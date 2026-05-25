@@ -9,6 +9,8 @@ import {
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { __testSetBackend } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
@@ -24,13 +26,17 @@ import {
   setRouteInMemory,
 } from "@/channels/routing";
 import type { ChannelAdapter } from "@/channels/types";
-import { runWithRuntimeContext } from "@/runtime-context";
+import {
+  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
+  runWithRuntimeContext,
+} from "@/runtime-context";
 import {
   captureToolExecutionContext,
   clearCapturedToolExecutionContexts,
   clearExternalTools,
   clearTools,
   executeTool,
+  getExecutionContextById,
   getToolNames,
   getToolSchema,
   loadSpecificTools,
@@ -40,7 +46,10 @@ import {
   refreshDynamicChannelToolsInLoadedRegistry,
   registerExternalTools,
 } from "@/tools/manager";
-import { resolveConversationChannelToolScope } from "@/tools/toolset";
+import {
+  prepareToolExecutionContextForScope,
+  resolveConversationChannelToolScope,
+} from "@/tools/toolset";
 
 function asText(
   toolReturn: Awaited<ReturnType<typeof executeTool>>["toolReturn"],
@@ -88,6 +97,8 @@ describe("tool execution context snapshot", () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
+    delete process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV];
+    __testSetBackend(null);
   });
 
   function installChannelAccountTestOverrides(): void {
@@ -504,6 +515,63 @@ describe("tool execution context snapshot", () => {
     );
 
     expect(prepared.loadedToolNames).toContain("MessageChannel");
+  });
+
+  test("hydrates inherited channel scope from serialized child env", async () => {
+    await loadSpecificTools(["Read"]);
+    __testSetBackend(
+      new FakeHeadlessBackend(
+        "agent-1",
+        undefined,
+        {},
+        {
+          modelHandle: "anthropic/claude-opus-4-1-20250805",
+        },
+      ),
+    );
+    process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV] = JSON.stringify({
+      channelToolScope: {
+        channels: [{ channelId: "telegram", accountId: "acct-telegram" }],
+      },
+      channelTurnSources: [
+        {
+          channel: "telegram",
+          accountId: "acct-telegram",
+          chatId: "7952253975",
+          chatType: "channel",
+          threadId: "42",
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    const prepared = await prepareToolExecutionContextForScope({
+      agentId: "agent-1",
+      conversationId: "default",
+      overrideModel: "anthropic/claude-opus-4-1-20250805",
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toContain(
+      "MessageChannel",
+    );
+    const captured = getExecutionContextById(
+      prepared.preparedToolContext.contextId,
+    );
+    expect(captured?.runtimeContext.channelToolScope).toEqual({
+      channels: [{ channelId: "telegram", accountId: "acct-telegram" }],
+    });
+    expect(captured?.runtimeContext.channelTurnSources).toEqual([
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        chatId: "7952253975",
+        chatType: "channel",
+        threadId: "42",
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    ]);
   });
 
   test("does not grant proactive MessageChannel scope for Telegram-only accounts", async () => {

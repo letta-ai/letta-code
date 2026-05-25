@@ -68,6 +68,13 @@ export interface ChannelThreadContext {
   history?: ChannelThreadContextEntry[];
 }
 
+export interface ChannelReplyContext {
+  messageId?: string;
+  senderId?: string;
+  senderName?: string;
+  text?: string;
+}
+
 export interface ChannelTurnSource {
   channel: string;
   accountId?: string;
@@ -211,6 +218,8 @@ export interface InboundChannelMessage {
   attachments?: ChannelMessageAttachment[];
   /** Reaction metadata for non-text channel events. */
   reaction?: ChannelReactionNotification;
+  /** Platform quote/reply context for messages sent in reply to another message. */
+  replyContext?: ChannelReplyContext;
   /** Supplemental thread context captured before the triggering message. */
   threadContext?: ChannelThreadContext;
 }
@@ -271,6 +280,7 @@ export interface ChannelRoute {
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
+export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
 
 export interface ChannelAccountBinding {
@@ -300,6 +310,8 @@ export interface TelegramChannelConfig {
   token: string;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /** Group/supergroup behavior: ambient open chat or explicit mentions only. */
+  groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
 }
@@ -406,8 +418,22 @@ export interface TelegramChannelAccount extends ChannelAccountBase {
   channel: "telegram";
   token: string;
   binding: ChannelAccountBinding;
+  /**
+   * Group/supergroup behavior. `open` preserves existing ambient room routing;
+   * `mention-only` only delivers messages explicitly addressed to this bot.
+   */
+  groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /**
+   * Optional debounce window (ms) for inbound group/topic messages. When
+   * greater than `0`, short back-to-back text messages in the same chat/topic
+   * stack into a single combined dispatch (trailing edge). Default `0`
+   * (disabled). DMs, attachments, and reactions bypass. The env var
+   * `LETTA_TELEGRAM_INBOUND_DEBOUNCE_MS` takes precedence if set. Clamped to
+   * `0..10000`.
+   */
+  inboundDebounceMs?: number;
 }
 
 export interface SlackChannelAccount extends ChannelAccountBase {

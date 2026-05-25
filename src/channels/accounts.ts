@@ -35,6 +35,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   allowed_channels: "allowedChannels",
   auto_thread_on_mention: "autoThreadOnMention",
   acknowledge_message_reaction: "acknowledgeMessageReaction",
+  group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
   remove_stale_routes: "removeStaleRoutes",
   thread_policy_by_channel: "threadPolicyByChannel",

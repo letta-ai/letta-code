@@ -8,6 +8,8 @@ import type {
   DmPolicy,
   OutboundChannelMessage,
   SlackChannelMode,
+  TelegramGroupMode,
+  WhatsAppGroupMode,
 } from "./types";
 
 export interface ChannelPluginMetadata {
@@ -148,6 +150,7 @@ export interface ChannelPluginAccountPatch {
   botToken?: string;
   appToken?: string;
   mode?: SlackChannelMode;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
@@ -157,7 +160,6 @@ export interface ChannelPluginAccountPatch {
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
-  groupMode?: "disabled" | "mention" | "open";
   allowedGroups?: string[];
   mentionPatterns?: string[];
   transcribeVoice?: boolean;

@@ -17,6 +17,7 @@ import type {
   DmPolicy,
   SlackChannelConfig,
   TelegramChannelConfig,
+  TelegramGroupMode,
   WhatsAppChannelConfig,
   WhatsAppGroupMode,
 } from "./types";
@@ -147,6 +148,7 @@ const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
       token: String(parsed.token ?? ""),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      groupMode: parseTelegramGroupMode(parsed.group_mode),
       transcribeVoice: parsed.transcribe_voice === true,
     };
   },
@@ -176,6 +178,10 @@ function parseDefaultPermissionMode(
     migrated === "unrestricted"
     ? migrated
     : "standard";
+}
+
+function parseTelegramGroupMode(value: unknown): TelegramGroupMode {
+  return value === "mention-only" ? "mention-only" : "open";
 }
 
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {

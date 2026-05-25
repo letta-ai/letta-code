@@ -6,17 +6,26 @@
 
 import type { ReactionType, ReactionTypeEmoji } from "@grammyjs/types";
 import type { Bot as GrammYBot, Context as GrammYContext } from "grammy";
+import {
+  createInboundDebouncer,
+  type InboundDebouncer,
+} from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelReplyContext,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
   TelegramChannelAccount,
 } from "@/channels/types";
+import {
+  buildTelegramDebounceKey,
+  resolveTelegramInboundDebounceMs,
+} from "./debounce";
 import {
   detectTelegramUploadMethod,
   extractTelegramMessageText,
@@ -73,9 +82,87 @@ type TelegramReactionUpdate = {
   new_reaction: TelegramReactionType[];
 };
 
+type TelegramMentionResult = {
+  isMention: boolean;
+  text: string;
+};
+
 const TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX = 3500;
 const TELEGRAM_LIFECYCLE_ERROR_DEDUPE_TTL_MS = 6 * 60 * 60 * 1000;
 const TELEGRAM_LIFECYCLE_ERROR_DEDUPE_MAX = 1000;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getTelegramMessageEntities(message: TelegramLikeMessage): Array<{
+  type?: string;
+  offset?: number;
+  length?: number;
+}> {
+  return message.text !== undefined
+    ? (message.entities ?? [])
+    : (message.caption_entities ?? []);
+}
+
+export function detectTelegramBotMention(
+  message: TelegramLikeMessage,
+  botUsername: string | null | undefined,
+  botDisplayName?: string | null | undefined,
+  text: string = extractTelegramMessageText(message),
+): TelegramMentionResult {
+  const username = botUsername?.trim().replace(/^@/, "");
+  const displayName = botDisplayName?.trim();
+  if (!username && !displayName) {
+    return { isMention: false, text };
+  }
+
+  const mention = username ? `@${username}` : null;
+  const mentionRegex = mention
+    ? new RegExp(`(^|\\s)${escapeRegExp(mention)}(?=$|\\s|[,.!?;:])`, "i")
+    : null;
+  const entityMentioned = getTelegramMessageEntities(message).some((entity) => {
+    if (!mention) return false;
+    if (entity.type !== "mention") return false;
+    if (
+      typeof entity.offset !== "number" ||
+      typeof entity.length !== "number" ||
+      entity.offset < 0 ||
+      entity.length <= 0
+    ) {
+      return false;
+    }
+    return (
+      text.slice(entity.offset, entity.offset + entity.length).toLowerCase() ===
+      mention.toLowerCase()
+    );
+  });
+  const regexMentioned = mentionRegex?.test(text) ?? false;
+  const leadingNameRegex = displayName
+    ? new RegExp(
+        `^\\s*${escapeRegExp(displayName)}(?:[:,]?\\s+|[,:]\\s*|$)`,
+        "i",
+      )
+    : null;
+  const leadingNameMentioned = leadingNameRegex?.test(text) ?? false;
+  const isMention = entityMentioned || regexMentioned || leadingNameMentioned;
+  if (!isMention) {
+    return { isMention: false, text };
+  }
+
+  const leadingMentionRegex = mention
+    ? new RegExp(`^\\s*${escapeRegExp(mention)}(?:[:,]?\\s*|$)`, "i")
+    : null;
+  const stripped = leadingMentionRegex
+    ? text.replace(leadingMentionRegex, "")
+    : text;
+  return {
+    isMention: true,
+    text: leadingNameRegex
+      ? stripped.replace(leadingNameRegex, "").trimStart()
+      : stripped.trimStart(),
+  };
+}
 
 function resolveTelegramBotConstructor(
   mod: GrammYModule,
@@ -100,10 +187,13 @@ function resolveTelegramInputFileConstructor(
 function buildTelegramReplyOptions(
   msg: Pick<
     OutboundChannelMessage,
-    "replyToMessageId" | "parseMode" | "text" | "title"
+    "replyToMessageId" | "threadId" | "parseMode" | "text" | "title"
   >,
 ): Record<string, unknown> {
   const options: Record<string, unknown> = {};
+  if (msg.threadId) {
+    options.message_thread_id = Number(msg.threadId);
+  }
   if (msg.replyToMessageId) {
     options.reply_parameters = {
       message_id: Number(msg.replyToMessageId),
@@ -195,7 +285,54 @@ function getTelegramReactionSenderId(
 }
 
 function getTelegramChatType(chat: { type?: string }): "direct" | "channel" {
-  return chat.type === "private" ? "direct" : "channel";
+  return !chat.type || chat.type === "private" ? "direct" : "channel";
+}
+
+function getTelegramChatLabel(
+  message: TelegramLikeMessage,
+): string | undefined {
+  const title = message.chat.title?.trim();
+  if (title) {
+    return title;
+  }
+  const username = message.chat.username?.trim();
+  if (username) {
+    return username.startsWith("@") ? username : `@${username}`;
+  }
+  return undefined;
+}
+
+function getTelegramMessageThreadId(
+  message: TelegramLikeMessage,
+): string | null {
+  return message.message_thread_id !== undefined
+    ? String(message.message_thread_id)
+    : null;
+}
+
+function getTelegramReplyContext(
+  message: TelegramLikeMessage,
+): ChannelReplyContext | undefined {
+  const replied = message.reply_to_message;
+  if (!replied) {
+    return undefined;
+  }
+
+  const text = extractTelegramMessageText(replied).trim();
+  const context: ChannelReplyContext = {
+    messageId: String(replied.message_id),
+  };
+  if (replied.from?.id !== undefined) {
+    context.senderId = String(replied.from.id);
+  }
+  const senderName = getTelegramSenderName(replied);
+  if (senderName) {
+    context.senderName = senderName;
+  }
+  if (text) {
+    context.text = text;
+  }
+  return context;
 }
 
 function getTelegramLifecycleErrorReplyKey(
@@ -231,6 +368,10 @@ type TelegramTypingEntry = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
+type TelegramDebounceEntry = {
+  inbound: InboundChannelMessage;
+};
+
 export function createTelegramAdapter(
   config: TelegramChannelAccount,
 ): ChannelAdapter {
@@ -240,6 +381,71 @@ export function createTelegramAdapter(
   const bufferedMediaGroups = new Map<string, BufferedMediaGroup>();
   const lifecycleErrorReplies = new Map<string, number>();
   const typingByChatId = new Map<string, TelegramTypingEntry>();
+  const debounceMs = resolveTelegramInboundDebounceMs(config);
+
+  const debouncer: InboundDebouncer<TelegramDebounceEntry> =
+    createInboundDebouncer<TelegramDebounceEntry>({
+      debounceMs,
+      buildKey: ({ inbound }) =>
+        buildTelegramDebounceKey(
+          { chatId: inbound.chatId, threadId: inbound.threadId },
+          config.accountId,
+        ),
+      shouldDebounce: ({ inbound }) =>
+        inbound.chatType === "channel" &&
+        !inbound.attachments?.length &&
+        !inbound.reaction,
+      onFlush: async (entries) => {
+        const last = entries[entries.length - 1];
+        if (!last || !adapter.onMessage) {
+          return;
+        }
+
+        const combinedText =
+          entries.length === 1
+            ? last.inbound.text
+            : entries
+                .map((entry) => {
+                  const text = entry.inbound.text.trim();
+                  if (!text) return null;
+                  const sender =
+                    entry.inbound.senderName?.trim() || entry.inbound.senderId;
+                  return `${sender}: ${text}`;
+                })
+                .filter((line): line is string => line !== null)
+                .join("\n");
+
+        const merged: InboundChannelMessage = {
+          ...last.inbound,
+          text: combinedText,
+          raw:
+            entries.length === 1
+              ? last.inbound.raw
+              : entries.map((entry) => entry.inbound.raw),
+        };
+
+        try {
+          await adapter.onMessage(merged);
+        } catch (error) {
+          console.error(
+            "[Telegram] Error handling debounced inbound message:",
+            error,
+          );
+        }
+      },
+      onError: (err) => {
+        console.error(
+          "[Telegram] Inbound debounce flush failed:",
+          err instanceof Error ? err.message : err,
+        );
+      },
+    });
+
+  async function dispatchInbound(
+    inbound: InboundChannelMessage,
+  ): Promise<void> {
+    await debouncer.enqueue({ inbound });
+  }
 
   async function sendTypingAction(chatId: string): Promise<void> {
     if (!running) return;
@@ -355,7 +561,12 @@ export function createTelegramAdapter(
       return;
     }
 
-    const text = extractTelegramMessageText(primaryMessage);
+    const mention = detectTelegramBotMention(
+      primaryMessage,
+      telegramBot.botInfo?.username,
+      telegramBot.botInfo?.first_name,
+    );
+    const text = mention.text;
     const attachments = await resolveTelegramInboundAttachments({
       accountId: config.accountId,
       token: config.token,
@@ -375,18 +586,24 @@ export function createTelegramAdapter(
       senderId: String(primaryMessage.from.id),
       senderName: getTelegramSenderName(primaryMessage),
       text,
+      isMention: mention.isMention,
       timestamp: primaryMessage.date * 1000,
       messageId: String(primaryMessage.message_id),
-      chatType: "direct",
+      chatType: getTelegramChatType(primaryMessage.chat),
       attachments: attachments.length > 0 ? attachments : undefined,
+      replyContext: getTelegramReplyContext(primaryMessage),
       raw: messages.length === 1 ? primaryMessage : messages,
     };
-
-    try {
-      await adapter.onMessage(inbound);
-    } catch (error) {
-      console.error("[Telegram] Error handling inbound message:", error);
+    const chatLabel = getTelegramChatLabel(primaryMessage);
+    if (chatLabel) {
+      inbound.chatLabel = chatLabel;
     }
+    const threadId = getTelegramMessageThreadId(primaryMessage);
+    if (threadId) {
+      inbound.threadId = threadId;
+    }
+
+    await dispatchInbound(inbound);
   }
 
   function scheduleBufferedMediaGroupFlush(
@@ -504,6 +721,11 @@ export function createTelegramAdapter(
             timestamp: update.date * 1000,
             messageId: String(update.message_id),
             chatType: getTelegramChatType(update.chat),
+            chatLabel:
+              update.chat.title?.trim() ||
+              (update.chat.username?.trim()
+                ? `@${update.chat.username.trim()}`
+                : undefined),
             reaction: {
               action: event.action,
               emoji: event.emoji,
@@ -583,7 +805,12 @@ export function createTelegramAdapter(
     await telegramBot.api.sendMessage(
       source.chatId,
       formatTelegramLifecycleErrorMessage(errorText),
-      reply_parameters ? { reply_parameters } : {},
+      {
+        ...(source.threadId
+          ? { message_thread_id: Number(source.threadId) }
+          : {}),
+        ...(reply_parameters ? { reply_parameters } : {}),
+      },
     );
   }
 
@@ -740,6 +967,9 @@ export function createTelegramAdapter(
       }
 
       const opts: Record<string, unknown> = {};
+      if (msg.threadId) {
+        opts.message_thread_id = Number(msg.threadId);
+      }
       if (msg.replyToMessageId) {
         opts.reply_parameters = {
           message_id: Number(msg.replyToMessageId),
@@ -838,7 +1068,12 @@ export function createTelegramAdapter(
       await telegramBot.api.sendMessage(
         event.source.chatId,
         formatChannelControlRequestPrompt(event),
-        reply_parameters ? { reply_parameters } : {},
+        {
+          ...(event.source.threadId
+            ? { message_thread_id: Number(event.source.threadId) }
+            : {}),
+          ...(reply_parameters ? { reply_parameters } : {}),
+        },
       );
       clearTypingForChat(event.source.chatId);
     },

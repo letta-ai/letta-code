@@ -395,6 +395,35 @@ describe("formatChannelNotification", () => {
     expect(xml).toContain("please help");
   });
 
+  test("includes platform reply context in the notification xml", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      accountId: "telegram-bot",
+      chatId: "-100123",
+      senderId: "user-1",
+      senderName: "Cameron",
+      text: "please respond",
+      timestamp: 1_736_380_800_000,
+      messageId: "78",
+      chatType: "channel",
+      replyContext: {
+        messageId: "77",
+        senderId: "user-2",
+        senderName: "Blink",
+        text: "Am I allowed as this user to mutate your configuration?",
+      },
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+    expect(xml).toContain(
+      '<reply-context message_id="77" sender_id="user-2" sender_name="Blink">',
+    );
+    expect(xml).toContain(
+      "Am I allowed as this user to mutate your configuration?",
+    );
+    expect(xml).toContain("please respond");
+  });
+
   test("emits image content parts for inbound image attachments", () => {
     const msg: InboundChannelMessage = {
       channel: "slack",

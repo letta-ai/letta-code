@@ -40,10 +40,10 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
   const escapedChannel = escapeXmlText(msg.channel);
   const escapedChatId = escapeXmlText(msg.chatId);
   const threadLine =
-    msg.channel === "slack" &&
+    (msg.channel === "slack" || msg.channel === "telegram") &&
     msg.chatType === "channel" &&
     (msg.threadId ?? msg.messageId)?.trim()
-      ? "Replies sent with MessageChannel will stay in the same Slack thread automatically."
+      ? `Replies sent with MessageChannel will stay in the same ${msg.channel === "telegram" ? "Telegram topic" : "Slack thread"} automatically.`
       : null;
 
   const lines = [
@@ -158,6 +158,30 @@ function buildReactionXml(msg: InboundChannelMessage): string | null {
   return `<reaction ${attrs.join(" ")} />`;
 }
 
+function buildReplyContextXml(msg: InboundChannelMessage): string | null {
+  const replyContext = msg.replyContext;
+  if (!replyContext) {
+    return null;
+  }
+
+  const attrs: string[] = [];
+  if (replyContext.messageId) {
+    attrs.push(`message_id="${escapeXmlAttribute(replyContext.messageId)}"`);
+  }
+  if (replyContext.senderId) {
+    attrs.push(`sender_id="${escapeXmlAttribute(replyContext.senderId)}"`);
+  }
+  if (replyContext.senderName) {
+    attrs.push(`sender_name="${escapeXmlAttribute(replyContext.senderName)}"`);
+  }
+
+  const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+  if (replyContext.text?.trim()) {
+    return `<reply-context${attrString}>\n${escapeXmlText(replyContext.text)}\n</reply-context>`;
+  }
+  return `<reply-context${attrString} />`;
+}
+
 function buildThreadContextEntryXml(
   tagName: string,
   entry: ChannelThreadContextEntry,
@@ -250,9 +274,16 @@ export function buildChannelNotificationXml(
   const attrString = attrs.join(" ");
   const escapedText = msg.text ? escapeXmlText(msg.text) : "";
   const reactionXml = buildReactionXml(msg);
+  const replyContextXml = buildReplyContextXml(msg);
   const threadContextXml = buildThreadContextXml(msg);
   const attachmentXml = (msg.attachments ?? []).map(buildAttachmentXml);
-  const body = [threadContextXml, reactionXml, ...attachmentXml, escapedText]
+  const body = [
+    threadContextXml,
+    replyContextXml,
+    reactionXml,
+    ...attachmentXml,
+    escapedText,
+  ]
     .filter(Boolean)
     .join("\n");
 

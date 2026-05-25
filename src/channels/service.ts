@@ -66,6 +66,8 @@ import type {
   PendingPairing,
   SlackChannelMode,
   SupportedChannelId,
+  TelegramGroupMode,
+  WhatsAppGroupMode,
 } from "./types";
 import {
   isDiscordChannelAccount,
@@ -99,6 +101,7 @@ export interface ChannelConfigSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
@@ -108,7 +111,6 @@ export interface ChannelConfigSnapshot {
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
-  groupMode?: "disabled" | "mention" | "open";
   allowedGroups?: string[];
   mentionPatterns?: string[];
   transcribeVoice?: boolean;
@@ -155,6 +157,20 @@ async function refreshLoadedMessageChannelTool(): Promise<void> {
   await refreshDynamicChannelToolsInLoadedRegistry();
 }
 
+function normalizeTelegramGroupMode(
+  value: ChannelAccountPatch["groupMode"],
+): TelegramGroupMode | undefined {
+  return value === "open" || value === "mention-only" ? value : undefined;
+}
+
+function normalizeWhatsAppGroupMode(
+  value: ChannelAccountPatch["groupMode"],
+): WhatsAppGroupMode | undefined {
+  return value === "disabled" || value === "mention" || value === "open"
+    ? value
+    : undefined;
+}
+
 export interface ChannelAccountSnapshot {
   [key: string]: unknown;
   channelId: string;
@@ -170,6 +186,7 @@ export interface ChannelAccountSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   transcribeVoice?: boolean;
   binding?: {
     agentId: string | null;
@@ -184,7 +201,6 @@ export interface ChannelAccountSnapshot {
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
-  groupMode?: "disabled" | "mention" | "open";
   allowedGroups?: string[];
   mentionPatterns?: string[];
   downloadMedia?: boolean;
@@ -446,6 +462,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       config,
       hasToken: account.token.trim().length > 0,
       transcribeVoice: account.transcribeVoice === true,
+      groupMode: account.groupMode ?? "open",
+      inboundDebounceMs: account.inboundDebounceMs,
       binding,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -557,7 +575,10 @@ function createAccountFromPatch(
       token: normalizedPatch.token ?? "",
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
+      groupMode:
+        normalizeTelegramGroupMode(normalizedPatch.groupMode) ?? "open",
       transcribeVoice: normalizedPatch.transcribeVoice === true,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       binding: {
         agentId: null,
         conversationId: null,
@@ -600,7 +621,8 @@ function createAccountFromPatch(
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       selfChatMode: normalizedPatch.selfChatMode ?? true,
-      groupMode: normalizedPatch.groupMode ?? "disabled",
+      groupMode:
+        normalizeWhatsAppGroupMode(normalizedPatch.groupMode) ?? "disabled",
       allowedGroups: normalizedPatch.allowedGroups ?? [],
       mentionPatterns: normalizedPatch.mentionPatterns ?? [],
       transcribeVoice: normalizedPatch.transcribeVoice === true,
@@ -659,8 +681,14 @@ function mergeAccountPatch(
       token: normalizedPatch.token ?? existing.token,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      groupMode:
+        normalizeTelegramGroupMode(normalizedPatch.groupMode) ??
+        existing.groupMode ??
+        "open",
       transcribeVoice:
         normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -710,7 +738,9 @@ function mergeAccountPatch(
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       selfChatMode: normalizedPatch.selfChatMode ?? existing.selfChatMode,
-      groupMode: normalizedPatch.groupMode ?? existing.groupMode,
+      groupMode:
+        normalizeWhatsAppGroupMode(normalizedPatch.groupMode) ??
+        existing.groupMode,
       allowedGroups: normalizedPatch.allowedGroups ?? existing.allowedGroups,
       mentionPatterns:
         normalizedPatch.mentionPatterns ?? existing.mentionPatterns,
