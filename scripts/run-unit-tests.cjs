@@ -13,6 +13,7 @@ const dirs = [
   "src/cli",
   "src/cron",
   "src/experiments",
+  "src/extensions",
   "src/hooks",
   "src/lsp",
   "src/permissions",
@@ -26,6 +27,7 @@ const dirs = [
   "src/types",
   "src/updater",
   "src/utils",
+  "src/web",
   "src/websocket",
   // Root-level test files (not inside a subdirectory)
   "src/*.test.ts",
