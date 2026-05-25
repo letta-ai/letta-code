@@ -7,7 +7,7 @@ import {
   getAvailableModelsCacheInfo,
   getCachedModelHandles,
 } from "@/agent/available-models";
-import { models } from "@/agent/model";
+import { getLocalModelLabel, models } from "@/agent/model";
 
 import {
   buildByokProviderAliases,
@@ -103,32 +103,11 @@ type UiModel = {
   updateArgs?: Record<string, unknown>;
 };
 
-const LOCAL_MODEL_HANDLE_PREFIXES = [
-  "ollama/",
-  "ollama-cloud/",
-  "lmstudio/",
-  "llama.cpp/",
-  "llama-cpp/",
-];
-
-function isLocalModelHandle(handle: string): boolean {
-  return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
-    handle.startsWith(prefix),
-  );
-}
-
-function localModelLabel(handle: string): string {
-  const providerPrefix = LOCAL_MODEL_HANDLE_PREFIXES.find((prefix) =>
-    handle.startsWith(prefix),
-  );
-  return providerPrefix ? handle.slice(providerPrefix.length) : handle;
-}
-
 export function toSelectorModelForHandle(handle: string): UiModel {
   return {
     id: handle,
     handle,
-    label: isLocalModelHandle(handle) ? localModelLabel(handle) : handle,
+    label: getLocalModelLabel(handle),
     description: "",
   };
 }

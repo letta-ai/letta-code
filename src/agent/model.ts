@@ -46,6 +46,15 @@ export function isLocalModelHandle(modelHandle: string): boolean {
   );
 }
 
+export function getLocalModelLabel(modelHandle: string): string {
+  const providerPrefix = LOCAL_MODEL_HANDLE_PREFIXES.find((prefix) =>
+    modelHandle.startsWith(prefix),
+  );
+  return providerPrefix
+    ? modelHandle.slice(providerPrefix.length)
+    : modelHandle;
+}
+
 function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
   return (
     typeof value === "string" &&
