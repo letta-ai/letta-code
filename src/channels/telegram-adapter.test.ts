@@ -563,6 +563,80 @@ test("telegram adapter skips voice transcription unless opt-in is enabled", asyn
   );
 });
 
+test("telegram adapter exposes inbound voice transcription errors", async () => {
+  process.env.OPENAI_API_KEY = "sk-test";
+  const warn = console.warn;
+  console.warn = mock(() => {}) as unknown as typeof console.warn;
+
+  globalThis.fetch = mock(async (url: string | URL | Request) => {
+    const href = typeof url === "string" ? url : url.toString();
+
+    if (href.includes("/file/bottest-token/voice/voice1.ogg")) {
+      return new Response(Buffer.from("voice-bytes"), {
+        status: 200,
+        headers: { "content-type": "audio/ogg" },
+      });
+    }
+
+    if (href === "https://api.openai.com/v1/audio/transcriptions") {
+      return new Response("Rate limited", { status: 429 });
+    }
+
+    throw new Error(`Unexpected fetch URL: ${href}`);
+  }) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "voice/voice1.ogg",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    transcribeVoice: true,
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  try {
+    await adapter.start();
+
+    const bot = FakeBot.instances[0];
+    await bot?.emit("message", {
+      message: {
+        chat: { id: 123 },
+        from: { id: 456, username: "alice", first_name: "Alice" },
+        text: "",
+        date: 1_736_380_800,
+        message_id: 77,
+        voice: {
+          file_id: "voice1",
+          file_unique_id: "voice-unique-1",
+          mime_type: "audio/ogg",
+          file_size: 12,
+        },
+      },
+    });
+  } finally {
+    console.warn = warn;
+  }
+
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      attachments: [
+        expect.objectContaining({
+          transcriptionError: expect.stringContaining("429"),
+        }),
+      ],
+    }),
+  );
+});
+
 test("telegram adapter replies with lifecycle errors", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
