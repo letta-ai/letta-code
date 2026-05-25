@@ -726,19 +726,27 @@ export async function loadLocalExtensions(
     for (const extensionPath of source.files) {
       const owner = createExtensionOwner(extensionPath, source, generation);
       const abortController = new AbortController();
+      let failurePhase: ExtensionDiagnostic["phase"] = "import";
       registry.ownerAbortControllers[owner.id] = abortController;
       registry.owners[owner.id] = owner;
 
       try {
         const mtimeMs = statSync(extensionPath).mtimeMs;
+        failurePhase = TYPESCRIPT_EXTENSION_FILE_EXTENSIONS.has(
+          path.extname(extensionPath),
+        )
+          ? "transpile"
+          : "import";
         const importPath = createImportableExtensionPath(
           extensionPath,
           cacheDirectory,
         );
+        failurePhase = "import";
         const module = (await import(
           `${pathToFileURL(importPath).href}?extension=${mtimeMs}`
         )) as LocalExtensionModule;
         const factory = getExtensionFactory(module);
+        failurePhase = "activate";
 
         if (typeof factory !== "function") {
           throw new Error(
@@ -777,7 +785,7 @@ export async function loadLocalExtensions(
             error: error instanceof Error ? error : new Error(String(error)),
             owner,
             path: extensionPath,
-            phase: "activate",
+            phase: failurePhase,
           },
           options.onDiagnostic,
         );
@@ -845,6 +853,7 @@ export function createExtensionHost(
   options: CreateExtensionHostOptions,
 ): ExtensionHost {
   let generation = 0;
+  let disposed = false;
   let activeRegistry = createEmptyExtensionRegistry(
     resolveLocalExtensionSources(options),
     generation,
@@ -860,20 +869,30 @@ export function createExtensionHost(
   };
 
   const reload = async () => {
+    if (disposed) return;
+
     disposeLocalExtensions(activeRegistry);
     generation += 1;
     const loadGeneration = generation;
+    activeRegistry = createEmptyExtensionRegistry(
+      resolveLocalExtensionSources(options),
+      loadGeneration,
+    );
+    publish();
+
     let loadingRegistry: LocalExtensionRegistry | null = null;
     const nextRegistry = await loadLocalExtensions({
       ...options,
-      generation,
+      generation: loadGeneration,
       onChange: () => {
-        if (loadingRegistry && loadGeneration === generation) {
+        if (!disposed && loadingRegistry && loadGeneration === generation) {
           activeRegistry = loadingRegistry;
           publish();
         }
       },
       onDiagnostic: (diagnostic) => {
+        if (disposed) return;
+
         if (loadingRegistry && loadGeneration === generation) {
           activeRegistry = loadingRegistry;
           publish();
@@ -895,13 +914,25 @@ export function createExtensionHost(
       },
     });
     loadingRegistry = nextRegistry;
+    if (disposed || loadGeneration !== generation) {
+      disposeLocalExtensions(nextRegistry);
+      return;
+    }
+
     activeRegistry = nextRegistry;
     publish();
   };
 
   return {
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      generation += 1;
       disposeLocalExtensions(activeRegistry);
+      activeRegistry = createEmptyExtensionRegistry(
+        resolveLocalExtensionSources(options),
+        generation,
+      );
       publish();
       listeners.clear();
     },

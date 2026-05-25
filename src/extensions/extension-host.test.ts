@@ -10,8 +10,10 @@ import {
 import type { ExtensionPanelHandle } from "@/extensions/types";
 
 type ExtensionTestGlobal = typeof globalThis & {
+  __lettaExtensionGate?: Promise<void>;
   __lettaExtensionPanel?: ExtensionPanelHandle;
   __lettaExtensionSignal?: AbortSignal;
+  __lettaExtensionStarted?: () => void;
 };
 
 function createTempDir(): string {
@@ -129,6 +131,176 @@ describe("extension host", () => {
     } finally {
       delete testGlobal.__lettaExtensionPanel;
       delete testGlobal.__lettaExtensionSignal;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("reload publishes an empty snapshot while extensions are loading", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ExtensionTestGlobal;
+    delete testGlobal.__lettaExtensionGate;
+    delete testGlobal.__lettaExtensionStarted;
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const extensionPath = path.join(extensionDir, "command.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "old-command",
+            description: "Old command",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+      expect(Object.keys(host.getSnapshot().commands)).toEqual(["old-command"]);
+
+      let releaseReload!: () => void;
+      const reloadStarted = new Promise<void>((resolve) => {
+        testGlobal.__lettaExtensionStarted = resolve;
+      });
+      testGlobal.__lettaExtensionGate = new Promise<void>((resolve) => {
+        releaseReload = resolve;
+      });
+      writeFileSync(
+        extensionPath,
+        `export default async function(letta) {
+          globalThis.__lettaExtensionStarted?.();
+          await globalThis.__lettaExtensionGate;
+          letta.commands.register({
+            id: "new-command",
+            description: "New command",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+
+      const reloadPromise = host.reload();
+      await reloadStarted;
+
+      expect(host.getSnapshot().commands).toEqual({});
+      expect(host.getSnapshot().loadedPaths).toEqual([]);
+
+      releaseReload();
+      await reloadPromise;
+      expect(Object.keys(host.getSnapshot().commands)).toEqual(["new-command"]);
+
+      host.dispose();
+    } finally {
+      delete testGlobal.__lettaExtensionGate;
+      delete testGlobal.__lettaExtensionStarted;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("ignores stale reload completions", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ExtensionTestGlobal;
+    delete testGlobal.__lettaExtensionGate;
+    delete testGlobal.__lettaExtensionStarted;
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const extensionPath = path.join(extensionDir, "command.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      let releaseFirstReload!: () => void;
+      const firstReloadStarted = new Promise<void>((resolve) => {
+        testGlobal.__lettaExtensionStarted = resolve;
+      });
+      testGlobal.__lettaExtensionGate = new Promise<void>((resolve) => {
+        releaseFirstReload = resolve;
+      });
+      writeFileSync(
+        extensionPath,
+        `export default async function(letta) {
+          globalThis.__lettaExtensionStarted?.();
+          await globalThis.__lettaExtensionGate;
+          letta.commands.register({
+            id: "stale-command",
+            description: "Stale command",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+
+      const host = createHost(root);
+      const firstReload = host.reload();
+      await firstReloadStarted;
+
+      delete testGlobal.__lettaExtensionGate;
+      delete testGlobal.__lettaExtensionStarted;
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "fresh-command",
+            description: "Fresh command",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+
+      await host.reload();
+      expect(Object.keys(host.getSnapshot().commands)).toEqual([
+        "fresh-command",
+      ]);
+
+      releaseFirstReload();
+      await firstReload;
+
+      const snapshot = host.getSnapshot();
+      expect(snapshot.generation).toBe(2);
+      expect(Object.keys(snapshot.commands)).toEqual(["fresh-command"]);
+
+      host.dispose();
+    } finally {
+      delete testGlobal.__lettaExtensionGate;
+      delete testGlobal.__lettaExtensionStarted;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("records load diagnostics with specific phases", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "phase-activate.js"),
+        `export default function() { throw new Error("activate failed"); }`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "phase-import.js"),
+        `import "missing-extension-test-package";
+         export default function() {}`,
+      );
+      writeFileSync(
+        path.join(extensionDir, "phase-transpile.ts"),
+        `export default function() { const value = ; }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+
+      expect(
+        Object.fromEntries(
+          host
+            .getSnapshot()
+            .errors.map((entry) => [path.basename(entry.path), entry.phase]),
+        ),
+      ).toEqual({
+        "phase-activate.js": "activate",
+        "phase-import.js": "import",
+        "phase-transpile.ts": "transpile",
+      });
+
+      host.dispose();
+    } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });
