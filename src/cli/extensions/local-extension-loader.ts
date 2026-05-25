@@ -12,6 +12,7 @@ import {
   loadLocalExtensions as loadLocalExtensionsBase,
   resolveLocalExtensionSources,
 } from "@/extensions/extension-host";
+import { getAllLettaToolNames, getServerToolName } from "@/tools/manager";
 
 function stripSlash(command: string): string {
   return command.startsWith("/") ? command.slice(1) : command;
@@ -21,8 +22,20 @@ function getDefaultReservedCommandIds(): Set<string> {
   return new Set(Object.keys(builtinCommands).map(stripSlash));
 }
 
-function withDefaultReservedCommandIds<
-  T extends { reservedCommandIds?: Iterable<string> },
+function getDefaultReservedToolNames(): Set<string> {
+  const reserved = new Set<string>();
+  for (const toolName of getAllLettaToolNames()) {
+    reserved.add(toolName);
+    reserved.add(getServerToolName(toolName));
+  }
+  return reserved;
+}
+
+function withDefaultReservations<
+  T extends {
+    reservedCommandIds?: Iterable<string>;
+    reservedToolNames?: Iterable<string>;
+  },
 >(options: T): T {
   return {
     ...options,
@@ -30,15 +43,19 @@ function withDefaultReservedCommandIds<
       ...getDefaultReservedCommandIds(),
       ...(options.reservedCommandIds ?? []),
     ],
+    reservedToolNames: [
+      ...getDefaultReservedToolNames(),
+      ...(options.reservedToolNames ?? []),
+    ],
   };
 }
 
 export function createExtensionHost(options: CreateExtensionHostOptions) {
-  return createExtensionHostBase(withDefaultReservedCommandIds(options));
+  return createExtensionHostBase(withDefaultReservations(options));
 }
 
 export function loadLocalExtensions(options: LoadLocalExtensionsOptions) {
-  return loadLocalExtensionsBase(withDefaultReservedCommandIds(options));
+  return loadLocalExtensionsBase(withDefaultReservations(options));
 }
 
 export {

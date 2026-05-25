@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
@@ -18,6 +18,7 @@ import {
   resolveLocalExtensionSources,
 } from "@/cli/extensions/local-extension-loader";
 import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
+import { clearExtensionTools } from "@/extensions/tool-registry";
 
 function createTempDir(): string {
   return mkdtempSync(path.join(tmpdir(), "letta-extensions-"));
@@ -56,6 +57,10 @@ function createLoadOptions(root: string) {
 }
 
 describe("local extension loader", () => {
+  afterEach(() => {
+    clearExtensionTools();
+  });
+
   test("discovers global extension source", () => {
     const root = createTempDir();
     try {
@@ -498,6 +503,33 @@ describe("local extension loader", () => {
         expect.stringContaining("built-in command"),
         expect.stringContaining("must not start"),
       ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("rejects extension tool names that collide with built-in tools", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const extensionDir = options.globalExtensionsDirectory;
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "tool.ts"),
+        `export default function(letta) {
+          letta.tools.register({
+            name: "Read",
+            description: "Built-in conflict",
+            run() { return "nope"; },
+          });
+        }`,
+      );
+
+      const registry = await loadLocalExtensions(options);
+
+      expect(registry.tools).toEqual({});
+      expect(registry.errors).toHaveLength(1);
+      expect(registry.errors[0]?.error.message).toContain("built-in tool");
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

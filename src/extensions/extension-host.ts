@@ -20,6 +20,12 @@ import type {
   StatuslineRenderer,
   StatuslineRendererOutput,
 } from "@/cli/display/statusline/types";
+import {
+  getExtensionToolDefinition,
+  registerExtensionTool,
+  unregisterExtensionTool,
+  unregisterExtensionToolsForOwner,
+} from "@/extensions/tool-registry";
 import type {
   ExtensionCommand,
   ExtensionCommandRegistration,
@@ -31,6 +37,8 @@ import type {
   ExtensionPanelHandle,
   ExtensionPanelOptions,
   ExtensionPanelUpdate,
+  ExtensionTool,
+  ExtensionToolRegistration,
 } from "@/extensions/types";
 
 export const GLOBAL_EXTENSIONS_DIRECTORY = path.join(
@@ -75,6 +83,10 @@ export interface LettaExtensionApi {
     register: (command: ExtensionCommandRegistration) => LettaExtensionDisposer;
     unregister: (id: string) => void;
   };
+  tools: {
+    register: (tool: ExtensionToolRegistration) => LettaExtensionDisposer;
+    unregister: (name: string) => void;
+  };
   ui: {
     clearPanel: (id: string) => void;
     clearStatus: (key: string) => void;
@@ -118,6 +130,7 @@ export interface LocalExtensionRegistry {
   ownerAbortControllers: Record<string, AbortController>;
   owners: Record<string, ExtensionOwner>;
   sources: LocalExtensionSource[];
+  tools: Record<string, ExtensionTool>;
   ui: LocalExtensionUiRegistry;
 }
 
@@ -146,6 +159,7 @@ export interface LoadLocalExtensionsOptions
   onChange?: () => void;
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void;
   reservedCommandIds?: Iterable<string>;
+  reservedToolNames?: Iterable<string>;
 }
 
 export interface ExtensionHost {
@@ -160,6 +174,7 @@ export interface CreateExtensionHostOptions
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
   reservedCommandIds?: Iterable<string>;
+  reservedToolNames?: Iterable<string>;
 }
 
 function listExtensionFiles(directory: string): string[] {
@@ -205,6 +220,7 @@ function createEmptyExtensionRegistry(
     ownerAbortControllers: {},
     owners: {},
     sources,
+    tools: {},
     ui: {
       panels: {},
       statuslineRenderer: null,
@@ -292,6 +308,7 @@ function snapshotRegistryForReaders(
       ...source,
       files: [...source.files],
     })),
+    tools: { ...registry.tools },
     ui: {
       ...registry.ui,
       panels: { ...registry.ui.panels },
@@ -316,6 +333,14 @@ function removeOwnerCapabilities(
       delete registry.ui.panels[id];
     }
   }
+
+  for (const [name, tool] of Object.entries(registry.tools)) {
+    if (tool.owner?.id === owner.id) {
+      delete registry.tools[name];
+    }
+  }
+
+  unregisterExtensionToolsForOwner(owner);
 
   for (const [key, statusOwner] of Object.entries(registry.ui.statusOwners)) {
     if (statusOwner.id === owner.id) {
@@ -529,6 +554,64 @@ function normalizeExtensionCommand(
   };
 }
 
+function validateExtensionToolName(name: string): void {
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) {
+    throw new Error(
+      "Extension tool name must be 1-64 characters using letters, numbers, underscores, or hyphens",
+    );
+  }
+}
+
+function normalizeExtensionToolParameters(
+  parameters: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!parameters) {
+    return {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    };
+  }
+  if (
+    typeof parameters !== "object" ||
+    parameters === null ||
+    Array.isArray(parameters)
+  ) {
+    throw new Error("Extension tool parameters must be a JSON Schema object");
+  }
+  if (parameters.type !== undefined && parameters.type !== "object") {
+    throw new Error(
+      "Extension tool parameters schema must be an object schema",
+    );
+  }
+  return parameters;
+}
+
+function normalizeExtensionTool(
+  tool: ExtensionToolRegistration,
+  owner: ExtensionOwner,
+): ExtensionTool {
+  validateExtensionToolName(tool.name);
+  if (!tool.description.trim()) {
+    throw new Error(`Extension tool '${tool.name}' must include a description`);
+  }
+  if (typeof tool.run !== "function") {
+    throw new Error(`Extension tool '${tool.name}' must include run()`);
+  }
+
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: normalizeExtensionToolParameters(tool.parameters),
+    owner,
+    path: owner.path,
+    requiresApproval: tool.requiresApproval !== false,
+    parallelSafe: tool.parallelSafe === true,
+    ...(tool.isEnabled ? { isEnabled: tool.isEnabled } : {}),
+    run: tool.run,
+  };
+}
+
 function validateExtensionPanelId(id: string): void {
   if (!id.trim()) {
     throw new Error("Extension panel id must not be empty");
@@ -578,6 +661,7 @@ function createLettaExtensionApi(
   onChange: () => void,
   onDiagnostic: ((diagnostic: ExtensionDiagnostic) => void) | undefined,
   reservedCommandIds: Set<string>,
+  reservedToolNames: Set<string>,
   signal: AbortSignal,
 ): LettaExtensionApi {
   const isLive = () => isOwnerLive(registry, owner);
@@ -606,6 +690,17 @@ function createLettaExtensionApi(
     const existing = registry.ui.panels[panelKey];
     if (existing?.owner?.id === owner.id) {
       delete registry.ui.panels[panelKey];
+      onChange();
+    }
+  };
+
+  const unregisterTool = (name: string) => {
+    validateExtensionToolName(name);
+    if (!guardLive({ id: name, kind: "tool" })) return;
+    const existing = registry.tools[name];
+    if (existing?.owner?.id === owner.id) {
+      delete registry.tools[name];
+      unregisterExtensionTool(name, owner);
       onChange();
     }
   };
@@ -641,6 +736,43 @@ function createLettaExtensionApi(
         return () => unregisterCommand(normalized.id);
       },
       unregister: unregisterCommand,
+    },
+    tools: {
+      register(tool) {
+        if (!guardLive({ id: tool.name, kind: "tool" })) {
+          return () => undefined;
+        }
+
+        const normalized = normalizeExtensionTool(tool, owner);
+        if (reservedToolNames.has(normalized.name)) {
+          throw new Error(
+            `Extension tool '${normalized.name}' conflicts with a built-in tool`,
+          );
+        }
+
+        const existing = registry.tools[normalized.name];
+        const existingGlobal = getExtensionToolDefinition(normalized.name);
+        if ((existing || existingGlobal) && !tool.override) {
+          throw new Error(
+            `Extension tool '${normalized.name}' is already registered by ${existing?.path ?? existingGlobal?.path}`,
+          );
+        }
+
+        registry.tools[normalized.name] = normalized;
+        registerExtensionTool({
+          ...normalized,
+          activationSignal: signal,
+          getContext,
+          isAvailable: () => {
+            if (signal.aborted) return false;
+            return normalized.isEnabled?.(getContext()) ?? true;
+          },
+        });
+        onChange();
+
+        return () => unregisterTool(normalized.name);
+      },
+      unregister: unregisterTool,
     },
     ui: {
       clearPanel,
@@ -720,6 +852,7 @@ export async function loadLocalExtensions(
   const sources = resolveLocalExtensionSources(options);
   const generation = options.generation ?? 1;
   const reservedCommandIds = new Set([...(options.reservedCommandIds ?? [])]);
+  const reservedToolNames = new Set([...(options.reservedToolNames ?? [])]);
   const registry = createEmptyExtensionRegistry(sources, generation);
 
   for (const source of sources) {
@@ -763,6 +896,7 @@ export async function loadLocalExtensions(
             onChange,
             options.onDiagnostic,
             reservedCommandIds,
+            reservedToolNames,
             abortController.signal,
           ),
         );
@@ -839,9 +973,14 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
     }
   }
 
+  for (const owner of Object.values(registry.owners)) {
+    unregisterExtensionToolsForOwner(owner);
+  }
+
   registry.commands = {};
   registry.ownerAbortControllers = {};
   registry.owners = {};
+  registry.tools = {};
   registry.ui.panels = {};
   registry.ui.statusOwners = {};
   registry.ui.statusValues = {};
