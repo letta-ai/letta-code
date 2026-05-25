@@ -5,9 +5,9 @@ import {
   ADV_DIFF_CONTEXT_LINES,
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
-} from "../helpers/diff";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/cli/helpers/diff";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { EditRenderer, MultiEditRenderer, WriteRenderer } from "./DiffRenderer";
 import {

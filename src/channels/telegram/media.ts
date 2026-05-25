@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
-import { getChannelDir } from "../config";
-import type { ChannelMessageAttachment } from "../types";
+import { getChannelDir } from "@/channels/config";
+import type { ChannelMessageAttachment } from "@/channels/types";
 
 export const TELEGRAM_MEDIA_GROUP_FLUSH_MS = 150;
 export const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 15_000;
@@ -585,7 +585,7 @@ async function downloadTelegramAttachment(params: {
   // Auto-transcribe voice memos when enabled and an API key is available.
   if (candidate.isVoice && params.transcribeVoice) {
     const { isTranscriptionConfigured, transcribeAudioFile } = await import(
-      "../transcription/index"
+      "@/channels/transcription/index"
     );
     if (isTranscriptionConfigured()) {
       const result = await transcribeAudioFile(localPath);

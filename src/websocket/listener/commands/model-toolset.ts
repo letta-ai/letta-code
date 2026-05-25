@@ -1,35 +1,47 @@
 import type WebSocket from "ws";
-import { getAvailableModelHandles } from "../../../agent/available-models";
-import { getModelInfo, models } from "../../../agent/model";
+import { getAvailableModelHandles } from "@/agent/available-models";
+import {
+  getModelInfo,
+  models,
+  shouldPreserveContextWindowForModelSelection,
+} from "@/agent/model";
 import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
-} from "../../../agent/modify";
+} from "@/agent/modify";
+import { getBackend } from "@/backend";
 import {
   buildByokProviderAliases,
   listProviders,
-} from "../../../providers/byok-providers";
-import { settingsManager } from "../../../settings-manager";
+} from "@/providers/byok-providers";
+import { settingsManager } from "@/settings-manager";
 import {
   ensureCorrectMemoryTool,
   prepareToolExecutionContextForScope,
   type ToolsetName,
   type ToolsetPreference,
-} from "../../../tools/toolset";
-import { formatToolsetName } from "../../../tools/toolset-labels";
+} from "@/tools/toolset";
+import { formatToolsetName } from "@/tools/toolset-labels";
 import type {
   ListModelsResponseMessage,
   ListModelsResponseModelEntry,
   UpdateModelResponseMessage,
   UpdateToolsetResponseMessage,
-} from "../../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   isListModelsCommand,
   isUpdateModelCommand,
   isUpdateToolsetCommand,
-} from "../protocol-inbound";
-import { emitRuntimeStateUpdates, emitStatusDelta } from "../protocol-outbound";
-import type { ConversationRuntime, ListenerRuntime } from "../types";
+} from "@/websocket/listener/protocol-inbound";
+import {
+  emitRuntimeStateUpdates,
+  emitStatusDelta,
+} from "@/websocket/listener/protocol-outbound";
+import type { ListenerTransport } from "@/websocket/listener/transport";
+import type {
+  ConversationRuntime,
+  ListenerRuntime,
+} from "@/websocket/listener/types";
 import type {
   GetOrCreateScopedRuntime,
   RunDetachedListenerTask,
@@ -50,6 +62,89 @@ type ModelToolsetCommandContext = {
   runDetachedListenerTask: RunDetachedListenerTask;
   getOrCreateScopedRuntime: GetOrCreateScopedRuntime;
 };
+
+type ModelScopeSnapshot = {
+  modelHandle: string | null;
+  llmConfig: {
+    model?: string | null;
+    model_endpoint_type?: string | null;
+    context_window?: number | null;
+  } | null;
+};
+
+function buildModelHandleFromConfig(
+  config: ModelScopeSnapshot["llmConfig"],
+): string | null {
+  if (!config) return null;
+  if (config.model_endpoint_type && config.model) {
+    return `${config.model_endpoint_type}/${config.model}`;
+  }
+  return config.model ?? null;
+}
+
+function withContextWindow(
+  baseConfig: ModelScopeSnapshot["llmConfig"],
+  contextWindow?: number,
+): ModelScopeSnapshot["llmConfig"] {
+  return {
+    ...(baseConfig ?? {}),
+    ...(typeof contextWindow === "number"
+      ? { context_window: contextWindow }
+      : {}),
+  };
+}
+
+async function getCurrentModelScopeSnapshot(params: {
+  agentId: string;
+  conversationId: string;
+}): Promise<ModelScopeSnapshot> {
+  const backend = getBackend();
+  const agent = await backend.retrieveAgent(params.agentId);
+  const agentRecord = agent as unknown as Record<string, unknown>;
+  const agentModelHandle =
+    typeof agent.model === "string" && agent.model.length > 0
+      ? agent.model
+      : buildModelHandleFromConfig(
+          agent.llm_config as ModelScopeSnapshot["llmConfig"],
+        );
+  const agentContextWindow =
+    typeof agentRecord.context_window_limit === "number"
+      ? agentRecord.context_window_limit
+      : typeof agent.llm_config?.context_window === "number"
+        ? agent.llm_config.context_window
+        : undefined;
+
+  if (params.conversationId === "default") {
+    return {
+      modelHandle: agentModelHandle,
+      llmConfig: withContextWindow(
+        agent.llm_config as ModelScopeSnapshot["llmConfig"],
+        agentContextWindow,
+      ),
+    };
+  }
+
+  const conversation = await backend.retrieveConversation(
+    params.conversationId,
+  );
+  const conversationRecord = conversation as unknown as Record<string, unknown>;
+  const conversationModel =
+    typeof conversationRecord.model === "string"
+      ? conversationRecord.model
+      : null;
+  const conversationContextWindow =
+    typeof conversationRecord.context_window_limit === "number"
+      ? conversationRecord.context_window_limit
+      : undefined;
+
+  return {
+    modelHandle: conversationModel ?? agentModelHandle,
+    llmConfig: withContextWindow(
+      agent.llm_config as ModelScopeSnapshot["llmConfig"],
+      conversationContextWindow ?? agentContextWindow,
+    ),
+  };
+}
 
 export function resolveModelForUpdate(payload: {
   model_id?: string;
@@ -180,7 +275,7 @@ export function buildModelUpdateStatusMessage(params: {
 }
 
 export async function applyModelUpdateForRuntime(params: {
-  socket: WebSocket;
+  socket: ListenerTransport;
   listener: ListenerRuntime;
   scopedRuntime: ConversationRuntime;
   requestId: string;
@@ -201,10 +296,29 @@ export async function applyModelUpdateForRuntime(params: {
 
   const isDefaultConversation = conversationId === "default";
 
-  const updateArgs = {
+  const updateArgs: Record<string, unknown> = {
     ...(model.updateArgs ?? {}),
     parallel_tool_calls: true,
   };
+  const selectedContextWindow =
+    typeof updateArgs.context_window === "number"
+      ? updateArgs.context_window
+      : undefined;
+  const currentModelScope = await getCurrentModelScopeSnapshot({
+    agentId,
+    conversationId,
+  });
+  const shouldPreserveContextWindow =
+    shouldPreserveContextWindowForModelSelection({
+      currentModelHandle: currentModelScope.modelHandle,
+      currentLlmConfig: currentModelScope.llmConfig,
+      selectedModelHandle: model.handle,
+      selectedContextWindow,
+    });
+  const updateArgsForRequest = { ...updateArgs };
+  if (shouldPreserveContextWindow) {
+    delete updateArgsForRequest.context_window;
+  }
 
   let modelSettings: Record<string, unknown> | null = null;
   let appliedTo: "agent" | "conversation";
@@ -213,7 +327,8 @@ export async function applyModelUpdateForRuntime(params: {
     const updatedAgent = await updateAgentLLMConfig(
       agentId,
       model.handle,
-      updateArgs,
+      updateArgsForRequest,
+      { preserveContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       (updatedAgent.model_settings as
@@ -225,8 +340,8 @@ export async function applyModelUpdateForRuntime(params: {
     const updatedConversation = await updateConversationLLMConfig(
       conversationId,
       model.handle,
-      updateArgs,
-      { preserveContextWindow: false },
+      updateArgsForRequest,
+      { preserveContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       ((

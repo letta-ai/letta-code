@@ -8,11 +8,11 @@ import type {
 import {
   type ApprovalDecision,
   executeApprovalBatch,
-} from "../../agent/approval-execution";
+} from "@/agent/approval-execution";
 import {
   getResumeDataFromBackend,
   type ResumeData,
-} from "../../agent/check-approval";
+} from "@/agent/check-approval";
 import {
   buildFreshDenialApprovals,
   isApprovalPendingError,
@@ -21,18 +21,18 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryRunMetadataError,
-} from "../../agent/turn-recovery-policy";
-import { getBackend } from "../../backend";
-import { createBuffers } from "../../cli/helpers/accumulator";
-import { drainStreamWithResume } from "../../cli/helpers/stream";
-import { formatPermissionDenial } from "../../permissions/formatDenial";
-import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
-import { prepareToolExecutionContextForScope } from "../../tools/toolset";
+} from "@/agent/turn-recovery-policy";
+import { getBackend } from "@/backend";
+import { createBuffers } from "@/cli/helpers/accumulator";
+import { drainStreamWithResume } from "@/cli/helpers/stream";
+import { formatPermissionDenial } from "@/permissions/format-denial";
+import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
   StopReasonType,
   StreamDelta,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,
@@ -46,7 +46,7 @@ import {
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
 } from "./interrupts";
-import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
+import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
   emitDequeuedUserMessage,
@@ -150,12 +150,24 @@ export async function isRetriablePostStopError(
       | {
           error_type?: string;
           detail?: string;
-          error?: { error_type?: string; detail?: string };
+          retryable?: boolean;
+          error?: {
+            error_type?: string;
+            detail?: string;
+            retryable?: boolean;
+          };
         }
       | undefined;
 
     const errorType = metaError?.error_type ?? metaError?.error?.error_type;
     const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+    const retryable = metaError?.retryable ?? metaError?.error?.retryable;
+    if (retryable === false) {
+      return false;
+    }
+    if (retryable === true) {
+      return true;
+    }
     return shouldRetryRunMetadataError(errorType, detail);
   } catch {
     return shouldRetryRunMetadataError(undefined, fallbackDetail);

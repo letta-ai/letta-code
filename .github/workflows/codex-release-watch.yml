@@ -1,0 +1,54 @@
+name: Codex Release Watch
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      since_tag:
+        description: "Previous stable openai/codex tag to compare from"
+        required: false
+        type: string
+      current_tag:
+        description: "Current stable openai/codex tag to compare to"
+        required: false
+        type: string
+      dry_run:
+        description: "Print the issue body instead of creating an issue"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check latest stable Codex release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ARGS=()
+          if [ -n "${{ inputs.since_tag }}" ]; then
+            ARGS+=(--since "${{ inputs.since_tag }}")
+          fi
+          if [ -n "${{ inputs.current_tag }}" ]; then
+            ARGS+=(--current "${{ inputs.current_tag }}")
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          bun scripts/codex-watch/check-release.ts "${ARGS[@]}"

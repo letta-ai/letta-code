@@ -4,20 +4,20 @@ import type WebSocket from "ws";
 import {
   estimateSystemPromptTokensFromMemoryDir,
   setSystemPromptDoctorState,
-} from "../../cli/helpers/systemPromptWarning";
-import { settingsManager } from "../../settings-manager";
+} from "@/cli/helpers/system-prompt-warning";
+import { settingsManager } from "@/settings-manager";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
-} from "../../types/protocol_v2";
-import { isDebugEnabled } from "../../utils/debug";
+} from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   handleTerminalInput,
   handleTerminalKill,
   handleTerminalResize,
   handleTerminalSpawn,
-} from "../terminalHandler";
+} from "@/websocket/terminal-handler";
 import { handleExecuteCommand } from "./commands";
 import {
   handleChannelsProtocolCommand,
@@ -35,7 +35,10 @@ import {
   parseServerLifecycleMessage,
   parseServerMessage,
 } from "./protocol-inbound";
-import { emitDeviceStatusUpdate } from "./protocol-outbound";
+import {
+  emitDeviceStatusUpdate,
+  emitQueueUpdateIfOpen,
+} from "./protocol-outbound";
 import {
   scheduleQueuePump,
   shouldProcessInboundMessageDirectly,
@@ -435,6 +438,35 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "remove_queue_item") {
+        const scopedRuntime = getOrCreateScopedRuntime(
+          runtime,
+          parsed.runtime.agent_id,
+          parsed.runtime.conversation_id || "default",
+        );
+        const removed = scopedRuntime.queueRuntime.removeItem(parsed.item_id);
+        // Emit a response so the client knows if the item was found/removed
+        safeSocketSend(
+          socket,
+          {
+            type: "remove_queue_item_response",
+            request_id: parsed.request_id,
+            success: removed !== null,
+            item_id: parsed.item_id,
+          },
+          "remove_queue_item_response",
+          "remove_queue_item",
+        );
+        // Broadcast the updated queue so all connected clients see the change
+        if (removed !== null) {
+          emitQueueUpdateIfOpen(runtime, {
+            agent_id: parsed.runtime.agent_id,
+            conversation_id: parsed.runtime.conversation_id,
+          });
+        }
+        return;
+      }
+
       if (fileCommandSession.handle(parsed)) {
         return;
       }
@@ -498,6 +530,22 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "get_cwd_map") {
+        safeSocketSend(
+          socket,
+          {
+            type: "get_cwd_map_response",
+            request_id: parsed.request_id,
+            success: true,
+            cwd_map: Object.fromEntries(runtime.workingDirectoryByConversation),
+            boot_working_directory: runtime.bootWorkingDirectory,
+          },
+          "get_cwd_map_response",
+          "get_cwd_map",
+        );
+        return;
+      }
+
       if (
         handleSettingsProtocolCommand(parsed, {
           socket,
@@ -517,7 +565,7 @@ export function createListenerMessageHandler(
           if (agentId && settingsManager.isMemfsEnabled(agentId)) {
             try {
               const { getMemoryFilesystemRoot } = await import(
-                "../../agent/memoryFilesystem"
+                "@/agent/memory-filesystem"
               );
               const memoryDir = getMemoryFilesystemRoot(agentId);
               const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);

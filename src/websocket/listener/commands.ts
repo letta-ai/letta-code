@@ -2,13 +2,13 @@ import type WebSocket from "ws";
 import {
   applySetMaxContext,
   formatSetMaxContextResult,
-} from "../../agent/maxContext";
-import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
-import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
-import { REMEMBER_PROMPT } from "../../agent/promptAssets";
-import type { ConversationMessageCompactBody } from "../../backend";
-import { getBackend } from "../../backend";
-import { formatErrorDetails } from "../../cli/helpers/errorFormatter";
+} from "@/agent/max-context";
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
+import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
+import type { ConversationMessageCompactBody } from "@/backend";
+import { getBackend } from "@/backend";
+import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildGoalContinuationPrompt,
   formatGoalSummary,
@@ -17,31 +17,31 @@ import {
   goalStatusLabel,
   parseGoalArgs,
   validateGoalObjective,
-} from "../../cli/helpers/goalCommand";
+} from "@/cli/helpers/goal-command";
 import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
-} from "../../cli/helpers/initCommand";
+} from "@/cli/helpers/init-command";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
-} from "../../constants";
-import { runPreCompactHooks } from "../../hooks";
-import { ralphMode } from "../../ralph/mode";
-import { settingsManager } from "../../settings-manager";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
+} from "@/constants";
+import { goalLoopMode } from "@/goal-loop-mode";
+import { runPreCompactHooks } from "@/hooks";
+import { settingsManager } from "@/settings-manager";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   ExecuteCommandCommand,
   SlashCommandEndMessage,
   SlashCommandStartMessage,
   StreamDelta,
-} from "../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
-} from "./permissionMode";
+} from "./permission-mode";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
@@ -50,28 +50,7 @@ import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
-/**
- * Command IDs that this letta-code version can handle via `execute_command`.
- * Advertised in DeviceStatus.supported_commands so the web UI only shows
- * commands the connected device actually supports.
- *
- * When adding a new case to `handleExecuteCommand`, add the ID here too.
- */
-export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
-  "clear",
-  "doctor",
-  "init",
-  "remember",
-  "goal",
-  "compact",
-  "set-max-context",
-  "channels",
-  "toolset",
-  // /secret opens the EditSecretsDialog and routes reads/writes through the
-  // dedicated secret_list / secret_apply WS commands — not via
-  // execute_command — so it has no case in handleExecuteCommand.
-  "secret",
-];
+export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 
 /**
  * Handle an `execute_command` message from the web app.
@@ -150,6 +129,7 @@ export async function handleExecuteCommand(
         output = await handleCompactCommand(conversationRuntime, trimmedArgs);
         break;
 
+      case "context-limit":
       case "set-max-context":
         output = await handleSetMaxContextCommand(
           conversationRuntime,
@@ -364,7 +344,7 @@ async function handleClearCommand(
     conversationRuntime.conversationId === "default" &&
     !backend.capabilities.localModelCatalog
   ) {
-    const { getClient } = await import("../../backend/api/client");
+    const { getClient } = await import("@/backend/api/client");
     const client = await getClient();
     await client.agents.messages.reset(agentId, {
       add_default_initial_messages: false,
@@ -553,7 +533,7 @@ async function handleRememberCommand(
 }
 
 /**
- * /goal — Manage conversation goals with auto-continuation (ralph mode).
+ * /goal — Manage conversation goals with auto-continuation.
  *
  * Subcommands:
  *   /goal status              — Show current goal status
@@ -603,8 +583,8 @@ async function handleGoalCommand(
     if (lowerGoalArg === "disable") {
       settingsManager.setConversationGoalToolsEnabled(conversationId, false);
     }
-    if (ralphMode.getState().mode === "goal") {
-      ralphMode.deactivate();
+    if (goalLoopMode.getState().isActive) {
+      goalLoopMode.deactivate();
     }
     const permState = getOrCreateConversationPermissionModeStateRef(
       conversationRuntime.listener,
@@ -645,8 +625,8 @@ async function handleGoalCommand(
     );
 
     if (lowerGoalArg === "pause" || lowerGoalArg === "complete") {
-      if (ralphMode.getState().mode === "goal") {
-        ralphMode.deactivate();
+      if (goalLoopMode.getState().isActive) {
+        goalLoopMode.deactivate();
       }
       if (permState.mode === "unrestricted") {
         permState.mode = "standard";
@@ -654,12 +634,12 @@ async function handleGoalCommand(
       }
     } else if (lowerGoalArg === "resume") {
       settingsManager.setConversationGoalToolsEnabled(conversationId, true);
-      ralphMode.activateGoal(goal.objective, 0, true);
+      goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
       permState.mode = "unrestricted";
       persistPermissionModeMapForRuntime(conversationRuntime.listener);
 
       // Send continuation prompt through the turn pipeline
-      const goalState = ralphMode.getState();
+      const goalState = goalLoopMode.getState();
       const storedGoal = settingsManager.getConversationGoal(conversationId);
       const liveActiveSeconds =
         storedGoal?.activeStartedAt && storedGoal.status === "active"
@@ -726,7 +706,7 @@ async function handleGoalCommand(
     parsedGoal.tokenBudget,
     true,
   );
-  ralphMode.activateGoal(parsedGoal.objective, 0, true, parsedGoal.tokenBudget);
+  goalLoopMode.activateGoal(parsedGoal.objective, parsedGoal.tokenBudget);
 
   const permState = getOrCreateConversationPermissionModeStateRef(
     conversationRuntime.listener,
@@ -740,7 +720,7 @@ async function handleGoalCommand(
   const resultPrefix = `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`;
 
   // Send initial goal continuation prompt through the turn pipeline
-  const goalState = ralphMode.getState();
+  const goalState = goalLoopMode.getState();
   const storedGoal = settingsManager.getConversationGoal(conversationId);
   const liveActiveSeconds =
     storedGoal?.activeStartedAt && storedGoal.status === "active"
@@ -781,14 +761,14 @@ async function handleGoalCommand(
   return resultPrefix;
 }
 
-/** /set-max-context — Set or reset the active scope's max context window. */
+/** /context-limit — Set or reset the active scope's max context window. */
 async function handleSetMaxContextCommand(
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
 ): Promise<string> {
   const agentId = conversationRuntime.agentId;
   if (!agentId) {
-    throw new Error("No agent ID available for /set-max-context command");
+    throw new Error("No agent ID available for /context-limit command");
   }
 
   const result = await applySetMaxContext({
@@ -828,14 +808,12 @@ async function handleChannelsCommand(
   }
 
   if (subCmd === "status") {
-    const { listChannelAccountSnapshots } = await import(
-      "../../channels/service"
-    );
+    const { listChannelAccountSnapshots } = await import("@/channels/service");
     const { getRoutesForChannel, loadRoutes } = await import(
-      "../../channels/routing"
+      "@/channels/routing"
     );
     const { getPendingPairings, getApprovedUsers, loadPairingStore } =
-      await import("../../channels/pairing");
+      await import("@/channels/pairing");
 
     const channels = ["telegram"];
     const lines: string[] = [];
@@ -871,9 +849,9 @@ async function handleChannelsCommand(
         return "Usage: /channels telegram pair <code>";
       }
 
-      const { completePairing } = await import("../../channels/registry");
-      const { loadRoutes } = await import("../../channels/routing");
-      const { loadPairingStore } = await import("../../channels/pairing");
+      const { completePairing } = await import("@/channels/registry");
+      const { loadRoutes } = await import("@/channels/routing");
+      const { loadPairingStore } = await import("@/channels/pairing");
 
       loadRoutes("telegram");
       loadPairingStore("telegram");
@@ -901,9 +879,9 @@ async function handleChannelsCommand(
       }
 
       const { getChannelAccount, listChannelAccounts } = await import(
-        "../../channels/accounts"
+        "@/channels/accounts"
       );
-      const { addRoute, loadRoutes } = await import("../../channels/routing");
+      const { addRoute, loadRoutes } = await import("@/channels/routing");
 
       let resolvedAccountId = accountId?.trim();
       if (resolvedAccountId) {
@@ -940,7 +918,7 @@ async function handleChannelsCommand(
 
     if (action === "disable") {
       const { removeRoutesForScope, loadRoutes } = await import(
-        "../../channels/routing"
+        "@/channels/routing"
       );
 
       loadRoutes("telegram");

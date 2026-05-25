@@ -1,9 +1,9 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
-import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
-import { formatToolsetName } from "../../tools/toolset-labels";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import { formatToolsetName } from "@/tools/toolset-labels";
 import { colors } from "./colors";
 import { Text } from "./Text";
 

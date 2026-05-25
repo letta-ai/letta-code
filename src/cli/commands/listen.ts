@@ -4,15 +4,12 @@
  */
 
 import { hostname } from "node:os";
-import { getServerUrl } from "../../backend/api/client";
-import { settingsManager } from "../../settings-manager";
-import { getErrorMessage } from "../../utils/error";
-import {
-  registerWithCloud,
-  registerWithCloudRetry,
-} from "../../websocket/listen-register";
-import type { Buffers, Line } from "../helpers/accumulator";
-import { buildAgentReference } from "../helpers/appUrls";
+import { getServerUrl } from "@/backend/api/client";
+import type { Buffers, Line } from "@/cli/helpers/accumulator";
+import { buildAgentReference } from "@/cli/helpers/app-urls";
+import { settingsManager } from "@/settings-manager";
+import { getErrorMessage } from "@/utils/error";
+import { registerWithCloudRetry } from "@/websocket/listen-register";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -108,7 +105,7 @@ export async function handleListen(
   // Handle /listen off - stop the listener
   if (msg.trim() === "/remote off") {
     const { stopListenerClient, isListenerActive } = await import(
-      "../../websocket/listen-client"
+      "@/websocket/listen-client"
     );
 
     if (!isListenerActive()) {
@@ -226,14 +223,30 @@ export async function handleListen(
       throw new Error("Missing LETTA_API_KEY");
     }
 
-    // Register with cloud
+    // Register with cloud, retrying transient failures with a bounded backoff.
     const { connectionId, wsUrl, supportsSplitStatusChannels } =
-      await registerWithCloud({
-        serverUrl,
-        apiKey,
-        deviceId,
-        connectionName,
-      });
+      await registerWithCloudRetry(
+        {
+          serverUrl,
+          apiKey,
+          deviceId,
+          connectionName,
+        },
+        {
+          onRetry: (attempt, delayMs, error) => {
+            updateCommandResult(
+              ctx.buffersRef,
+              ctx.refreshDerived,
+              cmdId,
+              msg,
+              `Registering listener "${connectionName}"...\n` +
+                `Retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+              true,
+              "running",
+            );
+          },
+        },
+      );
 
     updateCommandResult(
       ctx.buffersRef,
@@ -250,9 +263,7 @@ export async function handleListen(
     );
 
     // Import and start WebSocket client
-    const { startListenerClient } = await import(
-      "../../websocket/listen-client"
-    );
+    const { startListenerClient } = await import("@/websocket/listen-client");
 
     // Helper to start client with given connection details
     const startClient = async (
@@ -333,6 +344,7 @@ export async function handleListen(
             const reregisterResult = await registerWithCloudRetry(
               { serverUrl, apiKey, deviceId, connectionName },
               {
+                maxDurationMs: Infinity,
                 onRetry: (attempt, delayMs, error) => {
                   updateCommandResult(
                     ctx.buffersRef,

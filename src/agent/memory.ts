@@ -4,8 +4,8 @@
  */
 
 import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
-import { READ_ONLY_BLOCK_LABELS } from "./memoryConstants";
-import { MEMORY_PROMPTS } from "./promptAssets";
+import { READ_ONLY_BLOCK_LABELS } from "./memory-constants";
+import { MEMORY_PROMPTS } from "./prompt-assets";
 
 /**
  * Block labels that are stored globally (shared across all projects).

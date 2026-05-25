@@ -1,10 +1,10 @@
 import { Box } from "ink";
 import { memo } from "react";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import { clipToolReturn } from "../../tools/manager";
-import type { StreamingState } from "../helpers/accumulator";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { StreamingState } from "@/cli/helpers/accumulator";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { clipToolReturn } from "@/tools/manager";
 import { BlinkDot } from "./BlinkDot.js";
 import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
 import { colors } from "./colors.js";

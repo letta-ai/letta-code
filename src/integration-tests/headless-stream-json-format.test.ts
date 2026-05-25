@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 import type {
   ResultMessage,
   StreamEvent,
   SystemInitMessage,
-} from "../types/protocol";
+} from "@/types/protocol";
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
-} from "./processDiagnostics";
+} from "./process-diagnostics";
 
 /**
  * Tests for stream-json output format.

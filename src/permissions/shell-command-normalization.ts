@@ -1,7 +1,7 @@
 import {
   splitShellSegmentsAllowCommandSubstitution,
   tokenizeShellWords,
-} from "./shellAnalysis";
+} from "./shell-analysis";
 
 const SHELL_EXECUTORS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 

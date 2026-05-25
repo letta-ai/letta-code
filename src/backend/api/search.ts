@@ -11,3 +11,9 @@ export async function searchMessages<T>(
 ): Promise<T> {
   return apiRequest<T>("POST", "/v1/messages/search", body);
 }
+
+export async function searchConversations<T>(
+  body: Record<string, unknown>,
+): Promise<T> {
+  return apiRequest<T>("POST", "/v1/conversations/search", body);
+}

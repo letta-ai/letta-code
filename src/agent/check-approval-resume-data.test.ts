@@ -1,0 +1,449 @@
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  Message,
+  MessageType,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { __testSetBackend, type Backend } from "@/backend";
+
+type ResumeAgentState = AgentState & {
+  in_context_message_ids?: string[] | null;
+};
+
+function installBackend(overrides: Record<string, unknown>): void {
+  __testSetBackend(overrides as unknown as Backend);
+}
+
+const DEFAULT_RESUME_MESSAGE_TYPES: MessageType[] = [
+  "user_message",
+  "assistant_message",
+  "reasoning_message",
+  "event_message",
+  "summary_message",
+  "approval_request_message",
+  "tool_return_message",
+  "approval_response_message",
+];
+
+function makeAgent(overrides: Partial<ResumeAgentState> = {}): AgentState {
+  return {
+    id: "agent-test",
+    message_ids: ["msg-last"],
+    ...overrides,
+  } as ResumeAgentState;
+}
+
+function makeApprovalMessage(id = "msg-last"): Message {
+  return {
+    id,
+    date: new Date().toISOString(),
+    message_type: "approval_request_message",
+    tool_calls: [
+      {
+        tool_call_id: "tool-1",
+        name: "Bash",
+        arguments: '{"command":"echo hi"}',
+      },
+    ],
+  } as unknown as Message;
+}
+
+function makeUserMessage(id = "msg-last"): Message {
+  return {
+    id,
+    date: new Date().toISOString(),
+    message_type: "user_message",
+  } as Message;
+}
+
+function datedMessage(
+  id: string,
+  messageType: MessageType,
+  date: string,
+  extras: Record<string, unknown> = {},
+): Message {
+  return {
+    id,
+    date,
+    message_type: messageType,
+    ...extras,
+  } as unknown as Message;
+}
+
+describe("getResumeData", () => {
+  afterEach(() => {
+    __testSetBackend(null);
+  });
+
+  test("includeMessageHistory=false still computes pending approvals without backfill (conversation path)", async () => {
+    const conversationsRetrieve = mock(async () => ({
+      in_context_message_ids: ["msg-last"],
+    }));
+    const conversationsList = mock(async () => ({
+      getPaginatedItems: () => [],
+    }));
+    const agentsList = mock(async () => ({ items: [] }));
+    const messagesRetrieve = mock(async () => [makeApprovalMessage()]);
+
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listConversationMessages: conversationsList,
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(makeAgent(), "conv-abc", {
+      includeMessageHistory: false,
+    });
+
+    expect(conversationsRetrieve).toHaveBeenCalledTimes(1);
+    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
+    expect(conversationsList).toHaveBeenCalledTimes(0);
+    expect(resume.pendingApprovals).toHaveLength(1);
+    expect(resume.pendingApprovals[0]?.toolName).toBe("Bash");
+    expect(resume.messageHistory).toEqual([]);
+  });
+
+  test("includeMessageHistory=false skips default-conversation backfill calls", async () => {
+    const conversationsRetrieve = mock(async () => ({
+      in_context_message_ids: ["msg-last"],
+    }));
+    const conversationsList = mock(async () => ({
+      getPaginatedItems: () => [],
+    }));
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => [makeApprovalMessage()],
+    }));
+    const messagesRetrieve = mock(async () => [makeApprovalMessage()]);
+
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listConversationMessages: conversationsList,
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({
+        message_ids: ["msg-last"],
+        in_context_message_ids: ["msg-last"],
+      }),
+      "default",
+      { includeMessageHistory: false },
+    );
+
+    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
+    expect(agentsList).toHaveBeenCalledTimes(0);
+    expect(resume.pendingApprovals).toHaveLength(1);
+    expect(resume.messageHistory).toEqual([]);
+  });
+
+  test("default conversation resume uses in-context ids instead of stale agent.message_ids", async () => {
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => [makeApprovalMessage("msg-default-latest")],
+    }));
+    const messagesRetrieve = mock(async () => [
+      makeApprovalMessage("msg-live"),
+    ]);
+
+    installBackend({
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({
+        message_ids: ["msg-stale"],
+        in_context_message_ids: ["msg-live"],
+      }),
+      "default",
+      { includeMessageHistory: false },
+    );
+
+    expect(messagesRetrieve).toHaveBeenCalledWith("msg-live");
+    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
+    expect(agentsList).toHaveBeenCalledTimes(0);
+    expect(resume.pendingApprovals).toHaveLength(1);
+    expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
+  });
+
+  test("default conversation falls back to default conversation stream when in-context ids are unavailable", async () => {
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => [makeApprovalMessage("msg-default-latest")],
+    }));
+    const messagesRetrieve = mock(async () => [makeUserMessage("msg-stale")]);
+
+    installBackend({
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({ in_context_message_ids: [] }),
+      "default",
+      { includeMessageHistory: false },
+    );
+
+    expect(messagesRetrieve).toHaveBeenCalledTimes(0);
+    expect(agentsList).toHaveBeenCalledTimes(1);
+    expect(resume.pendingApprovals).toHaveLength(1);
+    expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
+  });
+
+  test("default behavior keeps backfill enabled when options are omitted", async () => {
+    const conversationsRetrieve = mock(async () => ({
+      in_context_message_ids: ["msg-last"],
+    }));
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => [
+        makeUserMessage("msg-a"),
+        makeUserMessage("msg-b"),
+      ],
+    }));
+    const messagesRetrieve = mock(async () => [makeUserMessage()]);
+
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({ in_context_message_ids: ["msg-last"] }),
+      "default",
+    );
+
+    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
+    expect(agentsList).toHaveBeenCalledTimes(1);
+    expect(agentsList).toHaveBeenCalledWith("agent-test", {
+      conversation_id: "default",
+      limit: 200,
+      order: "desc",
+      include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
+    });
+    expect(resume.pendingApprovals).toHaveLength(0);
+    expect(resume.messageHistory.length).toBeGreaterThan(0);
+  });
+
+  test("explicit conversation backfill requests and preserves tool messages", async () => {
+    const sameDate = "2026-01-01T00:00:02.000Z";
+    const conversationsRetrieve = mock(async () => ({
+      in_context_message_ids: ["provider-msg-2"],
+    }));
+    const conversationsList = mock(async () => ({
+      getPaginatedItems: () => [
+        datedMessage("provider-msg-2:assistant", "assistant_message", sameDate),
+        datedMessage(
+          "provider-msg-2:tool:call-1:return",
+          "tool_return_message",
+          sameDate,
+          {
+            tool_call_id: "call-1",
+            status: "success",
+            tool_return: "ok",
+          },
+        ),
+        datedMessage(
+          "provider-msg-2:tool:call-1:request",
+          "approval_request_message",
+          sameDate,
+          {
+            tool_call: {
+              tool_call_id: "call-1",
+              name: "Read",
+              arguments: '{"path":"src/index.ts"}',
+            },
+          },
+        ),
+        datedMessage(
+          "provider-msg-1",
+          "user_message",
+          "2026-01-01T00:00:01.000Z",
+        ),
+      ],
+    }));
+    const messagesRetrieve = mock(async () => []);
+
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listConversationMessages: conversationsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(makeAgent(), "conv-abc");
+
+    expect(conversationsList).toHaveBeenCalledWith("conv-abc", {
+      limit: 200,
+      order: "desc",
+      include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
+    });
+    expect(
+      resume.messageHistory.map((message) => message.message_type),
+    ).toEqual([
+      "user_message",
+      "approval_request_message",
+      "tool_return_message",
+      "assistant_message",
+    ]);
+  });
+
+  test("default conversation backfill orders equal-timestamp local tool messages before assistant text", async () => {
+    const sameDate = "2026-01-01T00:00:02.000Z";
+    const listedMessages = [
+      datedMessage("provider-msg-2:assistant", "assistant_message", sameDate),
+      datedMessage(
+        "provider-msg-2:tool:call-1:return",
+        "tool_return_message",
+        sameDate,
+        {
+          tool_call_id: "call-1",
+          status: "success",
+          tool_return: "ok",
+        },
+      ),
+      datedMessage(
+        "provider-msg-2:approval:call-1:request",
+        "approval_request_message",
+        sameDate,
+        {
+          tool_call: {
+            tool_call_id: "call-1",
+            name: "ShellCommand",
+            arguments: '{"command":"pwd"}',
+          },
+        },
+      ),
+      datedMessage(
+        "provider-msg-1",
+        "user_message",
+        "2026-01-01T00:00:01.000Z",
+      ),
+    ];
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => listedMessages,
+    }));
+    const messagesRetrieve = mock(async () => []);
+
+    installBackend({
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({ in_context_message_ids: ["provider-msg-2"] }),
+      "default",
+    );
+
+    expect(
+      resume.messageHistory.map((message) => message.message_type),
+    ).toEqual([
+      "user_message",
+      "approval_request_message",
+      "tool_return_message",
+      "assistant_message",
+    ]);
+  });
+
+  test("completed local approval request variants are not treated as pending", async () => {
+    const messagesRetrieve = mock(async () => [
+      datedMessage(
+        "provider-msg-2:tool:call-1:request",
+        "approval_request_message",
+        "2026-01-01T00:00:02.000Z",
+        {
+          tool_call: {
+            tool_call_id: "call-1",
+            name: "ShellCommand",
+            arguments: '{"command":"pwd"}',
+          },
+        },
+      ),
+      datedMessage(
+        "provider-msg-2:tool:call-1:return",
+        "tool_return_message",
+        "2026-01-01T00:00:02.000Z",
+        {
+          tool_call_id: "call-1",
+          status: "success",
+          tool_return: "ok",
+        },
+      ),
+    ]);
+
+    installBackend({
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({
+        message_ids: ["provider-msg-2"],
+        in_context_message_ids: ["provider-msg-2"],
+      }),
+      "default",
+      { includeMessageHistory: false },
+    );
+
+    expect(messagesRetrieve).toHaveBeenCalledWith("provider-msg-2");
+    expect(resume.pendingApprovals).toEqual([]);
+    expect(resume.pendingApproval).toBeNull();
+  });
+
+  test("uses latest pending approval variant when message has many tool variants", async () => {
+    const messagesRetrieve = mock(async () => [
+      datedMessage(
+        "ui-msg-122:tool:call-old:request",
+        "approval_request_message",
+        "2026-01-01T00:00:02.000Z",
+        {
+          tool_call: {
+            tool_call_id: "call-old",
+            name: "ShellCommand",
+            arguments: '{"command":"echo old"}',
+          },
+        },
+      ),
+      datedMessage(
+        "ui-msg-122:tool:call-old:return",
+        "tool_return_message",
+        "2026-01-01T00:00:02.000Z",
+        {
+          tool_call_id: "call-old",
+          status: "success",
+          tool_return: "ok",
+        },
+      ),
+      datedMessage(
+        "ui-msg-122:tool:call-latest:request",
+        "approval_request_message",
+        "2026-01-01T00:00:02.000Z",
+        {
+          tool_call: {
+            tool_call_id: "call-latest",
+            name: "ApplyPatch",
+            arguments: '{"input":"*** Begin Patch"}',
+          },
+        },
+      ),
+    ]);
+
+    installBackend({
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({
+        message_ids: ["ui-msg-122"],
+        in_context_message_ids: ["ui-msg-122"],
+      }),
+      "default",
+      { includeMessageHistory: false },
+    );
+
+    expect(messagesRetrieve).toHaveBeenCalledWith("ui-msg-122");
+    expect(resume.pendingApprovals).toHaveLength(1);
+    expect(resume.pendingApprovals[0]?.toolCallId).toBe("call-latest");
+    expect(resume.pendingApprovals[0]?.toolName).toBe("ApplyPatch");
+    expect(resume.pendingApproval?.toolCallId).toBe("call-latest");
+  });
+});

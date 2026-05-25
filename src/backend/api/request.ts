@@ -1,5 +1,5 @@
-import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
-import { settingsManager } from "../../settings-manager";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { settingsManager } from "@/settings-manager";
 import { getLettaCodeHeaders } from "./http-headers";
 
 export type ApiRequestMethod = "GET" | "POST" | "PATCH" | "DELETE";

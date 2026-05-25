@@ -20,7 +20,8 @@ interface MarkdownDisplayProps {
 
 // Regex patterns for markdown elements (defined outside component to avoid re-creation)
 const headerRegex = /^(#{1,6})\s+(.*)$/;
-const codeBlockRegex = /^```([^\s`]*)?.*$/;
+const codeBlockOpenRegex = /^ *(`{3,}|~{3,}) *([^\s`~]*)?.*$/;
+const codeBlockCloseRegex = /^ *(`{3,}|~{3,}) *$/;
 const listItemRegex = /^(\s*)([*\-+]|\d+\.)\s+(.*)$/;
 const blockquoteRegex = /^>\s*(.*)$/;
 const hrRegex = /^[-*_]{3,}$/;
@@ -70,6 +71,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   let inCodeBlock = false;
   let codeBlockContent: string[] = [];
   let codeBlockLanguage: string | undefined;
+  let codeBlockFence = "";
 
   const resolveFenceLanguage = (rawLanguage: string | undefined) => {
     if (!rawLanguage) return undefined;
@@ -229,26 +231,35 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     const key = `line-${index}`;
 
     // Handle code blocks
-    const codeBlockMatch = line.match(codeBlockRegex);
-    if (codeBlockMatch) {
-      if (!inCodeBlock) {
-        inCodeBlock = true;
-        codeBlockContent = [];
-        codeBlockLanguage = resolveFenceLanguage(codeBlockMatch[1]);
-      } else {
+    if (inCodeBlock) {
+      const codeBlockCloseMatch = line.match(codeBlockCloseRegex);
+      const fence = codeBlockCloseMatch?.[1] ?? "";
+      if (
+        codeBlockCloseMatch &&
+        fence.startsWith(codeBlockFence[0] ?? "") &&
+        fence.length >= codeBlockFence.length
+      ) {
         inCodeBlock = false;
         const code = codeBlockContent.join("\n");
         contentBlocks.push(renderCodeBlock(code, codeBlockLanguage, key));
         codeBlockContent = [];
         codeBlockLanguage = undefined;
+        codeBlockFence = "";
+        index++;
+        continue;
       }
+
+      codeBlockContent.push(line);
       index++;
       continue;
     }
 
-    // If we're inside a code block, collect the content
-    if (inCodeBlock) {
-      codeBlockContent.push(line);
+    const codeBlockOpenMatch = line.match(codeBlockOpenRegex);
+    if (codeBlockOpenMatch) {
+      inCodeBlock = true;
+      codeBlockContent = [];
+      codeBlockFence = codeBlockOpenMatch[1] ?? "";
+      codeBlockLanguage = resolveFenceLanguage(codeBlockOpenMatch[2]);
       index++;
       continue;
     }

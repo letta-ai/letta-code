@@ -9,16 +9,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { PermissionMode } from "../../permissions/mode";
+import type { PermissionMode } from "@/permissions/mode";
 
-/**
- * Persisted permission mode state for a single conversation.
- * planFilePath is intentionally excluded — it's ephemeral and tied to a
- * specific process run; it should not be restored across restarts.
- */
+/** Persisted permission mode state for a single conversation. */
 export interface PersistedPermissionModeState {
   mode: PermissionMode;
-  modeBeforePlan: PermissionMode | null;
 }
 
 export interface RemoteSettings {
