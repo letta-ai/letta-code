@@ -650,10 +650,6 @@ export interface ComposeSubagentChildEnvOptions {
    * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
    * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
   transcriptPath?: string | null;
-  /** Optional turn-scoped tool context for forked subagents launched from
-   * channel turns. Forwarded so the child can safely rediscover only tools
-   * available in the parent turn (not a broader process-wide toolset). */
-  inheritedToolContextId?: string | null;
   /** Serializable channel scope for child processes. Execution-context IDs are
    * process-local, so channel scope must be copied explicitly across spawn. */
   inheritedChannelContext?: InheritedChannelContextPayload | null;
@@ -706,7 +702,6 @@ export function composeSubagentChildEnv(
     inheritedApiKey,
     inheritedBaseUrl,
     transcriptPath,
-    inheritedToolContextId,
     inheritedChannelContext,
   } = options;
 
@@ -717,9 +712,6 @@ export function composeSubagentChildEnv(
     LETTA_CODE_AGENT_ROLE: "subagent",
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
-    ...(inheritedToolContextId && {
-      LETTA_INHERITED_TOOL_CONTEXT_ID: inheritedToolContextId,
-    }),
     ...(inheritedChannelContext && {
       [LETTA_INHERITED_CHANNEL_CONTEXT_ENV]: JSON.stringify(
         inheritedChannelContext,
@@ -1115,7 +1107,6 @@ async function executeSubagent(
       inheritedApiKey,
       inheritedBaseUrl,
       transcriptPath,
-      inheritedToolContextId: runtimeContext?.toolContextId ?? null,
       inheritedChannelContext,
     });
 

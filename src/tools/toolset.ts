@@ -21,7 +21,6 @@ import {
   filterBuiltInToolNamesByClientAllowlist,
   GEMINI_DEFAULT_TOOLS,
   GEMINI_PASCAL_TOOLS,
-  getExecutionContextById,
   getToolNames,
   isOpenAIModel,
   loadSpecificTools,
@@ -480,23 +479,12 @@ export async function prepareToolExecutionContextForScope(params: {
     }
   })();
 
-  const inheritedContextId = process.env.LETTA_INHERITED_TOOL_CONTEXT_ID;
-  const inheritedContext = inheritedContextId
-    ? getExecutionContextById(inheritedContextId)
-    : undefined;
   const inheritedChannelContext = parseInheritedChannelContextEnv();
   const inheritedChannelToolScope =
-    inheritedChannelContext?.channelToolScope ??
-    (inheritedContext
-      ? {
-          channels:
-            inheritedContext.runtimeContext.channelToolScope?.channels ?? [],
-        }
-      : null);
+    inheritedChannelContext?.channelToolScope ?? null;
   const inheritedChannelTurnSources =
     explicitChannelTurnSources ??
     inheritedChannelContext?.channelTurnSources ??
-    inheritedContext?.runtimeContext.channelTurnSources ??
     [];
   const scopedConversationId = conversationId ?? "default";
   const channelToolScope =
