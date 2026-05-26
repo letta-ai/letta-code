@@ -38,6 +38,7 @@ import {
 } from "@/agent/subagent-state";
 import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
+import { updateInternalConversationDescription } from "@/backend/api/conversations";
 import { getBillingTier } from "@/backend/api/metadata";
 import {
   cancelActiveConnectOperation,
@@ -66,6 +67,7 @@ import {
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
 import {
+  generateConversationDescriptionFromFork,
   generateConversationTitleFromFork,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
@@ -1119,11 +1121,17 @@ export function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
+  const shouldAutoGenerateConversationDescriptionRef = useRef(
+    !resumedExistingConversation,
+  );
+  const isAutoConversationDescriptionInFlightRef = useRef(false);
   const firstUserQueryRef = useRef<string | null>(null);
   const setConversationAutoTitleEligibility = useCallback(
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
+      shouldAutoGenerateConversationDescriptionRef.current = enabled;
+      isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
     },
     [],
@@ -1177,6 +1185,48 @@ export function App({
       return fallback;
     }
   }, [deriveAutoConversationTitle]);
+  const generateConversationDescription = useCallback(async () => {
+    if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {
+      return;
+    }
+    if (
+      !shouldAutoGenerateConversationDescriptionRef.current ||
+      isAutoConversationDescriptionInFlightRef.current
+    ) {
+      return;
+    }
+    if (getBackend().capabilities.localModelCatalog) {
+      return;
+    }
+
+    const conversationId = conversationIdRef.current;
+    if (!conversationId || conversationId === "default") {
+      return;
+    }
+
+    isAutoConversationDescriptionInFlightRef.current = true;
+    try {
+      const client = await getClient();
+      const description = await generateConversationDescriptionFromFork(
+        client,
+        conversationId,
+      );
+      if (!description) {
+        return;
+      }
+
+      await updateInternalConversationDescription(conversationId, {
+        description,
+      });
+      shouldAutoGenerateConversationDescriptionRef.current = false;
+    } catch (err) {
+      if (isDebugEnabled()) {
+        console.error("[DEBUG] generateConversationDescription failed:", err);
+      }
+    } finally {
+      isAutoConversationDescriptionInFlightRef.current = false;
+    }
+  }, []);
   const resetBootstrapReminderState = useCallback(
     (pendingConversationBootstrap = false) => {
       resetSharedReminderState(sharedReminderStateRef.current);
@@ -3365,6 +3415,7 @@ export function App({
     currentModelId,
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
+    generateConversationDescription,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,

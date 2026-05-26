@@ -175,6 +175,7 @@ type ConversationLoopContext = {
   currentModelId: string | null;
   emptyResponseRetriesRef: MutableRefObject<number>;
   executingToolCallIdsRef: MutableRefObject<string[]>;
+  generateConversationDescription: () => Promise<void>;
   generateConversationTitle: () => Promise<string | null>;
   hasConversationModelOverrideRef: MutableRefObject<boolean>;
   interruptQueuedRef: MutableRefObject<boolean>;
@@ -271,6 +272,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     currentModelId,
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
+    generateConversationDescription,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -1634,6 +1636,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   });
               }
             }
+
+            void generateConversationDescription();
 
             const trajectorySnapshot = sessionStatsRef.current.endTrajectory();
             setTrajectoryTokenBase(0);
