@@ -3618,6 +3618,12 @@ async function runBidirectionalMode(
 
   // Track current operation for interrupt support
   let currentAbortController: AbortController | null = null;
+  // Latch: an interrupt may arrive on stdin between the user message and
+  // when the abort controller for that turn is created (the gap is small but
+  // real — readline fires the next line before the main loop's microtask
+  // creating the controller runs). When that happens, set this flag so the
+  // turn aborts immediately after creation.
+  let pendingInterrupt = false;
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
@@ -3883,6 +3889,46 @@ async function runBidirectionalMode(
   // Feed lines into queue or resolver
   rl.on("line", (line) => {
     maybeNotifyBlocked(line);
+    // Fast path: handle control_request:interrupt synchronously so we can
+    // abort an in-flight drain without waiting for the main loop to dequeue.
+    // Without this, a runaway thinking turn never sees the interrupt because
+    // `getNextLine()` isn't called until the current drain returns.
+    let interruptRequestId: string | null = null;
+    try {
+      const parsed = JSON.parse(line);
+      if (
+        parsed?.type === "control_request" &&
+        parsed?.request?.subtype === "interrupt"
+      ) {
+        interruptRequestId = String(parsed.request_id ?? "");
+      }
+    } catch {
+      // Not JSON / not a control_request — ignore here, the main loop will
+      // surface the parse error.
+    }
+    if (interruptRequestId !== null) {
+      if (currentAbortController !== null) {
+        // Abort the in-flight turn. Do NOT null the controller here — the
+        // turn's epilogue (line ~4275) reads currentAbortController?.signal.aborted
+        // to classify the result as "interrupted" vs "error". The `finally`
+        // block at the bottom of the user-message branch is what owns nulling.
+        (currentAbortController as AbortController).abort();
+      } else {
+        // No active turn yet — latch the interrupt for the next one.
+        pendingInterrupt = true;
+      }
+      const interruptResponse: ControlResponse = {
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: interruptRequestId,
+        },
+        session_id: sessionId,
+        uuid: randomUUID(),
+      };
+      writeWireMessage(interruptResponse);
+      return;
+    }
     if (lineResolver) {
       const resolve = lineResolver;
       lineResolver = null;
@@ -4441,8 +4487,15 @@ async function runBidirectionalMode(
         continue;
       }
 
-      // Create abort controller for this operation
+      // Create abort controller for this operation.  Drain any latched
+      // interrupt that arrived before the controller existed (race between
+      // the readline 'line' event and the microtask that creates the
+      // controller — see rl.on("line", ...) above).
       currentAbortController = new AbortController();
+      if (pendingInterrupt) {
+        pendingInterrupt = false;
+        currentAbortController.abort();
+      }
 
       turnInProgress = true;
       try {
