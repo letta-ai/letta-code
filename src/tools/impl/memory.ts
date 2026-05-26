@@ -116,9 +116,10 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
 
   const affectedPaths = await applyMemoryCommand(memoryDir, args);
   if (affectedPaths.length === 0) {
-    return {
-      message: `Memory ${args.command} completed with no changed paths.`,
-    };
+    throw new Error(
+      `Memory ${args.command} made no changes: it produced no changed paths. ` +
+        "Verify the command targets the intended file(s) and actually modifies content.",
+    );
   }
 
   const commitResult = await commitAndSyncMemoryWrite({
@@ -135,12 +136,13 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       applyMemoryCommand(memoryDir, args, { replaying: true }),
   });
   if (!commitResult.committed) {
-    return {
-      message:
-        syncMode === "local"
-          ? `Memory ${args.command} made no effective changes; skipped commit.`
-          : `Memory ${args.command} made no effective changes; skipped commit and push.`,
-    };
+    throw new Error(
+      syncMode === "local"
+        ? `Memory ${args.command} made no effective changes; nothing was committed. ` +
+            "The resulting content matched what was already on disk."
+        : `Memory ${args.command} made no effective changes; nothing was committed or pushed. ` +
+            "The resulting content matched what was already on disk.",
+    );
   }
 
   // Emit memory_updated push event so web UI auto-refreshes
