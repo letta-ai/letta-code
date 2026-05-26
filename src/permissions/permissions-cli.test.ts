@@ -67,6 +67,13 @@ test("tracks disable-memory-guard CLI override", () => {
   expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
 });
 
+test("stores singleton on global symbol for bundled duplicate modules", () => {
+  const key = Symbol.for("@letta/cliPermissions");
+  const globals = globalThis as unknown as Record<symbol, unknown>;
+
+  expect(globals[key]).toBe(cliPermissions);
+});
+
 test("clear resets disable-memory-guard CLI override", () => {
   cliPermissions.setMemoryGuardDisabled(true);
   cliPermissions.clear();
