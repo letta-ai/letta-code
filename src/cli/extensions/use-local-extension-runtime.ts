@@ -15,7 +15,13 @@ import {
   type ExtensionHost,
   resolveLocalExtensionSources,
 } from "./local-extension-loader";
-import type { ExtensionBackendApi, ExtensionContext } from "./types";
+import type {
+  ExtensionBackendApi,
+  ExtensionContext,
+  ExtensionEventEmissionResult,
+  ExtensionEventMap,
+  ExtensionEventName,
+} from "./types";
 
 export interface LocalExtensionRuntime {
   hadStatuslineRenderer: boolean;
@@ -24,6 +30,10 @@ export interface LocalExtensionRuntime {
   isLoading: boolean;
   registry: ReturnType<ExtensionHost["getSnapshot"]> | null;
   getBackendApi: () => ExtensionBackendApi;
+  emitEvent: <TName extends ExtensionEventName>(
+    name: TName,
+    event: ExtensionEventMap[TName],
+  ) => Promise<ExtensionEventEmissionResult>;
   getContext: () => ExtensionContext;
   reload: () => Promise<void>;
   updateContext: (context: ExtensionContext) => void;
@@ -120,6 +130,14 @@ export function useLocalExtensionRuntime(
     host.getSnapshot,
   );
 
+  const emitEvent = useCallback(
+    <TName extends ExtensionEventName>(
+      name: TName,
+      event: ExtensionEventMap[TName],
+    ) => host.emitEvent(name, event),
+    [host],
+  );
+
   useEffect(() => {
     contextRef.current = initialContext;
   }, [initialContext]);
@@ -189,6 +207,7 @@ export function useLocalExtensionRuntime(
     () => ({
       registry,
       getBackendApi,
+      emitEvent,
       getContext,
       host,
       reload,
@@ -196,6 +215,7 @@ export function useLocalExtensionRuntime(
       ...loadState,
     }),
     [
+      emitEvent,
       getBackendApi,
       getContext,
       host,

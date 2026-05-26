@@ -7,6 +7,7 @@ import {
   createExtensionHost as createExtensionHostBase,
   disposeLocalExtensions,
   EXTENSION_CACHE_DIRECTORY,
+  emitLocalExtensionEvent,
   evaluateLocalExtensionStatuses,
   GLOBAL_EXTENSIONS_DIRECTORY,
   loadLocalExtensions as loadLocalExtensionsBase,
@@ -66,6 +67,7 @@ export {
   EXTENSION_CACHE_DIRECTORY,
   GLOBAL_EXTENSIONS_DIRECTORY,
   disposeLocalExtensions,
+  emitLocalExtensionEvent,
   evaluateLocalExtensionStatuses,
   resolveLocalExtensionSources,
 };

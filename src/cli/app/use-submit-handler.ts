@@ -51,6 +51,7 @@ import {
 import type {
   ExtensionCommand,
   ExtensionCommandContext,
+  ExtensionConversationCloseReason,
 } from "@/cli/extensions/types";
 import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
@@ -250,7 +251,7 @@ type SubmitHandlerContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: () => Promise<void>;
+  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;
@@ -1414,7 +1415,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           // Run SessionEnd hooks for current session before starting new one
-          await runEndHooks();
+          await runEndHooks("new");
 
           try {
             const backend = getBackend();
@@ -1463,6 +1464,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
+            void extensionRuntime.emitEvent("conversation_open", {
+              agentId,
+              agentName: agentName ?? null,
+              conversationId: conversation.id,
+              previousConversationId: prevConversationId ?? null,
+              reason: "new",
+            });
 
             // Update command with success
             cmd.finish(
@@ -1504,7 +1512,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
           }
 
-          await runEndHooks();
+          await runEndHooks("fork");
 
           try {
             // For default conversation, pass agent_id
@@ -1554,6 +1562,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
+            void extensionRuntime.emitEvent("conversation_open", {
+              agentId,
+              agentName: agentName ?? null,
+              conversationId: forked.id,
+              previousConversationId: forkPrevConversationId ?? null,
+              reason: "fork",
+            });
 
             cmd.finish(
               "Forked conversation (use /resume to switch back)",
@@ -1605,7 +1620,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           // Run SessionEnd hooks for current session before clearing
-          await runEndHooks();
+          await runEndHooks("new");
 
           try {
             const backend = getBackend();
@@ -1663,6 +1678,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
+            void extensionRuntime.emitEvent("conversation_open", {
+              agentId,
+              agentName: agentName ?? null,
+              conversationId: conversation.id,
+              previousConversationId: clearPrevConversationId ?? null,
+              reason: "new",
+            });
 
             // Update command with success
             cmd.finish(

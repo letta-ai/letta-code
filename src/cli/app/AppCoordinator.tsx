@@ -50,7 +50,11 @@ import {
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
-import { useLocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
+import {
+  type LocalExtensionRuntime,
+  useLocalExtensionRuntime,
+} from "@/cli/extensions/use-local-extension-runtime";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -986,6 +990,8 @@ export function App({
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
+  const sessionExtensionStartAttemptedRef = useRef(false);
+  const extensionRuntimeRef = useRef<LocalExtensionRuntime | null>(null);
 
   // Initialize chunk log for this agent + session (clears buffer, GCs old files).
   // Re-runs when agentId changes (e.g. agent switch via /agents).
@@ -1086,20 +1092,43 @@ export function App({
   }, [agentId, agentName, initialConversationId]);
 
   // Run SessionEnd hooks helper
-  const runEndHooks = useCallback(async () => {
-    const durationMs = Date.now() - sessionStartTimeRef.current;
-    try {
-      await runSessionEndHooks(
-        durationMs,
-        undefined,
-        undefined,
-        agentIdRef.current ?? undefined,
-        conversationIdRef.current ?? undefined,
-      );
-    } catch {
-      // Silently ignore hook errors
-    }
-  }, []);
+  const runEndHooks = useCallback(
+    async (reason: ExtensionConversationCloseReason = "quit") => {
+      const durationMs = Date.now() - sessionStartTimeRef.current;
+      try {
+        await runSessionEndHooks(
+          durationMs,
+          undefined,
+          undefined,
+          agentIdRef.current ?? undefined,
+          conversationIdRef.current ?? undefined,
+        );
+      } catch {
+        // Silently ignore hook errors
+      }
+
+      const extensionRuntime = extensionRuntimeRef.current;
+      if (
+        extensionRuntime &&
+        !extensionRuntime.isLoading &&
+        extensionRuntime.hasExtensionSources
+      ) {
+        try {
+          await extensionRuntime.emitEvent("conversation_close", {
+            agentId: agentIdRef.current ?? null,
+            conversationId: conversationIdRef.current ?? null,
+            durationMs,
+            messageCount: telemetry.getMessageCount(),
+            reason,
+            toolCallCount: telemetry.getToolCallCount(),
+          });
+        } catch {
+          // Extension lifecycle events are best-effort on shutdown.
+        }
+      }
+    },
+    [],
+  );
 
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
@@ -2196,6 +2225,25 @@ export function App({
     ],
   );
   const extensionRuntime = useLocalExtensionRuntime(extensionContext);
+
+  useEffect(() => {
+    extensionRuntimeRef.current = extensionRuntime;
+  }, [extensionRuntime]);
+
+  useEffect(() => {
+    if (!agentId || agentId === "loading") return;
+    if (sessionExtensionStartAttemptedRef.current) return;
+    if (extensionRuntime.isLoading) return;
+    if (!extensionRuntime.hasExtensionSources) return;
+
+    sessionExtensionStartAttemptedRef.current = true;
+    void extensionRuntime.emitEvent("conversation_open", {
+      agentId,
+      agentName: agentName ?? null,
+      conversationId: conversationIdRef.current ?? null,
+      reason: "startup",
+    });
+  }, [agentId, agentName, extensionRuntime]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
@@ -3687,6 +3735,7 @@ export function App({
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
+    extensionRuntime,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
