@@ -31,6 +31,7 @@ import {
   unregisterExtensionToolsForOwner,
 } from "@/extensions/tool-registry";
 import type {
+  ExtensionBackendApi,
   ExtensionCapabilities,
   ExtensionCommand,
   ExtensionCommandRegistration,
@@ -80,6 +81,7 @@ export type LettaExtensionFactory = (
   | Promise<undefined | LettaExtensionDisposer>;
 
 export interface LettaExtensionApi {
+  backend?: ExtensionBackendApi;
   capabilities: ExtensionCapabilities;
   client: Letta;
   getClient: () => Promise<Letta>;
@@ -162,6 +164,7 @@ export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
+  backend?: ExtensionBackendApi;
   capabilities?: ExtensionCapabilities;
   generation?: number;
   onChange?: () => void;
@@ -181,6 +184,7 @@ export interface CreateExtensionHostOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
+  backend?: ExtensionBackendApi;
   capabilities?: ExtensionCapabilities;
   reservedCommandIds?: Iterable<string>;
   reservedToolNames?: Iterable<string>;
@@ -668,6 +672,7 @@ function upsertExtensionPanel(
 function createLettaExtensionApi(
   registry: LocalExtensionRegistry,
   owner: ExtensionOwner,
+  backend: ExtensionBackendApi | undefined,
   capabilities: ExtensionCapabilities,
   getClient: () => Promise<Letta>,
   getContext: () => ExtensionContext,
@@ -722,6 +727,7 @@ function createLettaExtensionApi(
   };
 
   return {
+    ...(backend ? { backend } : {}),
     capabilities: cloneExtensionCapabilities(capabilities),
     client: createLazyClient(getClient),
     getClient,
@@ -928,6 +934,7 @@ export async function loadLocalExtensions(
           createLettaExtensionApi(
             registry,
             owner,
+            options.backend,
             capabilities,
             getConfiguredClient,
             getContext,
