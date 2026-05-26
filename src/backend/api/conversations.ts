@@ -5,10 +5,7 @@ export interface ForkConversationOptions {
   hidden?: boolean;
 }
 
-export type InternalConversationDescriptionUpdateBody = Record<
-  string,
-  unknown
-> & {
+export type ConversationDescriptionUpdateBody = Record<string, unknown> & {
   description: string | null;
 };
 
@@ -29,13 +26,13 @@ export async function forkConversation(
   );
 }
 
-export async function updateInternalConversationDescription(
+export async function updateConversationDescription(
   conversationId: string,
-  body: InternalConversationDescriptionUpdateBody,
-): Promise<string | null> {
-  return apiRequest<string | null>(
-    "POST",
-    `/v1/_internal_conversations/${encodeURIComponent(conversationId)}/description`,
+  body: ConversationDescriptionUpdateBody,
+): Promise<Record<string, unknown>> {
+  return apiRequest<Record<string, unknown>>(
+    "PATCH",
+    `/v1/conversations/${encodeURIComponent(conversationId)}`,
     body,
   );
 }

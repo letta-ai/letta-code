@@ -38,7 +38,7 @@ import {
 } from "@/agent/subagent-state";
 import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
-import { updateInternalConversationDescription } from "@/backend/api/conversations";
+import { updateConversationDescription } from "@/backend/api/conversations";
 import { getBillingTier } from "@/backend/api/metadata";
 import {
   cancelActiveConnectOperation,
@@ -1215,7 +1215,7 @@ export function App({
         return;
       }
 
-      await updateInternalConversationDescription(conversationId, {
+      await updateConversationDescription(conversationId, {
         description,
       });
       shouldAutoGenerateConversationDescriptionRef.current = false;
