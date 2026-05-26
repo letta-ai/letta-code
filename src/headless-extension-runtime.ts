@@ -22,7 +22,7 @@ import { telemetry } from "@/telemetry";
 import { getVersion } from "@/version";
 
 export const HEADLESS_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
-  tools: false,
+  tools: true,
   commands: false,
   events: {
     lifecycle: true,
@@ -148,15 +148,23 @@ export function createHeadlessExtensionContext(options: {
 export function createHeadlessExtensionRuntime(options: {
   agent: AgentState;
   backend: Backend;
+  cacheDirectory?: string;
   conversationId: string;
+  globalExtensionsDirectory?: string;
   permissionMode?: string | null;
   reflectionSettings?: ReflectionSettings;
   sessionStats?: SessionStats | null;
 }): ExtensionRuntime {
   return createExtensionRuntime({
+    ...(options.cacheDirectory
+      ? { cacheDirectory: options.cacheDirectory }
+      : {}),
     capabilities: HEADLESS_EXTENSION_CAPABILITIES,
     getBackendApi: () => createHeadlessExtensionBackendApi(options.backend),
     getClient,
+    ...(options.globalExtensionsDirectory
+      ? { globalExtensionsDirectory: options.globalExtensionsDirectory }
+      : {}),
     initialContext: createHeadlessExtensionContext(options),
   });
 }
