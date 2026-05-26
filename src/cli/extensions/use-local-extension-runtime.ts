@@ -7,7 +7,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { sendMessageStreamWithBackend } from "@/agent/message";
-import { getBackend } from "@/backend";
+import { type Backend, getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { debugLog } from "@/utils/debug";
 import {
@@ -23,6 +23,7 @@ export interface LocalExtensionRuntime {
   host: ExtensionHost;
   isLoading: boolean;
   registry: ReturnType<ExtensionHost["getSnapshot"]> | null;
+  getBackendApi: () => ExtensionBackendApi;
   getContext: () => ExtensionContext;
   reload: () => Promise<void>;
   updateContext: (context: ExtensionContext) => void;
@@ -38,6 +39,23 @@ function hasLocalExtensionSources(): boolean {
   return resolveLocalExtensionSources().some(
     (source) => source.files.length > 0,
   );
+}
+
+function createExtensionBackendApi(backend: Backend): ExtensionBackendApi {
+  return {
+    forkConversation(conversationId, options) {
+      return backend.forkConversation(conversationId, options);
+    },
+    sendMessageStream(conversationId, messages, options, requestOptions) {
+      return sendMessageStreamWithBackend(
+        backend,
+        conversationId,
+        messages,
+        options,
+        requestOptions,
+      );
+    },
+  };
 }
 
 export function useLocalExtensionRuntime(
@@ -65,14 +83,18 @@ export function useLocalExtensionRuntime(
 
   const getContext = useCallback(() => contextRef.current, []);
 
+  const getBackendApi = useCallback(
+    () => createExtensionBackendApi(getBackend()),
+    [],
+  );
+
   const backend = useMemo<ExtensionBackendApi>(() => {
     return {
       forkConversation(conversationId, options) {
-        return getBackend().forkConversation(conversationId, options);
+        return getBackendApi().forkConversation(conversationId, options);
       },
       sendMessageStream(conversationId, messages, options, requestOptions) {
-        return sendMessageStreamWithBackend(
-          getBackend(),
+        return getBackendApi().sendMessageStream(
           conversationId,
           messages,
           options,
@@ -80,7 +102,7 @@ export function useLocalExtensionRuntime(
         );
       },
     };
-  }, []);
+  }, [getBackendApi]);
 
   const host = useMemo(
     () =>
@@ -166,12 +188,21 @@ export function useLocalExtensionRuntime(
   return useMemo(
     () => ({
       registry,
+      getBackendApi,
       getContext,
       host,
       reload,
       updateContext,
       ...loadState,
     }),
-    [getContext, host, loadState, registry, reload, updateContext],
+    [
+      getBackendApi,
+      getContext,
+      host,
+      loadState,
+      registry,
+      reload,
+      updateContext,
+    ],
   );
 }

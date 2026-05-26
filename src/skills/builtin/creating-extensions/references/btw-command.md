@@ -56,15 +56,15 @@ export default function activate(letta) {
 
       void (async () => {
         try {
-          if (!letta.backend) {
-            throw new Error("/btw requires letta.backend support");
+          if (!ctx.backend) {
+            throw new Error("/btw requires backend support");
           }
 
-          const forked = await letta.backend.forkConversation(
+          const forked = await ctx.backend.forkConversation(
             ctx.conversation.id || "default",
             { agentId: ctx.agent.id, hidden: true },
           );
-          const stream = await letta.backend.sendMessageStream(
+          const stream = await ctx.backend.sendMessageStream(
             forked.id,
             [
               {

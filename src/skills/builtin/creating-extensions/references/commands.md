@@ -95,17 +95,19 @@ export default function activate(letta) {
 
 For commands with `runWhenBusy: true`, do not return `prompt` while the agent is running. Use backend primitives directly, update a panel if available, and return `{ type: "handled" }` quickly.
 
-Use `letta.backend` for conversation operations that should work across local and Constellation backends. Use `letta.client` only for server-specific API calls.
+Use `ctx.backend` for conversation operations that should work across local and Constellation backends. `ctx.backend` is bound to the backend active for that command invocation, so composed flows like fork-then-send stay on the same backend. Use `letta.client` only for server-specific API calls.
 
 Common calls:
 
 ```ts
-const forked = await letta.backend.forkConversation(ctx.conversation.id, {
+if (!ctx.backend) throw new Error("This command requires backend support");
+
+const forked = await ctx.backend.forkConversation(ctx.conversation.id, {
   agentId: ctx.agent.id,
   hidden: true,
 });
 
-const stream = await letta.backend.sendMessageStream(forked.id, [
+const stream = await ctx.backend.sendMessageStream(forked.id, [
   { role: "user", content: input },
 ]);
 ```
