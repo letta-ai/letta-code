@@ -6,6 +6,8 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { sendMessageStreamWithBackend } from "@/agent/message";
+import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { debugLog } from "@/utils/debug";
 import {
@@ -13,7 +15,7 @@ import {
   type ExtensionHost,
   resolveLocalExtensionSources,
 } from "./local-extension-loader";
-import type { ExtensionContext } from "./types";
+import type { ExtensionBackendApi, ExtensionContext } from "./types";
 
 export interface LocalExtensionRuntime {
   hadStatuslineRenderer: boolean;
@@ -63,13 +65,32 @@ export function useLocalExtensionRuntime(
 
   const getContext = useCallback(() => contextRef.current, []);
 
+  const backend = useMemo<ExtensionBackendApi>(() => {
+    const activeBackend = getBackend();
+    return {
+      forkConversation(conversationId, options) {
+        return activeBackend.forkConversation(conversationId, options);
+      },
+      sendMessageStream(conversationId, messages, options, requestOptions) {
+        return sendMessageStreamWithBackend(
+          activeBackend,
+          conversationId,
+          messages,
+          options,
+          requestOptions,
+        );
+      },
+    };
+  }, []);
+
   const host = useMemo(
     () =>
       createExtensionHost({
+        backend,
         getClient,
         getContext,
       }),
-    [getContext],
+    [backend, getContext],
   );
 
   const registry = useSyncExternalStore(

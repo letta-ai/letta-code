@@ -85,3 +85,4 @@ letta.capabilities.ui.customStatuslineRenderer
 - `references/tools.md` - extension tools the model can call
 - `references/commands.md` - slash commands, command results, and skill-backed commands
 - `references/ui.md` - panels, status values, capability guards
+- `references/btw-command.md` - advanced busy-safe side-question command using backend primitives
