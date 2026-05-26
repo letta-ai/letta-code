@@ -68,9 +68,14 @@ export interface ExtensionUiCapabilities {
   customStatuslineRenderer: boolean;
 }
 
+export interface ExtensionEventCapabilities {
+  lifecycle: boolean;
+}
+
 export interface ExtensionCapabilities {
   tools: boolean;
   commands: boolean;
+  events: ExtensionEventCapabilities;
   ui: ExtensionUiCapabilities;
 }
 
@@ -118,8 +123,80 @@ export interface ExtensionOwner {
   generation: number;
 }
 
+export type ExtensionEventName = "session_start" | "session_shutdown";
+
+export type ExtensionSessionStartReason =
+  | "startup"
+  | "reload"
+  | "new"
+  | "resume"
+  | "fork";
+
+export type ExtensionSessionShutdownReason =
+  | "quit"
+  | "reload"
+  | "new"
+  | "resume"
+  | "fork";
+
+export interface ExtensionSessionStartEvent {
+  agentId: string | null;
+  agentName: string | null;
+  conversationId: string | null;
+  previousConversationId?: string | null;
+  reason: ExtensionSessionStartReason;
+}
+
+export interface ExtensionSessionShutdownEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  durationMs: number | null;
+  messageCount: number | null;
+  reason: ExtensionSessionShutdownReason;
+  toolCallCount: number | null;
+}
+
+export interface ExtensionEventMap {
+  session_start: ExtensionSessionStartEvent;
+  session_shutdown: ExtensionSessionShutdownEvent;
+}
+
+export interface ExtensionEventResultMap {
+  session_start: undefined;
+  session_shutdown: undefined;
+}
+
+export interface ExtensionEventContext {
+  context: ExtensionContext;
+  getContext: () => ExtensionContext;
+  signal: AbortSignal;
+}
+
+export type ExtensionEventHandler<
+  TName extends ExtensionEventName = ExtensionEventName,
+> = (
+  event: ExtensionEventMap[TName],
+  context: ExtensionEventContext,
+) => ExtensionEventResultMap[TName] | Promise<ExtensionEventResultMap[TName]>;
+
+export interface ExtensionEventRegistration<
+  TName extends ExtensionEventName = ExtensionEventName,
+> {
+  handler: ExtensionEventHandler<TName>;
+  name: TName;
+  owner?: ExtensionOwner;
+  path: string;
+}
+
+export interface ExtensionEventEmissionResult {
+  diagnostics: ExtensionDiagnostic[];
+  handlerCount: number;
+  name: ExtensionEventName;
+}
+
 export type ExtensionCapabilityKind =
   | "command"
+  | "event"
   | "tool"
   | "panel"
   | "status"
@@ -138,6 +215,7 @@ export type ExtensionDiagnosticPhase =
   | "import"
   | "activate"
   | "dispose"
+  | "event"
   | "stale_handle"
   | "status.evaluate";
 

@@ -14,6 +14,7 @@ import {
 import type {
   ExtensionBackendApi,
   ExtensionCapabilities,
+  ExtensionContext,
   ExtensionPanelHandle,
 } from "@/extensions/types";
 
@@ -21,6 +22,7 @@ type ExtensionTestGlobal = typeof globalThis & {
   __lettaExtensionBackend?: ExtensionBackendApi;
   __lettaExtensionForkResult?: { id: string };
   __lettaExtensionCapabilities?: ExtensionCapabilities;
+  __lettaExtensionEvents?: string[];
   __lettaExtensionGate?: Promise<void>;
   __lettaExtensionPanel?: ExtensionPanelHandle;
   __lettaExtensionSignal?: AbortSignal;
@@ -29,6 +31,50 @@ type ExtensionTestGlobal = typeof globalThis & {
 
 function createTempDir(): string {
   return mkdtempSync(path.join(tmpdir(), "letta-extension-host-"));
+}
+
+function createExtensionContext(): ExtensionContext {
+  return {
+    app: { version: "test" },
+    backgroundAgents: [],
+    contextWindow: {
+      currentUsage: null,
+      remainingPercentage: null,
+      size: 200000,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      usedPercentage: null,
+    },
+    cost: {
+      totalApiDurationMs: 0,
+      totalCostUsd: null,
+      totalDurationMs: 0,
+      totalLinesAdded: null,
+      totalLinesRemoved: null,
+    },
+    cwd: "/tmp/project",
+    lastRunId: null,
+    memfs: { enabled: false, memoryDir: null },
+    model: {
+      displayName: "Sonnet",
+      id: "model-1",
+      provider: "anthropic",
+      reasoningEffort: null,
+    },
+    networkPhase: null,
+    permissionMode: "standard",
+    reflection: { mode: null, stepCount: 0 },
+    sessionId: "conversation-1",
+    systemPromptId: null,
+    terminalWidth: 80,
+    toolset: "default",
+    agent: { id: "agent-1", name: "Amelia" },
+    workspace: {
+      cwd: "/tmp/project",
+      currentDir: "/tmp/project",
+      projectDir: "/tmp/project",
+    },
+  };
 }
 
 function createHost(
@@ -41,6 +87,7 @@ function createHost(
     ...(backend ? { backend } : {}),
     ...(capabilities ? { capabilities } : {}),
     getClient: async () => ({}) as unknown as Letta,
+    getContext: createExtensionContext,
     globalExtensionsDirectory: path.join(root, "global-extensions"),
   });
 }
@@ -48,6 +95,7 @@ function createHost(
 const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   tools: true,
   commands: false,
+  events: { lifecycle: false },
   ui: {
     panels: false,
     statusValues: false,
@@ -219,6 +267,7 @@ describe("extension host", () => {
           letta.ui.openPanel({ id: "hidden", content: "hidden" });
           letta.ui.setStatus("hidden", "hidden");
           letta.ui.setStatuslineRenderer(() => "hidden");
+          letta.events.on("session_start", () => {});
           letta.tools.register({
             name: "visible_tool",
             description: "Visible tool",
@@ -233,11 +282,68 @@ describe("extension host", () => {
 
       expect(snapshot.errors).toEqual([]);
       expect(snapshot.commands).toEqual({});
+      expect(snapshot.events).toEqual({});
       expect(snapshot.ui.panels).toEqual({});
       expect(snapshot.ui.statusValues).toEqual({});
       expect(snapshot.ui.statuslineRenderer).toBeNull();
       expect(Object.keys(snapshot.tools)).toEqual(["visible_tool"]);
     } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("emits extension lifecycle events and isolates handler errors", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ExtensionTestGlobal;
+    testGlobal.__lettaExtensionEvents = [];
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "events.ts"),
+        `export default function(letta) {
+          letta.events.on("session_start", (event, ctx) => {
+            globalThis.__lettaExtensionEvents.push(
+              event.reason + ":" + event.agentId + ":" + ctx.context.agent.name,
+            );
+            letta.ui.setStatus("lifecycle", event.reason);
+          });
+          letta.events.on("session_start", () => {
+            throw new Error("event failed");
+          });
+        }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+      expect(host.getSnapshot().events.session_start).toHaveLength(2);
+
+      const result = await host.emitEvent("session_start", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "startup",
+      });
+
+      const snapshot = host.getSnapshot();
+      expect(result).toMatchObject({
+        handlerCount: 2,
+        name: "session_start",
+      });
+      expect(result.diagnostics).toHaveLength(1);
+      expect(testGlobal.__lettaExtensionEvents).toEqual([
+        "startup:agent-1:Amelia",
+      ]);
+      expect(snapshot.ui.statusValues.lifecycle).toBe("startup");
+      expect(snapshot.errors.at(-1)).toMatchObject({
+        phase: "event",
+        error: expect.objectContaining({ message: "event failed" }),
+      });
+
+      host.dispose();
+    } finally {
+      delete testGlobal.__lettaExtensionEvents;
       rmSync(root, { force: true, recursive: true });
     }
   });

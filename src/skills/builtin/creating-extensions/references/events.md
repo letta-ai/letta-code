@@ -1,0 +1,126 @@
+# Extension event recipes
+
+Use events when trusted local code should react to app/session changes without the human explicitly invoking a command.
+
+This is the first slice of the hooks-v2 direction. The long-term goal is for typed extension events to replace settings-based hooks. Existing hooks still own blocking decisions and model feedback injection until each event has a typed return contract.
+
+## Capabilities
+
+```ts
+letta.capabilities.events.lifecycle
+```
+
+Guard events when writing portable extensions:
+
+```ts
+export default function activate(letta) {
+  if (!letta.capabilities.events.lifecycle) return;
+
+  return letta.events.on("session_start", (event, ctx) => {
+    console.log(`session ${event.reason}: ${event.agentName ?? event.agentId}`);
+    console.log(`cwd: ${ctx.context.workspace.currentDir}`);
+  });
+}
+```
+
+The API intentionally follows the Pi-style event shape:
+
+```ts
+letta.events.on("event_name", (event, ctx) => {
+  // event is specific to event_name
+  // ctx contains host context and an AbortSignal
+});
+```
+
+Future hook-replacement events should use this same API. For example, a future tool gate should look like:
+
+```ts
+letta.events.on("tool_call", (event, ctx) => {
+  if (event.toolName !== "Bash") return;
+  if (String(event.input.command).includes("rm -rf")) {
+    return { block: true, reason: "Dangerous command" };
+  }
+});
+```
+
+Only lifecycle events are wired today, and existing settings-based hooks still own blocking behavior.
+
+Lifecycle handlers are notification-only and should not return values. Future events will define event-specific return contracts.
+
+## Supported events
+
+```ts
+"session_start"
+"session_shutdown"
+```
+
+`session_start` event:
+
+```ts
+{
+  agentId: string | null;
+  agentName: string | null;
+  conversationId: string | null;
+  previousConversationId?: string | null;
+  reason: "startup" | "reload" | "new" | "resume" | "fork";
+}
+```
+
+`session_shutdown` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  durationMs: number | null;
+  messageCount: number | null;
+  reason: "quit" | "reload" | "new" | "resume" | "fork";
+  toolCallCount: number | null;
+}
+```
+
+Handlers also receive:
+
+```ts
+{
+  context: letta.getContext();
+  getContext: () => letta.getContext();
+  signal: AbortSignal;
+}
+```
+
+Respect `ctx.signal` for long-running async work. It is aborted on `/reload` and app shutdown.
+
+## Session status example
+
+```ts
+export default function activate(letta) {
+  if (!letta.capabilities.events.lifecycle) return;
+
+  const disposers = [];
+
+  disposers.push(
+    letta.events.on("session_start", (event) => {
+      letta.ui.setStatus("session", event.reason);
+    }),
+  );
+
+  disposers.push(
+    letta.events.on("session_shutdown", (event) => {
+      console.log(`session ${event.reason}: ${event.durationMs ?? 0}ms`);
+    }),
+  );
+
+  return () => {
+    for (const dispose of disposers.reverse()) dispose();
+    letta.ui.clearStatus("session");
+  };
+}
+```
+
+## Rules
+
+- Do not block user flow unless the event's typed contract explicitly supports blocking.
+- Do not use lifecycle events for safety decisions yet. Existing hooks still own blocking behavior.
+- Catch expected local errors if the user-facing outcome matters. Uncaught errors are isolated and recorded as extension diagnostics.
+- Return disposers from activation for event registrations, timers, subscriptions, and status values.

@@ -22,6 +22,7 @@ Extensions are local runtime capabilities, not TUI-only plugins. Prefer portable
 | Slash command represents a reusable agent workflow | Skill + thin extension command |
 | Show transient output above input | Panel, usually from a command |
 | Show small persistent state | Status value |
+| React to app/session lifecycle changes | Lifecycle event |
 | Change the bottom statusline appearance | Use `customizing-statusline`, not this skill |
 
 Default to a **tool** when the model should decide when to use the capability. Default to a **command** when the human explicitly invokes it.
@@ -33,6 +34,7 @@ Default to a **tool** when the model should decide when to use the capability. D
 3. Choose one capability recipe:
    - tools: `references/tools.md`
    - commands: `references/commands.md`
+   - lifecycle events: `references/events.md`
    - panels/status/capabilities: `references/ui.md`
 4. Write a single-file extension unless the user asks for something larger.
 5. Return disposers for registered commands/tools, timers, subscriptions, and panels that should close on reload.
@@ -64,6 +66,7 @@ Use `letta.capabilities` for optional behavior:
 ```ts
 letta.capabilities.tools
 letta.capabilities.commands
+letta.capabilities.events.lifecycle
 letta.capabilities.ui.panels
 letta.capabilities.ui.statusValues
 letta.capabilities.ui.customStatuslineRenderer
@@ -84,5 +87,6 @@ letta.capabilities.ui.customStatuslineRenderer
 
 - `references/tools.md` - extension tools the model can call
 - `references/commands.md` - slash commands, command results, and skill-backed commands
+- `references/events.md` - lifecycle event handlers
 - `references/ui.md` - panels, status values, capability guards
 - `references/btw-command.md` - advanced busy-safe side-question command using backend primitives
