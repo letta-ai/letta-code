@@ -57,17 +57,6 @@ export async function runLocalOAuthConnectFlow(
       void Promise.resolve(callbacks.onStatus(status));
       void browserOpener(info.url);
     },
-    onDeviceCode: (info) => {
-      const status = [
-        `Open this URL to authenticate ${oauthProvider.name}:`,
-        "",
-        info.verificationUri,
-        "",
-        `Enter code: ${info.userCode}`,
-      ].join("\n");
-      void Promise.resolve(callbacks.onStatus(status));
-      void browserOpener(info.verificationUri);
-    },
     onPrompt: (prompt) =>
       callbacks.onPrompt?.(prompt) ?? defaultPrompt(oauthProvider.name, prompt),
     onProgress: (message) => {
