@@ -66,14 +66,13 @@ export function useLocalExtensionRuntime(
   const getContext = useCallback(() => contextRef.current, []);
 
   const backend = useMemo<ExtensionBackendApi>(() => {
-    const activeBackend = getBackend();
     return {
       forkConversation(conversationId, options) {
-        return activeBackend.forkConversation(conversationId, options);
+        return getBackend().forkConversation(conversationId, options);
       },
       sendMessageStream(conversationId, messages, options, requestOptions) {
         return sendMessageStreamWithBackend(
-          activeBackend,
+          getBackend(),
           conversationId,
           messages,
           options,
