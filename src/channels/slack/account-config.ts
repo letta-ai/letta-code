@@ -1,7 +1,8 @@
 import type { ChannelAccountConfigAdapter } from "@/channels/plugin-types";
-import type {
-  SlackChannelAccount,
-  SlackDefaultPermissionMode,
+import {
+  DEFAULT_SLACK_PERMISSION_MODE,
+  type SlackChannelAccount,
+  type SlackDefaultPermissionMode,
 } from "@/channels/types";
 import { migratePermissionMode } from "@/permissions/mode";
 
@@ -77,7 +78,8 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         has_bot_token: account.botToken.trim().length > 0,
         has_app_token: account.appToken.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "standard",
+        default_permission_mode:
+          account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
       };
     },
 
@@ -87,7 +89,8 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         has_bot_token: account.botToken.trim().length > 0,
         has_app_token: account.appToken.trim().length > 0,
         agent_id: account.agentId,
-        default_permission_mode: account.defaultPermissionMode ?? "standard",
+        default_permission_mode:
+          account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
       };
     },
 

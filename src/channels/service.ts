@@ -70,6 +70,7 @@ import type {
   WhatsAppGroupMode,
 } from "./types";
 import {
+  DEFAULT_SLACK_PERMISSION_MODE,
   isDiscordChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
@@ -553,7 +554,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     hasBotToken: account.botToken.trim().length > 0,
     hasAppToken: account.appToken.trim().length > 0,
     agentId: account.agentId,
-    defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+    defaultPermissionMode:
+      account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -656,7 +658,8 @@ function createAccountFromPatch(
     botToken: normalizedPatch.botToken ?? "",
     appToken: normalizedPatch.appToken ?? "",
     agentId: normalizedPatch.agentId ?? null,
-    defaultPermissionMode: normalizedPatch.defaultPermissionMode ?? "standard",
+    defaultPermissionMode:
+      normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
@@ -791,7 +794,7 @@ function mergeAccountPatch(
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ??
       existing.defaultPermissionMode ??
-      "standard",
+      DEFAULT_SLACK_PERMISSION_MODE,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
@@ -931,7 +934,8 @@ export function getChannelConfigSnapshot(
     hasBotToken: account.botToken.trim().length > 0,
     hasAppToken: account.appToken.trim().length > 0,
     agentId: account.agentId,
-    defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+    defaultPermissionMode:
+      account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
   };
 }
 

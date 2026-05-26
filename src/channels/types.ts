@@ -31,6 +31,9 @@ export type ChannelDefaultPermissionMode = Extract<
 export type SlackDefaultPermissionMode = ChannelDefaultPermissionMode;
 export type DiscordDefaultPermissionMode = ChannelDefaultPermissionMode;
 
+export const DEFAULT_SLACK_PERMISSION_MODE: SlackDefaultPermissionMode =
+  "unrestricted";
+
 /** Per-channel mode for Discord guild channels. */
 export type DiscordChannelMode = "open" | "mention-only";
 
@@ -120,6 +123,12 @@ export type ChannelTurnLifecycleEvent =
 
 // ── Adapter interface ─────────────────────────────────────────────
 
+export type ChannelStartupLogger = (message: string) => void;
+
+export interface ChannelAdapterStartOptions {
+  logger?: ChannelStartupLogger;
+}
+
 export interface ChannelAdapter {
   /** Platform identifier, e.g. "telegram", "slack". */
   readonly id: string;
@@ -131,7 +140,7 @@ export interface ChannelAdapter {
   readonly name: string;
 
   /** Start receiving messages (e.g. begin long-polling). */
-  start(): Promise<void>;
+  start(options?: ChannelAdapterStartOptions): Promise<void>;
   /** Stop receiving messages gracefully. */
   stop(): Promise<void>;
   /** Whether the adapter is currently running. */

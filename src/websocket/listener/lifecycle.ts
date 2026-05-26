@@ -62,7 +62,11 @@ import {
 import { loadPersistedCwdMap } from "./cwd";
 import { createFileCommandSession } from "./file-commands";
 import { createListenerMessageHandler } from "./message-router";
-import { loadPersistedPermissionModeMap } from "./permission-mode";
+import {
+  getOrCreateConversationPermissionModeStateRef,
+  loadPersistedPermissionModeMap,
+  persistPermissionModeMapForRuntime,
+} from "./permission-mode";
 import {
   emitDeviceStatusUpdate,
   emitLoopStatusUpdate,
@@ -425,6 +429,18 @@ export async function wireChannelIngress(
       delivery.route.conversationId,
     );
     if (!rawRuntime) return;
+
+    if (delivery.defaultPermissionMode) {
+      const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+        listener,
+        delivery.route.agentId,
+        delivery.route.conversationId,
+      );
+      if (permissionModeState.mode !== delivery.defaultPermissionMode) {
+        permissionModeState.mode = delivery.defaultPermissionMode;
+        persistPermissionModeMapForRuntime(listener);
+      }
+    }
 
     const conversationRuntime = ensureConversationQueueRuntime(
       listener,

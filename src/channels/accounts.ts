@@ -17,6 +17,7 @@ import type {
   WhatsAppChannelAccount,
 } from "./types";
 import {
+  DEFAULT_SLACK_PERMISSION_MODE,
   isCustomChannelAccount,
   isDiscordChannelAccount,
   isFirstPartyChannelId,
@@ -147,10 +148,12 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   }
   if (isSlackChannelAccount(next)) {
     const migrated = migratePermissionMode(
-      (next as SlackChannelAccount).defaultPermissionMode ?? "standard",
+      (next as SlackChannelAccount).defaultPermissionMode ??
+        DEFAULT_SLACK_PERMISSION_MODE,
     );
     (next as SlackChannelAccount).defaultPermissionMode =
-      (migrated as ChannelDefaultPermissionMode | null) ?? "standard";
+      (migrated as ChannelDefaultPermissionMode | null) ??
+      DEFAULT_SLACK_PERMISSION_MODE;
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
@@ -259,7 +262,7 @@ function makeDefaultLegacyAccount(
     dmPolicy: config.dmPolicy,
     allowedUsers: [...config.allowedUsers],
     agentId: null,
-    defaultPermissionMode: "standard",
+    defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     createdAt: now,
     updatedAt: now,
   };

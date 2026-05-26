@@ -41,6 +41,7 @@ import {
   clearTargetStores,
   upsertChannelTarget,
 } from "@/channels/targets";
+import type { SlackChannelAccount } from "@/channels/types";
 
 describe("channel service", () => {
   function upsertTargetForRouteTest(chatId: string): string {
@@ -213,7 +214,7 @@ describe("channel service", () => {
         configured: true,
         hasBotToken: true,
         hasAppToken: true,
-        defaultPermissionMode: "standard",
+        defaultPermissionMode: "unrestricted",
       }),
     );
 
@@ -410,6 +411,31 @@ describe("channel service", () => {
     expect(snapshot?.channelId).toBe("slack");
     if (snapshot?.channelId === "slack") {
       expect(snapshot.defaultPermissionMode).toBe("standard");
+    }
+  });
+
+  test("Slack accounts without persisted permission mode default to unrestricted", () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "legacy-slack",
+        enabled: false,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        agentId: null,
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      } as unknown as SlackChannelAccount,
+    ]);
+
+    const snapshot = getChannelAccountSnapshot("slack", "legacy-slack");
+    expect(snapshot?.channelId).toBe("slack");
+    if (snapshot?.channelId === "slack") {
+      expect(snapshot.defaultPermissionMode).toBe("unrestricted");
     }
   });
 
