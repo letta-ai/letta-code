@@ -16,6 +16,11 @@ export interface LocalOAuthConnectCallbacks {
   signal?: AbortSignal;
 }
 
+interface OAuthDeviceCodeInfo {
+  verificationUri: string;
+  userCode: string;
+}
+
 function localOAuthProviderId(provider: ByokProvider): string {
   const providerId = provider.oauthProviderId;
   if (!providerId) {
@@ -45,7 +50,7 @@ export async function runLocalOAuthConnectFlow(
   const browserOpener = callbacks.openBrowser ?? openOAuthBrowser;
   await callbacks.onStatus(`Starting ${oauthProvider.name} login...`);
 
-  const credentials = await oauthProvider.login({
+  const loginCallbacks = {
     signal: callbacks.signal,
     onAuth: (info) => {
       const status = [
@@ -68,7 +73,23 @@ export async function runLocalOAuthConnectFlow(
         `${oauthProvider.name} requires selection: ${prompt.message}`,
       );
     },
-  });
+  } as Parameters<typeof oauthProvider.login>[0] & {
+    onDeviceCode?: (info: OAuthDeviceCodeInfo) => void;
+  };
+
+  loginCallbacks.onDeviceCode = (info) => {
+    const status = [
+      `Open this URL to authenticate ${oauthProvider.name}:`,
+      "",
+      info.verificationUri,
+      "",
+      `Enter code: ${info.userCode}`,
+    ].join("\n");
+    void Promise.resolve(callbacks.onStatus(status));
+    void browserOpener(info.verificationUri);
+  };
+
+  const credentials = await oauthProvider.login(loginCallbacks);
 
   setLocalOAuthProvider({
     providerName: provider.providerName,
