@@ -7,6 +7,12 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
+import {
+  buildChannelModelListMessage,
+  buildChannelModelListUnavailableMessage,
+  buildChannelModelUpdatedMessage,
+  buildChannelModelUpdateFailedMessage,
+} from "@/channels/commands";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
@@ -33,6 +39,11 @@ import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
 import { handleChannelRegistryEvent } from "./commands/channels";
+import {
+  applyModelUpdateForRuntime,
+  buildListModelsResponse,
+  resolveModelForUpdate,
+} from "./commands/model-toolset";
 import {
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_DELAY_MS,
@@ -469,6 +480,100 @@ export async function wireChannelIngress(
       processQueuedTurn,
     }),
   );
+
+  registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
+    if (!modelIdentifier) {
+      try {
+        const response = await buildListModelsResponse(
+          `channel-model-list-${crypto.randomUUID()}`,
+        );
+        if (!response.success) {
+          return {
+            handled: true,
+            text: buildChannelModelListUnavailableMessage(
+              channelId,
+              response.error ?? "Failed to list models",
+            ),
+          };
+        }
+        return {
+          handled: true,
+          text: buildChannelModelListMessage(channelId, {
+            entries: response.entries,
+            availableHandles: response.available_handles,
+            recentHandles: settingsManager.getRecentModels(),
+          }),
+        };
+      } catch (error) {
+        return {
+          handled: true,
+          text: buildChannelModelListUnavailableMessage(
+            channelId,
+            error instanceof Error ? error.message : "Failed to list models",
+          ),
+        };
+      }
+    }
+
+    const resolvedModel = resolveModelForUpdate({
+      model_id: modelIdentifier,
+      model_handle: modelIdentifier,
+    });
+    if (!resolvedModel) {
+      return {
+        handled: true,
+        text: buildChannelModelUpdateFailedMessage(
+          channelId,
+          modelIdentifier,
+          "Model not found. Use /model to see available models.",
+        ),
+      };
+    }
+
+    try {
+      const scopedRuntime = getOrCreateScopedRuntime(
+        listener,
+        runtime.agent_id,
+        runtime.conversation_id,
+      );
+      const response = await applyModelUpdateForRuntime({
+        socket,
+        listener,
+        scopedRuntime,
+        requestId: `channel-model-update-${crypto.randomUUID()}`,
+        model: resolvedModel,
+      });
+      if (!response.success) {
+        return {
+          handled: true,
+          text: buildChannelModelUpdateFailedMessage(
+            channelId,
+            modelIdentifier,
+            response.error ?? "Failed to update model",
+          ),
+        };
+      }
+
+      settingsManager.addRecentModel(resolvedModel.handle);
+      return {
+        handled: true,
+        text: buildChannelModelUpdatedMessage(channelId, {
+          modelLabel: resolvedModel.label,
+          modelHandle: response.model_handle ?? resolvedModel.handle,
+          appliedTo: response.applied_to,
+        }),
+      };
+    } catch (error) {
+      return {
+        handled: true,
+        text: buildChannelModelUpdateFailedMessage(
+          channelId,
+          modelIdentifier,
+          error instanceof Error ? error.message : "Failed to update model",
+        ),
+      };
+    }
+  });
 
   registry.setReflectionHandler(async ({ runtime }) => {
     const agentId = runtime.agent_id;

@@ -6,10 +6,15 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
+import {
+  getReasoningTierOptionsForHandle,
+  type ModelReasoningEffort,
+} from "@/agent/model";
 import { getBackend } from "@/backend";
 import { getRecentAgentOptions } from "@/cli/helpers/recent-agent-options";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./components/colors";
+import { ModelReasoningSelector } from "./components/ModelReasoningSelector";
 import { Text } from "./components/Text";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 
@@ -26,6 +31,7 @@ interface ProfileSelectionResult {
   agentId?: string;
   profileName?: string | null;
   model?: string;
+  reasoningEffort?: ModelReasoningEffort;
 }
 
 const MAX_DISPLAY = 3;
@@ -98,6 +104,12 @@ function ProfileSelectionUI({
   );
   const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
+  const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
+    model: string;
+    initialModelId: string;
+    initialEffort?: ModelReasoningEffort;
+    options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+  } | null>(null);
 
   const loadOptions = useCallback(async () => {
     setInternalLoading(true);
@@ -218,6 +230,10 @@ function ProfileSelectionUI({
   useInput((_input, key) => {
     if (loading) return;
 
+    if (modelReasoningPrompt) {
+      return;
+    }
+
     // Model selection mode
     if (selectingModel && serverModelsForNewAgent) {
       if (key.upArrow) {
@@ -229,6 +245,21 @@ function ProfileSelectionUI({
       } else if (key.return) {
         const selected = filteredModels[modelSelectedIndex];
         if (selected) {
+          const reasoningOptions = getReasoningTierOptionsForHandle(selected);
+          if (reasoningOptions.length > 1) {
+            const preferredOption =
+              reasoningOptions.find((option) => option.effort === "medium") ??
+              reasoningOptions[0];
+            if (preferredOption) {
+              setModelReasoningPrompt({
+                model: selected,
+                initialModelId: preferredOption.modelId,
+                initialEffort: preferredOption.effort,
+                options: reasoningOptions,
+              });
+              return;
+            }
+          }
           onComplete({ type: "new_with_model", model: selected });
         }
       } else if (key.escape || (key.ctrl && _input === "c")) {
@@ -311,7 +342,6 @@ function ProfileSelectionUI({
         loadingState={loading ? "loading_profiles" : "ready"}
         continueSession={false}
         agentState={null}
-        agentProvenance={null}
       />
       <Box height={1} />
 
@@ -322,7 +352,25 @@ function ProfileSelectionUI({
         </>
       )}
 
-      {loading ? null : selectingModel && serverModelsForNewAgent ? (
+      {loading ? null : modelReasoningPrompt ? (
+        <ModelReasoningSelector
+          modelLabel={
+            modelReasoningPrompt.model.split("/").pop() ??
+            modelReasoningPrompt.model
+          }
+          options={modelReasoningPrompt.options}
+          initialModelId={modelReasoningPrompt.initialModelId}
+          initialEffort={modelReasoningPrompt.initialEffort}
+          onSelect={(selectedOption) => {
+            onComplete({
+              type: "new_with_model",
+              model: selectedOption.modelId,
+              reasoningEffort: selectedOption.effort,
+            });
+          }}
+          onCancel={() => setModelReasoningPrompt(null)}
+        />
+      ) : selectingModel && serverModelsForNewAgent ? (
         // Model selection mode
         <Box flexDirection="column" gap={1}>
           <Text bold color={colors.selector.title}>
@@ -503,7 +551,10 @@ export function ProfileSelectionInline({
   onSelect: (agentId: string) => void;
   onCreateNew: () => void;
   /** Called when user selects a model from serverModelsForNewAgent */
-  onCreateNewWithModel?: (model: string) => void;
+  onCreateNewWithModel?: (
+    model: string,
+    reasoningEffort?: ModelReasoningEffort,
+  ) => void;
   onExit: () => void;
 }) {
   const handleComplete = (result: ProfileSelectionResult) => {
@@ -512,7 +563,7 @@ export function ProfileSelectionInline({
     } else if (result.type === "select" && result.agentId) {
       onSelect(result.agentId);
     } else if (result.type === "new_with_model" && result.model) {
-      onCreateNewWithModel?.(result.model);
+      onCreateNewWithModel?.(result.model, result.reasoningEffort);
     } else {
       onCreateNew();
     }

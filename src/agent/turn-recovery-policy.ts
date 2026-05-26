@@ -21,6 +21,7 @@ const CONVERSATION_BUSY_DETAIL_FRAGMENTS = [
   "is currently being processed",
   "busy with another active run",
 ];
+const CONVERSATION_BUSY_RUN_ID_PATTERN = /\brun_id=([A-Za-z0-9_-]+)/i;
 const EMPTY_RESPONSE_DETAIL_FRAGMENT = "empty content in";
 const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "Anthropic API error",
@@ -141,6 +142,15 @@ export function isConversationBusyError(detail: unknown): boolean {
   return CONVERSATION_BUSY_DETAIL_FRAGMENTS.some((fragment) =>
     normalized.includes(fragment),
   );
+}
+
+/** Extract the server-reported blocking run id from a conversation-busy error. */
+export function extractConversationBusyRunId(detail: unknown): string | null {
+  if (typeof detail !== "string" || !isConversationBusyError(detail)) {
+    return null;
+  }
+
+  return detail.match(CONVERSATION_BUSY_RUN_ID_PATTERN)?.[1] ?? null;
 }
 
 /**

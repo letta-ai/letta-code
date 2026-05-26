@@ -313,6 +313,10 @@ describe("MessageChannel", () => {
       chatId: "7952253975",
       text: "hello <b>world</b> &amp; team",
       replyToMessageId: "42",
+      threadId: null,
+      mediaPath: undefined,
+      fileName: undefined,
+      title: undefined,
       parseMode: "HTML",
     });
   });
@@ -389,6 +393,10 @@ describe("MessageChannel", () => {
       chatId: "7952253975",
       text: "hello new bot",
       replyToMessageId: undefined,
+      threadId: null,
+      mediaPath: undefined,
+      fileName: undefined,
+      title: undefined,
       parseMode: "HTML",
     });
   });
@@ -443,6 +451,7 @@ describe("MessageChannel", () => {
       chatId: "7952253975",
       text: "see attached",
       replyToMessageId: undefined,
+      threadId: null,
       mediaPath: "/tmp/screenshot.png",
       fileName: "screenshot.png",
       title: "Screenshot",

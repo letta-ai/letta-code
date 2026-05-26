@@ -8,6 +8,11 @@ import {
   buildChannelChatLinkMessage,
   buildChannelChatUnavailableMessage,
   buildChannelHelpMessage,
+  buildChannelModelListMessage,
+  buildChannelModelListUnavailableMessage,
+  buildChannelModelUnavailableMessage,
+  buildChannelModelUpdatedMessage,
+  buildChannelModelUpdateFailedMessage,
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
   buildChannelResumedMessage,
@@ -39,6 +44,7 @@ describe("channel slash commands", () => {
       "resume",
       "cancel",
       "chat",
+      "model",
       "reflection",
     ]) {
       expect(listChannelSlashCommands()).toContainEqual(
@@ -49,7 +55,7 @@ describe("channel slash commands", () => {
     const text = buildChannelHelpMessage("telegram");
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
     );
   });
 
@@ -154,6 +160,81 @@ describe("channel slash commands", () => {
     );
   });
 
+  test("builds model selector-style command messages", () => {
+    const text = buildChannelModelListMessage("slack", {
+      entries: [
+        {
+          id: "sonnet",
+          handle: "anthropic/claude-sonnet-4-6",
+          label: "Claude Sonnet 4.6",
+          description: "",
+          isFeatured: true,
+        },
+        {
+          id: "gpt",
+          handle: "openai/gpt-5",
+          label: "GPT-5",
+          description: "",
+        },
+      ],
+      availableHandles: [
+        "openai/gpt-5",
+        "anthropic/claude-sonnet-4-6",
+        "custom/model",
+      ],
+      recentHandles: ["anthropic/claude-sonnet-4-6", "missing/model"],
+      limit: 2,
+    });
+
+    expect(text).toContain("Slack model selector");
+    expect(text).toContain("Recent models:");
+    expect(text).toContain(
+      "• Claude Sonnet 4.6 — anthropic/claude-sonnet-4-6 (/model sonnet)",
+    );
+    expect(text).toContain("Available models:");
+    expect(text).toContain("• GPT-5 — openai/gpt-5 (/model gpt)");
+    expect(text).toContain("…and 1 more.");
+    expect(text).not.toContain("missing/model");
+    expect(text).toContain("Use /model <handle-or-id>");
+  });
+
+  test("builds model update and unavailable messages", () => {
+    const fallback = buildChannelModelListMessage("telegram", {
+      entries: [
+        {
+          id: "auto",
+          handle: "letta/auto",
+          label: "Auto",
+          description: "",
+          isDefault: true,
+        },
+      ],
+      availableHandles: null,
+    });
+    expect(fallback).toContain("Availability lookup failed");
+    expect(fallback).toContain("• Auto — letta/auto (/model auto)");
+    expect(buildChannelModelListUnavailableMessage("discord", "boom")).toBe(
+      "Discord could not load the model list: boom",
+    );
+    expect(
+      buildChannelModelUpdatedMessage("slack", {
+        modelLabel: "Claude Sonnet 4.6",
+        modelHandle: "anthropic/claude-sonnet-4-6",
+        appliedTo: "conversation",
+      }),
+    ).toBe(
+      "Slack updated this conversation's model to Claude Sonnet 4.6 (anthropic/claude-sonnet-4-6).",
+    );
+    expect(
+      buildChannelModelUpdateFailedMessage("telegram", "bad-model", "nope"),
+    ).toBe(
+      "Telegram could not switch this chat's routed model to bad-model: nope",
+    );
+    expect(buildChannelModelUnavailableMessage("discord")).toContain(
+      "listener is not ready yet",
+    );
+  });
+
   test("builds a useful unsupported-command response", () => {
     const command = parseChannelSlashCommand("/compact now");
     expect(command).not.toBeNull();
@@ -165,7 +246,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
     );
     expect(text).toContain("without a leading slash");
   });

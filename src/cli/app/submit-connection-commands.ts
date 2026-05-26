@@ -20,6 +20,7 @@ type ConnectionCommandContext = {
   buffersRef: MutableRefObject<Buffers>;
   commandRunner: AppCommandRunner;
   conversationIdRef: MutableRefObject<string>;
+  markLocalModelsAvailable: () => void;
   refreshDerived: () => void;
   setCommandRunning: (value: boolean) => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
@@ -41,6 +42,7 @@ export async function handleConnectionCommand(
     buffersRef,
     commandRunner,
     conversationIdRef,
+    markLocalModelsAvailable,
     refreshDerived,
     setCommandRunning,
     setModelSelectorOptions,
@@ -147,6 +149,7 @@ export async function handleConnectionCommand(
           refreshDerived,
           setCommandRunning,
           onCodexConnected: () => {
+            markLocalModelsAvailable();
             setModelSelectorOptions({
               filterProvider: "chatgpt-plus-pro",
               forceRefresh: true,

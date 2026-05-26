@@ -18,11 +18,28 @@ const STATIC_STICKER_EXTENSIONS = new Set([".webp"]);
 
 export type TelegramLikeMessage = {
   media_group_id?: string;
+  message_thread_id?: number | string;
   message_id: number | string;
   date: number;
   text?: string;
   caption?: string;
-  chat: { id: number | string };
+  entities?: Array<{
+    type?: string;
+    offset?: number;
+    length?: number;
+  }>;
+  caption_entities?: Array<{
+    type?: string;
+    offset?: number;
+    length?: number;
+  }>;
+  reply_to_message?: TelegramLikeMessage;
+  chat: {
+    id: number | string;
+    type?: string;
+    title?: string;
+    username?: string;
+  };
   from?: {
     id: number | string;
     username?: string;
@@ -591,7 +608,16 @@ async function downloadTelegramAttachment(params: {
       const result = await transcribeAudioFile(localPath);
       if (result.success && result.text) {
         attachment.transcription = result.text;
+      } else if (result.error) {
+        attachment.transcriptionError = result.error;
+        console.warn(
+          `[Telegram] Voice transcription failed for ${fileName}:`,
+          result.error,
+        );
       }
+    } else {
+      attachment.transcriptionError =
+        "OPENAI_API_KEY not set; transcription skipped.";
     }
   }
 

@@ -24,6 +24,11 @@ export function ConstellationLoginView({
   const startedRef = useRef(false);
   const cancelledRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  const onAlreadyLoggedInRef = useRef(onAlreadyLoggedIn);
+
+  onCompleteRef.current = onComplete;
+  onAlreadyLoggedInRef.current = onAlreadyLoggedIn;
 
   useInput((input, key) => {
     if (key.escape || (key.ctrl && input === "c")) {
@@ -46,7 +51,7 @@ export function ConstellationLoginView({
           process.env.LETTA_API_KEY || currentSettings.env?.LETTA_API_KEY;
 
         if (hasApiKey) {
-          onAlreadyLoggedIn?.();
+          onAlreadyLoggedInRef.current?.();
           return;
         }
 
@@ -98,7 +103,7 @@ export function ConstellationLoginView({
         setDoneMessage(
           "Signed in to Constellation. Switch to a Constellation agent with /agents.",
         );
-        setTimeout(() => onComplete?.(), 500);
+        setTimeout(() => onCompleteRef.current?.(), 500);
       } catch (err) {
         if (
           cancelledRef.current ||
@@ -115,7 +120,7 @@ export function ConstellationLoginView({
       cancelledRef.current = true;
       abortControllerRef.current?.abort();
     };
-  }, [onAlreadyLoggedIn, onComplete]);
+  }, []);
 
   if (doneMessage) {
     return (

@@ -40,16 +40,16 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
   const escapedChannel = escapeXmlText(msg.channel);
   const escapedChatId = escapeXmlText(msg.chatId);
   const threadLine =
-    msg.channel === "slack" &&
+    (msg.channel === "slack" || msg.channel === "telegram") &&
     msg.chatType === "channel" &&
     (msg.threadId ?? msg.messageId)?.trim()
-      ? "Replies sent with MessageChannel will stay in the same Slack thread automatically."
+      ? `Replies sent with MessageChannel will stay in the same ${msg.channel === "telegram" ? "Telegram topic" : "Slack thread"} automatically.`
       : null;
 
   const lines = [
     SYSTEM_REMINDER_OPEN,
     `This is an external ${escapedChannel} turn. Plain assistant text is not delivered to the user.`,
-    `If you should reply to the external user, your final action for this turn must be exactly one MessageChannel call with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
+    `If you should reply to the external user, use MessageChannel with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
     "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
     "Do not produce a plain text assistant response as the user-visible reply.",
     "On supported channels, MessageChannel can also send proactively using channel + target (and accountId when needed).",
@@ -82,6 +82,13 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       'On Discord, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Discord reactions accept native Unicode emoji and custom emoji syntax like <:name:id>.',
     );
   }
+  if (msg.channel === "whatsapp") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Voice memo/audio uploads must be Ogg/Opus (.ogg, .oga, or .opus), not MP3/M4A/WAV. Replies are sent as the linked WhatsApp number.',
+    );
+  }
   if (msg.attachments?.length) {
     lines.splice(
       lines.length - 2,
@@ -112,9 +119,20 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
     attrs.push(`size_bytes="${attachment.sizeBytes}"`);
   }
 
+  const children: string[] = [];
   if (attachment.transcription) {
-    const escapedTranscription = escapeXmlText(attachment.transcription);
-    return `<attachment ${attrs.join(" ")}>\n  <attempted_transcription>${escapedTranscription}</attempted_transcription>\n</attachment>`;
+    children.push(
+      `<attempted_transcription>${escapeXmlText(attachment.transcription)}</attempted_transcription>`,
+    );
+  }
+  if (attachment.transcriptionError) {
+    children.push(
+      `<attempted_transcription_error>${escapeXmlText(attachment.transcriptionError)}</attempted_transcription_error>`,
+    );
+  }
+
+  if (children.length > 0) {
+    return `<attachment ${attrs.join(" ")}>\n  ${children.join("\n  ")}\n</attachment>`;
   }
 
   return `<attachment ${attrs.join(" ")} />`;
@@ -138,6 +156,30 @@ function buildReactionXml(msg: InboundChannelMessage): string | null {
   }
 
   return `<reaction ${attrs.join(" ")} />`;
+}
+
+function buildReplyContextXml(msg: InboundChannelMessage): string | null {
+  const replyContext = msg.replyContext;
+  if (!replyContext) {
+    return null;
+  }
+
+  const attrs: string[] = [];
+  if (replyContext.messageId) {
+    attrs.push(`message_id="${escapeXmlAttribute(replyContext.messageId)}"`);
+  }
+  if (replyContext.senderId) {
+    attrs.push(`sender_id="${escapeXmlAttribute(replyContext.senderId)}"`);
+  }
+  if (replyContext.senderName) {
+    attrs.push(`sender_name="${escapeXmlAttribute(replyContext.senderName)}"`);
+  }
+
+  const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+  if (replyContext.text?.trim()) {
+    return `<reply-context${attrString}>\n${escapeXmlText(replyContext.text)}\n</reply-context>`;
+  }
+  return `<reply-context${attrString} />`;
 }
 
 function buildThreadContextEntryXml(
@@ -232,9 +274,16 @@ export function buildChannelNotificationXml(
   const attrString = attrs.join(" ");
   const escapedText = msg.text ? escapeXmlText(msg.text) : "";
   const reactionXml = buildReactionXml(msg);
+  const replyContextXml = buildReplyContextXml(msg);
   const threadContextXml = buildThreadContextXml(msg);
   const attachmentXml = (msg.attachments ?? []).map(buildAttachmentXml);
-  const body = [threadContextXml, reactionXml, ...attachmentXml, escapedText]
+  const body = [
+    threadContextXml,
+    replyContextXml,
+    reactionXml,
+    ...attachmentXml,
+    escapedText,
+  ]
     .filter(Boolean)
     .join("\n");
 

@@ -35,6 +35,27 @@ describe("registry copy: first-party channels", () => {
     );
   });
 
+  test("first-party whatsapp pairing includes the desktop and CLI paths", () => {
+    const text = buildPairingInstructions("whatsapp", "W123");
+    expect(text).toContain("open Channels >");
+    expect(text).toContain("WhatsApp");
+    expect(text).toContain("Pairing code: W123");
+    expect(text).toContain(
+      "letta channels pair --channel whatsapp --code W123 --agent <agent-id>",
+    );
+  });
+
+  test("first-party whatsapp unbound route keeps the desktop wording", () => {
+    const text = buildUnboundRouteInstructions(
+      "whatsapp",
+      "15551234567@s.whatsapp.net",
+    );
+    expect(text).toContain("Open Channels >");
+    expect(text).toContain("WhatsApp");
+    expect(text).toContain("Chat ID: 15551234567@s.whatsapp.net");
+    expect(text).not.toContain("letta channels route add");
+  });
+
   test("first-party copy uses 'Letta agent' consistently", () => {
     expect(buildPairingInstructions("telegram", "X")).toContain("Letta agent");
     expect(buildUnboundRouteInstructions("slack", "Y")).toContain(
@@ -57,17 +78,17 @@ describe("registry copy: first-party channels", () => {
 });
 
 describe("registry copy: community channels", () => {
-  // Any channel id that isn't telegram/slack/discord is a community plugin.
+  // Any channel id that isn't telegram/slack/discord/whatsapp is a community plugin.
   // We don't need a real plugin installed — `isFirstPartyChannelPlugin` only
   // checks the FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS map.
 
   test("pairing instructions surface the CLI command for community channels", () => {
-    const text = buildPairingInstructions("whatsapp", "ABC123");
+    const text = buildPairingInstructions("custom-chat", "ABC123");
     expect(text).toContain("isn't connected to a Letta agent yet");
     expect(text).toContain("Pairing code: ABC123 (expires in 15 minutes)");
     expect(text).toContain("On the machine where your listener runs");
     expect(text).toContain(
-      "letta channels pair --channel whatsapp --code ABC123 --agent <agent-id>",
+      "letta channels pair --channel custom-chat --code ABC123 --agent <agent-id>",
     );
     expect(text).toContain("Find your agent id with letta agents list.");
     expect(text).not.toContain("open Channels >");
@@ -77,14 +98,11 @@ describe("registry copy: community channels", () => {
   });
 
   test("unbound route instructions surface the CLI command for community channels", () => {
-    const text = buildUnboundRouteInstructions(
-      "whatsapp",
-      "15551234567@s.whatsapp.net",
-    );
+    const text = buildUnboundRouteInstructions("custom-chat", "chat-123");
     expect(text).toContain("isn't connected to a Letta agent yet");
     expect(text).toContain("On the machine where your listener runs");
     expect(text).toContain(
-      "letta channels route add --channel whatsapp --chat-id 15551234567@s.whatsapp.net --agent <agent-id>",
+      "letta channels route add --channel custom-chat --chat-id chat-123 --agent <agent-id>",
     );
     expect(text).toContain("Find your agent id with letta agents list.");
     expect(text).not.toContain("Open Channels >");
@@ -112,8 +130,8 @@ describe("registry copy: community channels", () => {
     // The actual handler in src/cli/subcommands/channels.ts is `letta channels
     // pair` (no `approve` subcommand). If someone introduces an `approve`
     // subcommand, this test should be updated together with the copy.
-    const text = buildPairingInstructions("whatsapp", "X");
-    expect(text).toMatch(/letta channels pair --channel whatsapp /);
+    const text = buildPairingInstructions("custom-chat", "X");
+    expect(text).toMatch(/letta channels pair --channel custom-chat /);
     expect(text).not.toMatch(/letta channels pair approve/);
   });
 });
