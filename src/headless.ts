@@ -307,6 +307,7 @@ export const __headlessTestUtils = {
   shouldTrackTelemetryForQueuedMessage,
   contentToTaskNotificationText,
   toBidirectionalQueuedInput,
+  prepareHeadlessToolExecutionContext,
 };
 
 type ReflectionOverrides = {
@@ -1614,28 +1615,6 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  let availableTools =
-    agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
-  // Cache the agent from the initial fetch to avoid redundant agents.retrieve
-  // calls on every while-loop iteration.
-  let cachedAgent: AgentState | null = null;
-  // Capture the resolved model (conversation override → agent fallback) so
-  // subsequent while-loop iterations can prepare the correct toolset without
-  // re-fetching the conversation model. This is only for local tool context;
-  // request-scoped override_model should remain reserved for provider fallback.
-  let preparedEffectiveModel: string | null | undefined;
-  {
-    const initialToolContext = await prepareHeadlessToolExecutionContext({
-      agentId: agent.id,
-      conversationId,
-      cachedAgent: agent as AgentState,
-    });
-    availableTools = initialToolContext.availableTools;
-    cachedAgent = initialToolContext.preparedToolContext.agent;
-    preparedEffectiveModel =
-      initialToolContext.preparedToolContext.effectiveModel;
-  }
-
   const sessionStats = new SessionStats();
   const headlessPermissionMode = yoloMode
     ? "unrestricted"
@@ -1660,6 +1639,28 @@ export async function handleHeadlessCommand(
     });
   } catch {
     // Extension lifecycle events should not block headless startup.
+  }
+
+  let availableTools =
+    agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
+  // Cache the agent from the initial fetch to avoid redundant agents.retrieve
+  // calls on every while-loop iteration.
+  let cachedAgent: AgentState | null = null;
+  // Capture the resolved model (conversation override → agent fallback) so
+  // subsequent while-loop iterations can prepare the correct toolset without
+  // re-fetching the conversation model. This is only for local tool context;
+  // request-scoped override_model should remain reserved for provider fallback.
+  let preparedEffectiveModel: string | null | undefined;
+  {
+    const initialToolContext = await prepareHeadlessToolExecutionContext({
+      agentId: agent.id,
+      conversationId,
+      cachedAgent: agent as AgentState,
+    });
+    availableTools = initialToolContext.availableTools;
+    cachedAgent = initialToolContext.preparedToolContext.agent;
+    preparedEffectiveModel =
+      initialToolContext.preparedToolContext.effectiveModel;
   }
 
   // If input-format is stream-json, use bidirectional mode
