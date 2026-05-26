@@ -3035,6 +3035,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               agent: { id: agentId, name: agentName },
               args: parsedExtensionCommand.args,
               argv: parseExtensionCommandArgv(parsedExtensionCommand.args),
+              backend: extensionRuntime.getBackendApi(),
               command: parsedExtensionCommand.command,
               conversation: { id: conversationIdRef.current },
               cwd: getCurrentWorkingDirectory(),

@@ -180,6 +180,7 @@ export interface ExtensionCommandContext {
   command: string;
   args: string;
   argv: string[];
+  backend?: ExtensionBackendApi;
   cwd: string;
   agent: {
     id: string;
