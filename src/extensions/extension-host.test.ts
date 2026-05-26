@@ -267,7 +267,7 @@ describe("extension host", () => {
           letta.ui.openPanel({ id: "hidden", content: "hidden" });
           letta.ui.setStatus("hidden", "hidden");
           letta.ui.setStatuslineRenderer(() => "hidden");
-          letta.events.on("session_start", () => {});
+          letta.events.on("conversation_open", () => {});
           letta.tools.register({
             name: "visible_tool",
             description: "Visible tool",
@@ -303,13 +303,13 @@ describe("extension host", () => {
       writeFileSync(
         path.join(extensionDir, "events.ts"),
         `export default function(letta) {
-          letta.events.on("session_start", (event, ctx) => {
+          letta.events.on("conversation_open", (event, ctx) => {
             globalThis.__lettaExtensionEvents.push(
               event.reason + ":" + event.agentId + ":" + ctx.context.agent.name,
             );
             letta.ui.setStatus("lifecycle", event.reason);
           });
-          letta.events.on("session_start", () => {
+          letta.events.on("conversation_open", () => {
             throw new Error("event failed");
           });
         }`,
@@ -317,9 +317,9 @@ describe("extension host", () => {
 
       const host = createHost(root);
       await host.reload();
-      expect(host.getSnapshot().events.session_start).toHaveLength(2);
+      expect(host.getSnapshot().events.conversation_open).toHaveLength(2);
 
-      const result = await host.emitEvent("session_start", {
+      const result = await host.emitEvent("conversation_open", {
         agentId: "agent-1",
         agentName: "Amelia",
         conversationId: "conversation-1",
@@ -329,7 +329,7 @@ describe("extension host", () => {
       const snapshot = host.getSnapshot();
       expect(result).toMatchObject({
         handlerCount: 2,
-        name: "session_start",
+        name: "conversation_open",
       });
       expect(result.diagnostics).toHaveLength(1);
       expect(testGlobal.__lettaExtensionEvents).toEqual([

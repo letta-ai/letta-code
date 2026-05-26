@@ -51,7 +51,7 @@ import {
 import type {
   ExtensionCommand,
   ExtensionCommandContext,
-  ExtensionSessionEndReason,
+  ExtensionConversationCloseReason,
 } from "@/cli/extensions/types";
 import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
@@ -246,7 +246,7 @@ type SubmitHandlerContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: (reason?: ExtensionSessionEndReason) => Promise<void>;
+  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;
@@ -1380,7 +1380,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("session_start", {
+            void extensionRuntime.emitEvent("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -1478,7 +1478,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("session_start", {
+            void extensionRuntime.emitEvent("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: forked.id,
@@ -1594,7 +1594,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("session_start", {
+            void extensionRuntime.emitEvent("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,

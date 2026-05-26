@@ -16,8 +16,8 @@ Guard events when writing portable extensions:
 export default function activate(letta) {
   if (!letta.capabilities.events.lifecycle) return;
 
-  return letta.events.on("session_start", (event, ctx) => {
-    console.log(`session ${event.reason}: ${event.agentName ?? event.agentId}`);
+  return letta.events.on("conversation_open", (event, ctx) => {
+    console.log(`conversation ${event.reason}: ${event.agentName ?? event.agentId}`);
     console.log(`cwd: ${ctx.context.workspace.currentDir}`);
   });
 }
@@ -50,11 +50,11 @@ Lifecycle handlers are notification-only and should not return values. Future ev
 ## Supported events
 
 ```ts
-"session_start"
-"session_end"
+"conversation_open"
+"conversation_close"
 ```
 
-`session_start` event:
+`conversation_open` event:
 
 ```ts
 {
@@ -66,7 +66,7 @@ Lifecycle handlers are notification-only and should not return values. Future ev
 }
 ```
 
-`session_end` event:
+`conversation_close` event:
 
 ```ts
 {
@@ -91,7 +91,7 @@ Handlers also receive:
 
 Respect `ctx.signal` for long-running async work. It is aborted on `/reload` and app shutdown.
 
-## Session status example
+## Conversation status example
 
 ```ts
 export default function activate(letta) {
@@ -100,20 +100,20 @@ export default function activate(letta) {
   const disposers = [];
 
   disposers.push(
-    letta.events.on("session_start", (event) => {
-      letta.ui.setStatus("session", event.reason);
+    letta.events.on("conversation_open", (event) => {
+      letta.ui.setStatus("conversation", event.reason);
     }),
   );
 
   disposers.push(
-    letta.events.on("session_end", (event) => {
-      console.log(`session ${event.reason}: ${event.durationMs ?? 0}ms`);
+    letta.events.on("conversation_close", (event) => {
+      console.log(`conversation ${event.reason}: ${event.durationMs ?? 0}ms`);
     }),
   );
 
   return () => {
     for (const dispose of disposers.reverse()) dispose();
-    letta.ui.clearStatus("session");
+    letta.ui.clearStatus("conversation");
   };
 }
 ```

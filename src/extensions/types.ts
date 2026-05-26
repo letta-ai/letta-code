@@ -123,37 +123,45 @@ export interface ExtensionOwner {
   generation: number;
 }
 
-export type ExtensionEventName = "session_start" | "session_end";
+export type ExtensionEventName = "conversation_open" | "conversation_close";
 
-export type ExtensionSessionStartReason = "startup" | "new" | "resume" | "fork";
+export type ExtensionConversationOpenReason =
+  | "startup"
+  | "new"
+  | "resume"
+  | "fork";
 
-export type ExtensionSessionEndReason = "quit" | "new" | "resume" | "fork";
+export type ExtensionConversationCloseReason =
+  | "quit"
+  | "new"
+  | "resume"
+  | "fork";
 
-export interface ExtensionSessionStartEvent {
+export interface ExtensionConversationOpenEvent {
   agentId: string | null;
   agentName: string | null;
   conversationId: string | null;
   previousConversationId?: string | null;
-  reason: ExtensionSessionStartReason;
+  reason: ExtensionConversationOpenReason;
 }
 
-export interface ExtensionSessionEndEvent {
+export interface ExtensionConversationCloseEvent {
   agentId: string | null;
   conversationId: string | null;
   durationMs: number | null;
   messageCount: number | null;
-  reason: ExtensionSessionEndReason;
+  reason: ExtensionConversationCloseReason;
   toolCallCount: number | null;
 }
 
 export interface ExtensionEventMap {
-  session_start: ExtensionSessionStartEvent;
-  session_end: ExtensionSessionEndEvent;
+  conversation_open: ExtensionConversationOpenEvent;
+  conversation_close: ExtensionConversationCloseEvent;
 }
 
 export interface ExtensionEventResultMap {
-  session_start: undefined;
-  session_end: undefined;
+  conversation_open: undefined;
+  conversation_close: undefined;
 }
 
 export interface ExtensionEventContext {

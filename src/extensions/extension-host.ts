@@ -576,8 +576,8 @@ function createLazyClient(getClient: () => Promise<Letta>): Letta {
 }
 
 const SUPPORTED_EXTENSION_EVENT_NAMES = new Set<ExtensionEventName>([
-  "session_start",
-  "session_end",
+  "conversation_open",
+  "conversation_close",
 ]);
 
 function validateExtensionEventName(

@@ -32,7 +32,7 @@ import {
 } from "@/backend";
 import { getServerUrl } from "@/backend/api/client";
 import type { BtwState } from "@/cli/components/BtwPane";
-import type { ExtensionSessionEndReason } from "@/cli/extensions/types";
+import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
 import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import {
   type Buffers,
@@ -100,7 +100,7 @@ type ConversationSwitchingContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: (reason?: ExtensionSessionEndReason) => Promise<void>;
+  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
@@ -434,7 +434,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           })
           .catch(() => {});
         sessionHooksRanRef.current = true;
-        void extensionRuntime.emitEvent("session_start", {
+        void extensionRuntime.emitEvent("conversation_open", {
           agentId,
           agentName: agentName ?? null,
           conversationId,
