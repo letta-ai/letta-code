@@ -51,7 +51,7 @@ Lifecycle handlers are notification-only and should not return values. Future ev
 
 ```ts
 "session_start"
-"session_shutdown"
+"session_end"
 ```
 
 `session_start` event:
@@ -62,11 +62,11 @@ Lifecycle handlers are notification-only and should not return values. Future ev
   agentName: string | null;
   conversationId: string | null;
   previousConversationId?: string | null;
-  reason: "startup" | "reload" | "new" | "resume" | "fork";
+  reason: "startup" | "new" | "resume" | "fork";
 }
 ```
 
-`session_shutdown` event:
+`session_end` event:
 
 ```ts
 {
@@ -74,7 +74,7 @@ Lifecycle handlers are notification-only and should not return values. Future ev
   conversationId: string | null;
   durationMs: number | null;
   messageCount: number | null;
-  reason: "quit" | "reload" | "new" | "resume" | "fork";
+  reason: "quit" | "new" | "resume" | "fork";
   toolCallCount: number | null;
 }
 ```
@@ -106,7 +106,7 @@ export default function activate(letta) {
   );
 
   disposers.push(
-    letta.events.on("session_shutdown", (event) => {
+    letta.events.on("session_end", (event) => {
       console.log(`session ${event.reason}: ${event.durationMs ?? 0}ms`);
     }),
   );

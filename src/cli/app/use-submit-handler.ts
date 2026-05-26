@@ -51,7 +51,7 @@ import {
 import type {
   ExtensionCommand,
   ExtensionCommandContext,
-  ExtensionSessionShutdownReason,
+  ExtensionSessionEndReason,
 } from "@/cli/extensions/types";
 import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
@@ -246,7 +246,7 @@ type SubmitHandlerContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: (reason?: ExtensionSessionShutdownReason) => Promise<void>;
+  runEndHooks: (reason?: ExtensionSessionEndReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;

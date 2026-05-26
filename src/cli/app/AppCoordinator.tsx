@@ -50,7 +50,7 @@ import {
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
-import type { ExtensionSessionShutdownReason } from "@/cli/extensions/types";
+import type { ExtensionSessionEndReason } from "@/cli/extensions/types";
 import {
   type LocalExtensionRuntime,
   useLocalExtensionRuntime,
@@ -1089,7 +1089,7 @@ export function App({
 
   // Run SessionEnd hooks helper
   const runEndHooks = useCallback(
-    async (reason: ExtensionSessionShutdownReason = "quit") => {
+    async (reason: ExtensionSessionEndReason = "quit") => {
       const durationMs = Date.now() - sessionStartTimeRef.current;
       try {
         await runSessionEndHooks(
@@ -1110,7 +1110,7 @@ export function App({
         extensionRuntime.hasExtensionSources
       ) {
         try {
-          await extensionRuntime.emitEvent("session_shutdown", {
+          await extensionRuntime.emitEvent("session_end", {
             agentId: agentIdRef.current ?? null,
             conversationId: conversationIdRef.current ?? null,
             durationMs,
