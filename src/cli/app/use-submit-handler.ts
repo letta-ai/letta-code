@@ -103,6 +103,7 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
@@ -160,6 +161,10 @@ type ProfileConfirmPending = {
   name: string;
   agentId: string;
   cmdId: string;
+};
+
+type WorktreeDiffSelectorPending = {
+  worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
 };
 
 type ModelSelectorOptions = {
@@ -280,6 +285,9 @@ type SubmitHandlerContext = {
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
+  setWorktreeDiffSelectorPending: Dispatch<
+    SetStateAction<WorktreeDiffSelectorPending | null>
+  >;
   setReasoningTabCycleEnabled: Dispatch<SetStateAction<boolean>>;
   setSearchQuery: Dispatch<SetStateAction<string>>;
   setStaticItems: Dispatch<SetStateAction<StaticItem[]>>;
@@ -395,6 +403,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setNeedsEagerApprovalCheck,
     setPinDialogLocal,
     setProfileConfirmPending,
+    setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
     setSearchQuery,
     setStaticItems,
@@ -687,6 +696,81 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             "Opening experiments selector...",
             "Experiments dialog dismissed",
           );
+          return { submitted: true };
+        }
+
+        const [slashCommand, experimentsSubcommand, ...experimentsArgs] =
+          trimmed.split(/\s+/);
+        if (
+          slashCommand === "/experiments" &&
+          experimentsSubcommand === "diffs"
+        ) {
+          const args = experimentsArgs;
+          if (args.length > 1) {
+            const cmd = commandRunner.start(
+              "/experiments",
+              "Usage: /experiments diffs [path]",
+            );
+            cmd.fail("Usage: /experiments diffs [path]");
+            return { submitted: true };
+          }
+          if (!experimentManager.isEnabled("diffs")) {
+            const cmd = commandRunner.start(
+              "/experiments",
+              "Diffs experiment is disabled.",
+            );
+            cmd.fail("Enable the diffs experiment with /experiments first.");
+            return { submitted: true };
+          }
+
+          if (!args[0]) {
+            const cmd = openOverlay(
+              "worktree-diff",
+              "/experiments diffs",
+              "Loading worktrees...",
+              "Worktree diff selector dismissed",
+            );
+            const { listWorktreeDiffOptions } = await import(
+              "@/web/worktree-diff-list"
+            );
+            listWorktreeDiffOptions()
+              .then((worktrees) => {
+                setWorktreeDiffSelectorPending({ worktrees });
+                cmd.update({ output: "Select a worktree to diff" });
+              })
+              .catch((err: unknown) => {
+                cmd.fail(
+                  `Failed to list worktrees: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              });
+            return { submitted: true };
+          }
+
+          const cmd = commandRunner.start(
+            "/experiments",
+            "Opening worktree diff...",
+          );
+          const { generateAndOpenDiffViewer } = await import(
+            "@/web/generate-diff-viewer"
+          );
+          generateAndOpenDiffViewer(args[0])
+            .then((result) => {
+              const fileSummary = `${result.fileCount} file${result.fileCount === 1 ? "" : "s"}`;
+              if (result.opened) {
+                cmd.finish(`Opened worktree diff (${fileSummary})`, true);
+              } else {
+                cmd.finish(
+                  `Open manually: ${result.filePath} (${fileSummary})`,
+                  true,
+                );
+              }
+            })
+            .catch((err: unknown) => {
+              cmd.finish(
+                `Failed to open diff: ${err instanceof Error ? err.message : String(err)}`,
+                false,
+              );
+            });
           return { submitted: true };
         }
 
