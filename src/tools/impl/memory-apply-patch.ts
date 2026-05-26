@@ -129,7 +129,10 @@ export async function memory_apply_patch(
 
   const pathspecs = await applyMemoryPatch(memoryDir, input);
   if (pathspecs.length === 0) {
-    return { message: "memory_apply_patch completed with no changed paths." };
+    throw new Error(
+      "memory_apply_patch made no changes: the patch produced no changed paths. " +
+        "Verify the patch targets the intended file(s) and actually modifies content.",
+    );
   }
 
   const commitResult = await commitAndSyncMemoryWrite({
@@ -145,12 +148,13 @@ export async function memory_apply_patch(
     replay: async () => applyMemoryPatch(memoryDir, input),
   });
   if (!commitResult.committed) {
-    return {
-      message:
-        syncMode === "local"
-          ? "memory_apply_patch made no effective changes; skipped commit."
-          : "memory_apply_patch made no effective changes; skipped commit and push.",
-    };
+    throw new Error(
+      syncMode === "local"
+        ? "memory_apply_patch made no effective changes; nothing was committed. " +
+            "The patched content matched what was already on disk."
+        : "memory_apply_patch made no effective changes; nothing was committed or pushed. " +
+            "The patched content matched what was already on disk.",
+    );
   }
 
   if (commitResult.replayed && commitResult.replayNoop) {
