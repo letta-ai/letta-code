@@ -119,6 +119,9 @@ mock.module("./telegram/runtime", () => ({
   }),
 }));
 
+const { __testOverrideSubmitChannelLifecycleErrorReport } = await import(
+  "@/channels/lifecycle-error-report"
+);
 const { createTelegramAdapter, detectTelegramBotMention } = await import(
   "@/channels/telegram/adapter"
 );
@@ -158,6 +161,7 @@ beforeEach(() => {
   consoleErrorSpy.mockClear();
   console.error = consoleErrorSpy as typeof console.error;
   globalThis.fetch = originalFetch;
+  __testOverrideSubmitChannelLifecycleErrorReport(null);
   delete process.env.OPENAI_API_KEY;
 });
 
@@ -165,6 +169,7 @@ afterEach(() => {
   __testOverrideChannelsRoot(null);
   console.error = originalConsoleError;
   globalThis.fetch = originalFetch;
+  __testOverrideSubmitChannelLifecycleErrorReport(null);
   if (originalOpenAiApiKey === undefined) {
     delete process.env.OPENAI_API_KEY;
   } else {
@@ -984,7 +989,19 @@ test("telegram adapter replies with lifecycle errors", async () => {
   expect(bot?.api.sendMessage).toHaveBeenCalledWith(
     "123",
     "Turn failed:\nChatGPT usage limit reached. Resets at 1:00 PM.",
-    { reply_parameters: { message_id: 77 } },
+    expect.objectContaining({
+      reply_parameters: { message_id: 77 },
+      reply_markup: {
+        inline_keyboard: [
+          [
+            expect.objectContaining({
+              text: "Report error",
+              callback_data: expect.stringMatching(/^lc_report:/),
+            }),
+          ],
+        ],
+      },
+    }),
   );
 });
 
@@ -1022,8 +1039,163 @@ test("telegram adapter hides raw generic lifecycle errors", async () => {
   expect(bot?.api.sendMessage).toHaveBeenCalledWith(
     "123",
     "Turn failed:\nSomething went wrong while processing that message. Please try again.",
-    { reply_parameters: { message_id: 77 } },
+    expect.objectContaining({
+      reply_parameters: { message_id: 77 },
+      reply_markup: {
+        inline_keyboard: [
+          [
+            expect.objectContaining({
+              text: "Report error",
+              callback_data: expect.stringMatching(/^lc_report:/),
+            }),
+          ],
+        ],
+      },
+    }),
   );
+});
+
+test("telegram adapter prettifies conversation-busy lifecycle errors", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const rawError = [
+    JSON.stringify({
+      error: {
+        detail:
+          "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.",
+        run_id: "run-123",
+      },
+    }),
+    "View agent: \x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\ (run: run-123)",
+  ].join("\n");
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "error",
+    error: rawError,
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct",
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const bot = FakeBot.instances[0];
+  const sendMessageCall = bot?.api.sendMessage.mock.calls[0] as
+    | unknown[]
+    | undefined;
+  const message = sendMessageCall?.[1] as string | undefined;
+  expect(message).toBe(
+    "Turn still running\n" +
+      "Another request is already processing for this conversation. Please wait for it to finish, then try again.\n\n" +
+      "Run ID: run-123",
+  );
+  expect(message).not.toContain("app.letta.com");
+  expect(message).not.toContain("\x1b");
+});
+
+test("telegram lifecycle report button submits sanitized error metadata", async () => {
+  const reports: unknown[] = [];
+  __testOverrideSubmitChannelLifecycleErrorReport(async (report) => {
+    reports.push(report);
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const rawError = [
+    JSON.stringify({
+      error: {
+        detail:
+          "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.",
+        run_id: "run-456",
+      },
+    }),
+    "View agent: \x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\ (run: run-456)",
+  ].join("\n");
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "error",
+    error: rawError,
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct",
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const bot = FakeBot.instances[0];
+  const sendMessageCall = bot?.api.sendMessage.mock.calls[0] as
+    | unknown[]
+    | undefined;
+  const options = sendMessageCall?.[2] as
+    | {
+        reply_markup?: {
+          inline_keyboard?: Array<Array<{ callback_data?: string }>>;
+        };
+      }
+    | undefined;
+  const callbackData =
+    options?.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data;
+  if (!callbackData) {
+    throw new Error("Missing lifecycle report callback data");
+  }
+
+  const answerCallbackQuery = mock(async () => {});
+  await bot?.emit("callback_query", {
+    callbackQuery: { data: callbackData },
+    answerCallbackQuery,
+  });
+
+  expect(reports).toEqual([
+    expect.objectContaining({
+      channel: "telegram",
+      accountId: "telegram-test-account",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-456",
+      errorKind: "conversation_busy",
+      errorMessage:
+        "Another request is already processing for this conversation. Please wait for it to finish, then try again.",
+    }),
+  ]);
+  expect(JSON.stringify(reports[0])).not.toContain("app.letta.com");
+  expect(answerCallbackQuery).toHaveBeenCalledWith({
+    text: "Error report sent. Thanks.",
+    show_alert: false,
+  });
 });
 
 test("telegram adapter does not send lifecycle replies for completed turns", async () => {
