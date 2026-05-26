@@ -55,7 +55,6 @@ describe("/reload command", () => {
   test("LoadingApp passes onReload and key to App", () => {
     const indexPath = fileURLToPath(new URL("../index.ts", import.meta.url));
     const source = readFileSync(indexPath, "utf-8");
-
     expect(source).toContain("onReload: handleReload");
     expect(source).toContain(
       // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting source contains literal template string syntax

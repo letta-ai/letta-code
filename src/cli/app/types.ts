@@ -42,6 +42,8 @@ export type AppProps = {
   reasoningTabCycleEnabled?: boolean;
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
+  startupHasCloudCredentials?: boolean;
+  startupHasAvailableLocalModels?: boolean;
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   systemInfoReminderEnabled?: boolean;
@@ -74,10 +76,16 @@ export type ActiveOverlay =
   | "connect"
   | "skills"
   | "window-title"
+  | "login"
   | null;
 
 export type QueuedOverlayAction =
-  | { type: "switch_agent"; agentId: string; commandId?: string }
+  | {
+      type: "switch_agent";
+      agentId: string;
+      commandId?: string;
+      backendMode?: "local" | "api";
+    }
   | { type: "switch_model"; modelId: string; commandId?: string }
   | {
       type: "set_experiment";
@@ -191,7 +199,7 @@ export type StaticItem =
       snapshot: {
         continueSession: boolean;
         agentState?: AgentState | null;
-        agentProvenance?: AgentProvenance | null;
+        startupHasAvailableLocalModels?: boolean;
         terminalWidth: number;
       };
     }
@@ -220,7 +228,5 @@ export type StaticItem =
       toolArgs: string;
       // Optional precomputed/cached data for rendering
       precomputedDiff?: AdvancedDiffSuccess;
-      planContent?: string; // For ExitPlanMode
-      planFilePath?: string; // For ExitPlanMode
     }
   | Line;

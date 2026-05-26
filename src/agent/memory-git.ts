@@ -40,7 +40,7 @@ export const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:520|521|522|523|524)\b|The requested URL returned error:\s*(?:520|521|522|523|524))/i;
 const RETRYABLE_GIT_NETWORK_ERROR_RE =
-  /(remote end hung up unexpectedly|connection reset by peer|operation timed out|timed out)/i;
+  /(remote end hung up unexpectedly|connection reset by peer|operation timed out|timed out|SIGTERM|ETIMEDOUT)/i;
 
 const MISSING_CWD_GIT_ERROR_RE =
   /(Unable to read current working directory: No such file or directory|\buv_cwd\b|\bcwd\b.*\bENOENT\b)/i;
@@ -429,10 +429,14 @@ export function buildNonInteractiveGitEnv(
  * Run a git command in the given directory.
  * If a token is provided, passes it as an auth header.
  */
+const GIT_DEFAULT_TIMEOUT_MS = 60_000; // 60s
+const GIT_CLONE_TIMEOUT_MS = 180_000; // 3min — clone can be slow on cold CI runners
+
 async function runGit(
   cwd: string,
   args: string[],
   token?: string,
+  options?: { timeoutMs?: number },
 ): Promise<{ stdout: string; stderr: string }> {
   const authArgs = token ? buildGitAuthArgs(token) : [];
   const allArgs = [...buildMemfsGitProxyArgs(args), ...authArgs, ...args];
@@ -451,13 +455,14 @@ async function runGit(
   }
   debugLog("memfs-git", `git ${loggableArgs.join(" ")} (in ${cwd})`);
 
+  const timeoutMs = options?.timeoutMs ?? GIT_DEFAULT_TIMEOUT_MS;
   let result: Awaited<ReturnType<typeof execFile>>;
   try {
     result = await execFile("git", allArgs, {
       cwd,
       env: buildNonInteractiveGitEnv(),
       maxBuffer: 10 * 1024 * 1024, // 10MB
-      timeout: 60_000, // 60s
+      timeout: timeoutMs,
     });
   } catch (error) {
     throw redactGitAuthError(error);
@@ -504,7 +509,12 @@ async function runGitWithRetry(
   cwd: string,
   args: string[],
   token?: string,
-  options?: { operation?: string; attempts?: number; baseDelayMs?: number },
+  options?: {
+    operation?: string;
+    attempts?: number;
+    baseDelayMs?: number;
+    timeoutMs?: number;
+  },
 ): Promise<{ stdout: string; stderr: string }> {
   const attempts = options?.attempts ?? 3;
   const baseDelayMs = options?.baseDelayMs ?? 500;
@@ -516,7 +526,9 @@ async function runGitWithRetry(
       if (!existsSync(cwd)) {
         mkdirSync(cwd, { recursive: true });
       }
-      return await runGit(cwd, args, token);
+      return await runGit(cwd, args, token, {
+        timeoutMs: options?.timeoutMs,
+      });
     } catch (error) {
       if (isMissingCwdGitError(error)) {
         // Recreate cwd and retry once through the normal loop.
@@ -1688,6 +1700,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
     mkdirSync(dir, { recursive: true });
     await runGitWithRetry(dir, ["clone", url, "."], token, {
       operation: "clone memory repo",
+      timeoutMs: GIT_CLONE_TIMEOUT_MS,
     });
   } else if (!existsSync(join(dir, ".git"))) {
     // Directory exists but isn't a git repo (legacy local layout)
@@ -1700,6 +1713,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
       mkdirSync(tmpDir, { recursive: true });
       await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
         operation: "clone memory repo (tmp migration)",
+        timeoutMs: GIT_CLONE_TIMEOUT_MS,
       });
 
       // Move .git into the existing memory directory
@@ -1749,8 +1763,13 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
  * Pull latest changes from the server.
  * Called on startup to ensure local state is current.
  */
+export interface PullMemoryOptions {
+  throwOnFailure?: boolean;
+}
+
 export async function pullMemory(
   agentId: string,
+  options: PullMemoryOptions = {},
 ): Promise<{ updated: boolean; summary: string }> {
   const token = await getAuthToken();
   const dir = getMemoryRepoDir(agentId);
@@ -1824,10 +1843,14 @@ export async function pullMemory(
 
       const msg =
         rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
+      const failureSummary = `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`;
       debugWarn("memfs-git", `Pull failed: ${msg}`);
+      if (options.throwOnFailure) {
+        throw new Error(failureSummary);
+      }
       return {
         updated: false,
-        summary: `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`,
+        summary: failureSummary,
       };
     }
   }

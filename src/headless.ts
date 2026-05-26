@@ -10,6 +10,7 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
+import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -49,6 +50,7 @@ import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
+  type BackendMode,
   type ConversationCreateBody,
   type ConversationMessageStreamBody,
   getBackend,
@@ -111,10 +113,7 @@ import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/error-reporting";
 import { extractTelemetryInputText } from "./telemetry/input";
-import {
-  isHeadlessAutoAllowTool,
-  isInteractiveApprovalTool,
-} from "./tools/interactive-policy";
+import { isInteractiveApprovalTool } from "./tools/interactive-policy";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -490,6 +489,7 @@ export async function handleHeadlessCommand(
   skillsDirectoryOverride?: string,
   skillSourcesOverride?: SkillSource[],
   systemInfoReminderEnabledOverride?: boolean,
+  startupOptions: { requestedBackendMode?: BackendMode } = {},
 ) {
   const { values, positionals } = parsedArgs;
   telemetry.setSurface("headless");
@@ -515,8 +515,12 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Set CLI permission overrides if provided (inherited from parent agent)
-  if (values.allowedTools || values.disallowedTools || values["memory-scope"]) {
+  // Set CLI permission overrides if provided
+  if (
+    values.allowedTools ||
+    values.disallowedTools ||
+    values["disable-memory-guard"]
+  ) {
     const { cliPermissions } = await import(
       "@/permissions/cli-permissions-instance"
     );
@@ -526,8 +530,8 @@ export async function handleHeadlessCommand(
     if (values.disallowedTools) {
       cliPermissions.setDisallowedTools(values.disallowedTools);
     }
-    if (values["memory-scope"]) {
-      cliPermissions.setMemoryScope(values["memory-scope"]);
+    if (values["disable-memory-guard"]) {
+      cliPermissions.setMemoryGuardDisabled(true);
     }
   }
 
@@ -609,9 +613,13 @@ export async function handleHeadlessCommand(
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
   let autoEnableMemfsForFreshAgent = false;
+  const startupBackendMode = backend.capabilities.localModelCatalog
+    ? "local"
+    : "api";
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
+  let specifiedAgentIdFromAmbientBackendSwitch = false;
   const forceNew = values["new-agent"];
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
@@ -739,6 +747,25 @@ export async function handleHeadlessCommand(
       error,
       "headless_startup_conversation_shorthand",
     );
+  }
+
+  const ambientAgentId = (
+    process.env.LETTA_AGENT_ID ||
+    process.env.AGENT_ID ||
+    ""
+  ).trim();
+  if (
+    startupOptions.requestedBackendMode &&
+    ambientAgentId &&
+    !specifiedAgentId &&
+    !specifiedAgentName &&
+    !specifiedConversationId &&
+    !forceNew &&
+    !fromAfFile &&
+    !fromAgentId
+  ) {
+    specifiedAgentId = ambientAgentId;
+    specifiedAgentIdFromAmbientBackendSwitch = true;
   }
 
   // Validate --conv default requires --agent (unless --new-agent will create one)
@@ -900,7 +927,7 @@ export async function handleHeadlessCommand(
     : null;
   if (personalityInput && !personality) {
     console.error(
-      `Error: Unknown personality "${personalityInput}". Valid: letta-code, blank, linus, kawaii, claude, codex`,
+      `Error: Unknown personality "${personalityInput}". Valid: letta-code, tutorial, blank, linus, kawaii, claude, codex`,
     );
     process.exit(1);
   }
@@ -1072,6 +1099,24 @@ export async function handleHeadlessCommand(
         include: ["agent.secrets", "agent.tools", "agent.tags"],
       });
     } catch (_error) {
+      if (specifiedAgentIdFromAmbientBackendSwitch) {
+        console.error(
+          `Active agent ${specifiedAgentId} is not available on the ${startupOptions.requestedBackendMode} backend.`,
+        );
+        if (startupOptions.requestedBackendMode === "local") {
+          console.error(
+            "--backend local uses the local backend store and will not silently switch to a different cwd-local agent.",
+          );
+          console.error(
+            "Use --new-agent to create a local agent, or pass --agent <local-agent-id> to choose one explicitly.",
+          );
+        } else {
+          console.error(
+            "Pass --agent <id>, --conversation <id>, or --new-agent to choose the target explicitly.",
+          );
+        }
+        process.exit(1);
+      }
       console.error(`Agent ${specifiedAgentId} not found`);
       process.exit(1);
     }
@@ -1135,12 +1180,26 @@ export async function handleHeadlessCommand(
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
-  if (!agent) {
+  if (!agent && startupBackendMode === "local") {
     await settingsManager.loadLocalProjectSettings();
     const localAgentId = settingsManager.getLocalLastAgentId(
       getCurrentWorkingDirectory(),
     );
-    if (localAgentId) {
+    if (
+      localAgentId &&
+      process.env.AGENT_ID &&
+      process.env.AGENT_ID !== localAgentId
+    ) {
+      console.error(
+        `Using local backend agent ${localAgentId} from project-local settings (.letta/settings.local.json). \n` +
+          `Current session AGENT_ID=${process.env.AGENT_ID}; ` +
+          `--backend local switches to a separate persisted local agent.\n`,
+      );
+    }
+    if (
+      localAgentId &&
+      isAgentIdCompatibleWithBackend(localAgentId, startupBackendMode)
+    ) {
       try {
         agent = await backend.retrieveAgent(localAgentId, {
           include: ["agent.tags"],
@@ -1154,9 +1213,12 @@ export async function handleHeadlessCommand(
 
   // Priority 5: Try to reuse global LRU (covers directory-switching case)
   // Do NOT restore global conversation — use default (project-scoped conversations)
-  if (!agent) {
+  if (!agent && startupBackendMode === "api") {
     const globalAgentId = settingsManager.getGlobalLastAgentId();
-    if (globalAgentId) {
+    if (
+      globalAgentId &&
+      isAgentIdCompatibleWithBackend(globalAgentId, startupBackendMode)
+    ) {
       try {
         agent = await backend.retrieveAgent(globalAgentId, {
           include: ["agent.tags"],
@@ -1789,10 +1851,6 @@ ${SYSTEM_REMINDER_CLOSE}
     workingDirectory: getCurrentWorkingDirectory(),
     reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
-    resolvePlanModeReminder: async () => {
-      const { PLAN_MODE_REMINDER } = await import("@/agent/prompt-assets");
-      return PLAN_MODE_REMINDER;
-    },
   });
   for (const part of sharedReminderParts) {
     pushPart(part.text);
@@ -2347,14 +2405,7 @@ ${SYSTEM_REMINDER_CLOSE}
           })),
           ...needsUserInput.map((ac) => {
             // One-shot headless mode has no control channel for interactive
-            // approvals. Auto-allow plan-mode entry/exit tools, while denying
-            // tools that need runtime user responses.
-            if (isHeadlessAutoAllowTool(ac.approval.toolName)) {
-              return {
-                type: "approve" as const,
-                approval: ac.approval,
-              };
-            }
+            // approvals, so deny tools that need runtime user responses.
             return {
               type: "deny" as const,
               approval: ac.approval,
@@ -3793,12 +3844,6 @@ async function runBidirectionalMode(
           workingDirectory: getCurrentWorkingDirectory(),
           reflectionSettings,
           skillSources,
-          resolvePlanModeReminder: async () => {
-            const { PLAN_MODE_REMINDER } = await import(
-              "@/agent/prompt-assets"
-            );
-            return PLAN_MODE_REMINDER;
-          },
         });
         const enrichedContent = prependReminderPartsToContent(
           userContent,

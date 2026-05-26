@@ -72,8 +72,8 @@ function hasAdditionalFiles(skillMdPath: string): boolean {
  *
  * Search order (highest priority first):
  * 1. Project skills (.skills/)
- * 2. Agent skills (~/.letta/agents/{id}/skills/)
- * 3. Agent memory skills ($MEMORY_DIR/skills/ or ~/.letta/agents/{id}/memory/skills/)
+ * 2. Agent memory skills (~/.letta/agents/{id}/memory/skills/)
+ * 3. Agent memory skills fallback ($MEMORY_DIR/skills/)
  * 4. Global skills (~/.letta/skills/)
  * 5. Bundled skills
  */
@@ -91,7 +91,7 @@ export async function readSkillContent(
     // Not in project, continue
   }
 
-  // 2. Try agent skills directory (if agentId provided)
+  // 2. Try agent memory skills directory (if agentId provided)
   if (agentId) {
     const agentSkillPath = join(
       getAgentSkillsDir(agentId),
@@ -106,7 +106,7 @@ export async function readSkillContent(
     }
   }
 
-  // 3. Try agent memory skills directories
+  // 3. Try agent memory skills fallback directories
   for (const memorySkillsDir of getMemorySkillsDirs(agentId)) {
     const memorySkillPath = join(memorySkillsDir, skillId, "SKILL.md");
     try {

@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import type { EnsureLocalMemfsCheckoutOptions } from "@/agent/memory-filesystem";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { ListMemoryCommand } from "@/types/protocol_v2";
 import {
@@ -16,7 +17,10 @@ import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
 export type ListMemoryCommandTestOverrides = {
-  ensureLocalMemfsCheckout?: (agentId: string) => Promise<void>;
+  ensureLocalMemfsCheckout?: (
+    agentId: string,
+    options?: EnsureLocalMemfsCheckoutOptions,
+  ) => Promise<void>;
   getMemoryFilesystemRoot?: (agentId: string) => string;
   isMemfsEnabledOnServer?: (agentId: string) => Promise<boolean>;
 };
@@ -48,7 +52,7 @@ export async function handleListMemoryCommand(
   try {
     const {
       ensureLocalMemfsCheckout: actualEnsureLocalMemfsCheckout,
-      getMemoryFilesystemRoot: actualGetMemoryFilesystemRoot,
+      getScopedMemoryFilesystemRoot: actualGetMemoryFilesystemRoot,
       isMemfsEnabledOnServer: actualIsMemfsEnabledOnServer,
     } = await import("@/agent/memory-filesystem");
     const ensureLocalMemfsCheckout =
@@ -89,10 +93,10 @@ export async function handleListMemoryCommand(
       return true;
     }
 
-    if (!memfsInitialized) {
-      await ensureLocalMemfsCheckout(parsed.agent_id);
-      memfsInitialized = existsSync(join(memoryRoot, ".git"));
-    }
+    await ensureLocalMemfsCheckout(parsed.agent_id, {
+      pullOnExistingRepo: true,
+    });
+    memfsInitialized = existsSync(join(memoryRoot, ".git"));
 
     if (!memfsInitialized) {
       throw new Error(

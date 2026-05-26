@@ -133,6 +133,110 @@ Plugins that need Slack/Discord-style auto-routing or rich Desktop management
 remain first-party/bundled work for now. Custom plugins can still expose custom
 `MessageChannel` actions and schema fragments via `messageActions`.
 
+> Note: inbound channel delivery and user-visible replies are separate steps.
+> A channel message can successfully reach the agent, but the agent still has to
+> call `MessageChannel` to reply. If the transcript shows the incoming
+> `<channel-notification>` but no `MessageChannel` tool call, this is usually a
+> model/prompting issue rather than a channel adapter failure. For debugging,
+> check whether the notification reached the conversation, whether the agent
+> called `MessageChannel`, whether the tool result says the message was sent,
+> and whether the route/account IDs match the original chat.
+
+## Local backend channels
+
+Channels can run against the experimental local backend without registering a
+remote environment. In this mode the backend is in-process, so no
+`LETTA_BASE_URL` is required.
+
+```bash
+letta channels install telegram
+letta channels configure telegram
+letta server --backend local --channels telegram
+```
+
+Then send the bot a message to get a pairing code and bind it to the local agent
+and conversation:
+
+```bash
+letta channels pair \
+  --channel telegram \
+  --code XXXXXX \
+  --agent <agent-id> \
+  --conversation default
+```
+
+Only set `LETTA_BASE_URL` for a separate self-hosted server. For example,
+`LETTA_BASE_URL=http://localhost:8283 letta server --channels telegram` talks to
+a server running at that URL. Do not set a dummy `LETTA_BASE_URL` for
+`--backend local`.
+
+## Channel slash commands
+
+Typed slash commands are handled before normal channel ingress so operational
+commands do not get delivered to the agent as regular user messages. The shared
+channel command set is:
+
+- `/status` — show account, listener, route, agent, and conversation state.
+- `/pause` — disable agent replies for the current routed chat.
+- `/resume` — re-enable agent replies for the current routed chat.
+- `/cancel` — abort the in-progress agent turn for the current routed chat.
+- `/chat` — show the Letta web chat link for the current route.
+- `/reflection` — start a memory reflection pass for the current route's agent
+  conversation when MemFS is enabled.
+
+Slack-native slash command payloads currently exist only for `/cancel`; the rest
+are expected to be sent as normal channel messages in the relevant chat/thread.
+
+## Slack app manifest notes
+
+The bundled Slack channel runs in Socket Mode. The Slack app must still declare
+the events, scopes, and slash commands that Slack should deliver to Letta Code.
+For `/cancel`, add the `commands` bot scope and a native slash command entry:
+
+```yaml
+features:
+  slash_commands:
+    - command: /cancel
+      url: https://example.com/slack/commands
+      description: Cancel the in-progress Letta agent turn
+      usage_hint: ""
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - channels:history
+      - chat:write
+      - commands
+      - files:read
+      - files:write
+      - groups:history
+      - im:history
+      - reactions:read
+      - reactions:write
+      - users:read
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.channels
+      - message.groups
+      - message.im
+      - reaction_added
+      - reaction_removed
+  socket_mode_enabled: true
+```
+
+Slack-native slash command payloads do not identify a thread. If `/cancel` is
+sent through Slack's native command UI in a channel, Letta Code can target the
+sole routed thread in that channel; if multiple Letta threads are routed there,
+send `/cancel` as a normal thread message instead so the thread route is
+unambiguous.
+
+The slash command `url` is present because Slack manifests require one; the
+Socket Mode listener receives the command over the app-level WebSocket.
+
+
 ## First-party vs user plugins
 
 First-party plugins are bundled in `src/channels/<id>/` and registered by the

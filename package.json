@@ -1,8 +1,9 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.25.10",
+  "version": "0.26.2",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
+  "packageManager": "bun@1.3.0",
   "bin": {
     "letta": "letta.js"
   },
@@ -13,7 +14,8 @@
     "scripts",
     "skills",
     "vendor",
-    "dist/types"
+    "dist/types",
+    "docs"
   ],
   "exports": {
     ".": "./letta.js",
@@ -27,7 +29,7 @@
   },
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=18"
+    "node": ">=22.19.0"
   },
   "publishConfig": {
     "access": "public"
@@ -38,6 +40,7 @@
     "ink-link": "^5.0.0",
     "node-pty": "^1.1.0",
     "open": "^10.2.0",
+    "react": "18.2.0",
     "sharp": "^0.34.5",
     "shiki": "^4.0.2",
     "strip-ansi": "^7.2.0",
@@ -47,7 +50,7 @@
     "@vscode/ripgrep": "^1.17.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-ai": "^0.75.5",
     "@slack/bolt": "^4.7.0",
     "@types/bun": "^1.3.7",
     "@types/diff": "^8.0.0",
@@ -64,7 +67,6 @@
     "madge": "^8.0.0",
     "minimatch": "^10.0.3",
     "picomatch": "^2.3.1",
-    "react": "18.2.0",
     "typescript": "^5.0.0"
   },
   "scripts": {
@@ -77,6 +79,7 @@
     "check:exported-functions": "node scripts/check-exported-functions.js",
     "check:filename-casing": "node scripts/check-filename-casing.js",
     "check:test-mock-isolation": "bun run scripts/check-test-mock-isolation.js",
+    "check:test-coverage": "node scripts/check-test-coverage.cjs",
     "check": "bun run scripts/check.js",
     "dev": "LETTA_DEBUG=${LETTA_DEBUG:-1} LETTA_RESPONSES_WS=${LETTA_RESPONSES_WS:-1} bun --loader=.md:text --loader=.mdx:text --loader=.txt:text run src/index.ts",
     "build": "node scripts/postinstall-patches.js && bun run build.js",

@@ -21,6 +21,7 @@ import {
   type LocalMessage,
 } from "@/backend/local/local-message";
 import type { ClientTool } from "@/tools/manager";
+import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
   isRetryableLocalProviderError,
@@ -93,8 +94,27 @@ class PiProviderError extends Error {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+class EmptyPiResponseError extends Error {
+  readonly isRetryable = true;
+
+  constructor() {
+    super("Received empty content in local provider response.");
+    this.name = "EmptyPiResponseError";
+  }
+}
+
+function hasAssistantOutputContent(message: AssistantMessage): boolean {
+  return message.content.some((block) => {
+    if (block.type === "toolCall") return true;
+    if (block.type === "text") return block.text.trim().length > 0;
+    return false;
+  });
+}
+
+function assertAssistantHasOutputContent(message: AssistantMessage): void {
+  if (!hasAssistantOutputContent(message)) {
+    throw new EmptyPiResponseError();
+  }
 }
 
 async function sleepWithAbort(
@@ -139,53 +159,156 @@ function toPiTools(clientTools: unknown[]): Tool[] | undefined {
   return tools.length > 0 ? tools : undefined;
 }
 
-function toPiMessages(messages: LocalMessage[]): Message[] {
-  // Strip trailing assistant messages — providers like Anthropic require the
-  // conversation to end with a user or tool-result message. A trailing
-  // assistant message can appear when a stream errors mid-turn (e.g. timeout)
-  // and the retry sends no new user input, leaving the partial assistant
-  // response as the last message.
-  let trimmed = messages;
-  while (trimmed.length > 0 && trimmed.at(-1)?.role === "assistant") {
-    trimmed = trimmed.slice(0, -1);
-  }
+const EMPTY_TOOL_RESULT_PLACEHOLDER = "No result provided";
 
-  return trimmed.map((message) => {
-    if (message.role === "user") {
-      return {
-        role: "user",
-        content: message.content,
-        timestamp: message.timestamp,
-      } satisfies Message;
-    }
-    if (message.role === "toolResult") {
-      return {
-        role: "toolResult",
-        toolCallId: message.toolCallId,
-        toolName: message.toolName,
-        content: message.content,
-        details: message.details,
-        isError: message.isError,
-        timestamp: message.timestamp,
-      } satisfies Message;
-    }
+type LocalUserContent = Extract<LocalMessage, { role: "user" }>["content"];
+type LocalAssistantContent = Extract<
+  LocalMessage,
+  { role: "assistant" }
+>["content"];
+type LocalToolResultContent = Extract<
+  LocalMessage,
+  { role: "toolResult" }
+>["content"];
+
+function isEmptyTextBlock(block: { type: string; text?: unknown }): boolean {
+  return (
+    block.type === "text" &&
+    typeof block.text === "string" &&
+    block.text.trim().length === 0
+  );
+}
+
+function dropEmptyTextBlocks<T extends { type: string; text?: unknown }>(
+  content: T[],
+): T[] {
+  return content.filter((block) => !isEmptyTextBlock(block));
+}
+
+function normalizeUserContent(
+  content: LocalUserContent,
+): LocalUserContent | undefined {
+  if (typeof content === "string") {
+    return content.trim().length > 0 ? content : undefined;
+  }
+  const normalized = dropEmptyTextBlocks(content);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeAssistantContent(
+  content: LocalAssistantContent,
+): LocalAssistantContent | undefined {
+  const normalized = dropEmptyTextBlocks(content);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeToolResultContent(
+  content: LocalToolResultContent,
+): LocalToolResultContent {
+  const normalized = dropEmptyTextBlocks(content);
+  return normalized.length > 0
+    ? normalized
+    : [{ type: "text", text: EMPTY_TOOL_RESULT_PLACEHOLDER }];
+}
+
+function toPiMessage(message: LocalMessage): Message | undefined {
+  if (message.role === "user") {
+    const content = normalizeUserContent(message.content);
+    if (!content) return undefined;
     return {
-      role: "assistant",
-      content: message.content,
-      api: message.api,
-      provider: message.provider,
-      model: message.model,
-      ...(message.responseModel
-        ? { responseModel: message.responseModel }
-        : {}),
-      ...(message.responseId ? { responseId: message.responseId } : {}),
-      ...(message.diagnostics ? { diagnostics: message.diagnostics } : {}),
-      usage: message.usage,
-      stopReason: message.stopReason,
-      ...(message.errorMessage ? { errorMessage: message.errorMessage } : {}),
+      role: "user",
+      content,
       timestamp: message.timestamp,
     } satisfies Message;
+  }
+  if (message.role === "toolResult") {
+    return {
+      role: "toolResult",
+      toolCallId: message.toolCallId,
+      toolName: message.toolName,
+      content: normalizeToolResultContent(message.content),
+      details: message.details,
+      isError: message.isError,
+      timestamp: message.timestamp,
+    } satisfies Message;
+  }
+  const content = normalizeAssistantContent(message.content);
+  if (!content) return undefined;
+  return {
+    role: "assistant",
+    content,
+    api: message.api,
+    provider: message.provider,
+    model: message.model,
+    ...(message.responseModel ? { responseModel: message.responseModel } : {}),
+    ...(message.responseId ? { responseId: message.responseId } : {}),
+    ...(message.diagnostics ? { diagnostics: message.diagnostics } : {}),
+    usage: message.usage,
+    stopReason: message.stopReason,
+    ...(message.errorMessage ? { errorMessage: message.errorMessage } : {}),
+    timestamp: message.timestamp,
+  } satisfies Message;
+}
+
+function toPiMessages(messages: LocalMessage[]): Message[] {
+  let normalized = messages.flatMap((message) => {
+    const piMessage = toPiMessage(message);
+    return piMessage ? [piMessage] : [];
   });
+
+  // Strip trailing assistant messages after normalization. Providers like
+  // Anthropic require the conversation to end with a user or tool-result
+  // message, and dropping empty text-only user messages can expose a trailing
+  // partial assistant response from a failed turn.
+  while (normalized.length > 0 && normalized.at(-1)?.role === "assistant") {
+    normalized = normalized.slice(0, -1);
+  }
+
+  return normalized;
+}
+
+function stripOpenAIResponsesReplayItemIds(
+  payload: unknown,
+): unknown | undefined {
+  if (!isRecord(payload) || !Array.isArray(payload.input)) return undefined;
+
+  let changed = false;
+  const input = payload.input.map((item) => {
+    if (!isRecord(item) || !("id" in item)) return item;
+    const type = item.type;
+    if (
+      type !== "reasoning" &&
+      type !== "message" &&
+      type !== "function_call"
+    ) {
+      return item;
+    }
+
+    changed = true;
+    const next = { ...item };
+    delete next.id;
+    return next;
+  });
+
+  return changed ? { ...payload, input } : undefined;
+}
+
+function withOpenAIResponsesReplayIdSanitizer(
+  existing: SimpleStreamOptions["onPayload"] | undefined,
+): SimpleStreamOptions["onPayload"] {
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+
+    const sanitized = stripOpenAIResponsesReplayItemIds(next);
+    if (sanitized !== undefined) return sanitized;
+    return upstreamChanged ? next : undefined;
+  };
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -364,6 +487,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         : {}),
     };
+    if (resolved.model.api === "openai-responses") {
+      // pi-ai replays OpenAI Responses output items from transcript history.
+      // Those upstream item IDs (rs_*, msg_*, fc_*) are not retrievable when the
+      // request uses store:false, so remove them and replay the full item bodies.
+      options.onPayload = withOpenAIResponsesReplayIdSanitizer(
+        options.onPayload,
+      );
+    }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
     try {
@@ -387,6 +518,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         }
         if (part.type === "done") {
+          assertAssistantHasOutputContent(part.message);
           finalMessage = part.message;
           yield providerLocalMessage(
             toLocalAssistantMessage(part.message, input),
@@ -397,6 +529,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       if (streamError) throw streamError;
       finalMessage ??= await result.result();
+      assertAssistantHasOutputContent(finalMessage);
       if (
         finalMessage.stopReason === "error" ||
         finalMessage.stopReason === "aborted"

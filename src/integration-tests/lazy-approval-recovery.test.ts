@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
+import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 import {
   formatCapturedOutput,
   summarizeRecentMessages,
@@ -72,7 +72,7 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
       ],
       {
         cwd: process.cwd(),
-        env: createIsolatedCliTestEnv(),
+        env: createAuthenticatedCliTestEnv(),
       },
     );
 

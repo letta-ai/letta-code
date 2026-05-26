@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ import type {
   ConversationUpdateBody,
 } from "@/backend/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { isRecord } from "@/utils/type-guards";
 import type { LocalCompactionStats } from "./compaction";
 import {
   emptyLocalUsage,
@@ -145,8 +147,23 @@ function shouldUseDefaultLocalModel(model: unknown): boolean {
   );
 }
 
-function timestampForSequence(sequence: number): string {
-  return new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString();
+function currentIsoTimestamp(): string {
+  return new Date().toISOString();
+}
+
+function parseIsoTimestamp(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isSyntheticLocalTimestamp(value: string | null | undefined): boolean {
+  const parsed = parseIsoTimestamp(value);
+  if (parsed === null) return false;
+  return (
+    parsed >= Date.UTC(2026, 0, 1, 0, 0, 0, 0) &&
+    parsed < Date.UTC(2026, 0, 2, 0, 0, 0, 0)
+  );
 }
 
 function optionalRecordOrNull(
@@ -165,11 +182,11 @@ function conversationModelSettings(
 function createLocalConversationRecord(
   conversationId: string,
   agentId: string,
-  sequence: number,
+  _sequence: number,
   body: Partial<ConversationCreateBody> = {},
 ): StoredConversation {
   const bodyRecord = body as Record<string, unknown>;
-  const now = timestampForSequence(sequence);
+  const now = currentIsoTimestamp();
   const modelSettings = conversationModelSettings(bodyRecord.model_settings);
   return {
     id: conversationId,
@@ -275,7 +292,7 @@ function normalizeAgentRecord(
   };
 }
 
-function projectAgentState(
+export function projectLocalAgentState(
   record: LocalAgentRecord,
   messageIds: string[] = [],
   inContextMessageIds: string[] = messageIds,
@@ -343,10 +360,6 @@ function normalizeContent(content: unknown): unknown {
     return textContent(content);
   }
   return content;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function localImageContentFromLegacyImage(
@@ -651,6 +664,119 @@ function createdAtForLocalMessage(message: LocalMessage): string | undefined {
 
 function localMessageDate(message: LocalMessage, fallbackDate: string): string {
   return createdAtForLocalMessage(message) ?? fallbackDate;
+}
+
+interface LocalTranscriptTiming {
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+function fileIsoTimestamp(value: number | undefined): string | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? new Date(value).toISOString()
+    : undefined;
+}
+
+function transcriptTimingForConversationDir(
+  conversationDir: string,
+  manifest?: LocalTranscriptManifest,
+): LocalTranscriptTiming {
+  const messagesPath = transcriptMessagesPath(conversationDir);
+  const stats = existsSync(messagesPath) ? statSync(messagesPath) : undefined;
+  const manifestCreatedAt =
+    parseIsoTimestamp(manifest?.created_at) !== null
+      ? manifest?.created_at
+      : undefined;
+  const fileCreatedAt = fileIsoTimestamp(stats?.birthtimeMs);
+  const fileUpdatedAt = fileIsoTimestamp(stats?.mtimeMs);
+  return {
+    createdAt: manifestCreatedAt ?? fileCreatedAt ?? fileUpdatedAt,
+    updatedAt: fileUpdatedAt ?? manifestCreatedAt ?? fileCreatedAt,
+  };
+}
+
+function interpolatedTranscriptTimestamp(
+  timing: LocalTranscriptTiming,
+  index: number,
+  count: number,
+): string | undefined {
+  const start =
+    parseIsoTimestamp(timing.createdAt) ?? parseIsoTimestamp(timing.updatedAt);
+  const end = parseIsoTimestamp(timing.updatedAt) ?? start;
+  if (start === null || end === null) return undefined;
+  if (count <= 1) return new Date(end).toISOString();
+
+  const boundedEnd = Math.max(start, end);
+  const offset = Math.round(((boundedEnd - start) * index) / (count - 1));
+  return new Date(start + offset).toISOString();
+}
+
+function repairSyntheticLocalMessageTimestamps(
+  messages: LocalMessage[],
+  timing: LocalTranscriptTiming,
+): LocalMessage[] {
+  if (
+    !messages.some((message) =>
+      isSyntheticLocalTimestamp(createdAtForLocalMessage(message)),
+    )
+  ) {
+    return messages;
+  }
+
+  return messages.map((message, index) => {
+    const currentCreatedAt = createdAtForLocalMessage(message);
+    if (!isSyntheticLocalTimestamp(currentCreatedAt)) return message;
+
+    const createdAt = interpolatedTranscriptTimestamp(
+      timing,
+      index,
+      messages.length,
+    );
+    if (!createdAt) return message;
+
+    const metadata = message.metadata ?? {};
+    const updatedAt = isSyntheticLocalTimestamp(metadata.updated_at)
+      ? createdAt
+      : (metadata.updated_at ?? createdAt);
+    return {
+      ...message,
+      timestamp: timestampFromIso(createdAt),
+      metadata: {
+        ...metadata,
+        created_at: createdAt,
+        updated_at: updatedAt,
+      },
+    };
+  });
+}
+
+function repairSyntheticConversationTimestamps(
+  conversation: StoredConversation,
+  messages: LocalMessage[],
+  timing: LocalTranscriptTiming,
+): StoredConversation {
+  const firstMessage = messages[0];
+  const lastMessage = messages.at(-1);
+  const firstMessageAt = firstMessage
+    ? createdAtForLocalMessage(firstMessage)
+    : undefined;
+  const lastMessageAt = lastMessage
+    ? createdAtForLocalMessage(lastMessage)
+    : undefined;
+  return {
+    ...conversation,
+    created_at: isSyntheticLocalTimestamp(conversation.created_at)
+      ? (firstMessageAt ?? timing.createdAt ?? conversation.created_at)
+      : conversation.created_at,
+    updated_at: isSyntheticLocalTimestamp(conversation.updated_at)
+      ? (lastMessageAt ?? timing.updatedAt ?? conversation.updated_at)
+      : conversation.updated_at,
+    last_message_at:
+      !conversation.last_message_at ||
+      isSyntheticLocalTimestamp(conversation.last_message_at)
+        ? (lastMessageAt ?? timing.updatedAt ?? conversation.last_message_at)
+        : conversation.last_message_at,
+  };
 }
 
 export class LocalStore {
@@ -987,7 +1113,7 @@ export class LocalStore {
       const updated = updateLocalConversationRecord(
         created,
         body,
-        timestampForSequence(this.messageSeq + this.conversationSeq + 1),
+        currentIsoTimestamp(),
       );
       this.conversations.set(
         this.conversationKey(conversationId, created.agent_id),
@@ -999,7 +1125,7 @@ export class LocalStore {
     const updated = updateLocalConversationRecord(
       current,
       body,
-      timestampForSequence(this.messageSeq + this.conversationSeq + 1),
+      currentIsoTimestamp(),
     );
     this.conversations.set(
       this.conversationKey(conversationId, current.agent_id),
@@ -1776,7 +1902,7 @@ export class LocalStore {
     this.messageSeq += 1;
     return {
       id: `${this.storedMessageIdPrefix}${this.messageSeq}`,
-      date: new Date(Date.UTC(2026, 0, 1, 0, 0, this.messageSeq)).toISOString(),
+      date: currentIsoTimestamp(),
       agent_id: agentId,
       conversation_id: conversation.id,
       ...fields,
@@ -1900,10 +2026,7 @@ export class LocalStore {
         message.id,
       ];
     }
-    const date = localMessageDate(
-      message,
-      new Date(Date.UTC(2026, 0, 1, 0, 0, this.messageSeq + 1)).toISOString(),
-    );
+    const date = localMessageDate(message, currentIsoTimestamp());
     conversation.last_message_at = date;
     conversation.updated_at = date;
     this.conversations.set(key, conversation);
@@ -1955,11 +2078,11 @@ export class LocalStore {
   }
 
   private nextLocalMessageDate(): string {
-    return timestampForSequence(this.localMessageSeq + 1);
+    return currentIsoTimestamp();
   }
 
   private currentLocalMessageDate(): string {
-    return timestampForSequence(this.localMessageSeq);
+    return currentIsoTimestamp();
   }
 
   private loadFromStorage(): void {
@@ -1983,19 +2106,34 @@ export class LocalStore {
     if (existsSync(conversationsDir)) {
       for (const conversationDirName of readdirSync(conversationsDir)) {
         const conversationDir = join(conversationsDir, conversationDirName);
-        const conversation = readJsonFile<StoredConversation>(
+        let conversation = readJsonFile<StoredConversation>(
           join(conversationDir, "conversation.json"),
         );
         if (!conversation?.id || !conversation.agent_id) continue;
 
-        validateLocalTranscriptManifest(conversationDir, this.storageDir);
+        const manifest = validateLocalTranscriptManifest(
+          conversationDir,
+          this.storageDir,
+        );
         const key = this.conversationKey(
           conversation.id,
           conversation.agent_id,
         );
-        const localMessages = readJsonlFile<LocalMessage>(
-          transcriptMessagesPath(conversationDir),
-        ).map(normalizeLocalMessageForPi);
+        const timing = transcriptTimingForConversationDir(
+          conversationDir,
+          manifest,
+        );
+        const localMessages = repairSyntheticLocalMessageTimestamps(
+          readJsonlFile<LocalMessage>(
+            transcriptMessagesPath(conversationDir),
+          ).map(normalizeLocalMessageForPi),
+          timing,
+        );
+        conversation = repairSyntheticConversationTimestamps(
+          conversation,
+          localMessages,
+          timing,
+        );
         const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
           join(conversationDir, "system-prompt.json"),
         );
@@ -2057,7 +2195,7 @@ export class LocalStore {
     const inContextMessageIds =
       this.conversations.get(key)?.in_context_message_ids ?? messageIds;
     const lastRunCompletion = defaultMessages.at(-1)?.date ?? null;
-    return projectAgentState(
+    return projectLocalAgentState(
       record,
       messageIds,
       inContextMessageIds,

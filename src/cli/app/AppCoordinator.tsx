@@ -36,15 +36,21 @@ import {
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
 } from "@/agent/subagent-state";
-import { getBackend } from "@/backend";
+import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
+import {
+  cancelActiveConnectOperation,
+  isActiveConnectOperationCancellable,
+} from "@/cli/commands/connect-command-state";
 import {
   type CommandFinishedEvent,
   type CommandHandle,
   createCommandRunner,
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
+import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
+import { useLocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -66,12 +72,16 @@ import {
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { setErrorContext } from "@/cli/helpers/error-context";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import {
   buildContentFromQueueBatch,
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
+import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
+import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   collectFinishedTaskToolCalls,
@@ -93,7 +103,6 @@ import {
   renderWindowTitle,
   resolveWindowTitleConfig,
 } from "@/cli/helpers/window-title-config";
-import { useConfigurableStatusLine } from "@/cli/hooks/use-configurable-status-line";
 import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
   useTerminalRows,
@@ -109,6 +118,7 @@ import {
   updateTask,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
+import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
@@ -118,7 +128,6 @@ import {
   QueueRuntime,
   type TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
-import { ralphMode } from "@/ralph/mode";
 import {
   createSharedReminderState,
   enqueueCommandIoReminder,
@@ -150,7 +159,6 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
-import { generatePlanFilePath } from "@/utils/plan-name";
 import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
 import { recordTuiPerf } from "@/utils/tui-perf";
 import { getVersion } from "@/version";
@@ -201,6 +209,101 @@ import { useQueuedApprovalSubmit } from "./use-queued-approval-submit";
 import { useReasoningCycle } from "./use-reasoning-cycle";
 import { useSubmitHandler } from "./use-submit-handler";
 
+function buildStartupCommandHints(options: {
+  isResumingConversation: boolean;
+  isPinned: boolean;
+  isLocalBackend: boolean;
+  hasMessages: boolean;
+  hasCloudCredentials: boolean;
+  hasAvailableLocalModels: boolean;
+}): string[] {
+  const {
+    isResumingConversation,
+    isPinned,
+    isLocalBackend,
+    hasMessages,
+    hasCloudCredentials,
+    hasAvailableLocalModels,
+  } = options;
+
+  const baseHints = isResumingConversation
+    ? [
+        "→ **/agents**    list all agents",
+        "→ **/resume**    browse all conversations",
+        "→ **/new**       start a new conversation",
+        "→ **/init**      initialize your agent's memory",
+        "→ **/remember**  teach your agent",
+      ]
+    : isPinned
+      ? [
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/memory**    view your agent's memory",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ]
+      : [
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/pin**       save + name your agent",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ];
+
+  const onboardingHints: string[] = [];
+
+  if (isLocalBackend && !hasAvailableLocalModels) {
+    onboardingHints.push(
+      "→ **/model**     switch models",
+      "→ **/connect**   configure your llm api keys",
+    );
+  }
+
+  if (!hasMessages) {
+    onboardingHints.push(
+      "→ **/rename**    name your agent",
+      "→ **/init**      initialize your agent's memory",
+    );
+  }
+
+  if (!hasCloudCredentials) {
+    onboardingHints.push("→ **/login**     sign in to Constellation");
+  }
+
+  const dedupedHints: string[] = [];
+  const seenHints = new Set<string>();
+
+  for (const hint of [...onboardingHints, ...baseHints]) {
+    if (seenHints.has(hint)) {
+      continue;
+    }
+    seenHints.add(hint);
+    dedupedHints.push(hint);
+    if (dedupedHints.length === 5) {
+      break;
+    }
+  }
+
+  return dedupedHints;
+}
+
+function hasConversationContent(lines: Line[]): boolean {
+  return lines.some((line) => {
+    switch (line.kind) {
+      case "user":
+      case "assistant":
+      case "reasoning":
+      case "tool_call":
+      case "error":
+      case "command":
+      case "bash_command":
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
 export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
@@ -215,6 +318,8 @@ export function App({
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
   agentProvenance = null,
+  startupHasCloudCredentials = false,
+  startupHasAvailableLocalModels = true,
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
@@ -223,6 +328,13 @@ export function App({
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
     prefetchAvailableModelHandles();
+  }, []);
+
+  const [hasAvailableLocalModels, setHasAvailableLocalModels] = useState(
+    startupHasAvailableLocalModels,
+  );
+  const markLocalModelsAvailable = useCallback(() => {
+    setHasAvailableLocalModels(true);
   }, []);
 
   // Track current agent (can change when swapping)
@@ -326,6 +438,7 @@ export function App({
   const [networkPhase, setNetworkPhase] = useState<
     "upload" | "download" | "error" | null
   >(null);
+  const [executionPhase, setExecutionPhase] = useState<ExecutionPhase>(null);
   // Track permission mode changes for UI updates.
   // Keep a ref in sync *synchronously* so async approval classification never
   // reads a stale mode during the render/effect window.
@@ -339,52 +452,22 @@ export function App({
     null,
   );
 
-  // Store the last plan file path for post-approval rendering
-  // (needed because plan mode is exited before rendering the result)
-  const lastPlanFilePathRef = useRef<string | null>(null);
-  const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {
-    if (planFilePath) {
-      lastPlanFilePathRef.current = planFilePath;
+  const setUiPermissionMode = useCallback((mode: PermissionMode) => {
+    uiPermissionModeRef.current = mode;
+    _setUiPermissionMode(mode);
+
+    // Keep the permissionMode singleton in sync *immediately*.
+    if (permissionMode.getMode() !== mode) {
+      permissionMode.setMode(mode);
     }
   }, []);
-
-  const setUiPermissionMode = useCallback(
-    (mode: PermissionMode) => {
-      uiPermissionModeRef.current = mode;
-      _setUiPermissionMode(mode);
-
-      // Keep the permissionMode singleton in sync *immediately*.
-      //
-      // We also have a useEffect sync (below) as a safety net, but relying on it
-      // introduces a render/effect window where the UI can show YOLO while the
-      // singleton still reports an older mode. That window is enough to break
-      // plan-mode restoration (plan remembers the singleton's mode-at-entry).
-      if (permissionMode.getMode() !== mode) {
-        // If entering plan mode via UI state, ensure a plan file path is set.
-        if (mode === "plan" && !permissionMode.getPlanFilePath()) {
-          const planPath = generatePlanFilePath();
-          permissionMode.setPlanFilePath(planPath);
-          cacheLastPlanFilePath(planPath);
-        }
-        permissionMode.setMode(mode);
-      }
-    },
-    [cacheLastPlanFilePath],
-  );
-
-  const statusLineTriggerVersionRef = useRef(0);
-  const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
 
   useEffect(() => {
     if (!streaming) {
       setNetworkPhase(null);
+      setExecutionPhase(null);
     }
   }, [streaming]);
-
-  const triggerStatusLineRefresh = useCallback(() => {
-    statusLineTriggerVersionRef.current += 1;
-    setStatusLineTriggerVersion(statusLineTriggerVersionRef.current);
-  }, []);
 
   // Guard ref for preventing concurrent processConversation calls
   // Separate from streaming state which may be set early for UI responsiveness
@@ -428,8 +511,6 @@ export function App({
       | { type: "deny"; approval: ApprovalRequest; reason: string }
     >
   >([]);
-  const lastAutoApprovedEnterPlanToolCallIdRef = useRef<string | null>(null);
-  const lastAutoHandledExitPlanToolCallIdRef = useRef<string | null>(null);
   const [isExecutingTool, setIsExecutingTool] = useState(false);
   const [queuedApprovalResults, setQueuedApprovalResults] = useState<
     ApprovalResult[] | null
@@ -509,16 +590,9 @@ export function App({
     [],
   );
 
-  // Ralph Wiggum mode: config waiting for next message to capture as prompt
-  const [pendingRalphConfig, setPendingRalphConfig] = useState<{
-    completionPromise: string | null | undefined;
-    maxIterations: number;
-    isYolo: boolean;
-  } | null>(null);
-
-  // Track ralph mode for UI updates (singleton state doesn't trigger re-renders)
-  const [uiRalphActive, setUiRalphActive] = useState(
-    ralphMode.getState().isActive,
+  // Track goal loop state for UI updates (singleton state does not trigger re-renders)
+  const [uiGoalLoopActive, setUiGoalLoopActive] = useState(
+    goalLoopMode.getState().isActive,
   );
 
   // Derive current approval from pending approvals and results
@@ -645,6 +719,7 @@ export function App({
   const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
     modelLabel: string;
     initialModelId: string;
+    initialEffort?: ModelReasoningEffort;
     options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
   } | null>(null);
   const closeOverlay = useCallback(() => {
@@ -764,10 +839,15 @@ export function App({
     : agentState?.model_settings;
   const derivedReasoningEffort: ModelReasoningEffort | null =
     deriveReasoningEffort(effectiveModelSettings, llmConfig);
+  const startupModelDisplayOverride = getStartupModelDisplayOverride({
+    isLocalBackend: isLocalBackendEnabled(),
+    startupHasAvailableLocalModels: hasAvailableLocalModels,
+  });
 
   // Use tier-aware resolution so the display matches the agent's reasoning effort
   // (e.g. "GPT-5.3-Codex" not just "GPT-5" for the first match).
   const currentModelDisplay = useMemo(() => {
+    if (startupModelDisplayOverride) return startupModelDisplayOverride;
     if (!currentModelLabel) return null;
     const info = getModelInfoForLlmConfig(currentModelLabel, {
       reasoning_effort: derivedReasoningEffort ?? null,
@@ -784,7 +864,12 @@ export function App({
       currentModelLabel.split("/").pop() ??
       null
     );
-  }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
+  }, [
+    currentModelLabel,
+    derivedReasoningEffort,
+    llmConfig,
+    startupModelDisplayOverride,
+  ]);
 
   // Set terminal title from window title config
   useEffect(() => {
@@ -799,6 +884,7 @@ export function App({
   }, [agentState?.name, conversationSummary, projectDirectory]);
 
   const currentModelProvider = llmConfig?.provider_name ?? null;
+  const isLocalBackend = isLocalBackendEnabled();
   const currentReasoningEffort: ModelReasoningEffort | null =
     currentModelLabel?.startsWith("letta/auto")
       ? null
@@ -874,6 +960,11 @@ export function App({
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
+
+  // Live total context tokens (history + system + output). Mirrors
+  // `contextTrackerRef.current.lastContextTokens` into reactive state so
+  // UI can react during streaming — the ref itself doesn't trigger renders.
+  const [usedContextTokens, setUsedContextTokens] = useState(0);
 
   // Trajectory token/time bases (accumulated across runs)
   const [trajectoryTokenBase, setTrajectoryTokenBase] = useState(0);
@@ -2032,10 +2123,9 @@ export function App({
     buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
   }, [tokenStreamingEnabled]);
 
-  // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const statusLine = useConfigurableStatusLine({
+  const statusLinePayload = buildStatusLinePayload({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
     reasoningEffort: currentReasoningEffort,
@@ -2057,6 +2147,12 @@ export function App({
     turnCount: sharedReminderStateRef.current.turnCount,
     reflectionMode: reflectionSettings.trigger,
     reflectionStepCount: reflectionSettings.stepCount,
+    memfsEnabled:
+      agentId !== "loading" ? settingsManager.isMemfsEnabled(agentId) : false,
+    memfsDirectory:
+      agentId !== "loading" && settingsManager.isMemfsEnabled(agentId)
+        ? getScopedMemoryFilesystemRoot(agentId)
+        : null,
     permissionMode: uiPermissionMode,
     networkPhase,
     terminalWidth: chromeColumns,
@@ -2065,25 +2161,37 @@ export function App({
       status: a.status,
       duration_ms: Date.now() - a.startTime,
     })),
-    triggerVersion: statusLineTriggerVersion,
   });
-
-  const previousStreamingForStatusLineRef = useRef(streaming);
-  useEffect(() => {
-    // Trigger status line when an assistant stream completes.
-    if (previousStreamingForStatusLineRef.current && !streaming) {
-      triggerStatusLineRefresh();
-    }
-    previousStreamingForStatusLineRef.current = streaming;
-  }, [streaming, triggerStatusLineRefresh]);
-
-  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${effectiveContextWindowSize ?? ""}|${currentReasoningEffort ?? ""}|${currentSystemPromptId ?? ""}|${currentToolset ?? ""}`;
-
-  // Trigger status line when key session identity/display state changes.
-  useEffect(() => {
-    void statusLineRefreshIdentity;
-    triggerStatusLineRefresh();
-  }, [statusLineRefreshIdentity, triggerStatusLineRefresh]);
+  const extensionContext = useMemo(
+    () =>
+      buildStatuslineRenderContext({
+        payload: statusLinePayload,
+        ui: {
+          currentModelProvider: currentModelProvider ?? null,
+          goalStatusText: null,
+          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+          isByokProvider: Boolean(
+            currentModelProvider?.startsWith("lc-") ||
+              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          ),
+          isLocalBackend,
+          isOpenAICodexProvider:
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          rightColumnWidth: Math.max(
+            28,
+            Math.min(72, Math.floor(chromeColumns * 0.45)),
+          ),
+        },
+      }),
+    [
+      chromeColumns,
+      currentModelProvider,
+      hasTemporaryModelOverride,
+      isLocalBackend,
+      statusLinePayload,
+    ],
+  );
+  const extensionRuntime = useLocalExtensionRuntime(extensionContext);
 
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
@@ -2256,7 +2364,6 @@ export function App({
 
   const currentApprovalShouldCommitPreview = useMemo(() => {
     if (!currentApproval) return false;
-    if (currentApproval.toolName === "ExitPlanMode") return false;
     return shouldEagerCommitApprovalPreview(currentApproval);
   }, [currentApproval, shouldEagerCommitApprovalPreview]);
 
@@ -2264,6 +2371,7 @@ export function App({
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
     setTokenCount(b.tokenCount);
+    setUsedContextTokens(contextTrackerRef.current.lastContextTokens);
     const newLines = toLines(b);
     setLines(newLines);
     commitEligibleLines(b);
@@ -2497,52 +2605,9 @@ export function App({
     }
   }, [refreshDerived]);
 
-  // Eager commit for ExitPlanMode: Always commit plan preview to staticItems
-  // This keeps the dynamic area small (just approval options) to avoid flicker
-  useEffect(() => {
-    if (!currentApproval) return;
-    if (currentApproval.toolName !== "ExitPlanMode") return;
-
-    const toolCallId = currentApproval.toolCallId;
-    if (!toolCallId) return;
-
-    // Already committed preview for this approval?
-    if (eagerCommittedPreviewsRef.current.has(toolCallId)) return;
-
-    const planFilePath = permissionMode.getPlanFilePath();
-    if (!planFilePath) return;
-
-    try {
-      const { readFileSync, existsSync } = require("node:fs");
-      if (!existsSync(planFilePath)) return;
-
-      const planContent = readFileSync(planFilePath, "utf-8");
-
-      // Commit preview to static area
-      const previewItem: StaticItem = {
-        kind: "approval_preview",
-        id: `approval-preview-${toolCallId}`,
-        toolCallId,
-        toolName: currentApproval.toolName,
-        toolArgs: currentApproval.toolArgs || "{}",
-        planContent,
-        planFilePath,
-      };
-
-      setStaticItems((prev) => [...prev, previewItem]);
-      eagerCommittedPreviewsRef.current.add(toolCallId);
-
-      // Also capture plan file path for post-approval rendering
-      lastPlanFilePathRef.current = planFilePath;
-    } catch {
-      // Failed to read plan, don't commit preview
-    }
-  }, [currentApproval]);
-
   // Eager commit for large approval previews (bash/file edits) to avoid flicker
   useEffect(() => {
     if (!currentApproval) return;
-    if (currentApproval.toolName === "ExitPlanMode") return;
 
     const toolCallId = currentApproval.toolCallId;
     if (!toolCallId) return;
@@ -2589,7 +2654,7 @@ export function App({
             snapshot: {
               continueSession,
               agentState,
-              agentProvenance,
+              startupHasAvailableLocalModels,
               terminalWidth: columns,
             },
           },
@@ -2623,33 +2688,14 @@ export function App({
         ? `Resuming conversation with **${agentName}**`
         : `Starting new conversation with **${agentName}**`;
 
-      // Command hints - vary based on agent state:
-      // - Resuming: show /new (they may want a fresh conversation)
-      // - New session + unpinned: show /pin (they should save their agent)
-      // - New session + pinned: show /memory (they're already saved)
-      const commandHints = isResumingConversation
-        ? [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    browse all conversations",
-            "→ **/new**       start a new conversation",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ]
-        : isPinned
-          ? [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/memory**    view your agent's memory",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ]
-          : [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/pin**       save + name your agent",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ];
+      const commandHints = buildStartupCommandHints({
+        isResumingConversation,
+        isPinned,
+        isLocalBackend: isLocalBackendEnabled(),
+        hasMessages: messageHistory.length > 0,
+        hasCloudCredentials: startupHasCloudCredentials,
+        hasAvailableLocalModels: startupHasAvailableLocalModels,
+      });
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -2686,9 +2732,10 @@ export function App({
     continueSession,
     columns,
     agentState,
-    agentProvenance,
     resumedExistingConversation,
     releaseNotes,
+    startupHasCloudCredentials,
+    startupHasAvailableLocalModels,
     messageHistory,
   ]);
 
@@ -2954,8 +3001,21 @@ export function App({
           return;
         }
 
+        const hasConversationModelSettings =
+          conversationModelSettings !== undefined &&
+          conversationModelSettings !== null &&
+          Object.keys(conversationModelSettings as Record<string, unknown>)
+            .length > 0;
+        const resolvedConversationModelSettings = hasConversationModelSettings
+          ? conversationModelSettings
+          : conversationModel === undefined ||
+              conversationModel === null ||
+              conversationModel === agentModelHandle
+            ? (agentState.model_settings ?? null)
+            : null;
+
         const reasoningEffort = deriveReasoningEffort(
-          conversationModelSettings,
+          resolvedConversationModelSettings,
           agentState.llm_config,
         );
 
@@ -2980,7 +3040,7 @@ export function App({
             : conversationContextWindowLimit;
 
         setHasConversationModelOverride(true);
-        setConversationOverrideModelSettings(conversationModelSettings ?? null);
+        setConversationOverrideModelSettings(resolvedConversationModelSettings);
         setConversationOverrideContextWindowLimit(
           resolvedConversationContextWindowLimit,
         );
@@ -3345,6 +3405,7 @@ export function App({
     setLlmConfig,
     setNeedsEagerApprovalCheck,
     setNetworkPhase,
+    setExecutionPhase,
     setPendingApprovals,
     setRestoreQueueOnCancel,
     setRestoredInput,
@@ -3355,7 +3416,7 @@ export function App({
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -3378,11 +3439,7 @@ export function App({
     handleApproveAlways,
     handleDenyCurrent,
     handleCancelApprovals,
-    handlePlanApprove,
-    handlePlanKeepPlanning,
     handleQuestionSubmit,
-    handleEnterPlanModeApprove,
-    handleEnterPlanModeReject,
   } = useApprovalFlow({
     abortControllerRef,
     agentId,
@@ -3394,7 +3451,6 @@ export function App({
     autoDeniedApprovals,
     autoHandledResults,
     buffersRef,
-    cacheLastPlanFilePath,
     clearApprovalToolContext,
     closeTrajectorySegment,
     commandRunner,
@@ -3407,9 +3463,6 @@ export function App({
     executingToolCallIdsRef,
     interruptQueuedRef,
     isExecutingTool,
-    lastAutoApprovedEnterPlanToolCallIdRef,
-    lastAutoHandledExitPlanToolCallIdRef,
-    lastPlanFilePathRef,
     loadingState,
     openTrajectorySegment,
     pendingApprovals,
@@ -3704,9 +3757,7 @@ export function App({
     appendTaskNotificationEvents,
     bashCommandCacheRef,
     buffersRef,
-    cacheLastPlanFilePath,
     checkPendingApprovalsForSlashCommand,
-    chromeColumns,
     commandRunner,
     commandRunning,
     consumeQueuedApprovalInputForCurrentConversation,
@@ -3714,16 +3765,13 @@ export function App({
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
-    currentModelDisplay,
     currentModelHandle,
     currentModelId,
     currentModelLabel,
     currentModelProvider,
-    currentReasoningEffort,
-    currentSystemPromptId,
-    currentToolset,
     effectiveContextWindowSize,
     emittedIdsRef,
+    extensionRuntime,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
     generateConversationTitle,
@@ -3733,17 +3781,14 @@ export function App({
     hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
-    lastRunIdRef,
     llmConfigRef,
     maybeCarryOverActiveConversationModel,
     needsEagerApprovalCheck,
-    networkPhase,
     openTrajectorySegment,
     overrideContentPartsRef,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
-    pendingRalphConfig,
     processConversation,
     processConversationWithQueuedApprovals,
     profileConfirmPending,
@@ -3777,9 +3822,9 @@ export function App({
     setHasConversationModelOverride,
     setLines,
     setLlmConfig,
+    markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPendingRalphConfig,
     setPinDialogLocal,
     setProfileConfirmPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
@@ -3791,7 +3836,7 @@ export function App({
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
     streaming,
@@ -3801,9 +3846,7 @@ export function App({
     tokenStreamingEnabled,
     trajectoryRunTokenStartRef,
     trajectoryTokenDisplayRef,
-    triggerStatusLineRefresh,
     tuiQueueRef,
-    uiPermissionMode,
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
@@ -3937,6 +3980,7 @@ export function App({
     contextTrackerRef,
     conversationIdRef,
     currentModelHandle,
+    currentModelId,
     currentToolset,
     isAgentBusy,
     llmConfig,
@@ -3949,6 +3993,7 @@ export function App({
     setConversationOverrideModelSettings,
     setCurrentModelHandle,
     setCurrentModelId,
+    setHasAvailableLocalModels,
     setCurrentPersonalityId,
     setCurrentSystemPromptId,
     setCurrentToolset,
@@ -3978,7 +4023,10 @@ export function App({
       // Process the queued action
       if (action.type === "switch_agent") {
         // Call handleAgentSelect - it will see isAgentBusy() as false now
-        handleAgentSelect(action.agentId, { commandId: action.commandId });
+        handleAgentSelect(action.agentId, {
+          commandId: action.commandId,
+          backendMode: action.backendMode,
+        });
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
         handleModelSelect(action.modelId, action.commandId);
@@ -4101,6 +4149,7 @@ export function App({
     completeOverlay,
     commandRunner,
     currentModelId,
+    lastRunIdRef,
     sessionStatsRef,
     withCommandLock,
   });
@@ -4114,25 +4163,19 @@ export function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Handle ralph mode exit from Input component (shift+tab)
-  const handleRalphExit = useCallback(() => {
-    const ralph = ralphMode.getState();
-    if (ralph.isActive) {
-      const wasYolo = ralph.isYolo;
-      const wasGoal = ralph.mode === "goal";
-      ralphMode.deactivate();
-      setUiRalphActive(false);
-      if (wasGoal) {
-        settingsManager.updateConversationGoalStatus(
-          conversationIdRef.current,
-          "paused",
-        );
-      }
-      if (wasYolo) {
-        permissionMode.setMode("standard");
-        setUiPermissionMode("standard");
-      }
+  // Handle goal loop exit from Input component (Shift+Tab).
+  const handleGoalLoopExit = useCallback(() => {
+    if (!goalLoopMode.getState().isActive) {
+      return;
     }
+    goalLoopMode.deactivate();
+    setUiGoalLoopActive(false);
+    settingsManager.updateConversationGoalStatus(
+      conversationIdRef.current,
+      "paused",
+    );
+    permissionMode.setMode("standard");
+    setUiPermissionMode("standard");
   }, [setUiPermissionMode]);
 
   // Toggle expand/collapse for a specific tool call ID
@@ -4172,24 +4215,10 @@ export function App({
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
-      if (mode === "plan" && !settingsManager.isPlanModeEnabled()) {
-        permissionMode.setMode("unrestricted");
-        setUiPermissionMode("unrestricted");
-        triggerStatusLineRefresh();
-        return;
-      }
-
-      // When entering plan mode via tab cycling, generate and set the plan file path
-      if (mode === "plan") {
-        const planPath = generatePlanFilePath();
-        permissionMode.setPlanFilePath(planPath);
-        cacheLastPlanFilePath(planPath);
-      }
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
-      triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode, cacheLastPlanFilePath],
+    [setUiPermissionMode],
   );
 
   const { flushPendingReasoningEffort, handleCycleReasoningEffort } =
@@ -4358,7 +4387,7 @@ export function App({
           snapshot: {
             continueSession,
             agentState,
-            agentProvenance,
+            startupHasAvailableLocalModels,
             terminalWidth: columns,
           },
         },
@@ -4376,27 +4405,19 @@ export function App({
       // Build status message based on session type
       const agentName = agentState?.name || "Unnamed Agent";
       const headerMessage = resumedExistingConversation
-        ? `Resuming (empty) conversation with **${agentName}**`
+        ? `Resuming new conversation with **${agentName}**`
         : continueSession
           ? `Starting new conversation with **${agentName}**`
           : "Creating a new agent";
 
-      // Command hints - for pinned agents show /memory, for unpinned show /pin
-      const commandHints = isPinned
-        ? [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/memory**    view your agent's memory",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ]
-        : [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/pin**       save + name your agent",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ];
+      const commandHints = buildStartupCommandHints({
+        isResumingConversation: resumedExistingConversation,
+        isPinned,
+        isLocalBackend: isLocalBackendEnabled(),
+        hasMessages: messageHistory.length > 0,
+        hasCloudCredentials: startupHasCloudCredentials,
+        hasAvailableLocalModels: startupHasAvailableLocalModels,
+      });
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -4436,6 +4457,8 @@ export function App({
     agentState,
     refreshDerived,
     releaseNotes,
+    startupHasCloudCredentials,
+    startupHasAvailableLocalModels,
   ]);
 
   const liveTrajectorySnapshot =
@@ -4455,6 +4478,20 @@ export function App({
   const inputVisible = !showExitStats;
   const inputEnabled =
     !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+  const onEscapeCommandCancel = useCallback(() => {
+    if (isActiveConnectOperationCancellable()) {
+      cancelActiveConnectOperation();
+      return true;
+    }
+    return false;
+  }, []);
+  const showInspirationalPromptHints =
+    loadingState === "ready" &&
+    !hasConversationContent(lines) &&
+    !streaming &&
+    queueDisplay.length === 0 &&
+    pendingApprovals.length === 0 &&
+    !anySelectorOpen;
   const currentApprovalPreviewCommitted = currentApproval?.toolCallId
     ? eagerCommittedPreviewsRef.current.has(currentApproval.toolCallId)
     : false;
@@ -4493,6 +4530,7 @@ export function App({
       currentModelHandle={currentModelHandle}
       currentModelId={currentModelId}
       currentModelProvider={currentModelProvider}
+      isLocalBackend={isLocalBackend}
       currentPersonalityId={currentPersonalityId}
       currentReasoningEffort={currentReasoningEffort}
       currentSystemPromptId={currentSystemPromptId}
@@ -4507,6 +4545,8 @@ export function App({
       emittedIdsRef={emittedIdsRef}
       feedbackPrefill={feedbackPrefill}
       footerUpdateText={footerUpdateText}
+      showInspirationalPromptHints={showInspirationalPromptHints}
+      onEscapeCommandCancel={onEscapeCommandCancel}
       handleAgentSelect={handleAgentSelect}
       handleApproveAlways={handleApproveAlways}
       handleApproveCurrent={handleApproveCurrent}
@@ -4518,8 +4558,6 @@ export function App({
       handleCreateNewAgent={handleCreateNewAgent}
       handleCycleReasoningEffort={handleCycleReasoningEffort}
       handleDenyCurrent={handleDenyCurrent}
-      handleEnterPlanModeApprove={handleEnterPlanModeApprove}
-      handleEnterPlanModeReject={handleEnterPlanModeReject}
       handleQueueEdit={handleQueueEdit}
       handleExit={handleExit}
       handleExperimentsConfirm={handleExperimentsConfirm}
@@ -4529,11 +4567,9 @@ export function App({
       handlePasteError={handlePasteError}
       handlePermissionModeChange={handlePermissionModeChange}
       handlePersonalitySelect={handlePersonalitySelect}
-      handlePlanApprove={handlePlanApprove}
-      handlePlanKeepPlanning={handlePlanKeepPlanning}
       handleProfileEscapeCancel={handleProfileEscapeCancel}
       handleQuestionSubmit={handleQuestionSubmit}
-      handleRalphExit={handleRalphExit}
+      handleGoalLoopExit={handleGoalLoopExit}
       handleSleeptimeModeSelect={handleSleeptimeModeSelect}
       handleSystemPromptSelect={handleSystemPromptSelect}
       handleToolsetSelect={handleToolsetSelect}
@@ -4544,21 +4580,21 @@ export function App({
       inputVisible={inputVisible}
       interruptRequested={interruptRequested}
       isAgentBusy={isAgentBusy}
-      lastPlanFilePathRef={lastPlanFilePathRef}
       liveItems={liveItems}
       liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
       loadingState={loadingState}
+      markLocalModelsAvailable={markLocalModelsAvailable}
       maybeCarryOverActiveConversationModel={
         maybeCarryOverActiveConversationModel
       }
       modelReasoningPrompt={modelReasoningPrompt}
       modelSelectorOptions={modelSelectorOptions}
       networkPhase={networkPhase}
+      executionPhase={executionPhase}
       onSubmit={onSubmit}
       pendingApprovals={pendingApprovals}
       pendingConversationSwitchRef={pendingConversationSwitchRef}
       pendingIds={pendingIds}
-      pendingRalphConfig={pendingRalphConfig}
       pinDialogLocal={pinDialogLocal}
       precomputedDiffsRef={precomputedDiffsRef}
       profileConfirmPending={profileConfirmPending}
@@ -4595,13 +4631,17 @@ export function App({
       openOverlay={openOverlay}
       staticItems={staticItems}
       staticRenderEpoch={staticRenderEpoch}
-      statusLine={statusLine}
+      statusLinePayload={statusLinePayload}
+      statusLinePrompt={CLI_GLYPHS.prompt}
+      extensionRuntime={extensionRuntime}
       streaming={streaming}
       stubDescriptions={stubDescriptions}
       thinkingMessage={thinkingMessage}
       trajectoryTokenDisplay={trajectoryTokenDisplay}
+      usedContextTokens={usedContextTokens}
+      contextWindowSize={effectiveContextWindowSize}
       uiPermissionMode={uiPermissionMode}
-      uiRalphActive={uiRalphActive}
+      uiGoalLoopActive={uiGoalLoopActive}
       updateAgentName={updateAgentName}
     />
   );

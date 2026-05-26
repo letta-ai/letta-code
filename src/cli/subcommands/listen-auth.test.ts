@@ -26,6 +26,7 @@ describe("listen subcommand auth resolution", () => {
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
   const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  const originalLocalBackend = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 
   beforeEach(() => {
     refreshAccessTokenMock.mockReset();
@@ -41,6 +42,7 @@ describe("listen subcommand auth resolution", () => {
     delete process.env.LETTA_API_KEY;
     delete process.env.LETTA_BASE_URL;
     delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 
     settingsManager.getSettingsWithSecureTokens = mock(async () => ({
       env: {},
@@ -80,6 +82,11 @@ describe("listen subcommand auth resolution", () => {
       delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
     } else {
       process.env.LETTA_DESKTOP_DEBUG_PANEL = originalDesktopDebugPanel;
+    }
+    if (originalLocalBackend === undefined) {
+      delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+    } else {
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackend;
     }
     __listenSubcommandTestUtils.setOAuthDepsForTests(null);
   });
@@ -254,6 +261,27 @@ describe("listen subcommand auth resolution", () => {
     expect(result).toEqual({
       kind: "local-channels",
       serverUrl: "http://localhost:8283",
+      backend: "self-hosted",
+    });
+    expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+    expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
+  test("uses local channel mode for local backend listeners with channels", async () => {
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: {},
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    const result = await __listenSubcommandTestUtils.resolveListenerStartupMode(
+      ["telegram"],
+    );
+
+    expect(result).toEqual({
+      kind: "local-channels",
+      serverUrl: "local-backend",
+      backend: "local",
     });
     expect(requestDeviceCodeMock).not.toHaveBeenCalled();
     expect(pollForTokenMock).not.toHaveBeenCalled();

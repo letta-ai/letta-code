@@ -19,6 +19,15 @@ import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import {
+  type ExtensionToolDefinition,
+  extensionToolRequiresApproval,
+  getAvailableExtensionToolsRegistry,
+  getExtensionToolDefinition,
+  isExtensionToolParallelSafe,
+  runExtensionTool,
+} from "@/extensions/tool-registry";
+import type { ExtensionToolRunContext } from "@/extensions/types";
+import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreToolUseHooks,
@@ -38,6 +47,7 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
 import { refreshFileIndex } from "@/utils/file-index";
+import { isRecord } from "@/utils/type-guards";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
@@ -254,23 +264,7 @@ export function filterBuiltInToolNamesByClientAllowlist(
   );
 }
 
-const PLAN_MODE_TOOL_NAMES = new Set<ToolName>([
-  "EnterPlanMode",
-  "ExitPlanMode",
-]);
 const WORKTREE_TOOL_NAMES = new Set<ToolName>(["CreateWorktree"]);
-
-function isPlanModeTool(toolName: string): boolean {
-  return PLAN_MODE_TOOL_NAMES.has(toolName as ToolName);
-}
-
-function isPlanModeEnabled(): boolean {
-  try {
-    return settingsManager.isPlanModeEnabled();
-  } catch {
-    return false;
-  }
-}
 
 function shouldIncludeWorktreeTool(): boolean {
   try {
@@ -278,14 +272,6 @@ function shouldIncludeWorktreeTool(): boolean {
   } catch {
     return true;
   }
-}
-
-function filterPlanModeTools(toolNames: ToolName[]): ToolName[] {
-  if (isPlanModeEnabled()) {
-    return toolNames;
-  }
-
-  return toolNames.filter((name) => !PLAN_MODE_TOOL_NAMES.has(name));
 }
 
 function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
@@ -312,14 +298,28 @@ function filterExternalToolsByClientAllowlist(
   );
 }
 
+function filterExtensionToolsByClientAllowlist(
+  extensionTools: Map<string, ExtensionToolDefinition>,
+  clientToolAllowlist?: string[],
+): Map<string, ExtensionToolDefinition> {
+  if (clientToolAllowlist === undefined) {
+    return new Map(extensionTools);
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return new Map(
+    Array.from(extensionTools.entries()).filter(([name, tool]) =>
+      matchesClientToolAllowlistEntry(allowSet, tool.name, name),
+    ),
+  );
+}
+
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
   "TaskOutput",
   "CreateWorktree",
   "Edit",
-  "EnterPlanMode",
-  "ExitPlanMode",
   "TaskStop",
   // "MultiEdit",
   // "LS",
@@ -362,8 +362,6 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
   "CreateWorktree",
-  "EnterPlanMode",
-  "ExitPlanMode",
   "memory_apply_patch",
   "Task",
   "TaskOutput",
@@ -380,8 +378,6 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
   "CreateWorktree",
-  "EnterPlanMode",
-  "ExitPlanMode",
   "memory",
   "Skill",
   "Task",
@@ -405,8 +401,6 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   TaskOutput: { requiresApproval: false },
   CreateWorktree: { requiresApproval: true },
   Edit: { requiresApproval: true },
-  EnterPlanMode: { requiresApproval: true },
-  ExitPlanMode: { requiresApproval: false },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },
   KillBash: { requiresApproval: true },
@@ -542,21 +536,18 @@ let toolExecutionContextCounter = 0;
 
 /**
  * Mutable, shared-by-reference permission mode state.
- * Stored in each ToolExecutionContextSnapshot so tools like EnterPlanMode
- * and ExitPlanMode can update the mode without touching the global singleton.
  * Listener mode populates this from ConversationRuntime; CLI mode uses a
  * wrapper around the global permissionMode singleton.
  */
 export type PermissionModeState = {
   mode: PermissionMode;
-  planFilePath: string | null;
-  modeBeforePlan: PermissionMode | null;
 };
 
 type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
+  extensionTools: Map<string, ExtensionToolDefinition>;
   workingDirectory: string;
   runtimeContext: RuntimeContextSnapshot;
   permissionModeState: PermissionModeState;
@@ -600,6 +591,8 @@ function buildExecutionRuntimeContextSnapshot(options?: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   runtimeContext?: Partial<RuntimeContextSnapshot>;
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  channelTurnSources?: ChannelTurnSource[];
 }): RuntimeContextSnapshot {
   const mergedScope: RuntimeContextSnapshot = {
     ...(getRuntimeContext() ?? {}),
@@ -632,15 +625,11 @@ function buildExecutionRuntimeContextSnapshot(options?: {
     getCurrentWorkingDirectory();
   mergedScope.permissionMode =
     options?.permissionModeState?.mode ?? mergedScope.permissionMode;
-  mergedScope.planFilePath =
-    options?.permissionModeState?.planFilePath ?? mergedScope.planFilePath;
-  mergedScope.modeBeforePlan =
-    options?.permissionModeState?.modeBeforePlan ?? mergedScope.modeBeforePlan;
 
   return mergedScope;
 }
 
-function getExecutionContextById(
+export function getExecutionContextById(
   contextId: string,
 ): ToolExecutionContextSnapshot | undefined {
   return getExecutionContexts().get(contextId);
@@ -662,8 +651,6 @@ export function updateToolExecutionContextWorkingDirectory(
 
 /**
  * Returns the mutable PermissionModeState for an execution context.
- * EnterPlanMode / ExitPlanMode use this to update the per-conversation
- * state without touching the global singleton.
  */
 export function getExecutionContextPermissionModeState(
   contextId: string,
@@ -915,25 +902,43 @@ export async function executeExternalTool(
 /**
  * Get all loaded tools in the format expected by the Letta API's client_tools field.
  * Maps internal tool names to server-facing names for proper tool invocation.
- * Includes both built-in tools and external tools.
+ * Includes built-in, external, and extension tools.
  */
 export function getClientToolsFromRegistry(): ClientTool[] {
   return buildClientToolsFromSnapshot(
     withDynamicMessageChannelCache(toolRegistry),
     getExternalToolsRegistry(),
+    getAvailableExtensionToolsRegistry(),
   );
 }
 
 function buildClientToolsFromSnapshot(
   registry: ToolRegistry,
   externalTools: Map<string, ExternalToolDefinition>,
+  extensionTools: Map<string, ExtensionToolDefinition>,
 ): ClientTool[] {
   const builtInTools = Array.from(registry.entries()).map(([name, tool]) => ({
     name: getServerToolName(name),
     description: tool.schema.description,
     parameters: tool.schema.input_schema,
   }));
-  const externalClientTools = Array.from(externalTools.values()).map(
+  for (const name of externalTools.keys()) {
+    if (extensionTools.has(name)) {
+      debugLog(
+        "tools",
+        "extension tool %s shadows external tool with same name",
+        name,
+      );
+    }
+  }
+  const externalClientTools = Array.from(externalTools.values())
+    .filter((tool) => !extensionTools.has(tool.name))
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }));
+  const extensionClientTools = Array.from(extensionTools.values()).map(
     (tool) => ({
       name: tool.name,
       description: tool.description,
@@ -941,14 +946,14 @@ function buildClientToolsFromSnapshot(
     }),
   );
 
-  return [...builtInTools, ...externalClientTools];
+  return [...builtInTools, ...externalClientTools, ...extensionClientTools];
 }
 
 function getEffectivePermissionModeState(
   permissionModeState?: PermissionModeState,
 ): PermissionModeState {
   // When no scoped state is provided (local/CLI mode), create a live proxy to
-  // the global singleton so EnterPlanMode/ExitPlanMode still work correctly.
+  // the global singleton.
   return (
     permissionModeState ?? {
       get mode() {
@@ -956,18 +961,6 @@ function getEffectivePermissionModeState(
       },
       set mode(value: PermissionMode) {
         globalPermissionMode.setMode(value);
-      },
-      get planFilePath() {
-        return globalPermissionMode.getPlanFilePath();
-      },
-      set planFilePath(value: string | null) {
-        globalPermissionMode.setPlanFilePath(value);
-      },
-      get modeBeforePlan() {
-        return globalPermissionMode.getModeBeforePlan();
-      },
-      set modeBeforePlan(_value: PermissionMode | null) {
-        // managed internally by globalPermissionMode
       },
     }
   );
@@ -978,15 +971,24 @@ function capturePreparedToolExecutionContext(
     toolRegistry: ToolRegistry;
     externalTools: Map<string, ExternalToolDefinition>;
     externalExecutor?: ExternalToolExecutor;
+    extensionTools: Map<string, ExtensionToolDefinition>;
   },
   options?: {
     clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
+    channelToolScope?: MessageChannelToolDiscoveryScope | null;
+    channelTurnSources?: ChannelTurnSource[];
   },
 ): PreparedToolExecutionContext {
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
+  if (options?.channelToolScope !== undefined) {
+    runtimeContext.channelToolScope = options.channelToolScope;
+  }
+  if (options?.channelTurnSources?.length) {
+    runtimeContext.channelTurnSources = [...options.channelTurnSources];
+  }
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
     externalTools: filterExternalToolsByClientAllowlist(
@@ -994,6 +996,10 @@ function capturePreparedToolExecutionContext(
       options?.clientToolAllowlist,
     ),
     externalExecutor: snapshot.externalExecutor,
+    extensionTools: filterExtensionToolsByClientAllowlist(
+      snapshot.extensionTools,
+      options?.clientToolAllowlist,
+    ),
     workingDirectory:
       runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
     runtimeContext,
@@ -1009,6 +1015,7 @@ function capturePreparedToolExecutionContext(
     clientTools: buildClientToolsFromSnapshot(
       executionSnapshot.toolRegistry,
       executionSnapshot.externalTools,
+      executionSnapshot.extensionTools,
     ),
     loadedToolNames: Array.from(executionSnapshot.toolRegistry.keys()),
   };
@@ -1028,6 +1035,7 @@ export function captureToolExecutionContext(
       toolRegistry: new Map(toolRegistry),
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      extensionTools: getAvailableExtensionToolsRegistry(),
     },
     {
       workingDirectory,
@@ -1040,6 +1048,8 @@ export async function prepareCurrentToolExecutionContext(options?: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   runtimeContext?: Partial<RuntimeContextSnapshot>;
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  channelTurnSources?: ChannelTurnSource[];
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -1052,6 +1062,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
   );
@@ -1064,6 +1075,7 @@ export async function prepareToolExecutionContextForSpecificTools(
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
+    channelTurnSources?: ChannelTurnSource[];
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1076,6 +1088,7 @@ export async function prepareToolExecutionContextForSpecificTools(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
   );
@@ -1090,6 +1103,7 @@ export async function prepareToolExecutionContextForModel(
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
+    channelTurnSources?: ChannelTurnSource[];
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1102,6 +1116,7 @@ export async function prepareToolExecutionContextForModel(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
   );
@@ -1113,7 +1128,22 @@ export async function prepareToolExecutionContextForModel(
  * @returns Tool permissions object with requiresApproval flag
  */
 export function getToolPermissions(toolName: string) {
+  const extensionRequiresApproval = extensionToolRequiresApproval(toolName);
+  if (extensionRequiresApproval !== undefined) {
+    return { requiresApproval: extensionRequiresApproval };
+  }
   return TOOL_PERMISSIONS[toolName as ToolName] || { requiresApproval: false };
+}
+
+export function isExtensionToolParallelSafeForContext(
+  toolName: string,
+  contextId?: string,
+): boolean {
+  const context = contextId ? getExecutionContextById(contextId) : undefined;
+  return isExtensionToolParallelSafe(
+    toolName,
+    context?.extensionTools ?? getAvailableExtensionToolsRegistry(),
+  );
 }
 
 /**
@@ -1143,8 +1173,6 @@ export async function checkToolPermission(
       ...(agentIdArg ? { agentId: agentIdArg } : {}),
       workingDirectory,
       permissionMode: permissionModeStateArg?.mode,
-      planFilePath: permissionModeStateArg?.planFilePath ?? null,
-      modeBeforePlan: permissionModeStateArg?.modeBeforePlan ?? null,
     },
     () =>
       checkPermissionWithHooks(
@@ -1252,10 +1280,6 @@ async function buildSpecificToolRegistry(
     ) {
       continue;
     }
-    if (!isPlanModeEnabled() && isPlanModeTool(internalName)) {
-      continue;
-    }
-
     const definition = TOOL_DEFINITIONS[internalName as ToolName];
     if (!definition) {
       console.warn(
@@ -1336,7 +1360,6 @@ async function resolveBaseToolNamesForModel(
     }
   }
 
-  baseToolNames = filterPlanModeTools(baseToolNames);
   baseToolNames = filterWorktreeTools(baseToolNames);
 
   // Append channel tool if channels are active
@@ -1605,10 +1628,6 @@ export function clipToolReturn(
  * @param result - The raw result from a tool execution
  * @returns A flattened string representation of the result
  */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
@@ -1632,6 +1651,10 @@ function flattenToolResponse(result: unknown): ToolReturnContent {
   }
 
   if (typeof result === "string") {
+    return result;
+  }
+
+  if (Array.isArray(result) && isMultimodalContent(result)) {
     return result;
   }
 
@@ -1705,6 +1728,304 @@ function flattenToolResponse(result: unknown): ToolReturnContent {
   return JSON.stringify(result);
 }
 
+function createLinkedAbortSignal(signals: Array<AbortSignal | undefined>): {
+  cleanup: () => void;
+  signal: AbortSignal;
+} {
+  const activeSignals = signals.filter(
+    (signal): signal is AbortSignal => signal !== undefined,
+  );
+  const controller = new AbortController();
+  const cleanupFns: Array<() => void> = [];
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      abort();
+      break;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    cleanupFns.push(() => signal.removeEventListener("abort", abort));
+  }
+
+  return {
+    cleanup: () => {
+      for (const cleanup of cleanupFns) {
+        cleanup();
+      }
+    },
+    signal: controller.signal,
+  };
+}
+
+function getExtensionToolStatus(result: unknown): "success" | "error" {
+  if (!isRecord(result)) return "success";
+  if (result.status === "error" || result.isError === true) return "error";
+  if (result.success === false) return "error";
+  return "success";
+}
+
+type ToolHookContext = {
+  args: Record<string, unknown>;
+  debugLabel: string;
+  scopedAgentId?: string;
+  toolCallId?: string;
+  toolName: string;
+  workingDirectory: string;
+};
+
+async function collectPostToolHookFeedback(
+  context: ToolHookContext,
+  result: {
+    errorType?: string;
+    failureOutput?: string;
+    output: string;
+    status: "success" | "error";
+  },
+): Promise<string[]> {
+  let postToolUseFeedback: string[] = [];
+  try {
+    const postHookResult = await runPostToolUseHooks(
+      context.toolName,
+      context.args,
+      { status: result.status, output: result.output },
+      context.toolCallId,
+      context.workingDirectory,
+      context.scopedAgentId,
+      undefined,
+      undefined,
+    );
+    postToolUseFeedback = postHookResult.feedback;
+  } catch (error) {
+    debugLog("hooks", `PostToolUse hook error (${context.debugLabel})`, error);
+  }
+
+  let postToolUseFailureFeedback: string[] = [];
+  if (result.status === "error") {
+    try {
+      const failureHookResult = await runPostToolUseFailureHooks(
+        context.toolName,
+        context.args,
+        result.failureOutput ?? result.output,
+        result.errorType ?? "tool_error",
+        context.toolCallId,
+        context.workingDirectory,
+        context.scopedAgentId,
+        undefined,
+        undefined,
+      );
+      postToolUseFailureFeedback = failureHookResult.feedback;
+    } catch (error) {
+      debugLog(
+        "hooks",
+        `PostToolUseFailure hook error (${context.debugLabel})`,
+        error,
+      );
+    }
+  }
+
+  return [...postToolUseFeedback, ...postToolUseFailureFeedback];
+}
+
+function appendHookFeedbackToText(text: string, feedback: string[]): string {
+  if (feedback.length === 0) return text;
+  return `${text}\n\n[Hook feedback]:\n${feedback.join("\n")}`;
+}
+
+function appendHookFeedbackToToolReturn(
+  toolReturn: ToolReturnContent,
+  feedback: string[],
+): ToolReturnContent {
+  if (feedback.length === 0) return toolReturn;
+  const feedbackMessage = `\n\n[Hook feedback]:\n${feedback.join("\n")}`;
+  if (typeof toolReturn === "string") {
+    return toolReturn + feedbackMessage;
+  }
+  return [...toolReturn, { type: "text" as const, text: feedbackMessage }];
+}
+
+async function executeExtensionTool(
+  toolName: string,
+  tool: ExtensionToolDefinition,
+  args: ToolArgs,
+  executionScope: RuntimeContextSnapshot,
+  options: {
+    signal?: AbortSignal;
+    toolCallId?: string;
+    onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+    workingDirectory: string;
+    scopedAgentId?: string;
+  },
+): Promise<ToolExecutionResult> {
+  const startTime = Date.now();
+  const linkedSignal = createLinkedAbortSignal([
+    options.signal,
+    tool.activationSignal,
+  ]);
+  const { signal } = linkedSignal;
+
+  const run = async (): Promise<ToolExecutionResult> => {
+    const preHookResult = await runPreToolUseHooks(
+      toolName,
+      args as Record<string, unknown>,
+      options.toolCallId,
+      options.workingDirectory,
+      options.scopedAgentId,
+    );
+    if (preHookResult.blocked) {
+      const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
+      return {
+        toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+        status: "error",
+      };
+    }
+
+    try {
+      const context: ExtensionToolRunContext = {
+        args: args as Record<string, unknown>,
+        cwd: options.workingDirectory,
+        workingDirectory: options.workingDirectory,
+        toolCallId: options.toolCallId ?? null,
+        signal,
+        ...(options.onOutput
+          ? {
+              onOutput: (chunk: string, stream: "stdout" | "stderr") => {
+                options.onOutput?.(
+                  stripAnsi(
+                    scrubSecretsFromString(chunk, options.scopedAgentId),
+                  ),
+                  stream,
+                );
+              },
+            }
+          : {}),
+        permissionMode: executionScope.permissionMode ?? null,
+        agent: { id: executionScope.agentId ?? null },
+        conversation: { id: executionScope.conversationId ?? null },
+        getContext: tool.getContext,
+      };
+      const result = await runExtensionTool(tool, context);
+      const duration = Date.now() - startTime;
+      const recordResult = isRecord(result) ? result : undefined;
+      const stdout = isStringArray(recordResult?.stdout)
+        ? recordResult.stdout
+        : undefined;
+      const stderr = isStringArray(recordResult?.stderr)
+        ? recordResult.stderr
+        : undefined;
+      const toolStatus = getExtensionToolStatus(result);
+      const flattenedResponse = flattenToolResponse(result);
+      const responseSize =
+        typeof flattenedResponse === "string"
+          ? flattenedResponse.length
+          : JSON.stringify(flattenedResponse).length;
+
+      telemetry.trackToolUsage(
+        toolName,
+        toolStatus === "success",
+        duration,
+        responseSize,
+        toolStatus === "error" ? "tool_error" : undefined,
+        stderr ? stderr.join("\n") : undefined,
+      );
+
+      const hookFeedback = await collectPostToolHookFeedback(
+        {
+          args: args as Record<string, unknown>,
+          debugLabel: "extension tool result path",
+          scopedAgentId: options.scopedAgentId,
+          toolCallId: options.toolCallId,
+          toolName,
+          workingDirectory: options.workingDirectory,
+        },
+        {
+          status: toolStatus,
+          output: getDisplayableToolReturn(flattenedResponse),
+          failureOutput:
+            typeof flattenedResponse === "string"
+              ? flattenedResponse
+              : JSON.stringify(flattenedResponse),
+          errorType: "tool_error",
+        },
+      );
+      const finalToolReturn = appendHookFeedbackToToolReturn(
+        flattenedResponse,
+        hookFeedback,
+      );
+
+      return {
+        toolReturn: finalToolReturn,
+        status: toolStatus,
+        ...(stdout && { stdout }),
+        ...(stderr && { stderr }),
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const isAbort =
+        signal.aborted ||
+        (error instanceof Error &&
+          (error.name === "AbortError" ||
+            error.message === "The operation was aborted" ||
+            ("code" in error && error.code === "ABORT_ERR")));
+      const errorType = isAbort
+        ? "abort"
+        : error instanceof Error
+          ? error.name
+          : "unknown";
+      const errorMessage = isAbort
+        ? INTERRUPTED_BY_USER
+        : error instanceof Error
+          ? error.message
+          : String(error);
+
+      telemetry.trackToolUsage(
+        toolName,
+        false,
+        duration,
+        errorMessage.length,
+        errorType,
+        errorMessage,
+      );
+
+      const hookFeedback = await collectPostToolHookFeedback(
+        {
+          args: args as Record<string, unknown>,
+          debugLabel: "extension tool exception path",
+          scopedAgentId: options.scopedAgentId,
+          toolCallId: options.toolCallId,
+          toolName,
+          workingDirectory: options.workingDirectory,
+        },
+        {
+          status: "error",
+          output: errorMessage,
+          failureOutput: errorMessage,
+          errorType,
+        },
+      );
+      const finalErrorMessage = appendHookFeedbackToText(
+        errorMessage,
+        hookFeedback,
+      );
+
+      return {
+        toolReturn: finalErrorMessage,
+        status: "error",
+      };
+    }
+  };
+
+  try {
+    return await runWithRuntimeContext(executionScope, run);
+  } finally {
+    linkedSignal.cleanup();
+  }
+}
+
 /**
  * Executes a tool by name with the provided arguments.
  *
@@ -1742,6 +2063,8 @@ export async function executeTool(
     context?.externalTools ?? getExternalToolsRegistry();
   const activeExternalExecutor =
     context?.externalExecutor ?? getExternalToolExecutor();
+  const activeExtensionTools =
+    context?.extensionTools ?? getAvailableExtensionToolsRegistry();
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
         workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
@@ -1756,6 +2079,23 @@ export async function executeTool(
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
 
+  if (activeExtensionTools.has(name)) {
+    const extensionTool = activeExtensionTools.get(name);
+    if (!extensionTool) {
+      return {
+        toolReturn: `Extension tool not found: ${name}`,
+        status: "error",
+      };
+    }
+    return executeExtensionTool(name, extensionTool, args, executionScope, {
+      signal: options?.signal,
+      toolCallId: options?.toolCallId,
+      onOutput: options?.onOutput,
+      workingDirectory,
+      scopedAgentId,
+    });
+  }
+
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
     return executeExternalTool(
@@ -1768,16 +2108,26 @@ export async function executeTool(
 
   const internalName = resolveInternalToolName(name, activeRegistry);
   if (!internalName) {
+    const availableTools = [
+      ...Array.from(activeRegistry.keys()),
+      ...Array.from(activeExternalTools.keys()),
+      ...Array.from(activeExtensionTools.keys()),
+    ];
     return {
-      toolReturn: `Tool not found: ${name}. Available tools: ${Array.from(activeRegistry.keys()).join(", ")}`,
+      toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
       status: "error",
     };
   }
 
   const tool = activeRegistry.get(internalName);
   if (!tool) {
+    const availableTools = [
+      ...Array.from(activeRegistry.keys()),
+      ...Array.from(activeExternalTools.keys()),
+      ...Array.from(activeExtensionTools.keys()),
+    ];
     return {
-      toolReturn: `Tool not found: ${name}. Available tools: ${Array.from(activeRegistry.keys()).join(", ")}`,
+      toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
       status: "error",
     };
   }
@@ -1874,15 +2224,8 @@ export async function executeTool(
 
       // Inject the execution context id for tools that need to mutate
       // turn-scoped execution state without touching global singletons.
-      const PLAN_MODE_TOOL_NAMES = new Set([
-        "EnterPlanMode",
-        "enter_plan_mode",
-        "ExitPlanMode",
-        "exit_plan_mode",
-      ]);
       if (
-        (PLAN_MODE_TOOL_NAMES.has(internalName) ||
-          WORKTREE_TOOL_NAMES.has(internalName as ToolName)) &&
+        WORKTREE_TOOL_NAMES.has(internalName as ToolName) &&
         options?.toolContextId
       ) {
         enhancedArgs = {
@@ -1978,87 +2321,33 @@ export async function executeTool(
         stderr ? stderr.join("\n") : undefined,
       );
 
-      // Run PostToolUse hooks - exit 2 injects stderr into agent context
-      // Note: preceding_reasoning/assistant_message not available here - tracked in accumulator for server tools
-      let postToolUseFeedback: string[] = [];
-      try {
-        const postHookResult = await runPostToolUseHooks(
-          internalName,
-          args as Record<string, unknown>,
-          {
-            status: toolStatus,
-            output: getDisplayableToolReturn(flattenedResponse),
-          },
-          options?.toolCallId,
-          workingDirectory,
+      const hookFeedback = await collectPostToolHookFeedback(
+        {
+          args: args as Record<string, unknown>,
+          debugLabel: "tool result path",
           scopedAgentId,
-          undefined, // precedingReasoning - not available in tool manager context
-          undefined, // precedingAssistantMessage - not available in tool manager context
-        );
-        postToolUseFeedback = postHookResult.feedback;
-      } catch (error) {
-        debugLog("hooks", "PostToolUse hook error (success path)", error);
-      }
-
-      // Run PostToolUseFailure hooks when tool returns error status
-      let postToolUseFailureFeedback: string[] = [];
-      if (toolStatus === "error") {
-        const errorOutput =
-          typeof flattenedResponse === "string"
-            ? flattenedResponse
-            : JSON.stringify(flattenedResponse);
-        try {
-          const failureHookResult = await runPostToolUseFailureHooks(
-            internalName,
-            args as Record<string, unknown>,
-            errorOutput,
-            "tool_error", // error type for returned errors
-            options?.toolCallId,
-            workingDirectory,
-            scopedAgentId,
-            undefined, // precedingReasoning - not available in tool manager context
-            undefined, // precedingAssistantMessage - not available in tool manager context
-          );
-          postToolUseFailureFeedback = failureHookResult.feedback;
-        } catch (error) {
-          debugLog(
-            "hooks",
-            "PostToolUseFailure hook error (tool returned error)",
-            error,
-          );
-        }
-      }
-
-      // Combine feedback from both hook types and inject into tool return
-      const allFeedback = [
-        ...postToolUseFeedback,
-        ...postToolUseFailureFeedback,
-      ];
-      if (allFeedback.length > 0) {
-        const feedbackMessage = `\n\n[Hook feedback]:\n${allFeedback.join("\n")}`;
-        let finalToolReturn: ToolReturnContent;
-        if (typeof flattenedResponse === "string") {
-          finalToolReturn = flattenedResponse + feedbackMessage;
-        } else if (Array.isArray(flattenedResponse)) {
-          // Append feedback as a new text content block
-          finalToolReturn = [
-            ...flattenedResponse,
-            { type: "text" as const, text: feedbackMessage },
-          ];
-        } else {
-          finalToolReturn = flattenedResponse;
-        }
-        return {
-          toolReturn: finalToolReturn,
+          toolCallId: options?.toolCallId,
+          toolName: internalName,
+          workingDirectory,
+        },
+        {
           status: toolStatus,
-          ...(stdout && { stdout }),
-          ...(stderr && { stderr }),
-        };
-      }
+          output: getDisplayableToolReturn(flattenedResponse),
+          failureOutput:
+            typeof flattenedResponse === "string"
+              ? flattenedResponse
+              : JSON.stringify(flattenedResponse),
+          errorType: "tool_error",
+        },
+      );
+      const finalToolReturn = appendHookFeedbackToToolReturn(
+        flattenedResponse,
+        hookFeedback,
+      );
 
       // Return the full response (truncation happens in UI layer only)
       return {
-        toolReturn: flattenedResponse,
+        toolReturn: finalToolReturn,
         status: toolStatus,
         ...(stdout && { stdout }),
         ...(stderr && { stderr }),
@@ -2092,56 +2381,26 @@ export async function executeTool(
         errorMessage,
       );
 
-      // Run PostToolUse hooks for error case - exit 2 injects stderr
-      let postToolUseFeedback: string[] = [];
-      try {
-        const postHookResult = await runPostToolUseHooks(
-          internalName,
-          args as Record<string, unknown>,
-          { status: "error", output: errorMessage },
-          options?.toolCallId,
-          workingDirectory,
+      const hookFeedback = await collectPostToolHookFeedback(
+        {
+          args: args as Record<string, unknown>,
+          debugLabel: "tool exception path",
           scopedAgentId,
-          undefined, // precedingReasoning - not available in tool manager context
-          undefined, // precedingAssistantMessage - not available in tool manager context
-        );
-        postToolUseFeedback = postHookResult.feedback;
-      } catch (error) {
-        debugLog("hooks", "PostToolUse hook error (error path)", error);
-      }
-
-      // Run PostToolUseFailure hooks - exit 2 injects stderr
-      let postToolUseFailureFeedback: string[] = [];
-      try {
-        const failureHookResult = await runPostToolUseFailureHooks(
-          internalName,
-          args as Record<string, unknown>,
-          errorMessage,
+          toolCallId: options?.toolCallId,
+          toolName: internalName,
+          workingDirectory,
+        },
+        {
+          status: "error",
+          output: errorMessage,
+          failureOutput: errorMessage,
           errorType,
-          options?.toolCallId,
-          workingDirectory,
-          scopedAgentId,
-          undefined, // precedingReasoning - not available in tool manager context
-          undefined, // precedingAssistantMessage - not available in tool manager context
-        );
-        postToolUseFailureFeedback = failureHookResult.feedback;
-      } catch (error) {
-        debugLog(
-          "hooks",
-          "PostToolUseFailure hook error (exception path)",
-          error,
-        );
-      }
-
-      // Combine feedback from both hook types
-      const allFeedback = [
-        ...postToolUseFeedback,
-        ...postToolUseFailureFeedback,
-      ];
-      const finalErrorMessage =
-        allFeedback.length > 0
-          ? `${errorMessage}\n\n[Hook feedback]:\n${allFeedback.join("\n")}`
-          : errorMessage;
+        },
+      );
+      const finalErrorMessage = appendHookFeedbackToText(
+        errorMessage,
+        hookFeedback,
+      );
 
       // Don't console.error here - it pollutes the TUI
       // The error message is already returned in toolReturn
@@ -2178,9 +2437,17 @@ export function getAllLettaToolNames(): string[] {
  * @returns Array of tool schemas
  */
 export function getToolSchemas(): ToolSchema[] {
-  return Array.from(withDynamicMessageChannelCache(toolRegistry).values()).map(
-    (tool) => tool.schema,
-  );
+  const builtInSchemas = Array.from(
+    withDynamicMessageChannelCache(toolRegistry).values(),
+  ).map((tool) => tool.schema);
+  const extensionSchemas = Array.from(
+    getAvailableExtensionToolsRegistry().values(),
+  ).map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.parameters as JsonSchema,
+  }));
+  return [...builtInSchemas, ...extensionSchemas];
 }
 
 /**
@@ -2191,8 +2458,27 @@ export function getToolSchemas(): ToolSchema[] {
  */
 export function getToolSchema(name: string): ToolSchema | undefined {
   const internalName = resolveInternalToolName(name);
-  if (!internalName) return undefined;
-  return withDynamicMessageChannelCache(toolRegistry).get(internalName)?.schema;
+  if (internalName) {
+    return withDynamicMessageChannelCache(toolRegistry).get(internalName)
+      ?.schema;
+  }
+  const extensionTool = getExtensionToolDefinition(name);
+  if (extensionTool) {
+    return {
+      name: extensionTool.name,
+      description: extensionTool.description,
+      input_schema: extensionTool.parameters as JsonSchema,
+    };
+  }
+  const externalTool = getExternalToolDefinition(name);
+  if (externalTool) {
+    return {
+      name: externalTool.name,
+      description: externalTool.description,
+      input_schema: externalTool.parameters as JsonSchema,
+    };
+  }
+  return undefined;
 }
 
 export async function refreshDynamicChannelToolsInLoadedRegistry(): Promise<void> {

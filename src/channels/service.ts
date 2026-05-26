@@ -66,11 +66,15 @@ import type {
   PendingPairing,
   SlackChannelMode,
   SupportedChannelId,
+  TelegramGroupMode,
+  WhatsAppGroupMode,
 } from "./types";
 import {
+  DEFAULT_SLACK_PERMISSION_MODE,
   isDiscordChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
+  isWhatsAppChannelAccount,
 } from "./types";
 
 export interface ChannelSummary {
@@ -98,6 +102,7 @@ export interface ChannelConfigSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
@@ -106,6 +111,12 @@ export interface ChannelConfigSnapshot {
   acknowledgeMessageReaction?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  selfChatMode?: boolean;
+  allowedGroups?: string[];
+  mentionPatterns?: string[];
+  transcribeVoice?: boolean;
+  downloadMedia?: boolean;
+  mediaMaxBytes?: number;
 }
 
 export interface PendingPairingSnapshot {
@@ -147,6 +158,20 @@ async function refreshLoadedMessageChannelTool(): Promise<void> {
   await refreshDynamicChannelToolsInLoadedRegistry();
 }
 
+function normalizeTelegramGroupMode(
+  value: ChannelAccountPatch["groupMode"],
+): TelegramGroupMode | undefined {
+  return value === "open" || value === "mention-only" ? value : undefined;
+}
+
+function normalizeWhatsAppGroupMode(
+  value: ChannelAccountPatch["groupMode"],
+): WhatsAppGroupMode | undefined {
+  return value === "disabled" || value === "mention" || value === "open"
+    ? value
+    : undefined;
+}
+
 export interface ChannelAccountSnapshot {
   [key: string]: unknown;
   channelId: string;
@@ -162,6 +187,7 @@ export interface ChannelAccountSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   transcribeVoice?: boolean;
   binding?: {
     agentId: string | null;
@@ -175,6 +201,11 @@ export interface ChannelAccountSnapshot {
   acknowledgeMessageReaction?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  selfChatMode?: boolean;
+  allowedGroups?: string[];
+  mentionPatterns?: string[];
+  downloadMedia?: boolean;
+  mediaMaxBytes?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -378,6 +409,10 @@ function isAccountConfigured(account: ChannelAccount): boolean {
     return account.token.trim().length > 0;
   }
 
+  if (isWhatsAppChannelAccount(account)) {
+    return true;
+  }
+
   if (!isSlackChannelAccount(account)) {
     return Object.keys(account.config).length > 0;
   }
@@ -428,6 +463,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       config,
       hasToken: account.token.trim().length > 0,
       transcribeVoice: account.transcribeVoice === true,
+      groupMode: account.groupMode ?? "open",
+      inboundDebounceMs: account.inboundDebounceMs,
       binding,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -463,6 +500,30 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     };
   }
 
+  if (isWhatsAppChannelAccount(account)) {
+    return {
+      channelId: "whatsapp",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      configured: isAccountConfigured(account),
+      running,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelAccountProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
   if (!isSlackChannelAccount(account)) {
     return {
       channelId: account.channel,
@@ -493,7 +554,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     hasBotToken: account.botToken.trim().length > 0,
     hasAppToken: account.appToken.trim().length > 0,
     agentId: account.agentId,
-    defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+    defaultPermissionMode:
+      account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -515,7 +577,10 @@ function createAccountFromPatch(
       token: normalizedPatch.token ?? "",
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
+      groupMode:
+        normalizeTelegramGroupMode(normalizedPatch.groupMode) ?? "open",
       transcribeVoice: normalizedPatch.transcribeVoice === true,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       binding: {
         agentId: null,
         conversationId: null,
@@ -548,6 +613,28 @@ function createAccountFromPatch(
     };
   }
 
+  if (channelId === "whatsapp") {
+    return {
+      channel: "whatsapp",
+      accountId,
+      displayName: normalizeDisplayName(normalizedPatch.displayName),
+      enabled: normalizedPatch.enabled ?? false,
+      agentId: normalizedPatch.agentId ?? null,
+      dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      allowedUsers: normalizedPatch.allowedUsers ?? [],
+      selfChatMode: normalizedPatch.selfChatMode ?? true,
+      groupMode:
+        normalizeWhatsAppGroupMode(normalizedPatch.groupMode) ?? "disabled",
+      allowedGroups: normalizedPatch.allowedGroups ?? [],
+      mentionPatterns: normalizedPatch.mentionPatterns ?? [],
+      transcribeVoice: normalizedPatch.transcribeVoice === true,
+      downloadMedia: normalizedPatch.downloadMedia === true,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   if (channelId !== "slack") {
     return {
       channel: channelId,
@@ -571,7 +658,8 @@ function createAccountFromPatch(
     botToken: normalizedPatch.botToken ?? "",
     appToken: normalizedPatch.appToken ?? "",
     agentId: normalizedPatch.agentId ?? null,
-    defaultPermissionMode: normalizedPatch.defaultPermissionMode ?? "standard",
+    defaultPermissionMode:
+      normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
@@ -596,8 +684,14 @@ function mergeAccountPatch(
       token: normalizedPatch.token ?? existing.token,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      groupMode:
+        normalizeTelegramGroupMode(normalizedPatch.groupMode) ??
+        existing.groupMode ??
+        "open",
       transcribeVoice:
         normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -631,6 +725,33 @@ function mergeAccountPatch(
         normalizedPatch.removeStaleRoutes ?? existing.removeStaleRoutes,
       inboundDebounceMs:
         normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
+      updatedAt: nextUpdatedAt,
+    };
+  }
+
+  if (isWhatsAppChannelAccount(existing)) {
+    return {
+      ...existing,
+      displayName:
+        normalizedPatch.displayName !== undefined
+          ? normalizeDisplayName(normalizedPatch.displayName)
+          : existing.displayName,
+      enabled: normalizedPatch.enabled ?? existing.enabled,
+      agentId: normalizedPatch.agentId ?? existing.agentId,
+      dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      selfChatMode: normalizedPatch.selfChatMode ?? existing.selfChatMode,
+      groupMode:
+        normalizeWhatsAppGroupMode(normalizedPatch.groupMode) ??
+        existing.groupMode,
+      allowedGroups: normalizedPatch.allowedGroups ?? existing.allowedGroups,
+      mentionPatterns:
+        normalizedPatch.mentionPatterns ?? existing.mentionPatterns,
+      transcribeVoice:
+        normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      downloadMedia:
+        normalizedPatch.downloadMedia ?? existing.downloadMedia ?? false,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -673,7 +794,7 @@ function mergeAccountPatch(
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ??
       existing.defaultPermissionMode ??
-      "standard",
+      DEFAULT_SLACK_PERMISSION_MODE,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
@@ -769,6 +890,26 @@ export function getChannelConfigSnapshot(
     };
   }
 
+  if (isWhatsAppChannelAccount(account)) {
+    return {
+      channelId: "whatsapp",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelConfigSnapshotProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
+    };
+  }
+
   if (!isSlackChannelAccount(account)) {
     return {
       channelId: account.channel,
@@ -793,7 +934,8 @@ export function getChannelConfigSnapshot(
     hasBotToken: account.botToken.trim().length > 0,
     hasAppToken: account.appToken.trim().length > 0,
     agentId: account.agentId,
-    defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+    defaultPermissionMode:
+      account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
   };
 }
 
@@ -818,11 +960,19 @@ export async function setChannelConfigLive(
       dmPolicy: normalizedPatch.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
+      agentId: normalizedPatch.agentId,
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
+      selfChatMode: normalizedPatch.selfChatMode,
+      groupMode: normalizedPatch.groupMode,
+      allowedGroups: normalizedPatch.allowedGroups,
+      mentionPatterns: normalizedPatch.mentionPatterns,
+      transcribeVoice: normalizedPatch.transcribeVoice,
+      downloadMedia: normalizedPatch.downloadMedia,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes,
       config: normalizedPatch.config,
       displayName: existing.displayName,
     });
@@ -843,12 +993,19 @@ export async function setChannelConfigLive(
         dmPolicy: normalizedPatch.dmPolicy,
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
+        agentId: normalizedPatch.agentId,
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
         threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
         acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
         removeStaleRoutes: normalizedPatch.removeStaleRoutes,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
+        selfChatMode: normalizedPatch.selfChatMode,
+        groupMode: normalizedPatch.groupMode,
+        allowedGroups: normalizedPatch.allowedGroups,
+        mentionPatterns: normalizedPatch.mentionPatterns,
         transcribeVoice: normalizedPatch.transcribeVoice,
+        downloadMedia: normalizedPatch.downloadMedia,
+        mediaMaxBytes: normalizedPatch.mediaMaxBytes,
         config: normalizedPatch.config,
       },
       accountId ? { accountId } : undefined,
@@ -1129,9 +1286,10 @@ export function bindChannelAccountLive(
     });
   } else if (
     isSlackChannelAccount(existing) ||
-    isDiscordChannelAccount(existing)
+    isDiscordChannelAccount(existing) ||
+    isWhatsAppChannelAccount(existing)
   ) {
-    // Slack and Discord both use a top-level agentId
+    // Slack, Discord, and WhatsApp use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId,
@@ -1168,9 +1326,10 @@ export function unbindChannelAccountLive(
     });
   } else if (
     isSlackChannelAccount(existing) ||
-    isDiscordChannelAccount(existing)
+    isDiscordChannelAccount(existing) ||
+    isWhatsAppChannelAccount(existing)
   ) {
-    // Slack and Discord both use a top-level agentId
+    // Slack, Discord, and WhatsApp use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId: null,

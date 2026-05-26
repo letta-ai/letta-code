@@ -7,7 +7,7 @@ import {
 
 describe("buildByokProviderAliases", () => {
   test("derives default aliases from all built-in BYOK_PROVIDERS", () => {
-    const aliases = buildByokProviderAliases();
+    const aliases = buildByokProviderAliases([], "api");
 
     // Every built-in provider with a known providerType should have an alias
     for (const bp of BYOK_PROVIDERS) {
@@ -16,23 +16,42 @@ describe("buildByokProviderAliases", () => {
   });
 
   test("includes all built-in lc-* providers (not just a partial set)", () => {
-    const aliases = buildByokProviderAliases();
+    const aliases = buildByokProviderAliases([], "api");
 
     expect(aliases["lc-anthropic"]).toBe("anthropic");
     expect(aliases["lc-openai"]).toBe("openai");
     expect(aliases["lc-zai"]).toBe("zai");
-    expect(aliases["lc-gemini"]).toBe("google_ai");
+    expect(aliases["lc-gemini"]).toBe("google");
     expect(aliases["lc-minimax"]).toBe("minimax");
     expect(aliases["lc-openrouter"]).toBe("openrouter");
-    expect(aliases["lc-llama-cpp"]).toBe("llama.cpp");
-    expect(aliases["lc-bedrock"]).toBe("bedrock");
-    expect(aliases["chatgpt-plus-pro"]).toBe("chatgpt-plus-pro");
+    expect(aliases["lc-bedrock"]).toBe("amazon-bedrock");
+    expect(aliases["chatgpt-plus-pro"]).toBe("openai-codex");
+  });
+
+  test("includes local endpoint aliases only for the local provider store", () => {
+    const apiAliases = buildByokProviderAliases([], "api");
+    const localAliases = buildByokProviderAliases([], "local");
+
+    expect(apiAliases["lc-ollama"]).toBeUndefined();
+    expect(apiAliases["lc-ollama-cloud"]).toBeUndefined();
+    expect(apiAliases["lc-lmstudio"]).toBeUndefined();
+    expect(apiAliases["lc-llama-cpp"]).toBeUndefined();
+
+    expect(localAliases.ollama).toBe("ollama");
+    expect(localAliases["lc-ollama"]).toBe("ollama");
+    expect(localAliases["ollama-cloud"]).toBe("ollama-cloud");
+    expect(localAliases["lc-ollama-cloud"]).toBe("ollama-cloud");
+    expect(localAliases.lmstudio).toBe("lmstudio");
+    expect(localAliases["lc-lmstudio"]).toBe("lmstudio");
+    expect(localAliases["llama-cpp"]).toBe("llama.cpp");
+    expect(localAliases["lc-llama-cpp"]).toBe("llama.cpp");
   });
 
   test("layers connected providers on top of built-in aliases", () => {
-    const aliases = buildByokProviderAliases([
-      { name: "openai-sarah", provider_type: "openai" },
-    ]);
+    const aliases = buildByokProviderAliases(
+      [{ name: "openai-sarah", provider_type: "openai" }],
+      "api",
+    );
 
     // Custom provider mapped
     expect(aliases["openai-sarah"]).toBe("openai");
@@ -41,10 +60,24 @@ describe("buildByokProviderAliases", () => {
     expect(aliases["lc-anthropic"]).toBe("anthropic");
   });
 
+  test("maps connected LM Studio provider types to the LM Studio handle", () => {
+    const aliases = buildByokProviderAliases(
+      [
+        { name: "lmstudio-server", provider_type: "lmstudio_openai" },
+        { name: "lmstudio-legacy", provider_type: "lmstudio" },
+      ],
+      "api",
+    );
+
+    expect(aliases["lmstudio-server"]).toBe("lmstudio");
+    expect(aliases["lmstudio-legacy"]).toBe("lmstudio");
+  });
+
   test("handles unknown provider types gracefully", () => {
-    const aliases = buildByokProviderAliases([
-      { name: "unknown-provider", provider_type: "some_new_type" },
-    ]);
+    const aliases = buildByokProviderAliases(
+      [{ name: "unknown-provider", provider_type: "some_new_type" }],
+      "api",
+    );
 
     // Unknown type doesn't get an alias
     expect(aliases["unknown-provider"]).toBeUndefined();
@@ -53,9 +86,10 @@ describe("buildByokProviderAliases", () => {
   });
 
   test("connected provider can override a built-in alias", () => {
-    const aliases = buildByokProviderAliases([
-      { name: "lc-anthropic", provider_type: "anthropic" },
-    ]);
+    const aliases = buildByokProviderAliases(
+      [{ name: "lc-anthropic", provider_type: "anthropic" }],
+      "api",
+    );
 
     // Still maps correctly (same value)
     expect(aliases["lc-anthropic"]).toBe("anthropic");
@@ -63,7 +97,7 @@ describe("buildByokProviderAliases", () => {
 });
 
 describe("isByokHandleForSelector", () => {
-  const defaultAliases = buildByokProviderAliases();
+  const defaultAliases = buildByokProviderAliases([], "api");
 
   test("matches chatgpt-plus-pro/ prefix", () => {
     expect(
@@ -78,9 +112,10 @@ describe("isByokHandleForSelector", () => {
   });
 
   test("matches known BYOK provider names via aliases", () => {
-    const aliases = buildByokProviderAliases([
-      { name: "openai-sarah", provider_type: "openai" },
-    ]);
+    const aliases = buildByokProviderAliases(
+      [{ name: "openai-sarah", provider_type: "openai" }],
+      "api",
+    );
 
     expect(isByokHandleForSelector("openai-sarah/gpt-5-fast", aliases)).toBe(
       true,

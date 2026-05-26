@@ -8,7 +8,10 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import type { ModelReasoningEffort } from "@/agent/model";
+import {
+  type ModelReasoningEffort,
+  shouldPreserveContextWindowForModelSelection,
+} from "@/agent/model";
 import {
   applyPersonalityToMemory,
   getPersonalityBlockValues,
@@ -49,6 +52,7 @@ import type {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
+  initialEffort?: ModelReasoningEffort;
   options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
 };
 
@@ -70,6 +74,7 @@ type ConfigurationHandlersContext = {
   contextTrackerRef: MutableRefObject<ContextTracker>;
   conversationIdRef: MutableRefObject<string>;
   currentModelHandle: string | null;
+  currentModelId: string | null;
   currentToolset: ToolsetName | null;
   isAgentBusy: () => boolean;
   llmConfig: LlmConfig | null;
@@ -88,6 +93,7 @@ type ConfigurationHandlersContext = {
   >;
   setCurrentModelHandle: Dispatch<SetStateAction<string | null>>;
   setCurrentModelId: Dispatch<SetStateAction<string | null>>;
+  setHasAvailableLocalModels: Dispatch<SetStateAction<boolean>>;
   setCurrentPersonalityId: Dispatch<SetStateAction<PersonalityId | null>>;
   setCurrentSystemPromptId: Dispatch<SetStateAction<string | null>>;
   setCurrentToolset: Dispatch<SetStateAction<ToolsetName | null>>;
@@ -113,6 +119,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     contextTrackerRef,
     conversationIdRef,
     currentModelHandle,
+    currentModelId,
     currentToolset,
     isAgentBusy,
     llmConfig,
@@ -125,6 +132,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     setConversationOverrideModelSettings,
     setCurrentModelHandle,
     setCurrentModelId,
+    setHasAvailableLocalModels,
     setCurrentPersonalityId,
     setCurrentSystemPromptId,
     setCurrentToolset,
@@ -142,7 +150,11 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     async (
       modelId: string,
       commandId?: string | null,
-      opts?: { skipReasoningPrompt?: boolean },
+      opts?: {
+        promptReasoning?: boolean;
+        skipReasoningPrompt?: boolean;
+        reasoningEffort?: ModelReasoningEffort;
+      },
     ) => {
       let overlayCommand = commandId
         ? commandRunner.getHandle(commandId, "/model")
@@ -203,16 +215,31 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             "@/agent/available-models"
           );
           const apiContextWindow = await getModelContextWindow(modelId);
+          const updateArgs: Record<string, unknown> = {
+            ...(apiContextWindow ? { context_window: apiContextWindow } : {}),
+            ...(opts?.reasoningEffort
+              ? { reasoning_effort: opts.reasoningEffort }
+              : {}),
+          };
 
           selectedModel = {
             id: modelId,
             handle: modelId,
             label: modelId.split("/").pop() ?? modelId,
             description: "Custom model",
-            updateArgs: apiContextWindow
-              ? { context_window: apiContextWindow }
-              : undefined,
+            updateArgs:
+              Object.keys(updateArgs).length > 0 ? updateArgs : undefined,
           } as unknown as (typeof models)[number];
+        }
+
+        if (selectedModel && opts?.reasoningEffort) {
+          selectedModel = {
+            ...selectedModel,
+            updateArgs: {
+              ...(selectedModel.updateArgs ?? {}),
+              reasoning_effort: opts.reasoningEffort,
+            },
+          };
         }
 
         if (!selectedModel) {
@@ -250,7 +277,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
 
         if (
           !opts?.skipReasoningPrompt &&
-          activeOverlay === "model" &&
+          (opts?.promptReasoning || activeOverlay === "model") &&
           reasoningTierOptions.length > 1
         ) {
           const selectedEffort = (
@@ -268,6 +295,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             setModelReasoningPrompt({
               modelLabel: model.label,
               initialModelId: preferredOption.modelId,
+              initialEffort: preferredOption.effort,
               options: reasoningTierOptions,
             });
             return;
@@ -297,6 +325,22 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           return;
         }
 
+        const currentLlmConfig = llmConfigRef.current;
+        const shouldPreserveContextWindow =
+          shouldPreserveContextWindowForModelSelection({
+            currentModelHandle,
+            currentModelId,
+            currentLlmConfig,
+            selectedModelHandle: modelHandle,
+            selectedContextWindow,
+          });
+        const modelUpdateArgsForRequest = model.updateArgs
+          ? { ...(model.updateArgs as Record<string, unknown>) }
+          : undefined;
+        if (shouldPreserveContextWindow && modelUpdateArgsForRequest) {
+          delete modelUpdateArgsForRequest.context_window;
+        }
+
         await withCommandLock(async () => {
           const cmd =
             resolveOverlayCommand() ??
@@ -324,7 +368,8 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             updatedAgent = await updateAgentLLMConfig(
               agentIdRef.current,
               modelHandle,
-              model.updateArgs,
+              modelUpdateArgsForRequest,
+              { preserveContextWindow: shouldPreserveContextWindow },
             );
             conversationModelSettings = updatedAgent?.model_settings;
           } else {
@@ -334,8 +379,8 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             const updatedConversation = await updateConversationLLMConfig(
               conversationIdRef.current,
               modelHandle,
-              model.updateArgs,
-              { preserveContextWindow: false },
+              modelUpdateArgsForRequest,
+              { preserveContextWindow: shouldPreserveContextWindow },
             );
             conversationModelSettings = (
               updatedConversation as {
@@ -374,15 +419,17 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             );
           }
 
-          const presetContextWindow = (
-            model.updateArgs as { context_window?: unknown } | undefined
-          )?.context_window;
+          const presetContextWindow = modelUpdateArgsForRequest?.context_window;
+          const preservedContextWindow = llmConfigRef.current?.context_window;
           const resolvedContextWindow =
             typeof conversationContextWindowLimit === "number"
               ? conversationContextWindowLimit
-              : typeof presetContextWindow === "number"
-                ? presetContextWindow
-                : undefined;
+              : shouldPreserveContextWindow &&
+                  typeof preservedContextWindow === "number"
+                ? preservedContextWindow
+                : typeof presetContextWindow === "number"
+                  ? presetContextWindow
+                  : undefined;
           if (!isDefaultConversation) {
             setConversationOverrideContextWindowLimit(
               typeof resolvedContextWindow === "number"
@@ -421,6 +468,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           // Reset context token tracking since different models have different tokenizers
           resetContextHistory(contextTrackerRef.current);
           setCurrentModelHandle(modelHandle);
+          setHasAvailableLocalModels(true);
 
           const persistedToolsetPreference =
             settingsManager.getToolsetPreference(agentId);
@@ -501,6 +549,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       commandRunner,
       consumeOverlayCommand,
       currentModelHandle,
+      currentModelId,
       currentToolset,
       isAgentBusy,
       maybeRecordToolsetChangeReminder,
@@ -1134,12 +1183,13 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     async (
       changes: Array<{ experimentId: ExperimentId; enabled: boolean }>,
     ) => {
+      const overlayCommand = consumeOverlayCommand("experiment");
+
       if (changes.length === 0) {
+        overlayCommand?.finish("Experiments dialog dismissed", true);
         setActiveOverlay(null);
         return;
       }
-
-      const overlayCommand = consumeOverlayCommand("experiment");
 
       if (isAgentBusy()) {
         setActiveOverlay(null);

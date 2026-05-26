@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Lint & Type Check
         run: bun run check
@@ -110,14 +110,11 @@ jobs:
           jq --arg version "$NEW_VERSION" '.version = $version' package.json > package.json.tmp
           mv package.json.tmp package.json
 
-          jq --arg version "$NEW_VERSION" '.version = $version | .packages[""].version = $version' package-lock.json > package-lock.json.tmp
-          mv package-lock.json.tmp package-lock.json
-
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
       - name: Commit version bump
         run: |
-          git add package.json package-lock.json
+          git add package.json
           git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
 
       - name: Create version bump PR

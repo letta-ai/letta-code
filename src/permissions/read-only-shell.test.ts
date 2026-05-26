@@ -18,7 +18,7 @@ describe("isReadOnlyShellCommand", () => {
         "/Users/test/.letta/agents/agent-1/memory-worktrees",
       ];
 
-      test("allows memory-scoped git commands", () => {
+      test("allows memory-rooted git commands", () => {
         expect(
           isScopedMemoryShellCommand(
             "cd /Users/test/.letta/agents/agent-1/memory && git status && git pull --ff-only && git push",
@@ -27,7 +27,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
-      test("allows constrained memory-scoped git introspection and index cleanup", () => {
+      test("allows constrained memory-rooted git introspection and index cleanup", () => {
         const env = {
           MEMORY_DIR: "/Users/test/.letta/agents/agent-1/memory",
         } as NodeJS.ProcessEnv;
@@ -96,7 +96,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
-      test("denies unsafe variants of memory-scoped git allowlist additions", () => {
+      test("denies unsafe variants of memory-rooted git allowlist additions", () => {
         expect(
           isScopedMemoryShellCommand(
             "git fetch https://example.com/repo.git",
@@ -184,7 +184,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
-      test("allows memory-scoped shell redirection to MEMORY_DIR", () => {
+      test("allows memory-rooted shell redirection to MEMORY_DIR", () => {
         expect(
           isScopedMemoryShellCommand(
             'echo "test content" > "$MEMORY_DIR/skills/example/SKILL.md" && ls -la "$MEMORY_DIR/skills/example/"',
@@ -199,7 +199,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
-      test("allows memory-scoped heredoc writes to MEMORY_DIR", () => {
+      test("allows memory-rooted heredoc writes to MEMORY_DIR", () => {
         expect(
           isScopedMemoryShellCommand(
             [
@@ -283,7 +283,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
-      test("allows mkdir setup before memory-scoped heredoc", () => {
+      test("allows mkdir setup before memory-rooted heredoc", () => {
         expect(
           isScopedMemoryShellCommand(
             [
@@ -303,7 +303,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
-      test("allows safe trailing command after memory-scoped heredoc", () => {
+      test("allows safe trailing command after memory-rooted heredoc", () => {
         expect(
           isScopedMemoryShellCommand(
             [
@@ -393,7 +393,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(false);
       });
 
-      test("denies command substitution in memory-scoped commands", () => {
+      test("denies command substitution in memory-rooted commands", () => {
         expect(
           isScopedMemoryShellCommand(
             'cd /Users/test/.letta/agents/agent-1/memory && git commit -m "$(touch /tmp/pwn)"',
@@ -408,7 +408,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(false);
       });
 
-      test("denies git rebase exec hooks in memory-scoped commands", () => {
+      test("denies git rebase exec hooks in memory-rooted commands", () => {
         expect(
           isScopedMemoryShellCommand(
             'cd /Users/test/.letta/agents/agent-1/memory && git rebase --exec "touch /tmp/pwn" main',
@@ -423,7 +423,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(false);
       });
 
-      test("allows safe git rebase continuation in memory-scoped commands", () => {
+      test("allows safe git rebase continuation in memory-rooted commands", () => {
         expect(
           isScopedMemoryShellCommand(
             "cd /Users/test/.letta/agents/agent-1/memory && git rebase --continue",
@@ -438,7 +438,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(true);
       });
 
-      test("denies git config --global / --system in memory-scoped commands", () => {
+      test("denies git config --global / --system in memory-rooted commands", () => {
         // --global writes to ~/.gitconfig, --system writes to /etc/gitconfig.
         // Neither flag looks like a path token, so validateScopedTokens
         // can't catch them — must be rejected explicitly.
@@ -462,7 +462,7 @@ describe("isReadOnlyShellCommand", () => {
         ).toBe(false);
       });
 
-      test("allows git config without --global / --system in memory-scoped commands", () => {
+      test("allows git config without --global / --system in memory-rooted commands", () => {
         expect(
           isScopedMemoryShellCommand(
             "cd /Users/test/.letta/agents/agent-1/memory && git config --get remote.origin.url",

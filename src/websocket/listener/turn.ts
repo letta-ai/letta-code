@@ -31,10 +31,13 @@ import {
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import { createBuffers, toLines } from "@/cli/helpers/accumulator";
+import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
   getReflectionSettings,
+  type ReflectionSettings,
   type ReflectionTrigger,
+  shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
 import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
@@ -43,6 +46,7 @@ import {
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
+  getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import {
@@ -50,8 +54,10 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
-import { getPlanModeReminder } from "@/reminders/plan-mode-reminder";
-import { syncReminderStateFromContextTracker } from "@/reminders/state";
+import {
+  type SharedReminderState,
+  syncReminderStateFromContextTracker,
+} from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -145,6 +151,7 @@ function trackListenerUserInput(
 
 export const __listenerTurnTestUtils = {
   trackListenerUserInput,
+  maybeLaunchPostTurnChannelReflection,
 };
 
 function hasActiveReflectionSubagent(
@@ -322,6 +329,63 @@ function buildMaybeLaunchReflectionSubagent(params: {
   };
 }
 
+type PostTurnReflectionLauncher = (
+  triggerSource: Exclude<ReflectionTrigger, "off">,
+) => Promise<boolean>;
+
+async function maybeLaunchPostTurnChannelReflection(params: {
+  hasChannelTurnSources: boolean;
+  agentId?: string | null;
+  conversationId: string;
+  memfsEnabled: boolean;
+  reflectionSettings: ReflectionSettings;
+  reminderState: SharedReminderState;
+  contextTracker: ContextTracker;
+  launch: PostTurnReflectionLauncher;
+  getTranscriptState?: typeof getReflectionTranscriptState;
+}): Promise<boolean> {
+  if (
+    !params.hasChannelTurnSources ||
+    !params.agentId ||
+    !params.memfsEnabled
+  ) {
+    return false;
+  }
+
+  switch (params.reflectionSettings.trigger) {
+    case "off":
+      return false;
+    case "compaction-event": {
+      syncReminderStateFromContextTracker(
+        params.reminderState,
+        params.contextTracker,
+      );
+      if (!params.reminderState.pendingReflectionTrigger) {
+        return false;
+      }
+      params.reminderState.pendingReflectionTrigger = false;
+      return params.launch("compaction-event");
+    }
+    case "step-count": {
+      const readTranscriptState =
+        params.getTranscriptState ?? getReflectionTranscriptState;
+      const transcriptState = await readTranscriptState(
+        params.agentId,
+        params.conversationId,
+      );
+      if (
+        !shouldFireStepCountTrigger(
+          transcriptState.turns_since_last_successful_reflection,
+          params.reflectionSettings,
+        )
+      ) {
+        return false;
+      }
+      return params.launch("step-count");
+    }
+  }
+}
+
 function finalizeInterruptedTurn(
   socket: ListenerTransport,
   runtime: ConversationRuntime,
@@ -379,8 +443,6 @@ export async function handleIncomingMessage(
   );
 
   // Get the canonical mutable permission mode state ref for this turn.
-  // Websocket mode changes and tool implementations (EnterPlanMode/ExitPlanMode)
-  // all mutate this same object in place.
   const turnPermissionModeState = getOrCreateConversationPermissionModeStateRef(
     runtime.listener,
     normalizedAgentId,
@@ -562,7 +624,6 @@ export async function handleIncomingMessage(
                   cachedAgent,
                 })
               : undefined,
-            resolvePlanModeReminder: getPlanModeReminder,
             workingDirectory: turnWorkingDirectory,
           }),
         );
@@ -604,6 +665,7 @@ export async function handleIncomingMessage(
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       cachedAgent,
+      channelTurnSources: msg.channelTurnSources,
     });
     runtime.currentToolset = preparedToolContext.toolset;
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
@@ -792,6 +854,40 @@ export async function handleIncomingMessage(
               transcriptError instanceof Error
                 ? transcriptError.message
                 : String(transcriptError)
+            }`,
+          );
+        }
+        try {
+          const reflectionSettings = getReflectionSettings(
+            agentId || undefined,
+            turnWorkingDirectory,
+          );
+          await maybeLaunchPostTurnChannelReflection({
+            hasChannelTurnSources: (msg.channelTurnSources?.length ?? 0) > 0,
+            agentId,
+            conversationId,
+            memfsEnabled: Boolean(
+              agentId && settingsManager.isMemfsEnabled(agentId),
+            ),
+            reflectionSettings,
+            reminderState: runtime.reminderState,
+            contextTracker: runtime.contextTracker,
+            launch: buildMaybeLaunchReflectionSubagent({
+              runtime,
+              socket,
+              agentId: agentId || "",
+              conversationId,
+              workingDirectory: turnWorkingDirectory,
+              cachedAgent,
+            }),
+          });
+        } catch (reflectionError) {
+          debugWarn(
+            "memory",
+            `Failed to evaluate post-turn channel reflection: ${
+              reflectionError instanceof Error
+                ? reflectionError.message
+                : String(reflectionError)
             }`,
           );
         }

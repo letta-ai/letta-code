@@ -11,6 +11,7 @@
 .idea
 node_modules
 bun.lockb
+package-lock.json
 bin/
 letta.js
 letta.js.map
@@ -29,6 +30,7 @@ lerna-debug.log*
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Runtime data
+data/
 pids
 *.pid
 *.seed
@@ -157,3 +159,7 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 __pycache__/
+
+# Nix build outputs
+result
+result-*

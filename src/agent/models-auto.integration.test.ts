@@ -2,6 +2,7 @@
  * Live API regression test for Cloud model availability.
  *
  * Runs only when:
+ * - LETTA_RUN_API_INTEGRATION_TESTS=true
  * - LETTA_API_KEY is set
  * - LETTA_BASE_URL points to Letta Cloud (api.letta.com)
  */
@@ -11,6 +12,8 @@ import Letta from "@letta-ai/letta-client";
 
 const LETTA_API_KEY = process.env.LETTA_API_KEY;
 const LETTA_BASE_URL = process.env.LETTA_BASE_URL || "https://api.letta.com";
+const RUN_API_INTEGRATION_TESTS =
+  process.env.LETTA_RUN_API_INTEGRATION_TESTS === "true";
 
 function isCloudBaseUrl(value: string): boolean {
   try {
@@ -21,7 +24,9 @@ function isCloudBaseUrl(value: string): boolean {
 }
 
 const describeIntegration =
-  LETTA_API_KEY && isCloudBaseUrl(LETTA_BASE_URL) ? describe : describe.skip;
+  RUN_API_INTEGRATION_TESTS && LETTA_API_KEY && isCloudBaseUrl(LETTA_BASE_URL)
+    ? describe
+    : describe.skip;
 
 async function listModelHandlesWithRetry(
   client: Letta,

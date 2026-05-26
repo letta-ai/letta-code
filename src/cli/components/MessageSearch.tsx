@@ -5,6 +5,7 @@ import {
   searchMessagesForBackend,
   warmMessageSearchCacheForBackend,
 } from "@/backend/message-search";
+import { truncateText } from "@/cli/helpers/truncate-text";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -119,11 +120,6 @@ function formatLocalTime(dateStr: string | null | undefined): string {
 /**
  * Truncate text to fit width, adding ellipsis if needed
  */
-function truncateText(text: string, maxWidth: number): string {
-  if (text.length <= maxWidth) return text;
-  return `${text.slice(0, maxWidth - 3)}...`;
-}
-
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
 }

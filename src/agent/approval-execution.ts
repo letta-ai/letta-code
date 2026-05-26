@@ -13,6 +13,7 @@ import { INTERRUPTED_BY_USER } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   executeTool,
+  isExtensionToolParallelSafeForContext,
   prepareCurrentToolExecutionContext,
   type ToolExecutionResult,
   type ToolReturnContent,
@@ -82,13 +83,13 @@ const PARALLEL_SAFE_TOOLS = new Set([
   // Task spawns independent subagents
   "Task",
   "Agent",
-  // Plan mode tools (no parameters, no file operations)
-  "EnterPlanMode",
-  "ExitPlanMode",
 ]);
 
-function isParallelSafe(toolName: string): boolean {
-  return PARALLEL_SAFE_TOOLS.has(toolName);
+function isParallelSafe(toolName: string, toolContextId?: string): boolean {
+  return (
+    PARALLEL_SAFE_TOOLS.has(toolName) ||
+    isExtensionToolParallelSafeForContext(toolName, toolContextId)
+  );
 }
 
 /**
@@ -417,7 +418,7 @@ export async function executeApprovalBatch(
 
     const toolName = decision.approval.toolName;
 
-    if (isParallelSafe(toolName)) {
+    if (isParallelSafe(toolName, toolContextId)) {
       parallelIndices.push(i);
     } else {
       // Get resource key for write tools

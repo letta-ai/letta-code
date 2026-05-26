@@ -3,7 +3,7 @@
  *
  * Skills are discovered from four sources (in order of priority):
  * 1. Project skills: .skills/ in current directory (highest priority - overrides)
- * 2. Agent skills: ~/.letta/agents/{agent-id}/skills/ for agent-specific skills
+ * 2. Agent skills: ~/.letta/agents/{agent-id}/memory/skills/ for agent-specific skills
  * 3. Global skills: ~/.letta/skills/ for user's personal skills
  * 4. Bundled skills: embedded in package (lowest priority - defaults)
  */
@@ -170,7 +170,6 @@ export const GLOBAL_SKILLS_DIR = join(
 /**
  * Get the agent-scoped skills directory for a specific agent.
  * Primary path is ~/.letta/agents/{id}/memory/skills/ (memfs).
- * Falls back to ~/.letta/agents/{id}/skills/ for legacy installs.
  */
 export function getAgentSkillsDir(agentId: string): string {
   return join(
@@ -178,18 +177,6 @@ export function getAgentSkillsDir(agentId: string): string {
     ".letta/agents",
     agentId,
     "memory/skills",
-  );
-}
-
-/**
- * Legacy agent skills path from before memfs migration (pre-Feb 2026).
- */
-export function getLegacyAgentSkillsDir(agentId: string): string {
-  return join(
-    process.env.HOME || process.env.USERPROFILE || "~",
-    ".letta/agents",
-    agentId,
-    "skills",
   );
 }
 
@@ -243,7 +230,7 @@ async function discoverSkillsFromDir(
  *
  * Priority order (highest to lowest):
  * 1. Project skills (.skills/ in current directory)
- * 2. Agent skills (~/.letta/agents/{agent-id}/skills/)
+ * 2. Agent skills (~/.letta/agents/{agent-id}/memory/skills/)
  * 3. Global skills (~/.letta/skills/)
  * 4. Bundled skills (embedded in package)
  *
@@ -282,15 +269,7 @@ export async function discoverSkills(
   }
 
   // 3. Add agent skills if agentId provided (override global)
-  //    Check legacy path first, then memfs path (memfs wins on conflict)
   if (agentId && includeSource("agent")) {
-    const legacyDir = getLegacyAgentSkillsDir(agentId);
-    const legacyResult = await discoverSkillsFromDir(legacyDir, "agent");
-    allErrors.push(...legacyResult.errors);
-    for (const skill of legacyResult.skills) {
-      skillsById.set(skill.id, skill);
-    }
-
     const agentSkillsDir = getAgentSkillsDir(agentId);
     const agentResult = await discoverSkillsFromDir(agentSkillsDir, "agent");
     allErrors.push(...agentResult.errors);

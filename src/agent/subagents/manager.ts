@@ -31,13 +31,16 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
-import {
-  parseScopeList,
-  resolveAllowedMemoryRoots,
-} from "@/permissions/memory-scope";
+import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+  type InheritedChannelContextPayload,
+  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
+  type RuntimeContextSnapshot,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,
@@ -628,9 +631,8 @@ export interface ComposeSubagentChildEnvOptions {
   backendMode?: BackendMode;
   /** Local backend flatfile root to forward when backendMode="local". */
   localBackendStorageDir?: string | null;
-  /** Parent agent ID. When present, authorizes the subagent to touch the
-   * parent's memory via the cross-agent guard and sets LETTA_PARENT_AGENT_ID
-   * so prompts / scripts that reference it resolve correctly. */
+  /** Parent agent ID. When present, sets LETTA_PARENT_AGENT_ID so prompts,
+   * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
   /** The subagent config's declared permissionMode ("memory" triggers
    * memory-dir override; other modes leave the parent's MEMORY_DIR alone). */
@@ -648,20 +650,36 @@ export interface ComposeSubagentChildEnvOptions {
    * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
    * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
   transcriptPath?: string | null;
+  /** Serializable channel scope for child processes. Execution-context IDs are
+   * process-local, so channel scope must be copied explicitly across spawn. */
+  inheritedChannelContext?: InheritedChannelContextPayload | null;
+}
+
+function buildInheritedChannelContextPayload(
+  runtimeContext: RuntimeContextSnapshot | undefined,
+): InheritedChannelContextPayload | null {
+  const channelToolScope = runtimeContext?.channelToolScope;
+  const channelTurnSources = runtimeContext?.channelTurnSources ?? [];
+  if (!channelToolScope?.channels.length && channelTurnSources.length === 0) {
+    return null;
+  }
+
+  return {
+    ...(channelToolScope?.channels.length ? { channelToolScope } : {}),
+    ...(channelTurnSources.length
+      ? { channelTurnSources: [...channelTurnSources] }
+      : {}),
+  };
 }
 
 /**
  * Compose the env a subagent child process should be spawned with.
  *
- * Authorization (LETTA_MEMORY_SCOPE) and filesystem pointer (MEMORY_DIR) are
- * intentionally decoupled:
+ * The parent identity marker and filesystem pointer are intentionally
+ * decoupled:
  *
- *   - LETTA_MEMORY_SCOPE inherits any scope the parent process already had
- *     (env LETTA_MEMORY_SCOPE plus CLI --memory-scope) and also includes the
- *     immediate parent agent ID when one is known. Subagents should never
- *     lose explicit cross-agent access that the parent process already had.
- *     This applies to general-purpose/recall etc. — not just
- *     memory-writing subagents.
+ *   - LETTA_PARENT_AGENT_ID identifies the immediate parent. Subagents never
+ *     inherit a broad cross-agent memory-guard opt-out from the parent.
  *
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
  *     declares permissionMode=memory. Those subagents operate on the parent's
@@ -684,6 +702,7 @@ export function composeSubagentChildEnv(
     inheritedApiKey,
     inheritedBaseUrl,
     transcriptPath,
+    inheritedChannelContext,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -693,6 +712,11 @@ export function composeSubagentChildEnv(
     LETTA_CODE_AGENT_ROLE: "subagent",
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
+    ...(inheritedChannelContext && {
+      [LETTA_INHERITED_CHANNEL_CONTEXT_ENV]: JSON.stringify(
+        inheritedChannelContext,
+      ),
+    }),
   };
 
   if (backendMode === "local") {
@@ -702,25 +726,6 @@ export function composeSubagentChildEnv(
     }
   } else if (backendMode === "api") {
     childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "0";
-  }
-
-  const nextScope = new Set<string>([
-    ...parseScopeList(parentProcessEnv.LETTA_MEMORY_SCOPE),
-    ...cliPermissions.getMemoryScope(),
-  ]);
-  if (parentAgentId) {
-    nextScope.add(parentAgentId);
-  }
-
-  // Authorize the subagent to access both the parent's memory and any
-  // explicitly granted cross-agent scope the parent process already had.
-  // Independent of permissionMode — Read from those memories is legitimate
-  // for any subagent type, and the cross-agent guard would otherwise deny it
-  // as a foreign-agent access.
-  if (nextScope.size > 0) {
-    childEnv.LETTA_MEMORY_SCOPE = [...nextScope].join(",");
-  } else {
-    delete childEnv.LETTA_MEMORY_SCOPE;
   }
 
   // Only memory-mode subagents get MEMORY_DIR pointed at the parent. Other
@@ -854,6 +859,7 @@ export function buildSubagentPrompt(
 interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
+  extraTools?: string[];
 }
 
 /**
@@ -968,7 +974,10 @@ export function buildSubagentArgs(
     Array.isArray(config.allowedTools) &&
     config.allowedTools.length > 0
   ) {
-    args.push("--tools", config.allowedTools.join(","));
+    const scopedTools = Array.from(
+      new Set([...(config.allowedTools ?? []), ...(options.extraTools ?? [])]),
+    );
+    args.push("--tools", scopedTools.join(","));
   }
 
   // Add max turns limit if specified
@@ -1022,6 +1031,9 @@ async function executeSubagent(
     const backendMode: BackendMode = activeBackend.capabilities.localMemfs
       ? "local"
       : "api";
+    const runtimeContext = getRuntimeContext();
+    const inheritedChannelContext =
+      buildInheritedChannelContextPayload(runtimeContext);
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
     const cliArgs = buildSubagentArgs(
       type,
@@ -1031,7 +1043,14 @@ async function executeSubagent(
       existingAgentId,
       existingConversationId,
       maxTurns,
-      { backendMode, promptTransport: "stdin" },
+      {
+        backendMode,
+        promptTransport: "stdin",
+        extraTools:
+          config.fork && inheritedChannelContext
+            ? ["MessageChannel"]
+            : undefined,
+      },
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
@@ -1088,6 +1107,7 @@ async function executeSubagent(
       inheritedApiKey,
       inheritedBaseUrl,
       transcriptPath,
+      inheritedChannelContext,
     });
 
     const proc = spawn(launcher.command, launcher.args, {

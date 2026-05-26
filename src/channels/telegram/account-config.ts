@@ -1,7 +1,15 @@
 import type { ChannelAccountConfigAdapter } from "@/channels/plugin-types";
-import type { TelegramChannelAccount } from "@/channels/types";
+import type {
+  TelegramChannelAccount,
+  TelegramGroupMode,
+} from "@/channels/types";
 
-const TELEGRAM_CONFIG_KEYS = new Set(["token", "transcribe_voice"]);
+const TELEGRAM_CONFIG_KEYS = new Set([
+  "token",
+  "group_mode",
+  "transcribe_voice",
+  "inbound_debounce_ms",
+]);
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -9,6 +17,10 @@ function isString(value: unknown): value is string {
 
 function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
+}
+
+function isTelegramGroupMode(value: unknown): value is TelegramGroupMode {
+  return value === "open" || value === "mention-only";
 }
 
 export const telegramAccountConfigAdapter: ChannelAccountConfigAdapter<TelegramChannelAccount> =
@@ -21,39 +33,59 @@ export const telegramAccountConfigAdapter: ChannelAccountConfigAdapter<TelegramC
       }
       return (
         (config.token === undefined || isString(config.token)) &&
+        (config.group_mode === undefined ||
+          isTelegramGroupMode(config.group_mode)) &&
         (config.transcribe_voice === undefined ||
-          isBoolean(config.transcribe_voice))
+          isBoolean(config.transcribe_voice)) &&
+        (config.inbound_debounce_ms === undefined ||
+          (typeof config.inbound_debounce_ms === "number" &&
+            Number.isFinite(config.inbound_debounce_ms) &&
+            config.inbound_debounce_ms >= 0 &&
+            config.inbound_debounce_ms <= 10000))
       );
     },
 
     toAccountPatch(config) {
       return {
         token: isString(config.token) ? config.token : undefined,
+        groupMode: isTelegramGroupMode(config.group_mode)
+          ? config.group_mode
+          : undefined,
         transcribeVoice: isBoolean(config.transcribe_voice)
           ? config.transcribe_voice
           : undefined,
+        inboundDebounceMs:
+          typeof config.inbound_debounce_ms === "number" &&
+          Number.isFinite(config.inbound_debounce_ms) &&
+          config.inbound_debounce_ms >= 0
+            ? Math.trunc(Math.min(config.inbound_debounce_ms, 10000))
+            : undefined,
       };
     },
 
     toAccountConfig(account) {
       return {
         has_token: account.token.trim().length > 0,
+        group_mode: account.groupMode ?? "open",
         transcribe_voice: account.transcribeVoice === true,
         binding: {
           agent_id: account.binding.agentId,
           conversation_id: account.binding.conversationId,
         },
+        inbound_debounce_ms: account.inboundDebounceMs,
       };
     },
 
     toConfigSnapshotConfig(account) {
       return {
         has_token: account.token.trim().length > 0,
+        group_mode: account.groupMode ?? "open",
         transcribe_voice: account.transcribeVoice === true,
         binding: {
           agent_id: account.binding.agentId,
           conversation_id: account.binding.conversationId,
         },
+        inbound_debounce_ms: account.inboundDebounceMs,
       };
     },
 

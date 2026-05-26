@@ -38,12 +38,12 @@ describe("formatPermissionDenial", () => {
     const result = formatPermissionDenial({
       reason:
         "Permission denied by cross-agent memory guard: targeted agent-abc123. " +
-        "Set LETTA_MEMORY_SCOPE or pass --memory-scope to authorize.",
+        "Pass --disable-memory-guard from the parent agent process to opt in.",
       matchedRule: "cross-agent guard",
     });
     expect(result).toBe(
       "Permission denied by cross-agent memory guard: targeted agent-abc123. " +
-        "Set LETTA_MEMORY_SCOPE or pass --memory-scope to authorize.",
+        "Pass --disable-memory-guard from the parent agent process to opt in.",
     );
   });
 
@@ -95,20 +95,6 @@ describe("formatPermissionDenial", () => {
       matchedRule: "Edit(secret.txt) (CLI)",
     });
     expect(result).toBe("Permission denied by rule: Edit(secret.txt) (CLI)");
-  });
-
-  test("plan-mode denial — reason contains plan file path context", () => {
-    const result = formatPermissionDenial({
-      reason:
-        "Plan mode is active. You can only use read-only tools (Read, " +
-        "Grep, Glob, etc.) and write to the plan file. " +
-        "Write your plan to: /tmp/plan.md. Use ExitPlanMode when ready.",
-      matchedRule: "plan mode",
-    });
-    expect(result).toContain("Plan mode is active");
-    expect(result).toContain("/tmp/plan.md");
-    // Crucially, it shouldn't be the short "plan mode" label
-    expect(result).not.toBe("Permission denied by rule: plan mode");
   });
 
   test("memory-mode denial shows fuller reason over short label", () => {

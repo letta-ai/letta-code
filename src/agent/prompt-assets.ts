@@ -17,7 +17,7 @@ import personaBlankPrompt from "./prompts/persona_blank.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
 import personaLinusPrompt from "./prompts/persona_linus.mdx";
 import personaMemoPrompt from "./prompts/persona_memo.mdx";
-import planModeReminder from "./prompts/plan_mode_reminder.txt";
+import personaTutorialPrompt from "./prompts/persona_tutorial.mdx";
 import projectPrompt from "./prompts/project.mdx";
 import rememberPrompt from "./prompts/remember.md";
 import skillCreatorModePrompt from "./prompts/skill_creator_mode.md";
@@ -29,7 +29,6 @@ import sourceGeminiPrompt from "./prompts/source_gemini.md";
 import stylePrompt from "./prompts/style.mdx";
 
 export const SYSTEM_PROMPT = lettaNoMemfsPrompt;
-export const PLAN_MODE_REMINDER = planModeReminder;
 
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
@@ -44,6 +43,7 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "persona_kawaii.mdx": personaKawaiiPrompt,
   "persona_linus.mdx": personaLinusPrompt,
   "persona_memo.mdx": personaMemoPrompt,
+  "persona_tutorial.mdx": personaTutorialPrompt,
   "human.mdx": humanPrompt,
   "human_kawaii.mdx": humanKawaiiPrompt,
   "human_linus.mdx": humanLinusPrompt,

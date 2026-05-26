@@ -8,7 +8,7 @@
     },
     "description": {
       "type": "string",
-      "description": "Brief description of the command for the user. Be specific and concise. Ideally a single sentence. Can be up to 3 sentences for clarity. No line breaks."
+      "description": "Brief user-facing description of the command. This may be shown directly in chat as part of a status row like `Running command: <description>` or `Ran command: <description>`. Be specific and concise. Ideally a single sentence. No line breaks."
     },
     "dir_path": {
       "type": "string",

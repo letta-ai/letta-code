@@ -8,6 +8,7 @@ import {
   type ReflectionSettings,
   shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
+import { getReflectionTranscriptState } from "@/cli/helpers/reflection-transcript";
 import {
   buildSessionContext,
   type SessionContextSource,
@@ -41,7 +42,6 @@ export interface SharedReminderContext {
   systemInfoReminderEnabled: boolean;
   reflectionSettings: ReflectionSettings;
   skillSources: SkillSource[];
-  resolvePlanModeReminder: () => string | Promise<string>;
   maybeLaunchReflectionSubagent?: (
     triggerSource: ReflectionTriggerSource,
   ) => Promise<boolean>;
@@ -170,21 +170,9 @@ async function buildConversationBootstrapReminderPart(
   });
 }
 
-async function buildPlanModeReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (permissionMode.getMode() !== "plan") {
-    return null;
-  }
-
-  const reminder = await context.resolvePlanModeReminder();
-  return reminder || null;
-}
-
 const PERMISSION_MODE_DESCRIPTIONS = {
   standard: "Normal approval flow.",
   acceptEdits: "File edits auto-approved.",
-  plan: "Read-only mode. Focus on exploration and planning.",
   memory:
     "Memory-scoped mode. Reads are broad; mutations are limited to allowed memory roots.",
   unrestricted: "All tools auto-approved. Bias toward action.",
@@ -227,23 +215,28 @@ async function buildPermissionModeReminder(
 async function buildReflectionStepReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  const shouldFireStepTrigger = shouldFireStepCountTrigger(
-    context.state.turnCount,
-    context.reflectionSettings,
-  );
-
   const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
   let reminder: string | null = null;
 
-  if (shouldFireStepTrigger) {
+  if (context.reflectionSettings.trigger === "step-count") {
     if (memfsEnabled) {
-      if (context.maybeLaunchReflectionSubagent) {
-        await context.maybeLaunchReflectionSubagent("step-count");
-      } else {
-        debugLog(
-          "memory",
-          `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-        );
+      const transcriptState = await getReflectionTranscriptState(
+        context.agent.id,
+        context.agent.conversationId ?? "default",
+      );
+      const shouldFireStepTrigger = shouldFireStepCountTrigger(
+        transcriptState.turns_since_last_successful_reflection,
+        context.reflectionSettings,
+      );
+      if (shouldFireStepTrigger) {
+        if (context.maybeLaunchReflectionSubagent) {
+          await context.maybeLaunchReflectionSubagent("step-count");
+        } else {
+          debugLog(
+            "memory",
+            `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
+          );
+        }
       }
     } else {
       reminder = await buildMemoryReminder(
@@ -399,7 +392,6 @@ export const sharedReminderProviders: Record<
   "secrets-info": buildSecretsInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
-  "plan-mode": buildPlanModeReminder,
   "reflection-step-count": buildReflectionStepReminder,
   "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,
@@ -468,5 +460,16 @@ export function prependReminderPartsToContent(
     return [...reminderParts, ...content] as MessageCreate["content"];
   }
 
-  return content;
+  if (content === null || content === undefined) {
+    return reminderParts as MessageCreate["content"];
+  }
+
+  let text: string;
+  try {
+    text = JSON.stringify(content) ?? String(content);
+  } catch {
+    text = String(content);
+  }
+
+  return [...reminderParts, { type: "text", text }] as MessageCreate["content"];
 }

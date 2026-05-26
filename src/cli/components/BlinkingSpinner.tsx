@@ -2,6 +2,7 @@ import { memo, useEffect, useState } from "react";
 import stringWidth from "string-width";
 import { useAnimation } from "@/cli/contexts/AnimationContext.js";
 import { colors } from "./colors.js";
+import { useFrameCycle } from "./spinners/use-frame-cycle.js";
 import { Text } from "./Text";
 
 export const BRAILLE_SPINNER_FRAMES = [
@@ -44,18 +45,8 @@ export const BlinkingSpinner = memo(
     const shouldAnimate =
       shouldAnimateProp === false ? false : shouldAnimateContext;
 
-    const [frameIndex, setFrameIndex] = useState(0);
+    const frameIndex = useFrameCycle(frames, intervalMs, shouldAnimate);
     const [blinkOn, setBlinkOn] = useState(true);
-
-    useEffect(() => {
-      if (!shouldAnimate || frames.length === 0) return;
-
-      const timer = setInterval(() => {
-        setFrameIndex((v) => (v + 1) % frames.length);
-      }, intervalMs);
-
-      return () => clearInterval(timer);
-    }, [shouldAnimate, frames, intervalMs]);
 
     useEffect(() => {
       if (!shouldAnimate || !pulse) return;

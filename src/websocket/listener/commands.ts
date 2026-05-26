@@ -28,8 +28,8 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
+import { goalLoopMode } from "@/goal-loop-mode";
 import { runPreCompactHooks } from "@/hooks";
-import { ralphMode } from "@/ralph/mode";
 import { settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
@@ -129,6 +129,7 @@ export async function handleExecuteCommand(
         output = await handleCompactCommand(conversationRuntime, trimmedArgs);
         break;
 
+      case "context-limit":
       case "set-max-context":
         output = await handleSetMaxContextCommand(
           conversationRuntime,
@@ -532,7 +533,7 @@ async function handleRememberCommand(
 }
 
 /**
- * /goal — Manage conversation goals with auto-continuation (ralph mode).
+ * /goal — Manage conversation goals with auto-continuation.
  *
  * Subcommands:
  *   /goal status              — Show current goal status
@@ -582,8 +583,8 @@ async function handleGoalCommand(
     if (lowerGoalArg === "disable") {
       settingsManager.setConversationGoalToolsEnabled(conversationId, false);
     }
-    if (ralphMode.getState().mode === "goal") {
-      ralphMode.deactivate();
+    if (goalLoopMode.getState().isActive) {
+      goalLoopMode.deactivate();
     }
     const permState = getOrCreateConversationPermissionModeStateRef(
       conversationRuntime.listener,
@@ -624,8 +625,8 @@ async function handleGoalCommand(
     );
 
     if (lowerGoalArg === "pause" || lowerGoalArg === "complete") {
-      if (ralphMode.getState().mode === "goal") {
-        ralphMode.deactivate();
+      if (goalLoopMode.getState().isActive) {
+        goalLoopMode.deactivate();
       }
       if (permState.mode === "unrestricted") {
         permState.mode = "standard";
@@ -633,12 +634,12 @@ async function handleGoalCommand(
       }
     } else if (lowerGoalArg === "resume") {
       settingsManager.setConversationGoalToolsEnabled(conversationId, true);
-      ralphMode.activateGoal(goal.objective, 0, true);
+      goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
       permState.mode = "unrestricted";
       persistPermissionModeMapForRuntime(conversationRuntime.listener);
 
       // Send continuation prompt through the turn pipeline
-      const goalState = ralphMode.getState();
+      const goalState = goalLoopMode.getState();
       const storedGoal = settingsManager.getConversationGoal(conversationId);
       const liveActiveSeconds =
         storedGoal?.activeStartedAt && storedGoal.status === "active"
@@ -705,7 +706,7 @@ async function handleGoalCommand(
     parsedGoal.tokenBudget,
     true,
   );
-  ralphMode.activateGoal(parsedGoal.objective, 0, true, parsedGoal.tokenBudget);
+  goalLoopMode.activateGoal(parsedGoal.objective, parsedGoal.tokenBudget);
 
   const permState = getOrCreateConversationPermissionModeStateRef(
     conversationRuntime.listener,
@@ -719,7 +720,7 @@ async function handleGoalCommand(
   const resultPrefix = `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`;
 
   // Send initial goal continuation prompt through the turn pipeline
-  const goalState = ralphMode.getState();
+  const goalState = goalLoopMode.getState();
   const storedGoal = settingsManager.getConversationGoal(conversationId);
   const liveActiveSeconds =
     storedGoal?.activeStartedAt && storedGoal.status === "active"
@@ -760,14 +761,14 @@ async function handleGoalCommand(
   return resultPrefix;
 }
 
-/** /set-max-context — Set or reset the active scope's max context window. */
+/** /context-limit — Set or reset the active scope's max context window. */
 async function handleSetMaxContextCommand(
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
 ): Promise<string> {
   const agentId = conversationRuntime.agentId;
   if (!agentId) {
-    throw new Error("No agent ID available for /set-max-context command");
+    throw new Error("No agent ID available for /context-limit command");
   }
 
   const result = await applySetMaxContext({

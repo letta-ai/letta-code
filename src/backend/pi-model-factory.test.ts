@@ -2,11 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getModels } from "@earendil-works/pi-ai";
 import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
-import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
+import {
+  createOrUpdateLocalProvider,
+  localOAuthAuthFromCredentials,
+  setLocalOAuthProvider,
+} from "@/backend/local/local-provider-auth-store";
 
 function envValue(key: string): string | undefined {
   return process.env[key];
@@ -56,6 +61,9 @@ describe("pi model factory", () => {
   test("resolves ChatGPT OAuth through pi OAuth credentials", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-chatgpt-oauth-"));
     try {
+      const model = getModels("openai-codex")[0];
+      if (!model) throw new Error("Expected ChatGPT subscription models");
+
       await createOrUpdateLocalProvider({
         storageDir,
         providerType: "chatgpt_oauth",
@@ -70,12 +78,72 @@ describe("pi model factory", () => {
       });
 
       const resolved = await resolvePiModelForAgent(
-        "chatgpt-plus-pro/gpt-5.1-codex-max",
+        `chatgpt-plus-pro/${model.id}`,
         { provider_type: "chatgpt_oauth" },
         { localProviderAuthStorageDir: storageDir },
       );
 
       expect(resolved.apiKey).toBe("chatgpt-access-token");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves generic local OAuth credentials through pi OAuth providers", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-anthropic-oauth-"));
+    try {
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "anthropic",
+        providerType: "anthropic",
+        auth: localOAuthAuthFromCredentials({
+          access: "sk-ant-oat-local",
+          refresh: "anthropic-refresh-token",
+          expires: Date.now() + 60_000,
+        }),
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "anthropic/claude-sonnet-4-6",
+        { provider_type: "anthropic" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.apiKey).toBe("sk-ant-oat-local");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("applies pi OAuth model modifications for GitHub Copilot", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-copilot-oauth-"));
+    try {
+      const model = getModels("github-copilot")[0];
+      if (!model) throw new Error("Expected GitHub Copilot models");
+
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "github-copilot",
+        providerType: "github-copilot",
+        auth: localOAuthAuthFromCredentials({
+          access: "tid=1;exp=1;proxy-ep=proxy.enterprise.githubcopilot.com;",
+          refresh: "copilot-refresh-token",
+          expires: Date.now() + 60_000,
+        }),
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        `github-copilot/${model.id}`,
+        { provider_type: "github-copilot" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.apiKey).toBe(
+        "tid=1;exp=1;proxy-ep=proxy.enterprise.githubcopilot.com;",
+      );
+      expect(resolved.model.baseUrl).toBe(
+        "https://api.enterprise.githubcopilot.com",
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -117,7 +185,7 @@ describe("pi model factory", () => {
       { provider_type: "bedrock" },
     );
 
-    expect(resolved.provider).toBe("bedrock");
+    expect(resolved.provider).toBe("amazon-bedrock");
     expect(resolved.model.id).toBe("us.anthropic.claude-opus-4-7");
     expect(resolved.model.reasoning).toBe(true);
   });
@@ -154,6 +222,16 @@ describe("pi model factory", () => {
     }
   });
 
+  test("resolves server LM Studio provider type to local runtime provider", async () => {
+    const resolved = await resolvePiModelForAgent(undefined, {
+      provider_type: "lmstudio_openai",
+    });
+
+    expect(resolved.provider).toBe("lmstudio");
+    expect(resolved.model.provider).toBe("lmstudio");
+    expect(resolved.model.baseUrl).toBe("http://127.0.0.1:1234/v1");
+  });
+
   test("normalizes local OpenAI-compatible provider base URLs for runtime", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-llama-cpp-base-url-"));
     try {
@@ -172,6 +250,31 @@ describe("pi model factory", () => {
       );
 
       expect(resolved.model.baseUrl).toBe("http://localhost:8088/v1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not let local no-key placeholders mask LM Studio env API keys", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-lmstudio-env-key-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "lmstudio",
+        providerName: "lc-lmstudio",
+        apiKey: "not-needed",
+        baseURL: "http://localhost:8000/v1",
+      });
+
+      await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {
+        const resolved = await resolvePiModelForAgent(
+          "lmstudio/local-model",
+          { provider_type: "lmstudio" },
+          { localProviderAuthStorageDir: storageDir },
+        );
+
+        expect(resolved.apiKey).toBe("1234");
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
