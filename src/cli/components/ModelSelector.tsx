@@ -7,7 +7,7 @@ import {
   getAvailableModelsCacheInfo,
   getCachedModelHandles,
 } from "@/agent/available-models";
-import { models } from "@/agent/model";
+import { getLocalModelLabel, models } from "@/agent/model";
 
 import {
   buildByokProviderAliases,
@@ -102,6 +102,15 @@ type UiModel = {
   free?: boolean;
   updateArgs?: Record<string, unknown>;
 };
+
+export function toSelectorModelForHandle(handle: string): UiModel {
+  return {
+    id: handle,
+    handle,
+    label: getLocalModelLabel(handle),
+    description: "",
+  };
+}
 
 const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
 
@@ -556,12 +565,7 @@ export function ModelSelector({
           handle,
         });
       } else {
-        resolved.push({
-          id: handle,
-          handle,
-          label: handle,
-          description: "",
-        });
+        resolved.push(toSelectorModelForHandle(handle));
       }
     }
     return resolved;
@@ -580,12 +584,7 @@ export function ModelSelector({
         description: "",
       })),
       "server-recommended": serverRecommendedModels,
-      "server-all": serverAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-      })),
+      "server-all": serverAllModels.map(toSelectorModelForHandle),
       all: allLettaModels,
     }),
     [

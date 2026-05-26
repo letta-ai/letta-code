@@ -8,7 +8,7 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import type { ModelReasoningEffort } from "@/agent/model";
+import { isLocalModelHandle, type ModelReasoningEffort } from "@/agent/model";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 
@@ -55,6 +55,32 @@ type ReasoningCycleContext = {
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
   withCommandLock: (fn: () => Promise<void>) => Promise<void>;
 };
+
+export function resolveReasoningCycleModelHandle(
+  llmConfig: LlmConfig | null | undefined,
+  agentModel: string | null | undefined,
+): string | null {
+  if (agentModel && isLocalModelHandle(agentModel)) {
+    return agentModel;
+  }
+
+  const model = llmConfig?.model;
+  if (!model) return agentModel ?? null;
+
+  if (isLocalModelHandle(model)) {
+    return model;
+  }
+
+  if (llmConfig?.model_endpoint_type) {
+    return `${
+      llmConfig.model_endpoint_type === "chatgpt_oauth"
+        ? OPENAI_CODEX_PROVIDER_NAME
+        : llmConfig.model_endpoint_type
+    }/${model}`;
+  }
+
+  return model;
+}
 
 export function useReasoningCycle(ctx: ReasoningCycleContext) {
   const {
@@ -287,17 +313,12 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       if (reasoningCycleInFlightRef.current) return;
 
       const current = llmConfigRef.current;
-      // For ChatGPT OAuth sessions, llm_config may report model_endpoint_type as
-      // "chatgpt_oauth" while our code/model registry uses the provider name
-      // "chatgpt-plus-pro" in handles.
-      const modelHandle =
-        current?.model_endpoint_type && current?.model
-          ? `${
-              current.model_endpoint_type === "chatgpt_oauth"
-                ? OPENAI_CODEX_PROVIDER_NAME
-                : current.model_endpoint_type
-            }/${current.model}`
-          : current?.model;
+      const modelHandle = resolveReasoningCycleModelHandle(
+        current,
+        hasConversationModelOverrideRef.current
+          ? null
+          : (agentStateRef.current?.model ?? null),
+      );
       if (!modelHandle) return;
 
       // Derive current effort from effective model settings (conversation override aware)
@@ -307,19 +328,15 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       const currentEffort =
         deriveReasoningEffort(modelSettingsForEffort, current) ?? "none";
 
-      const { models } = await import("@/agent/model");
-      const tiers = models
-        .filter((m) => m.handle === modelHandle)
-        .map((m) => {
-          const effort = (
-            m.updateArgs as { reasoning_effort?: unknown } | undefined
-          )?.reasoning_effort;
-          return {
-            id: m.id,
-            effort: typeof effort === "string" ? effort : null,
-          };
-        })
-        .filter((m): m is { id: string; effort: string } => Boolean(m.effort));
+      const { getReasoningTierOptionsForHandle } = await import(
+        "@/agent/model"
+      );
+      const tiers = getReasoningTierOptionsForHandle(modelHandle).map(
+        (option) => ({
+          id: option.modelId,
+          effort: option.effort,
+        }),
+      );
 
       // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;

@@ -33,6 +33,36 @@ const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "max",
 ];
 
+const LOCAL_REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
+  "none",
+  "low",
+  "medium",
+  "high",
+];
+
+const LOCAL_MODEL_HANDLE_PREFIXES = [
+  "ollama/",
+  "ollama-cloud/",
+  "lmstudio/",
+  "llama.cpp/",
+  "llama-cpp/",
+];
+
+export function isLocalModelHandle(modelHandle: string): boolean {
+  return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
+    modelHandle.startsWith(prefix),
+  );
+}
+
+export function getLocalModelLabel(modelHandle: string): string {
+  const providerPrefix = LOCAL_MODEL_HANDLE_PREFIXES.find((prefix) =>
+    modelHandle.startsWith(prefix),
+  );
+  return providerPrefix
+    ? modelHandle.slice(providerPrefix.length)
+    : modelHandle;
+}
+
 function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
   return (
     typeof value === "string" &&
@@ -62,6 +92,13 @@ export function getReasoningTierOptionsForHandle(
     if (!byEffort.has(effort)) {
       byEffort.set(effort, model.id);
     }
+  }
+
+  if (byEffort.size === 0 && isLocalModelHandle(modelHandle)) {
+    return LOCAL_REASONING_EFFORT_ORDER.map((effort) => ({
+      effort,
+      modelId: modelHandle,
+    }));
   }
 
   return REASONING_EFFORT_ORDER.flatMap((effort) => {

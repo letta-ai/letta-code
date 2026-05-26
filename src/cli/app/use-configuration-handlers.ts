@@ -52,6 +52,7 @@ import type {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
+  initialEffort?: ModelReasoningEffort;
   options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
 };
 
@@ -149,7 +150,11 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     async (
       modelId: string,
       commandId?: string | null,
-      opts?: { skipReasoningPrompt?: boolean },
+      opts?: {
+        promptReasoning?: boolean;
+        skipReasoningPrompt?: boolean;
+        reasoningEffort?: ModelReasoningEffort;
+      },
     ) => {
       let overlayCommand = commandId
         ? commandRunner.getHandle(commandId, "/model")
@@ -210,16 +215,31 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             "@/agent/available-models"
           );
           const apiContextWindow = await getModelContextWindow(modelId);
+          const updateArgs: Record<string, unknown> = {
+            ...(apiContextWindow ? { context_window: apiContextWindow } : {}),
+            ...(opts?.reasoningEffort
+              ? { reasoning_effort: opts.reasoningEffort }
+              : {}),
+          };
 
           selectedModel = {
             id: modelId,
             handle: modelId,
             label: modelId.split("/").pop() ?? modelId,
             description: "Custom model",
-            updateArgs: apiContextWindow
-              ? { context_window: apiContextWindow }
-              : undefined,
+            updateArgs:
+              Object.keys(updateArgs).length > 0 ? updateArgs : undefined,
           } as unknown as (typeof models)[number];
+        }
+
+        if (selectedModel && opts?.reasoningEffort) {
+          selectedModel = {
+            ...selectedModel,
+            updateArgs: {
+              ...(selectedModel.updateArgs ?? {}),
+              reasoning_effort: opts.reasoningEffort,
+            },
+          };
         }
 
         if (!selectedModel) {
@@ -257,7 +277,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
 
         if (
           !opts?.skipReasoningPrompt &&
-          activeOverlay === "model" &&
+          (opts?.promptReasoning || activeOverlay === "model") &&
           reasoningTierOptions.length > 1
         ) {
           const selectedEffort = (
@@ -275,6 +295,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             setModelReasoningPrompt({
               modelLabel: model.label,
               initialModelId: preferredOption.modelId,
+              initialEffort: preferredOption.effort,
               options: reasoningTierOptions,
             });
             return;

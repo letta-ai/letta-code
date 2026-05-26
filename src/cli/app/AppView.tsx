@@ -102,6 +102,7 @@ type ModelSelectorOptions = {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
+  initialEffort?: ModelReasoningEffort;
   options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
 };
 
@@ -200,7 +201,11 @@ type AppViewProps = {
   handleModelSelect: (
     modelId: string,
     commandId?: string | null,
-    opts?: { skipReasoningPrompt?: boolean },
+    opts?: {
+      promptReasoning?: boolean;
+      skipReasoningPrompt?: boolean;
+      reasoningEffort?: ModelReasoningEffort;
+    },
   ) => Promise<void>;
   handlePasteError: (message: string) => void;
   handlePermissionModeChange: (mode: PermissionMode) => void;
@@ -732,10 +737,12 @@ export function AppView(props: AppViewProps) {
                   modelLabel={modelReasoningPrompt.modelLabel}
                   options={modelReasoningPrompt.options}
                   initialModelId={modelReasoningPrompt.initialModelId}
-                  onSelect={(selectedModelId) => {
+                  initialEffort={modelReasoningPrompt.initialEffort}
+                  onSelect={(selectedOption) => {
                     setModelReasoningPrompt(null);
-                    void handleModelSelect(selectedModelId, null, {
+                    void handleModelSelect(selectedOption.modelId, null, {
                       skipReasoningPrompt: true,
+                      reasoningEffort: selectedOption.effort,
                     });
                   }}
                   onCancel={() => setModelReasoningPrompt(null)}
@@ -744,7 +751,11 @@ export function AppView(props: AppViewProps) {
                 <ModelSelector
                   currentModelId={currentModelId ?? undefined}
                   currentModelHandle={currentModelHandle}
-                  onSelect={handleModelSelect}
+                  onSelect={(modelId) => {
+                    void handleModelSelect(modelId, null, {
+                      promptReasoning: true,
+                    });
+                  }}
                   onOpenConnect={() => {
                     const overlayCommand = completeOverlay("model");
                     overlayCommand?.finish("Models dialog dismissed", true);

@@ -19,6 +19,7 @@ import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
+  type ModelReasoningEffort,
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
@@ -1520,6 +1521,10 @@ async function main(): Promise<void> {
     const [selectedServerModel, setSelectedServerModel] = useState<
       string | null
     >(null);
+    const [
+      selectedServerModelReasoningEffort,
+      setSelectedServerModelReasoningEffort,
+    ] = useState<ModelReasoningEffort | null>(null);
     const [selfHostedDefaultModel, setSelfHostedDefaultModel] = useState<
       string | null
     >(null);
@@ -2219,7 +2224,13 @@ async function main(): Promise<void> {
             : undefined;
           const modelForUpdateArgs =
             personalityOptions?.model ?? effectiveModel;
-          const updateArgs = getModelUpdateArgs(modelForUpdateArgs);
+          const baseUpdateArgs = getModelUpdateArgs(modelForUpdateArgs);
+          const updateArgs = selectedServerModelReasoningEffort
+            ? {
+                ...(baseUpdateArgs ?? {}),
+                reasoning_effort: selectedServerModelReasoningEffort,
+              }
+            : baseUpdateArgs;
           const result = await createAgent({
             ...(personalityOptions ?? {}),
             model: modelForUpdateArgs,
@@ -2694,9 +2705,13 @@ async function main(): Promise<void> {
           setUserRequestedNewAgent(true);
           setLoadingState("assembling");
         },
-        onCreateNewWithModel: (modelHandle: string) => {
+        onCreateNewWithModel: (
+          modelHandle: string,
+          reasoningEffort?: ModelReasoningEffort,
+        ) => {
           setUserRequestedNewAgent(true);
           setSelectedServerModel(modelHandle);
+          setSelectedServerModelReasoningEffort(reasoningEffort ?? null);
           setLoadingState("assembling");
         },
         onExit: () => {

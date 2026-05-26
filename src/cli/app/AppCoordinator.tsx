@@ -719,6 +719,7 @@ export function App({
   const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
     modelLabel: string;
     initialModelId: string;
+    initialEffort?: ModelReasoningEffort;
     options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
   } | null>(null);
   const closeOverlay = useCallback(() => {
