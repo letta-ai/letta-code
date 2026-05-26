@@ -165,6 +165,7 @@ export interface ExtensionEventResultMap {
 }
 
 export interface ExtensionEventContext {
+  backend?: ExtensionBackendApi;
   context: ExtensionContext;
   getContext: () => ExtensionContext;
   signal: AbortSignal;

@@ -1,19 +1,11 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { sendMessageStreamWithBackend } from "@/agent/message";
 import { type Backend, getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
-import { debugLog } from "@/utils/debug";
 import {
-  createExtensionHost,
-  type ExtensionHost,
-  resolveLocalExtensionSources,
+  createExtensionRuntime,
+  type ExtensionRuntime,
+  type ExtensionRuntimeSnapshot,
 } from "./local-extension-loader";
 import type {
   ExtensionBackendApi,
@@ -24,31 +16,19 @@ import type {
 } from "./types";
 
 export interface LocalExtensionRuntime {
-  hadStatuslineRenderer: boolean;
-  hasExtensionSources: boolean;
-  host: ExtensionHost;
-  isLoading: boolean;
-  registry: ReturnType<ExtensionHost["getSnapshot"]> | null;
-  getBackendApi: () => ExtensionBackendApi;
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
   ) => Promise<ExtensionEventEmissionResult>;
+  getBackendApi: () => ExtensionBackendApi | undefined;
   getContext: () => ExtensionContext;
-  reload: () => Promise<void>;
-  updateContext: (context: ExtensionContext) => void;
-}
-
-interface LocalExtensionLoadState {
   hadStatuslineRenderer: boolean;
   hasExtensionSources: boolean;
+  host: ExtensionRuntime["host"];
   isLoading: boolean;
-}
-
-function hasLocalExtensionSources(): boolean {
-  return resolveLocalExtensionSources().some(
-    (source) => source.files.length > 0,
-  );
+  registry: ExtensionRuntimeSnapshot["registry"];
+  reload: () => Promise<void>;
+  updateContext: (context: ExtensionContext) => void;
 }
 
 function createExtensionBackendApi(backend: Backend): ExtensionBackendApi {
@@ -71,158 +51,48 @@ function createExtensionBackendApi(backend: Backend): ExtensionBackendApi {
 export function useLocalExtensionRuntime(
   initialContext: ExtensionContext,
 ): LocalExtensionRuntime {
-  const contextRef = useRef(initialContext);
-  const mountedRef = useRef(false);
-  const [loadState, setLoadState] = useState<LocalExtensionLoadState>(() => {
-    const hasExtensionSources = hasLocalExtensionSources();
-    return {
-      hadStatuslineRenderer: false,
-      hasExtensionSources,
-      isLoading: hasExtensionSources,
-    };
-  });
-  const loadStateRef = useRef(loadState);
-
-  useEffect(() => {
-    loadStateRef.current = loadState;
-  }, [loadState]);
-
-  const updateContext = useCallback((context: ExtensionContext) => {
-    contextRef.current = context;
-  }, []);
-
-  const getContext = useCallback(() => contextRef.current, []);
-
-  const getBackendApi = useCallback(
-    () => createExtensionBackendApi(getBackend()),
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the runtime is process-local; context updates are pushed through updateContext below.
+  const runtime = useMemo(
+    () =>
+      createExtensionRuntime({
+        getBackendApi: () => createExtensionBackendApi(getBackend()),
+        getClient,
+        initialContext,
+      }),
     [],
   );
 
-  const backend = useMemo<ExtensionBackendApi>(() => {
-    return {
-      forkConversation(conversationId, options) {
-        return getBackendApi().forkConversation(conversationId, options);
-      },
-      sendMessageStream(conversationId, messages, options, requestOptions) {
-        return getBackendApi().sendMessageStream(
-          conversationId,
-          messages,
-          options,
-          requestOptions,
-        );
-      },
-    };
-  }, [getBackendApi]);
-
-  const host = useMemo(
-    () =>
-      createExtensionHost({
-        backend,
-        getClient,
-        getContext,
-      }),
-    [backend, getContext],
-  );
-
-  const registry = useSyncExternalStore(
-    host.subscribe,
-    host.getSnapshot,
-    host.getSnapshot,
-  );
-
-  const emitEvent = useCallback(
-    <TName extends ExtensionEventName>(
-      name: TName,
-      event: ExtensionEventMap[TName],
-    ) => host.emitEvent(name, event),
-    [host],
+  const snapshot = useSyncExternalStore(
+    runtime.subscribe,
+    runtime.getSnapshot,
+    runtime.getSnapshot,
   );
 
   useEffect(() => {
-    contextRef.current = initialContext;
-  }, [initialContext]);
-
-  const reload = useCallback(async () => {
-    const previousSnapshot = host.getSnapshot();
-    const previousHadStatuslineRenderer =
-      Boolean(previousSnapshot.ui.statuslineRenderer) ||
-      loadStateRef.current.hadStatuslineRenderer;
-    const hasExtensionSources = hasLocalExtensionSources();
-    setLoadState({
-      hadStatuslineRenderer: previousHadStatuslineRenderer,
-      hasExtensionSources,
-      isLoading: true,
-    });
-
-    await host.reload();
-    const nextRegistry = host.getSnapshot();
-
-    debugLog(
-      "extensions",
-      "loaded %s extension(s) from %s source(s); renderer=%s",
-      nextRegistry.loadedPaths.length,
-      nextRegistry.sources.length,
-      nextRegistry.ui.statuslineRenderer?.id ?? "(none)",
-    );
-
-    for (const loadError of nextRegistry.errors) {
-      debugLog(
-        "extensions",
-        "failed to load %s: %s",
-        loadError.path,
-        loadError.error.message,
-      );
-    }
-
-    if (!mountedRef.current) {
-      host.dispose();
-      return;
-    }
-
-    const nextHasExtensionSources = nextRegistry.sources.some(
-      (source) => source.files.length > 0,
-    );
-    const nextHadStatuslineRenderer = Boolean(
-      nextRegistry.ui.statuslineRenderer,
-    );
-
-    setLoadState({
-      hadStatuslineRenderer: nextHadStatuslineRenderer,
-      hasExtensionSources: nextHasExtensionSources,
-      isLoading: false,
-    });
-  }, [host]);
+    runtime.updateContext(initialContext);
+  }, [initialContext, runtime]);
 
   useEffect(() => {
-    mountedRef.current = true;
-    void reload();
+    void runtime.reload();
 
     return () => {
-      mountedRef.current = false;
-      host.dispose();
+      runtime.dispose();
     };
-  }, [host, reload]);
+  }, [runtime]);
 
   return useMemo(
     () => ({
-      registry,
-      getBackendApi,
-      emitEvent,
-      getContext,
-      host,
-      reload,
-      updateContext,
-      ...loadState,
+      emitEvent: runtime.emitEvent,
+      getBackendApi: runtime.getBackendApi,
+      getContext: runtime.getContext,
+      hadStatuslineRenderer: snapshot.hadStatuslineRenderer,
+      hasExtensionSources: snapshot.hasExtensionSources,
+      host: runtime.host,
+      isLoading: snapshot.isLoading,
+      registry: snapshot.registry,
+      reload: runtime.reload,
+      updateContext: runtime.updateContext,
     }),
-    [
-      emitEvent,
-      getBackendApi,
-      getContext,
-      host,
-      loadState,
-      registry,
-      reload,
-      updateContext,
-    ],
+    [runtime, snapshot],
   );
 }

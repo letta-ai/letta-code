@@ -305,7 +305,7 @@ describe("extension host", () => {
         `export default function(letta) {
           letta.events.on("conversation_open", (event, ctx) => {
             globalThis.__lettaExtensionEvents.push(
-              event.reason + ":" + event.agentId + ":" + ctx.context.agent.name,
+              event.reason + ":" + event.agentId + ":" + ctx.context.agent.name + ":" + Boolean(ctx.backend),
             );
             letta.ui.setStatus("lifecycle", event.reason);
           });
@@ -315,7 +315,11 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root);
+      const backend: ExtensionBackendApi = {
+        forkConversation: async () => ({ id: "forked" }),
+        sendMessageStream: async () => (async function* () {})(),
+      };
+      const host = createHost(root, undefined, backend);
       await host.reload();
       expect(host.getSnapshot().events.conversation_open).toHaveLength(2);
 
@@ -333,7 +337,7 @@ describe("extension host", () => {
       });
       expect(result.diagnostics).toHaveLength(1);
       expect(testGlobal.__lettaExtensionEvents).toEqual([
-        "startup:agent-1:Amelia",
+        "startup:agent-1:Amelia:true",
       ]);
       expect(snapshot.ui.statusValues.lifecycle).toBe("startup");
       expect(snapshot.errors.at(-1)).toMatchObject({

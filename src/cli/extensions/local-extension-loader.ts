@@ -13,6 +13,8 @@ import {
   loadLocalExtensions as loadLocalExtensionsBase,
   resolveLocalExtensionSources,
 } from "@/extensions/extension-host";
+import type { CreateExtensionRuntimeOptions } from "@/extensions/extension-runtime";
+import { createExtensionRuntime as createExtensionRuntimeBase } from "@/extensions/extension-runtime";
 import type { ExtensionCapabilities } from "@/extensions/types";
 import { getAllLettaToolNames, getServerToolName } from "@/tools/manager";
 import { TUI_EXTENSION_CAPABILITIES } from "./capabilities";
@@ -59,6 +61,10 @@ export function createExtensionHost(options: CreateExtensionHostOptions) {
   return createExtensionHostBase(withDefaultReservations(options));
 }
 
+export function createExtensionRuntime(options: CreateExtensionRuntimeOptions) {
+  return createExtensionRuntimeBase(withDefaultReservations(options));
+}
+
 export function loadLocalExtensions(options: LoadLocalExtensionsOptions) {
   return loadLocalExtensionsBase(withDefaultReservations(options));
 }
@@ -88,4 +94,10 @@ export type {
   ResolveLocalExtensionSourcesOptions,
   StatuslineRenderFunction,
 } from "@/extensions/extension-host";
+export type {
+  CreateExtensionRuntimeOptions,
+  ExtensionRuntime,
+  ExtensionRuntimeLoadState,
+  ExtensionRuntimeSnapshot,
+} from "@/extensions/extension-runtime";
 export { TUI_EXTENSION_CAPABILITIES } from "./capabilities";

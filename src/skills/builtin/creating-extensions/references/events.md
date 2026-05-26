@@ -83,11 +83,14 @@ Handlers also receive:
 
 ```ts
 {
+  backend?: letta.backend;
   context: letta.getContext();
   getContext: () => letta.getContext();
   signal: AbortSignal;
 }
 ```
+
+`ctx.backend` is bound when the event is dispatched. Use it for backend calls made while handling that event.
 
 Respect `ctx.signal` for long-running async work. It is aborted on `/reload` and app shutdown.
 
