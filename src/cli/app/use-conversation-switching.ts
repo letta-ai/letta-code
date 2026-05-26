@@ -24,7 +24,7 @@ import {
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { createAgent } from "@/agent/create";
 import { selectDefaultAgentModel } from "@/agent/defaults";
-import { sendMessageStream } from "@/agent/message";
+import { sendMessageStreamWithBackend } from "@/agent/message";
 import {
   configureBackendMode,
   getBackend,
@@ -188,8 +188,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       try {
         const isDefault = conversationIdRef.current === "default";
 
+        const backend = getBackend();
+
         // Fork the conversation
-        const forked = await getBackend().forkConversation(
+        const forked = await backend.forkConversation(
           conversationIdRef.current,
           {
             ...(isDefault ? { agentId } : {}),
@@ -211,17 +213,22 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           },
         ];
         let approvalRecoveryRetries = 0;
-        let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+        let stream: Awaited<ReturnType<typeof sendMessageStreamWithBackend>>;
 
         while (true) {
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
             );
-            stream = await sendMessageStream(forked.id, currentInput, {
-              overrideModel: tempModelOverrideRef.current ?? undefined,
-              preparedToolContext: preparedToolContext.preparedToolContext,
-            });
+            stream = await sendMessageStreamWithBackend(
+              backend,
+              forked.id,
+              currentInput,
+              {
+                overrideModel: tempModelOverrideRef.current ?? undefined,
+                preparedToolContext: preparedToolContext.preparedToolContext,
+              },
+            );
             break;
           } catch (preStreamError) {
             debugLog(
