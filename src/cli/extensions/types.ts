@@ -1,5 +1,10 @@
 export type {
   ExtensionAgentContext,
+  ExtensionBackendApi,
+  ExtensionBackendForkConversationOptions,
+  ExtensionBackendMessage,
+  ExtensionBackendSendMessageOptions,
+  ExtensionBackendSendMessageRequestOptions,
   ExtensionBackgroundAgentContext,
   ExtensionCapabilities,
   ExtensionCapabilityKind,

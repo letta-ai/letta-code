@@ -1,3 +1,9 @@
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  ApprovalCreate,
+  LettaStreamingResponse,
+} from "@letta-ai/letta-client/resources/agents/messages";
+
 export interface ExtensionWorkspaceContext {
   cwd: string;
   currentDir: string;
@@ -66,6 +72,41 @@ export interface ExtensionCapabilities {
   tools: boolean;
   commands: boolean;
   ui: ExtensionUiCapabilities;
+}
+
+export interface ExtensionBackendForkConversationOptions {
+  agentId?: string;
+  hidden?: boolean;
+}
+
+export type ExtensionBackendMessage = MessageCreate | ApprovalCreate;
+
+export interface ExtensionBackendSendMessageOptions {
+  agentId?: string;
+  background?: boolean;
+  overrideModel?: string;
+  skipImageNormalization?: boolean;
+  streamTokens?: boolean;
+  workingDirectory?: string;
+}
+
+export interface ExtensionBackendSendMessageRequestOptions {
+  headers?: Record<string, string>;
+  maxRetries?: number;
+  signal?: AbortSignal;
+}
+
+export interface ExtensionBackendApi {
+  forkConversation: (
+    conversationId: string,
+    options?: ExtensionBackendForkConversationOptions,
+  ) => Promise<{ id: string }>;
+  sendMessageStream: (
+    conversationId: string,
+    messages: ExtensionBackendMessage[],
+    options?: ExtensionBackendSendMessageOptions,
+    requestOptions?: ExtensionBackendSendMessageRequestOptions,
+  ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
 export type ExtensionSourceScope = "global" | "project" | "bundled";

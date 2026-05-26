@@ -12,11 +12,14 @@ import {
   getExtensionToolDefinition,
 } from "@/extensions/tool-registry";
 import type {
+  ExtensionBackendApi,
   ExtensionCapabilities,
   ExtensionPanelHandle,
 } from "@/extensions/types";
 
 type ExtensionTestGlobal = typeof globalThis & {
+  __lettaExtensionBackend?: ExtensionBackendApi;
+  __lettaExtensionForkResult?: { id: string };
   __lettaExtensionCapabilities?: ExtensionCapabilities;
   __lettaExtensionGate?: Promise<void>;
   __lettaExtensionPanel?: ExtensionPanelHandle;
@@ -31,9 +34,11 @@ function createTempDir(): string {
 function createHost(
   root: string,
   capabilities?: ExtensionCapabilities,
+  backend?: ExtensionBackendApi,
 ): ExtensionHost {
   return createExtensionHost({
     cacheDirectory: path.join(root, "extension-cache"),
+    ...(backend ? { backend } : {}),
     ...(capabilities ? { capabilities } : {}),
     getClient: async () => ({}) as unknown as Letta,
     globalExtensionsDirectory: path.join(root, "global-extensions"),
@@ -145,6 +150,55 @@ describe("extension host", () => {
       expect(Object.keys(snapshot.tools)).toEqual(["visible_tool"]);
     } finally {
       delete testGlobal.__lettaExtensionCapabilities;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("exposes configured backend to extensions", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ExtensionTestGlobal;
+    delete testGlobal.__lettaExtensionBackend;
+    delete testGlobal.__lettaExtensionForkResult;
+
+    const backend: ExtensionBackendApi = {
+      forkConversation: async (conversationId, options) => ({
+        id: `${conversationId}:${options?.hidden ? "hidden" : "visible"}`,
+      }),
+      sendMessageStream: async () =>
+        (async function* () {
+          // Empty stream for host plumbing tests.
+        })(),
+    };
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const extensionPath = path.join(extensionDir, "backend.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default async function(letta) {
+          globalThis.__lettaExtensionBackend = letta.backend;
+          globalThis.__lettaExtensionForkResult = await letta.backend.forkConversation("conv-1", { hidden: true });
+        }`,
+      );
+
+      const host = createHost(root, undefined, backend);
+      await host.reload();
+
+      const observedBackend = testGlobal.__lettaExtensionBackend as
+        | ExtensionBackendApi
+        | undefined;
+      const forkResult = testGlobal.__lettaExtensionForkResult as
+        | { id: string }
+        | undefined;
+      expect(observedBackend).toBe(backend);
+      expect(forkResult).toEqual({
+        id: "conv-1:hidden",
+      });
+      expect(host.getSnapshot().errors).toEqual([]);
+    } finally {
+      delete testGlobal.__lettaExtensionBackend;
+      delete testGlobal.__lettaExtensionForkResult;
       rmSync(root, { force: true, recursive: true });
     }
   });
