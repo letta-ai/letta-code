@@ -286,7 +286,9 @@ export const ToolCallMessage = memo(
       ) {
         try {
           const parsedArgs = JSON.parse(argsText);
-          if (typeof parsedArgs.command === "string") {
+          if (typeof parsedArgs.cmd === "string") {
+            shellCommand = parsedArgs.cmd;
+          } else if (typeof parsedArgs.command === "string") {
             shellCommand = parsedArgs.command;
           } else if (Array.isArray(parsedArgs.command)) {
             shellCommand = parsedArgs.command.join(" ");

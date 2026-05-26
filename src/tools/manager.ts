@@ -178,6 +178,8 @@ const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
   "BashOutput",
   "TaskOutput",
+  "exec_command",
+  "write_stdin",
   "shell_command",
   "ShellCommand",
   "shell",
@@ -332,7 +334,8 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
 ];
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
-  "shell_command",
+  "exec_command",
+  "write_stdin",
   // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
   // "request_user_input",
   "apply_patch",
@@ -368,7 +371,8 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "TaskStop",
   "Skill",
   // Standard Codex tools
-  "ShellCommand",
+  "exec_command",
+  "write_stdin",
   "ViewImage",
   "ApplyPatch",
   "UpdatePlan",
@@ -419,6 +423,8 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
   shell_command: { requiresApproval: true },
+  exec_command: { requiresApproval: true },
+  write_stdin: { requiresApproval: false },
   shell: { requiresApproval: true },
   read_file: { requiresApproval: false },
   list_dir: { requiresApproval: false },
@@ -2174,7 +2180,7 @@ export async function executeTool(
         // Inject secrets as environment variables instead of substituting into
         // the command string. This prevents shell metacharacters in secrets
         // (e.g. $$, backticks, quotes) from being interpreted by the shell.
-        const command = enhancedArgs.command;
+        const command = enhancedArgs.command ?? enhancedArgs.cmd;
         const secretEnv =
           typeof command === "string" ||
           (Array.isArray(command) &&

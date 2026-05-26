@@ -5,6 +5,7 @@ import BashOutputDescription from "./descriptions/BashOutput.md";
 import CreateGoalDescription from "./descriptions/CreateGoal.md";
 import CreateWorktreeDescription from "./descriptions/CreateWorktree.md";
 import EditDescription from "./descriptions/Edit.md";
+import ExecCommandDescription from "./descriptions/ExecCommand.md";
 import GetGoalDescription from "./descriptions/GetGoal.md";
 import GlobDescription from "./descriptions/Glob.md";
 // Gemini toolset
@@ -39,6 +40,7 @@ import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
 import WriteDescription from "./descriptions/Write.md";
 import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
+import WriteStdinDescription from "./descriptions/WriteStdin.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
 import { apply_patch } from "./impl/apply-patch";
 import { ask_user_question } from "./impl/ask-user-question";
@@ -47,6 +49,7 @@ import { bash_output } from "./impl/bash-output";
 import { create_goal } from "./impl/create-goal";
 import { create_worktree } from "./impl/create-worktree";
 import { edit } from "./impl/edit";
+import { exec_command, write_stdin } from "./impl/exec-command";
 import { get_goal } from "./impl/get-goal";
 import { glob } from "./impl/glob";
 // Gemini toolset
@@ -89,6 +92,7 @@ import BashOutputSchema from "./schemas/BashOutput.json";
 import CreateGoalSchema from "./schemas/CreateGoal.json";
 import CreateWorktreeSchema from "./schemas/CreateWorktree.json";
 import EditSchema from "./schemas/Edit.json";
+import ExecCommandSchema from "./schemas/ExecCommand.json";
 import GetGoalSchema from "./schemas/GetGoal.json";
 import GlobSchema from "./schemas/Glob.json";
 // Gemini toolset
@@ -123,6 +127,7 @@ import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
 import WriteSchema from "./schemas/Write.json";
 import WriteFileGeminiSchema from "./schemas/WriteFileGemini.json";
+import WriteStdinSchema from "./schemas/WriteStdin.json";
 import WriteTodosGeminiSchema from "./schemas/WriteTodosGemini.json";
 
 type ToolImplementation = (args: Record<string, unknown>) => Promise<unknown>;
@@ -254,6 +259,16 @@ const toolDefinitions = {
     schema: ShellCommandSchema,
     description: ShellCommandDescription.trim(),
     impl: shell_command as unknown as ToolImplementation,
+  },
+  exec_command: {
+    schema: ExecCommandSchema,
+    description: ExecCommandDescription.trim(),
+    impl: exec_command as unknown as ToolImplementation,
+  },
+  write_stdin: {
+    schema: WriteStdinSchema,
+    description: WriteStdinDescription.trim(),
+    impl: write_stdin as unknown as ToolImplementation,
   },
   shell: {
     schema: ShellSchema,

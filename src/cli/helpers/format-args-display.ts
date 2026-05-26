@@ -365,13 +365,14 @@ export function formatArgsDisplay(
           }
 
           // Shell/Bash tools: show just the command
-          if (isShellTool(toolName) && parsed.command) {
+          if (isShellTool(toolName) && (parsed.command || parsed.cmd)) {
+            const commandValue = parsed.cmd ?? parsed.command;
             shellSemantic = summarizeShellDisplay(
-              Array.isArray(parsed.command)
-                ? parsed.command.filter(
+              Array.isArray(commandValue)
+                ? commandValue.filter(
                     (part): part is string => typeof part === "string",
                   )
-                : String(parsed.command),
+                : String(commandValue),
             );
             display = shellSemantic.summary;
             return { display, parsed, shellSemantic };

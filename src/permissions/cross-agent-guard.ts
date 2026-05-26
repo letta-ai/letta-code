@@ -217,6 +217,8 @@ function extractMultiEditPaths(toolArgs: ToolArgs): string[] {
 }
 
 function extractShellCommand(toolArgs: ToolArgs): string | null {
+  const cmd = toolArgs.cmd;
+  if (typeof cmd === "string") return cmd;
   const command = toolArgs.command;
   if (typeof command === "string") return command;
   if (Array.isArray(command)) {

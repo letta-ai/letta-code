@@ -254,6 +254,8 @@ class PermissionModeManager {
           "Shell",
           "shell_command",
           "ShellCommand",
+          "exec_command",
+          "write_stdin",
           "run_shell_command",
           "RunShellCommand",
           "run_shell_command_gemini",
@@ -311,7 +313,19 @@ class PermissionModeManager {
         }
 
         if (shellTools.includes(toolName)) {
-          const command = toolArgs?.command as string | string[] | undefined;
+          if (toolName === "write_stdin") {
+            return toolArgs?.chars
+              ? {
+                  decision: "deny",
+                  reason:
+                    "Memory mode does not allow writing stdin to shell sessions.",
+                }
+              : { decision: "allow" };
+          }
+
+          const command =
+            (toolArgs?.cmd as string | undefined) ??
+            (toolArgs?.command as string | string[] | undefined);
           if (
             command &&
             isReadOnlyShellCommand(command, { allowExternalPaths: true })

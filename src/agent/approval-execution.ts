@@ -121,6 +121,8 @@ const GLOBAL_LOCK_TOOLS = new Set([
   // Memory tool (file + git side effects)
   "memory",
   "shell_command",
+  "exec_command",
+  "write_stdin",
   "shell",
   "ShellCommand",
   "Shell",

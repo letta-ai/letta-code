@@ -4,6 +4,8 @@ const SHELL_TOOL_NAMES = new Set([
   "Shell",
   "shell_command",
   "ShellCommand",
+  "exec_command",
+  "write_stdin",
   "run_shell_command",
   "RunShellCommand",
 ]);
