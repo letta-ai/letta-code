@@ -93,7 +93,7 @@ function formatBootstrapReminder(params: {
 
   lines.push(
     "",
-    "Use this as lightweight context only. Do not treat these titles or hidden conversation descriptions as confirmed facts beyond what is written here.",
+    "Use this as lightweight context only. Do not treat these titles or conversation descriptions as confirmed facts beyond what is written here.",
     "These descriptions are internal search metadata. Do not quote or expose them to the user unless independently supported in the active conversation.",
     SYSTEM_REMINDER_CLOSE,
   );
