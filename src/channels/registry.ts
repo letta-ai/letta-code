@@ -16,9 +16,11 @@ import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { ApprovalResponseBody } from "@/types/protocol_v2";
 import {
   getChannelAccount,
+  getChannelAccountWithSecrets,
+  hydrateChannelAccountSecrets,
   LEGACY_CHANNEL_ACCOUNT_ID,
   listChannelAccounts,
-  loadChannelAccounts,
+  listChannelAccountsWithSecrets,
 } from "./accounts";
 import {
   buildChannelAlreadyActiveMessage,
@@ -55,6 +57,7 @@ import {
 } from "./pending-control-requests";
 import {
   getChannelDisplayName,
+  getSupportedChannelIds,
   isFirstPartyChannelPlugin,
   loadChannelPlugin,
 } from "./plugin-registry";
@@ -794,8 +797,7 @@ export class ChannelRegistry {
   }
 
   async startChannel(channelId: string): Promise<boolean> {
-    loadChannelAccounts(channelId);
-    const accounts = listChannelAccounts(channelId).filter(
+    const accounts = (await listChannelAccountsWithSecrets(channelId)).filter(
       (account) => account.enabled,
     );
     if (accounts.length === 0) {
@@ -817,8 +819,7 @@ export class ChannelRegistry {
     options?: ChannelStartupOptions,
   ): Promise<boolean> {
     logChannelStartup(options?.logger, `starting ${channelId}/${accountId}`);
-    loadChannelAccounts(channelId);
-    const account = getChannelAccount(channelId, accountId);
+    const account = await getChannelAccountWithSecrets(channelId, accountId);
     if (!account) {
       logChannelStartup(
         options?.logger,
@@ -1998,12 +1999,23 @@ export async function initializeChannels(
   );
   logChannelStartup(options?.logger, `root: ${getChannelsRoot()}`);
 
+  // Eagerly hydrate/migrate channel account secrets at channel subsystem
+  // startup. This converts existing plaintext token fields in accounts.json to
+  // keyring-backed refs when the active credential store is `keyring` (or
+  // `auto` with keyring available), while preserving file-mode compatibility.
+  for (const channelId of new Set([
+    ...getSupportedChannelIds(),
+    ...channelNames,
+  ])) {
+    await hydrateChannelAccountSecrets(channelId);
+  }
+
   for (const channelId of channelNames) {
     logChannelStartup(
       options?.logger,
       `loading ${channelId} accounts from ${getChannelAccountsPath(channelId)}`,
     );
-    loadChannelAccounts(channelId);
+    await hydrateChannelAccountSecrets(channelId);
     const accounts = listChannelAccounts(channelId);
     const enabledAccountIds = accounts
       .filter((account) => account.enabled)

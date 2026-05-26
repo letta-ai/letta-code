@@ -254,7 +254,7 @@ export async function handleChannelsProtocolCommand(
     bindChannelPairing,
     bindChannelAccountLive,
     bindChannelTarget,
-    createChannelAccountLive,
+    createChannelAccountLiveWithSecrets,
     refreshChannelAccountDisplayNameLive,
     getChannelConfigSnapshot,
     listChannelAccountSnapshots,
@@ -270,7 +270,7 @@ export async function handleChannelsProtocolCommand(
     stopChannelAccountLive,
     stopChannelLive,
     unbindChannelAccountLive,
-    updateChannelAccountLive,
+    updateChannelAccountLiveWithSecrets,
     updateChannelRouteLive,
   } = await loadChannelsService();
 
@@ -529,7 +529,7 @@ export async function handleChannelsProtocolCommand(
 
       const pluginConfig =
         getChannelPluginConfig(parsed.account as Record<string, unknown>) ?? {};
-      const created = createChannelAccountLive(
+      const created = await createChannelAccountLiveWithSecrets(
         effectiveChannelId,
         {
           displayName:
@@ -600,7 +600,7 @@ export async function handleChannelsProtocolCommand(
     try {
       const pluginConfig =
         getChannelPluginConfig(parsed.patch as Record<string, unknown>) ?? {};
-      const updated = updateChannelAccountLive(
+      const updated = await updateChannelAccountLiveWithSecrets(
         parsed.channel_id,
         parsed.account_id,
         {
