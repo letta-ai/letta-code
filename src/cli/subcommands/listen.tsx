@@ -437,7 +437,18 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
 
     const { initializeChannels } = await import("@/channels/registry");
-    await initializeChannels(channelNames);
+    try {
+      await initializeChannels(channelNames, {
+        failOnStartupError: Boolean(values.channels),
+        logger: debugMode
+          ? (message) => console.log(`[${formatTimestamp()}] ${message}`)
+          : undefined,
+      });
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      await flushListenerTelemetryEnd("listener_channel_start_failed");
+      return 1;
+    }
   }
 
   // Determine connection name

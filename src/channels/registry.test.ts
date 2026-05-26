@@ -19,9 +19,11 @@ import {
 } from "@/channels/pending-control-requests";
 import {
   buildSlackConversationSummary,
+  ChannelInitializationError,
   ChannelRegistry,
   completePairing,
   getChannelRegistry,
+  initializeChannels,
 } from "@/channels/registry";
 import {
   __testOverrideLoadRoutes,
@@ -97,6 +99,22 @@ describe("ChannelRegistry", () => {
 
     await registry.stopAll();
     expect(getChannelRegistry()).toBeNull();
+  });
+
+  test("initializeChannels throws when requested channel startup fails", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    const logs: string[] = [];
+
+    await expect(
+      initializeChannels(["telegram"], {
+        failOnStartupError: true,
+        logger: (message) => logs.push(message),
+      }),
+    ).rejects.toBeInstanceOf(ChannelInitializationError);
+
+    expect(logs).toContain("[Channels] requested: telegram");
+    expect(logs.some((line) => line.includes("root:"))).toBe(true);
+    expect(logs.some((line) => line.includes("accounts=0"))).toBe(true);
   });
 
   test("/help gets a direct channel reply instead of being delivered to the agent", async () => {
