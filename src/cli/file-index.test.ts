@@ -14,6 +14,7 @@ import {
   addEntriesToCache,
   refreshFileIndex,
   searchFileIndex,
+  searchFileIndexWithDiskFallback,
   setIndexRoot,
 } from "@/utils/file-index";
 
@@ -100,6 +101,30 @@ describe("build and search", () => {
     expect(paths).toContain("src");
     expect(paths).toContain(join("src", "components"));
     expect(paths).toContain("tests");
+  });
+
+  test("disk fallback finds files created after the last index refresh", async () => {
+    await refreshFileIndex();
+
+    const newFile = join("src", "generated-after-index.ts");
+    writeFileSync(join(TEST_DIR, newFile), "export const generated = true;");
+
+    const staleOnly = searchFileIndex({
+      searchDir: "src",
+      pattern: "generated-after-index",
+      deep: true,
+      maxResults: 10,
+    });
+    expect(staleOnly.map((r) => r.path)).not.toContain(newFile);
+
+    const withFallback = searchFileIndexWithDiskFallback({
+      searchDir: "src",
+      absoluteSearchDir: join(TEST_DIR, "src"),
+      pattern: "generated-after-index",
+      deep: true,
+      maxResults: 10,
+    });
+    expect(withFallback.map((r) => r.path)).toContain(newFile);
   });
 
   test("assigns correct types", async () => {
