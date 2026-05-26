@@ -199,6 +199,7 @@ export interface ExtensionHost {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
+    backend?: ExtensionBackendApi,
   ) => Promise<ExtensionEventEmissionResult>;
   getSnapshot: () => LocalExtensionRegistry;
   reload: () => Promise<void>;
@@ -1113,6 +1114,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
   name: TName,
   event: ExtensionEventMap[TName],
   getContext: () => ExtensionContext,
+  backend?: ExtensionBackendApi,
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
 ): Promise<ExtensionEventEmissionResult> {
   if (!registry) {
@@ -1132,6 +1134,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
     try {
       const context = getContext();
       const eventContext: ExtensionEventContext = {
+        ...(backend ? { backend } : {}),
         context,
         getContext,
         signal: signal ?? new AbortController().signal,
@@ -1290,7 +1293,7 @@ export function createExtensionHost(
       publish();
       listeners.clear();
     },
-    async emitEvent(name, payload) {
+    async emitEvent(name, payload, backend) {
       if (disposed) {
         return { diagnostics: [], handlerCount: 0, name };
       }
@@ -1299,6 +1302,7 @@ export function createExtensionHost(
         name,
         payload,
         getContext,
+        backend ?? options.backend,
       );
       if (result.diagnostics.length > 0) {
         publish();
