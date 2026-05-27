@@ -161,12 +161,11 @@ export interface ExtensionConversationCloseEvent {
 export interface ExtensionTurnStartEvent {
   agentId: string | null;
   conversationId: string | null;
+  input: Array<MessageCreate | ApprovalCreate>;
 }
 
 export interface ExtensionTurnStartResult {
-  input?: {
-    appendSystemReminder?: string;
-  };
+  input?: Array<MessageCreate | ApprovalCreate>;
 }
 
 export interface ExtensionEventMap {

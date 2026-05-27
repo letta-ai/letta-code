@@ -52,6 +52,7 @@ import type {
   ExtensionPanelUpdate,
   ExtensionTool,
   ExtensionToolRegistration,
+  ExtensionTurnStartEvent,
 } from "@/extensions/types";
 
 export const GLOBAL_EXTENSIONS_DIRECTORY = path.join(
@@ -602,6 +603,18 @@ function isExtensionEventCapabilityEnabled(
     case "turn_start":
       return capabilities.events.turns;
   }
+}
+
+function isTurnStartResultWithInput(
+  name: ExtensionEventName,
+  result: unknown,
+): result is { input: ExtensionTurnStartEvent["input"] } {
+  return (
+    name === "turn_start" &&
+    typeof result === "object" &&
+    result !== null &&
+    Array.isArray((result as { input?: unknown }).input)
+  );
 }
 
 function validateExtensionCommandId(id: string): void {
@@ -1156,6 +1169,9 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
         signal: signal ?? new AbortController().signal,
       };
       const result = await registration.handler(event, eventContext);
+      if (isTurnStartResultWithInput(name, result)) {
+        (event as ExtensionTurnStartEvent).input = result.input;
+      }
       if (result != null) {
         results.push(result as NonNullable<ExtensionEventResultMap[TName]>);
       }

@@ -105,7 +105,6 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import { collectTurnStartSystemReminders } from "@/extensions/turn-start";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
@@ -3578,21 +3577,6 @@ ${SYSTEM_REMINDER_CLOSE}
       if (currentGoal) {
         pushReminder(buildGoalReminder(currentGoal));
       }
-      if (extensionRuntime.hasExtensionSources && !extensionRuntime.isLoading) {
-        try {
-          const result = await extensionRuntime.emitEvent("turn_start", {
-            agentId,
-            conversationId: conversationIdRef.current ?? null,
-          });
-          for (const reminder of collectTurnStartSystemReminders(result)) {
-            pushReminder(
-              `${SYSTEM_REMINDER_OPEN}\n${reminder}\n${SYSTEM_REMINDER_CLOSE}`,
-            );
-          }
-        } catch {
-          // Extension turn_start handlers should not block sending the turn.
-        }
-      }
       const messageContent = prependReminderPartsToContent(
         contentParts as MessageCreate["content"],
         reminderParts,
@@ -3649,7 +3633,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Start the conversation loop. If we have queued approval results from an interrupted
       // client-side execution, send them first before the new user message.
-      const initialInput: Array<MessageCreate | ApprovalCreate> = [];
+      let initialInput: Array<MessageCreate | ApprovalCreate> = [];
 
       if (eagerRecoveryDenials && eagerRecoveryDenials.length > 0) {
         initialInput.push({
@@ -3671,6 +3655,20 @@ ${SYSTEM_REMINDER_CLOSE}
         content: messageContent as unknown as MessageCreate["content"],
         otid: userOtid,
       });
+
+      if (extensionRuntime.hasExtensionSources && !extensionRuntime.isLoading) {
+        try {
+          const turnStartEvent = {
+            agentId,
+            conversationId: conversationIdRef.current ?? null,
+            input: initialInput,
+          };
+          await extensionRuntime.emitEvent("turn_start", turnStartEvent);
+          initialInput = turnStartEvent.input;
+        } catch {
+          // Extension turn_start handlers should not block sending the turn.
+        }
+      }
 
       await processConversation(initialInput, {
         submissionGeneration,

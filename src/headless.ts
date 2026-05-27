@@ -93,7 +93,6 @@ import {
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import type { ExtensionRuntime } from "./extensions/extension-runtime";
-import { collectTurnStartSystemReminders } from "./extensions/turn-start";
 import type { ExtensionConversationOpenReason } from "./extensions/types";
 import {
   createHeadlessExtensionContext,
@@ -442,26 +441,25 @@ async function prepareHeadlessToolExecutionContext(params: {
   };
 }
 
-function buildExtensionSystemReminder(text: string): string {
-  return `${SYSTEM_REMINDER_OPEN}\n${text}\n${SYSTEM_REMINDER_CLOSE}`;
-}
-
-async function collectHeadlessTurnStartSystemReminders(options: {
+async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
+  input: Array<MessageCreate | ApprovalCreate>;
   runtime: ExtensionRuntime;
-}): Promise<string[]> {
-  if (!options.runtime.getSnapshot().hasExtensionSources) return [];
+}): Promise<Array<MessageCreate | ApprovalCreate>> {
+  if (!options.runtime.getSnapshot().hasExtensionSources) return options.input;
 
   try {
-    const result = await options.runtime.emitEvent("turn_start", {
+    const event = {
       agentId: options.agent.id,
       conversationId: options.conversationId,
-    });
-    return collectTurnStartSystemReminders(result);
+      input: options.input,
+    };
+    await options.runtime.emitEvent("turn_start", event);
+    return event.input;
   } catch {
     // Extension turn_start handlers should not block sending the turn.
-    return [];
+    return options.input;
   }
 }
 
@@ -1980,23 +1978,6 @@ ${SYSTEM_REMINDER_CLOSE}
     }
   }
 
-  headlessExtensionRuntime.updateContext(
-    createHeadlessExtensionContext({
-      agent,
-      conversationId,
-      permissionMode: headlessPermissionMode,
-      reflectionSettings: effectiveReflectionSettings,
-      sessionStats,
-    }),
-  );
-  for (const reminder of await collectHeadlessTurnStartSystemReminders({
-    agent,
-    conversationId,
-    runtime: headlessExtensionRuntime,
-  })) {
-    pushPart(buildExtensionSystemReminder(reminder));
-  }
-
   // Add user prompt
   pushPart(prompt);
 
@@ -2027,6 +2008,21 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
+  headlessExtensionRuntime.updateContext(
+    createHeadlessExtensionContext({
+      agent,
+      conversationId,
+      permissionMode: headlessPermissionMode,
+      reflectionSettings: effectiveReflectionSettings,
+      sessionStats,
+    }),
+  );
+  currentInput = await emitHeadlessTurnStart({
+    agent,
+    conversationId,
+    input: currentInput,
+    runtime: headlessExtensionRuntime,
+  });
 
   // Track lastRunId outside the while loop so it's available in catch block
   let llmApiErrorRetries = 0;
@@ -3977,25 +3973,20 @@ async function runBidirectionalMode(
             reflectionSettings,
           }),
         );
-        const turnStartReminderParts = (
-          await collectHeadlessTurnStartSystemReminders({
-            agent,
-            conversationId,
-            runtime: headlessExtensionRuntime,
-          })
-        ).map((reminder) => ({
-          type: "text" as const,
-          text: buildExtensionSystemReminder(reminder),
-        }));
         const enrichedContent = prependReminderPartsToContent(userContent, [
           ...sharedReminderParts,
-          ...turnStartReminderParts,
         ]);
 
         // Initial input is the user message
-        let currentInput: MessageCreate[] = [
+        let currentInput: Array<MessageCreate | ApprovalCreate> = [
           { role: "user", content: enrichedContent },
         ];
+        currentInput = await emitHeadlessTurnStart({
+          agent,
+          conversationId,
+          input: currentInput,
+          runtime: headlessExtensionRuntime,
+        });
 
         // Approval handling loop - continue until end_turn or error
         while (true) {
