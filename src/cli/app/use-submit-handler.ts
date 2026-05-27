@@ -105,6 +105,7 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
+import { collectTurnStartSystemReminders } from "@/extensions/turn-start";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
@@ -3576,6 +3577,21 @@ ${SYSTEM_REMINDER_CLOSE}
       );
       if (currentGoal) {
         pushReminder(buildGoalReminder(currentGoal));
+      }
+      if (extensionRuntime.hasExtensionSources && !extensionRuntime.isLoading) {
+        try {
+          const result = await extensionRuntime.emitEvent("turn_start", {
+            agentId,
+            conversationId: conversationIdRef.current ?? null,
+          });
+          for (const reminder of collectTurnStartSystemReminders(result)) {
+            pushReminder(
+              `${SYSTEM_REMINDER_OPEN}\n${reminder}\n${SYSTEM_REMINDER_CLOSE}`,
+            );
+          }
+        } catch {
+          // Extension turn_start handlers should not block sending the turn.
+        }
       }
       const messageContent = prependReminderPartsToContent(
         contentParts as MessageCreate["content"],

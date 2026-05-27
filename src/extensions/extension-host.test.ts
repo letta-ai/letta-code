@@ -95,7 +95,7 @@ function createHost(
 const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   tools: true,
   commands: false,
-  events: { lifecycle: false },
+  events: { lifecycle: false, turns: false },
   ui: {
     panels: false,
     statusValues: false,
@@ -348,6 +348,49 @@ describe("extension host", () => {
       host.dispose();
     } finally {
       delete testGlobal.__lettaExtensionEvents;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("collects turn_start input effects", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "turn-start.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_start", (event, ctx) => ({
+            input: {
+              appendSystemReminder: "turn for " + event.agentId + " in " + ctx.context.agent.name,
+            },
+          }));
+        }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+
+      const result = await host.emitEvent("turn_start", {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+      });
+
+      expect(result).toEqual({
+        diagnostics: [],
+        handlerCount: 1,
+        name: "turn_start",
+        results: [
+          {
+            input: {
+              appendSystemReminder: "turn for agent-1 in Amelia",
+            },
+          },
+        ],
+      });
+
+      host.dispose();
+    } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });

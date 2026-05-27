@@ -48,6 +48,8 @@ export type {
   ExtensionToolRegistration,
   ExtensionToolRunContext,
   ExtensionToolRunResult,
+  ExtensionTurnStartEvent,
+  ExtensionTurnStartResult,
   ExtensionUiCapabilities,
   ExtensionWorkspaceContext,
 } from "@/extensions/types";

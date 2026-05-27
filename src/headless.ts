@@ -93,6 +93,7 @@ import {
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import type { ExtensionRuntime } from "./extensions/extension-runtime";
+import { collectTurnStartSystemReminders } from "./extensions/turn-start";
 import type { ExtensionConversationOpenReason } from "./extensions/types";
 import {
   createHeadlessExtensionContext,
@@ -439,6 +440,29 @@ async function prepareHeadlessToolExecutionContext(params: {
       (tool) => tool.name,
     ),
   };
+}
+
+function buildExtensionSystemReminder(text: string): string {
+  return `${SYSTEM_REMINDER_OPEN}\n${text}\n${SYSTEM_REMINDER_CLOSE}`;
+}
+
+async function collectHeadlessTurnStartSystemReminders(options: {
+  agent: AgentState;
+  conversationId: string;
+  runtime: ExtensionRuntime;
+}): Promise<string[]> {
+  if (!options.runtime.getSnapshot().hasExtensionSources) return [];
+
+  try {
+    const result = await options.runtime.emitEvent("turn_start", {
+      agentId: options.agent.id,
+      conversationId: options.conversationId,
+    });
+    return collectTurnStartSystemReminders(result);
+  } catch {
+    // Extension turn_start handlers should not block sending the turn.
+    return [];
+  }
 }
 
 async function sendScopedApprovalMessages(params: {
@@ -1954,6 +1978,23 @@ ${SYSTEM_REMINDER_CLOSE}
         `<loaded_skills>\n${loadedContents.join("\n\n")}\n</loaded_skills>`,
       );
     }
+  }
+
+  headlessExtensionRuntime.updateContext(
+    createHeadlessExtensionContext({
+      agent,
+      conversationId,
+      permissionMode: headlessPermissionMode,
+      reflectionSettings: effectiveReflectionSettings,
+      sessionStats,
+    }),
+  );
+  for (const reminder of await collectHeadlessTurnStartSystemReminders({
+    agent,
+    conversationId,
+    runtime: headlessExtensionRuntime,
+  })) {
+    pushPart(buildExtensionSystemReminder(reminder));
   }
 
   // Add user prompt
@@ -3929,10 +3970,27 @@ async function runBidirectionalMode(
           reflectionSettings,
           skillSources,
         });
-        const enrichedContent = prependReminderPartsToContent(
-          userContent,
-          sharedReminderParts,
+        headlessExtensionRuntime.updateContext(
+          createHeadlessExtensionContext({
+            agent,
+            conversationId,
+            reflectionSettings,
+          }),
         );
+        const turnStartReminderParts = (
+          await collectHeadlessTurnStartSystemReminders({
+            agent,
+            conversationId,
+            runtime: headlessExtensionRuntime,
+          })
+        ).map((reminder) => ({
+          type: "text" as const,
+          text: buildExtensionSystemReminder(reminder),
+        }));
+        const enrichedContent = prependReminderPartsToContent(userContent, [
+          ...sharedReminderParts,
+          ...turnStartReminderParts,
+        ]);
 
         // Initial input is the user message
         let currentInput: MessageCreate[] = [
