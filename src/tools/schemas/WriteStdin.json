@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "chars": {
+      "type": "string",
+      "description": "Bytes to write to stdin (may be empty to poll)."
+    },
+    "max_output_tokens": {
+      "type": "number",
+      "description": "Maximum number of tokens to return. Excess output will be truncated."
+    },
+    "session_id": {
+      "type": "number",
+      "description": "Identifier of the running unified exec session."
+    },
+    "yield_time_ms": {
+      "type": "number",
+      "description": "How long to wait (in milliseconds) for output before yielding."
+    }
+  },
+  "required": ["session_id"],
+  "additionalProperties": false
+}

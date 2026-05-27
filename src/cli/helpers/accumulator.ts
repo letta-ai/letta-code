@@ -19,6 +19,7 @@ import { MAX_CONTEXT_HISTORY } from "./context-tracker";
 import { findLastSafeSplitPoint } from "./markdown-split";
 import { trimFinishedReasoningText } from "./reasoning-text";
 import { isShellOutputTool } from "./tool-name-mapping";
+import { extractUnifiedExecRunningSessionId } from "./unified-exec-output";
 
 type CompactionSummaryMessageChunk = {
   message_type: "summary_message";
@@ -169,6 +170,7 @@ export type Line =
       toolCallId?: string;
       name?: string;
       argsText?: string;
+      unifiedExecCommandDisplay?: string;
       // from the tool return object
       resultText?: string;
       resultOk?: boolean;
@@ -278,6 +280,10 @@ export type Buffers = {
   splitCounters: Map<string, number>; // tracks split count per original otid
   // Track server-side tool calls for hook triggering (toolCallId -> info)
   serverToolCalls: Map<string, ServerToolCallInfo>;
+  // Maps Codex unified exec session IDs to the original command that created
+  // them. This lets write_stdin render Codex-like "background terminal"
+  // labels without reaching into the ephemeral tool runtime session map.
+  unifiedExecSessionCommands: Map<string, string>;
   // Track if this run has pending approvals (used to gate server tool phases)
   approvalsPending: boolean;
   // Agent ID for passing to hooks (needed for server-side tools like memory)
@@ -311,9 +317,58 @@ export function createBuffers(agentId?: string): Buffers {
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
     serverToolCalls: new Map(),
+    unifiedExecSessionCommands: new Map(),
     approvalsPending: false,
     agentId,
   };
+}
+
+function parseToolArgsText(
+  argsText: string | undefined,
+): Record<string, unknown> | null {
+  if (!argsText?.trim()) return null;
+  try {
+    const parsed = JSON.parse(argsText);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractExecCommandDisplay(
+  argsText: string | undefined,
+): string | null {
+  const parsed = parseToolArgsText(argsText);
+  const cmd = parsed?.cmd;
+  return typeof cmd === "string" && cmd.trim() ? cmd : null;
+}
+
+function extractWriteStdinSessionId(
+  argsText: string | undefined,
+): string | null {
+  const parsed = parseToolArgsText(argsText);
+  const sessionId = parsed?.session_id;
+  if (typeof sessionId === "string" && sessionId.trim()) return sessionId;
+  if (typeof sessionId === "number" && Number.isFinite(sessionId)) {
+    return String(sessionId);
+  }
+  return null;
+}
+
+function annotateWriteStdinCommandDisplay(
+  b: Buffers,
+  line: ToolCallLine,
+): ToolCallLine {
+  if (line.name !== "write_stdin") return line;
+  const sessionId = extractWriteStdinSessionId(line.argsText);
+  if (!sessionId) return line;
+  const commandDisplay = b.unifiedExecSessionCommands.get(sessionId);
+  if (!commandDisplay || line.unifiedExecCommandDisplay === commandDisplay) {
+    return line;
+  }
+  const updatedLine = { ...line, unifiedExecCommandDisplay: commandDisplay };
+  b.byId.set(line.id, updatedLine);
+  return updatedLine;
 }
 
 // Guarantees that there's only one line per ID
@@ -1050,8 +1105,8 @@ export function onChunk(
           ...line,
           argsText: (line.argsText || "") + argsText,
         };
-        line = updatedLine;
-        b.byId.set(id, updatedLine);
+        line = annotateWriteStdinCommandDisplay(b, updatedLine);
+        b.byId.set(id, line);
         // Count tool call arguments as LLM output tokens
         b.tokenCount += Buffer.byteLength(argsText, "utf8");
       }
@@ -1137,11 +1192,13 @@ export function onChunk(
           : undefined;
         if (!id) continue;
 
-        const line = ensure<ToolCallLine>(b, id, () => ({
+        let line = ensure<ToolCallLine>(b, id, () => ({
           kind: "tool_call",
           id,
           phase: "finished",
         }));
+
+        line = annotateWriteStdinCommandDisplay(b, line);
 
         // Immutable update: create new object with result
         const updatedLine = {
@@ -1151,6 +1208,16 @@ export function onChunk(
           resultOk: status === "success",
         };
         b.byId.set(id, updatedLine);
+
+        if (updatedLine.name === "exec_command") {
+          const sessionId = extractUnifiedExecRunningSessionId(resultText);
+          const commandDisplay = extractExecCommandDisplay(
+            updatedLine.argsText,
+          );
+          if (sessionId && commandDisplay) {
+            b.unifiedExecSessionCommands.set(sessionId, commandDisplay);
+          }
+        }
 
         // Trigger PostToolUse hook for server-side tools (fire-and-forget)
         if (toolCallId) {

@@ -133,11 +133,13 @@ export function analyzeApprovalContext(
 
     case "Bash":
       return analyzeBashApproval(
-        typeof toolArgs.command === "string"
-          ? toolArgs.command
-          : Array.isArray(toolArgs.command)
-            ? toolArgs.command.join(" ")
-            : "",
+        typeof toolArgs.cmd === "string"
+          ? toolArgs.cmd
+          : typeof toolArgs.command === "string"
+            ? toolArgs.command
+            : Array.isArray(toolArgs.command)
+              ? toolArgs.command.join(" ")
+              : "",
         workingDirectory,
       );
 

@@ -643,12 +643,19 @@ export function App({
           return args.file_path || undefined;
         }
         if (isShellTool(approval.toolName)) {
-          const cmd =
-            typeof args.command === "string"
-              ? args.command
-              : Array.isArray(args.command)
-                ? args.command.join(" ")
-                : "";
+          const cmd = (() => {
+            if (typeof args.cmd === "string") return args.cmd;
+            if (typeof args.command === "string") return args.command;
+            if (Array.isArray(args.command)) return args.command.join(" ");
+            if (
+              approval.toolName === "write_stdin" &&
+              (typeof args.session_id === "string" ||
+                typeof args.session_id === "number")
+            ) {
+              return `write_stdin ${String(args.session_id)}`;
+            }
+            return "";
+          })();
           return cmd.length > 50 ? `${cmd.slice(0, 50)}...` : cmd || undefined;
         }
         if (isPatchTool(approval.toolName)) {
@@ -2279,7 +2286,20 @@ export function App({
         let command = "(no command)";
         let description = "";
 
-        if (t === "shell") {
+        if (t === "exec_command") {
+          command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+        } else if (t === "write_stdin") {
+          const sessionId =
+            typeof args.session_id === "string" ||
+            typeof args.session_id === "number"
+              ? String(args.session_id)
+              : "unknown";
+          command = `write_stdin ${sessionId}`;
+          description =
+            typeof args.chars === "string" && args.chars.length > 0
+              ? "Write input to running shell session"
+              : "Poll running shell session";
+        } else if (t === "shell") {
           const cmdVal = args.command;
           command = Array.isArray(cmdVal)
             ? cmdVal.join(" ")

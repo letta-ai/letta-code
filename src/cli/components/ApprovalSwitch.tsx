@@ -89,7 +89,20 @@ function getBashInfo(approval: ApprovalRequest): BashInfo | null {
     let command = "";
     let description = "";
 
-    if (t === "shell") {
+    if (t === "exec_command") {
+      command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+    } else if (t === "write_stdin") {
+      const sessionId =
+        typeof args.session_id === "string" ||
+        typeof args.session_id === "number"
+          ? String(args.session_id)
+          : "unknown";
+      command = `write_stdin ${sessionId}`;
+      description =
+        typeof args.chars === "string" && args.chars.length > 0
+          ? "Write input to running shell session"
+          : "Poll running shell session";
+    } else if (t === "shell") {
       // Shell tool uses command array and justification
       const cmdVal = args.command;
       command = Array.isArray(cmdVal)

@@ -760,6 +760,16 @@ test("run_shell_command is analyzed as Bash", () => {
   expect(context.recommendedRule).toBe("Bash(curl:*)");
 });
 
+test("exec_command is analyzed as Bash using cmd", () => {
+  const context = analyzeApprovalContext(
+    "exec_command",
+    { cmd: "curl -s http://localhost:4321/intro" },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe("Bash(curl:*)");
+});
+
 // ============================================================================
 // gh CLI approval tests
 // ============================================================================
