@@ -176,6 +176,17 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("No recent session found");
   });
 
+  test("--new-agent --conv default headless parses and reaches credential check", async () => {
+    const result = await runCli(
+      ["--new-agent", "--conv", "default", "-p", "Say OK"],
+      {
+        expectExit: 1,
+      },
+    );
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("No recent session found");
+  });
+
   test("--toolset auto is accepted", async () => {
     const result = await runCli(
       ["--new-agent", "--toolset", "auto", "-p", "Say OK"],

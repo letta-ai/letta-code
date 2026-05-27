@@ -1878,7 +1878,7 @@ async function main(): Promise<void> {
         // Conversation ID is unique, so we can derive the agent from it
         // (except for "default" which requires --agent flag, validated above)
         // =====================================================================
-        if (specifiedConversationId) {
+        if (specifiedConversationId && !forceNew) {
           if (specifiedConversationId === "default") {
             // "default" requires --agent (validated in flag preprocessing above)
             // Use the specified agent directly, skip conversation validation
@@ -2635,7 +2635,7 @@ async function main(): Promise<void> {
           );
         }
 
-        if (specifiedConversationId) {
+        if (specifiedConversationId && specifiedConversationId !== "default") {
           // Use the explicitly specified conversation ID
           // User explicitly requested this conversation, so error if it doesn't exist
           conversationIdToUse = specifiedConversationId;
