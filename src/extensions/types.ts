@@ -2,6 +2,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type {
   ApprovalCreate,
   LettaStreamingResponse,
+  Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 
 export interface ExtensionWorkspaceContext {
@@ -362,6 +363,15 @@ export type ExtensionToolRunResult =
       success?: boolean;
     };
 
+export interface ExtensionConversationHistoryOptions {
+  /** Maximum number of recent messages to return. Defaults to 100. */
+  limit?: number;
+  /** Return chronological (asc, default) or newest-first (desc) messages. */
+  order?: "asc" | "desc";
+  /** Include error messages and error statuses. Defaults to true. */
+  includeErrors?: boolean;
+}
+
 export interface ExtensionToolRunContext {
   args: Record<string, unknown>;
   cwd: string;
@@ -375,6 +385,9 @@ export interface ExtensionToolRunContext {
   };
   conversation: {
     id: string | null;
+    getHistory: (
+      options?: ExtensionConversationHistoryOptions,
+    ) => Promise<Message[]>;
   };
   getContext: () => ExtensionContext;
 }

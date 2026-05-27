@@ -17,6 +17,7 @@ export type {
   ExtensionContextWindowContext,
   ExtensionConversationCloseEvent,
   ExtensionConversationCloseReason,
+  ExtensionConversationHistoryOptions,
   ExtensionConversationOpenEvent,
   ExtensionConversationOpenReason,
   ExtensionCostContext,
