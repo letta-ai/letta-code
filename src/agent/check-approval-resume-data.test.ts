@@ -57,6 +57,14 @@ function makeUserMessage(id = "msg-last"): Message {
   } as Message;
 }
 
+function makeSummaryMessage(id = "msg-summary"): Message {
+  return {
+    id,
+    date: new Date().toISOString(),
+    message_type: "summary_message",
+  } as Message;
+}
+
 function datedMessage(
   id: string,
   messageType: MessageType,
@@ -164,6 +172,33 @@ describe("getResumeData", () => {
     expect(messagesRetrieve).toHaveBeenCalledWith("msg-live");
     expect(messagesRetrieve).toHaveBeenCalledTimes(1);
     expect(agentsList).toHaveBeenCalledTimes(0);
+    expect(resume.pendingApprovals).toHaveLength(1);
+    expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
+  });
+
+  test("default conversation resume uses agent message_ids when in-context ids are absent", async () => {
+    const agentsList = mock(async () => ({
+      getPaginatedItems: () => [makeSummaryMessage("msg-summary-latest")],
+    }));
+    const messagesRetrieve = mock(async () => [
+      makeApprovalMessage("msg-pending-approval"),
+    ]);
+
+    installBackend({
+      listAgentMessages: agentsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({
+        message_ids: ["msg-pending-approval"],
+      }),
+      "default",
+    );
+
+    expect(messagesRetrieve).toHaveBeenCalledWith("msg-pending-approval");
+    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
+    expect(agentsList).toHaveBeenCalledTimes(1);
     expect(resume.pendingApprovals).toHaveLength(1);
     expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
   });
