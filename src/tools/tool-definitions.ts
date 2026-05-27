@@ -85,6 +85,11 @@ import { view_image } from "./impl/view-image";
 import { write } from "./impl/write";
 import { write_file_gemini } from "./impl/write-file-gemini";
 import { write_todos } from "./impl/write-todos-gemini";
+import {
+  APPLY_PATCH_PASCAL_PI_CUSTOM_TOOL,
+  APPLY_PATCH_PI_CUSTOM_TOOL,
+  type PiCustomToolSpec,
+} from "./pi-tool-definitions";
 
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
@@ -149,6 +154,7 @@ interface ToolAssets {
   schema: Record<string, unknown>;
   description: string;
   impl: ToolImplementation;
+  piCustomTool?: PiCustomToolSpec;
 }
 
 const toolDefinitions = {
@@ -307,6 +313,7 @@ const toolDefinitions = {
     schema: ApplyPatchSchema,
     description: ApplyPatchDescription.trim(),
     impl: apply_patch as unknown as ToolImplementation,
+    piCustomTool: APPLY_PATCH_PI_CUSTOM_TOOL,
   },
   update_plan: {
     schema: UpdatePlanSchema,
@@ -404,6 +411,7 @@ const toolDefinitions = {
     schema: ApplyPatchSchema,
     description: ApplyPatchDescription.trim(),
     impl: apply_patch as unknown as ToolImplementation,
+    piCustomTool: APPLY_PATCH_PASCAL_PI_CUSTOM_TOOL,
   },
   UpdatePlan: {
     schema: UpdatePlanSchema,

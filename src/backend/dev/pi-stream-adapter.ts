@@ -9,9 +9,6 @@ import {
   stream,
   streamSimple,
   type ThinkingLevel,
-  type Tool,
-  type TSchema,
-  Type,
   type Usage,
 } from "@earendil-works/pi-ai";
 import type { LocalCompactionStats } from "@/backend/local/compaction";
@@ -20,7 +17,6 @@ import {
   type LocalAssistantMessage,
   type LocalMessage,
 } from "@/backend/local/local-message";
-import type { ClientTool } from "@/tools/manager";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
@@ -139,26 +135,6 @@ async function sleepWithAbort(
   });
 }
 
-function isClientTool(value: unknown): value is ClientTool {
-  return isRecord(value) && typeof value.name === "string";
-}
-
-function toPiTools(clientTools: unknown[]): Tool[] | undefined {
-  const tools: Tool[] = [];
-  for (const value of clientTools) {
-    if (!isClientTool(value)) continue;
-    const schema = isRecord(value.parameters)
-      ? (value.parameters as unknown as TSchema)
-      : Type.Object({});
-    tools.push({
-      name: value.name,
-      description: value.description ?? "",
-      parameters: schema,
-    });
-  }
-  return tools.length > 0 ? tools : undefined;
-}
-
 const EMPTY_TOOL_RESULT_PLACEHOLDER = "No result provided";
 
 type LocalUserContent = Extract<LocalMessage, { role: "user" }>["content"];
@@ -267,7 +243,7 @@ function toPiMessages(messages: LocalMessage[]): Message[] {
   return normalized;
 }
 
-function stripOpenAIResponsesReplayItemIds(
+export function stripOpenAIResponsesReplayItemIds(
   payload: unknown,
 ): unknown | undefined {
   if (!isRecord(payload) || !Array.isArray(payload.input)) return undefined;
@@ -279,7 +255,8 @@ function stripOpenAIResponsesReplayItemIds(
     if (
       type !== "reasoning" &&
       type !== "message" &&
-      type !== "function_call"
+      type !== "function_call" &&
+      type !== "custom_tool_call"
     ) {
       return item;
     }
@@ -453,7 +430,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   private async *streamOnce(
     input: ProviderTurnInput,
   ): AsyncIterable<ProviderStreamEvent> {
-    const tools = toPiTools(input.clientTools);
     const resolved = await resolvePiModelForAgent(
       input.agent.model,
       input.agent.model_settings,
@@ -462,7 +438,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     const context: Context = {
       systemPrompt: input.systemPrompt ?? input.agent.system,
       messages: toPiMessages(input.uiMessages),
-      ...(tools ? { tools } : {}),
+      ...(input.clientTools.length > 0
+        ? { tools: input.clientTools as Context["tools"] }
+        : {}),
     };
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,

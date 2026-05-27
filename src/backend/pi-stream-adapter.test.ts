@@ -12,6 +12,7 @@ import type {
 import {
   PiStreamAdapter,
   type PiStreamFunction,
+  stripOpenAIResponsesReplayItemIds,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
   ProviderStreamEvent,
@@ -118,6 +119,13 @@ describe("PiStreamAdapter", () => {
             arguments: "{}",
           },
           {
+            type: "custom_tool_call",
+            id: "ctc_0052fa548fed1375016a0e8d5da1cc819bbbf26f40ef48320c",
+            call_id: "call_2",
+            name: "apply_patch",
+            input: "*** Begin Patch\n*** End Patch",
+          },
+          {
             role: "user",
             content: [{ type: "input_text", text: "next" }],
           },
@@ -162,12 +170,43 @@ describe("PiStreamAdapter", () => {
         { type: "reasoning", encrypted_content: "opaque" },
         { type: "message", role: "assistant", status: "completed" },
         { type: "function_call", call_id: "call_1", name: "Read" },
+        {
+          type: "custom_tool_call",
+          call_id: "call_2",
+          name: "apply_patch",
+        },
         { role: "user" },
       ],
     });
     expect(JSON.stringify(sanitizedPayload)).not.toContain("rs_0052");
     expect(JSON.stringify(sanitizedPayload)).not.toContain("msg_0052");
     expect(JSON.stringify(sanitizedPayload)).not.toContain("fc_0052");
+    expect(JSON.stringify(sanitizedPayload)).not.toContain("ctc_0052");
+  });
+
+  test("OpenAI Responses replay id sanitizer removes custom tool call ids", () => {
+    const sanitized = stripOpenAIResponsesReplayItemIds({
+      input: [
+        {
+          type: "custom_tool_call",
+          id: "ctc_patch",
+          call_id: "call_patch",
+          name: "apply_patch",
+          input: "*** Begin Patch\n*** End Patch",
+        },
+      ],
+    });
+
+    expect(sanitized).toEqual({
+      input: [
+        {
+          type: "custom_tool_call",
+          call_id: "call_patch",
+          name: "apply_patch",
+          input: "*** Begin Patch\n*** End Patch",
+        },
+      ],
+    });
   });
 
   test("drops empty text blocks before OpenRouter Anthropic requests", async () => {
