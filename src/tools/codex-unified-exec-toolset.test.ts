@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import ShellDescription from "@/tools/descriptions/Shell.md";
 import { OPENAI_DEFAULT_TOOLS, OPENAI_PASCAL_TOOLS } from "@/tools/manager";
 import ExecCommandSchema from "@/tools/schemas/ExecCommand.json";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
+
+function extractCommitGuidance(description: string): string {
+  const start = description.indexOf("# Committing changes with git");
+  const end = description.indexOf("# Creating pull requests", start);
+  if (start === -1 || end === -1) {
+    throw new Error("Expected shell description to include commit guidance");
+  }
+  return description.slice(start, end).trim();
+}
 
 describe("Codex unified exec toolset", () => {
   test("uses Codex exec_command/write_stdin instead of shell_command", () => {
@@ -23,19 +33,11 @@ describe("Codex unified exec toolset", () => {
     expect(properties).not.toContain("additional_permissions");
   });
 
-  test("keeps unified exec tool descriptions aligned with Codex plus LC commit attribution", () => {
+  test("keeps unified exec tool descriptions aligned with Codex plus LC commit guidance", () => {
     const execCommandDescription = [
       "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
       "",
-      "# Git commits",
-      "",
-      "When creating a git commit on behalf of the user, end the commit message with:",
-      "",
-      "👾 Generated with [Letta Code](https://letta.com)",
-      "",
-      "Co-Authored-By: Letta Code <noreply@letta.com>",
-      "",
-      "Use a quoted multiline commit message so the footer is included verbatim.",
+      extractCommitGuidance(ShellDescription),
     ].join("\n");
 
     expect(TOOL_DEFINITIONS.exec_command.description).toBe(
