@@ -89,11 +89,31 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
 
     const formatted = formatArgsDisplay(args, "write_stdin");
-    expect(formatted.display).toBe("write_stdin 8");
+    expect(formatted.display).toBe(
+      "Interacted with background terminal (session 8)",
+    );
     expect(formatted.shellSemantic).toMatchObject({
       kind: "run",
       label: "Run",
-      rawCommand: "write_stdin 8",
+      rawCommand: "Interacted with background terminal (session 8)",
+    });
+  });
+
+  test("summarizes Codex write_stdin polling with Codex-like language", () => {
+    const args = JSON.stringify({
+      session_id: 8,
+      yield_time_ms: 1000,
+      max_output_tokens: 2000,
+    });
+
+    const formatted = formatArgsDisplay(args, "write_stdin");
+    expect(formatted.display).toBe(
+      "Waited for background terminal (session 8)",
+    );
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "run",
+      label: "Run",
+      rawCommand: "Waited for background terminal (session 8)",
     });
   });
 });

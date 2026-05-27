@@ -364,8 +364,8 @@ export function formatArgsDisplay(
             const isWrite =
               typeof parsed.chars === "string" && parsed.chars.length > 0;
             display = isWrite
-              ? `write_stdin ${sessionId}`
-              : `poll session ${sessionId}`;
+              ? `Interacted with background terminal (session ${sessionId})`
+              : `Waited for background terminal (session ${sessionId})`;
             shellSemantic = {
               kind: "run",
               label: "Run",
