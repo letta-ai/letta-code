@@ -374,6 +374,21 @@ describe("extension host", () => {
                 : item,
             );
           });
+          letta.events.on("turn_start", (event) => {
+            event.input = event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: "broken" }
+                : item,
+            );
+            throw new Error("turn_start failed");
+          });
+          letta.events.on("turn_start", (event) => {
+            event.input = event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: String(item.content).replaceAll("second", "final") }
+                : item,
+            );
+          });
         }`,
       );
 
@@ -388,12 +403,12 @@ describe("extension host", () => {
       const result = await host.emitEvent("turn_start", event);
 
       expect(result).toMatchObject({
-        handlerCount: 2,
+        handlerCount: 4,
         name: "turn_start",
       });
-      expect(result.diagnostics).toEqual([]);
+      expect(result.diagnostics).toHaveLength(1);
       expect(result.results).toHaveLength(1);
-      expect(event.input).toEqual([{ role: "user", content: "hello second" }]);
+      expect(event.input).toEqual([{ role: "user", content: "hello final" }]);
 
       host.dispose();
     } finally {

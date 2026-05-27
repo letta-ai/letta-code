@@ -613,8 +613,23 @@ function isTurnStartResultWithInput(
     name === "turn_start" &&
     typeof result === "object" &&
     result !== null &&
-    Array.isArray((result as { input?: unknown }).input)
+    isTurnStartInput((result as { input?: unknown }).input)
   );
+}
+
+function isTurnStartInput(
+  value: unknown,
+): value is ExtensionTurnStartEvent["input"] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
+function cloneTurnStartInput(
+  input: ExtensionTurnStartEvent["input"],
+): ExtensionTurnStartEvent["input"] {
+  return input.map((item) => structuredClone(item));
 }
 
 function validateExtensionCommandId(id: string): void {
@@ -1159,6 +1174,12 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       ? registry.ownerAbortControllers[registration.owner.id]?.signal
       : undefined;
     if (signal?.aborted) continue;
+    const turnStartEvent =
+      name === "turn_start" ? (event as ExtensionTurnStartEvent) : null;
+    const turnStartInputBeforeHandler =
+      turnStartEvent && isTurnStartInput(turnStartEvent.input)
+        ? cloneTurnStartInput(turnStartEvent.input)
+        : null;
 
     try {
       const context = getContext();
@@ -1175,7 +1196,17 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       if (result != null) {
         results.push(result as NonNullable<ExtensionEventResultMap[TName]>);
       }
+      if (
+        turnStartEvent &&
+        turnStartInputBeforeHandler &&
+        !isTurnStartInput(turnStartEvent.input)
+      ) {
+        turnStartEvent.input = turnStartInputBeforeHandler;
+      }
     } catch (error) {
+      if (turnStartEvent && turnStartInputBeforeHandler) {
+        turnStartEvent.input = turnStartInputBeforeHandler;
+      }
       recordExtensionDiagnostic(
         registry,
         {

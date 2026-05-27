@@ -40,6 +40,7 @@ import {
   hasActiveSubagents,
 } from "@/agent/subagent-state";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
+import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import {
   type Buffers,
   type Line,
@@ -156,6 +157,28 @@ function makeExecutionPhaseHook(
   };
 }
 
+function hasUserMessageInput(
+  input: Array<MessageCreate | ApprovalCreate>,
+): boolean {
+  return input.some(
+    (item) =>
+      typeof item === "object" &&
+      item !== null &&
+      item.type !== "approval" &&
+      "role" in item &&
+      item.role === "user",
+  );
+}
+
+function isTurnInputArray(
+  value: unknown,
+): value is Array<MessageCreate | ApprovalCreate> {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
 type ConversationLoopContext = {
   abortControllerRef: MutableRefObject<AbortController | null>;
   agentIdRef: MutableRefObject<string>;
@@ -175,6 +198,7 @@ type ConversationLoopContext = {
   currentModelId: string | null;
   emptyResponseRetriesRef: MutableRefObject<number>;
   executingToolCallIdsRef: MutableRefObject<string[]>;
+  extensionRuntime: LocalExtensionRuntime;
   generateConversationTitle: () => Promise<string | null>;
   hasConversationModelOverrideRef: MutableRefObject<boolean>;
   interruptQueuedRef: MutableRefObject<boolean>;
@@ -271,6 +295,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     currentModelId,
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
+    extensionRuntime,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -580,21 +605,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       const inputList = Array.isArray(initialInput) ? initialInput : [];
       let currentInput = [...inputList];
       const allowReentry = options?.allowReentry ?? false;
-      const hasApprovalInput = inputList.some(
-        (item) => item.type === "approval",
-      );
-      const hasExplicitTranscriptStart =
-        options?.transcriptStartLineIndex !== undefined;
-      if (options?.transcriptStartLineIndex !== undefined) {
-        pendingTranscriptStartLineIndexRef.current =
-          options.transcriptStartLineIndex;
-      } else if (!hasApprovalInput) {
-        pendingTranscriptStartLineIndexRef.current = null;
-      }
-      const transcriptTurnStartLineIndex =
-        hasExplicitTranscriptStart || hasApprovalInput
-          ? pendingTranscriptStartLineIndexRef.current
-          : null;
 
       // Use provided generation (from onSubmit) or capture current
       // This allows detecting if ESC was pressed during async work before this function was called
@@ -615,6 +625,44 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         return;
       }
       processingConversationRef.current += 1;
+
+      if (
+        hasUserMessageInput(currentInput) &&
+        extensionRuntime.hasExtensionSources &&
+        !extensionRuntime.isLoading
+      ) {
+        const originalInput = currentInput;
+        try {
+          const turnStartEvent = {
+            agentId: agentIdRef.current ?? null,
+            conversationId: conversationIdRef.current ?? null,
+            input: currentInput,
+          };
+          await extensionRuntime.emitEvent("turn_start", turnStartEvent);
+          currentInput = isTurnInputArray(turnStartEvent.input)
+            ? turnStartEvent.input
+            : originalInput;
+        } catch {
+          // Extension turn_start handlers should not block sending the turn.
+          currentInput = originalInput;
+        }
+      }
+
+      const hasApprovalInput = currentInput.some(
+        (item) => item.type === "approval",
+      );
+      const hasExplicitTranscriptStart =
+        options?.transcriptStartLineIndex !== undefined;
+      if (options?.transcriptStartLineIndex !== undefined) {
+        pendingTranscriptStartLineIndexRef.current =
+          options.transcriptStartLineIndex;
+      } else if (!hasApprovalInput) {
+        pendingTranscriptStartLineIndexRef.current = null;
+      }
+      const transcriptTurnStartLineIndex =
+        hasExplicitTranscriptStart || hasApprovalInput
+          ? pendingTranscriptStartLineIndexRef.current
+          : null;
 
       // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
@@ -2923,6 +2971,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       setUiPermissionMode,
       prepareScopedToolExecutionContext,
       maybeStreamSyntheticNoModelResponse,
+      extensionRuntime,
     ],
   );
 

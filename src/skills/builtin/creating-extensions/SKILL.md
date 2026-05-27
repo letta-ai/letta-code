@@ -22,7 +22,7 @@ Extensions are local runtime capabilities, not TUI-only plugins. Prefer portable
 | Slash command represents a reusable agent workflow | Skill + thin extension command |
 | Show transient output above input | Panel, usually from a command |
 | Show small persistent state | Status value |
-| React to app/session lifecycle changes | Lifecycle event |
+| React to app/session lifecycle or turn changes | Event |
 | Change the bottom statusline appearance | Use `customizing-statusline`, not this skill |
 
 Default to a **tool** when the model should decide when to use the capability. Default to a **command** when the human explicitly invokes it.
@@ -67,6 +67,7 @@ Use `letta.capabilities` for optional behavior:
 letta.capabilities.tools
 letta.capabilities.commands
 letta.capabilities.events.lifecycle
+letta.capabilities.events.turns
 letta.capabilities.ui.panels
 letta.capabilities.ui.statusValues
 letta.capabilities.ui.customStatuslineRenderer

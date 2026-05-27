@@ -441,6 +441,15 @@ async function prepareHeadlessToolExecutionContext(params: {
   };
 }
 
+function isTurnInputArray(
+  value: unknown,
+): value is Array<MessageCreate | ApprovalCreate> {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
 async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
@@ -456,7 +465,7 @@ async function emitHeadlessTurnStart(options: {
       input: options.input,
     };
     await options.runtime.emitEvent("turn_start", event);
-    return event.input;
+    return isTurnInputArray(event.input) ? event.input : options.input;
   } catch {
     // Extension turn_start handlers should not block sending the turn.
     return options.input;

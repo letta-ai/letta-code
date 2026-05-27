@@ -3633,7 +3633,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Start the conversation loop. If we have queued approval results from an interrupted
       // client-side execution, send them first before the new user message.
-      let initialInput: Array<MessageCreate | ApprovalCreate> = [];
+      const initialInput: Array<MessageCreate | ApprovalCreate> = [];
 
       if (eagerRecoveryDenials && eagerRecoveryDenials.length > 0) {
         initialInput.push({
@@ -3655,20 +3655,6 @@ ${SYSTEM_REMINDER_CLOSE}
         content: messageContent as unknown as MessageCreate["content"],
         otid: userOtid,
       });
-
-      if (extensionRuntime.hasExtensionSources && !extensionRuntime.isLoading) {
-        try {
-          const turnStartEvent = {
-            agentId,
-            conversationId: conversationIdRef.current ?? null,
-            input: initialInput,
-          };
-          await extensionRuntime.emitEvent("turn_start", turnStartEvent);
-          initialInput = turnStartEvent.input;
-        } catch {
-          // Extension turn_start handlers should not block sending the turn.
-        }
-      }
 
       await processConversation(initialInput, {
         submissionGeneration,
