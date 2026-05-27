@@ -65,6 +65,21 @@ describe("formatUnifiedExecOutputForTui", () => {
     expect(formatUnifiedExecOutputForTui("plain output")).toBe("plain output");
   });
 
+  test("can hide empty completion output for background polls", () => {
+    const text = [
+      "Chunk ID: abc123",
+      "Wall time: 0.1234 seconds",
+      "Process exited with code 0",
+      "Original token count: 0",
+      "Output:",
+      "",
+    ].join("\n");
+
+    expect(
+      formatUnifiedExecOutputForTui(text, { hideEmptyCompletion: true }),
+    ).toBe("");
+  });
+
   test("extracts running session IDs from unified exec output", () => {
     const text = [
       "Chunk ID: abc123",

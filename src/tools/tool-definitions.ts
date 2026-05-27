@@ -85,6 +85,7 @@ import { view_image } from "./impl/view-image";
 import { write } from "./impl/write";
 import { write_file_gemini } from "./impl/write-file-gemini";
 import { write_todos } from "./impl/write-todos-gemini";
+
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
@@ -129,6 +130,18 @@ import WriteSchema from "./schemas/Write.json";
 import WriteFileGeminiSchema from "./schemas/WriteFileGemini.json";
 import WriteStdinSchema from "./schemas/WriteStdin.json";
 import WriteTodosGeminiSchema from "./schemas/WriteTodosGemini.json";
+
+const WINDOWS_UNIFIED_EXEC_GUIDANCE = `Windows safety rules:
+- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to \`cmd /c\`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as \`Remove-Item\` / \`Move-Item\` with \`-LiteralPath\`, and avoid string-built shell commands for file operations.
+- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.
+- When using \`Start-Process\` to launch a background helper or service, pass \`-WindowStyle Hidden\` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.`;
+
+function execCommandDescription(): string {
+  const baseDescription = ExecCommandDescription.trim();
+  return process.platform === "win32"
+    ? `${baseDescription}\n\n${WINDOWS_UNIFIED_EXEC_GUIDANCE}`
+    : baseDescription;
+}
 
 type ToolImplementation = (args: Record<string, unknown>) => Promise<unknown>;
 
@@ -262,7 +275,7 @@ const toolDefinitions = {
   },
   exec_command: {
     schema: ExecCommandSchema,
-    description: ExecCommandDescription.trim(),
+    description: execCommandDescription(),
     impl: exec_command as unknown as ToolImplementation,
   },
   write_stdin: {

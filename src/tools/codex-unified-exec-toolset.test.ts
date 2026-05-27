@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { OPENAI_DEFAULT_TOOLS, OPENAI_PASCAL_TOOLS } from "@/tools/manager";
 import ExecCommandSchema from "@/tools/schemas/ExecCommand.json";
+import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 
 describe("Codex unified exec toolset", () => {
   test("uses Codex exec_command/write_stdin instead of shell_command", () => {
@@ -20,5 +21,23 @@ describe("Codex unified exec toolset", () => {
     expect(properties).not.toContain("justification");
     expect(properties).not.toContain("prefix_rule");
     expect(properties).not.toContain("additional_permissions");
+  });
+
+  test("keeps unified exec tool descriptions aligned with Codex", () => {
+    expect(TOOL_DEFINITIONS.exec_command.description).toBe(
+      process.platform === "win32"
+        ? [
+            "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+            "",
+            "Windows safety rules:",
+            "- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to `cmd /c`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as `Remove-Item` / `Move-Item` with `-LiteralPath`, and avoid string-built shell commands for file operations.",
+            "- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.",
+            "- When using `Start-Process` to launch a background helper or service, pass `-WindowStyle Hidden` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.",
+          ].join("\n")
+        : "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+    );
+    expect(TOOL_DEFINITIONS.write_stdin.description).toBe(
+      "Writes characters to an existing unified exec session and returns recent output.",
+    );
   });
 });

@@ -1028,18 +1028,23 @@ export const ToolCallMessage = memo(
           {isShellOutputTool(rawName) &&
             line.phase === "finished" &&
             line.resultText &&
-            line.resultOk !== false && (
-              <CollapsedOutputDisplay
-                output={formatUnifiedExecOutputForTui(
-                  extractMessageFromResult(line.resultText),
-                )}
-                maxChars={300}
-                expanded={
-                  expandedToolCallId != null && expandedToolCallId === line.id
-                }
-                isLast={lastShellToolCallId === line.id}
-              />
-            )}
+            line.resultOk !== false &&
+            (() => {
+              const output = formatUnifiedExecOutputForTui(
+                extractMessageFromResult(line.resultText),
+                { hideEmptyCompletion: rawName === "write_stdin" },
+              );
+              return output ? (
+                <CollapsedOutputDisplay
+                  output={output}
+                  maxChars={300}
+                  expanded={
+                    expandedToolCallId != null && expandedToolCallId === line.id
+                  }
+                  isLast={lastShellToolCallId === line.id}
+                />
+              ) : null;
+            })()}
 
           {/* Tool result for non-shell tools or shell tool errors */}
           {(() => {

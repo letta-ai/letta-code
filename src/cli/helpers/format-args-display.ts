@@ -370,8 +370,8 @@ export function formatArgsDisplay(
               typeof parsed.chars === "string" && parsed.chars.length > 0;
             const commandDisplay = options?.unifiedExecCommandDisplay?.trim();
             const suffix = commandDisplay
-              ? ` · ${commandDisplay}`
-              : ` (session ${sessionId})`;
+              ? `· ${commandDisplay}`
+              : `(session ${sessionId})`;
             if (options?.suppressUnifiedExecInteractionLabel) {
               return { display: suffix, parsed };
             }

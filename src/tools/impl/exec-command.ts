@@ -102,7 +102,7 @@ type NodePtyModule = {
   ) => NodePtyProcess;
 };
 
-const NODE_PTY_BRIDGE_SCRIPT = String.raw`
+const NODE_PTY_BRIDGE_SCRIPT = `
 const pty = require("node-pty");
 const config = JSON.parse(process.argv[1]);
 const child = pty.spawn(config.executable, config.args, {

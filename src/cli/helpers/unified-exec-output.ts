@@ -48,7 +48,10 @@ export function extractUnifiedExecRunningSessionId(
  * output. The TUI shell renderer should stay focused on what the command
  * printed, while preserving non-zero exits and running session status.
  */
-export function formatUnifiedExecOutputForTui(text: string): string {
+export function formatUnifiedExecOutputForTui(
+  text: string,
+  options?: { hideEmptyCompletion?: boolean },
+): string {
   const parsed = parseUnifiedExecOutput(text);
   if (!parsed) {
     return text;
@@ -74,6 +77,10 @@ export function formatUnifiedExecOutputForTui(text: string): string {
 
   if (prefix.length > 0) {
     return prefix.join("\n");
+  }
+
+  if (options?.hideEmptyCompletion) {
+    return "";
   }
 
   return "(Command completed with no output)";
