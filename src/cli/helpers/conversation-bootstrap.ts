@@ -53,9 +53,20 @@ function formatBootstrapConversationLine(conversation: Conversation): string {
   return `- ${(conversation.summary || "Unlabelled conversation").trim()} [${conversation.id}]`;
 }
 
+function formatBootstrapRelevantConversationLine(
+  result: ConversationSearchResult,
+): string {
+  const description = result.embedded_text.trim();
+  if (!description) {
+    return formatBootstrapConversationLine(result.conversation);
+  }
+
+  return `- ${description} [${result.conversation.id}]`;
+}
+
 function formatBootstrapReminder(params: {
   recentConversations: Conversation[];
-  relevantConversations: Conversation[];
+  relevantConversations: ConversationSearchResult[];
 }): string {
   const { recentConversations, relevantConversations } = params;
   const lines = [
@@ -75,14 +86,15 @@ function formatBootstrapReminder(params: {
   if (relevantConversations.length > 0) {
     lines.push(
       "",
-      "Relevant prior conversations for the user's first message:",
-      ...relevantConversations.map(formatBootstrapConversationLine),
+      "Relevant prior conversation descriptions for the user's first message:",
+      ...relevantConversations.map(formatBootstrapRelevantConversationLine),
     );
   }
 
   lines.push(
     "",
-    "Use this as lightweight context only. Do not treat these summaries as confirmed facts beyond what is written here.",
+    "Use this as lightweight context only. Do not treat these titles or conversation descriptions as confirmed facts beyond what is written here.",
+    "These descriptions are internal search metadata. Do not quote or expose them to the user unless independently supported in the active conversation.",
     SYSTEM_REMINDER_CLOSE,
   );
 
@@ -93,10 +105,9 @@ function filterBootstrapRelevantConversations(
   results: ConversationSearchResult[],
   params: {
     excludeConversationId?: string;
-    recentIds: Set<string>;
   },
-): Conversation[] {
-  const { excludeConversationId, recentIds } = params;
+): ConversationSearchResult[] {
+  const { excludeConversationId } = params;
   const dedupedResults: ConversationSearchResult[] = [];
   const seenConversationIds = new Set<string>();
 
@@ -106,10 +117,7 @@ function filterBootstrapRelevantConversations(
       continue;
     }
 
-    if (
-      recentIds.has(conversation.id) ||
-      seenConversationIds.has(conversation.id)
-    ) {
+    if (seenConversationIds.has(conversation.id)) {
       continue;
     }
 
@@ -131,8 +139,7 @@ function filterBootstrapRelevantConversations(
 
   return dedupedResults
     .filter((result) => result.rrf_score >= minimumAcceptedScore)
-    .slice(0, BOOTSTRAP_RELEVANT_LIMIT)
-    .map((result) => result.conversation);
+    .slice(0, BOOTSTRAP_RELEVANT_LIMIT);
 }
 
 export async function buildConversationBootstrapReminder(params: {
@@ -157,6 +164,7 @@ export async function buildConversationBootstrapReminder(params: {
             agent_id: agentId,
             query: queryText,
             search_mode: "hybrid",
+            search_target: "description",
             limit: BOOTSTRAP_RELEVANT_FETCH_LIMIT,
           },
           backend,
@@ -170,23 +178,28 @@ export async function buildConversationBootstrapReminder(params: {
           (conversation) => conversation.id !== excludeConversationId,
         )
       : [];
-  const recentIds = new Set(
-    recentConversations.map((conversation) => conversation.id),
-  );
   const relevantConversations =
     relevantResult.status === "fulfilled"
       ? filterBootstrapRelevantConversations(relevantResult.value, {
           excludeConversationId,
-          recentIds,
         })
       : [];
+  const relevantConversationIds = new Set(
+    relevantConversations.map((result) => result.conversation.id),
+  );
+  const nonDuplicatedRecentConversations = recentConversations.filter(
+    (conversation) => !relevantConversationIds.has(conversation.id),
+  );
 
-  if (recentConversations.length === 0 && relevantConversations.length === 0) {
+  if (
+    nonDuplicatedRecentConversations.length === 0 &&
+    relevantConversations.length === 0
+  ) {
     return null;
   }
 
   return formatBootstrapReminder({
-    recentConversations,
+    recentConversations: nonDuplicatedRecentConversations,
     relevantConversations,
   });
 }

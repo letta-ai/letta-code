@@ -5,6 +5,10 @@ export interface ForkConversationOptions {
   hidden?: boolean;
 }
 
+export type ConversationDescriptionUpdateBody = Record<string, unknown> & {
+  description: string | null;
+};
+
 export async function forkConversation(
   conversationId: string,
   options: ForkConversationOptions = {},
@@ -19,5 +23,16 @@ export async function forkConversation(
     `/v1/conversations/${encodeURIComponent(conversationId)}/fork`,
     undefined,
     { query },
+  );
+}
+
+export async function updateConversationDescription(
+  conversationId: string,
+  body: ConversationDescriptionUpdateBody,
+): Promise<Record<string, unknown>> {
+  return apiRequest<Record<string, unknown>>(
+    "PATCH",
+    `/v1/conversations/${encodeURIComponent(conversationId)}`,
+    body,
   );
 }
