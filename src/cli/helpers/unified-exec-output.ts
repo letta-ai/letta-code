@@ -64,7 +64,7 @@ export function formatUnifiedExecOutputForTui(
   }
 
   const sessionStatus = parsed.sessionId
-    ? `Process running with session ID ${parsed.sessionId}`
+    ? "Process running in background"
     : null;
 
   if (output.length > 0) {

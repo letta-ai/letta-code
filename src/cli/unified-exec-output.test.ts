@@ -42,7 +42,7 @@ describe("formatUnifiedExecOutputForTui", () => {
     ].join("\n");
 
     expect(formatUnifiedExecOutputForTui(text)).toBe(
-      "Process running with session ID 4",
+      "Process running in background",
     );
   });
 
@@ -57,7 +57,7 @@ describe("formatUnifiedExecOutputForTui", () => {
     ].join("\n");
 
     expect(formatUnifiedExecOutputForTui(text)).toBe(
-      "ready\nProcess running with session ID 4",
+      "ready\nProcess running in background",
     );
   });
 
