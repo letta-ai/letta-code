@@ -118,7 +118,7 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import { telemetry } from "./telemetry";
+import { getTerminalTelemetrySurface, telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/error-reporting";
 import { extractTelemetryInputText } from "./telemetry/input";
 import { isInteractiveApprovalTool } from "./tools/interactive-policy";
@@ -532,7 +532,7 @@ export async function handleHeadlessCommand(
   startupOptions: { requestedBackendMode?: BackendMode } = {},
 ) {
   const { values, positionals } = parsedArgs;
-  telemetry.setSurface("headless");
+  telemetry.setSurface(getTerminalTelemetrySurface(true));
 
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {

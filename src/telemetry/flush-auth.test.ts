@@ -1,17 +1,64 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import {
+  getListenerTelemetrySurface,
+  getTerminalTelemetrySurface,
+  resolveTelemetryBackend,
+  type TelemetrySurface,
+  telemetry,
+} from "@/telemetry";
 
 type TelemetryTestState = {
   events: unknown[];
   messageCount: number;
   currentAgentId: string | null;
-  surface: "tui" | "headless" | "websocket";
+  surface: TelemetrySurface;
   sessionEndTracked: boolean;
   isCloudUser: () => boolean;
 };
 
 const telemetryState = telemetry as unknown as TelemetryTestState;
+
+describe("telemetry segmentation", () => {
+  test("maps surfaces to stable analytics buckets", () => {
+    expect(getTerminalTelemetrySurface(false)).toBe("letta_code_tui");
+    expect(getTerminalTelemetrySurface(true)).toBe("letta_code_headless");
+    expect(getListenerTelemetrySurface({})).toBe("letta_code_cli_server");
+    expect(
+      getListenerTelemetrySurface({ LETTA_DESKTOP_DEBUG_PANEL: "1" }),
+    ).toBe("letta_code_desktop");
+  });
+
+  test("maps backends to stable analytics buckets", () => {
+    expect(
+      resolveTelemetryBackend({
+        env: { LETTA_LOCAL_BACKEND_EXPERIMENTAL: "1" },
+        serverUrl: "https://api.letta.com",
+      }),
+    ).toBe("local");
+    expect(
+      resolveTelemetryBackend({ env: {}, serverUrl: "https://api.letta.com" }),
+    ).toBe("constellation");
+    expect(
+      resolveTelemetryBackend({
+        env: { LETTA_DESKTOP_DEBUG_PANEL: "1" },
+        serverUrl: "http://127.0.0.1:54085",
+      }),
+    ).toBe("constellation");
+    expect(
+      resolveTelemetryBackend({ env: {}, serverUrl: "http://localhost:8283" }),
+    ).toBe("docker_deprecated");
+    expect(
+      resolveTelemetryBackend({
+        env: {},
+        serverUrl: "https://self-hosted.example.com",
+      }),
+    ).toBe("self_hosted_api");
+    expect(resolveTelemetryBackend({ env: {}, serverUrl: null })).toBe(
+      "unknown",
+    );
+  });
+});
 
 describe("telemetry flush auth", () => {
   const originalFetch = globalThis.fetch;
@@ -51,7 +98,7 @@ describe("telemetry flush auth", () => {
     telemetryState.events = [];
     telemetryState.messageCount = 0;
     telemetryState.currentAgentId = null;
-    telemetryState.surface = "tui";
+    telemetryState.surface = "letta_code_tui";
     telemetryState.sessionEndTracked = false;
     deleteEnvVarCaseInsensitive("LETTA_API_KEY");
     deleteEnvVarCaseInsensitive("LETTA_TELEMETRY_DISABLED");
@@ -70,6 +117,18 @@ describe("telemetry flush auth", () => {
     restoreEnvVar("LETTA_API_KEY", originalLettaApiKey);
     restoreEnvVar("LETTA_TELEMETRY_DISABLED", originalTelemetryDisabled);
     restoreEnvVar("LETTA_BASE_URL", originalLettaBaseUrl);
+  });
+
+  test("usage events include segmentation properties", () => {
+    telemetry.trackUserInput("hello", "user", "model-1");
+
+    expect(telemetryState.events).toHaveLength(1);
+    expect(telemetryState.events[0]).toMatchObject({
+      data: {
+        surface: "letta_code_tui",
+        backend: "constellation",
+      },
+    });
   });
 
   test("flush falls back to secure settings token when env var is absent", async () => {
