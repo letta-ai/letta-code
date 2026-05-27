@@ -460,6 +460,49 @@ test("memory mode - allows Bash redirection inside MEMORY_DIR", () => {
   }
 });
 
+test("memory mode - applies shell scoping to exec_command cmd", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+  try {
+    const result = checkPermission(
+      "exec_command",
+      { cmd: 'echo "test content" > "$MEMORY_DIR/system/test.md"' },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+
+    expect(result.decision).toBe("allow");
+    expect(result.matchedRule).toBe("memory mode");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - allows write_stdin polls but denies stdin writes", () => {
+  permissionMode.setMode("memory");
+
+  const pollResult = checkPermission(
+    "write_stdin",
+    { session_id: 1, chars: "" },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+  expect(pollResult.decision).toBe("allow");
+  expect(pollResult.matchedRule).toBe("memory mode");
+
+  const writeResult = checkPermission(
+    "write_stdin",
+    { session_id: 1, chars: "echo pwn\n" },
+    { allow: [], deny: [], ask: [] },
+    "/Users/test/project",
+  );
+  expect(writeResult.decision).toBe("deny");
+  expect(writeResult.matchedRule).toBe("memory mode");
+});
+
 test("memory mode - denies Bash redirection outside MEMORY_DIR", () => {
   permissionMode.setMode("memory");
   const originalMemoryDir = process.env.MEMORY_DIR;

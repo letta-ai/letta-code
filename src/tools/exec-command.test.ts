@@ -91,6 +91,17 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(second.output).toContain("Output:\nhello");
   });
 
+  test("non-tty sessions close stdin like Codex pipe mode", async () => {
+    const result = await exec_command({
+      cmd: "cat",
+      yield_time_ms: 1000,
+    });
+
+    expect(result.output).toContain("Process exited with code 0");
+    expect(result.output).not.toContain("Process running with session ID");
+    expect(result.output).toContain("Output:\n");
+  });
+
   test("preserves non-zero exit code in model-facing output", async () => {
     const result = await exec_command({
       cmd: "printf 'bad'; exit 7",

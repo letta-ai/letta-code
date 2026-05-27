@@ -308,7 +308,7 @@ function spawnPipeProcess(params: {
     cwd: params.cwd,
     env: params.env,
     shell: false,
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: [params.session.tty ? "pipe" : "ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
   });
 
