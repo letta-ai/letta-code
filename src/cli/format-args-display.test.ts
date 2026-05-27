@@ -65,4 +65,18 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
       rawCommand: "git status --short",
     });
   });
+
+  test("uses cmd for Codex unified exec shell display", () => {
+    const args = JSON.stringify({
+      cmd: "git status --short",
+    });
+
+    const formatted = formatArgsDisplay(args, "exec_command");
+    expect(formatted.display).toBe("git status --short");
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "run",
+      label: "Run",
+      rawCommand: "git status --short",
+    });
+  });
 });

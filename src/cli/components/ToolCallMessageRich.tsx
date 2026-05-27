@@ -23,6 +23,7 @@ import {
   isTaskTool,
   isTodoTool,
 } from "@/cli/helpers/tool-name-mapping.js";
+import { formatUnifiedExecOutputForTui } from "@/cli/helpers/unified-exec-output.js";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { clipToolReturn } from "@/tools/manager.js";
 import { isRecord } from "@/utils/type-guards";
@@ -1013,7 +1014,9 @@ export const ToolCallMessage = memo(
             line.resultText &&
             line.resultOk !== false && (
               <CollapsedOutputDisplay
-                output={extractMessageFromResult(line.resultText)}
+                output={formatUnifiedExecOutputForTui(
+                  extractMessageFromResult(line.resultText),
+                )}
                 maxChars={300}
                 expanded={
                   expandedToolCallId != null && expandedToolCallId === line.id

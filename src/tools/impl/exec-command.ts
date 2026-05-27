@@ -59,6 +59,7 @@ interface ExecSession {
   id: string;
   command: string;
   output: string;
+  chunks: ExecOutputChunk[];
   readOffset: number;
   status: ExecSessionStatus;
   exitCode: number | null;
@@ -69,6 +70,13 @@ interface ExecSession {
 type ProcessLauncher = {
   kill(signal?: string | number): unknown;
   write(input: string): void;
+};
+
+type ExecOutputChunk = {
+  text: string;
+  stream: "stdout" | "stderr";
+  start: number;
+  end: number;
 };
 
 const execSessions = new Map<string, ExecSession>();
@@ -105,8 +113,16 @@ function truncateOutput(text: string, maxOutputTokens?: number): string {
   ).content;
 }
 
-function appendSessionOutput(session: ExecSession, text: string): void {
+function appendSessionOutput(
+  session: ExecSession,
+  text: string,
+  stream: "stdout" | "stderr",
+): void {
+  const start = session.output.length;
   session.output += text;
+  const end = session.output.length;
+  session.chunks.push({ text, stream, start, end });
+
   if (session.output.length <= MAX_SESSION_OUTPUT_CHARS) {
     return;
   }
@@ -114,6 +130,48 @@ function appendSessionOutput(session: ExecSession, text: string): void {
   const removedChars = session.output.length - MAX_SESSION_OUTPUT_CHARS;
   session.output = session.output.slice(removedChars);
   session.readOffset = Math.max(0, session.readOffset - removedChars);
+  session.chunks = session.chunks
+    .map((chunk) => ({
+      ...chunk,
+      start: chunk.start - removedChars,
+      end: chunk.end - removedChars,
+    }))
+    .filter((chunk) => chunk.end > 0)
+    .map((chunk) => {
+      if (chunk.start >= 0) {
+        return chunk;
+      }
+      return {
+        ...chunk,
+        text: chunk.text.slice(-chunk.end),
+        start: 0,
+      };
+    });
+}
+
+function getSessionOutputChunks(
+  session: ExecSession,
+  startOffset: number,
+  endOffset: number,
+): ExecOutputChunk[] {
+  const chunks: ExecOutputChunk[] = [];
+  for (const chunk of session.chunks) {
+    if (chunk.end <= startOffset || chunk.start >= endOffset) {
+      continue;
+    }
+    const sliceStart = Math.max(0, startOffset - chunk.start);
+    const sliceEnd = Math.min(chunk.text.length, endOffset - chunk.start);
+    const text = chunk.text.slice(sliceStart, sliceEnd);
+    if (text) {
+      chunks.push({
+        text,
+        stream: chunk.stream,
+        start: Math.max(chunk.start, startOffset),
+        end: Math.min(chunk.end, endOffset),
+      });
+    }
+  }
+  return chunks;
 }
 
 function scheduleExecSessionCleanup(sessionId: string): void {
@@ -253,7 +311,7 @@ function spawnPipeProcess(params: {
   });
 
   const appendOutput = (text: string, stream: "stdout" | "stderr") => {
-    appendSessionOutput(params.session, text);
+    appendSessionOutput(params.session, text, stream);
     const bgProcess = backgroundProcesses.get(params.session.id);
     if (bgProcess) {
       appendBackgroundProcessOutput(bgProcess, stream, text);
@@ -321,14 +379,26 @@ async function waitForSessionOutput(params: {
 
   while (Date.now() < deadline && params.session.status === "running") {
     if (params.onOutput && params.session.output.length > emittedOffset) {
-      params.onOutput(params.session.output.slice(emittedOffset), "stdout");
+      for (const chunk of getSessionOutputChunks(
+        params.session,
+        emittedOffset,
+        params.session.output.length,
+      )) {
+        params.onOutput(chunk.text, chunk.stream);
+      }
       emittedOffset = params.session.output.length;
     }
     await sleep(25);
   }
 
   if (params.onOutput && params.session.output.length > emittedOffset) {
-    params.onOutput(params.session.output.slice(emittedOffset), "stdout");
+    for (const chunk of getSessionOutputChunks(
+      params.session,
+      emittedOffset,
+      params.session.output.length,
+    )) {
+      params.onOutput(chunk.text, chunk.stream);
+    }
   }
 
   const endOffset = params.session.output.length;
@@ -355,6 +425,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     id,
     command: args.cmd,
     output: "",
+    chunks: [],
     readOffset: 0,
     status: "running",
     exitCode: null,

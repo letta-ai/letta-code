@@ -100,4 +100,24 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(result.output).toContain("Process exited with code 7");
     expect(result.output).toContain("Output:\nbad");
   });
+
+  test("streams stdout and stderr with distinct stream labels", async () => {
+    const chunks: Array<{ chunk: string; stream: "stdout" | "stderr" }> = [];
+
+    await exec_command({
+      cmd: "printf out; printf err >&2",
+      onOutput: (chunk, stream) => chunks.push({ chunk, stream }),
+    });
+
+    expect(
+      chunks.some(
+        (entry) => entry.stream === "stdout" && entry.chunk.includes("out"),
+      ),
+    ).toBe(true);
+    expect(
+      chunks.some(
+        (entry) => entry.stream === "stderr" && entry.chunk.includes("err"),
+      ),
+    ).toBe(true);
+  });
 });
