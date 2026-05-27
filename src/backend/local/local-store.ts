@@ -24,6 +24,11 @@ import type {
   ConversationMessageStreamBody,
   ConversationUpdateBody,
 } from "@/backend/backend";
+import {
+  getRegisteredPiProvider,
+  resolveRegisteredPiProviderFromModelHandle,
+  stripRegisteredProviderHandlePrefix,
+} from "@/backend/dev/pi-provider-extension-registry";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalCompactionStats } from "./compaction";
@@ -292,6 +297,18 @@ function normalizeAgentRecord(
   };
 }
 
+function registeredModelContextWindow(modelHandle: string): number | undefined {
+  const providerName = resolveRegisteredPiProviderFromModelHandle(modelHandle);
+  if (!providerName) return undefined;
+  const provider = getRegisteredPiProvider(providerName);
+  const modelId = stripRegisteredProviderHandlePrefix(
+    modelHandle,
+    providerName,
+  );
+  if (!provider?.config.models || !modelId) return undefined;
+  return provider.config.models.find((m) => m.id === modelId)?.contextWindow;
+}
+
 export function projectLocalAgentState(
   record: LocalAgentRecord,
   messageIds: string[] = [],
@@ -340,7 +357,7 @@ export function projectLocalAgentState(
       context_window:
         typeof record.model_settings.context_window_limit === "number"
           ? record.model_settings.context_window_limit
-          : 128000,
+          : (registeredModelContextWindow(record.model) ?? 128000),
       ...(reasoningEffort && { reasoning_effort: reasoningEffort }),
       ...(enableReasoner !== undefined && { enable_reasoner: enableReasoner }),
       ...((typeof record.model_settings.max_tokens === "number" ||
