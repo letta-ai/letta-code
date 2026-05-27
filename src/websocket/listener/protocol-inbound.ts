@@ -860,6 +860,7 @@ export function isCreateAgentCommand(
     typeof c.request_id === "string" &&
     (c.personality === "memo" ||
       c.personality === "blank" ||
+      c.personality === "tutorial" ||
       c.personality === "linus" ||
       c.personality === "kawaii") &&
     (c.model === undefined || typeof c.model === "string") &&
