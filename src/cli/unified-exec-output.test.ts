@@ -43,6 +43,21 @@ describe("formatUnifiedExecOutputForTui", () => {
     );
   });
 
+  test("keeps running session status when output is present", () => {
+    const text = [
+      "Chunk ID: abc123",
+      "Wall time: 0.1234 seconds",
+      "Process running with session ID 4",
+      "Original token count: 1",
+      "Output:",
+      "ready",
+    ].join("\n");
+
+    expect(formatUnifiedExecOutputForTui(text)).toBe(
+      "ready\nProcess running with session ID 4",
+    );
+  });
+
   test("leaves non-unified output unchanged", () => {
     expect(formatUnifiedExecOutputForTui("plain output")).toBe("plain output");
   });

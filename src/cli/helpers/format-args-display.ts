@@ -352,6 +352,29 @@ export function formatArgsDisplay(
             return { display, parsed };
           }
 
+          // write_stdin is part of Codex unified exec: keep it on the shell
+          // rendering path, but don't dump raw polling/truncation args in the
+          // transcript header.
+          if (toolName.toLowerCase() === "write_stdin") {
+            const sessionId =
+              typeof parsed.session_id === "string" ||
+              typeof parsed.session_id === "number"
+                ? String(parsed.session_id)
+                : "unknown";
+            const isWrite =
+              typeof parsed.chars === "string" && parsed.chars.length > 0;
+            display = isWrite
+              ? `write_stdin ${sessionId}`
+              : `poll session ${sessionId}`;
+            shellSemantic = {
+              kind: "run",
+              label: "Run",
+              summary: display,
+              rawCommand: display,
+            } satisfies ShellSemanticDisplay;
+            return { display, parsed, shellSemantic };
+          }
+
           // Plan tools: only show compact plan item count.
           if (isPlanTool(toolName) && Array.isArray(parsed.plan)) {
             display = formatItemCount(parsed.plan.length);

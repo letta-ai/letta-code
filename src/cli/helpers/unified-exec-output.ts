@@ -40,7 +40,7 @@ function parseUnifiedExecOutput(text: string): ParsedUnifiedExecOutput | null {
 /**
  * Codex unified exec returns model-facing metadata before the actual command
  * output. The TUI shell renderer should stay focused on what the command
- * printed, while preserving non-zero exits and empty running sessions.
+ * printed, while preserving non-zero exits and running session status.
  */
 export function formatUnifiedExecOutputForTui(text: string): string {
   const parsed = parseUnifiedExecOutput(text);
@@ -54,12 +54,16 @@ export function formatUnifiedExecOutputForTui(text: string): string {
     prefix.push(`Exit code: ${parsed.exitCode}`);
   }
 
+  const sessionStatus = parsed.sessionId
+    ? `Process running with session ID ${parsed.sessionId}`
+    : null;
+
   if (output.length > 0) {
-    return prefix.length > 0 ? `${prefix.join("\n")}\n${output}` : output;
+    return [...prefix, output, sessionStatus].filter(Boolean).join("\n");
   }
 
-  if (parsed.sessionId) {
-    return `Process running with session ID ${parsed.sessionId}`;
+  if (sessionStatus) {
+    return sessionStatus;
   }
 
   if (prefix.length > 0) {

@@ -79,4 +79,21 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
       rawCommand: "git status --short",
     });
   });
+
+  test("summarizes Codex write_stdin without raw polling args", () => {
+    const args = JSON.stringify({
+      session_id: 8,
+      chars: "hello from stdin\n",
+      yield_time_ms: 1000,
+      max_output_tokens: 2000,
+    });
+
+    const formatted = formatArgsDisplay(args, "write_stdin");
+    expect(formatted.display).toBe("write_stdin 8");
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "run",
+      label: "Run",
+      rawCommand: "write_stdin 8",
+    });
+  });
 });
