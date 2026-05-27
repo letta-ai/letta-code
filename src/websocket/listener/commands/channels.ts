@@ -463,25 +463,18 @@ export async function handleChannelsProtocolCommand(
         "listener_channels_command",
       );
 
-      const accountsNeedingRefresh = accounts.filter((account) =>
-        parsed.channel_id === "slack" ? true : !account.displayName,
+      const accountsNeedingRefresh = accounts.filter(
+        (account) => !account.displayName,
       );
 
       if (accountsNeedingRefresh.length > 0) {
         runDetachedListenerTask("channel_accounts_refresh", async () => {
           const refreshResults = await Promise.allSettled(
             accountsNeedingRefresh.map(async (account) => {
-              const refreshed =
-                parsed.channel_id === "slack"
-                  ? await refreshChannelAccountDisplayNameLive(
-                      parsed.channel_id,
-                      account.accountId,
-                      { force: true },
-                    )
-                  : await refreshChannelAccountDisplayNameLive(
-                      parsed.channel_id,
-                      account.accountId,
-                    );
+              const refreshed = await refreshChannelAccountDisplayNameLive(
+                parsed.channel_id,
+                account.accountId,
+              );
 
               return refreshed.displayName !== account.displayName;
             }),
