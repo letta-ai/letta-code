@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import { createExtensionRuntime } from "@/extensions/extension-runtime";
-import type { ExtensionBackendApi, ExtensionContext } from "@/extensions/types";
+import type {
+  ExtensionContext,
+  ExtensionRuntimeBackendApi,
+} from "@/extensions/types";
 
 type ExtensionRuntimeTestGlobal = typeof globalThis & {
   __lettaRuntimeEvents?: string[];
@@ -71,7 +74,7 @@ describe("extension runtime", () => {
         path.join(extensionDir, "events.ts"),
         `export default function(letta) {
           letta.events.on("conversation_open", async (event, ctx) => {
-            const fork = await ctx.backend.forkConversation(event.conversationId, { hidden: true });
+            const fork = await ctx.conversation.fork({ hidden: true });
             globalThis.__lettaRuntimeEvents.push(
               event.reason + ":" + ctx.context.agent.name + ":" + fork.id,
             );
@@ -79,8 +82,9 @@ describe("extension runtime", () => {
         }`,
       );
 
-      const backend: ExtensionBackendApi = {
+      const backend: ExtensionRuntimeBackendApi = {
         forkConversation: async () => ({ id: "forked-conversation" }),
+        getConversationHistory: async () => [],
         sendMessageStream: async () => (async function* () {})(),
       };
       const runtime = createExtensionRuntime({

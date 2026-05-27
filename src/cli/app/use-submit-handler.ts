@@ -105,6 +105,7 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
+import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
@@ -3137,14 +3138,20 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           try {
             const extensionContext = extensionRuntime.getContext();
+            const cwd = getCurrentWorkingDirectory();
+            const conversation = createExtensionConversationHandle({
+              agentId,
+              backend: extensionRuntime.getBackendApi(),
+              conversationId: conversationIdRef.current,
+              workingDirectory: cwd,
+            });
             const commandContext: ExtensionCommandContext = {
               agent: { id: agentId, name: agentName },
               args: parsedExtensionCommand.args,
               argv: parseExtensionCommandArgv(parsedExtensionCommand.args),
-              backend: extensionRuntime.getBackendApi(),
               command: parsedExtensionCommand.command,
-              conversation: { id: conversationIdRef.current },
-              cwd: getCurrentWorkingDirectory(),
+              conversation: { ...conversation, id: conversationIdRef.current },
+              cwd,
               getContext: extensionRuntime.getContext,
               model: {
                 id:
