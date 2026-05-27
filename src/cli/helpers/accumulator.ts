@@ -600,6 +600,7 @@ function markCompactionCompleted(ctx?: ContextTracker): void {
   if (!ctx) return;
   ctx.pendingCompaction = true;
   ctx.pendingReflectionTrigger = true;
+  ctx.pendingConversationDescriptionRegeneration = true;
 }
 
 function resolveLineIdForKind(
