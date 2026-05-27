@@ -9,7 +9,8 @@ import {
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { __testSetBackend } from "@/backend";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import { __testSetBackend, type Backend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import {
   __testOverrideLoadChannelAccounts,
@@ -329,6 +330,79 @@ describe("tool execution context snapshot", () => {
 
     expect(result.status).toBe("success");
     expect(asText(result.toolReturn)).toBe("echo:hi");
+  });
+
+  test("exposes recent conversation history to extension tools", async () => {
+    const newestFirstMessages = [
+      {
+        id: "msg-2",
+        date: "2026-05-27T00:00:02.000Z",
+        message_type: "assistant_message",
+        content: "hello",
+      },
+      {
+        id: "msg-1",
+        date: "2026-05-27T00:00:01.000Z",
+        message_type: "user_message",
+        content: "hi",
+      },
+    ] as unknown as Message[];
+    const listCalls: Array<{ body: unknown; conversationId: string }> = [];
+    __testSetBackend({
+      listConversationMessages: async (
+        conversationId: string,
+        body: unknown,
+      ) => {
+        listCalls.push({ conversationId, body });
+        return {
+          getPaginatedItems: () => newestFirstMessages,
+        };
+      },
+    } as unknown as Backend);
+
+    const controller = new AbortController();
+    registerExtensionTool({
+      name: "history_echo",
+      description: "Echo conversation history ids",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/history-echo.ts",
+        path: "/tmp/history-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/history-echo.ts",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      getContext: () => {
+        throw new Error("context should not be needed for this test");
+      },
+      isAvailable: () => true,
+      run: async (ctx) => {
+        const history = await ctx.conversation.getHistory({ limit: 2 });
+        return history.map((message) => message.id).join(",");
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-1", conversationId: "default" },
+      () => executeTool("history_echo", {}),
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("msg-1,msg-2");
+    expect(listCalls).toEqual([
+      {
+        conversationId: "default",
+        body: {
+          agent_id: "agent-1",
+          include_err: true,
+          limit: 2,
+          order: "desc",
+        },
+      },
+    ]);
   });
 
   test("extension tools take precedence over external tools with the same name", async () => {
