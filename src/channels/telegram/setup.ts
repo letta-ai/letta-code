@@ -13,7 +13,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "@/channels/accounts";
+import { upsertChannelAccountWithSecrets } from "@/channels/accounts";
 import type { DmPolicy, TelegramChannelAccount } from "@/channels/types";
 import { validateTelegramToken } from "./adapter";
 import { ensureTelegramRuntimeInstalled } from "./runtime";
@@ -125,7 +125,7 @@ export async function runTelegramSetup(): Promise<boolean> {
       updatedAt: now,
     };
 
-    upsertChannelAccount("telegram", account);
+    await upsertChannelAccountWithSecrets("telegram", account);
     console.log("\n✓ Telegram bot configured!");
     console.log(
       "Config written to: ~/.letta/channels/telegram/accounts.json\n",

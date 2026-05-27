@@ -2,6 +2,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type {
   ApprovalCreate,
   LettaStreamingResponse,
+  Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 
 export interface ExtensionWorkspaceContext {
@@ -70,6 +71,7 @@ export interface ExtensionUiCapabilities {
 
 export interface ExtensionEventCapabilities {
   lifecycle: boolean;
+  turns: boolean;
 }
 
 export interface ExtensionCapabilities {
@@ -124,7 +126,10 @@ export interface ExtensionOwner {
   generation: number;
 }
 
-export type ExtensionEventName = "conversation_open" | "conversation_close";
+export type ExtensionEventName =
+  | "conversation_open"
+  | "conversation_close"
+  | "turn_start";
 
 export type ExtensionConversationOpenReason =
   | "startup"
@@ -155,14 +160,26 @@ export interface ExtensionConversationCloseEvent {
   toolCallCount: number | null;
 }
 
+export interface ExtensionTurnStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  input: Array<MessageCreate | ApprovalCreate>;
+}
+
+export interface ExtensionTurnStartResult {
+  input?: Array<MessageCreate | ApprovalCreate>;
+}
+
 export interface ExtensionEventMap {
   conversation_open: ExtensionConversationOpenEvent;
   conversation_close: ExtensionConversationCloseEvent;
+  turn_start: ExtensionTurnStartEvent;
 }
 
 export interface ExtensionEventResultMap {
   conversation_open: undefined;
   conversation_close: undefined;
+  turn_start: ExtensionTurnStartResult | undefined;
 }
 
 export interface ExtensionEventContext {
@@ -188,10 +205,13 @@ export interface ExtensionEventRegistration<
   path: string;
 }
 
-export interface ExtensionEventEmissionResult {
+export interface ExtensionEventEmissionResult<
+  TName extends ExtensionEventName = ExtensionEventName,
+> {
   diagnostics: ExtensionDiagnostic[];
   handlerCount: number;
-  name: ExtensionEventName;
+  name: TName;
+  results: Array<NonNullable<ExtensionEventResultMap[TName]>>;
 }
 
 export type ExtensionCapabilityKind =
@@ -364,6 +384,15 @@ export type ExtensionToolRunResult =
       success?: boolean;
     };
 
+export interface ExtensionConversationHistoryOptions {
+  /** Maximum number of recent messages to return. Defaults to 100. */
+  limit?: number;
+  /** Return chronological (asc, default) or newest-first (desc) messages. */
+  order?: "asc" | "desc";
+  /** Include error messages and error statuses. Defaults to true. */
+  includeErrors?: boolean;
+}
+
 export interface ExtensionToolRunContext {
   args: Record<string, unknown>;
   cwd: string;
@@ -377,6 +406,9 @@ export interface ExtensionToolRunContext {
   };
   conversation: {
     id: string | null;
+    getHistory: (
+      options?: ExtensionConversationHistoryOptions,
+    ) => Promise<Message[]>;
   };
   getContext: () => ExtensionContext;
 }

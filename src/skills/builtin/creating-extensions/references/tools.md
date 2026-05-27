@@ -10,6 +10,7 @@ Use tools when the agent/model should call a local capability autonomously.
 - `requiresApproval: false` only for read-only, low-risk local introspection.
 - `parallelSafe: true` only for read-only tools with no shared mutation or long-lived exclusive resource.
 - Use `ctx.cwd` / `ctx.workingDirectory` as the workspace.
+- Use `await ctx.conversation.getHistory()` when a tool needs recent conversation context. It returns the most recent messages in chronological order by default.
 - Respect `ctx.signal` for long-running work when practical.
 
 ## Read-only shell tool

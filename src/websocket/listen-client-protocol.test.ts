@@ -2205,7 +2205,7 @@ describe("listen-client channels command handling", () => {
 
     __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
       ...actualChannelsService,
-      createChannelAccountLive: () => ({
+      createChannelAccountLiveWithSecrets: async () => ({
         channelId: "telegram" as const,
         accountId: "bot-1",
         displayName: "@docsbot",

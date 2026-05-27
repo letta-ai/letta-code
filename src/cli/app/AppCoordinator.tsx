@@ -3437,6 +3437,7 @@ export function App({
     currentModelId,
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
+    extensionRuntime,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,

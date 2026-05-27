@@ -49,6 +49,7 @@ import type {
   ExtensionEventMap,
   ExtensionEventName,
   ExtensionEventRegistration,
+  ExtensionEventResultMap,
   ExtensionOwner,
   ExtensionPanel,
   ExtensionPanelContent,
@@ -57,6 +58,7 @@ import type {
   ExtensionPanelUpdate,
   ExtensionTool,
   ExtensionToolRegistration,
+  ExtensionTurnStartEvent,
 } from "@/extensions/types";
 
 export const GLOBAL_EXTENSIONS_DIRECTORY = path.join(
@@ -218,7 +220,7 @@ export interface ExtensionHost {
     name: TName,
     event: ExtensionEventMap[TName],
     backend?: ExtensionBackendApi,
-  ) => Promise<ExtensionEventEmissionResult>;
+  ) => Promise<ExtensionEventEmissionResult<TName>>;
   getSnapshot: () => LocalExtensionRegistry;
   reload: () => Promise<void>;
   subscribe: (listener: () => void) => () => void;
@@ -599,6 +601,7 @@ function createLazyClient(getClient: () => Promise<Letta>): Letta {
 const SUPPORTED_EXTENSION_EVENT_NAMES = new Set<ExtensionEventName>([
   "conversation_open",
   "conversation_close",
+  "turn_start",
 ]);
 
 function validateExtensionEventName(
@@ -607,6 +610,46 @@ function validateExtensionEventName(
   if (!SUPPORTED_EXTENSION_EVENT_NAMES.has(name as ExtensionEventName)) {
     throw new Error(`Unsupported extension event '${name}'`);
   }
+}
+
+function isExtensionEventCapabilityEnabled(
+  capabilities: ExtensionCapabilities,
+  name: ExtensionEventName,
+): boolean {
+  switch (name) {
+    case "conversation_open":
+    case "conversation_close":
+      return capabilities.events.lifecycle;
+    case "turn_start":
+      return capabilities.events.turns;
+  }
+}
+
+function isTurnStartResultWithInput(
+  name: ExtensionEventName,
+  result: unknown,
+): result is { input: ExtensionTurnStartEvent["input"] } {
+  return (
+    name === "turn_start" &&
+    typeof result === "object" &&
+    result !== null &&
+    isTurnStartInput((result as { input?: unknown }).input)
+  );
+}
+
+function isTurnStartInput(
+  value: unknown,
+): value is ExtensionTurnStartEvent["input"] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
+function cloneTurnStartInput(
+  input: ExtensionTurnStartEvent["input"],
+): ExtensionTurnStartEvent["input"] {
+  return input.map((item) => structuredClone(item));
 }
 
 function validateExtensionCommandId(id: string): void {
@@ -772,8 +815,8 @@ function createLettaExtensionApi(
     name: TName,
     handler: ExtensionEventHandler<TName>,
   ) => {
-    if (!capabilities.events.lifecycle) return;
     validateExtensionEventName(name);
+    if (!isExtensionEventCapabilityEnabled(capabilities, name)) return;
     if (!guardLive({ id: name, kind: "event" })) return;
     const registrations = registry.events[name];
     if (!registrations) return;
@@ -854,10 +897,10 @@ function createLettaExtensionApi(
     name: TName,
     handler: ExtensionEventHandler<TName>,
   ): LettaExtensionDisposer => {
-    if (!capabilities.events.lifecycle) {
+    validateExtensionEventName(name);
+    if (!isExtensionEventCapabilityEnabled(capabilities, name)) {
       return () => undefined;
     }
-    validateExtensionEventName(name);
     if (typeof handler !== "function") {
       throw new Error("Extension event registration must include a handler");
     }
@@ -1169,20 +1212,27 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
   getContext: () => ExtensionContext,
   backend?: ExtensionBackendApi,
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
-): Promise<ExtensionEventEmissionResult> {
+): Promise<ExtensionEventEmissionResult<TName>> {
   if (!registry) {
-    return { diagnostics: [], handlerCount: 0, name };
+    return { diagnostics: [], handlerCount: 0, name, results: [] };
   }
 
   validateExtensionEventName(name);
   const registrations = [...(registry.events[name] ?? [])];
   const diagnostics: ExtensionDiagnostic[] = [];
+  const results: Array<NonNullable<ExtensionEventResultMap[TName]>> = [];
 
   for (const registration of registrations) {
     const signal = registration.owner
       ? registry.ownerAbortControllers[registration.owner.id]?.signal
       : undefined;
     if (signal?.aborted) continue;
+    const turnStartEvent =
+      name === "turn_start" ? (event as ExtensionTurnStartEvent) : null;
+    const turnStartInputBeforeHandler =
+      turnStartEvent && isTurnStartInput(turnStartEvent.input)
+        ? cloneTurnStartInput(turnStartEvent.input)
+        : null;
 
     try {
       const context = getContext();
@@ -1192,8 +1242,24 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
         getContext,
         signal: signal ?? new AbortController().signal,
       };
-      await registration.handler(event, eventContext);
+      const result = await registration.handler(event, eventContext);
+      if (isTurnStartResultWithInput(name, result)) {
+        (event as ExtensionTurnStartEvent).input = result.input;
+      }
+      if (result != null) {
+        results.push(result as NonNullable<ExtensionEventResultMap[TName]>);
+      }
+      if (
+        turnStartEvent &&
+        turnStartInputBeforeHandler &&
+        !isTurnStartInput(turnStartEvent.input)
+      ) {
+        turnStartEvent.input = turnStartInputBeforeHandler;
+      }
     } catch (error) {
+      if (turnStartEvent && turnStartInputBeforeHandler) {
+        turnStartEvent.input = turnStartInputBeforeHandler;
+      }
       recordExtensionDiagnostic(
         registry,
         {
@@ -1210,7 +1276,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
     }
   }
 
-  return { diagnostics, handlerCount: registrations.length, name };
+  return { diagnostics, handlerCount: registrations.length, name, results };
 }
 
 export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
@@ -1349,7 +1415,7 @@ export function createExtensionHost(
     },
     async emitEvent(name, payload, backend) {
       if (disposed) {
-        return { diagnostics: [], handlerCount: 0, name };
+        return { diagnostics: [], handlerCount: 0, name, results: [] };
       }
       const result = await emitLocalExtensionEvent(
         activeRegistry,

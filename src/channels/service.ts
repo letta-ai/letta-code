@@ -9,10 +9,13 @@ import {
 } from "./account-config";
 import {
   getChannelAccount,
+  getChannelAccountWithSecrets,
   LEGACY_CHANNEL_ACCOUNT_ID,
   listChannelAccounts,
-  removeChannelAccount,
+  listChannelAccountsWithSecrets,
+  removeChannelAccountWithSecrets,
   upsertChannelAccount,
+  upsertChannelAccountWithSecrets,
 } from "./accounts";
 import { resolveDiscordAccountDisplayName } from "./discord/adapter";
 import {
@@ -290,6 +293,28 @@ function getSelectedChannelAccount(
   }
 
   const accounts = listChannelAccounts(channelId);
+  if (accounts.length === 0) {
+    return null;
+  }
+  if (accounts.length === 1) {
+    return accounts[0] ?? null;
+  }
+
+  throw new Error(
+    `Channel "${channelId}" has multiple accounts. Specify account_id.`,
+  );
+}
+
+async function getSelectedChannelAccountWithSecrets(
+  channelId: string,
+  accountId?: string,
+): Promise<ChannelAccount | null> {
+  const normalizedAccountId = accountId?.trim();
+  if (normalizedAccountId) {
+    return getChannelAccountWithSecrets(channelId, normalizedAccountId);
+  }
+
+  const accounts = await listChannelAccountsWithSecrets(channelId);
   if (accounts.length === 0) {
     return null;
   }
@@ -939,6 +964,15 @@ export function getChannelConfigSnapshot(
   };
 }
 
+export async function getChannelConfigSnapshotWithSecrets(
+  channelId: string,
+  accountId?: string,
+): Promise<ChannelConfigSnapshot | null> {
+  assertSupportedChannelId(channelId);
+  await getSelectedChannelAccountWithSecrets(channelId, accountId);
+  return getChannelConfigSnapshot(channelId, accountId);
+}
+
 export async function setChannelConfigLive(
   channelId: string,
   patch: ChannelConfigPatch,
@@ -946,11 +980,14 @@ export async function setChannelConfigLive(
 ): Promise<ChannelConfigSnapshot> {
   assertSupportedChannelId(channelId);
   const normalizedPatch = normalizeChannelConfigPatch(channelId, patch);
-  const existing = getSelectedChannelAccount(channelId, accountId);
+  const existing = await getSelectedChannelAccountWithSecrets(
+    channelId,
+    accountId,
+  );
   let targetAccountId = existing?.accountId;
   let shouldRefreshDisplayName = false;
   if (existing) {
-    updateChannelAccountLive(channelId, existing.accountId, {
+    await updateChannelAccountLiveWithSecrets(channelId, existing.accountId, {
       enabled: existing.enabled,
       token: normalizedPatch.token,
       botToken: normalizedPatch.botToken,
@@ -981,7 +1018,7 @@ export async function setChannelConfigLive(
       normalizedPatch,
     );
   } else {
-    const created = createChannelAccountLive(
+    const created = await createChannelAccountLiveWithSecrets(
       channelId,
       {
         enabled: false,
@@ -1029,7 +1066,8 @@ export async function setChannelConfigLive(
   }
 
   if (
-    (getChannelAccount(channelId, targetAccountId)?.enabled ?? false) === true
+    ((await getChannelAccountWithSecrets(channelId, targetAccountId))
+      ?.enabled ?? false) === true
   ) {
     await ensureChannelRegistry().startChannelAccount(
       channelId,
@@ -1037,7 +1075,10 @@ export async function setChannelConfigLive(
     );
   }
 
-  const snapshot = getChannelConfigSnapshot(channelId, targetAccountId);
+  const snapshot = await getChannelConfigSnapshotWithSecrets(
+    channelId,
+    targetAccountId,
+  );
   if (!snapshot) {
     throw new Error(`Failed to write ${channelId} channel config`);
   }
@@ -1051,7 +1092,10 @@ export async function startChannelLive(
 ): Promise<ChannelSummary> {
   assertSupportedChannelId(channelId);
 
-  const existing = getSelectedChannelAccount(channelId, accountId);
+  const existing = await getSelectedChannelAccountWithSecrets(
+    channelId,
+    accountId,
+  );
   if (!existing) {
     throw new Error(
       `Channel "${channelId}" is not configured. Configure it first.`,
@@ -1079,7 +1123,7 @@ export async function startChannelLive(
   }
 
   if (!existing.enabled) {
-    upsertChannelAccount(channelId, {
+    await upsertChannelAccountWithSecrets(channelId, {
       ...existing,
       enabled: true,
       updatedAt: new Date().toISOString(),
@@ -1110,14 +1154,17 @@ export async function stopChannelLive(
 ): Promise<ChannelSummary> {
   assertSupportedChannelId(channelId);
 
-  const existing = getSelectedChannelAccount(channelId, accountId);
+  const existing = await getSelectedChannelAccountWithSecrets(
+    channelId,
+    accountId,
+  );
   if (!existing) {
     throw new Error(
       `Channel "${channelId}" is not configured. Configure it first.`,
     );
   }
 
-  upsertChannelAccount(channelId, {
+  await upsertChannelAccountWithSecrets(channelId, {
     ...existing,
     enabled: false,
     updatedAt: new Date().toISOString(),
@@ -1142,12 +1189,30 @@ export function listChannelAccountSnapshots(
   return listChannelAccounts(channelId).map(toAccountSnapshot);
 }
 
+export async function listChannelAccountSnapshotsWithSecrets(
+  channelId: string,
+): Promise<ChannelAccountSnapshot[]> {
+  assertSupportedChannelId(channelId);
+  return (await listChannelAccountsWithSecrets(channelId)).map(
+    toAccountSnapshot,
+  );
+}
+
 export function getChannelAccountSnapshot(
   channelId: string,
   accountId: string,
 ): ChannelAccountSnapshot | null {
   assertSupportedChannelId(channelId);
   const account = getChannelAccount(channelId, accountId);
+  return account ? toAccountSnapshot(account) : null;
+}
+
+export async function getChannelAccountSnapshotWithSecrets(
+  channelId: string,
+  accountId: string,
+): Promise<ChannelAccountSnapshot | null> {
+  assertSupportedChannelId(channelId);
+  const account = await getChannelAccountWithSecrets(channelId, accountId);
   return account ? toAccountSnapshot(account) : null;
 }
 
@@ -1166,6 +1231,27 @@ export function createChannelAccountLive(
   }
 
   const created = upsertChannelAccount(
+    channelId,
+    createAccountFromPatch(channelId, accountId, patch),
+  );
+  return toAccountSnapshot(created);
+}
+
+export async function createChannelAccountLiveWithSecrets(
+  channelId: string,
+  patch: ChannelAccountPatch,
+  options?: { accountId?: string },
+): Promise<ChannelAccountSnapshot> {
+  assertSupportedChannelId(channelId);
+  const accountId = options?.accountId?.trim() || randomUUID();
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
+  if (existing) {
+    throw new Error(
+      `Channel account "${accountId}" already exists for ${channelId}.`,
+    );
+  }
+
+  const created = await upsertChannelAccountWithSecrets(
     channelId,
     createAccountFromPatch(channelId, accountId, patch),
   );
@@ -1220,6 +1306,54 @@ export function updateChannelAccountLive(
           "Failed to save routes",
         )}. Account changes were rolled back.`,
       );
+    }
+  }
+
+  return toAccountSnapshot(updated);
+}
+
+export async function updateChannelAccountLiveWithSecrets(
+  channelId: string,
+  accountId: string,
+  patch: ChannelAccountPatch,
+): Promise<ChannelAccountSnapshot> {
+  assertSupportedChannelId(channelId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
+  if (!existing) {
+    throw new Error(
+      `Channel account "${accountId}" was not found for ${channelId}.`,
+    );
+  }
+
+  const nextAccount = mergeAccountPatch(existing, patch);
+  const shouldResetRoutes =
+    (isSlackChannelAccount(existing) || isDiscordChannelAccount(existing)) &&
+    (isSlackChannelAccount(nextAccount) ||
+      isDiscordChannelAccount(nextAccount)) &&
+    typeof nextAccount.agentId === "string" &&
+    nextAccount.agentId !== existing.agentId;
+
+  const updated = await upsertChannelAccountWithSecrets(channelId, nextAccount);
+
+  if (shouldResetRoutes) {
+    try {
+      loadRoutes(channelId);
+      removeRoutesForAccount(channelId, accountId);
+    } catch (error) {
+      try {
+        await upsertChannelAccountWithSecrets(channelId, existing);
+      } catch (rollbackError) {
+        throw new Error(
+          `Failed to reset channel routes after updating account: ${getErrorMessage(
+            error,
+            "route reset failed",
+          )}; rollback also failed: ${getErrorMessage(
+            rollbackError,
+            "rollback failed",
+          )}`,
+        );
+      }
+      throw error;
     }
   }
 
@@ -1350,7 +1484,7 @@ export async function startChannelAccountLive(
   accountId: string,
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
-  const existing = getChannelAccount(channelId, accountId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     throw new Error(
       `Channel account "${accountId}" was not found for ${channelId}.`,
@@ -1378,7 +1512,7 @@ export async function startChannelAccountLive(
   }
 
   if (!existing.enabled) {
-    upsertChannelAccount(channelId, {
+    await upsertChannelAccountWithSecrets(channelId, {
       ...existing,
       enabled: true,
       updatedAt: new Date().toISOString(),
@@ -1402,7 +1536,7 @@ export async function stopChannelAccountLive(
   accountId: string,
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
-  const existing = getChannelAccount(channelId, accountId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     throw new Error(
       `Channel account "${accountId}" was not found for ${channelId}.`,
@@ -1410,7 +1544,7 @@ export async function stopChannelAccountLive(
   }
 
   const next = existing.enabled
-    ? upsertChannelAccount(channelId, {
+    ? await upsertChannelAccountWithSecrets(channelId, {
         ...existing,
         enabled: false,
         updatedAt: new Date().toISOString(),
@@ -1427,7 +1561,7 @@ export async function removeChannelAccountLive(
   accountId: string,
 ): Promise<boolean> {
   assertSupportedChannelId(channelId);
-  const existing = getChannelAccount(channelId, accountId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     return false;
   }
@@ -1439,7 +1573,7 @@ export async function removeChannelAccountLive(
   removeRoutesForAccount(channelId, accountId);
   removeChannelTargetsForAccount(channelId, accountId);
   removePairingStateForAccount(channelId, accountId);
-  const removed = removeChannelAccount(channelId, accountId);
+  const removed = await removeChannelAccountWithSecrets(channelId, accountId);
   await refreshLoadedMessageChannelTool();
   return removed;
 }

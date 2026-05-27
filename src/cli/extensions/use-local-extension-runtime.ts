@@ -19,7 +19,7 @@ export interface LocalExtensionRuntime {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-  ) => Promise<ExtensionEventEmissionResult>;
+  ) => Promise<ExtensionEventEmissionResult<TName>>;
   getBackendApi: () => ExtensionBackendApi | undefined;
   getContext: () => ExtensionContext;
   hadStatuslineRenderer: boolean;

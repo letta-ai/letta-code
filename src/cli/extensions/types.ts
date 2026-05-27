@@ -17,6 +17,7 @@ export type {
   ExtensionContextWindowContext,
   ExtensionConversationCloseEvent,
   ExtensionConversationCloseReason,
+  ExtensionConversationHistoryOptions,
   ExtensionConversationOpenEvent,
   ExtensionConversationOpenReason,
   ExtensionCostContext,
@@ -48,6 +49,8 @@ export type {
   ExtensionToolRegistration,
   ExtensionToolRunContext,
   ExtensionToolRunResult,
+  ExtensionTurnStartEvent,
+  ExtensionTurnStartResult,
   ExtensionUiCapabilities,
   ExtensionWorkspaceContext,
 } from "@/extensions/types";

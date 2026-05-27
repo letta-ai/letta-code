@@ -36,7 +36,7 @@ export interface ExtensionRuntime {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-  ) => Promise<ExtensionEventEmissionResult>;
+  ) => Promise<ExtensionEventEmissionResult<TName>>;
   getBackendApi: () => ExtensionBackendApi | undefined;
   getContext: () => ExtensionContext;
   getSnapshot: () => ExtensionRuntimeSnapshot;

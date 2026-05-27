@@ -26,6 +26,7 @@ export const HEADLESS_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   commands: false,
   events: {
     lifecycle: true,
+    turns: true,
   },
   providers: true,
   ui: {

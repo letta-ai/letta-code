@@ -99,7 +99,7 @@ function createHost(
 const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   tools: true,
   commands: false,
-  events: { lifecycle: false },
+  events: { lifecycle: false, turns: false },
   providers: false,
   ui: {
     panels: false,
@@ -399,6 +399,70 @@ describe("extension host", () => {
       host.dispose();
     } finally {
       delete testGlobal.__lettaExtensionEvents;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("lets turn_start handlers replace input in registration order", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "turn-start.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_start", (event) => ({
+            input: event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: String(item.content).replaceAll("??", "first") }
+                : item,
+            ),
+          }));
+          letta.events.on("turn_start", (event) => {
+            event.input = event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: String(item.content).replaceAll("first", "second") }
+                : item,
+            );
+          });
+          letta.events.on("turn_start", (event) => {
+            event.input = event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: "broken" }
+                : item,
+            );
+            throw new Error("turn_start failed");
+          });
+          letta.events.on("turn_start", (event) => {
+            event.input = event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: String(item.content).replaceAll("second", "final") }
+                : item,
+            );
+          });
+        }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        input: [{ role: "user" as const, content: "hello ??" }],
+      };
+
+      const result = await host.emitEvent("turn_start", event);
+
+      expect(result).toMatchObject({
+        handlerCount: 4,
+        name: "turn_start",
+      });
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.results).toHaveLength(1);
+      expect(event.input).toEqual([{ role: "user", content: "hello final" }]);
+
+      host.dispose();
+    } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });
