@@ -19,7 +19,9 @@ import {
   type LocalStoreOptions,
 } from "@/backend/local/local-store";
 import { isLocalStateChunkOnly } from "@/backend/local/local-stream-chunks";
+import type { LocalAgentRecord } from "@/backend/local/local-types";
 import { TURN_DID_NOT_COMPLETE } from "@/constants";
+import { isRecord } from "@/utils/type-guards";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
@@ -121,6 +123,29 @@ function localStopReasonChunk(stopReason: string): LettaStreamingResponse {
     message_type: "stop_reason",
     stop_reason: stopReason,
   } as LettaStreamingResponse;
+}
+
+function effectiveAgentForConversation(
+  agent: LocalAgentRecord,
+  conversation: Conversation,
+): LocalAgentRecord {
+  const conversationRecord = conversation as unknown as Record<string, unknown>;
+  const conversationModelSettings = isRecord(conversationRecord.model_settings)
+    ? conversationRecord.model_settings
+    : undefined;
+  return {
+    ...agent,
+    ...(typeof conversationRecord.model === "string"
+      ? { model: conversationRecord.model }
+      : {}),
+    model_settings: {
+      ...agent.model_settings,
+      ...(conversationModelSettings ?? {}),
+      ...(typeof conversationRecord.context_window_limit === "number"
+        ? { context_window_limit: conversationRecord.context_window_limit }
+        : {}),
+    },
+  };
 }
 
 function createReplayStream(
@@ -394,7 +419,13 @@ export class HeadlessBackend implements Backend {
       turnInput.conversationId,
       turnInput.agentId,
     );
-    const agent = this.store.retrieveAgentRecord(turnInput.agentId);
+    const agent = effectiveAgentForConversation(
+      this.store.retrieveAgentRecord(turnInput.agentId),
+      this.store.retrieveConversation(
+        turnInput.conversationId,
+        turnInput.agentId,
+      ),
+    );
     const systemPrompt = await this.resolveSystemPromptForTurn({
       conversationId: turnInput.conversationId,
       agentId: turnInput.agentId,
