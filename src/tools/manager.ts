@@ -53,7 +53,7 @@ import {
   functionToolForm,
   type JsonSchema,
   type ModelFacingToolForm,
-  serializeFunctionToolPayload,
+  serializeFunctionOnlyToolPayload,
 } from "./model-facing-tool";
 import {
   extractSecretEnvFromCommand,
@@ -151,8 +151,8 @@ function resolvedModelForm(
   if (base.type === "custom") {
     return {
       ...base,
-      fallback: {
-        ...base.fallback,
+      functionFallback: {
+        ...base.functionFallback,
         description,
         parameters: inputSchema,
       },
@@ -950,7 +950,7 @@ function buildClientToolsFromSnapshot(
   extensionTools: Map<string, ExtensionToolDefinition>,
 ): ClientTool[] {
   const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
-    serializeFunctionToolPayload(getServerToolName(name), tool.modelForm),
+    serializeFunctionOnlyToolPayload(getServerToolName(name), tool.modelForm),
   );
   for (const name of externalTools.keys()) {
     if (extensionTools.has(name)) {

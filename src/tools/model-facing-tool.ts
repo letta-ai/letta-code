@@ -22,34 +22,18 @@ export type CustomToolForm = {
   type: "custom";
   description: string;
   format?: CustomToolInputFormat;
-  fallback: FunctionToolForm & {
-    inputField?: string;
-  };
+  // Internal fallback for backends that only accept JSON-schema function tools.
+  // This is not part of OpenAI Responses custom tool payloads.
+  functionFallback: FunctionToolForm;
 };
 
 export type ModelFacingToolForm = FunctionToolForm | CustomToolForm;
 
-export type FunctionToolPayload = {
+export type FunctionOnlyToolPayload = {
   name: string;
   description: string;
   parameters: JsonSchema;
 };
-
-export type ProviderRuntimeCustomToolPayload = {
-  type: "custom";
-  name: string;
-  description: string;
-  format?: CustomToolInputFormat;
-  fallback: {
-    description?: string;
-    parameters: JsonSchema;
-    inputField?: string;
-  };
-};
-
-export type ProviderRuntimeToolPayload =
-  | FunctionToolPayload
-  | ProviderRuntimeCustomToolPayload;
 
 export function functionToolForm(input: {
   description: string;
@@ -62,15 +46,15 @@ export function functionToolForm(input: {
   };
 }
 
-export function serializeFunctionToolPayload(
+export function serializeFunctionOnlyToolPayload(
   name: string,
   form: ModelFacingToolForm,
-): FunctionToolPayload {
+): FunctionOnlyToolPayload {
   if (form.type === "custom") {
     return {
       name,
-      description: form.fallback.description,
-      parameters: form.fallback.parameters,
+      description: form.functionFallback.description,
+      parameters: form.functionFallback.parameters,
     };
   }
 
@@ -79,27 +63,4 @@ export function serializeFunctionToolPayload(
     description: form.description,
     parameters: form.parameters,
   };
-}
-
-export function serializeProviderRuntimeToolPayload(
-  name: string,
-  form: ModelFacingToolForm,
-): ProviderRuntimeToolPayload {
-  if (form.type === "custom") {
-    return {
-      type: "custom",
-      name,
-      description: form.description,
-      ...(form.format ? { format: form.format } : {}),
-      fallback: {
-        description: form.fallback.description,
-        parameters: form.fallback.parameters,
-        ...(form.fallback.inputField
-          ? { inputField: form.fallback.inputField }
-          : {}),
-      },
-    };
-  }
-
-  return serializeFunctionToolPayload(name, form);
 }

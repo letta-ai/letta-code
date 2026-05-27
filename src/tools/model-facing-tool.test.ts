@@ -2,8 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   functionToolForm,
   type ModelFacingToolForm,
-  serializeFunctionToolPayload,
-  serializeProviderRuntimeToolPayload,
+  serializeFunctionOnlyToolPayload,
 } from "@/tools/model-facing-tool";
 
 const fallbackParameters = {
@@ -22,12 +21,7 @@ describe("model-facing tool serialization", () => {
       parameters: fallbackParameters,
     });
 
-    expect(serializeFunctionToolPayload("ExampleTool", form)).toEqual({
-      name: "ExampleTool",
-      description: "Function description",
-      parameters: fallbackParameters,
-    });
-    expect(serializeProviderRuntimeToolPayload("ExampleTool", form)).toEqual({
+    expect(serializeFunctionOnlyToolPayload("ExampleTool", form)).toEqual({
       name: "ExampleTool",
       description: "Function description",
       parameters: fallbackParameters,
@@ -39,21 +33,21 @@ describe("model-facing tool serialization", () => {
       type: "custom",
       description: "Custom freeform description",
       format: { type: "text" },
-      fallback: {
+      functionFallback: {
         type: "function",
         description: "Fallback function description",
         parameters: fallbackParameters,
       },
     };
 
-    expect(serializeFunctionToolPayload("ExampleTool", form)).toEqual({
+    expect(serializeFunctionOnlyToolPayload("ExampleTool", form)).toEqual({
       name: "ExampleTool",
       description: "Fallback function description",
       parameters: fallbackParameters,
     });
   });
 
-  test("preserves custom metadata only for provider-runtime payloads", () => {
+  test("keeps OpenAI custom-tool metadata separate from the function fallback", () => {
     const form: ModelFacingToolForm = {
       type: "custom",
       description: "Custom freeform description",
@@ -62,28 +56,26 @@ describe("model-facing tool serialization", () => {
         syntax: "lark",
         definition: "start: /.+/",
       },
-      fallback: {
+      functionFallback: {
         type: "function",
         description: "Fallback function description",
         parameters: fallbackParameters,
-        inputField: "input",
       },
     };
 
-    expect(serializeProviderRuntimeToolPayload("ExampleTool", form)).toEqual({
+    expect(form).toMatchObject({
       type: "custom",
-      name: "ExampleTool",
       description: "Custom freeform description",
       format: {
         type: "grammar",
         syntax: "lark",
         definition: "start: /.+/",
       },
-      fallback: {
-        description: "Fallback function description",
-        parameters: fallbackParameters,
-        inputField: "input",
-      },
+    });
+    expect(serializeFunctionOnlyToolPayload("ExampleTool", form)).toEqual({
+      name: "ExampleTool",
+      description: "Fallback function description",
+      parameters: fallbackParameters,
     });
   });
 });
