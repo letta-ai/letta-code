@@ -2,6 +2,8 @@
 
 UI capabilities are optional. Always guard UI work with `letta.capabilities.ui.*` when writing portable extensions.
 
+For UI that belongs to a larger command/event extension, also read `architecture.md` for cleanup and composition patterns.
+
 ## Capabilities
 
 ```ts
@@ -31,6 +33,8 @@ if (letta.capabilities.ui.panels) {
 
 Panel content is plain text: a string or string array. Keep it short; use command `output` for longer text.
 
+Close panels when they are transient, and close/replace long-lived panels from the activation disposer if reload should remove them.
+
 ## Status values
 
 ```ts
@@ -39,7 +43,7 @@ if (letta.capabilities.ui.statusValues) {
 }
 ```
 
-Clear status values in disposers if they are owned by timers or external state:
+Clear status values in disposers if they are owned by timers, events, or external state:
 
 ```ts
 return () => {

@@ -31,9 +31,10 @@ A custom statusline owns the whole idle row. Do not preserve legacy left/right s
 3. If it does not exist, start from the built-in default template or synthesize a focused starter for the user's request.
 4. If the user asks to migrate, import a `.sh` file, or match a shell prompt, read `references/migration.md`.
 5. If API details or concrete patterns are needed, read `references/api.md` and `references/examples.md`.
-6. Guard statusline-specific behavior with `letta.capabilities.ui.customStatuslineRenderer` when writing new files.
-7. Edit `~/.letta/extensions/statusline.tsx`.
-8. Summarize the absolute file path changed and tell the user to run `/reload` unless the command can reload automatically.
+6. If the request combines statusline work with commands, tools, events, panels, or stateful extension behavior, also use `creating-extensions` and its `references/architecture.md`.
+7. Guard statusline-specific behavior with `letta.capabilities.ui.customStatuslineRenderer` when writing new files.
+8. Edit `~/.letta/extensions/statusline.tsx`.
+9. Summarize the absolute file path changed and tell the user to run `/reload` unless the command can reload automatically.
 
 ## Bare `/statusline` behavior
 
