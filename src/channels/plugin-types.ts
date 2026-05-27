@@ -229,6 +229,16 @@ export interface ChannelMessageActionRequest {
   mediaPath?: string;
   filename?: string;
   title?: string;
+  /**
+   * Plugin-owned field bag: top-level properties from the tool args that
+   * are not part of the core MessageChannel schema. Channel plugins that
+   * contribute schema properties via `describeMessageTool().schema` can
+   * read their fields from this bag inside `handleAction()`.
+   *
+   * For example, a Bluesky plugin contributing `reply_to_uri` to the schema
+   * would find it at `request.pluginFields.reply_to_uri`.
+   */
+  pluginFields?: Record<string, unknown>;
 }
 
 export interface ChannelResolvedMessageTarget {

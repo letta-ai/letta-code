@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   __testOverrideLoadChannelAccounts,
@@ -6,6 +9,8 @@ import {
   clearChannelAccountStores,
   upsertChannelAccount,
 } from "@/channels/accounts";
+import { __testOverrideChannelsRoot } from "@/channels/config";
+import { __testClearUserChannelPluginCache } from "@/channels/plugin-registry";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import { clearAllRoutes, setRouteInMemory } from "@/channels/routing";
 import {
@@ -544,7 +549,9 @@ describe("MessageChannel", () => {
       action: "send",
       channel: "slack",
       chat_id: "D123",
-      // @ts-expect-error intentionally asserting that legacy aliases are rejected at runtime too
+      // `text` is a legacy alias not in the core schema; it passes through as
+      // a plugin-owned field at the type level (index signature) but is
+      // rejected at runtime by the Slack plugin's handleAction.
       text: "hello from legacy args",
       parentScope: {
         agentId: "agent-1",
@@ -849,5 +856,199 @@ describe("MessageChannel", () => {
       "Error: MessageChannel requires exactly one of chat_id or target.",
     );
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("MessageChannel plugin field passthrough", () => {
+  let channelsRoot: string;
+
+  beforeEach(() => {
+    channelsRoot = mkdtempSync(join(tmpdir(), "letta-plugin-fields-"));
+    __testOverrideChannelsRoot(channelsRoot);
+    __testClearUserChannelPluginCache();
+  });
+
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearAllRoutes();
+    clearChannelAccountStores();
+    clearTargetStores();
+    __testOverrideLoadChannelAccounts(null);
+    __testOverrideSaveChannelAccounts(null);
+    __testOverrideLoadTargetStore(null);
+    __testOverrideSaveTargetStore(null);
+    __testOverrideChannelsRoot(null);
+    __testClearUserChannelPluginCache();
+    rmSync(channelsRoot, { recursive: true, force: true });
+  });
+
+  /**
+   * Create a user channel plugin ("testchan") that:
+   *  - declares a custom action "wave" and a schema contribution for
+   *    `reply_to_uri` and `control_command` (simulating a Bluesky-like plugin)
+   *  - reads `request.pluginFields` in handleAction and returns them so the
+   *    test can verify passthrough
+   */
+  function writeTestChannelPlugin(): void {
+    const channelDir = join(channelsRoot, "testchan");
+    mkdirSync(channelDir, { recursive: true });
+    writeFileSync(
+      join(channelDir, "channel.json"),
+      `${JSON.stringify(
+        {
+          id: "testchan",
+          displayName: "Test Channel",
+          entry: "./plugin.mjs",
+          runtimePackages: [],
+          runtimeModules: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(
+      join(channelDir, "plugin.mjs"),
+      `export const channelPlugin = {
+        metadata: {
+          id: "testchan",
+          displayName: "Test Channel",
+          runtimePackages: [],
+          runtimeModules: []
+        },
+        createAdapter(account) {
+          return {
+            id: "testchan:" + account.accountId,
+            channelId: "testchan",
+            accountId: account.accountId,
+            name: "Test Channel",
+            start: async () => {},
+            stop: async () => {},
+            isRunning: () => true,
+            sendMessage: async () => ({ messageId: "tc-1" }),
+            sendDirectReply: async () => {}
+          };
+        },
+        messageActions: {
+          describeMessageTool() {
+            return {
+              actions: ["wave"],
+              schema: {
+                properties: {
+                  reply_to_uri: { type: "string", description: "URI of the post to reply to" },
+                  control_command: { type: "string", description: "Bluesky-specific control command" }
+                }
+              }
+            };
+          },
+          handleAction(ctx) {
+            const pf = ctx.request.pluginFields ?? {};
+            const keys = Object.keys(pf).sort();
+            if (keys.length === 0) {
+              return "no plugin fields received";
+            }
+            return "plugin fields: " + keys.map(k => k + "=" + String(pf[k])).join(", ");
+          }
+        }
+      };\n`,
+    );
+  }
+
+  test("plugin-owned top-level fields are forwarded to handleAction via pluginFields", async () => {
+    writeTestChannelPlugin();
+
+    const registry = new ChannelRegistry();
+    const sendMessage = mock(async () => ({ messageId: "tc-msg-1" }));
+    const adapter: ChannelAdapter = {
+      id: "testchan:account-1",
+      channelId: "testchan",
+      accountId: "account-1",
+      name: "Test Channel",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("testchan", {
+      accountId: "account-1",
+      chatId: "D-test",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "wave",
+      channel: "testchan",
+      chat_id: "D-test",
+      // Plugin-owned fields that should be forwarded via pluginFields:
+      reply_to_uri: "at://did:plc:xyz/app.bsky.feed.post/123",
+      control_command: "delete",
+      // Core fields that should NOT appear in pluginFields:
+      message: "hello",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("plugin fields:");
+    expect(result).toContain("control_command=delete");
+    expect(result).toContain(
+      "reply_to_uri=at://did:plc:xyz/app.bsky.feed.post/123",
+    );
+    // Core fields should NOT leak into pluginFields:
+    expect(result).not.toContain("message=");
+    expect(result).not.toContain("chat_id=");
+    expect(result).not.toContain("channel=");
+  });
+
+  test("pluginFields is absent when no plugin-owned fields are provided", async () => {
+    writeTestChannelPlugin();
+
+    const registry = new ChannelRegistry();
+    const sendMessage = mock(async () => ({ messageId: "tc-msg-2" }));
+    const adapter: ChannelAdapter = {
+      id: "testchan:account-1",
+      channelId: "testchan",
+      accountId: "account-1",
+      name: "Test Channel",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("testchan", {
+      accountId: "account-1",
+      chatId: "D-test",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "wave",
+      channel: "testchan",
+      chat_id: "D-test",
+      message: "hello",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toBe("no plugin fields received");
   });
 });

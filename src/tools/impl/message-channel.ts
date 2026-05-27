@@ -512,6 +512,30 @@ export function formatOutboundChannelMessage(
   return formatter(normalizedText);
 }
 
+/**
+ * Canonical core arg keys for the MessageChannel tool.
+ * Any top-level property NOT in this set is treated as a plugin-owned
+ * field and forwarded via the `pluginFields` bag rather than dropped.
+ */
+const CORE_MESSAGE_CHANNEL_ARG_KEYS = new Set([
+  "channel",
+  "action",
+  "chat_id",
+  "target",
+  "accountId",
+  "message",
+  "replyTo",
+  "threadId",
+  "messageId",
+  "emoji",
+  "remove",
+  "media",
+  "filename",
+  "title",
+  "parentScope",
+  "channelTurnSources",
+]);
+
 interface MessageChannelArgs {
   channel: string;
   action: string;
@@ -531,6 +555,17 @@ interface MessageChannelArgs {
   parentScope?: { agentId: string; conversationId: string };
   /** Injected by executeTool() for channel-originated turns. */
   channelTurnSources?: ChannelTurnSource[];
+  /**
+   * Plugin-owned fields that were contributed to the tool schema via
+   * `describeMessageTool().schema` but are not part of the core
+   * MessageChannel contract. These are forwarded to the channel plugin's
+   * `handleAction()` via `request.pluginFields`.
+   *
+   * At runtime, extra top-level properties from the raw tool args that
+   * are not in `CORE_MESSAGE_CHANNEL_ARG_KEYS` are extracted into this
+   * bag during normalization.
+   */
+  [key: string]: unknown;
 }
 
 interface NormalizedMessageChannelInput {
@@ -548,6 +583,8 @@ interface NormalizedMessageChannelInput {
   mediaPath?: string;
   filename?: string;
   title?: string;
+  /** Plugin-owned fields forwarded from tool args not in the core schema. */
+  pluginFields?: Record<string, unknown>;
 }
 
 interface ResolvedMessageChannelExecutionContext {
@@ -634,6 +671,16 @@ function normalizeMessageChannelInput(
     return "Error: MessageChannel requires exactly one of chat_id or target.";
   }
 
+  // Extract plugin-owned fields: any top-level arg key that is not
+  // part of the core MessageChannel schema. These are forwarded to
+  // the channel plugin's handleAction() via request.pluginFields.
+  const pluginFields: Record<string, unknown> = {};
+  for (const key of Object.keys(args)) {
+    if (!CORE_MESSAGE_CHANNEL_ARG_KEYS.has(key)) {
+      pluginFields[key] = args[key];
+    }
+  }
+
   return {
     action,
     channel,
@@ -649,6 +696,7 @@ function normalizeMessageChannelInput(
     mediaPath: firstNonEmptyString(args.media),
     filename: firstNonEmptyString(args.filename),
     title: firstNonEmptyString(args.title),
+    ...(Object.keys(pluginFields).length > 0 ? { pluginFields } : {}),
   };
 }
 
@@ -670,6 +718,9 @@ function buildMessageChannelRequest(
     mediaPath: input.mediaPath,
     filename: input.filename,
     title: input.title,
+    ...(input.pluginFields && Object.keys(input.pluginFields).length > 0
+      ? { pluginFields: input.pluginFields }
+      : {}),
   };
 }
 
