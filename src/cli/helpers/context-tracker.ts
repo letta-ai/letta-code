@@ -18,6 +18,8 @@ export type ContextTracker = {
   pendingCompaction: boolean;
   /** Set when compaction happens; consumed by the next user message to trigger memory reminder/spawn */
   pendingReflectionTrigger: boolean;
+  /** Set when compaction completes; consumed to refresh conversation search metadata */
+  pendingConversationDescriptionRegeneration: boolean;
 };
 
 export function createContextTracker(): ContextTracker {
@@ -27,6 +29,7 @@ export function createContextTracker(): ContextTracker {
     currentTurnId: 0, // simple in-memory counter for now
     pendingCompaction: false,
     pendingReflectionTrigger: false,
+    pendingConversationDescriptionRegeneration: false,
   };
 }
 
@@ -36,4 +39,5 @@ export function resetContextHistory(ct: ContextTracker): void {
   ct.contextTokensHistory = [];
   ct.pendingCompaction = false;
   ct.pendingReflectionTrigger = false;
+  ct.pendingConversationDescriptionRegeneration = false;
 }

@@ -18,6 +18,7 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import { prefetchAvailableModelHandles } from "@/agent/available-models";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
+import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getModelInfoForLlmConfig,
@@ -38,7 +39,6 @@ import {
 } from "@/agent/subagent-state";
 import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
-import { updateConversationDescription } from "@/backend/api/conversations";
 import { getBillingTier } from "@/backend/api/metadata";
 import {
   cancelActiveConnectOperation,
@@ -71,7 +71,6 @@ import {
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
 import {
-  generateConversationDescriptionFromFork,
   generateConversationTitleFromFork,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
@@ -1225,48 +1224,43 @@ export function App({
       return fallback;
     }
   }, [deriveAutoConversationTitle]);
-  const generateConversationDescription = useCallback(async () => {
-    if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {
-      return;
-    }
-    if (
-      !shouldAutoGenerateConversationDescriptionRef.current ||
-      isAutoConversationDescriptionInFlightRef.current
-    ) {
-      return;
-    }
-    if (getBackend().capabilities.localModelCatalog) {
-      return;
-    }
-
-    const conversationId = conversationIdRef.current;
-    if (!conversationId || conversationId === "default") {
-      return;
-    }
-
-    isAutoConversationDescriptionInFlightRef.current = true;
-    try {
-      const client = await getClient();
-      const description = await generateConversationDescriptionFromFork(
-        client,
-        conversationId,
-      );
-      if (!description) {
+  const generateConversationDescription = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {
+        return;
+      }
+      if (
+        (!options?.force &&
+          !shouldAutoGenerateConversationDescriptionRef.current) ||
+        isAutoConversationDescriptionInFlightRef.current
+      ) {
+        return;
+      }
+      if (getBackend().capabilities.localModelCatalog) {
         return;
       }
 
-      await updateConversationDescription(conversationId, {
-        description,
-      });
-      shouldAutoGenerateConversationDescriptionRef.current = false;
-    } catch (err) {
-      if (isDebugEnabled()) {
-        console.error("[DEBUG] generateConversationDescription failed:", err);
+      const conversationId = conversationIdRef.current;
+      if (!conversationId || conversationId === "default") {
+        return;
       }
-    } finally {
-      isAutoConversationDescriptionInFlightRef.current = false;
-    }
-  }, []);
+
+      isAutoConversationDescriptionInFlightRef.current = true;
+      try {
+        const updated = await regenerateConversationDescription(conversationId);
+        if (updated) {
+          shouldAutoGenerateConversationDescriptionRef.current = false;
+        }
+      } catch (err) {
+        if (isDebugEnabled()) {
+          console.error("[DEBUG] generateConversationDescription failed:", err);
+        }
+      } finally {
+        isAutoConversationDescriptionInFlightRef.current = false;
+      }
+    },
+    [],
+  );
   const resetBootstrapReminderState = useCallback(
     (pendingConversationBootstrap = false) => {
       resetSharedReminderState(sharedReminderStateRef.current);
@@ -3899,6 +3893,7 @@ export function App({
     extensionRuntime,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
+    generateConversationDescription,
     generateConversationTitle,
     handleAgentSelect,
     handleBtwCommand,

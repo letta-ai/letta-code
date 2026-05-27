@@ -212,6 +212,9 @@ type SubmitHandlerContext = {
   extensionRuntime: LocalExtensionRuntime;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
+  generateConversationDescription: (options?: {
+    force?: boolean;
+  }) => Promise<void>;
   generateConversationTitle: () => Promise<string | null>;
   handleAgentSelect: (
     targetAgentId: string,
@@ -354,6 +357,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     extensionRuntime,
     firstUserQueryRef,
     flushPendingReasoningEffort,
+    generateConversationDescription,
     generateConversationTitle,
     handleAgentSelect,
     handleBtwCommand,
@@ -1983,6 +1987,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Manual /compact bypasses stream compaction events, so trigger
             // post-compaction reflection reminder/auto-launch on the next user turn.
             contextTrackerRef.current.pendingReflectionTrigger = true;
+            void generateConversationDescription({ force: true });
           } catch (error) {
             const apiError = error as {
               status?: number;
