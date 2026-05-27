@@ -37,7 +37,7 @@ function isDuplicateKeychainItemError(error: unknown): boolean {
   );
 }
 
-async function getSecretValue(
+export async function getSecretValue(
   name: string,
   label: string,
 ): Promise<string | null> {
@@ -67,7 +67,10 @@ async function getSecretValue(
   }
 }
 
-async function setSecretValue(name: string, value: string): Promise<void> {
+export async function setSecretValue(
+  name: string,
+  value: string,
+): Promise<void> {
   if (!secretsAvailable) {
     throw new Error("Secrets API unavailable");
   }
@@ -100,6 +103,22 @@ async function setSecretValue(name: string, value: string): Promise<void> {
     name,
     value,
   });
+}
+
+export async function deleteSecretValue(name: string): Promise<boolean> {
+  if (!secretsAvailable) {
+    return false;
+  }
+
+  try {
+    return await secrets.delete({
+      service: SERVICE_NAME,
+      name,
+    });
+  } catch (error) {
+    console.warn(`Failed to delete secret ${name}: ${error}`);
+    return false;
+  }
 }
 
 /**

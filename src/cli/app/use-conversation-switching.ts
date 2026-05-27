@@ -24,7 +24,7 @@ import {
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { createAgent } from "@/agent/create";
 import { selectDefaultAgentModel } from "@/agent/defaults";
-import { sendMessageStream } from "@/agent/message";
+import { sendMessageStreamWithBackend } from "@/agent/message";
 import {
   configureBackendMode,
   getBackend,
@@ -32,6 +32,8 @@ import {
 } from "@/backend";
 import { getServerUrl } from "@/backend/api/client";
 import type { BtwState } from "@/cli/components/BtwPane";
+import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
+import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import {
   type Buffers,
   extractTextPart,
@@ -80,6 +82,7 @@ type ConversationSwitchingContext = {
   currentModelHandle: string | null;
   currentModelId: string | null;
   emittedIdsRef: MutableRefObject<Set<string>>;
+  extensionRuntime: LocalExtensionRuntime;
   hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   maybeCarryOverActiveConversationModel: (
@@ -97,7 +100,7 @@ type ConversationSwitchingContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: () => Promise<void>;
+  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
@@ -138,6 +141,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
+    extensionRuntime,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
@@ -188,8 +192,10 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       try {
         const isDefault = conversationIdRef.current === "default";
 
+        const backend = getBackend();
+
         // Fork the conversation
-        const forked = await getBackend().forkConversation(
+        const forked = await backend.forkConversation(
           conversationIdRef.current,
           {
             ...(isDefault ? { agentId } : {}),
@@ -211,17 +217,22 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           },
         ];
         let approvalRecoveryRetries = 0;
-        let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+        let stream: Awaited<ReturnType<typeof sendMessageStreamWithBackend>>;
 
         while (true) {
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
             );
-            stream = await sendMessageStream(forked.id, currentInput, {
-              overrideModel: tempModelOverrideRef.current ?? undefined,
-              preparedToolContext: preparedToolContext.preparedToolContext,
-            });
+            stream = await sendMessageStreamWithBackend(
+              backend,
+              forked.id,
+              currentInput,
+              {
+                overrideModel: tempModelOverrideRef.current ?? undefined,
+                preparedToolContext: preparedToolContext.preparedToolContext,
+              },
+            );
             break;
           } catch (preStreamError) {
             debugLog(
@@ -344,8 +355,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       // Switch to the forked conversation using existing pattern from /search
       resetPendingReasoningCycle();
       setCommandRunning(true);
+      const previousConversationId = conversationIdRef.current;
 
-      await runEndHooks();
+      await runEndHooks("resume");
 
       try {
         if (!agentState) {
@@ -422,6 +434,13 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           })
           .catch(() => {});
         sessionHooksRanRef.current = true;
+        void extensionRuntime.emitEvent("conversation_open", {
+          agentId,
+          agentName: agentName ?? null,
+          conversationId,
+          previousConversationId,
+          reason: "resume",
+        });
 
         setCommandRunning(false);
 
@@ -449,6 +468,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       setCommandRunning,
       setStreaming,
       recoverRestoredPendingApprovals,
+      extensionRuntime,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       abortControllerRef,

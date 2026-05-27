@@ -51,7 +51,11 @@ import {
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
-import { useLocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
+import {
+  type LocalExtensionRuntime,
+  useLocalExtensionRuntime,
+} from "@/cli/extensions/use-local-extension-runtime";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -494,6 +498,10 @@ export function App({
     agentId: string;
     cmdId: string;
   } | null>(null);
+  const [worktreeDiffSelectorPending, setWorktreeDiffSelectorPending] =
+    useState<{
+      worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+    } | null>(null);
 
   // If we have approval requests, we should show the approval dialog instead of the input area
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
@@ -637,12 +645,19 @@ export function App({
           return args.file_path || undefined;
         }
         if (isShellTool(approval.toolName)) {
-          const cmd =
-            typeof args.command === "string"
-              ? args.command
-              : Array.isArray(args.command)
-                ? args.command.join(" ")
-                : "";
+          const cmd = (() => {
+            if (typeof args.cmd === "string") return args.cmd;
+            if (typeof args.command === "string") return args.command;
+            if (Array.isArray(args.command)) return args.command.join(" ");
+            if (
+              approval.toolName === "write_stdin" &&
+              (typeof args.session_id === "string" ||
+                typeof args.session_id === "number")
+            ) {
+              return `write_stdin ${String(args.session_id)}`;
+            }
+            return "";
+          })();
           return cmd.length > 50 ? `${cmd.slice(0, 50)}...` : cmd || undefined;
         }
         if (isPatchTool(approval.toolName)) {
@@ -984,6 +999,8 @@ export function App({
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
+  const sessionExtensionStartAttemptedRef = useRef(false);
+  const extensionRuntimeRef = useRef<LocalExtensionRuntime | null>(null);
 
   // Initialize chunk log for this agent + session (clears buffer, GCs old files).
   // Re-runs when agentId changes (e.g. agent switch via /agents).
@@ -1084,20 +1101,43 @@ export function App({
   }, [agentId, agentName, initialConversationId]);
 
   // Run SessionEnd hooks helper
-  const runEndHooks = useCallback(async () => {
-    const durationMs = Date.now() - sessionStartTimeRef.current;
-    try {
-      await runSessionEndHooks(
-        durationMs,
-        undefined,
-        undefined,
-        agentIdRef.current ?? undefined,
-        conversationIdRef.current ?? undefined,
-      );
-    } catch {
-      // Silently ignore hook errors
-    }
-  }, []);
+  const runEndHooks = useCallback(
+    async (reason: ExtensionConversationCloseReason = "quit") => {
+      const durationMs = Date.now() - sessionStartTimeRef.current;
+      try {
+        await runSessionEndHooks(
+          durationMs,
+          undefined,
+          undefined,
+          agentIdRef.current ?? undefined,
+          conversationIdRef.current ?? undefined,
+        );
+      } catch {
+        // Silently ignore hook errors
+      }
+
+      const extensionRuntime = extensionRuntimeRef.current;
+      if (
+        extensionRuntime &&
+        !extensionRuntime.isLoading &&
+        extensionRuntime.hasExtensionSources
+      ) {
+        try {
+          await extensionRuntime.emitEvent("conversation_close", {
+            agentId: agentIdRef.current ?? null,
+            conversationId: conversationIdRef.current ?? null,
+            durationMs,
+            messageCount: telemetry.getMessageCount(),
+            reason,
+            toolCallCount: telemetry.getToolCallCount(),
+          });
+        } catch {
+          // Extension lifecycle events are best-effort on shutdown.
+        }
+      }
+    },
+    [],
+  );
 
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
@@ -2243,6 +2283,25 @@ export function App({
   );
   const extensionRuntime = useLocalExtensionRuntime(extensionContext);
 
+  useEffect(() => {
+    extensionRuntimeRef.current = extensionRuntime;
+  }, [extensionRuntime]);
+
+  useEffect(() => {
+    if (!agentId || agentId === "loading") return;
+    if (sessionExtensionStartAttemptedRef.current) return;
+    if (extensionRuntime.isLoading) return;
+    if (!extensionRuntime.hasExtensionSources) return;
+
+    sessionExtensionStartAttemptedRef.current = true;
+    void extensionRuntime.emitEvent("conversation_open", {
+      agentId,
+      agentName: agentName ?? null,
+      conversationId: conversationIdRef.current ?? null,
+      reason: "startup",
+    });
+  }, [agentId, agentName, extensionRuntime]);
+
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
     buffersRef.current.agentId = agentState?.id;
@@ -2277,7 +2336,20 @@ export function App({
         let command = "(no command)";
         let description = "";
 
-        if (t === "shell") {
+        if (t === "exec_command") {
+          command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+        } else if (t === "write_stdin") {
+          const sessionId =
+            typeof args.session_id === "string" ||
+            typeof args.session_id === "number"
+              ? String(args.session_id)
+              : "unknown";
+          command = `write_stdin ${sessionId}`;
+          description =
+            typeof args.chars === "string" && args.chars.length > 0
+              ? "Write input to running shell session"
+              : "Poll running shell session";
+        } else if (t === "shell") {
           const cmdVal = args.command;
           command = Array.isArray(cmdVal)
             ? cmdVal.join(" ")
@@ -3416,6 +3488,7 @@ export function App({
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
     generateConversationDescription,
+    extensionRuntime,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -3734,6 +3807,7 @@ export function App({
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
+    extensionRuntime,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
@@ -3878,6 +3952,7 @@ export function App({
     setNeedsEagerApprovalCheck,
     setPinDialogLocal,
     setProfileConfirmPending,
+    setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
     setSearchQuery,
     setStaticItems,
@@ -4662,6 +4737,8 @@ export function App({
       resumeKey={resumeKey}
       searchQuery={searchQuery}
       sessionStatsRef={sessionStatsRef}
+      worktreeDiffSelectorPending={worktreeDiffSelectorPending}
+      setWorktreeDiffSelectorPending={setWorktreeDiffSelectorPending}
       setActiveOverlay={setActiveOverlay}
       setBtwState={setBtwState}
       setCommandRunning={setCommandRunning}

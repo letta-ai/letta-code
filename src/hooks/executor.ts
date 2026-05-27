@@ -97,7 +97,6 @@ export async function executeHookCommand(
     return executePromptHook(hook, input, workingDirectory);
   }
 
-  // Default to command hook execution
   if (isCommandHook(hook)) {
     return executeCommandHook(hook, input, workingDirectory);
   }
@@ -126,7 +125,6 @@ export async function executeCommandHook(
   const timeout = hook.timeout ?? DEFAULT_TIMEOUT_MS;
   const inputJson = JSON.stringify(input);
 
-  // Get platform-appropriate shell launchers
   const launchers = buildShellLaunchers(hook.command);
   if (launchers.length === 0) {
     return {
@@ -152,6 +150,7 @@ export async function executeCommandHook(
         timeout,
         hook.command,
         startTime,
+        hook.quiet,
       );
       return result;
     } catch (error) {
@@ -191,6 +190,7 @@ function executeWithLauncher(
   timeout: number,
   command: string,
   startTime: number,
+  quiet?: boolean,
 ): Promise<HookResult> {
   return new Promise<HookResult>((resolve, reject) => {
     let stdout = "";
@@ -218,25 +218,27 @@ function executeWithLauncher(
         const exitLabel = result.timedOut
           ? `${exitColor}timeout\x1b[0m`
           : `${exitColor}exit ${exitCode}\x1b[0m`;
-        console.log(`\x1b[90m[hook:${input.event_type}] ${command}\x1b[0m`);
-        console.log(
-          `\x1b[90m  \u23BF ${exitLabel} (${result.durationMs}ms)\x1b[0m`,
-        );
-        if (result.stdout) {
-          console.log(`\x1b[90m  \u23BF (stdout)\x1b[0m`);
-          const indented = result.stdout
-            .split("\n")
-            .map((line) => `    ${line}`)
-            .join("\n");
-          console.log(`\x1b[90m${indented}\x1b[0m`);
-        }
-        if (result.stderr) {
-          console.log(`\x1b[90m  \u23BF (stderr)\x1b[0m`);
-          const indented = result.stderr
-            .split("\n")
-            .map((line) => `    ${line}`)
-            .join("\n");
-          console.log(`\x1b[90m${indented}\x1b[0m`);
+        if (!quiet) {
+          console.log(`\x1b[90m[hook:${input.event_type}] ${command}\x1b[0m`);
+          console.log(
+            `\x1b[90m  \u23BF ${exitLabel} (${result.durationMs}ms)\x1b[0m`,
+          );
+          if (result.stdout) {
+            console.log(`\x1b[90m  \u23BF (stdout)\x1b[0m`);
+            const indented = result.stdout
+              .split("\n")
+              .map((line) => `    ${line}`)
+              .join("\n");
+            console.log(`\x1b[90m${indented}\x1b[0m`);
+          }
+          if (result.stderr) {
+            console.log(`\x1b[90m  \u23BF (stderr)\x1b[0m`);
+            const indented = result.stderr
+              .split("\n")
+              .map((line) => `    ${line}`)
+              .join("\n");
+            console.log(`\x1b[90m${indented}\x1b[0m`);
+          }
         }
         resolve(result);
       }

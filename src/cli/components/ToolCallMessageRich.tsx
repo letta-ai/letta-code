@@ -23,6 +23,7 @@ import {
   isTaskTool,
   isTodoTool,
 } from "@/cli/helpers/tool-name-mapping.js";
+import { formatUnifiedExecOutputForTui } from "@/cli/helpers/unified-exec-output.js";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { clipToolReturn } from "@/tools/manager.js";
 import { isRecord } from "@/utils/type-guards";
@@ -127,6 +128,7 @@ type ToolCallLine = {
   toolCallId?: string;
   name?: string;
   argsText?: string;
+  unifiedExecCommandDisplay?: string;
   resultText?: string;
   resultOk?: boolean;
   phase: "streaming" | "ready" | "running" | "finished";
@@ -237,7 +239,13 @@ export const ToolCallMessage = memo(
             return { formatted: null, parseable: true };
           }
           try {
-            const formatted = formatArgsDisplay(argsText, rawName);
+            const formatted = formatArgsDisplay(argsText, rawName, {
+              unifiedExecCommandDisplay: line.unifiedExecCommandDisplay,
+              suppressUnifiedExecInteractionLabel:
+                rawName === "write_stdin" &&
+                line.phase === "finished" &&
+                line.resultOk === false,
+            });
             return { formatted, parseable: true };
           } catch {
             return { formatted: null, parseable: false };
@@ -256,13 +264,22 @@ export const ToolCallMessage = memo(
           args = "(…)";
         } else {
           const formattedArgs =
-            formatted ?? formatArgsDisplay(argsText, rawName);
+            formatted ??
+            formatArgsDisplay(argsText, rawName, {
+              unifiedExecCommandDisplay: line.unifiedExecCommandDisplay,
+              suppressUnifiedExecInteractionLabel:
+                rawName === "write_stdin" &&
+                line.phase === "finished" &&
+                line.resultOk === false,
+            });
           if (formattedArgs.shellSemantic) {
             shellSemanticKind = formattedArgs.shellSemantic.kind;
             displayName = formattedArgs.shellSemantic.label;
             if (formattedArgs.shellSemantic.kind === "run") {
               shellCommand = formattedArgs.shellSemantic.rawCommand;
             }
+          } else if (formattedArgs.displayName) {
+            displayName = formattedArgs.displayName;
           }
           // Normalize newlines to spaces to prevent forced line breaks
           const normalizedDisplay = formattedArgs.display.replace(/\n/g, " ");
@@ -286,7 +303,9 @@ export const ToolCallMessage = memo(
       ) {
         try {
           const parsedArgs = JSON.parse(argsText);
-          if (typeof parsedArgs.command === "string") {
+          if (typeof parsedArgs.cmd === "string") {
+            shellCommand = parsedArgs.cmd;
+          } else if (typeof parsedArgs.command === "string") {
             shellCommand = parsedArgs.command;
           } else if (Array.isArray(parsedArgs.command)) {
             shellCommand = parsedArgs.command.join(" ");
@@ -1009,16 +1028,23 @@ export const ToolCallMessage = memo(
           {isShellOutputTool(rawName) &&
             line.phase === "finished" &&
             line.resultText &&
-            line.resultOk !== false && (
-              <CollapsedOutputDisplay
-                output={extractMessageFromResult(line.resultText)}
-                maxChars={300}
-                expanded={
-                  expandedToolCallId != null && expandedToolCallId === line.id
-                }
-                isLast={lastShellToolCallId === line.id}
-              />
-            )}
+            line.resultOk !== false &&
+            (() => {
+              const output = formatUnifiedExecOutputForTui(
+                extractMessageFromResult(line.resultText),
+                { hideEmptyCompletion: rawName === "write_stdin" },
+              );
+              return output ? (
+                <CollapsedOutputDisplay
+                  output={output}
+                  maxChars={300}
+                  expanded={
+                    expandedToolCallId != null && expandedToolCallId === line.id
+                  }
+                  isLast={lastShellToolCallId === line.id}
+                />
+              ) : null;
+            })()}
 
           {/* Tool result for non-shell tools or shell tool errors */}
           {(() => {

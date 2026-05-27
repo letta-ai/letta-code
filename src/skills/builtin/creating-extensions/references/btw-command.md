@@ -1,10 +1,17 @@
 # `/btw` side-question extension example
 
-This example runs while the main agent is busy because it forks the conversation, uses the SDK directly, renders progress in a panel when panels are available, and returns `{ type: "handled" }` immediately.
+This example runs while the main agent is busy because it forks the conversation through the harness backend, streams a response in the fork, renders progress in a panel when panels are available, and returns `{ type: "handled" }` immediately.
 
 ```ts
 export default function activate(letta) {
   if (!letta.capabilities.commands) return;
+
+  function createOtid() {
+    return (
+      globalThis.crypto?.randomUUID?.() ??
+      `btw-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    );
+  }
 
   function appendAssistantText(chunk, parts) {
     if (chunk.message_type !== "assistant_message") return;
@@ -19,6 +26,10 @@ export default function activate(letta) {
           parts.push(String(part.text));
         }
       }
+      return;
+    }
+    if (content && typeof content === "object" && "text" in content) {
+      parts.push(String(content.text));
     }
   }
 
@@ -45,29 +56,43 @@ export default function activate(letta) {
 
       void (async () => {
         try {
-          const forked = await letta.client.conversations.fork(
-            ctx.conversation.id || "default",
-            { agent_id: ctx.agent.id },
-          );
-          const stream = await letta.client.conversations.messages.create(
-            forked.id,
-            {
-              agent_id: ctx.agent.id,
-              input: `${question}
+          if (!ctx.backend) {
+            throw new Error("/btw requires backend support");
+          }
 
-Answer briefly in 1-3 short sentences.`,
-              streaming: true,
+          const forked = await ctx.backend.forkConversation(
+            ctx.conversation.id || "default",
+            { agentId: ctx.agent.id, hidden: true },
+          );
+          const stream = await ctx.backend.sendMessageStream(
+            forked.id,
+            [
+              {
+                role: "user",
+                content: `${question}\n\nAnswer briefly in 1-3 short sentences.`,
+                otid: createOtid(),
+              },
+            ],
+            {
+              agentId: ctx.agent.id,
+              overrideModel: ctx.model.id ?? undefined,
+              workingDirectory: ctx.cwd,
             },
           );
 
           const parts = [];
           for await (const chunk of stream) {
             appendAssistantText(chunk, parts);
-            panel?.update({ content: [`/btw ${question}`, parts.join("") || "..."] });
+            panel?.update({
+              content: [`/btw ${question}`, parts.join("") || "..."],
+            });
           }
 
           panel?.update({
-            content: [`done /btw ${question}`, parts.join("").trim() || "No response."],
+            content: [
+              `done /btw ${question}`,
+              parts.join("").trim() || "No response.",
+            ],
           });
           if (panel) setTimeout(() => panel.close(), 10_000);
         } catch (error) {

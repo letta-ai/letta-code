@@ -21,6 +21,12 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
       "Inject lightweight prior-conversation context into the first turn of brand-new Letta Code conversations.",
   },
   {
+    id: "diffs",
+    label: "diffs",
+    description:
+      "Open browser-based worktree diff previews powered by Diffs from Pierre.",
+  },
+  {
     id: "node",
     label: "node",
     description: "Route API requests through the Letta Node / TS core path.",

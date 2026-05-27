@@ -1,5 +1,6 @@
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import stripAnsi from "strip-ansi";
 import { getDisplayableToolReturn } from "@/agent/approval-execution";
 import {
@@ -10,6 +11,7 @@ import {
 } from "@/agent/context";
 import { getModelInfo } from "@/agent/model";
 import { getAllSubagentConfigs } from "@/agent/subagents";
+import type { ConversationMessageListBody } from "@/backend";
 import {
   buildDynamicMessageChannelToolDefinition,
   getCachedDynamicMessageChannelToolDefinition,
@@ -26,7 +28,10 @@ import {
   isExtensionToolParallelSafe,
   runExtensionTool,
 } from "@/extensions/tool-registry";
-import type { ExtensionToolRunContext } from "@/extensions/types";
+import type {
+  ExtensionConversationHistoryOptions,
+  ExtensionToolRunContext,
+} from "@/extensions/types";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -178,6 +183,8 @@ const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
   "BashOutput",
   "TaskOutput",
+  "exec_command",
+  "write_stdin",
   "shell_command",
   "ShellCommand",
   "shell",
@@ -332,7 +339,8 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
 ];
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
-  "shell_command",
+  "exec_command",
+  "write_stdin",
   // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
   // "request_user_input",
   "apply_patch",
@@ -368,7 +376,8 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "TaskStop",
   "Skill",
   // Standard Codex tools
-  "ShellCommand",
+  "exec_command",
+  "write_stdin",
   "ViewImage",
   "ApplyPatch",
   "UpdatePlan",
@@ -419,6 +428,8 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
   shell_command: { requiresApproval: true },
+  exec_command: { requiresApproval: true },
+  write_stdin: { requiresApproval: false },
   shell: { requiresApproval: true },
   read_file: { requiresApproval: false },
   list_dir: { requiresApproval: false },
@@ -1769,6 +1780,43 @@ function getExtensionToolStatus(result: unknown): "success" | "error" {
   return "success";
 }
 
+const DEFAULT_EXTENSION_CONVERSATION_HISTORY_LIMIT = 100;
+const MAX_EXTENSION_CONVERSATION_HISTORY_LIMIT = 500;
+
+function normalizeExtensionConversationHistoryLimit(limit?: number): number {
+  if (limit === undefined) return DEFAULT_EXTENSION_CONVERSATION_HISTORY_LIMIT;
+  if (!Number.isFinite(limit))
+    return DEFAULT_EXTENSION_CONVERSATION_HISTORY_LIMIT;
+  return Math.min(
+    Math.max(1, Math.trunc(limit)),
+    MAX_EXTENSION_CONVERSATION_HISTORY_LIMIT,
+  );
+}
+
+async function loadExtensionConversationHistory(
+  executionScope: RuntimeContextSnapshot,
+  options?: ExtensionConversationHistoryOptions,
+): Promise<Message[]> {
+  const conversationId = executionScope.conversationId ?? "default";
+  const agentId = executionScope.agentId ?? null;
+  if (!executionScope.conversationId && !agentId) {
+    return [];
+  }
+
+  const { getBackend } = await import("@/backend");
+  const page = await getBackend().listConversationMessages(conversationId, {
+    limit: normalizeExtensionConversationHistoryLimit(options?.limit),
+    order: "desc",
+    include_err: options?.includeErrors ?? true,
+    ...(conversationId === "default" && agentId ? { agent_id: agentId } : {}),
+  } as ConversationMessageListBody);
+  const messages = page.getPaginatedItems() as Message[];
+  if (options?.order === "desc") {
+    return messages;
+  }
+  return [...messages].reverse();
+}
+
 type ToolHookContext = {
   args: Record<string, unknown>;
   debugLabel: string;
@@ -1905,7 +1953,11 @@ async function executeExtensionTool(
           : {}),
         permissionMode: executionScope.permissionMode ?? null,
         agent: { id: executionScope.agentId ?? null },
-        conversation: { id: executionScope.conversationId ?? null },
+        conversation: {
+          id: executionScope.conversationId ?? null,
+          getHistory: (historyOptions) =>
+            loadExtensionConversationHistory(executionScope, historyOptions),
+        },
         getContext: tool.getContext,
       };
       const result = await runExtensionTool(tool, context);
@@ -2174,7 +2226,7 @@ export async function executeTool(
         // Inject secrets as environment variables instead of substituting into
         // the command string. This prevents shell metacharacters in secrets
         // (e.g. $$, backticks, quotes) from being interpreted by the shell.
-        const command = enhancedArgs.command;
+        const command = enhancedArgs.command ?? enhancedArgs.cmd;
         const secretEnv =
           typeof command === "string" ||
           (Array.isArray(command) &&

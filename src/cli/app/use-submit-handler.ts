@@ -51,6 +51,7 @@ import {
 import type {
   ExtensionCommand,
   ExtensionCommandContext,
+  ExtensionConversationCloseReason,
 } from "@/cli/extensions/types";
 import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
@@ -103,6 +104,7 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
@@ -160,6 +162,10 @@ type ProfileConfirmPending = {
   name: string;
   agentId: string;
   cmdId: string;
+};
+
+type WorktreeDiffSelectorPending = {
+  worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
 };
 
 type ModelSelectorOptions = {
@@ -245,7 +251,7 @@ type SubmitHandlerContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: () => Promise<void>;
+  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;
@@ -279,6 +285,9 @@ type SubmitHandlerContext = {
   setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
+  >;
+  setWorktreeDiffSelectorPending: Dispatch<
+    SetStateAction<WorktreeDiffSelectorPending | null>
   >;
   setReasoningTabCycleEnabled: Dispatch<SetStateAction<boolean>>;
   setSearchQuery: Dispatch<SetStateAction<string>>;
@@ -395,6 +404,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setNeedsEagerApprovalCheck,
     setPinDialogLocal,
     setProfileConfirmPending,
+    setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
     setSearchQuery,
     setStaticItems,
@@ -687,6 +697,81 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             "Opening experiments selector...",
             "Experiments dialog dismissed",
           );
+          return { submitted: true };
+        }
+
+        const [slashCommand, experimentsSubcommand, ...experimentsArgs] =
+          trimmed.split(/\s+/);
+        if (
+          slashCommand === "/experiments" &&
+          experimentsSubcommand === "diffs"
+        ) {
+          const args = experimentsArgs;
+          if (args.length > 1) {
+            const cmd = commandRunner.start(
+              "/experiments",
+              "Usage: /experiments diffs [path]",
+            );
+            cmd.fail("Usage: /experiments diffs [path]");
+            return { submitted: true };
+          }
+          if (!experimentManager.isEnabled("diffs")) {
+            const cmd = commandRunner.start(
+              "/experiments",
+              "Diffs experiment is disabled.",
+            );
+            cmd.fail("Enable the diffs experiment with /experiments first.");
+            return { submitted: true };
+          }
+
+          if (!args[0]) {
+            const cmd = openOverlay(
+              "worktree-diff",
+              "/experiments diffs",
+              "Loading worktrees...",
+              "Worktree diff selector dismissed",
+            );
+            const { listWorktreeDiffOptions } = await import(
+              "@/web/worktree-diff-list"
+            );
+            listWorktreeDiffOptions()
+              .then((worktrees) => {
+                setWorktreeDiffSelectorPending({ worktrees });
+                cmd.update({ output: "Select a worktree to diff" });
+              })
+              .catch((err: unknown) => {
+                cmd.fail(
+                  `Failed to list worktrees: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              });
+            return { submitted: true };
+          }
+
+          const cmd = commandRunner.start(
+            "/experiments",
+            "Opening worktree diff...",
+          );
+          const { generateAndOpenDiffViewer } = await import(
+            "@/web/generate-diff-viewer"
+          );
+          generateAndOpenDiffViewer(args[0])
+            .then((result) => {
+              const fileSummary = `${result.fileCount} file${result.fileCount === 1 ? "" : "s"}`;
+              if (result.opened) {
+                cmd.finish(`Opened worktree diff (${fileSummary})`, true);
+              } else {
+                cmd.finish(
+                  `Open manually: ${result.filePath} (${fileSummary})`,
+                  true,
+                );
+              }
+            })
+            .catch((err: unknown) => {
+              cmd.finish(
+                `Failed to open diff: ${err instanceof Error ? err.message : String(err)}`,
+                false,
+              );
+            });
           return { submitted: true };
         }
 
@@ -1330,7 +1415,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           // Run SessionEnd hooks for current session before starting new one
-          await runEndHooks();
+          await runEndHooks("new");
 
           try {
             const backend = getBackend();
@@ -1379,6 +1464,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
+            void extensionRuntime.emitEvent("conversation_open", {
+              agentId,
+              agentName: agentName ?? null,
+              conversationId: conversation.id,
+              previousConversationId: prevConversationId ?? null,
+              reason: "new",
+            });
 
             // Update command with success
             cmd.finish(
@@ -1420,7 +1512,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
           }
 
-          await runEndHooks();
+          await runEndHooks("fork");
 
           try {
             // For default conversation, pass agent_id
@@ -1470,6 +1562,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
+            void extensionRuntime.emitEvent("conversation_open", {
+              agentId,
+              agentName: agentName ?? null,
+              conversationId: forked.id,
+              previousConversationId: forkPrevConversationId ?? null,
+              reason: "fork",
+            });
 
             cmd.finish(
               "Forked conversation (use /resume to switch back)",
@@ -1521,7 +1620,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           // Run SessionEnd hooks for current session before clearing
-          await runEndHooks();
+          await runEndHooks("new");
 
           try {
             const backend = getBackend();
@@ -1579,6 +1678,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
+            void extensionRuntime.emitEvent("conversation_open", {
+              agentId,
+              agentName: agentName ?? null,
+              conversationId: conversation.id,
+              previousConversationId: clearPrevConversationId ?? null,
+              reason: "new",
+            });
 
             // Update command with success
             cmd.finish(
@@ -3035,6 +3141,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               agent: { id: agentId, name: agentName },
               args: parsedExtensionCommand.args,
               argv: parseExtensionCommandArgv(parsedExtensionCommand.args),
+              backend: extensionRuntime.getBackendApi(),
               command: parsedExtensionCommand.command,
               conversation: { id: conversationIdRef.current },
               cwd: getCurrentWorkingDirectory(),

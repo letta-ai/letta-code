@@ -37,6 +37,8 @@ export interface CommandHookConfig {
   command: string;
   /** Optional timeout in milliseconds (default: 60000 for command hooks) */
   timeout?: number;
+  /** When true, suppress hook output in the TUI */
+  quiet?: boolean;
 }
 
 /**
@@ -56,6 +58,8 @@ export interface PromptHookConfig {
   model?: string;
   /** Optional timeout in milliseconds (default: 30000 for prompt hooks) */
   timeout?: number;
+  /** When true, suppress hook output in the TUI */
+  quiet?: boolean;
 }
 
 /**

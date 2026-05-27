@@ -54,6 +54,7 @@ export type AppProps = {
 export type ActiveOverlay =
   | "model"
   | "experiment"
+  | "worktree-diff"
   | "sleeptime"
   | "compaction"
   | "toolset"

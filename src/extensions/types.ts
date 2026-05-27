@@ -1,3 +1,10 @@
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  ApprovalCreate,
+  LettaStreamingResponse,
+  Message,
+} from "@letta-ai/letta-client/resources/agents/messages";
+
 export interface ExtensionWorkspaceContext {
   cwd: string;
   currentDir: string;
@@ -62,10 +69,51 @@ export interface ExtensionUiCapabilities {
   customStatuslineRenderer: boolean;
 }
 
+export interface ExtensionEventCapabilities {
+  lifecycle: boolean;
+  turns: boolean;
+}
+
 export interface ExtensionCapabilities {
   tools: boolean;
   commands: boolean;
+  events: ExtensionEventCapabilities;
   ui: ExtensionUiCapabilities;
+}
+
+export interface ExtensionBackendForkConversationOptions {
+  agentId?: string;
+  hidden?: boolean;
+}
+
+export type ExtensionBackendMessage = MessageCreate | ApprovalCreate;
+
+export interface ExtensionBackendSendMessageOptions {
+  agentId?: string;
+  background?: boolean;
+  overrideModel?: string;
+  skipImageNormalization?: boolean;
+  streamTokens?: boolean;
+  workingDirectory?: string;
+}
+
+export interface ExtensionBackendSendMessageRequestOptions {
+  headers?: Record<string, string>;
+  maxRetries?: number;
+  signal?: AbortSignal;
+}
+
+export interface ExtensionBackendApi {
+  forkConversation: (
+    conversationId: string,
+    options?: ExtensionBackendForkConversationOptions,
+  ) => Promise<{ id: string }>;
+  sendMessageStream: (
+    conversationId: string,
+    messages: ExtensionBackendMessage[],
+    options?: ExtensionBackendSendMessageOptions,
+    requestOptions?: ExtensionBackendSendMessageRequestOptions,
+  ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
 export type ExtensionSourceScope = "global" | "project" | "bundled";
@@ -77,8 +125,97 @@ export interface ExtensionOwner {
   generation: number;
 }
 
+export type ExtensionEventName =
+  | "conversation_open"
+  | "conversation_close"
+  | "turn_start";
+
+export type ExtensionConversationOpenReason =
+  | "startup"
+  | "new"
+  | "resume"
+  | "fork";
+
+export type ExtensionConversationCloseReason =
+  | "quit"
+  | "new"
+  | "resume"
+  | "fork";
+
+export interface ExtensionConversationOpenEvent {
+  agentId: string | null;
+  agentName: string | null;
+  conversationId: string | null;
+  previousConversationId?: string | null;
+  reason: ExtensionConversationOpenReason;
+}
+
+export interface ExtensionConversationCloseEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  durationMs: number | null;
+  messageCount: number | null;
+  reason: ExtensionConversationCloseReason;
+  toolCallCount: number | null;
+}
+
+export interface ExtensionTurnStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  input: Array<MessageCreate | ApprovalCreate>;
+}
+
+export interface ExtensionTurnStartResult {
+  input?: Array<MessageCreate | ApprovalCreate>;
+}
+
+export interface ExtensionEventMap {
+  conversation_open: ExtensionConversationOpenEvent;
+  conversation_close: ExtensionConversationCloseEvent;
+  turn_start: ExtensionTurnStartEvent;
+}
+
+export interface ExtensionEventResultMap {
+  conversation_open: undefined;
+  conversation_close: undefined;
+  turn_start: ExtensionTurnStartResult | undefined;
+}
+
+export interface ExtensionEventContext {
+  backend?: ExtensionBackendApi;
+  context: ExtensionContext;
+  getContext: () => ExtensionContext;
+  signal: AbortSignal;
+}
+
+export type ExtensionEventHandler<
+  TName extends ExtensionEventName = ExtensionEventName,
+> = (
+  event: ExtensionEventMap[TName],
+  context: ExtensionEventContext,
+) => ExtensionEventResultMap[TName] | Promise<ExtensionEventResultMap[TName]>;
+
+export interface ExtensionEventRegistration<
+  TName extends ExtensionEventName = ExtensionEventName,
+> {
+  handler: ExtensionEventHandler<TName>;
+  name: TName;
+  owner?: ExtensionOwner;
+  path: string;
+}
+
+export interface ExtensionEventEmissionResult<
+  TName extends ExtensionEventName = ExtensionEventName,
+> {
+  diagnostics: ExtensionDiagnostic[];
+  handlerCount: number;
+  name: TName;
+  results: Array<NonNullable<ExtensionEventResultMap[TName]>>;
+}
+
 export type ExtensionCapabilityKind =
   | "command"
+  | "event"
   | "tool"
   | "panel"
   | "status"
@@ -97,6 +234,7 @@ export type ExtensionDiagnosticPhase =
   | "import"
   | "activate"
   | "dispose"
+  | "event"
   | "stale_handle"
   | "status.evaluate";
 
@@ -139,6 +277,7 @@ export interface ExtensionCommandContext {
   command: string;
   args: string;
   argv: string[];
+  backend?: ExtensionBackendApi;
   cwd: string;
   agent: {
     id: string;
@@ -243,6 +382,15 @@ export type ExtensionToolRunResult =
       success?: boolean;
     };
 
+export interface ExtensionConversationHistoryOptions {
+  /** Maximum number of recent messages to return. Defaults to 100. */
+  limit?: number;
+  /** Return chronological (asc, default) or newest-first (desc) messages. */
+  order?: "asc" | "desc";
+  /** Include error messages and error statuses. Defaults to true. */
+  includeErrors?: boolean;
+}
+
 export interface ExtensionToolRunContext {
   args: Record<string, unknown>;
   cwd: string;
@@ -256,6 +404,9 @@ export interface ExtensionToolRunContext {
   };
   conversation: {
     id: string | null;
+    getHistory: (
+      options?: ExtensionConversationHistoryOptions,
+    ) => Promise<Message[]>;
   };
   getContext: () => ExtensionContext;
 }

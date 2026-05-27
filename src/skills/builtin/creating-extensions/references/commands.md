@@ -91,24 +91,25 @@ export default function activate(letta) {
 }
 ```
 
-## Busy-safe SDK command
+## Busy-safe backend command
 
-For commands with `runWhenBusy: true`, do not return `prompt` while the agent is running. Use the SDK directly, update a panel if available, and return `{ type: "handled" }` quickly.
+For commands with `runWhenBusy: true`, do not return `prompt` while the agent is running. Use backend primitives directly, update a panel if available, and return `{ type: "handled" }` quickly.
 
-Use `letta.client` or `await letta.getClient()` instead of raw `fetch`; SDK initialization is lazy and uses the current backend/auth context.
+Use `ctx.backend` for conversation operations that should work across local and Constellation backends. `ctx.backend` is bound to the backend active for that command invocation, so composed flows like fork-then-send stay on the same backend. Use `letta.client` only for server-specific API calls.
 
 Common calls:
 
 ```ts
-await letta.client.conversations.fork(ctx.conversation.id || "default", {
-  agent_id: ctx.agent.id,
+if (!ctx.backend) throw new Error("This command requires backend support");
+
+const forked = await ctx.backend.forkConversation(ctx.conversation.id, {
+  agentId: ctx.agent.id,
+  hidden: true,
 });
 
-await letta.client.conversations.messages.create(conversationId, {
-  agent_id: ctx.agent.id,
-  input,
-  streaming: true,
-});
+const stream = await ctx.backend.sendMessageStream(forked.id, [
+  { role: "user", content: input },
+]);
 ```
 
 For a complete side-question example, see `btw-command.md`.

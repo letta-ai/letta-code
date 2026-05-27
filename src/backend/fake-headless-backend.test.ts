@@ -50,11 +50,21 @@ describe("FakeHeadlessBackend", () => {
       } as ConversationMessageCreateBody),
     );
 
-    const dirs = await readdir(join(storageDir, "conversations"));
-    const firstDir = dirs[0];
-    if (!firstDir)
-      throw new Error("Expected a persisted conversation directory");
-    const conversationDir = join(storageDir, "conversations", firstDir);
+    const conversationsDir = join(storageDir, "conversations");
+    const dirs = await readdir(conversationsDir);
+    let conversationDir: string | undefined;
+    for (const dir of dirs) {
+      const candidateDir = join(conversationsDir, dir);
+      const candidate = JSON.parse(
+        await readFile(join(candidateDir, "conversation.json"), "utf8"),
+      ) as { id?: unknown };
+      if (candidate.id === conversation.id) {
+        conversationDir = candidateDir;
+        break;
+      }
+    }
+    if (!conversationDir)
+      throw new Error("Expected the persisted test conversation directory");
     const manifest = JSON.parse(
       await readFile(join(conversationDir, "manifest.json"), "utf8"),
     );
