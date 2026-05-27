@@ -210,6 +210,9 @@ export function parsePatchOperations(input: string): PatchOperation[] {
 export function formatArgsDisplay(
   argsJson: string,
   toolName?: string,
+  options?: {
+    unifiedExecCommandDisplay?: string;
+  },
 ): {
   display: string;
   parsed: Record<string, unknown>;
@@ -363,16 +366,14 @@ export function formatArgsDisplay(
                 : "unknown";
             const isWrite =
               typeof parsed.chars === "string" && parsed.chars.length > 0;
+            const commandDisplay = options?.unifiedExecCommandDisplay?.trim();
+            const suffix = commandDisplay
+              ? ` · ${commandDisplay}`
+              : ` (session ${sessionId})`;
             display = isWrite
-              ? `Interacted with background terminal (session ${sessionId})`
-              : `Waited for background terminal (session ${sessionId})`;
-            shellSemantic = {
-              kind: "run",
-              label: "Run",
-              summary: display,
-              rawCommand: display,
-            } satisfies ShellSemanticDisplay;
-            return { display, parsed, shellSemantic };
+              ? `Interacted with background terminal${suffix}`
+              : `Waited for background terminal${suffix}`;
+            return { display, parsed };
           }
 
           // Plan tools: only show compact plan item count.

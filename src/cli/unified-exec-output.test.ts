@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { formatUnifiedExecOutputForTui } from "@/cli/helpers/unified-exec-output";
+import {
+  extractUnifiedExecRunningSessionId,
+  formatUnifiedExecOutputForTui,
+} from "@/cli/helpers/unified-exec-output";
 
 describe("formatUnifiedExecOutputForTui", () => {
   test("shows command output without Codex metadata", () => {
@@ -60,5 +63,19 @@ describe("formatUnifiedExecOutputForTui", () => {
 
   test("leaves non-unified output unchanged", () => {
     expect(formatUnifiedExecOutputForTui("plain output")).toBe("plain output");
+  });
+
+  test("extracts running session IDs from unified exec output", () => {
+    const text = [
+      "Chunk ID: abc123",
+      "Wall time: 0.1234 seconds",
+      "Process running with session ID 4",
+      "Original token count: 1",
+      "Output:",
+      "ready",
+    ].join("\n");
+
+    expect(extractUnifiedExecRunningSessionId(text)).toBe("4");
+    expect(extractUnifiedExecRunningSessionId("plain output")).toBeNull();
   });
 });

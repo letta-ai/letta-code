@@ -37,6 +37,12 @@ function parseUnifiedExecOutput(text: string): ParsedUnifiedExecOutput | null {
   };
 }
 
+export function extractUnifiedExecRunningSessionId(
+  text: string,
+): string | null {
+  return parseUnifiedExecOutput(text)?.sessionId ?? null;
+}
+
 /**
  * Codex unified exec returns model-facing metadata before the actual command
  * output. The TUI shell renderer should stay focused on what the command

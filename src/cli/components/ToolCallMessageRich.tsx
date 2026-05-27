@@ -128,6 +128,7 @@ type ToolCallLine = {
   toolCallId?: string;
   name?: string;
   argsText?: string;
+  unifiedExecCommandDisplay?: string;
   resultText?: string;
   resultOk?: boolean;
   phase: "streaming" | "ready" | "running" | "finished";
@@ -238,7 +239,9 @@ export const ToolCallMessage = memo(
             return { formatted: null, parseable: true };
           }
           try {
-            const formatted = formatArgsDisplay(argsText, rawName);
+            const formatted = formatArgsDisplay(argsText, rawName, {
+              unifiedExecCommandDisplay: line.unifiedExecCommandDisplay,
+            });
             return { formatted, parseable: true };
           } catch {
             return { formatted: null, parseable: false };
@@ -257,7 +260,10 @@ export const ToolCallMessage = memo(
           args = "(…)";
         } else {
           const formattedArgs =
-            formatted ?? formatArgsDisplay(argsText, rawName);
+            formatted ??
+            formatArgsDisplay(argsText, rawName, {
+              unifiedExecCommandDisplay: line.unifiedExecCommandDisplay,
+            });
           if (formattedArgs.shellSemantic) {
             shellSemanticKind = formattedArgs.shellSemantic.kind;
             displayName = formattedArgs.shellSemantic.label;

@@ -92,11 +92,24 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     expect(formatted.display).toBe(
       "Interacted with background terminal (session 8)",
     );
-    expect(formatted.shellSemantic).toMatchObject({
-      kind: "run",
-      label: "Run",
-      rawCommand: "Interacted with background terminal (session 8)",
+    expect(formatted.shellSemantic).toBeUndefined();
+  });
+
+  test("summarizes Codex write_stdin with original command display when available", () => {
+    const args = JSON.stringify({
+      session_id: 8,
+      chars: "hello from stdin\n",
+      yield_time_ms: 1000,
+      max_output_tokens: 2000,
     });
+
+    const formatted = formatArgsDisplay(args, "write_stdin", {
+      unifiedExecCommandDisplay: "python3 repl.py",
+    });
+    expect(formatted.display).toBe(
+      "Interacted with background terminal · python3 repl.py",
+    );
+    expect(formatted.shellSemantic).toBeUndefined();
   });
 
   test("summarizes Codex write_stdin polling with Codex-like language", () => {
@@ -110,10 +123,6 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     expect(formatted.display).toBe(
       "Waited for background terminal (session 8)",
     );
-    expect(formatted.shellSemantic).toMatchObject({
-      kind: "run",
-      label: "Run",
-      rawCommand: "Waited for background terminal (session 8)",
-    });
+    expect(formatted.shellSemantic).toBeUndefined();
   });
 });
