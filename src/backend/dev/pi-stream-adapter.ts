@@ -9,9 +9,6 @@ import {
   stream,
   streamSimple,
   type ThinkingLevel,
-  type Tool,
-  type TSchema,
-  Type,
   type Usage,
 } from "@earendil-works/pi-ai";
 import type { LocalCompactionStats } from "@/backend/local/compaction";
@@ -20,7 +17,7 @@ import {
   type LocalAssistantMessage,
   type LocalMessage,
 } from "@/backend/local/local-message";
-import type { ClientTool } from "@/tools/manager";
+import { toPiTools } from "@/tools/pi-tool-projection";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
@@ -45,46 +42,6 @@ import {
 
 const LOCAL_PROVIDER_MAX_RETRIES = 3;
 const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
-
-export const APPLY_PATCH_FREEFORM_DESCRIPTION =
-  "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.";
-
-export const APPLY_PATCH_LARK_GRAMMAR = `start: begin_patch hunk+ end_patch
-begin_patch: "*** Begin Patch" LF
-end_patch: "*** End Patch" LF?
-
-hunk: add_hunk | delete_hunk | update_hunk
-add_hunk: "*** Add File: " filename LF add_line+
-delete_hunk: "*** Delete File: " filename LF
-update_hunk: "*** Update File: " filename LF change_move? change?
-
-filename: /(.+)/
-add_line: "+" /(.*)/ LF -> line
-
-change_move: "*** Move to: " filename LF
-change: (change_context | change_line)+ eof_line?
-change_context: ("@@" | "@@ " /(.+)/) LF
-change_line: ("+" | "-" | " ") /(.*)/ LF
-eof_line: "*** End of File" LF
-
-%import common.LF
-`;
-
-type PiCustomTool = {
-  type: "custom";
-  name: string;
-  description: string;
-  format: {
-    type: "grammar";
-    syntax: "lark";
-    definition: string;
-  };
-  fallback: {
-    parameters: TSchema;
-  };
-};
-
-type PiToolDefinition = Tool | PiCustomTool;
 
 export type PiStreamFunction = (
   model: Model<string>,
@@ -177,52 +134,6 @@ async function sleepWithAbort(
     };
     abortSignal?.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-function isClientTool(value: unknown): value is ClientTool {
-  return isRecord(value) && typeof value.name === "string";
-}
-
-function isApplyPatchToolName(name: string): boolean {
-  return name === "apply_patch" || name === "ApplyPatch";
-}
-
-function toPiApplyPatchTool(tool: ClientTool, schema: TSchema): PiCustomTool {
-  return {
-    type: "custom",
-    name: tool.name,
-    description: APPLY_PATCH_FREEFORM_DESCRIPTION,
-    format: {
-      type: "grammar",
-      syntax: "lark",
-      definition: APPLY_PATCH_LARK_GRAMMAR,
-    },
-    fallback: {
-      parameters: schema,
-    },
-  };
-}
-
-export function toPiTools(
-  clientTools: unknown[],
-): PiToolDefinition[] | undefined {
-  const tools: PiToolDefinition[] = [];
-  for (const value of clientTools) {
-    if (!isClientTool(value)) continue;
-    const schema = isRecord(value.parameters)
-      ? (value.parameters as unknown as TSchema)
-      : Type.Object({});
-    if (isApplyPatchToolName(value.name)) {
-      tools.push(toPiApplyPatchTool(value, schema));
-      continue;
-    }
-    tools.push({
-      name: value.name,
-      description: value.description ?? "",
-      parameters: schema,
-    });
-  }
-  return tools.length > 0 ? tools : undefined;
 }
 
 const EMPTY_TOOL_RESULT_PLACEHOLDER = "No result provided";
