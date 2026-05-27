@@ -6,6 +6,7 @@ export const TUI_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   events: {
     lifecycle: true,
   },
+  providers: true,
   ui: {
     panels: true,
     statusValues: true,

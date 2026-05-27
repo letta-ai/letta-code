@@ -6,6 +6,7 @@ export const DEFAULT_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   events: {
     lifecycle: true,
   },
+  providers: true,
   ui: {
     panels: true,
     statusValues: true,
@@ -22,6 +23,7 @@ export function cloneExtensionCapabilities(
     events: {
       lifecycle: capabilities.events.lifecycle,
     },
+    providers: capabilities.providers,
     ui: {
       panels: capabilities.ui.panels,
       statusValues: capabilities.ui.statusValues,

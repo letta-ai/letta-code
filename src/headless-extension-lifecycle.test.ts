@@ -42,6 +42,7 @@ describe("headless extension runtime", () => {
       events: {
         lifecycle: true,
       },
+      providers: true,
       ui: {
         panels: false,
         statusValues: false,

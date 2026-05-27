@@ -27,6 +27,7 @@ export const HEADLESS_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   events: {
     lifecycle: true,
   },
+  providers: true,
   ui: {
     panels: false,
     statusValues: false,

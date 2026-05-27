@@ -76,6 +76,7 @@ export interface ExtensionCapabilities {
   tools: boolean;
   commands: boolean;
   events: ExtensionEventCapabilities;
+  providers: boolean;
   ui: ExtensionUiCapabilities;
 }
 
@@ -196,6 +197,7 @@ export interface ExtensionEventEmissionResult {
 export type ExtensionCapabilityKind =
   | "command"
   | "event"
+  | "provider"
   | "tool"
   | "panel"
   | "status"
