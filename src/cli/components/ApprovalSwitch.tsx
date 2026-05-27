@@ -91,8 +91,6 @@ function getBashInfo(approval: ApprovalRequest): BashInfo | null {
 
     if (t === "exec_command") {
       command = typeof args.cmd === "string" ? args.cmd : "(no command)";
-      description =
-        typeof args.justification === "string" ? args.justification : "";
     } else if (t === "write_stdin") {
       const sessionId =
         typeof args.session_id === "string" ||

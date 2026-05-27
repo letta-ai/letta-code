@@ -33,9 +33,11 @@ interface ExecCommandArgs {
   yield_time_ms?: number;
   max_output_tokens?: number;
   login?: boolean;
-  sandbox_permissions?: "use_default" | "require_escalated" | string;
-  justification?: string;
-  prefix_rule?: string[];
+  // Upstream Codex also exposes sandbox-escalation fields here:
+  // sandbox_permissions, justification, prefix_rule, additional_permissions.
+  // Letta Code intentionally omits them from the model-facing schema because
+  // this harness has no Codex sandbox override / permission-profile layer;
+  // the regular Letta Code approval system still gates command execution.
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
