@@ -6,15 +6,16 @@ import type { SessionStats } from "@/agent/stats";
 import type { Backend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
 import {
   createExtensionRuntime,
   type ExtensionRuntime,
 } from "@/extensions/extension-runtime";
 import type {
-  ExtensionBackendApi,
   ExtensionCapabilities,
   ExtensionContext,
   ExtensionConversationOpenReason,
+  ExtensionRuntimeBackendApi,
 } from "@/extensions/types";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -38,10 +39,20 @@ export const HEADLESS_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
 
 function createHeadlessExtensionBackendApi(
   backend: Backend,
-): ExtensionBackendApi {
+): ExtensionRuntimeBackendApi {
   return {
     forkConversation(conversationId, options) {
       return backend.forkConversation(conversationId, options);
+    },
+    getConversationHistory(conversationId, options) {
+      return loadExtensionConversationHistoryFromBackend(
+        backend,
+        {
+          agentId: options?.agentId,
+          conversationId,
+        },
+        options,
+      );
     },
     sendMessageStream(conversationId, messages, options, requestOptions) {
       return sendMessageStreamWithBackend(

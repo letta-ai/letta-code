@@ -30,6 +30,7 @@ import {
   cloneExtensionCapabilities,
   resolveExtensionCapabilities,
 } from "@/extensions/capabilities";
+import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import {
   getExtensionToolDefinition,
   registerExtensionTool,
@@ -37,7 +38,6 @@ import {
   unregisterExtensionToolsForOwner,
 } from "@/extensions/tool-registry";
 import type {
-  ExtensionBackendApi,
   ExtensionCapabilities,
   ExtensionCommand,
   ExtensionCommandRegistration,
@@ -56,6 +56,7 @@ import type {
   ExtensionPanelHandle,
   ExtensionPanelOptions,
   ExtensionPanelUpdate,
+  ExtensionRuntimeBackendApi,
   ExtensionTool,
   ExtensionToolRegistration,
   ExtensionTurnStartEvent,
@@ -95,7 +96,6 @@ export type LettaExtensionFactory = (
   | Promise<undefined | LettaExtensionDisposer>;
 
 export interface LettaExtensionApi {
-  backend?: ExtensionBackendApi;
   capabilities: ExtensionCapabilities;
   client: Letta;
   getClient: () => Promise<Letta>;
@@ -205,7 +205,7 @@ export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionBackendApi;
+  backend?: ExtensionRuntimeBackendApi;
   capabilities?: ExtensionCapabilities;
   generation?: number;
   onChange?: () => void;
@@ -219,7 +219,7 @@ export interface ExtensionHost {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-    backend?: ExtensionBackendApi,
+    backend?: ExtensionRuntimeBackendApi,
   ) => Promise<ExtensionEventEmissionResult<TName>>;
   getSnapshot: () => LocalExtensionRegistry;
   reload: () => Promise<void>;
@@ -230,7 +230,7 @@ export interface CreateExtensionHostOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionBackendApi;
+  backend?: ExtensionRuntimeBackendApi;
   capabilities?: ExtensionCapabilities;
   reservedCommandIds?: Iterable<string>;
   reservedToolNames?: Iterable<string>;
@@ -792,7 +792,6 @@ function upsertExtensionPanel(
 function createLettaExtensionApi(
   registry: LocalExtensionRegistry,
   owner: ExtensionOwner,
-  backend: ExtensionBackendApi | undefined,
   capabilities: ExtensionCapabilities,
   getClient: () => Promise<Letta>,
   getContext: () => ExtensionContext,
@@ -923,7 +922,6 @@ function createLettaExtensionApi(
   };
 
   return {
-    ...(backend ? { backend } : {}),
     capabilities: cloneExtensionCapabilities(capabilities),
     client: createLazyClient(getClient),
     getClient,
@@ -1142,7 +1140,6 @@ export async function loadLocalExtensions(
           createLettaExtensionApi(
             registry,
             owner,
-            options.backend,
             capabilities,
             getConfiguredClient,
             getContext,
@@ -1210,7 +1207,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
   name: TName,
   event: ExtensionEventMap[TName],
   getContext: () => ExtensionContext,
-  backend?: ExtensionBackendApi,
+  backend?: ExtensionRuntimeBackendApi,
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
 ): Promise<ExtensionEventEmissionResult<TName>> {
   if (!registry) {
@@ -1237,7 +1234,18 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
     try {
       const context = getContext();
       const eventContext: ExtensionEventContext = {
-        ...(backend ? { backend } : {}),
+        conversation: createExtensionConversationHandle({
+          agentId:
+            typeof event.agentId === "string"
+              ? event.agentId
+              : context.agent.id,
+          backend,
+          conversationId:
+            typeof event.conversationId === "string"
+              ? event.conversationId
+              : context.sessionId,
+          workingDirectory: context.cwd,
+        }),
         context,
         getContext,
         signal: signal ?? new AbortController().signal,

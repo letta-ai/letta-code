@@ -82,15 +82,13 @@ export interface ExtensionCapabilities {
   ui: ExtensionUiCapabilities;
 }
 
-export interface ExtensionBackendForkConversationOptions {
-  agentId?: string;
+export interface ExtensionConversationForkOptions {
   hidden?: boolean;
 }
 
-export type ExtensionBackendMessage = MessageCreate | ApprovalCreate;
+export type ExtensionConversationMessage = MessageCreate | ApprovalCreate;
 
-export interface ExtensionBackendSendMessageOptions {
-  agentId?: string;
+export interface ExtensionConversationSendMessageOptions {
   background?: boolean;
   overrideModel?: string;
   skipImageNormalization?: boolean;
@@ -98,22 +96,65 @@ export interface ExtensionBackendSendMessageOptions {
   workingDirectory?: string;
 }
 
-export interface ExtensionBackendSendMessageRequestOptions {
+export interface ExtensionConversationSendMessageRequestOptions {
   headers?: Record<string, string>;
   maxRetries?: number;
   signal?: AbortSignal;
 }
 
-export interface ExtensionBackendApi {
+export interface ExtensionConversationHistoryOptions {
+  /** Maximum number of recent messages to return. Defaults to 100. */
+  limit?: number;
+  /** Return chronological (asc, default) or newest-first (desc) messages. */
+  order?: "asc" | "desc";
+  /** Include error messages and error statuses. Defaults to true. */
+  includeErrors?: boolean;
+}
+
+export interface ExtensionConversationHandle {
+  id: string | null;
+  fork: (
+    options?: ExtensionConversationForkOptions,
+  ) => Promise<ExtensionConversationHandle>;
+  getHistory: (
+    options?: ExtensionConversationHistoryOptions,
+  ) => Promise<Message[]>;
+  sendMessageStream: (
+    messages: ExtensionConversationMessage[],
+    options?: ExtensionConversationSendMessageOptions,
+    requestOptions?: ExtensionConversationSendMessageRequestOptions,
+  ) => Promise<AsyncIterable<LettaStreamingResponse>>;
+}
+
+export interface ExtensionRuntimeBackendForkConversationOptions
+  extends ExtensionConversationForkOptions {
+  agentId?: string;
+}
+
+export interface ExtensionRuntimeBackendSendMessageOptions
+  extends ExtensionConversationSendMessageOptions {
+  agentId?: string;
+}
+
+export interface ExtensionRuntimeBackendHistoryOptions
+  extends ExtensionConversationHistoryOptions {
+  agentId?: string | null;
+}
+
+export interface ExtensionRuntimeBackendApi {
   forkConversation: (
     conversationId: string,
-    options?: ExtensionBackendForkConversationOptions,
+    options?: ExtensionRuntimeBackendForkConversationOptions,
   ) => Promise<{ id: string }>;
+  getConversationHistory: (
+    conversationId: string,
+    options?: ExtensionRuntimeBackendHistoryOptions,
+  ) => Promise<Message[]>;
   sendMessageStream: (
     conversationId: string,
-    messages: ExtensionBackendMessage[],
-    options?: ExtensionBackendSendMessageOptions,
-    requestOptions?: ExtensionBackendSendMessageRequestOptions,
+    messages: ExtensionConversationMessage[],
+    options?: ExtensionRuntimeBackendSendMessageOptions,
+    requestOptions?: ExtensionConversationSendMessageRequestOptions,
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
@@ -183,7 +224,7 @@ export interface ExtensionEventResultMap {
 }
 
 export interface ExtensionEventContext {
-  backend?: ExtensionBackendApi;
+  conversation: ExtensionConversationHandle;
   context: ExtensionContext;
   getContext: () => ExtensionContext;
   signal: AbortSignal;
@@ -279,15 +320,12 @@ export interface ExtensionCommandContext {
   command: string;
   args: string;
   argv: string[];
-  backend?: ExtensionBackendApi;
   cwd: string;
   agent: {
     id: string;
     name: string | null;
   };
-  conversation: {
-    id: string;
-  };
+  conversation: ExtensionConversationHandle & { id: string };
   model: {
     id: string | null;
     displayName: string | null;
@@ -383,15 +421,6 @@ export type ExtensionToolRunResult =
       isError?: boolean;
       success?: boolean;
     };
-
-export interface ExtensionConversationHistoryOptions {
-  /** Maximum number of recent messages to return. Defaults to 100. */
-  limit?: number;
-  /** Return chronological (asc, default) or newest-first (desc) messages. */
-  order?: "asc" | "desc";
-  /** Include error messages and error statuses. Defaults to true. */
-  includeErrors?: boolean;
-}
 
 export interface ExtensionToolRunContext {
   args: Record<string, unknown>;

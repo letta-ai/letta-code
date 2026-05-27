@@ -127,14 +127,19 @@ Handlers also receive:
 
 ```ts
 {
-  backend?: letta.backend;
+  conversation: {
+    id: string | null;
+    fork(options?): Promise<conversation>;
+    getHistory(options?): Promise<Message[]>;
+    sendMessageStream(messages, options?): Promise<AsyncIterable<chunk>>;
+  };
   context: letta.getContext();
   getContext: () => letta.getContext();
   signal: AbortSignal;
 }
 ```
 
-`ctx.backend` is bound when the event is dispatched. Use it for backend calls made while handling that event.
+`ctx.conversation` is bound when the event is dispatched. Use it for scoped conversation calls made while handling that event.
 
 Respect `ctx.signal` for long-running async work. It is aborted on `/reload` and app shutdown.
 

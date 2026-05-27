@@ -1,6 +1,5 @@
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import stripAnsi from "strip-ansi";
 import { getDisplayableToolReturn } from "@/agent/approval-execution";
 import {
@@ -11,7 +10,6 @@ import {
 } from "@/agent/context";
 import { getModelInfo } from "@/agent/model";
 import { getAllSubagentConfigs } from "@/agent/subagents";
-import type { ConversationMessageListBody } from "@/backend";
 import {
   buildDynamicMessageChannelToolDefinition,
   getCachedDynamicMessageChannelToolDefinition,
@@ -20,6 +18,7 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
 import {
   type ExtensionToolDefinition,
   extensionToolRequiresApproval,
@@ -28,10 +27,7 @@ import {
   isExtensionToolParallelSafe,
   runExtensionTool,
 } from "@/extensions/tool-registry";
-import type {
-  ExtensionConversationHistoryOptions,
-  ExtensionToolRunContext,
-} from "@/extensions/types";
+import type { ExtensionToolRunContext } from "@/extensions/types";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -1780,43 +1776,6 @@ function getExtensionToolStatus(result: unknown): "success" | "error" {
   return "success";
 }
 
-const DEFAULT_EXTENSION_CONVERSATION_HISTORY_LIMIT = 100;
-const MAX_EXTENSION_CONVERSATION_HISTORY_LIMIT = 500;
-
-function normalizeExtensionConversationHistoryLimit(limit?: number): number {
-  if (limit === undefined) return DEFAULT_EXTENSION_CONVERSATION_HISTORY_LIMIT;
-  if (!Number.isFinite(limit))
-    return DEFAULT_EXTENSION_CONVERSATION_HISTORY_LIMIT;
-  return Math.min(
-    Math.max(1, Math.trunc(limit)),
-    MAX_EXTENSION_CONVERSATION_HISTORY_LIMIT,
-  );
-}
-
-async function loadExtensionConversationHistory(
-  executionScope: RuntimeContextSnapshot,
-  options?: ExtensionConversationHistoryOptions,
-): Promise<Message[]> {
-  const conversationId = executionScope.conversationId ?? "default";
-  const agentId = executionScope.agentId ?? null;
-  if (!executionScope.conversationId && !agentId) {
-    return [];
-  }
-
-  const { getBackend } = await import("@/backend");
-  const page = await getBackend().listConversationMessages(conversationId, {
-    limit: normalizeExtensionConversationHistoryLimit(options?.limit),
-    order: "desc",
-    include_err: options?.includeErrors ?? true,
-    ...(conversationId === "default" && agentId ? { agent_id: agentId } : {}),
-  } as ConversationMessageListBody);
-  const messages = page.getPaginatedItems() as Message[];
-  if (options?.order === "desc") {
-    return messages;
-  }
-  return [...messages].reverse();
-}
-
 type ToolHookContext = {
   args: Record<string, unknown>;
   debugLabel: string;
@@ -1955,8 +1914,17 @@ async function executeExtensionTool(
         agent: { id: executionScope.agentId ?? null },
         conversation: {
           id: executionScope.conversationId ?? null,
-          getHistory: (historyOptions) =>
-            loadExtensionConversationHistory(executionScope, historyOptions),
+          getHistory: async (historyOptions) => {
+            const { getBackend } = await import("@/backend");
+            return loadExtensionConversationHistoryFromBackend(
+              getBackend(),
+              {
+                agentId: executionScope.agentId,
+                conversationId: executionScope.conversationId,
+              },
+              historyOptions,
+            );
+          },
         },
         getContext: tool.getContext,
       };
