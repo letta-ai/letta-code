@@ -7,6 +7,7 @@
  *   letta cron add --prompt <text> --cron <expr> [--agent <id>]
  *   letta cron list [--agent <id>] [--conversation <id>]
  *   letta cron get <id>
+ *   letta cron runs --id <id>
  *   letta cron delete <id>
  *   letta cron delete --all [--agent <id>]
  */
@@ -16,11 +17,13 @@ import {
   addTask,
   deleteAllTasks,
   deleteTask,
+  getCronRunLogPath,
   getTask,
   isValidCron,
   listTasks,
   parseAt,
   parseEvery,
+  readCronRunLogEntriesPage,
 } from "@/cron";
 
 // ── Usage ───────────────────────────────────────────────────────────
@@ -34,6 +37,7 @@ Usage:
   letta cron add --prompt <text> --cron <expr> [options]
   letta cron list [options]
   letta cron get <id>
+  letta cron runs --id <id> [--limit <n>]
   letta cron delete <id>
   letta cron delete --all [--agent <id>]
 
@@ -72,6 +76,9 @@ const CRON_OPTIONS = {
   agent: { type: "string" },
   conversation: { type: "string" },
   all: { type: "boolean" },
+  id: { type: "string" },
+  limit: { type: "string" },
+  "run-id": { type: "string" },
 } as const;
 
 function parseCronArgs(argv: string[]) {
@@ -256,6 +263,34 @@ function handleGet(positionals: string[]): number {
   return 0;
 }
 
+function handleRuns(
+  values: ReturnType<typeof parseCronArgs>["values"],
+): number {
+  const id = values.id;
+  if (!id || typeof id !== "string") {
+    console.error("Error: --id is required. Usage: letta cron runs --id <id>");
+    return 1;
+  }
+
+  const limitRaw = Number.parseInt(String(values.limit ?? "50"), 10);
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50;
+  const runId = values["run-id"];
+
+  try {
+    const logPath = getCronRunLogPath(id);
+    const page = readCronRunLogEntriesPage(logPath, {
+      jobId: id,
+      limit,
+      ...(typeof runId === "string" && runId.trim() ? { runId } : {}),
+    });
+    console.log(JSON.stringify(page, null, 2));
+    return 0;
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+}
+
 function handleDelete(
   values: ReturnType<typeof parseCronArgs>["values"],
   positionals: string[],
@@ -314,6 +349,8 @@ export async function runCronSubcommand(argv: string[]): Promise<number> {
       return handleList(parsed.values);
     case "get":
       return handleGet(parsed.positionals);
+    case "runs":
+      return handleRuns(parsed.values);
     case "delete":
       return handleDelete(parsed.values, parsed.positionals);
     default:
