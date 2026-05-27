@@ -15,6 +15,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type Letta from "@letta-ai/letta-client";
 import * as ts from "typescript";
+import type { PiProviderRegistration } from "@/backend/dev/pi-provider-extension-registry";
+import {
+  registerPiProvider,
+  unregisterPiProvider,
+  unregisterPiProvidersForOwner,
+} from "@/backend/dev/pi-provider-extension-registry";
 import type {
   StatuslineRenderContext,
   StatuslineRenderer,
@@ -95,12 +101,24 @@ export interface LettaExtensionApi {
   getClient: () => Promise<Letta>;
   getContext: () => ExtensionContext;
   signal: AbortSignal;
+  registerProvider: (
+    name: string,
+    config: PiProviderRegistration,
+  ) => LettaExtensionDisposer;
+  unregisterProvider: (name: string) => void;
   commands: {
     register: (command: ExtensionCommandRegistration) => LettaExtensionDisposer;
     unregister: (id: string) => void;
   };
   tools: {
     register: (tool: ExtensionToolRegistration) => LettaExtensionDisposer;
+    unregister: (name: string) => void;
+  };
+  providers: {
+    register: (
+      name: string,
+      config: PiProviderRegistration,
+    ) => LettaExtensionDisposer;
     unregister: (name: string) => void;
   };
   events: {
@@ -373,6 +391,8 @@ function removeOwnerCapabilities(
   registry: LocalExtensionRegistry,
   owner: ExtensionOwner,
 ): void {
+  unregisterPiProvidersForOwner(owner.id);
+
   for (const [id, command] of Object.entries(registry.commands)) {
     if (command.owner?.id === owner.id) {
       delete registry.commands[id];
@@ -848,6 +868,31 @@ function createLettaExtensionApi(
     }
   };
 
+  const unregisterProvider = (name: string) => {
+    if (!capabilities.providers) return;
+    if (!guardLive({ id: name, kind: "provider" })) return;
+    unregisterPiProvider(name, owner.id);
+    onChange();
+  };
+
+  const registerProviderForOwner = (
+    name: string,
+    config: PiProviderRegistration,
+  ): LettaExtensionDisposer => {
+    if (!capabilities.providers) {
+      return () => undefined;
+    }
+    if (!guardLive({ id: name, kind: "provider" })) {
+      return () => undefined;
+    }
+    registerPiProvider(name, config, {
+      id: owner.id,
+      path: owner.path,
+    });
+    onChange();
+    return () => unregisterProvider(name);
+  };
+
   const onEvent = <TName extends ExtensionEventName>(
     name: TName,
     handler: ExtensionEventHandler<TName>,
@@ -884,6 +929,8 @@ function createLettaExtensionApi(
     getClient,
     getContext,
     signal,
+    registerProvider: registerProviderForOwner,
+    unregisterProvider,
     commands: {
       register(command) {
         if (!capabilities.commands) {
@@ -953,6 +1000,12 @@ function createLettaExtensionApi(
         return () => unregisterTool(normalized.name);
       },
       unregister: unregisterTool,
+    },
+    providers: {
+      register(name, config) {
+        return registerProviderForOwner(name, config);
+      },
+      unregister: unregisterProvider,
     },
     events: {
       off: unregisterEvent,
@@ -1248,6 +1301,7 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   }
 
   for (const owner of Object.values(registry.owners)) {
+    unregisterPiProvidersForOwner(owner.id);
     unregisterExtensionToolsForOwner(owner);
   }
 

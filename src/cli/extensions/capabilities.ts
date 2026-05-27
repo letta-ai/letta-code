@@ -7,6 +7,7 @@ export const TUI_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
     lifecycle: true,
     turns: true,
   },
+  providers: true,
   ui: {
     panels: true,
     statusValues: true,

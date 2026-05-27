@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import {
+  clearRegisteredPiProviders,
+  getRegisteredPiProvider,
+} from "@/backend/dev/pi-provider-extension-registry";
+import {
   createExtensionHost,
   type ExtensionHost,
 } from "@/extensions/extension-host";
@@ -96,6 +100,7 @@ const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   tools: true,
   commands: false,
   events: { lifecycle: false, turns: false },
+  providers: false,
   ui: {
     panels: false,
     statusValues: false,
@@ -106,6 +111,7 @@ const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
 describe("extension host", () => {
   afterEach(() => {
     clearExtensionTools();
+    clearRegisteredPiProviders();
   });
 
   test("reload publishes snapshots with owner metadata", async () => {
@@ -247,6 +253,51 @@ describe("extension host", () => {
     } finally {
       delete testGlobal.__lettaExtensionBackend;
       delete testGlobal.__lettaExtensionForkResult;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("lets extensions register pi providers for local backend", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const extensionPath = path.join(extensionDir, "provider.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          letta.registerProvider("lmstudio", {
+            baseUrl: "http://localhost:8000/v1",
+            apiKey: "not-needed",
+            api: "openai-completions",
+            models: [{
+              id: "gemma-4-26B-A4B-it-oQ6",
+              name: "Gemma 4 VLM",
+              reasoning: true,
+              input: ["text", "image"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 256000,
+              maxTokens: 8192,
+            }],
+          });
+        }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+
+      expect(
+        getRegisteredPiProvider("lmstudio")?.config.models?.[0],
+      ).toMatchObject({
+        id: "gemma-4-26B-A4B-it-oQ6",
+        input: ["text", "image"],
+        contextWindow: 256000,
+        reasoning: true,
+      });
+
+      host.dispose();
+      expect(getRegisteredPiProvider("lmstudio")).toBeUndefined();
+    } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });

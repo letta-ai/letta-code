@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
   mkdir,
@@ -21,6 +21,10 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
+import {
+  clearRegisteredPiProviders,
+  registerPiProvider,
+} from "@/backend/dev/pi-provider-extension-registry";
 import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -132,6 +136,10 @@ function lettaStreamFromChunks(
 }
 
 describe("local backend pi transcript", () => {
+  afterEach(() => {
+    clearRegisteredPiProviders();
+  });
+
   test("uses wall-clock timestamps for new local conversations and messages", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-time-"));
     const before = Date.now() - 1_000;
@@ -486,6 +494,56 @@ describe("local backend pi transcript", () => {
     expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
     expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
+  });
+
+  test("lists extension-registered local provider models with context windows", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-registered-provider-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      calls.push(typeof input === "string" ? input : String(input));
+      return new Response(
+        JSON.stringify({ data: [{ id: "heuristic-only-model" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const models = await listLocalModels(storageDir, { fetch: fetchImpl });
+
+    expect(calls).toEqual([]);
+    expect(models).toContainEqual({
+      handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+      max_context_window: 256000,
+      model: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+      model_endpoint_type: "lmstudio",
+    });
+    expect(models.map((model) => model.handle)).not.toContain(
+      "lmstudio/heuristic-only-model",
+    );
   });
 
   test("discovers configured Ollama Cloud models from OpenAI-compatible catalog", async () => {

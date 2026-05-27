@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,10 @@ import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
+import {
+  clearRegisteredPiProviders,
+  registerPiProvider,
+} from "@/backend/dev/pi-provider-extension-registry";
 import {
   createOrUpdateLocalProvider,
   localOAuthAuthFromCredentials,
@@ -30,6 +34,10 @@ async function withEnv<T>(
 }
 
 describe("pi model factory", () => {
+  afterEach(() => {
+    clearRegisteredPiProviders();
+  });
+
   test("uses KIMI_API_KEY for Kimi For Coding", async () => {
     await withEnv(
       { KIMI_API_KEY: "kimi-key", MOONSHOT_API_KEY: undefined },
@@ -230,6 +238,82 @@ describe("pi model factory", () => {
     expect(resolved.provider).toBe("lmstudio");
     expect(resolved.model.provider).toBe("lmstudio");
     expect(resolved.model.baseUrl).toBe("http://127.0.0.1:1234/v1");
+  });
+
+  test("uses extension-registered provider capabilities for local OpenAI-compatible models", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+
+    const resolved = await resolvePiModelForAgent(
+      "lmstudio/gemma-4-26B-A4B-it-oQ6",
+      { provider_type: "lmstudio_openai" },
+    );
+
+    expect(resolved.provider).toBe("lmstudio");
+    expect(resolved.model).toMatchObject({
+      id: "gemma-4-26B-A4B-it-oQ6",
+      provider: "lmstudio",
+      baseUrl: "http://localhost:8000/v1",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 256000,
+      maxTokens: 8192,
+    });
+  });
+
+  test("local provider connection base URL overrides extension default", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-lmstudio-extension-url-"),
+    );
+    try {
+      registerPiProvider("lmstudio", {
+        baseUrl: "http://localhost:8000/v1",
+        apiKey: "not-needed",
+        api: "openai-completions",
+        models: [
+          {
+            id: "gemma-4-26B-A4B-it-oQ6",
+            name: "Gemma 4 VLM",
+            reasoning: true,
+            input: ["text", "image"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 256000,
+            maxTokens: 8192,
+          },
+        ],
+      });
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "lmstudio",
+        providerName: "lc-lmstudio",
+        apiKey: "not-needed",
+        baseURL: "http://127.0.0.1:1234/v1",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "lmstudio/gemma-4-26B-A4B-it-oQ6",
+        { provider_type: "lmstudio_openai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.model.baseUrl).toBe("http://127.0.0.1:1234/v1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("normalizes local OpenAI-compatible provider base URLs for runtime", async () => {

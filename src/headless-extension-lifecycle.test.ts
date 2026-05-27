@@ -43,6 +43,7 @@ describe("headless extension runtime", () => {
         lifecycle: true,
         turns: true,
       },
+      providers: true,
       ui: {
         panels: false,
         statusValues: false,
