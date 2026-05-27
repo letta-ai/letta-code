@@ -441,8 +441,8 @@ export async function resolvePiModelForAgent(
         timeout: resolveLocalProviderTimeout({ providerIds: [provider] }),
       };
   let baseURL =
-    registeredProvider?.config.baseUrl ??
     connection.baseURL ??
+    registeredProvider?.config.baseUrl ??
     spec?.baseUrlEnv?.() ??
     spec?.defaultBaseURL;
   let headers = mergeHeaders(
