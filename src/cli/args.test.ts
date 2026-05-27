@@ -150,6 +150,17 @@ describe("shared CLI arg schema", () => {
       backend: "api",
       args: ["connect", "help"],
     });
+    expect(
+      extractBackendFlag([
+        "remote",
+        "--env-name",
+        "desktop-local",
+        "--backend=local",
+      ]),
+    ).toEqual({
+      backend: "local",
+      args: ["remote", "--env-name", "desktop-local"],
+    });
     expect(() => extractBackendFlag(["--backend"])).toThrow(
       "Missing value for --backend",
     );
