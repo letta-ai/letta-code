@@ -50,6 +50,12 @@ import { debugLog } from "@/utils/debug";
 import { refreshFileIndex } from "@/utils/file-index";
 import { isRecord } from "@/utils/type-guards";
 import {
+  functionToolForm,
+  type JsonSchema,
+  type ModelFacingToolForm,
+  serializeFunctionOnlyToolPayload,
+} from "./model-facing-tool";
+import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "./secret-substitution";
@@ -137,6 +143,28 @@ async function resolveBackendSpecificToolDescription(
   return description;
 }
 
+function resolvedModelForm(
+  base: ModelFacingToolForm,
+  description: string,
+  inputSchema: JsonSchema,
+): ModelFacingToolForm {
+  if (base.type === "custom") {
+    return {
+      ...base,
+      functionFallback: {
+        ...base.functionFallback,
+        description,
+        parameters: inputSchema,
+      },
+    };
+  }
+
+  return functionToolForm({
+    description,
+    parameters: inputSchema,
+  });
+}
+
 function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
   const nextRegistry = new Map(registry);
   const existing = nextRegistry.get("MessageChannel");
@@ -169,9 +197,11 @@ function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
       description: cachedMessageChannel.description,
       input_schema: cachedMessageChannel.schema as JsonSchema,
     },
-    fn:
-      existing?.fn ??
-      (TOOL_DEFINITIONS.MessageChannel.impl as ToolDefinition["fn"]),
+    modelForm: functionToolForm({
+      description: cachedMessageChannel.description,
+      parameters: cachedMessageChannel.schema as JsonSchema,
+    }),
+    fn: existing?.fn ?? TOOL_DEFINITIONS.MessageChannel.impl,
   });
   return nextRegistry;
 }
@@ -468,12 +498,6 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   ReadManyFiles: { requiresApproval: false },
 };
 
-interface JsonSchema {
-  properties?: Record<string, JsonSchema>;
-  required?: string[];
-  [key: string]: unknown;
-}
-
 type ToolArgs = Record<string, unknown>;
 
 interface ToolSchema {
@@ -484,6 +508,7 @@ interface ToolSchema {
 
 interface ToolDefinition {
   schema: ToolSchema;
+  modelForm: ModelFacingToolForm;
   fn: (args: ToolArgs) => Promise<unknown>;
 }
 
@@ -924,11 +949,9 @@ function buildClientToolsFromSnapshot(
   externalTools: Map<string, ExternalToolDefinition>,
   extensionTools: Map<string, ExtensionToolDefinition>,
 ): ClientTool[] {
-  const builtInTools = Array.from(registry.entries()).map(([name, tool]) => ({
-    name: getServerToolName(name),
-    description: tool.schema.description,
-    parameters: tool.schema.input_schema,
-  }));
+  const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
+    serializeFunctionOnlyToolPayload(getServerToolName(name), tool.modelForm),
+  );
   for (const name of externalTools.keys()) {
     if (extensionTools.has(name)) {
       debugLog(
@@ -1264,6 +1287,7 @@ function maybeApplyLspReadOverride(registry: ToolRegistry): void {
       description: lspDefinition.description,
       input_schema: lspDefinition.schema,
     },
+    modelForm: lspDefinition.modelForm,
     fn: lspDefinition.impl,
   });
 }
@@ -1319,6 +1343,11 @@ async function buildSpecificToolRegistry(
 
     newRegistry.set(internalName, {
       schema: toolSchema,
+      modelForm: resolvedModelForm(
+        definition.modelForm,
+        resolvedTool.description,
+        resolvedTool.input_schema as JsonSchema,
+      ),
       fn: definition.impl,
     });
   }
@@ -1448,6 +1477,11 @@ async function buildRegistryForModel(
 
       newRegistry.set(name, {
         schema: toolSchema,
+        modelForm: resolvedModelForm(
+          definition.modelForm,
+          resolvedTool.description,
+          resolvedTool.input_schema as JsonSchema,
+        ),
         fn: definition.impl,
       });
     } catch (error) {
@@ -2524,6 +2558,10 @@ export async function refreshDynamicChannelToolsInLoadedRegistry(): Promise<void
       description: resolvedTool.description,
       input_schema: resolvedTool.input_schema as JsonSchema,
     },
+    modelForm: functionToolForm({
+      description: resolvedTool.description,
+      parameters: resolvedTool.input_schema as JsonSchema,
+    }),
     fn: definition.impl,
   });
 }
