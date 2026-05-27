@@ -12,6 +12,7 @@ import type { MessageCreateParams as ConversationMessageCreateParams } from "@le
 import { type Backend, getBackend } from "@/backend";
 import {
   type ClientTool,
+  getClientToolsForExecutionContext,
   type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareCurrentToolExecutionContext,
@@ -192,7 +193,14 @@ export async function sendMessageStreamWithBackend(
           permissionModeState: opts.permissionModeState,
         });
       })();
-  const { clientTools, contextId } = preparedToolContext;
+  const { contextId } = preparedToolContext;
+  const clientTools =
+    getClientToolsForExecutionContext(
+      contextId,
+      backend.capabilities.modelFacingCustomTools
+        ? "custom-capable"
+        : "function-only",
+    ) ?? preparedToolContext.clientTools;
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({
       agentId: opts.agentId,

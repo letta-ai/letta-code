@@ -175,6 +175,7 @@ describe("APIBackend", () => {
       byokProviderRefresh: true,
       localModelCatalog: false,
       localMemfs: false,
+      modelFacingCustomTools: false,
     });
     const agentUpdateBody = { system: "system" } as AgentUpdateBody;
     const agentCreateBody = { name: "new agent" } as AgentCreateBody;

@@ -236,6 +236,7 @@ export class LocalBackend extends HeadlessBackend {
     byokProviderRefresh: false,
     localModelCatalog: true,
     localMemfs: true,
+    modelFacingCustomTools: true,
   };
 
   private readonly memoryDir?: string;

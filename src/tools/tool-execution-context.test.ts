@@ -41,6 +41,7 @@ import {
   clearExternalTools,
   clearTools,
   executeTool,
+  getClientToolsForExecutionContext,
   getExecutionContextById,
   getToolNames,
   getToolSchema,
@@ -260,6 +261,44 @@ describe("tool execution context snapshot", () => {
 
     expect(prepared.loadedToolNames).toEqual(["Task"]);
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Agent"]);
+  });
+
+  test("serializes apply_patch as custom-capable without changing function-only payloads", async () => {
+    const prepared = await prepareToolExecutionContextForSpecificTools([
+      "apply_patch",
+    ]);
+
+    expect(prepared.clientTools).toEqual([
+      expect.objectContaining({
+        name: "apply_patch",
+        description: expect.stringContaining("Use the `apply_patch` tool"),
+        parameters: expect.objectContaining({
+          properties: expect.objectContaining({ input: expect.any(Object) }),
+        }),
+      }),
+    ]);
+    expect(prepared.clientTools[0]).not.toHaveProperty("type", "custom");
+
+    expect(
+      getClientToolsForExecutionContext(prepared.contextId, "custom-capable"),
+    ).toEqual([
+      expect.objectContaining({
+        type: "custom",
+        name: "apply_patch",
+        description: expect.stringContaining("FREEFORM"),
+        format: expect.objectContaining({
+          type: "grammar",
+          syntax: "lark",
+          definition: expect.stringContaining("start: begin_patch"),
+        }),
+        fallback: expect.objectContaining({
+          description: expect.stringContaining("Use the `apply_patch` tool"),
+          parameters: expect.objectContaining({
+            properties: expect.objectContaining({ input: expect.any(Object) }),
+          }),
+        }),
+      }),
+    ]);
   });
 
   test("request-scoped allowlist filters external tools by name", async () => {

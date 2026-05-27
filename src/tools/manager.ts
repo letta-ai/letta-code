@@ -50,9 +50,11 @@ import { debugLog } from "@/utils/debug";
 import { refreshFileIndex } from "@/utils/file-index";
 import { isRecord } from "@/utils/type-guards";
 import {
+  type CustomCapableToolPayload,
   functionToolForm,
   type JsonSchema,
   type ModelFacingToolForm,
+  serializeCustomCapableToolPayload,
   serializeFunctionOnlyToolPayload,
 } from "./model-facing-tool";
 import {
@@ -778,15 +780,10 @@ function resolveInternalToolName(
   return undefined;
 }
 
-/**
- * ClientTool interface matching the Letta SDK's expected format.
- * Used when passing client-side tools via the client_tools field.
- */
-export interface ClientTool {
-  name: string;
-  description?: string | null;
-  parameters?: { [key: string]: unknown } | null;
-}
+/** Model-facing client tool payload sent through the client_tools field. */
+export type ClientTool = CustomCapableToolPayload;
+
+export type ClientToolSerializationTarget = "function-only" | "custom-capable";
 
 // ═══════════════════════════════════════════════════════════════
 // EXTERNAL TOOLS (SDK-side execution)
@@ -948,10 +945,14 @@ function buildClientToolsFromSnapshot(
   registry: ToolRegistry,
   externalTools: Map<string, ExternalToolDefinition>,
   extensionTools: Map<string, ExtensionToolDefinition>,
+  target: ClientToolSerializationTarget = "function-only",
 ): ClientTool[] {
-  const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
-    serializeFunctionOnlyToolPayload(getServerToolName(name), tool.modelForm),
-  );
+  const builtInTools = Array.from(registry.entries()).map(([name, tool]) => {
+    const serverName = getServerToolName(name);
+    return target === "custom-capable"
+      ? serializeCustomCapableToolPayload(serverName, tool.modelForm)
+      : serializeFunctionOnlyToolPayload(serverName, tool.modelForm);
+  });
   for (const name of externalTools.keys()) {
     if (extensionTools.has(name)) {
       debugLog(
@@ -977,6 +978,20 @@ function buildClientToolsFromSnapshot(
   );
 
   return [...builtInTools, ...externalClientTools, ...extensionClientTools];
+}
+
+export function getClientToolsForExecutionContext(
+  contextId: string,
+  target: ClientToolSerializationTarget = "function-only",
+): ClientTool[] | undefined {
+  const context = getExecutionContextById(contextId);
+  if (!context) return undefined;
+  return buildClientToolsFromSnapshot(
+    context.toolRegistry,
+    context.externalTools,
+    context.extensionTools,
+    target,
+  );
 }
 
 function getEffectivePermissionModeState(

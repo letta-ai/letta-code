@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessageEvent,
+  ToolCall,
+  Usage,
+} from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LocalMessage } from "@/backend/local/local-message";
@@ -98,6 +102,27 @@ export function buildProviderTurnInput(
 function stringifyToolInput(input: unknown): string {
   if (typeof input === "string") return input;
   return JSON.stringify(input ?? {});
+}
+
+type CustomCapableToolCall = ToolCall & {
+  input?: string;
+  customInput?: string;
+  kind?: "custom";
+};
+
+function customToolCallInput(toolCall: ToolCall): string | undefined {
+  const customToolCall = toolCall as CustomCapableToolCall;
+  return customToolCall.input ?? customToolCall.customInput;
+}
+
+function toolCallExecutionArguments(
+  toolCall: ToolCall,
+): Record<string, unknown> {
+  const input = customToolCallInput(toolCall);
+  if (input !== undefined) {
+    return { input };
+  }
+  return toolCall.arguments;
 }
 
 function createLocalMessageChunk(
@@ -295,12 +320,18 @@ function createProviderLettaStream(
 
           if (part.type === "toolcall_end") {
             sawToolCall = true;
+            const customInput = customToolCallInput(part.toolCall);
             yield {
               message_type: "approval_request_message",
               tool_call: {
                 tool_call_id: part.toolCall.id,
                 name: part.toolCall.name,
-                arguments: stringifyToolInput(part.toolCall.arguments),
+                arguments: stringifyToolInput(
+                  toolCallExecutionArguments(part.toolCall),
+                ),
+                ...(customInput !== undefined
+                  ? { type: "custom", input: customInput }
+                  : {}),
               },
             } as LettaStreamingResponse;
             continue;

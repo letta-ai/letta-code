@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  customToolForm,
   functionToolForm,
   type ModelFacingToolForm,
+  serializeCustomCapableToolPayload,
   serializeFunctionOnlyToolPayload,
 } from "@/tools/model-facing-tool";
 
@@ -48,8 +50,7 @@ describe("model-facing tool serialization", () => {
   });
 
   test("keeps OpenAI custom-tool metadata separate from the function fallback", () => {
-    const form: ModelFacingToolForm = {
-      type: "custom",
+    const form: ModelFacingToolForm = customToolForm({
       description: "Custom freeform description",
       format: {
         type: "grammar",
@@ -61,7 +62,7 @@ describe("model-facing tool serialization", () => {
         description: "Fallback function description",
         parameters: fallbackParameters,
       },
-    };
+    });
 
     expect(form).toMatchObject({
       type: "custom",
@@ -76,6 +77,37 @@ describe("model-facing tool serialization", () => {
       name: "ExampleTool",
       description: "Fallback function description",
       parameters: fallbackParameters,
+    });
+  });
+
+  test("serializes custom-capable payloads with custom metadata and fallback", () => {
+    const form: ModelFacingToolForm = customToolForm({
+      description: "Custom freeform description",
+      format: {
+        type: "grammar",
+        syntax: "lark",
+        definition: "start: /.+/",
+      },
+      functionFallback: {
+        type: "function",
+        description: "Fallback function description",
+        parameters: fallbackParameters,
+      },
+    });
+
+    expect(serializeCustomCapableToolPayload("ExampleTool", form)).toEqual({
+      type: "custom",
+      name: "ExampleTool",
+      description: "Custom freeform description",
+      format: {
+        type: "grammar",
+        syntax: "lark",
+        definition: "start: /.+/",
+      },
+      fallback: {
+        description: "Fallback function description",
+        parameters: fallbackParameters,
+      },
     });
   });
 });

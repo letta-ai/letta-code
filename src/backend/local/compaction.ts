@@ -216,8 +216,21 @@ function textFromAssistantContent(
   return textContent || undefined;
 }
 
-function localToolCallArguments(input: unknown): string {
-  return typeof input === "string" ? input : stringifyUnknown(input ?? {});
+function localToolCallArguments(toolCall: {
+  arguments?: unknown;
+  input?: unknown;
+  customInput?: unknown;
+}): string {
+  const customInput =
+    typeof toolCall.input === "string"
+      ? toolCall.input
+      : typeof toolCall.customInput === "string"
+        ? toolCall.customInput
+        : undefined;
+  if (customInput !== undefined) return customInput;
+  return typeof toolCall.arguments === "string"
+    ? toolCall.arguments
+    : stringifyUnknown(toolCall.arguments ?? {});
 }
 
 function toolReturnToText(
@@ -267,7 +280,7 @@ function localMessagesToSummaryOpenAIDicts(
                 tool_calls: toolCalls.map((toolCall) => ({
                   function: {
                     name: toolCall.name,
-                    arguments: localToolCallArguments(toolCall.arguments),
+                    arguments: localToolCallArguments(toolCall),
                   },
                 })),
               }
