@@ -10,8 +10,12 @@ import type {
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import {
+  APPLY_PATCH_FREEFORM_DESCRIPTION,
+  APPLY_PATCH_LARK_GRAMMAR,
   PiStreamAdapter,
   type PiStreamFunction,
+  stripOpenAIResponsesReplayItemIds,
+  toPiTools,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
   ProviderStreamEvent,
@@ -88,6 +92,69 @@ function emptyTextBlocks(messages: Context["messages"]) {
 }
 
 describe("PiStreamAdapter", () => {
+  test("projects apply_patch as a pi custom tool with a function fallback", () => {
+    const tools = toPiTools([
+      {
+        name: "apply_patch",
+        description: "JSON schema fallback description",
+        parameters: {
+          type: "object",
+          properties: { input: { type: "string" } },
+          required: ["input"],
+          additionalProperties: false,
+        },
+      },
+    ]);
+
+    expect(tools).toEqual([
+      {
+        type: "custom",
+        name: "apply_patch",
+        description: APPLY_PATCH_FREEFORM_DESCRIPTION,
+        format: {
+          type: "grammar",
+          syntax: "lark",
+          definition: APPLY_PATCH_LARK_GRAMMAR,
+        },
+        fallback: {
+          parameters: {
+            type: "object",
+            properties: { input: { type: "string" } },
+            required: ["input"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ]);
+  });
+
+  test("projects PascalCase ApplyPatch as a pi custom tool without changing execution name", () => {
+    const tools = toPiTools([
+      {
+        name: "ApplyPatch",
+        description: "JSON schema fallback description",
+        parameters: {
+          type: "object",
+          properties: { input: { type: "string" } },
+          required: ["input"],
+        },
+      },
+    ]);
+
+    expect(tools?.[0]).toMatchObject({
+      type: "custom",
+      name: "ApplyPatch",
+      description: APPLY_PATCH_FREEFORM_DESCRIPTION,
+      fallback: {
+        parameters: {
+          type: "object",
+          properties: { input: { type: "string" } },
+          required: ["input"],
+        },
+      },
+    });
+  });
+
   test("removes OpenAI Responses replay item IDs before provider submission", async () => {
     let sanitizedPayload: unknown;
     const stream: PiStreamFunction = (
@@ -116,6 +183,13 @@ describe("PiStreamAdapter", () => {
             call_id: "call_1",
             name: "Read",
             arguments: "{}",
+          },
+          {
+            type: "custom_tool_call",
+            id: "ctc_0052fa548fed1375016a0e8d5da1cc819bbbf26f40ef48320c",
+            call_id: "call_2",
+            name: "apply_patch",
+            input: "*** Begin Patch\n*** End Patch",
           },
           {
             role: "user",
@@ -162,12 +236,43 @@ describe("PiStreamAdapter", () => {
         { type: "reasoning", encrypted_content: "opaque" },
         { type: "message", role: "assistant", status: "completed" },
         { type: "function_call", call_id: "call_1", name: "Read" },
+        {
+          type: "custom_tool_call",
+          call_id: "call_2",
+          name: "apply_patch",
+        },
         { role: "user" },
       ],
     });
     expect(JSON.stringify(sanitizedPayload)).not.toContain("rs_0052");
     expect(JSON.stringify(sanitizedPayload)).not.toContain("msg_0052");
     expect(JSON.stringify(sanitizedPayload)).not.toContain("fc_0052");
+    expect(JSON.stringify(sanitizedPayload)).not.toContain("ctc_0052");
+  });
+
+  test("OpenAI Responses replay id sanitizer removes custom tool call ids", () => {
+    const sanitized = stripOpenAIResponsesReplayItemIds({
+      input: [
+        {
+          type: "custom_tool_call",
+          id: "ctc_patch",
+          call_id: "call_patch",
+          name: "apply_patch",
+          input: "*** Begin Patch\n*** End Patch",
+        },
+      ],
+    });
+
+    expect(sanitized).toEqual({
+      input: [
+        {
+          type: "custom_tool_call",
+          call_id: "call_patch",
+          name: "apply_patch",
+          input: "*** Begin Patch\n*** End Patch",
+        },
+      ],
+    });
   });
 
   test("drops empty text blocks before OpenRouter Anthropic requests", async () => {
