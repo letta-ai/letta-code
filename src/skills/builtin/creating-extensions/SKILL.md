@@ -34,7 +34,7 @@ Default to a **tool** when the model should decide when to use the capability. D
 3. Choose one capability recipe:
    - tools: `references/tools.md`
    - commands: `references/commands.md`
-   - lifecycle events: `references/events.md`
+   - events: `references/events.md`
    - panels/status/capabilities: `references/ui.md`
 4. Write a single-file extension unless the user asks for something larger.
 5. Return disposers for registered commands/tools, timers, subscriptions, and panels that should close on reload.
@@ -88,6 +88,6 @@ letta.capabilities.ui.customStatuslineRenderer
 
 - `references/tools.md` - extension tools the model can call
 - `references/commands.md` - slash commands, command results, and skill-backed commands
-- `references/events.md` - lifecycle event handlers
+- `references/events.md` - lifecycle and turn event handlers
 - `references/ui.md` - panels, status values, capability guards
 - `references/btw-command.md` - advanced busy-safe side-question command using backend primitives
