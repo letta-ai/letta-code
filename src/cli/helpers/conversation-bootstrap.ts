@@ -9,9 +9,14 @@ import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 
 const BOOTSTRAP_RECENT_LIMIT = 5;
 const BOOTSTRAP_RELEVANT_LIMIT = 5;
+const BOOTSTRAP_RECENT_FETCH_LIMIT =
+  BOOTSTRAP_RECENT_LIMIT + BOOTSTRAP_RELEVANT_LIMIT;
 const BOOTSTRAP_RELEVANT_FETCH_LIMIT = 12;
-const BOOTSTRAP_RELEVANT_MIN_RRF_SCORE = 0.01;
-const BOOTSTRAP_RELEVANT_MIN_RELATIVE_SCORE = 0.5;
+// The remote hybrid search uses RRF with k=60, so a rank-1 result from only
+// one retrieval channel scores ~0.016. Require a stronger score so weak
+// vector-only nearest neighbors do not get injected as bootstrap context.
+const BOOTSTRAP_RELEVANT_MIN_RRF_SCORE = 0.025;
+const BOOTSTRAP_RELEVANT_MIN_RELATIVE_SCORE = 0.75;
 
 function pageItems<T>(page: unknown): T[] {
   if (Array.isArray(page)) return page as T[];
@@ -101,7 +106,7 @@ function formatBootstrapReminder(params: {
   return lines.join("\n");
 }
 
-function filterBootstrapRelevantConversations(
+export function filterBootstrapRelevantConversations(
   results: ConversationSearchResult[],
   params: {
     excludeConversationId?: string;
@@ -142,6 +147,20 @@ function filterBootstrapRelevantConversations(
     .slice(0, BOOTSTRAP_RELEVANT_LIMIT);
 }
 
+export function selectBootstrapRecentConversations(
+  conversations: Conversation[],
+  params: {
+    excludeConversationId?: string;
+    relevantConversationIds: Set<string>;
+  },
+): Conversation[] {
+  const { excludeConversationId, relevantConversationIds } = params;
+  return conversations
+    .filter((conversation) => conversation.id !== excludeConversationId)
+    .filter((conversation) => !relevantConversationIds.has(conversation.id))
+    .slice(0, BOOTSTRAP_RECENT_LIMIT);
+}
+
 export async function buildConversationBootstrapReminder(params: {
   agentId: string;
   content: MessageCreate["content"];
@@ -154,7 +173,7 @@ export async function buildConversationBootstrapReminder(params: {
   const [recentResult, relevantResult] = await Promise.allSettled([
     backend.listConversations({
       agent_id: agentId,
-      limit: BOOTSTRAP_RECENT_LIMIT,
+      limit: BOOTSTRAP_RECENT_FETCH_LIMIT,
       order: "desc",
       order_by: "last_message_at",
     } as never),
@@ -174,9 +193,7 @@ export async function buildConversationBootstrapReminder(params: {
 
   const recentConversations =
     recentResult.status === "fulfilled"
-      ? pageItems<Conversation>(recentResult.value).filter(
-          (conversation) => conversation.id !== excludeConversationId,
-        )
+      ? pageItems<Conversation>(recentResult.value)
       : [];
   const relevantConversations =
     relevantResult.status === "fulfilled"
@@ -187,8 +204,12 @@ export async function buildConversationBootstrapReminder(params: {
   const relevantConversationIds = new Set(
     relevantConversations.map((result) => result.conversation.id),
   );
-  const nonDuplicatedRecentConversations = recentConversations.filter(
-    (conversation) => !relevantConversationIds.has(conversation.id),
+  const nonDuplicatedRecentConversations = selectBootstrapRecentConversations(
+    recentConversations,
+    {
+      excludeConversationId,
+      relevantConversationIds,
+    },
   );
 
   if (
