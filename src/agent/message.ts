@@ -207,6 +207,15 @@ export async function sendMessageStreamWithBackend(
     clientTools,
     clientSkills,
   );
+  // API-backed conversations accept only function-shaped client tools. Local
+  // provider execution goes through pi-ai, which can carry native custom tools
+  // with function-schema fallbacks in the same `client_tools` slot.
+  const backendRequestBody = backend.capabilities.localModelCatalog
+    ? ({
+        ...requestBody,
+        client_tools: preparedToolContext.piTools,
+      } as typeof requestBody)
+    : requestBody;
 
   if (isDebugEnabled()) {
     debugLog(
@@ -284,7 +293,7 @@ export async function sendMessageStreamWithBackend(
   try {
     stream = await backend.createConversationMessageStream(
       resolvedConversationId,
-      requestBody,
+      backendRequestBody,
       {
         ...requestOptions,
         ...(abortRelay ? { signal: abortRelay.signal } : {}),

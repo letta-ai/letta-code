@@ -54,6 +54,11 @@ import { debugLog } from "@/utils/debug";
 import { refreshFileIndex } from "@/utils/file-index";
 import { isRecord } from "@/utils/type-guards";
 import {
+  buildPiToolDefinition,
+  type PiCustomToolSpec,
+  type PiToolDefinition,
+} from "./pi-tool-definitions";
+import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
 } from "./secret-substitution";
@@ -176,6 +181,7 @@ function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
     fn:
       existing?.fn ??
       (TOOL_DEFINITIONS.MessageChannel.impl as ToolDefinition["fn"]),
+    piCustomTool: existing?.piCustomTool,
   });
   return nextRegistry;
 }
@@ -489,6 +495,7 @@ interface ToolSchema {
 interface ToolDefinition {
   schema: ToolSchema;
   fn: (args: ToolArgs) => Promise<unknown>;
+  piCustomTool?: PiCustomToolSpec;
 }
 
 import type {
@@ -567,6 +574,7 @@ type ToolExecutionContextSnapshot = {
 export type CapturedToolExecutionContext = {
   contextId: string;
   clientTools: ClientTool[];
+  piTools: PiToolDefinition[];
 };
 
 export type PreparedToolExecutionContext = CapturedToolExecutionContext & {
@@ -916,23 +924,22 @@ export async function executeExternalTool(
  * Includes built-in, external, and extension tools.
  */
 export function getClientToolsFromRegistry(): ClientTool[] {
+  const extensionTools = getAvailableExtensionToolsRegistry();
+  const externalTools = getVisibleExternalTools(
+    getExternalToolsRegistry(),
+    extensionTools,
+  );
   return buildClientToolsFromSnapshot(
     withDynamicMessageChannelCache(toolRegistry),
-    getExternalToolsRegistry(),
-    getAvailableExtensionToolsRegistry(),
+    externalTools,
+    extensionTools,
   );
 }
 
-function buildClientToolsFromSnapshot(
-  registry: ToolRegistry,
+function getVisibleExternalTools(
   externalTools: Map<string, ExternalToolDefinition>,
   extensionTools: Map<string, ExtensionToolDefinition>,
-): ClientTool[] {
-  const builtInTools = Array.from(registry.entries()).map(([name, tool]) => ({
-    name: getServerToolName(name),
-    description: tool.schema.description,
-    parameters: tool.schema.input_schema,
-  }));
+): ExternalToolDefinition[] {
   for (const name of externalTools.keys()) {
     if (extensionTools.has(name)) {
       debugLog(
@@ -942,13 +949,27 @@ function buildClientToolsFromSnapshot(
       );
     }
   }
-  const externalClientTools = Array.from(externalTools.values())
-    .filter((tool) => !extensionTools.has(tool.name))
-    .map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    }));
+
+  return Array.from(externalTools.values()).filter(
+    (tool) => !extensionTools.has(tool.name),
+  );
+}
+
+function buildClientToolsFromSnapshot(
+  registry: ToolRegistry,
+  externalTools: ExternalToolDefinition[],
+  extensionTools: Map<string, ExtensionToolDefinition>,
+): ClientTool[] {
+  const builtInTools = Array.from(registry.entries()).map(([name, tool]) => ({
+    name: getServerToolName(name),
+    description: tool.schema.description,
+    parameters: tool.schema.input_schema,
+  }));
+  const externalClientTools = externalTools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+  }));
   const extensionClientTools = Array.from(extensionTools.values()).map(
     (tool) => ({
       name: tool.name,
@@ -958,6 +979,60 @@ function buildClientToolsFromSnapshot(
   );
 
   return [...builtInTools, ...externalClientTools, ...extensionClientTools];
+}
+
+function buildPiToolsFromSnapshot(
+  registry: ToolRegistry,
+  externalTools: ExternalToolDefinition[],
+  extensionTools: Map<string, ExtensionToolDefinition>,
+): PiToolDefinition[] {
+  const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
+    buildPiToolDefinition({
+      name: getServerToolName(name),
+      description: tool.schema.description,
+      parameters: tool.schema.input_schema,
+      piCustomTool: tool.piCustomTool,
+    }),
+  );
+  const externalToolsForPi = externalTools.map((tool) =>
+    buildPiToolDefinition({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }),
+  );
+  const extensionToolsForPi = Array.from(extensionTools.values()).map((tool) =>
+    buildPiToolDefinition({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }),
+  );
+
+  return [...builtInTools, ...externalToolsForPi, ...extensionToolsForPi];
+}
+
+function buildToolPayloadsFromSnapshot(
+  registry: ToolRegistry,
+  externalTools: Map<string, ExternalToolDefinition>,
+  extensionTools: Map<string, ExtensionToolDefinition>,
+): Pick<CapturedToolExecutionContext, "clientTools" | "piTools"> {
+  const visibleExternalTools = getVisibleExternalTools(
+    externalTools,
+    extensionTools,
+  );
+  return {
+    clientTools: buildClientToolsFromSnapshot(
+      registry,
+      visibleExternalTools,
+      extensionTools,
+    ),
+    piTools: buildPiToolsFromSnapshot(
+      registry,
+      visibleExternalTools,
+      extensionTools,
+    ),
+  };
 }
 
 function getEffectivePermissionModeState(
@@ -1020,14 +1095,15 @@ function capturePreparedToolExecutionContext(
   };
   const contextId = saveExecutionContext(executionSnapshot);
   executionSnapshot.runtimeContext.toolContextId = contextId;
+  const toolPayloads = buildToolPayloadsFromSnapshot(
+    executionSnapshot.toolRegistry,
+    executionSnapshot.externalTools,
+    executionSnapshot.extensionTools,
+  );
 
   return {
     contextId,
-    clientTools: buildClientToolsFromSnapshot(
-      executionSnapshot.toolRegistry,
-      executionSnapshot.externalTools,
-      executionSnapshot.extensionTools,
-    ),
+    ...toolPayloads,
     loadedToolNames: Array.from(executionSnapshot.toolRegistry.keys()),
   };
 }
@@ -1324,6 +1400,7 @@ async function buildSpecificToolRegistry(
     newRegistry.set(internalName, {
       schema: toolSchema,
       fn: definition.impl,
+      piCustomTool: definition.piCustomTool,
     });
   }
 
@@ -1453,6 +1530,7 @@ async function buildRegistryForModel(
       newRegistry.set(name, {
         schema: toolSchema,
         fn: definition.impl,
+        piCustomTool: definition.piCustomTool,
       });
     } catch (error) {
       const message =

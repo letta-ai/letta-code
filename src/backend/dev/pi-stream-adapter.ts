@@ -17,7 +17,6 @@ import {
   type LocalAssistantMessage,
   type LocalMessage,
 } from "@/backend/local/local-message";
-import { toPiTools } from "@/tools/pi-tool-projection";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
@@ -431,7 +430,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   private async *streamOnce(
     input: ProviderTurnInput,
   ): AsyncIterable<ProviderStreamEvent> {
-    const tools = toPiTools(input.clientTools);
     const resolved = await resolvePiModelForAgent(
       input.agent.model,
       input.agent.model_settings,
@@ -440,7 +438,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     const context: Context = {
       systemPrompt: input.systemPrompt ?? input.agent.system,
       messages: toPiMessages(input.uiMessages),
-      ...(tools ? { tools: tools as Context["tools"] } : {}),
+      ...(input.clientTools.length > 0
+        ? { tools: input.clientTools as Context["tools"] }
+        : {}),
     };
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
