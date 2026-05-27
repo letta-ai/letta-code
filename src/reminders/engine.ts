@@ -460,5 +460,16 @@ export function prependReminderPartsToContent(
     return [...reminderParts, ...content] as MessageCreate["content"];
   }
 
-  return content;
+  if (content === null || content === undefined) {
+    return reminderParts as MessageCreate["content"];
+  }
+
+  let text: string;
+  try {
+    text = JSON.stringify(content) ?? String(content);
+  } catch {
+    text = String(content);
+  }
+
+  return [...reminderParts, { type: "text", text }] as MessageCreate["content"];
 }

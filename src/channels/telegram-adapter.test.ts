@@ -30,6 +30,7 @@ class FakeInputFile {
 
 class FakeBot {
   static instances: FakeBot[] = [];
+  static nextInitImpl: () => Promise<void> = async () => {};
   static nextStartImpl: (
     options?: FakeBotStartOptions,
     botInfo?: { username?: string; id: number },
@@ -84,7 +85,9 @@ class FakeBot {
     return this;
   }
 
-  async init(): Promise<void> {}
+  async init(): Promise<void> {
+    return FakeBot.nextInitImpl();
+  }
 
   start(options?: FakeBotStartOptions): Promise<void> {
     return FakeBot.nextStartImpl(options, this.botInfo);
@@ -119,7 +122,15 @@ mock.module("./telegram/runtime", () => ({
   }),
 }));
 
-const { createTelegramAdapter } = await import("@/channels/telegram/adapter");
+const { __testOverrideSubmitChannelLifecycleErrorReport } = await import(
+  "@/channels/lifecycle-error-report"
+);
+const { createTelegramAdapter, detectTelegramBotMention } = await import(
+  "@/channels/telegram/adapter"
+);
+const { MAX_TELEGRAM_DOWNLOAD_BYTES } = await import(
+  "@/channels/telegram/media"
+);
 
 const telegramAccountDefaults = {
   accountId: "telegram-test-account",
@@ -133,14 +144,18 @@ const telegramAccountDefaults = {
 } as const;
 
 const consoleErrorSpy = mock(() => {});
+const consoleWarnSpy = mock(() => {});
 const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
 const originalFetch = globalThis.fetch;
 const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+const originalTelegramDebounce = process.env.LETTA_TELEGRAM_INBOUND_DEBOUNCE_MS;
 
 beforeEach(() => {
   channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
   __testOverrideChannelsRoot(channelRoot);
   FakeBot.instances.length = 0;
+  FakeBot.nextInitImpl = async () => {};
   FakeBot.nextStartImpl = async (options, botInfo) => {
     await options?.onStart?.(
       botInfo ?? {
@@ -153,19 +168,29 @@ beforeEach(() => {
     file_path: `photos/${fileId}.jpg`,
   });
   consoleErrorSpy.mockClear();
+  consoleWarnSpy.mockClear();
   console.error = consoleErrorSpy as typeof console.error;
+  console.warn = consoleWarnSpy as typeof console.warn;
   globalThis.fetch = originalFetch;
+  __testOverrideSubmitChannelLifecycleErrorReport(null);
   delete process.env.OPENAI_API_KEY;
 });
 
 afterEach(() => {
   __testOverrideChannelsRoot(null);
   console.error = originalConsoleError;
+  console.warn = originalConsoleWarn;
   globalThis.fetch = originalFetch;
+  __testOverrideSubmitChannelLifecycleErrorReport(null);
   if (originalOpenAiApiKey === undefined) {
     delete process.env.OPENAI_API_KEY;
   } else {
     process.env.OPENAI_API_KEY = originalOpenAiApiKey;
+  }
+  if (originalTelegramDebounce === undefined) {
+    delete process.env.LETTA_TELEGRAM_INBOUND_DEBOUNCE_MS;
+  } else {
+    process.env.LETTA_TELEGRAM_INBOUND_DEBOUNCE_MS = originalTelegramDebounce;
   }
   rmSync(channelRoot, { recursive: true, force: true });
 });
@@ -293,6 +318,58 @@ test("telegram adapter logs and clears running state when polling exits unexpect
   );
 });
 
+test("telegram adapter rejects startup when polling never becomes live", async () => {
+  const originalStartTimeout = process.env.LETTA_TELEGRAM_START_TIMEOUT_MS;
+  process.env.LETTA_TELEGRAM_START_TIMEOUT_MS = "20";
+  FakeBot.nextStartImpl = async () => {
+    await new Promise(() => undefined);
+  };
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  try {
+    await expect(adapter.start()).rejects.toThrow(
+      "Telegram bot polling start timed out after 20ms",
+    );
+    expect(adapter.isRunning()).toBe(false);
+  } finally {
+    if (originalStartTimeout === undefined) {
+      delete process.env.LETTA_TELEGRAM_START_TIMEOUT_MS;
+    } else {
+      process.env.LETTA_TELEGRAM_START_TIMEOUT_MS = originalStartTimeout;
+    }
+  }
+});
+
+test("telegram adapter emits startup logger milestones", async () => {
+  const logs: string[] = [];
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start({ logger: (message) => logs.push(message) });
+
+  expect(logs).toContain(
+    "[Telegram] start requested for account telegram-test-account",
+  );
+  expect(logs).toContain("[Telegram] loading grammY runtime");
+  expect(logs).toContain(
+    "[Telegram] polling ready for account telegram-test-account",
+  );
+});
+
 test("telegram adapter forwards parse mode and reply parameters", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
@@ -320,6 +397,37 @@ test("telegram adapter forwards parse mode and reply parameters", async () => {
   });
 });
 
+test("telegram adapter sends messages into forum topics", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "telegram",
+    chatId: "-100123",
+    text: "<b>hello topic</b>",
+    threadId: "42",
+    parseMode: "HTML",
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot).toBeDefined();
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
+    "-100123",
+    "<b>hello topic</b>",
+    {
+      message_thread_id: 42,
+      parse_mode: "HTML",
+    },
+  );
+});
+
 test("telegram adapter uploads outbound media with a caption", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
@@ -337,6 +445,7 @@ test("telegram adapter uploads outbound media with a caption", async () => {
     text: "<b>see image</b>",
     parseMode: "HTML",
     replyToMessageId: "456",
+    threadId: "42",
     mediaPath: "/tmp/screenshot.png",
     fileName: "screenshot.png",
     title: "Screenshot",
@@ -348,6 +457,7 @@ test("telegram adapter uploads outbound media with a caption", async () => {
     expect.any(FakeInputFile),
     {
       caption: "<b>see image</b>",
+      message_thread_id: 42,
       parse_mode: "HTML",
       reply_parameters: { message_id: 456 },
       title: "Screenshot",
@@ -413,12 +523,284 @@ test("telegram adapter forwards plain text messages through onMessage", async ()
     senderId: "456",
     senderName: "alice",
     text: "Hello from Telegram",
+    isMention: false,
     timestamp: 1_736_380_800_000,
     messageId: "77",
     chatType: "direct",
     attachments: undefined,
     raw: expect.objectContaining({ message_id: 77 }),
   });
+});
+
+test("telegram adapter preserves group topic metadata on inbound messages", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
+      message_thread_id: 42,
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "Hello from topic",
+      date: 1_736_380_800,
+      message_id: 77,
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith({
+    channel: "telegram",
+    accountId: "telegram-test-account",
+    chatId: "-100123",
+    senderId: "456",
+    senderName: "alice",
+    chatLabel: "Void Cafe",
+    text: "Hello from topic",
+    isMention: false,
+    timestamp: 1_736_380_800_000,
+    messageId: "77",
+    threadId: "42",
+    chatType: "channel",
+    attachments: undefined,
+    raw: expect.objectContaining({ message_id: 77 }),
+  });
+});
+
+test("telegram adapter detects bot mentions and strips a leading mention", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "@test_bot: hello from topic",
+      entities: [{ type: "mention", offset: 0, length: 9 }],
+      date: 1_736_380_800,
+      message_id: 77,
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chatId: "-100123",
+      chatType: "channel",
+      isMention: true,
+      text: "hello from topic",
+    }),
+  );
+});
+
+test("telegram adapter forwards reply context for quoted messages", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "@test_bot please respond",
+      entities: [{ type: "mention", offset: 0, length: 9 }],
+      date: 1_736_380_800,
+      message_id: 78,
+      reply_to_message: {
+        chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
+        from: { id: 789, username: "blink", first_name: "Blink" },
+        text: "Am I allowed as this user to mutate your configuration?",
+        date: 1_736_380_790,
+        message_id: 77,
+      },
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      text: "please respond",
+      isMention: true,
+      replyContext: {
+        messageId: "77",
+        senderId: "789",
+        senderName: "blink",
+        text: "Am I allowed as this user to mutate your configuration?",
+      },
+    }),
+  );
+});
+
+test("detectTelegramBotMention preserves non-leading mentions", () => {
+  expect(
+    detectTelegramBotMention(
+      {
+        chat: { id: 1, type: "supergroup" },
+        from: { id: 2 },
+        text: "hey @test_bot can you see this",
+        entities: [{ type: "mention", offset: 4, length: 9 }],
+        date: 1,
+        message_id: 1,
+      },
+      "test_bot",
+    ),
+  ).toEqual({
+    isMention: true,
+    text: "hey @test_bot can you see this",
+  });
+});
+
+test("detectTelegramBotMention accepts leading bot display name", () => {
+  expect(
+    detectTelegramBotMention(
+      {
+        chat: { id: 1, type: "supergroup" },
+        from: { id: 2 },
+        text: "Void, what am I quoting?",
+        date: 1,
+        message_id: 1,
+      },
+      "void_comind_bot",
+      "Void",
+    ),
+  ).toEqual({
+    isMention: true,
+    text: "what am I quoting?",
+  });
+});
+
+test("telegram adapter debounces group bursts by chat/topic", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    inboundDebounceMs: 20,
+  });
+
+  const received: InboundChannelMessage[] = [];
+  const onMessage = mock(async (message: InboundChannelMessage) => {
+    received.push(message);
+  });
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
+      message_thread_id: 42,
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "first",
+      date: 1_736_380_800,
+      message_id: 77,
+    },
+  });
+  await bot?.emit("message", {
+    message: {
+      chat: { id: -100123, type: "supergroup", title: "Void Cafe" },
+      message_thread_id: 42,
+      from: { id: 789, username: "bob", first_name: "Bob" },
+      text: "second",
+      date: 1_736_380_801,
+      message_id: 78,
+    },
+  });
+
+  await withTimeout(
+    new Promise<void>((resolve) => {
+      const check = () => {
+        if (received.length === 1) resolve();
+        else setTimeout(check, 5);
+      };
+      check();
+    }),
+    500,
+    "Timed out waiting for Telegram debounce flush",
+  );
+
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  expect(received[0]).toMatchObject({
+    chatId: "-100123",
+    threadId: "42",
+    chatType: "channel",
+    senderId: "789",
+    messageId: "78",
+    text: "alice: first\nbob: second",
+  });
+});
+
+test("telegram adapter does not debounce direct messages", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    inboundDebounceMs: 100,
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123, type: "private" },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "dm one",
+      date: 1_736_380_800,
+      message_id: 77,
+    },
+  });
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123, type: "private" },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "dm two",
+      date: 1_736_380_801,
+      message_id: 78,
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledTimes(2);
 });
 
 test("telegram adapter transcribes inbound voice memos when opt-in is enabled", async () => {
@@ -563,6 +945,80 @@ test("telegram adapter skips voice transcription unless opt-in is enabled", asyn
   );
 });
 
+test("telegram adapter exposes inbound voice transcription errors", async () => {
+  process.env.OPENAI_API_KEY = "sk-test";
+  const warn = console.warn;
+  console.warn = mock(() => {}) as unknown as typeof console.warn;
+
+  globalThis.fetch = mock(async (url: string | URL | Request) => {
+    const href = typeof url === "string" ? url : url.toString();
+
+    if (href.includes("/file/bottest-token/voice/voice1.ogg")) {
+      return new Response(Buffer.from("voice-bytes"), {
+        status: 200,
+        headers: { "content-type": "audio/ogg" },
+      });
+    }
+
+    if (href === "https://api.openai.com/v1/audio/transcriptions") {
+      return new Response("Rate limited", { status: 429 });
+    }
+
+    throw new Error(`Unexpected fetch URL: ${href}`);
+  }) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "voice/voice1.ogg",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    transcribeVoice: true,
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  try {
+    await adapter.start();
+
+    const bot = FakeBot.instances[0];
+    await bot?.emit("message", {
+      message: {
+        chat: { id: 123 },
+        from: { id: 456, username: "alice", first_name: "Alice" },
+        text: "",
+        date: 1_736_380_800,
+        message_id: 77,
+        voice: {
+          file_id: "voice1",
+          file_unique_id: "voice-unique-1",
+          mime_type: "audio/ogg",
+          file_size: 12,
+        },
+      },
+    });
+  } finally {
+    console.warn = warn;
+  }
+
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      attachments: [
+        expect.objectContaining({
+          transcriptionError: expect.stringContaining("429"),
+        }),
+      ],
+    }),
+  );
+});
+
 test("telegram adapter replies with lifecycle errors", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
@@ -597,7 +1053,19 @@ test("telegram adapter replies with lifecycle errors", async () => {
   expect(bot?.api.sendMessage).toHaveBeenCalledWith(
     "123",
     "Turn failed:\nChatGPT usage limit reached. Resets at 1:00 PM.",
-    { reply_parameters: { message_id: 77 } },
+    expect.objectContaining({
+      reply_parameters: { message_id: 77 },
+      reply_markup: {
+        inline_keyboard: [
+          [
+            expect.objectContaining({
+              text: "Report error",
+              callback_data: expect.stringMatching(/^lc_report:/),
+            }),
+          ],
+        ],
+      },
+    }),
   );
 });
 
@@ -635,8 +1103,163 @@ test("telegram adapter hides raw generic lifecycle errors", async () => {
   expect(bot?.api.sendMessage).toHaveBeenCalledWith(
     "123",
     "Turn failed:\nSomething went wrong while processing that message. Please try again.",
-    { reply_parameters: { message_id: 77 } },
+    expect.objectContaining({
+      reply_parameters: { message_id: 77 },
+      reply_markup: {
+        inline_keyboard: [
+          [
+            expect.objectContaining({
+              text: "Report error",
+              callback_data: expect.stringMatching(/^lc_report:/),
+            }),
+          ],
+        ],
+      },
+    }),
   );
+});
+
+test("telegram adapter prettifies conversation-busy lifecycle errors", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const rawError = [
+    JSON.stringify({
+      error: {
+        detail:
+          "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.",
+        run_id: "run-123",
+      },
+    }),
+    "View agent: \x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\ (run: run-123)",
+  ].join("\n");
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "error",
+    error: rawError,
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct",
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const bot = FakeBot.instances[0];
+  const sendMessageCall = bot?.api.sendMessage.mock.calls[0] as
+    | unknown[]
+    | undefined;
+  const message = sendMessageCall?.[1] as string | undefined;
+  expect(message).toBe(
+    "Turn still running\n" +
+      "Another request is already processing for this conversation. Please wait for it to finish, then try again.\n\n" +
+      "Run ID: run-123",
+  );
+  expect(message).not.toContain("app.letta.com");
+  expect(message).not.toContain("\x1b");
+});
+
+test("telegram lifecycle report button submits sanitized error metadata", async () => {
+  const reports: unknown[] = [];
+  __testOverrideSubmitChannelLifecycleErrorReport(async (report) => {
+    reports.push(report);
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const rawError = [
+    JSON.stringify({
+      error: {
+        detail:
+          "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.",
+        run_id: "run-456",
+      },
+    }),
+    "View agent: \x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\ (run: run-456)",
+  ].join("\n");
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "error",
+    error: rawError,
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct",
+        messageId: "77",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const bot = FakeBot.instances[0];
+  const sendMessageCall = bot?.api.sendMessage.mock.calls[0] as
+    | unknown[]
+    | undefined;
+  const options = sendMessageCall?.[2] as
+    | {
+        reply_markup?: {
+          inline_keyboard?: Array<Array<{ callback_data?: string }>>;
+        };
+      }
+    | undefined;
+  const callbackData =
+    options?.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data;
+  if (!callbackData) {
+    throw new Error("Missing lifecycle report callback data");
+  }
+
+  const answerCallbackQuery = mock(async () => {});
+  await bot?.emit("callback_query", {
+    callbackQuery: { data: callbackData },
+    answerCallbackQuery,
+  });
+
+  expect(reports).toEqual([
+    expect.objectContaining({
+      channel: "telegram",
+      accountId: "telegram-test-account",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-456",
+      errorKind: "conversation_busy",
+      errorMessage:
+        "Another request is already processing for this conversation. Please wait for it to finish, then try again.",
+    }),
+  ]);
+  expect(JSON.stringify(reports[0])).not.toContain("app.letta.com");
+  expect(answerCallbackQuery).toHaveBeenCalledWith({
+    text: "Error report sent. Thanks.",
+    show_alert: false,
+  });
 });
 
 test("telegram adapter does not send lifecycle replies for completed turns", async () => {
@@ -910,6 +1533,171 @@ test("telegram adapter preserves photo mime type when Telegram download responds
     rmSync(channelRoot, { recursive: true, force: true });
     channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
   }
+});
+
+test("telegram adapter downloads inbound wav documents as audio", async () => {
+  const wavBytes = Buffer.from("wav-bytes");
+  globalThis.fetch = mock(
+    async () =>
+      new Response(wavBytes, {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      }),
+  ) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "documents/clip",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  try {
+    await bot?.emit("message", {
+      message: {
+        chat: { id: 123 },
+        from: { id: 456, username: "alice", first_name: "Alice" },
+        date: 1_736_380_800,
+        message_id: 10,
+        document: {
+          file_id: "wav1",
+          file_name: "clip.wav",
+          file_size: wavBytes.byteLength,
+        },
+      },
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    const firstCall = onMessage.mock.calls[0] as unknown as
+      | [InboundChannelMessage]
+      | undefined;
+    expect(firstCall).toBeDefined();
+    if (!firstCall) {
+      throw new Error("Expected inbound Telegram WAV to emit a message");
+    }
+
+    const [inbound] = firstCall;
+    expect(inbound.attachments).toHaveLength(1);
+    const attachment = inbound.attachments?.[0];
+    expect(attachment).toMatchObject({
+      kind: "audio",
+      name: "clip.wav",
+      mimeType: "audio/wav",
+      sizeBytes: wavBytes.byteLength,
+    });
+    expect(attachment?.localPath).toBeDefined();
+    if (!attachment?.localPath) {
+      throw new Error("Expected inbound Telegram WAV to be saved locally");
+    }
+    expect(readFileSync(attachment.localPath)).toEqual(wavBytes);
+  } finally {
+    rmSync(channelRoot, { recursive: true, force: true });
+    channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
+  }
+});
+
+test("telegram adapter logs when oversized inbound attachments are skipped", async () => {
+  globalThis.fetch = mock(async () => {
+    throw new Error("oversized attachment should not be downloaded");
+  }) as unknown as typeof fetch;
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  const oversizedBytes = MAX_TELEGRAM_DOWNLOAD_BYTES + 1;
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123 },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "Oversized attachment",
+      date: 1_736_380_800,
+      message_id: 10,
+      document: {
+        file_id: "too-big",
+        file_name: "too-big.wav",
+        file_size: oversizedBytes,
+      },
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ attachments: undefined }),
+  );
+  expect(bot?.api.getFile).not.toHaveBeenCalled();
+  expect(consoleWarnSpy).toHaveBeenCalledWith(
+    `[Telegram] Skipping attachment too-big.wav: ${oversizedBytes} bytes exceeds Telegram download limit (${MAX_TELEGRAM_DOWNLOAD_BYTES} bytes).`,
+  );
+});
+
+test("telegram adapter logs attachment download failures", async () => {
+  globalThis.fetch = mock(async () => {
+    throw new Error("network down");
+  }) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "documents/fail.wav",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123 },
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "Download this",
+      date: 1_736_380_800,
+      message_id: 10,
+      document: {
+        file_id: "fail",
+        file_name: "fail.wav",
+        file_size: 9,
+      },
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ attachments: undefined }),
+  );
+  expect(consoleWarnSpy).toHaveBeenCalledWith(
+    "[Telegram] Attachment download failed for fail.wav: network down",
+  );
 });
 
 test("telegram adapter sends typing chat action while a turn is processing", async () => {

@@ -1,0 +1,115 @@
+# Extension tool recipes
+
+Use tools when the agent/model should call a local capability autonomously.
+
+## Defaults
+
+- Name: lowercase/underscore tool name, e.g. `branch_summary`.
+- Description: explain when the model should use it.
+- Parameters: JSON Schema object. Use `additionalProperties: false` when possible.
+- `requiresApproval: false` only for read-only, low-risk local introspection.
+- `parallelSafe: true` only for read-only tools with no shared mutation or long-lived exclusive resource.
+- Use `ctx.cwd` / `ctx.workingDirectory` as the workspace.
+- Respect `ctx.signal` for long-running work when practical.
+
+## Read-only shell tool
+
+```ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+export default function activate(letta) {
+  if (!letta.capabilities.tools) return;
+
+  return letta.tools.register({
+    name: "branch_summary",
+    description: "Summarize the current git branch, working tree status, and recent commits.",
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    requiresApproval: false,
+    parallelSafe: true,
+    async run(ctx) {
+      const [{ stdout: status }, { stdout: log }] = await Promise.all([
+        execFileAsync("git", ["status", "--short", "--branch"], { cwd: ctx.cwd }),
+        execFileAsync("git", ["log", "--oneline", "-5"], { cwd: ctx.cwd }),
+      ]);
+
+      return ["## Branch", status.trim(), "", "## Recent commits", log.trim()].join("\n");
+    },
+  });
+}
+```
+
+## Tool with arguments
+
+```ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+export default function activate(letta) {
+  if (!letta.capabilities.tools) return;
+
+  return letta.tools.register({
+    name: "repo_notes_search",
+    description: "Search local repo notes for a query and return matching snippets.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query" },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    requiresApproval: false,
+    parallelSafe: true,
+    async run(ctx) {
+      const query = String(ctx.args.query ?? "").trim();
+      if (!query) return { status: "error", content: "query is required" };
+
+      try {
+        const { stdout } = await execFileAsync(
+          "rg",
+          ["--line-number", "--max-count", "20", query, "notes"],
+          { cwd: ctx.cwd },
+        );
+        return stdout.trim() || "No matches.";
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === 1) {
+          return "No matches.";
+        }
+        throw error;
+      }
+    },
+  });
+}
+```
+
+## Mutating or risky tool
+
+Set approval required and avoid `parallelSafe` unless it is truly safe:
+
+```ts
+letta.tools.register({
+  name: "format_file",
+  description: "Format a specific file in the current workspace.",
+  parameters: {
+    type: "object",
+    properties: { path: { type: "string" } },
+    required: ["path"],
+    additionalProperties: false,
+  },
+  requiresApproval: true,
+  parallelSafe: false,
+  async run(ctx) {
+    // mutate only the requested file, with clear output
+    return "formatted";
+  },
+});
+```

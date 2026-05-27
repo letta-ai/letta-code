@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   getModelCategories,
+  toSelectorModelForHandle,
   usesBackendModelCatalog,
 } from "@/cli/components/ModelSelector";
 
@@ -80,5 +81,21 @@ describe("getModelCategories", () => {
     expect(usesBackendModelCatalog(false, true)).toBe(true);
     expect(usesBackendModelCatalog(true, false)).toBe(true);
     expect(usesBackendModelCatalog(false, false)).toBe(false);
+  });
+});
+
+describe("toSelectorModelForHandle", () => {
+  test("uses a display label without the local provider prefix", () => {
+    expect(toSelectorModelForHandle("ollama/qwen2.5:7b")).toMatchObject({
+      id: "ollama/qwen2.5:7b",
+      handle: "ollama/qwen2.5:7b",
+      label: "qwen2.5:7b",
+    });
+  });
+
+  test("keeps non-local handles unchanged", () => {
+    expect(toSelectorModelForHandle("openai/gpt-5.5")).toMatchObject({
+      label: "openai/gpt-5.5",
+    });
   });
 });

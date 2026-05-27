@@ -1,5 +1,5 @@
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
-import { getModels } from "@earendil-works/pi-ai";
+import { getEnvApiKey, getModels, getProviders } from "@earendil-works/pi-ai";
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
@@ -8,6 +8,8 @@ export const LOCAL_OPENROUTER_PROVIDER_NAME = "lc-openrouter";
 export const LOCAL_OLLAMA_PROVIDER_NAME = "lc-ollama";
 export const LOCAL_OLLAMA_CLOUD_PROVIDER_NAME = "lc-ollama-cloud";
 export const LOCAL_LMSTUDIO_PROVIDER_NAME = "lc-lmstudio";
+export const LMSTUDIO_OPENAI_PROVIDER_TYPE = "lmstudio_openai";
+export const LEGACY_LMSTUDIO_PROVIDER_TYPE = "lmstudio";
 export const LOCAL_LLAMA_CPP_PROVIDER_NAME = "lc-llama-cpp";
 export const LOCAL_ZAI_PROVIDER_NAME = "lc-zai";
 export const LOCAL_ZAI_CODING_PROVIDER_NAME = "lc-zai-coding";
@@ -17,35 +19,13 @@ export const LOCAL_KIMI_CODE_PROVIDER_NAME = "lc-kimi-code";
 export const LOCAL_GOOGLE_AI_PROVIDER_NAME = "lc-gemini";
 export const LOCAL_BEDROCK_PROVIDER_NAME = "lc-bedrock";
 
-const OLLAMA_CLOUD_MODELS = [
-  "ollama-cloud/glm-4.7",
-  "ollama-cloud/qwen3-coder:480b",
-  "ollama-cloud/gpt-oss:20b",
-  "ollama-cloud/gpt-oss:120b",
-  "ollama-cloud/kimi-k2.5",
-  "ollama-cloud/minimax-m2.1",
-  "ollama-cloud/deepseek-v3.2",
-] as const;
-
-function hasEnvValue(value: string | undefined): boolean {
-  return typeof value === "string" && value.length > 0;
-}
-
-export type PiProvider =
-  | "openai-responses"
-  | "anthropic"
-  | "openrouter"
-  | "zai"
-  | "minimax"
-  | "moonshot"
-  | "kimi-coding"
-  | "google-ai"
+export type LocalEndpointProvider =
   | "ollama"
   | "ollama-cloud"
   | "lmstudio"
-  | "llama-cpp"
-  | "bedrock"
-  | "chatgpt-oauth";
+  | "llama-cpp";
+
+export type PiProvider = KnownProvider | LocalEndpointProvider;
 
 export interface PiProviderSpec {
   id: PiProvider;
@@ -59,137 +39,177 @@ export interface PiProviderSpec {
   baseUrlEnv?: () => string | undefined;
   fallbackApiKey?: string;
   headers?: () => Record<string, string> | undefined;
-  staticModels?: readonly string[];
   localModelDiscovery?: "ollama" | "openai-compatible";
   envConfigured?: () => boolean;
   createCustomModel?: boolean;
   catalogModelHandle?: (model: Model<Api>) => string | undefined;
 }
 
+interface PiProviderOverride {
+  providerTypes?: readonly string[];
+  handlePrefixes?: readonly string[];
+  localProviderNames?: readonly string[];
+  defaultModel?: string;
+  defaultBaseURL?: string;
+  apiKeyEnv?: () => string | undefined;
+  baseUrlEnv?: () => string | undefined;
+  fallbackApiKey?: string;
+  headers?: () => Record<string, string> | undefined;
+  localModelDiscovery?: "ollama" | "openai-compatible";
+  envConfigured?: () => boolean;
+  createCustomModel?: boolean;
+  catalogModelHandle?: (model: Model<Api>) => string | undefined;
+}
+
+function hasEnvValue(value: string | undefined): boolean {
+  return typeof value === "string" && value.length > 0;
+}
+
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values.filter((value) => value.length > 0))];
+}
+
 const prefixedCatalogModelHandle = (prefix: string) => (model: Model<Api>) =>
   `${prefix}${model.id}`;
 
-export const PI_PROVIDER_SPECS = [
-  {
-    id: "openai-responses",
-    piProvider: "openai",
+const PI_PROVIDER_ALIASES: Record<string, PiProvider> = {
+  "openai-responses": "openai",
+  "google-ai": "google",
+  bedrock: "amazon-bedrock",
+  "chatgpt-oauth": "openai-codex",
+  moonshot: "moonshotai",
+  "kimi-code": "kimi-coding",
+};
+
+const PI_PROVIDER_OVERRIDES: Partial<
+  Record<KnownProvider, PiProviderOverride>
+> = {
+  openai: {
     providerTypes: ["openai", "openai-responses"],
     handlePrefixes: ["openai/", "openai-responses/"],
-    localProviderNames: [LOCAL_OPENAI_PROVIDER_NAME],
+    localProviderNames: ["openai", LOCAL_OPENAI_PROVIDER_NAME],
     defaultModel: "openai/gpt-5.5",
-    apiKeyEnv: () => process.env.OPENAI_API_KEY,
-    envConfigured: () => hasEnvValue(process.env.OPENAI_API_KEY),
-    catalogModelHandle: prefixedCatalogModelHandle("openai/"),
   },
-  {
-    id: "anthropic",
-    piProvider: "anthropic",
-    providerTypes: ["anthropic"],
-    handlePrefixes: ["anthropic/"],
-    localProviderNames: [LOCAL_ANTHROPIC_PROVIDER_NAME],
+  anthropic: {
+    localProviderNames: ["anthropic", LOCAL_ANTHROPIC_PROVIDER_NAME],
     defaultModel: "anthropic/claude-sonnet-4-6",
-    apiKeyEnv: () => process.env.ANTHROPIC_API_KEY,
-    envConfigured: () => hasEnvValue(process.env.ANTHROPIC_API_KEY),
-    catalogModelHandle: prefixedCatalogModelHandle("anthropic/"),
   },
-  {
-    id: "openrouter",
-    piProvider: "openrouter",
-    providerTypes: ["openrouter"],
-    handlePrefixes: ["openrouter/"],
-    localProviderNames: [LOCAL_OPENROUTER_PROVIDER_NAME],
+  openrouter: {
+    localProviderNames: ["openrouter", LOCAL_OPENROUTER_PROVIDER_NAME],
     defaultModel: "openrouter/deepseek/deepseek-v4-pro",
-    apiKeyEnv: () => process.env.OPENROUTER_API_KEY,
     baseUrlEnv: () => process.env.OPENROUTER_BASE_URL,
     headers: () => ({ "X-Title": "Letta Code" }),
-    envConfigured: () => hasEnvValue(process.env.OPENROUTER_API_KEY),
-    catalogModelHandle: prefixedCatalogModelHandle("openrouter/"),
   },
-  {
-    id: "zai",
-    piProvider: "zai",
+  zai: {
     providerTypes: ["zai", "zai_coding"],
-    handlePrefixes: ["zai/"],
     localProviderNames: [
+      "zai",
+      "zai_coding",
       LOCAL_ZAI_PROVIDER_NAME,
       LOCAL_ZAI_CODING_PROVIDER_NAME,
     ],
     defaultModel: "zai/glm-5.1",
     envConfigured: () =>
-      hasEnvValue(process.env.ZAI_API_KEY) ||
+      getEnvApiKey("zai") !== undefined ||
       hasEnvValue(process.env.ZHIPU_API_KEY) ||
       hasEnvValue(process.env.ZAI_CODING_API_KEY),
-    catalogModelHandle: prefixedCatalogModelHandle("zai/"),
   },
-  {
-    id: "minimax",
-    piProvider: "minimax",
-    providerTypes: ["minimax"],
-    handlePrefixes: ["minimax/"],
-    localProviderNames: [LOCAL_MINIMAX_PROVIDER_NAME],
+  minimax: {
+    localProviderNames: ["minimax", LOCAL_MINIMAX_PROVIDER_NAME],
     defaultModel: "minimax/MiniMax-M2.7",
-    apiKeyEnv: () => process.env.MINIMAX_API_KEY,
     baseUrlEnv: () => process.env.MINIMAX_BASE_URL,
-    envConfigured: () => hasEnvValue(process.env.MINIMAX_API_KEY),
-    catalogModelHandle: prefixedCatalogModelHandle("minimax/"),
   },
-  {
-    id: "moonshot",
-    piProvider: "moonshotai",
-    providerTypes: ["moonshot"],
-    handlePrefixes: ["moonshot/"],
-    localProviderNames: [LOCAL_MOONSHOT_PROVIDER_NAME],
-    defaultModel: "moonshot/kimi-k2.5",
-    apiKeyEnv: () => process.env.MOONSHOT_API_KEY,
+  moonshotai: {
+    providerTypes: ["moonshotai", "moonshot"],
+    handlePrefixes: ["moonshotai/", "moonshot/"],
+    localProviderNames: ["moonshotai", LOCAL_MOONSHOT_PROVIDER_NAME],
+    defaultModel: "moonshotai/kimi-k2.5",
     baseUrlEnv: () => process.env.MOONSHOT_BASE_URL,
-    envConfigured: () => hasEnvValue(process.env.MOONSHOT_API_KEY),
-    catalogModelHandle: prefixedCatalogModelHandle("moonshot/"),
   },
-  {
-    id: "kimi-coding",
-    piProvider: "kimi-coding",
-    providerTypes: ["moonshot_coding"],
-    handlePrefixes: ["moonshot_coding/"],
-    localProviderNames: [LOCAL_KIMI_CODE_PROVIDER_NAME],
-    defaultModel: "moonshot_coding/kimi-for-coding",
-    apiKeyEnv: () => process.env.KIMI_API_KEY,
-    envConfigured: () => hasEnvValue(process.env.KIMI_API_KEY),
-    catalogModelHandle: prefixedCatalogModelHandle("moonshot_coding/"),
+  "kimi-coding": {
+    providerTypes: ["kimi-coding", "moonshot_coding"],
+    handlePrefixes: ["kimi-coding/", "moonshot_coding/"],
+    localProviderNames: ["kimi-coding", LOCAL_KIMI_CODE_PROVIDER_NAME],
+    defaultModel: "kimi-coding/kimi-for-coding",
   },
-  {
-    id: "google-ai",
-    piProvider: "google",
-    providerTypes: ["google_ai"],
-    handlePrefixes: ["google_ai/"],
-    localProviderNames: [LOCAL_GOOGLE_AI_PROVIDER_NAME],
-    defaultModel: "google_ai/gemini-3.1-pro-preview",
+  google: {
+    providerTypes: ["google", "google_ai"],
+    handlePrefixes: ["google/", "google_ai/"],
+    localProviderNames: ["google", LOCAL_GOOGLE_AI_PROVIDER_NAME],
+    defaultModel: "google/gemini-3.1-pro-preview",
     apiKeyEnv: () =>
-      process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? process.env.GEMINI_API_KEY,
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? getEnvApiKey("google"),
     baseUrlEnv: () => process.env.GOOGLE_GENERATIVE_AI_BASE_URL,
     envConfigured: () =>
       hasEnvValue(process.env.GOOGLE_GENERATIVE_AI_API_KEY) ||
-      hasEnvValue(process.env.GEMINI_API_KEY),
-    catalogModelHandle: prefixedCatalogModelHandle("google_ai/"),
+      getEnvApiKey("google") !== undefined,
   },
-  {
-    id: "bedrock",
-    piProvider: "amazon-bedrock",
-    providerTypes: ["bedrock"],
-    handlePrefixes: ["bedrock/"],
-    localProviderNames: [LOCAL_BEDROCK_PROVIDER_NAME],
-    defaultModel: "bedrock/us.anthropic.claude-sonnet-4-6",
-    envConfigured: () =>
-      (hasEnvValue(process.env.AWS_ACCESS_KEY_ID) &&
-        hasEnvValue(process.env.AWS_SECRET_ACCESS_KEY)) ||
-      hasEnvValue(process.env.AWS_PROFILE) ||
-      hasEnvValue(process.env.AWS_BEARER_TOKEN_BEDROCK),
-    catalogModelHandle: prefixedCatalogModelHandle("bedrock/"),
+  "amazon-bedrock": {
+    providerTypes: ["amazon-bedrock", "bedrock"],
+    handlePrefixes: ["amazon-bedrock/", "bedrock/"],
+    localProviderNames: ["amazon-bedrock", LOCAL_BEDROCK_PROVIDER_NAME],
+    defaultModel: "amazon-bedrock/us.anthropic.claude-sonnet-4-6",
   },
+  "openai-codex": {
+    providerTypes: ["openai-codex", "chatgpt_oauth"],
+    handlePrefixes: ["openai-codex/", "chatgpt-plus-pro/"],
+    localProviderNames: ["openai-codex", LOCAL_CHATGPT_PROVIDER_NAME],
+    defaultModel: "openai-codex/gpt-5.5",
+  },
+};
+
+function defaultModelForProvider(
+  provider: KnownProvider,
+  handlePrefix: string,
+): string {
+  const model = getModels(provider)[0] as Model<Api> | undefined;
+  return model ? `${handlePrefix}${model.id}` : `${handlePrefix}model`;
+}
+
+function makePiProviderSpec(provider: KnownProvider): PiProviderSpec {
+  const override = PI_PROVIDER_OVERRIDES[provider] ?? {};
+  const handlePrefixes = unique(override.handlePrefixes ?? [`${provider}/`]);
+  const providerTypes = unique(override.providerTypes ?? [provider]);
+  const localProviderNames = unique(override.localProviderNames ?? [provider]);
+  const primaryHandlePrefix = handlePrefixes[0] ?? `${provider}/`;
+  return {
+    id: provider,
+    piProvider: provider,
+    providerTypes,
+    handlePrefixes,
+    localProviderNames,
+    defaultModel:
+      override.defaultModel ??
+      defaultModelForProvider(provider, primaryHandlePrefix),
+    ...(override.defaultBaseURL
+      ? { defaultBaseURL: override.defaultBaseURL }
+      : {}),
+    apiKeyEnv: override.apiKeyEnv ?? (() => getEnvApiKey(provider)),
+    ...(override.baseUrlEnv ? { baseUrlEnv: override.baseUrlEnv } : {}),
+    ...(override.fallbackApiKey
+      ? { fallbackApiKey: override.fallbackApiKey }
+      : {}),
+    ...(override.headers ? { headers: override.headers } : {}),
+    ...(override.localModelDiscovery
+      ? { localModelDiscovery: override.localModelDiscovery }
+      : {}),
+    envConfigured:
+      override.envConfigured ?? (() => getEnvApiKey(provider) !== undefined),
+    ...(override.createCustomModel !== undefined
+      ? { createCustomModel: override.createCustomModel }
+      : {}),
+    catalogModelHandle:
+      override.catalogModelHandle ??
+      prefixedCatalogModelHandle(primaryHandlePrefix),
+  };
+}
+
+const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
   {
     id: "ollama",
     providerTypes: ["ollama"],
     handlePrefixes: ["ollama/"],
-    localProviderNames: [LOCAL_OLLAMA_PROVIDER_NAME],
+    localProviderNames: ["ollama", LOCAL_OLLAMA_PROVIDER_NAME],
     defaultModel: "ollama/llama2",
     defaultBaseURL: "http://localhost:11434/v1",
     apiKeyEnv: () => process.env.OLLAMA_LOCAL_API_KEY,
@@ -205,20 +225,23 @@ export const PI_PROVIDER_SPECS = [
     id: "ollama-cloud",
     providerTypes: ["ollama_cloud"],
     handlePrefixes: ["ollama-cloud/"],
-    localProviderNames: [LOCAL_OLLAMA_CLOUD_PROVIDER_NAME],
+    localProviderNames: ["ollama-cloud", LOCAL_OLLAMA_CLOUD_PROVIDER_NAME],
     defaultModel: "ollama-cloud/gpt-oss:20b",
-    staticModels: OLLAMA_CLOUD_MODELS,
     defaultBaseURL: "https://ollama.com/v1",
     apiKeyEnv: () => process.env.OLLAMA_API_KEY,
     baseUrlEnv: () => process.env.OLLAMA_CLOUD_BASE_URL,
+    localModelDiscovery: "openai-compatible",
     envConfigured: () => hasEnvValue(process.env.OLLAMA_API_KEY),
     createCustomModel: true,
   },
   {
     id: "lmstudio",
-    providerTypes: ["lmstudio"],
+    providerTypes: [
+      LMSTUDIO_OPENAI_PROVIDER_TYPE,
+      LEGACY_LMSTUDIO_PROVIDER_TYPE,
+    ],
     handlePrefixes: ["lmstudio/"],
-    localProviderNames: [LOCAL_LMSTUDIO_PROVIDER_NAME],
+    localProviderNames: ["lmstudio", LOCAL_LMSTUDIO_PROVIDER_NAME],
     defaultModel: "lmstudio/google/gemma-3n-e4b",
     defaultBaseURL: "http://127.0.0.1:1234/v1",
     apiKeyEnv: () => process.env.LMSTUDIO_API_KEY,
@@ -234,7 +257,7 @@ export const PI_PROVIDER_SPECS = [
     id: "llama-cpp",
     providerTypes: ["llama_cpp", "llama.cpp"],
     handlePrefixes: ["llama.cpp/", "llama-cpp/"],
-    localProviderNames: [LOCAL_LLAMA_CPP_PROVIDER_NAME],
+    localProviderNames: ["llama-cpp", LOCAL_LLAMA_CPP_PROVIDER_NAME],
     defaultModel: "llama.cpp/model",
     defaultBaseURL: "http://localhost:8080/v1",
     apiKeyEnv: () => process.env.LLAMA_CPP_API_KEY,
@@ -248,16 +271,12 @@ export const PI_PROVIDER_SPECS = [
       hasEnvValue(process.env.LLAMACPP_BASE_URL),
     createCustomModel: true,
   },
-  {
-    id: "chatgpt-oauth",
-    piProvider: "openai-codex",
-    providerTypes: ["chatgpt_oauth"],
-    handlePrefixes: ["chatgpt-plus-pro/"],
-    localProviderNames: [LOCAL_CHATGPT_PROVIDER_NAME],
-    defaultModel: "chatgpt-plus-pro/gpt-5.1-codex-max",
-    catalogModelHandle: prefixedCatalogModelHandle("chatgpt-plus-pro/"),
-  },
-] as const satisfies readonly PiProviderSpec[];
+];
+
+export const PI_PROVIDER_SPECS: readonly PiProviderSpec[] = [
+  ...getProviders().map(makePiProviderSpec),
+  ...LOCAL_ENDPOINT_PROVIDER_SPECS,
+];
 
 export const SUPPORTED_LOCAL_PROVIDER_TYPES: ReadonlySet<string> = new Set(
   PI_PROVIDER_SPECS.flatMap((provider) => provider.providerTypes),
@@ -276,8 +295,16 @@ export const PROVIDER_TYPE_TO_BASE_PROVIDER = Object.fromEntries(
   ),
 ) as Record<string, string>;
 
+function canonicalProvider(provider: string): PiProvider | undefined {
+  if (KNOWN_PI_PROVIDERS.has(provider as PiProvider)) {
+    return provider as PiProvider;
+  }
+  return PI_PROVIDER_ALIASES[provider];
+}
+
 export function getPiProviderSpec(provider: PiProvider): PiProviderSpec {
-  const spec = PI_PROVIDER_SPECS.find((entry) => entry.id === provider);
+  const canonical = canonicalProvider(provider) ?? provider;
+  const spec = PI_PROVIDER_SPECS.find((entry) => entry.id === canonical);
   if (!spec) {
     throw new Error(`Unknown pi provider "${provider}".`);
   }
@@ -285,7 +312,7 @@ export function getPiProviderSpec(provider: PiProvider): PiProviderSpec {
 }
 
 export function isPiProvider(provider: string): provider is PiProvider {
-  return KNOWN_PI_PROVIDERS.has(provider as PiProvider);
+  return canonicalProvider(provider) !== undefined;
 }
 
 export function expectedPiProviderList(): string {
@@ -306,7 +333,7 @@ export function resolveProviderFromProviderType(
 ): PiProvider | undefined {
   if (typeof providerType !== "string") return undefined;
   return PI_PROVIDER_SPECS.find((provider) =>
-    (provider.providerTypes as readonly string[]).includes(providerType),
+    provider.providerTypes.includes(providerType),
   )?.id;
 }
 
@@ -321,7 +348,7 @@ export function stripProviderHandlePrefix(
 }
 
 export function localProviderType(provider: PiProvider): string {
-  return getPiProviderSpec(provider).providerTypes[0] ?? "openai";
+  return getPiProviderSpec(provider).providerTypes[0] ?? provider;
 }
 
 export function localModelHandle(provider: PiProvider, model: string): string {
@@ -370,9 +397,6 @@ export function listCatalogModelsForProvider(provider: PiProvider): string[] {
     for (const model of getModels(spec.piProvider)) {
       add(spec.catalogModelHandle(model as Model<Api>));
     }
-  }
-  for (const model of spec.staticModels ?? []) {
-    add(model);
   }
 
   return models;

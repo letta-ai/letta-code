@@ -438,6 +438,31 @@ describe("buildSubagentArgs", () => {
     // --base-tools requires --new and only applies to fresh agent creation.
     expect(args).not.toContain("--base-tools");
   });
+  test("adds MessageChannel to fork subagent scoped tools when inheriting a channel tool context", () => {
+    const args = buildSubagentArgs(
+      "fork",
+      {
+        ...baseConfig,
+        name: "fork",
+        fork: true,
+        allowedTools: ["Bash", "Read"],
+      },
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { extraTools: ["MessageChannel"] },
+    );
+
+    const idx = args.indexOf("--tools");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]?.split(",")).toEqual([
+      "Bash",
+      "Read",
+      "MessageChannel",
+    ]);
+  });
 });
 
 describe("getModelHandleFromAgent", () => {

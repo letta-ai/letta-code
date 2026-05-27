@@ -20,6 +20,10 @@ import {
 import { getAgentContextOverview } from "@/backend/api/agents";
 import { getClient, getServerUrl } from "@/backend/api/client";
 import { apiRequest } from "@/backend/api/request";
+import {
+  applyContextUsageSnapshot,
+  type ContextUsageSnapshot,
+} from "./context-usage";
 import { collectLocalMemoryContextData } from "./local-memory-context";
 import memoryViewerTemplate from "./memory-viewer-template.txt";
 import type {
@@ -100,6 +104,12 @@ function contextFromOverview(
 export interface GenerateResult {
   filePath: string;
   opened: boolean;
+}
+
+export interface GenerateMemoryViewerOptions {
+  agentName?: string;
+  conversationId?: string;
+  contextUsage?: ContextUsageSnapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +485,7 @@ async function collectMemoryData(
 
 export async function generateAndOpenMemoryViewer(
   agentId: string,
-  options?: { agentName?: string; conversationId?: string },
+  options?: GenerateMemoryViewerOptions,
 ): Promise<GenerateResult> {
   const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
   const repoDir = memoryRoot;
@@ -496,6 +506,8 @@ export async function generateAndOpenMemoryViewer(
   if (options?.agentName) {
     data.agent.name = options.agentName;
   }
+
+  data.context = applyContextUsageSnapshot(data.context, options?.contextUsage);
 
   // 2. Safely embed JSON - escape < to \u003c to prevent </script> injection
   const jsonPayload = JSON.stringify(data).replace(/</g, "\\u003c");

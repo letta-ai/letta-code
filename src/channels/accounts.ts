@@ -14,13 +14,16 @@ import type {
   SlackChannelAccount,
   SupportedChannelId,
   TelegramChannelAccount,
+  WhatsAppChannelAccount,
 } from "./types";
 import {
+  DEFAULT_SLACK_PERMISSION_MODE,
   isCustomChannelAccount,
   isDiscordChannelAccount,
   isFirstPartyChannelId,
   isSlackChannelAccount,
   isTelegramChannelAccount,
+  isWhatsAppChannelAccount,
 } from "./types";
 
 /**
@@ -33,6 +36,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   allowed_channels: "allowedChannels",
   auto_thread_on_mention: "autoThreadOnMention",
   acknowledge_message_reaction: "acknowledgeMessageReaction",
+  group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
   remove_stale_routes: "removeStaleRoutes",
   thread_policy_by_channel: "threadPolicyByChannel",
@@ -72,6 +76,15 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     )
       ? [...account.allowedChannels]
       : { ...account.allowedChannels };
+  }
+
+  if (isWhatsAppChannelAccount(account)) {
+    (cloned as WhatsAppChannelAccount).allowedGroups = [
+      ...(account.allowedGroups ?? []),
+    ];
+    (cloned as WhatsAppChannelAccount).mentionPatterns = [
+      ...(account.mentionPatterns ?? []),
+    ];
   }
 
   if ("config" in account) {
@@ -128,16 +141,19 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
         next.displayName === "Migrated Slack app")) ||
     (isDiscordChannelAccount(next) &&
       (next.displayName === "Discord bot" ||
-        next.displayName === "Migrated Discord bot"))
+        next.displayName === "Migrated Discord bot")) ||
+    (isWhatsAppChannelAccount(next) && next.displayName === "WhatsApp")
   ) {
     next.displayName = undefined;
   }
   if (isSlackChannelAccount(next)) {
     const migrated = migratePermissionMode(
-      (next as SlackChannelAccount).defaultPermissionMode ?? "standard",
+      (next as SlackChannelAccount).defaultPermissionMode ??
+        DEFAULT_SLACK_PERMISSION_MODE,
     );
     (next as SlackChannelAccount).defaultPermissionMode =
-      (migrated as ChannelDefaultPermissionMode | null) ?? "standard";
+      (migrated as ChannelDefaultPermissionMode | null) ??
+      DEFAULT_SLACK_PERMISSION_MODE;
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
@@ -152,6 +168,14 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     if (!("auto_thread_on_mention" in raw) && !("autoThreadOnMention" in raw)) {
       (next as DiscordChannelAccount).autoThreadOnMention = true;
     }
+  }
+  if (isWhatsAppChannelAccount(next)) {
+    next.selfChatMode = next.selfChatMode !== false;
+    next.groupMode = next.groupMode ?? "disabled";
+    next.allowedGroups = [...(next.allowedGroups ?? [])];
+    next.mentionPatterns = [...(next.mentionPatterns ?? [])];
+    next.downloadMedia = next.downloadMedia === true;
+    next.transcribeVoice = next.transcribeVoice === true;
   }
   return next;
 }
@@ -206,6 +230,28 @@ function makeDefaultLegacyAccount(
     };
   }
 
+  if (config.channel === "whatsapp") {
+    return {
+      channel: "whatsapp",
+      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
+      enabled: config.enabled,
+      dmPolicy: config.dmPolicy,
+      allowedUsers: [...config.allowedUsers],
+      agentId: config.agentId,
+      selfChatMode: config.selfChatMode !== false,
+      groupMode: config.groupMode ?? "disabled",
+      allowedGroups: config.allowedGroups ? [...config.allowedGroups] : [],
+      mentionPatterns: config.mentionPatterns
+        ? [...config.mentionPatterns]
+        : [],
+      transcribeVoice: config.transcribeVoice === true,
+      downloadMedia: config.downloadMedia === true,
+      mediaMaxBytes: config.mediaMaxBytes,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   return {
     channel: "slack",
     accountId: LEGACY_CHANNEL_ACCOUNT_ID,
@@ -216,7 +262,7 @@ function makeDefaultLegacyAccount(
     dmPolicy: config.dmPolicy,
     allowedUsers: [...config.allowedUsers],
     agentId: null,
-    defaultPermissionMode: "standard",
+    defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     createdAt: now,
     updatedAt: now,
   };
@@ -264,7 +310,12 @@ export function loadChannelAccounts(channelId: string): void {
     }
   }
 
-  if (channelId === "telegram" || channelId === "slack") {
+  if (
+    channelId === "telegram" ||
+    channelId === "slack" ||
+    channelId === "discord" ||
+    channelId === "whatsapp"
+  ) {
     const legacyConfig = readChannelConfig(channelId);
     if (legacyConfig) {
       const migratedAccounts = [makeDefaultLegacyAccount(channelId)];

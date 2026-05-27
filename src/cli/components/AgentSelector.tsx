@@ -1,6 +1,7 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { getModelDisplayName } from "@/agent/model";
 import { getBackendForMode } from "@/backend/backend";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
@@ -22,8 +23,9 @@ interface AgentSelectorProps {
   currentAgentId: string;
   onSelect: (agentId: string, backendMode: AgentBackendMode) => void;
   onCancel: () => void;
+  onLogin?: () => void;
   /** Called when user creates a new agent (from New tab or N shortcut) */
-  onCreateNewAgent?: (name: string) => void;
+  onCreateNewAgent?: (name: string, backendMode: AgentBackendMode) => void;
   /** The command that triggered this selector (e.g., "/agents" or "/resume") */
   command?: string;
 }
@@ -69,15 +71,23 @@ const TAB_EMPTY_STATES: Record<TabId, string> = {
 
 const DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
+const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
 
 /**
  * Check if the user has cloud credentials (API key or refresh token).
  * Used to determine whether the Constellation tab can fetch agents.
  */
-async function hasCloudCredentials(): Promise<boolean> {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-  return Boolean(apiKey || settings.refreshToken);
+function hasCloudCredentials(): boolean {
+  const apiKey = process.env.LETTA_API_KEY;
+  if (apiKey) return true;
+  const settings = settingsManager.getSettings();
+  const cached = settingsManager.getCachedSecureTokens();
+  return Boolean(
+    cached.apiKey ||
+      cached.refreshToken ||
+      settings.refreshToken ||
+      settings.env?.LETTA_API_KEY,
+  );
 }
 
 /**
@@ -141,6 +151,7 @@ export function AgentSelector({
   currentAgentId,
   onSelect,
   onCancel,
+  onLogin,
   onCreateNewAgent,
   command = "/agents",
 }: AgentSelectorProps) {
@@ -217,6 +228,8 @@ export function AgentSelector({
   // New agent tab state
   const [newAgentNameInput, setNewAgentNameInput] = useState("");
   const [newAgentNameError, setNewAgentNameError] = useState("");
+  const [newAgentBackendMode, setNewAgentBackendMode] =
+    useState<AgentBackendMode>(NEW_AGENT_DEFAULT_BACKEND);
 
   // Load pinned agents
   const loadPinnedAgents = useCallback(async () => {
@@ -224,28 +237,47 @@ export function AgentSelector({
     try {
       const mergedPinned = settingsManager.getMergedPinnedAgents();
 
-      if (mergedPinned.length === 0) {
+      let pinnedData: PinnedAgentData[] = [];
+
+      if (mergedPinned.length > 0) {
+        pinnedData = await Promise.all(
+          mergedPinned.map(async ({ agentId, isLocal }) => {
+            try {
+              // Use the correct backend for this agent's mode
+              if (!isLocal && !hasCloudCredentials()) {
+                return {
+                  agentId,
+                  agent: null,
+                  error: "Not signed in",
+                  isLocal,
+                };
+              }
+              const agentBackend = isLocal
+                ? getBackendForMode("local")
+                : getBackendForMode("api");
+              const agent = await agentBackend.retrieveAgent(agentId, {
+                include: ["agent.blocks"],
+              });
+              return { agentId, agent, error: null, isLocal };
+            } catch {
+              return {
+                agentId,
+                agent: null,
+                error: "Agent not found",
+                isLocal,
+              };
+            }
+          }),
+        );
+      }
+
+      const validPinnedData = pinnedData.filter((p) => p.agent !== null);
+
+      if (validPinnedData.length === 0) {
         setPinnedAgents([]);
         setPinnedLoading(false);
         return;
       }
-
-      const pinnedData = await Promise.all(
-        mergedPinned.map(async ({ agentId, isLocal }) => {
-          try {
-            // Use the correct backend for this agent's mode
-            const agentBackend = isLocal
-              ? getBackendForMode("local")
-              : getBackendForMode("api");
-            const agent = await agentBackend.retrieveAgent(agentId, {
-              include: ["agent.blocks"],
-            });
-            return { agentId, agent, error: null, isLocal };
-          } catch {
-            return { agentId, agent: null, error: "Agent not found", isLocal };
-          }
-        }),
-      );
 
       setPinnedAgents(pinnedData);
     } catch {
@@ -352,9 +384,9 @@ export function AgentSelector({
     activeQuery,
   ]);
 
-  // Check cloud auth on mount
+  // Check cloud credentials on mount (sync — reads from the in-memory keychain cache)
   useEffect(() => {
-    hasCloudCredentials().then(setHasCloudAuth);
+    setHasCloudAuth(hasCloudCredentials());
   }, []);
 
   // Load pinned agents on mount
@@ -385,12 +417,28 @@ export function AgentSelector({
     hasCloudAuth,
   ]);
 
+  useEffect(() => {
+    if (activeTab === "new") {
+      setNewAgentBackendMode(NEW_AGENT_DEFAULT_BACKEND);
+    }
+  }, [activeTab]);
+
   // Reload current tab when search query changes (only if query differs from cached)
   useEffect(() => {
-    if (activeTab === "constellation" && activeQuery !== constellationQuery) {
+    if (
+      activeTab === "constellation" &&
+      hasCloudAuth &&
+      activeQuery !== constellationQuery
+    ) {
       loadConstellationAgents(activeQuery || undefined);
     }
-  }, [activeQuery, activeTab, constellationQuery, loadConstellationAgents]);
+  }, [
+    activeQuery,
+    activeTab,
+    constellationQuery,
+    loadConstellationAgents,
+    hasCloudAuth,
+  ]);
 
   // Pagination calculations - Pinned (filter out 404 agents)
   const validPinnedAgents = pinnedAgents.filter((p) => p.agent !== null);
@@ -545,6 +593,11 @@ export function AgentSelector({
     // New tab has its own input handling via PasteAwareTextInput.
     // Only handle Escape here.
     if (activeTab === "new") {
+      if (hasCloudAuth && key.ctrl && input.toLowerCase() === "b") {
+        setNewAgentBackendMode((prev) => (prev === "api" ? "local" : "api"));
+        return;
+      }
+
       if (key.escape) {
         if (newAgentNameInput) {
           setNewAgentNameInput("");
@@ -592,6 +645,8 @@ export function AgentSelector({
         const selected = constellationPageAgents[constellationSelectedIndex];
         if (selected?.id) {
           onSelect(selected.id, "api");
+        } else if (hasCloudAuth === false) {
+          onLogin?.();
         }
       }
     } else if (key.escape) {
@@ -712,9 +767,17 @@ export function AgentSelector({
     extra?: { isLocal?: boolean; backend?: "local" | "constellation" },
   ) => {
     const isCurrent = agent.id === currentAgentId;
+    const isLocalAgent = isLocalAgentId(agent.id);
     const relativeTime = formatRelativeTime(agent.last_run_completion);
     const blockCount = agent.blocks?.length ?? 0;
     const modelStr = formatModel(agent);
+    const metadataParts = [
+      relativeTime,
+      ...(isLocalAgent
+        ? []
+        : [`${blockCount} memory block${blockCount === 1 ? "" : "s"}`]),
+      modelStr,
+    ];
 
     const nameLen = (agent.name || "Unnamed").length;
     const fixedChars = 2 + 3 + (isCurrent ? 10 : 0);
@@ -757,10 +820,7 @@ export function AgentSelector({
           </Text>
         </Box>
         <Box flexDirection="row" marginLeft={2}>
-          <Text dimColor>
-            {relativeTime} · {blockCount} memory block
-            {blockCount === 1 ? "" : "s"} · {modelStr}
-          </Text>
+          <Text dimColor>{metadataParts.join(" · ")}</Text>
         </Box>
       </Box>
     );
@@ -811,7 +871,13 @@ export function AgentSelector({
       <Text dimColor>
         Connect to Letta Constellation to see hosted agents here.
       </Text>
-      <Text dimColor>Run /login to sign in.</Text>
+      <Box height={1} />
+      <Box flexDirection="column">
+        <Text color={colors.selector.itemHighlighted}>{"> /login"}</Text>
+        <Box paddingLeft={2}>
+          <Text dimColor>Sign in to Letta Constellation</Text>
+        </Box>
+      </Box>
     </Box>
   );
 
@@ -869,20 +935,35 @@ export function AgentSelector({
       footer={
         activeTab !== "new" &&
         !currentLoading &&
-        ((activeTab === "pinned" && validPinnedAgents.length > 0) ||
+        (activeTab === "pinned" ||
           (activeTab === "local" && localAgents.length > 0) ||
           (activeTab === "constellation" &&
             !constellationError &&
             constellationAgents.length > 0))
           ? (() => {
               const footerWidth = Math.max(0, terminalWidth - 2);
+              if (activeTab === "pinned" && validPinnedAgents.length === 0) {
+                return (
+                  <Box flexDirection="row">
+                    <Box width={2} flexShrink={0} />
+                    <Box flexGrow={1} width={footerWidth}>
+                      <MarkdownDisplay
+                        text="Tab switch · Esc cancel"
+                        dimColor
+                      />
+                    </Box>
+                  </Box>
+                );
+              }
+
               const pageText =
                 activeTab === "pinned"
                   ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
                   : activeTab === "local"
                     ? `Page ${localPage + 1}/${localTotalPages || 1}`
                     : `Page ${constellationPage + 1}${constellationHasMore ? "+" : `/${constellationTotalPages || 1}`}${constellationLoadingMore ? " (loading...)" : ""}`;
-              const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? " · P unpin" : ""} · Esc cancel`;
+              const pinnedHint = " · Shift+P unpin";
+              const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? pinnedHint : ""} · Esc cancel`;
 
               return (
                 <Box flexDirection="column">
@@ -913,6 +994,7 @@ export function AgentSelector({
           }
         />
         <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
+        <Box height={2} />
       </Box>
 
       {/* Search input - list tabs only */}
@@ -958,9 +1040,14 @@ export function AgentSelector({
             !constellationError &&
             hasCloudAuth &&
             constellationAgents.length === 0)) && (
-          <Box flexDirection="column">
+          <Box
+            flexDirection="column"
+            paddingLeft={activeTab === "pinned" ? 2 : 0}
+          >
             <Text dimColor>{TAB_EMPTY_STATES[activeTab]}</Text>
-            <Text dimColor>Press ESC to cancel</Text>
+            {activeTab !== "pinned" && (
+              <Text dimColor>Press ESC to cancel</Text>
+            )}
           </Box>
         )}
 
@@ -1031,7 +1118,10 @@ export function AgentSelector({
                 onSubmit={(text) => {
                   const trimmed = text.trim();
                   if (!trimmed) {
-                    onCreateNewAgent?.(DEFAULT_AGENT_NAME);
+                    onCreateNewAgent?.(
+                      DEFAULT_AGENT_NAME,
+                      hasCloudAuth ? newAgentBackendMode : "local",
+                    );
                     return;
                   }
                   const validationError = validateAgentName(trimmed);
@@ -1039,12 +1129,41 @@ export function AgentSelector({
                     setNewAgentNameError(validationError);
                     return;
                   }
-                  onCreateNewAgent?.(trimmed);
+                  onCreateNewAgent?.(
+                    trimmed,
+                    hasCloudAuth ? newAgentBackendMode : "local",
+                  );
                 }}
                 placeholder={DEFAULT_AGENT_NAME}
               />
             </Box>
           </Box>
+          {hasCloudAuth && (
+            <Box paddingLeft={2} marginTop={1}>
+              <Text>Backend: </Text>
+              <Text
+                bold={newAgentBackendMode === "api"}
+                color={
+                  newAgentBackendMode === "api"
+                    ? colors.selector.itemHighlighted
+                    : colors.selector.title
+                }
+              >
+                Constellation
+              </Text>
+              <Text color={colors.selector.title}> · </Text>
+              <Text
+                bold={newAgentBackendMode === "local"}
+                color={
+                  newAgentBackendMode === "local"
+                    ? colors.selector.itemHighlighted
+                    : colors.selector.title
+                }
+              >
+                Local
+              </Text>
+            </Box>
+          )}
           {newAgentNameError && (
             <Box paddingLeft={2} marginTop={1}>
               <Text color="red">{newAgentNameError}</Text>
@@ -1052,7 +1171,11 @@ export function AgentSelector({
           )}
           <Box height={1} />
           <Box paddingLeft={2}>
-            <Text dimColor>Enter create · Esc cancel</Text>
+            <Text dimColor>
+              {hasCloudAuth
+                ? `Enter create · Ctrl+B switch to ${newAgentBackendMode === "api" ? "Local" : "Constellation"} · Esc cancel`
+                : "Enter create · Esc cancel"}
+            </Text>
           </Box>
         </Box>
       )}

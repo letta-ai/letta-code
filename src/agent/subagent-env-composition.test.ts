@@ -5,6 +5,7 @@ import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
 } from "@/agent/subagents/manager";
+import { LETTA_INHERITED_CHANNEL_CONTEXT_ENV } from "@/runtime-context";
 
 const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
@@ -221,6 +222,49 @@ describe("composeSubagentChildEnv", () => {
     expect(env.HOME).toBe("/home/user");
     expect(env.PATH).toBe("/usr/bin:/bin");
     expect(env.CUSTOM_VAR).toBe("preserved");
+  });
+  test("inherited channel context is serialized for child process scope", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { HOME: "/home/user" },
+      parentAgentId: PARENT_ID,
+      permissionMode: "standard",
+      inheritedPrimaryRoot: null,
+      inheritedChannelContext: {
+        channelToolScope: {
+          channels: [{ channelId: "telegram", accountId: "account-1" }],
+        },
+        channelTurnSources: [
+          {
+            channel: "telegram",
+            accountId: "account-1",
+            chatId: "7952253975",
+            chatType: "channel",
+            threadId: "42",
+            agentId: PARENT_ID,
+            conversationId: "default",
+          },
+        ],
+      },
+    });
+
+    expect(env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV]).toBe(
+      JSON.stringify({
+        channelToolScope: {
+          channels: [{ channelId: "telegram", accountId: "account-1" }],
+        },
+        channelTurnSources: [
+          {
+            channel: "telegram",
+            accountId: "account-1",
+            chatId: "7952253975",
+            chatType: "channel",
+            threadId: "42",
+            agentId: PARENT_ID,
+            conversationId: "default",
+          },
+        ],
+      }),
+    );
   });
 });
 

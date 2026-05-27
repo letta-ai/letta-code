@@ -4,6 +4,7 @@ import {
   getModelInfo,
   getModelInfoForLlmConfig,
   getReasoningTierOptionsForHandle,
+  shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 
 describe("getModelInfo", () => {
@@ -274,10 +275,84 @@ describe("getReasoningTierOptionsForHandle", () => {
     }
   });
 
+  test("returns generic reasoning options for discovered Ollama models", () => {
+    const options = getReasoningTierOptionsForHandle("ollama/gpt-oss:20b");
+    expect(options).toEqual([
+      { effort: "none", modelId: "ollama/gpt-oss:20b" },
+      { effort: "low", modelId: "ollama/gpt-oss:20b" },
+      { effort: "medium", modelId: "ollama/gpt-oss:20b" },
+      { effort: "high", modelId: "ollama/gpt-oss:20b" },
+    ]);
+  });
+
   test("returns empty options for models without reasoning tiers", () => {
     const options = getReasoningTierOptionsForHandle(
       "anthropic/claude-haiku-4-5",
     );
     expect(options).toEqual([]);
+  });
+});
+
+describe("shouldPreserveContextWindowForModelSelection", () => {
+  test("preserves manual context when switching reasoning tiers on the same preset", () => {
+    expect(
+      shouldPreserveContextWindowForModelSelection({
+        currentModelHandle: "openai/gpt-5.5",
+        currentModelId: "gpt-5.5-high",
+        currentLlmConfig: {
+          model: "gpt-5.5",
+          model_endpoint_type: "openai",
+          context_window: 500000,
+        },
+        selectedModelHandle: "openai/gpt-5.5",
+        selectedContextWindow: 272000,
+      }),
+    ).toBe(true);
+  });
+
+  test("does not preserve context when selecting a different context-window preset", () => {
+    expect(
+      shouldPreserveContextWindowForModelSelection({
+        currentModelHandle: "anthropic/claude-sonnet-4-6",
+        currentModelId: "sonnet",
+        currentLlmConfig: {
+          model: "claude-sonnet-4-6",
+          model_endpoint_type: "anthropic",
+          context_window: 500000,
+        },
+        selectedModelHandle: "anthropic/claude-sonnet-4-6",
+        selectedContextWindow: 9500000,
+      }),
+    ).toBe(false);
+  });
+
+  test("normalizes ChatGPT OAuth llm_config handles before comparison", () => {
+    expect(
+      shouldPreserveContextWindowForModelSelection({
+        currentModelId: "gpt-5.5-plus-pro-high",
+        currentLlmConfig: {
+          model: "gpt-5.5",
+          model_endpoint_type: "chatgpt_oauth",
+          context_window: 500000,
+        },
+        selectedModelHandle: "chatgpt-plus-pro/gpt-5.5",
+        selectedContextWindow: 272000,
+      }),
+    ).toBe(true);
+  });
+
+  test("derives current preset from llm config when no current model id is available", () => {
+    expect(
+      shouldPreserveContextWindowForModelSelection({
+        currentLlmConfig: {
+          model: "gpt-5.5",
+          model_endpoint_type: "openai",
+          reasoning_effort: "high",
+          context_window: 500000,
+        },
+        selectedModelHandle: "openai/gpt-5.5",
+        selectedContextWindow: 272000,
+      }),
+    ).toBe(true);
   });
 });

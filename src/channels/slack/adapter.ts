@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
+import { listChannelSlashCommands } from "@/channels/commands";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
 } from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
-import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -77,6 +78,16 @@ type SlackReactionEvent = {
   item_user?: string;
   reaction?: string;
   event_ts?: string;
+};
+
+type SlackCommandPayload = {
+  command?: string;
+  text?: string;
+  user_id?: string;
+  user_name?: string;
+  channel_id?: string;
+  channel_name?: string;
+  trigger_id?: string;
 };
 
 type Constructor = abstract new (...args: never[]) => unknown;
@@ -711,13 +722,10 @@ export function createSlackAdapter(
   }
 
   function formatSlackLifecycleErrorMessage(errorText: string): string {
-    const normalized = normalizeChannelLifecycleErrorMessage(errorText);
-    const truncated =
-      normalized.length > SLACK_LIFECYCLE_ERROR_TEXT_MAX
-        ? `${normalized.slice(0, SLACK_LIFECYCLE_ERROR_TEXT_MAX - 1).trimEnd()}…`
-        : normalized;
-    const escaped = truncated.replace(/```/g, "``\u200b`");
-    return `Turn failed:\n\`\`\`\n${escaped}\n\`\`\``;
+    return formatChannelLifecycleErrorMessage(errorText, {
+      codeBlock: true,
+      maxLength: SLACK_LIFECYCLE_ERROR_TEXT_MAX,
+    });
   }
 
   function pruneLifecycleState(now: number = Date.now()): void {
@@ -1114,6 +1122,73 @@ export function createSlackAdapter(
         console.error("[Slack] Error handling channel mention:", error);
       }
     });
+
+    const handleNativeChannelSlashCommand = async ({
+      command,
+      ack,
+    }: {
+      command: SlackCommandPayload;
+      ack: () => Promise<void>;
+    }) => {
+      await ack();
+
+      if (!adapter.onMessage) {
+        return;
+      }
+
+      const payload = command;
+      if (
+        !isNonEmptyString(payload.command) ||
+        !isNonEmptyString(payload.channel_id) ||
+        !isNonEmptyString(payload.user_id)
+      ) {
+        return;
+      }
+
+      const commandArgs = isNonEmptyString(payload.text)
+        ? payload.text.trim()
+        : "";
+      const commandText = commandArgs
+        ? `${payload.command} ${commandArgs}`
+        : payload.command;
+
+      const inbound: InboundChannelMessage = {
+        channel: "slack",
+        accountId: config.accountId,
+        chatId: payload.channel_id,
+        senderId: payload.user_id,
+        senderName: firstNonEmptyString(payload.user_name, payload.user_id),
+        chatLabel: firstNonEmptyString(
+          payload.channel_name,
+          payload.channel_id,
+        ),
+        text: commandText,
+        timestamp: Date.now(),
+        messageId: firstNonEmptyString(payload.trigger_id, payload.command),
+        threadId: null,
+        chatType: resolveSlackChatType(payload.channel_id),
+        isMention: false,
+        raw: command,
+      };
+
+      try {
+        await adapter.onMessage(inbound);
+      } catch (error) {
+        console.error(
+          `[Slack] Error handling ${payload.command} command:`,
+          error,
+        );
+      }
+    };
+
+    for (const definition of listChannelSlashCommands()) {
+      for (const commandName of [
+        definition.name,
+        ...(definition.aliases ?? []),
+      ]) {
+        instance.command(`/${commandName}`, handleNativeChannelSlashCommand);
+      }
+    }
 
     const handleReactionEvent = async (
       event: SlackReactionEvent,

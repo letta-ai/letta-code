@@ -18,6 +18,7 @@ const checks = [
   { name: "exported function style", script: ["check:exported-functions"] },
   { name: "filename casing", script: ["check:filename-casing"] },
   { name: "test mock isolation", script: ["check:test-mock-isolation"] },
+  { name: "test coverage", script: ["check:test-coverage"] },
   { name: "biome", script: ["lint"] },
   { name: "typescript", script: ["typecheck"] },
 ];

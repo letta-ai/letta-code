@@ -57,6 +57,7 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
       chatId: request.chatId,
       text: formatted.text,
       replyToMessageId: request.replyToMessageId,
+      threadId: request.threadId ?? route.threadId ?? null,
       mediaPath: request.mediaPath,
       fileName: request.filename,
       title: request.title,

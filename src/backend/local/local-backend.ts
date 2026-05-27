@@ -1,6 +1,5 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import {
-  getMemoryHeadRevision,
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";
@@ -25,7 +24,11 @@ import {
   type PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
 import type { ProviderTurnInput } from "@/backend/dev/provider-turn-executor";
-import { ProviderTurnExecutor } from "@/backend/dev/provider-turn-executor";
+import {
+  contextTokensFromUsage,
+  estimateProviderContextTokens,
+  ProviderTurnExecutor,
+} from "@/backend/dev/provider-turn-executor";
 import { isRecord } from "@/utils/type-guards";
 import {
   estimateLocalMessageTokens,
@@ -188,11 +191,6 @@ function localCompactionSettingsForStorage(
   if (!hasLocalSetting) return undefined;
 
   return { ...settings };
-}
-
-function contextTokensFromUsage(usage: Usage): number | undefined {
-  if (typeof usage.totalTokens === "number") return usage.totalTokens;
-  return (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0);
 }
 
 function createLocalExecutor(
@@ -478,7 +476,8 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const contextTokens = contextTokensFromUsage(usage);
+    const contextTokens =
+      contextTokensFromUsage(usage) ?? estimateProviderContextTokens(input);
     const contextWindow = this.effectiveContextWindow(
       input.conversationId,
       input.agentId,
@@ -604,9 +603,15 @@ export class LocalBackend extends HeadlessBackend {
   }> {
     const agent = this.store.retrieveAgentRecord(agentId);
     const settings = this.resolveCompactionSettings(agent, body);
+    let result: {
+      numMessagesBefore: number;
+      numMessagesAfter: number;
+      summary: string;
+      stats: LocalCompactionStats;
+    };
     if (settings.mode === "sliding_window") {
       try {
-        const result = await this.compactLocalConversationSlidingWindow(
+        result = await this.compactLocalConversationSlidingWindow(
           conversationId,
           agentId,
           agent,
@@ -618,13 +623,20 @@ export class LocalBackend extends HeadlessBackend {
           result.stats.context_tokens_after === undefined ||
           result.stats.context_tokens_after < result.stats.context_window
         ) {
+          await this.compileAndMaybePersistSystemPrompt(
+            conversationId,
+            agentId,
+            {
+              dryRun: false,
+            },
+          );
           return result;
         }
       } catch (error) {
         if (!isLocalSlidingWindowCompactionPlanningError(error)) throw error;
       }
     }
-    return this.compactLocalConversationAll(
+    result = await this.compactLocalConversationAll(
       conversationId,
       agentId,
       agent,
@@ -635,6 +647,10 @@ export class LocalBackend extends HeadlessBackend {
         prompt: settings.mode === "all" ? settings.prompt : undefined,
       },
     );
+    await this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
+      dryRun: false,
+    });
+    return result;
   }
 
   private async compactLocalConversationAll(
@@ -749,16 +765,7 @@ export class LocalBackend extends HeadlessBackend {
       conversationId,
       agentId,
     );
-    const memfsEnabled = this.isLocalMemfsEnabled();
-    const memfsRevision = memfsEnabled
-      ? await getMemoryHeadRevision(this.memoryDirForAgent(agentId))
-      : undefined;
-    if (
-      existing?.rawSystemHash === hashRawSystemPrompt(agent.system) &&
-      (memfsEnabled
-        ? memfsRevision !== null && existing.memfsRevision === memfsRevision
-        : existing.memfsRevision === undefined)
-    ) {
+    if (existing?.rawSystemHash === hashRawSystemPrompt(agent.system)) {
       return existing;
     }
     return this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {

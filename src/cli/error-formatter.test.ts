@@ -118,6 +118,26 @@ describe("formatErrorDetails", () => {
     expect(message).not.toContain("Selected hosted model");
   });
 
+  test("prefers backend reason_text for credit exhaustion", () => {
+    const error = new APIError(
+      402,
+      {
+        error: "Rate limited",
+        reasons: ["not-enough-credits"],
+        reason_text:
+          "This request is estimated to cost 10,000 credits, but only 7 credits are currently available. Please add more credits or use a lower-cost model.",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toBe(
+      "This request is estimated to cost 10,000 credits, but only 7 credits are currently available. Please add more credits or use a lower-cost model.",
+    );
+  });
+
   test("formats OpenAI incomplete chunked streaming errors", () => {
     setErrorContext({ modelEndpointType: "chatgpt_oauth" });
     const errorObject = {
@@ -167,6 +187,26 @@ describe("formatErrorDetails", () => {
     const message = formatErrorDetails(error);
     expect(message).toBe(
       "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+    );
+  });
+
+  test("handles nested reason_text for credit exhaustion", () => {
+    const error = new APIError(
+      402,
+      {
+        error: {
+          reasons: ["not-enough-credits"],
+          reason_text:
+            "This request is too expensive for the credits currently available. Please add more credits or use a lower-cost model.",
+        },
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+    expect(message).toBe(
+      "This request is too expensive for the credits currently available. Please add more credits or use a lower-cost model.",
     );
   });
 
@@ -304,6 +344,27 @@ describe("formatErrorDetails", () => {
     expect(message).not.toContain("Add your own API keys");
   });
 
+  test("prefers backend reason_text over generic hosted quota guidance", () => {
+    setErrorContext({ billingTier: "team_pro", modelLabel: "letta/auto" });
+
+    const error = new APIError(
+      402,
+      {
+        reasons: ["basic-usage-exceeded", "not-enough-credits"],
+        reason_text:
+          "You've used all of your Basic tier model inferences for this 4-hour window (100 per 4-hour window). Quota resets in 2h. This request is estimated to cost 5,000 credits, but only 20 credits are currently available. Please add more credits or use a lower-cost model.",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error);
+
+    expect(message).toContain("Quota resets in 2h");
+    expect(message).toContain("estimated to cost 5,000 credits");
+    expect(message).not.toContain("Upgrade your plan for more quota");
+  });
+
   test("keeps generic credit guidance for non-Letta models", () => {
     setErrorContext({ modelLabel: "anthropic/claude-sonnet-4-6" });
 
@@ -425,6 +486,88 @@ describe("formatErrorDetails", () => {
     expect(message).toContain("Z.ai rate limit");
     expect(message).toContain("High concurrency usage exceeds limits");
     expect(message).not.toContain("OpenAI");
+  });
+
+  test("formats conversation-busy conflicts with user-facing copy", () => {
+    const error = new APIError(
+      409,
+      {
+        detail:
+          "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.",
+        run_id: "run-123",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error, "agent-1", "conv-1");
+
+    expect(message).toBe(
+      "Turn still running\n" +
+        "Another request is already processing for this conversation. Please wait for it to finish, then try again.\n\n" +
+        "Run ID: run-123",
+    );
+    expect(message).not.toContain("CONFLICT");
+    expect(message).not.toContain("app.letta.com");
+    expect(message).not.toContain("\x1b");
+  });
+
+  test("keeps OSC8 links by default for terminal displays", () => {
+    const error = new APIError(
+      500,
+      {
+        detail: "Internal failure",
+        run_id: "run-123",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error, "agent-1", "conv-1");
+
+    expect(message).toContain(
+      "\x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
+    );
+  });
+
+  test("uses plain agent references when explicitly requested", () => {
+    const error = new APIError(
+      500,
+      {
+        detail: "Internal failure",
+        run_id: "run-123",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error, "agent-1", "conv-1", {
+      surface: "plain",
+    });
+
+    expect(message).toContain("View agent: agent-1 (run: run-123)");
+    expect(message).not.toContain("app.letta.com");
+    expect(message).not.toContain("\x1b");
+  });
+
+  test("keeps OSC8 links when terminal output explicitly asks for them", () => {
+    const error = new APIError(
+      500,
+      {
+        detail: "Internal failure",
+        run_id: "run-123",
+      },
+      undefined,
+      new Headers(),
+    );
+
+    const message = formatErrorDetails(error, "agent-1", "conv-1", {
+      surface: "terminal",
+    });
+
+    expect(message).toContain(
+      "\x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
+    );
   });
 
   describe("Cloudflare HTML 52x errors", () => {

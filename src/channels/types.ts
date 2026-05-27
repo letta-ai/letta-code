@@ -14,6 +14,7 @@ export const FIRST_PARTY_CHANNEL_IDS = [
   "slack",
   "discord",
   "custom",
+  "whatsapp",
 ] as const;
 export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 /**
@@ -30,6 +31,9 @@ export type ChannelDefaultPermissionMode = Extract<
 export type SlackDefaultPermissionMode = ChannelDefaultPermissionMode;
 export type DiscordDefaultPermissionMode = ChannelDefaultPermissionMode;
 
+export const DEFAULT_SLACK_PERMISSION_MODE: SlackDefaultPermissionMode =
+  "unrestricted";
+
 /** Per-channel mode for Discord guild channels. */
 export type DiscordChannelMode = "open" | "mention-only";
 
@@ -43,6 +47,8 @@ export interface ChannelMessageAttachment {
   imageDataBase64?: string;
   /** Best-effort speech-to-text transcription (voice memos only). */
   transcription?: string;
+  /** Best-effort reason voice memo transcription failed. */
+  transcriptionError?: string;
 }
 
 export interface ChannelReactionNotification {
@@ -63,6 +69,13 @@ export interface ChannelThreadContext {
   label?: string;
   starter?: ChannelThreadContextEntry;
   history?: ChannelThreadContextEntry[];
+}
+
+export interface ChannelReplyContext {
+  messageId?: string;
+  senderId?: string;
+  senderName?: string;
+  text?: string;
 }
 
 export interface ChannelTurnSource {
@@ -110,6 +123,12 @@ export type ChannelTurnLifecycleEvent =
 
 // ── Adapter interface ─────────────────────────────────────────────
 
+export type ChannelStartupLogger = (message: string) => void;
+
+export interface ChannelAdapterStartOptions {
+  logger?: ChannelStartupLogger;
+}
+
 export interface ChannelAdapter {
   /** Platform identifier, e.g. "telegram", "slack". */
   readonly id: string;
@@ -121,7 +140,7 @@ export interface ChannelAdapter {
   readonly name: string;
 
   /** Start receiving messages (e.g. begin long-polling). */
-  start(): Promise<void>;
+  start(options?: ChannelAdapterStartOptions): Promise<void>;
   /** Stop receiving messages gracefully. */
   stop(): Promise<void>;
   /** Whether the adapter is currently running. */
@@ -208,6 +227,8 @@ export interface InboundChannelMessage {
   attachments?: ChannelMessageAttachment[];
   /** Reaction metadata for non-text channel events. */
   reaction?: ChannelReactionNotification;
+  /** Platform quote/reply context for messages sent in reply to another message. */
+  replyContext?: ChannelReplyContext;
   /** Supplemental thread context captured before the triggering message. */
   threadContext?: ChannelThreadContext;
 }
@@ -268,6 +289,8 @@ export interface ChannelRoute {
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
+export type TelegramGroupMode = "open" | "mention-only";
+export type WhatsAppGroupMode = "disabled" | "mention" | "open";
 
 export interface ChannelAccountBinding {
   agentId: string | null;
@@ -296,6 +319,8 @@ export interface TelegramChannelConfig {
   token: string;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /** Group/supergroup behavior: ambient open chat or explicit mentions only. */
+  groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
 }
@@ -370,17 +395,54 @@ export interface DiscordChannelConfig {
   inboundDebounceMs?: number;
 }
 
+export interface WhatsAppChannelConfig {
+  channel: "whatsapp";
+  enabled: boolean;
+  dmPolicy: DmPolicy;
+  allowedUsers: string[];
+  agentId: string | null;
+  /** Default true. When true, only the user's own Message Yourself chat routes. */
+  selfChatMode: boolean;
+  /** Default disabled. Controls group-message ingestion. */
+  groupMode: WhatsAppGroupMode;
+  /** Optional allowlist of WhatsApp group JIDs. Empty/undefined allows any group when groupMode is not disabled. */
+  allowedGroups?: string[];
+  /** Optional textual aliases for group mention detection. */
+  mentionPatterns?: string[];
+  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
+  transcribeVoice?: boolean;
+  /** When true, supported inbound media is downloaded to local channel storage. */
+  downloadMedia?: boolean;
+  /** Maximum inbound media bytes to download. Undefined uses channel default. */
+  mediaMaxBytes?: number;
+}
+
 export type ChannelConfig =
   | TelegramChannelConfig
   | SlackChannelConfig
-  | DiscordChannelConfig;
+  | DiscordChannelConfig
+  | WhatsAppChannelConfig;
 
 export interface TelegramChannelAccount extends ChannelAccountBase {
   channel: "telegram";
   token: string;
   binding: ChannelAccountBinding;
+  /**
+   * Group/supergroup behavior. `open` preserves existing ambient room routing;
+   * `mention-only` only delivers messages explicitly addressed to this bot.
+   */
+  groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /**
+   * Optional debounce window (ms) for inbound group/topic messages. When
+   * greater than `0`, short back-to-back text messages in the same chat/topic
+   * stack into a single combined dispatch (trailing edge). Default `0`
+   * (disabled). DMs, attachments, and reactions bypass. The env var
+   * `LETTA_TELEGRAM_INBOUND_DEBOUNCE_MS` takes precedence if set. Clamped to
+   * `0..10000`.
+   */
+  inboundDebounceMs?: number;
 }
 
 export interface SlackChannelAccount extends ChannelAccountBase {
@@ -461,10 +523,31 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   inboundDebounceMs?: number;
 }
 
+export interface WhatsAppChannelAccount extends ChannelAccountBase {
+  channel: "whatsapp";
+  /** Agent ID used for account-bound DM and group auto-routing. */
+  agentId: string | null;
+  /** Default true. Explicitly set false before replying under the linked user's identity. */
+  selfChatMode: boolean;
+  /** Default disabled. Controls group-message ingestion. */
+  groupMode: WhatsAppGroupMode;
+  /** Optional allowlist of WhatsApp group JIDs. */
+  allowedGroups?: string[];
+  /** Optional textual aliases for group mention detection. */
+  mentionPatterns?: string[];
+  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
+  transcribeVoice?: boolean;
+  /** When true, supported inbound media is downloaded to local channel storage. */
+  downloadMedia?: boolean;
+  /** Maximum inbound media bytes to download. Undefined uses channel default. */
+  mediaMaxBytes?: number;
+}
+
 export type ChannelAccount =
   | TelegramChannelAccount
   | SlackChannelAccount
   | DiscordChannelAccount
+  | WhatsAppChannelAccount
   | CustomChannelAccount;
 
 export function isFirstPartyChannelId(
@@ -495,6 +578,12 @@ export function isDiscordChannelAccount(
   account: ChannelAccount,
 ): account is DiscordChannelAccount {
   return account.channel === "discord" && "token" in account;
+}
+
+export function isWhatsAppChannelAccount(
+  account: ChannelAccount,
+): account is WhatsAppChannelAccount {
+  return account.channel === "whatsapp" && "selfChatMode" in account;
 }
 
 export function isCustomChannelAccount(

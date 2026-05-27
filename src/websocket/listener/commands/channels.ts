@@ -1441,6 +1441,17 @@ export function handleChannelRegistryEvent(
     return;
   }
 
+  if (event.type === "channel_account_state_updated") {
+    if (socket instanceof WebSocket) {
+      emitChannelAccountsUpdated(socket, safeSocketSend, {
+        channelId: event.channelId as ChannelId,
+        accountId: event.accountId,
+      });
+      emitChannelsUpdated(socket, safeSocketSend, event.channelId as ChannelId);
+    }
+    return;
+  }
+
   const permissionModeState = getOrCreateConversationPermissionModeStateRef(
     runtime,
     event.agentId,

@@ -182,16 +182,24 @@ function dateToCron(d: Date): string {
 
 // ── Cron validation ─────────────────────────────────────────────────
 
-const CRON_FIELD_RE = /^(\*|\d+)([/-]\d+)?$/;
+/** Matches a single cron sub-field (no commas): *, N, star/N, N-M, N-M/S */
+const CRON_SUBFIELD_RE = /^(\*|\d+)(-\d+)?(\/\d+)?$/;
 
 /**
- * Validate a 5-field cron expression. Very basic — checks field count and
- * each field matches `*`, `N`, `*​/N`, or `N-N` patterns.
+ * Validate a 5-field cron expression. Checks field count and each field
+ * supports wildcards, exact values, steps, ranges, range-steps, and
+ * comma-separated combinations of the above.
  */
 export function isValidCron(expr: string): boolean {
   const fields = expr.trim().split(/\s+/);
   if (fields.length !== 5) return false;
-  return fields.every((f) => CRON_FIELD_RE.test(f));
+  return fields.every((f) => {
+    // Split on commas and validate each sub-field individually
+    const subFields = f.split(",");
+    // Reject empty sub-fields (trailing/leading/double commas)
+    if (subFields.some((s) => s === "")) return false;
+    return subFields.every((s) => CRON_SUBFIELD_RE.test(s));
+  });
 }
 
 // ── Cron evaluation ─────────────────────────────────────────────────
@@ -328,6 +336,11 @@ export function cronMatchesTime(
 }
 
 function fieldMatches(field: string, value: number): boolean {
+  // Comma-separated: any sub-field matching is enough
+  if (field.includes(",")) {
+    return field.split(",").some((sub) => fieldMatches(sub, value));
+  }
+
   if (field === "*") return true;
 
   // Step: */N
@@ -337,7 +350,19 @@ function fieldMatches(field: string, value: number): boolean {
     return value % step === 0;
   }
 
-  // Range: N-N
+  // Range with step: N-M/S
+  if (field.includes("-") && field.includes("/")) {
+    const [range, stepStr] = field.split("/");
+    const step = Number.parseInt(stepStr ?? "", 10);
+    if (step <= 0 || !Number.isFinite(step)) return false;
+    const [startStr, endStr] = (range ?? "").split("-");
+    const start = Number.parseInt(startStr ?? "", 10);
+    const end = Number.parseInt(endStr ?? "", 10);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+    return value >= start && value <= end && (value - start) % step === 0;
+  }
+
+  // Range: N-M
   if (field.includes("-")) {
     const [startStr, endStr] = field.split("-");
     const start = Number.parseInt(startStr ?? "", 10);

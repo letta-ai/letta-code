@@ -9,7 +9,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
-import { getBackend } from "@/backend";
+import { type Backend, getBackend } from "@/backend";
 import {
   type ClientTool,
   type PermissionModeState,
@@ -94,6 +94,12 @@ export type SendMessageStreamOptions = {
   actingUserId?: string;
 };
 
+export type SendMessageStreamRequestOptions = {
+  maxRetries?: number;
+  signal?: AbortSignal;
+  headers?: Record<string, string>;
+};
+
 export function buildConversationMessagesCreateRequestBody(
   conversationId: string,
   messages: Array<MessageCreate | ApprovalCreate>,
@@ -141,17 +147,35 @@ export async function sendMessageStream(
   opts: SendMessageStreamOptions = { streamTokens: true, background: true },
   // Disable SDK retries by default - state management happens outside the stream,
   // so retries would violate idempotency and create race conditions
-  requestOptions: {
-    maxRetries?: number;
-    signal?: AbortSignal;
-    headers?: Record<string, string>;
-  } = {
+  requestOptions: SendMessageStreamRequestOptions = {
+    maxRetries: 0,
+  },
+): Promise<Stream<LettaStreamingResponse>> {
+  return sendMessageStreamWithBackend(
+    getBackend(),
+    conversationId,
+    messages,
+    opts,
+    requestOptions,
+  );
+}
+
+/**
+ * Send a message through an explicit backend instance. Use this when a caller
+ * composes several backend operations and needs fork/send to stay on the same
+ * backend without reaching back through the global backend singleton.
+ */
+export async function sendMessageStreamWithBackend(
+  backend: Backend,
+  conversationId: string,
+  messages: Array<MessageCreate | ApprovalCreate>,
+  opts: SendMessageStreamOptions = { streamTokens: true, background: true },
+  requestOptions: SendMessageStreamRequestOptions = {
     maxRetries: 0,
   },
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
-  const backend = getBackend();
   const normalizedMessages = opts.skipImageNormalization
     ? messages
     : await normalizeMessageImageParts(messages);

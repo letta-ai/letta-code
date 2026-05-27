@@ -3,6 +3,7 @@
 
 import { resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
+import { extensionToolRequiresApproval } from "@/extensions/tool-registry";
 import { runPermissionRequestHooks } from "@/hooks";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
@@ -718,6 +719,11 @@ function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
 ): PermissionDecision {
+  const extensionRequiresApproval = extensionToolRequiresApproval(toolName);
+  if (extensionRequiresApproval !== undefined) {
+    return extensionRequiresApproval ? "ask" : "allow";
+  }
+
   // Check TOOL_PERMISSIONS to determine if tool requires approval
   // Import is async so we need to do this synchronously - get the permissions from manager
   // For now, use a hardcoded check that matches TOOL_PERMISSIONS configuration

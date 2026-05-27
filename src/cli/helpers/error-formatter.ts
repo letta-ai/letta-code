@@ -1,10 +1,33 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
+import {
+  formatConversationBusyErrorMessage,
+  isConversationBusyErrorText,
+} from "@/utils/conversation-busy-error";
 import { buildAgentTerminalLink, buildAppUrl } from "./app-urls";
 import { getErrorContext } from "./error-context";
 import { checkZaiError } from "./zai-errors";
 
 const LETTA_USAGE_URL = buildAppUrl("/settings/organization/usage");
 const LETTA_AGENTS_URL = buildAppUrl("/projects/default-project/agents");
+
+export type ErrorDisplaySurface = "plain" | "terminal";
+
+export interface FormatErrorDetailsOptions {
+  automaticRetry?: boolean;
+  surface?: ErrorDisplaySurface;
+}
+
+function formatConversationBusyErrorForDisplay(
+  errorText: string,
+  runId: string | undefined,
+  options: FormatErrorDetailsOptions,
+): string | null {
+  if (!isConversationBusyErrorText(errorText)) return null;
+  return formatConversationBusyErrorMessage({
+    automaticRetry: options.automaticRetry ?? false,
+    runId,
+  });
+}
 
 function extractReasonList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -168,6 +191,27 @@ function hasErrorReason(
 ): boolean {
   const allReasons = reasons ?? getErrorReasons(e);
   return allReasons.includes(reason.toLowerCase());
+}
+
+function getReasonText(e: APIError): string | undefined {
+  const errorBody = e.error;
+  if (!errorBody || typeof errorBody !== "object") {
+    return undefined;
+  }
+
+  const body = errorBody as Record<string, unknown>;
+  if (typeof body.reason_text === "string") {
+    return body.reason_text;
+  }
+
+  if (body.error && typeof body.error === "object") {
+    const nested = body.error as Record<string, unknown>;
+    if (typeof nested.reason_text === "string") {
+      return nested.reason_text;
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -644,8 +688,10 @@ export function formatErrorDetails(
   e: unknown,
   agentId?: string,
   conversationId?: string,
+  options: FormatErrorDetailsOptions = {},
 ): string {
   let runId: string | undefined;
+  const surface = options.surface ?? "terminal";
 
   // Check for OpenAI encrypted content org mismatch before anything else
   const encryptedContentMsg = checkEncryptedContentError(e);
@@ -721,13 +767,21 @@ export function formatErrorDetails(
       return `${resourceLimitMsg}\nUpgrade at: ${LETTA_USAGE_URL}\nDelete ${resourceType} at: ${LETTA_AGENTS_URL}`;
     }
 
-    const lettaHostedQuotaMsg = getLettaHostedQuotaMessage(e, reasons);
-    if (lettaHostedQuotaMsg) return lettaHostedQuotaMsg;
-
     // Check for credit exhaustion error - provide a friendly message
     if (isCreditExhaustedError(e, reasons)) {
+      const reasonText = getReasonText(e);
+      if (reasonText) {
+        return reasonText;
+      }
+
+      const lettaHostedQuotaMsg = getLettaHostedQuotaMessage(e, reasons);
+      if (lettaHostedQuotaMsg) return lettaHostedQuotaMsg;
+
       return `Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.`;
     }
+
+    const lettaHostedQuotaMsg = getLettaHostedQuotaMessage(e, reasons);
+    if (lettaHostedQuotaMsg) return lettaHostedQuotaMsg;
 
     const tierUsageLimitMsg = getTierUsageLimitMessage(reasons);
     if (tierUsageLimitMsg) return tierUsageLimitMsg;
@@ -759,8 +813,14 @@ export function formatErrorDetails(
         }
 
         const baseError = `${errorType}${message}${errorDetail}`;
+        const conversationBusyMessage = formatConversationBusyErrorForDisplay(
+          baseError,
+          runId,
+          options,
+        );
+        if (conversationBusyMessage) return conversationBusyMessage;
         return runId && agentId
-          ? `${baseError}\n${createAgentLink(runId, agentId, conversationId)}`
+          ? `${baseError}\n${createAgentLink(runId, agentId, conversationId, surface)}`
           : baseError;
       }
     }
@@ -776,8 +836,14 @@ export function formatErrorDetails(
       // (e.message often contains the full JSON body like '409 {"detail":"CONFLICT: ..."}')
       const baseError =
         detail && typeof detail === "string" ? detail : e.message;
+      const conversationBusyMessage = formatConversationBusyErrorForDisplay(
+        baseError,
+        runId,
+        options,
+      );
+      if (conversationBusyMessage) return conversationBusyMessage;
       return runId && agentId
-        ? `${baseError}\n${createAgentLink(runId, agentId, conversationId)}`
+        ? `${baseError}\n${createAgentLink(runId, agentId, conversationId, surface)}`
         : baseError;
     }
 
@@ -882,8 +948,12 @@ function getProviderDisplayName(): string {
 function createAgentLink(
   runId: string,
   agentId: string,
-  conversationId?: string,
+  conversationId: string | undefined,
+  surface: ErrorDisplaySurface,
 ): string {
-  const agentRef = buildAgentTerminalLink(agentId, { conversationId });
+  const agentRef =
+    surface === "terminal"
+      ? buildAgentTerminalLink(agentId, { conversationId })
+      : agentId;
   return `View agent: ${agentRef} (run: ${runId})`;
 }

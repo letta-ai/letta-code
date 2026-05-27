@@ -362,7 +362,7 @@ describe("Settings Manager - Project Settings", () => {
       await settingsManager.loadProjectSettings(testProjectDir);
 
     expect(projectSettings.hooks).toBeUndefined();
-    expect(projectSettings.statusLine).toBeUndefined();
+    expect(projectSettings.windowTitle).toBeUndefined();
   });
 
   test("Get project settings returns cached value", async () => {
@@ -380,13 +380,13 @@ describe("Settings Manager - Project Settings", () => {
 
     settingsManager.updateProjectSettings(
       {
-        statusLine: { command: "echo test" },
+        windowTitle: { items: ["agent-name"] },
       },
       testProjectDir,
     );
 
     const settings = settingsManager.getProjectSettings(testProjectDir);
-    expect(settings.statusLine?.command).toBe("echo test");
+    expect(settings.windowTitle?.items).toEqual(["agent-name"]);
   });
 
   test("Project settings persist to disk", async () => {
@@ -394,7 +394,7 @@ describe("Settings Manager - Project Settings", () => {
 
     settingsManager.updateProjectSettings(
       {
-        statusLine: { command: "echo persist-test" },
+        windowTitle: { items: ["agent-name", "model-name"] },
       },
       testProjectDir,
     );
@@ -407,7 +407,7 @@ describe("Settings Manager - Project Settings", () => {
     await settingsManager.initialize();
     const reloaded = await settingsManager.loadProjectSettings(testProjectDir);
 
-    expect(reloaded.statusLine?.command).toBe("echo persist-test");
+    expect(reloaded.windowTitle?.items).toEqual(["agent-name", "model-name"]);
   });
 
   test("Throw error if accessing project settings before loading", async () => {
@@ -419,19 +419,19 @@ describe("Settings Manager - Project Settings", () => {
   test("When cwd is HOME, project settings resolve to defaults (no global collision)", async () => {
     await settingsManager.initialize();
 
-    // Seed a global statusLine config in ~/.letta/settings.json
+    // Seed a global windowTitle config in ~/.letta/settings.json
     settingsManager.updateSettings({
-      statusLine: { command: "echo global-status" },
+      windowTitle: { items: ["agent-name"] },
     });
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const projectSettings =
       await settingsManager.loadProjectSettings(testHomeDir);
     expect(projectSettings.hooks).toBeUndefined();
-    expect(projectSettings.statusLine).toBeUndefined();
+    expect(projectSettings.windowTitle).toBeUndefined();
   });
 
-  test("When cwd is HOME, project hook/statusLine updates route to global settings", async () => {
+  test("When cwd is HOME, project hook/windowTitle updates route to global settings", async () => {
     await settingsManager.initialize();
 
     // Load project settings for HOME (will be defaults due to collision guard)
@@ -439,7 +439,7 @@ describe("Settings Manager - Project Settings", () => {
 
     settingsManager.updateProjectSettings(
       {
-        statusLine: { command: "echo routed-status" },
+        windowTitle: { items: ["agent-name", "model-name"] },
         hooks: {
           Notification: [
             {
@@ -454,7 +454,10 @@ describe("Settings Manager - Project Settings", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const globalSettings = settingsManager.getSettings();
-    expect(globalSettings.statusLine?.command).toBe("echo routed-status");
+    expect(globalSettings.windowTitle?.items).toEqual([
+      "agent-name",
+      "model-name",
+    ]);
     expect(
       asCommand(globalSettings.hooks?.Notification?.[0]?.hooks[0])?.command,
     ).toBe("echo routed-hook");
@@ -629,19 +632,19 @@ describe("Settings Manager - Multiple Projects", () => {
     await settingsManager.loadProjectSettings(testProjectDir2);
 
     settingsManager.updateProjectSettings(
-      { statusLine: { command: "echo project-1" } },
+      { windowTitle: { items: ["agent-name"] } },
       testProjectDir,
     );
     settingsManager.updateProjectSettings(
-      { statusLine: { command: "echo project-2" } },
+      { windowTitle: { items: ["model-name"] } },
       testProjectDir2,
     );
 
     const settings1 = settingsManager.getProjectSettings(testProjectDir);
     const settings2 = settingsManager.getProjectSettings(testProjectDir2);
 
-    expect(settings1.statusLine?.command).toBe("echo project-1");
-    expect(settings2.statusLine?.command).toBe("echo project-2");
+    expect(settings1.windowTitle?.items).toEqual(["agent-name"]);
+    expect(settings2.windowTitle?.items).toEqual(["model-name"]);
   });
 });
 
@@ -1619,6 +1622,23 @@ describe("Settings Manager - Conversation Goals", () => {
     );
     expect(resumed?.status).toBe("active");
     expect(resumed?.activeStartedAt).not.toBeNull();
+  });
+
+  test("updateConversationGoalStatus transitions active -> blocked", async () => {
+    await initGoalTest();
+    settingsManager.setConversationGoal(
+      "conv-1",
+      "fix the bug",
+      testProjectDir,
+    );
+    const updated = settingsManager.updateConversationGoalStatus(
+      "conv-1",
+      "blocked",
+      testProjectDir,
+    );
+    expect(updated).not.toBeNull();
+    expect(updated?.status).toBe("blocked");
+    expect(updated?.activeStartedAt).toBeNull();
   });
 
   test("updateConversationGoalStatus returns null for missing conversation", async () => {

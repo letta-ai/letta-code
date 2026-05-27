@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyPreStreamConflict,
   extractConflictDetail,
+  extractConversationBusyRunId,
   getPreStreamErrorAction,
   getRetryDelayMs,
   getTransientRetryDelayMs,
@@ -66,10 +67,34 @@ describe("isConversationBusyError", () => {
     ).toBe(true);
   });
 
+  test("detects TS core active-run busy error", () => {
+    expect(
+      isConversationBusyError(
+        "Conversation conv-123 is busy with another active run.",
+      ),
+    ).toBe(true);
+  });
+
   test("rejects approval-pending", () => {
     expect(isConversationBusyError("The agent is waiting for approval")).toBe(
       false,
     );
+  });
+});
+
+describe("extractConversationBusyRunId", () => {
+  test("extracts run id from conversation-busy errors", () => {
+    expect(
+      extractConversationBusyRunId(
+        "Cannot send a new message: Another request (run_id=run-46b3f831-88d4-4d53-a9d1-591967bf711d) is currently being processed for this conversation.",
+      ),
+    ).toBe("run-46b3f831-88d4-4d53-a9d1-591967bf711d");
+  });
+
+  test("ignores unrelated run ids", () => {
+    expect(
+      extractConversationBusyRunId("run_id=run-abc but no busy text"),
+    ).toBe(null);
   });
 });
 
@@ -99,6 +124,14 @@ describe("classifyPreStreamConflict", () => {
   test("conversation busy", () => {
     expect(
       classifyPreStreamConflict("another request is currently being processed"),
+    ).toBe("conversation_busy");
+  });
+
+  test("conversation busy from TS core", () => {
+    expect(
+      classifyPreStreamConflict(
+        "Conversation is busy with another active run.",
+      ),
     ).toBe("conversation_busy");
   });
 
@@ -478,6 +511,22 @@ describe("extractConflictDetail", () => {
     expect(extractConflictDetail(err)).toBe("fallback msg");
   });
 
+  test("nested string: e.error.error", () => {
+    const err = {
+      error: { error: "Conversation is busy with another active run." },
+    };
+    expect(extractConflictDetail(err)).toBe(
+      "Conversation is busy with another active run.",
+    );
+  });
+
+  test("string body: e.error", () => {
+    const err = { error: "Conversation is busy with another active run." };
+    expect(extractConflictDetail(err)).toBe(
+      "Conversation is busy with another active run.",
+    );
+  });
+
   test("flat: e.error.detail", () => {
     const err = {
       error: { detail: "another request is currently being processed" },
@@ -521,6 +570,19 @@ describe("extractConflictDetail", () => {
     expect(isConversationBusyError(detail)).toBe(false);
     expect(getPreStreamErrorAction(detail, 0, 3)).toBe(
       "resolve_approval_pending",
+    );
+  });
+
+  test("end-to-end: TS core busy response retries as conversation busy", () => {
+    const sdkError = {
+      error: {
+        error: "Conversation is busy with another active run.",
+      },
+    };
+    const detail = extractConflictDetail(sdkError);
+    expect(isConversationBusyError(detail)).toBe(true);
+    expect(getPreStreamErrorAction(detail, 0, 3)).toBe(
+      "retry_conversation_busy",
     );
   });
 });

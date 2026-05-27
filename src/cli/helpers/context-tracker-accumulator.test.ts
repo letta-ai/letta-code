@@ -59,6 +59,34 @@ describe("accumulator usage statistics", () => {
     expect(buffers.usage.contextTokens).toBe(640);
   });
 
+  test("tracks context_tokens even when provider token totals are zero", () => {
+    const buffers = createBuffers();
+    const tracker = createContextTracker();
+
+    onChunk(
+      buffers,
+      usageChunk({
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        context_tokens: 512,
+      }),
+      tracker,
+    );
+
+    expect(buffers.usage.promptTokens).toBe(0);
+    expect(buffers.usage.completionTokens).toBe(0);
+    expect(buffers.usage.totalTokens).toBe(0);
+    expect(buffers.usage.contextTokens).toBe(512);
+    expect(tracker.lastContextTokens).toBe(512);
+    expect(tracker.contextTokensHistory).toEqual([
+      expect.objectContaining({
+        tokens: 512,
+        turnId: 0,
+      }),
+    ]);
+  });
+
   test("ignores null optional token metrics", () => {
     const buffers = createBuffers();
 

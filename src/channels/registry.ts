@@ -12,6 +12,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { getClient } from "@/backend/api/client";
+import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { ApprovalResponseBody } from "@/types/protocol_v2";
 import {
   getChannelAccount,
@@ -19,7 +20,22 @@ import {
   listChannelAccounts,
   loadChannelAccounts,
 } from "./accounts";
-import { tryHandleChannelSlashCommand } from "./commands";
+import {
+  buildChannelAlreadyActiveMessage,
+  buildChannelAlreadyPausedMessage,
+  buildChannelCancelNoActiveTurnMessage,
+  buildChannelCancelUnavailableMessage,
+  buildChannelChatLinkMessage,
+  buildChannelChatUnavailableMessage,
+  buildChannelModelUnavailableMessage,
+  buildChannelNoRouteMessage,
+  buildChannelPausedMessage,
+  buildChannelReflectionUnavailableMessage,
+  buildChannelResumedMessage,
+  parseChannelSlashCommand,
+  tryHandleChannelSlashCommand,
+} from "./commands";
+import { getChannelAccountsPath, getChannelsRoot } from "./config";
 import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
 import {
   formatChannelControlRequestPrompt,
@@ -57,13 +73,23 @@ import type {
   ChannelControlRequestEvent,
   ChannelDefaultPermissionMode,
   ChannelRoute,
+  ChannelStartupLogger,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   DiscordChannelAccount,
   InboundChannelMessage,
   SlackChannelAccount,
+  TelegramChannelAccount,
+  WhatsAppChannelAccount,
 } from "./types";
-import { isDiscordChannelAccount, isSlackChannelAccount } from "./types";
+import {
+  isDiscordChannelAccount,
+  isSlackChannelAccount,
+  isTelegramChannelAccount,
+  isWhatsAppChannelAccount,
+} from "./types";
+import { allowedUsersIncludes } from "./whatsapp/jid";
+import { subscribeWhatsAppConnectionState } from "./whatsapp/state";
 import { formatChannelNotification } from "./xml";
 
 function channelDisplayName(channelId: string): string {
@@ -183,6 +209,48 @@ function buildDiscordConversationSummary(
   return `[Discord] Thread${channelLabel || ` ${msg.chatId}`}`;
 }
 
+function buildTelegramConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[Telegram] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const preview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (preview) {
+    return `[Telegram] Topic${channelLabel}: ${preview}`;
+  }
+
+  return `[Telegram] Topic${channelLabel || ` ${msg.chatId}`}`;
+}
+
+function buildWhatsAppConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[WhatsApp] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const textPreview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (textPreview) {
+    return `[WhatsApp] Group${channelLabel}: ${textPreview}`;
+  }
+
+  return `[WhatsApp] Group${channelLabel || ` ${msg.chatId}`}`;
+}
+
 function buildChannelTurnSource(
   route: ChannelRoute,
   msg: Pick<
@@ -239,6 +307,7 @@ export interface ChannelInboundDelivery {
   route: ChannelRoute;
   content: MessageCreate["content"];
   turnSources?: ChannelTurnSource[];
+  defaultPermissionMode?: ChannelDefaultPermissionMode;
 }
 
 export type ChannelMessageHandler = (delivery: ChannelInboundDelivery) => void;
@@ -249,6 +318,92 @@ export type ChannelApprovalResponseHandler = (params: {
   };
   response: ApprovalResponseBody;
 }) => Promise<boolean>;
+
+export type ChannelCancelHandler = (params: {
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+}) => Promise<boolean>;
+
+export type ChannelReflectionHandler = (params: {
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+}) => Promise<{
+  handled: boolean;
+  text?: string;
+}>;
+
+export type ChannelModelHandler = (params: {
+  channelId: string;
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+  modelIdentifier?: string;
+}) => Promise<{
+  handled: boolean;
+  text?: string;
+}>;
+
+type ChannelStartupOptions = {
+  logger?: ChannelStartupLogger;
+};
+
+export interface ChannelStartupFailure {
+  channelId: string;
+  accountId?: string;
+  error: string;
+}
+
+export class ChannelInitializationError extends Error {
+  constructor(public readonly failures: ChannelStartupFailure[]) {
+    super(formatChannelStartupFailures(failures));
+    this.name = "ChannelInitializationError";
+  }
+}
+
+function logChannelStartup(
+  logger: ChannelStartupLogger | undefined,
+  message: string,
+): void {
+  logger?.(`[Channels] ${message}`);
+}
+
+function formatChannelStartupError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+  return String(error);
+}
+
+export function formatChannelStartupFailures(
+  failures: ChannelStartupFailure[],
+): string {
+  const failedChannels = Array.from(
+    new Set(failures.map((failure) => failure.channelId)),
+  );
+  const lines = failures.map((failure) => {
+    const label = failure.accountId
+      ? `${failure.channelId}/${failure.accountId}`
+      : failure.channelId;
+    return `- ${label}: ${failure.error}`;
+  });
+
+  return [
+    "Failed to start requested channel listeners.",
+    ...lines,
+    "",
+    "The listener is not running for these channels.",
+    `Install missing runtimes with: letta server --channels ${failedChannels.join(",")} --install-channel-runtimes`,
+    "Or install them once with:",
+    ...failedChannels.map(
+      (channelId) => `  letta channels install ${channelId}`,
+    ),
+  ].join("\n");
+}
 
 type PendingChannelControlRequest = {
   event: ChannelControlRequestEvent;
@@ -263,6 +418,11 @@ export type ChannelRegistryEvent =
   | {
       type: "targets_updated";
       channelId: string;
+    }
+  | {
+      type: "channel_account_state_updated";
+      channelId: string;
+      accountId: string;
     }
   | {
       type: "slack_conversation_created";
@@ -289,12 +449,16 @@ export class ChannelRegistry {
   private messageHandler: ChannelMessageHandler | null = null;
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
+  private cancelHandler: ChannelCancelHandler | null = null;
+  private reflectionHandler: ChannelReflectionHandler | null = null;
+  private modelHandler: ChannelModelHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
     PendingChannelControlRequest
   >();
   private readonly pendingControlRequestIdByScope = new Map<string, string>();
+  private readonly unsubscribeWhatsAppState: () => void;
 
   constructor() {
     if (instance) {
@@ -303,6 +467,15 @@ export class ChannelRegistry {
       );
     }
     instance = this;
+    this.unsubscribeWhatsAppState = subscribeWhatsAppConnectionState(
+      (accountId) => {
+        this.eventHandler?.({
+          type: "channel_account_state_updated",
+          channelId: "whatsapp",
+          accountId,
+        });
+      },
+    );
     this.primePersistedPendingControlRequests();
   }
 
@@ -419,6 +592,18 @@ export class ChannelRegistry {
     handler: ChannelApprovalResponseHandler | null,
   ): void {
     this.approvalResponseHandler = handler;
+  }
+
+  setCancelHandler(handler: ChannelCancelHandler | null): void {
+    this.cancelHandler = handler;
+  }
+
+  setReflectionHandler(handler: ChannelReflectionHandler | null): void {
+    this.reflectionHandler = handler;
+  }
+
+  setModelHandler(handler: ChannelModelHandler | null): void {
+    this.modelHandler = handler;
   }
 
   setEventHandler(
@@ -629,27 +814,57 @@ export class ChannelRegistry {
   async startChannelAccount(
     channelId: string,
     accountId: string,
+    options?: ChannelStartupOptions,
   ): Promise<boolean> {
+    logChannelStartup(options?.logger, `starting ${channelId}/${accountId}`);
     loadChannelAccounts(channelId);
     const account = getChannelAccount(channelId, accountId);
     if (!account) {
+      logChannelStartup(
+        options?.logger,
+        `account not found: ${channelId}/${accountId}`,
+      );
       return false;
     }
 
+    logChannelStartup(
+      options?.logger,
+      `loading route, pairing, and target stores for ${channelId}/${accountId}`,
+    );
     loadRoutes(channelId);
     loadPairingStore(channelId);
     loadTargetStore(channelId);
 
     const existing = this.getAdapter(channelId, accountId);
     if (existing?.isRunning()) {
+      logChannelStartup(
+        options?.logger,
+        `stopping existing adapter for ${channelId}/${accountId}`,
+      );
       await existing.stop();
     }
     this.adapters.delete(this.getAdapterKey(channelId, accountId));
 
+    logChannelStartup(
+      options?.logger,
+      `loading plugin for ${account.channel}/${accountId}`,
+    );
     const plugin = await loadChannelPlugin(account.channel);
+    logChannelStartup(
+      options?.logger,
+      `creating adapter for ${account.channel}/${accountId}`,
+    );
     const adapter = await plugin.createAdapter(account);
     this.registerAdapter(adapter);
-    await adapter.start();
+    logChannelStartup(
+      options?.logger,
+      `starting adapter for ${account.channel}/${accountId}`,
+    );
+    await adapter.start({ logger: options?.logger });
+    logChannelStartup(
+      options?.logger,
+      `started adapter for ${account.channel}/${accountId}`,
+    );
     return true;
   }
 
@@ -711,6 +926,9 @@ export class ChannelRegistry {
     this.messageHandler = null;
     this.eventHandler = null;
     this.approvalResponseHandler = null;
+    this.cancelHandler = null;
+    this.reflectionHandler = null;
+    this.modelHandler = null;
   }
 
   /**
@@ -727,8 +945,12 @@ export class ChannelRegistry {
     this.messageHandler = null;
     this.eventHandler = null;
     this.approvalResponseHandler = null;
+    this.cancelHandler = null;
+    this.reflectionHandler = null;
+    this.modelHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
+    this.unsubscribeWhatsAppState();
     instance = null;
   }
 
@@ -738,6 +960,11 @@ export class ChannelRegistry {
     adapter: ChannelAdapter,
     msg: InboundChannelMessage,
   ): Promise<boolean> {
+    const slashCommand = parseChannelSlashCommand(msg.text);
+    if (slashCommand) {
+      return false;
+    }
+
     const scopeKey = getChannelApprovalScopeKey({
       channel: msg.channel,
       accountId: msg.accountId,
@@ -797,6 +1024,226 @@ export class ChannelRegistry {
     return true;
   }
 
+  private findRawRouteForMessage(
+    msg: InboundChannelMessage,
+  ): ChannelRoute | null {
+    const route =
+      getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ??
+      (msg.threadId
+        ? getRouteRaw(msg.channel, msg.chatId, msg.accountId, null)
+        : undefined);
+    return route ?? null;
+  }
+
+  private loadAndFindRawRouteForMessage(
+    msg: InboundChannelMessage,
+  ): ChannelRoute | null {
+    const route = this.findRawRouteForMessage(msg);
+    if (route) {
+      return route;
+    }
+    loadRoutes(msg.channel);
+    return this.findRawRouteForMessage(msg);
+  }
+
+  private async handlePauseResumeSlashCommand(
+    commandName: "pause" | "resume",
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (commandName === "pause") {
+      if (route.enabled === false) {
+        return {
+          handled: true,
+          text: buildChannelAlreadyPausedMessage(msg.channel),
+        };
+      }
+      const updatedRoute: ChannelRoute = {
+        ...route,
+        enabled: false,
+        updatedAt: new Date().toISOString(),
+      };
+      addRoute(msg.channel, updatedRoute);
+      return {
+        handled: true,
+        text: buildChannelPausedMessage(msg.channel, updatedRoute),
+      };
+    }
+
+    if (route.enabled !== false) {
+      return {
+        handled: true,
+        text: buildChannelAlreadyActiveMessage(msg.channel),
+      };
+    }
+    const updatedRoute: ChannelRoute = {
+      ...route,
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    };
+    addRoute(msg.channel, updatedRoute);
+    return {
+      handled: true,
+      text: buildChannelResumedMessage(msg.channel, updatedRoute),
+    };
+  }
+
+  private async handleCancelSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.getCancelRoute(msg);
+    if (!route?.enabled || !this.cancelHandler) {
+      return {
+        handled: true,
+        text: buildChannelCancelUnavailableMessage(msg.channel),
+      };
+    }
+
+    const cancelled = await this.cancelHandler({
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
+
+    if (!cancelled) {
+      return {
+        handled: true,
+        text: buildChannelCancelNoActiveTurnMessage(msg.channel),
+      };
+    }
+
+    return { handled: true };
+  }
+
+  private async handleChatSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (isLocalAgentId(route.agentId)) {
+      return {
+        handled: true,
+        text: buildChannelChatUnavailableMessage(msg.channel, route),
+      };
+    }
+
+    return {
+      handled: true,
+      text: buildChannelChatLinkMessage(
+        msg.channel,
+        route,
+        buildChatUrl(route.agentId, {
+          conversationId: route.conversationId,
+        }),
+      ),
+    };
+  }
+
+  private async handleReflectionSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (!this.reflectionHandler) {
+      return {
+        handled: true,
+        text: buildChannelReflectionUnavailableMessage(msg.channel),
+      };
+    }
+
+    return this.reflectionHandler({
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
+  }
+
+  private async handleModelSlashCommand(
+    command: { args: string },
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (!this.modelHandler) {
+      return {
+        handled: true,
+        text: buildChannelModelUnavailableMessage(msg.channel),
+      };
+    }
+
+    return this.modelHandler({
+      channelId: msg.channel,
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+      modelIdentifier: command.args || undefined,
+    });
+  }
+
+  private getCancelRoute(msg: InboundChannelMessage): ChannelRoute | null {
+    let route = this.getRoute(
+      msg.channel,
+      msg.chatId,
+      msg.accountId,
+      msg.threadId,
+    );
+    if (route) {
+      return route;
+    }
+
+    loadRoutes(msg.channel);
+    route = this.getRoute(msg.channel, msg.chatId, msg.accountId, msg.threadId);
+    if (route) {
+      return route;
+    }
+
+    if (
+      msg.channel !== "slack" ||
+      msg.chatType !== "channel" ||
+      msg.threadId != null
+    ) {
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const matches = getRoutesForChannel(msg.channel, accountId).filter(
+      (candidate) =>
+        candidate.chatId === msg.chatId &&
+        candidate.chatType === "channel" &&
+        candidate.enabled,
+    );
+
+    return matches.length === 1 ? (matches[0] ?? null) : null;
+  }
+
   private async handleInboundMessage(
     msg: InboundChannelMessage,
   ): Promise<void> {
@@ -807,11 +1254,52 @@ export class ChannelRegistry {
       return;
     }
 
-    if (await tryHandleChannelSlashCommand(adapter, msg)) {
+    const config = getChannelAccount(msg.channel, accountId);
+
+    const getStatusRoute = (): ChannelRoute | null => {
+      let statusRoute = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        msg.threadId,
+      );
+      if (!statusRoute) {
+        loadRoutes(msg.channel);
+        statusRoute = getRouteFromStore(
+          msg.channel,
+          msg.chatId,
+          accountId,
+          msg.threadId,
+        );
+      }
+      return statusRoute;
+    };
+
+    if (
+      await tryHandleChannelSlashCommand(adapter, msg, {
+        statusContext: {
+          adapterRunning: adapter.isRunning(),
+          accountConfigured: !!config,
+          accountEnabled: config?.enabled,
+          route: getStatusRoute(),
+        },
+        handlers: {
+          cancel: async (_command, commandMsg) =>
+            this.handleCancelSlashCommand(commandMsg),
+          chat: async (_command, commandMsg) =>
+            this.handleChatSlashCommand(commandMsg),
+          model: async (command, commandMsg) =>
+            this.handleModelSlashCommand(command, commandMsg),
+          pause: async () => this.handlePauseResumeSlashCommand("pause", msg),
+          reflection: async (_command, commandMsg) =>
+            this.handleReflectionSlashCommand(commandMsg),
+          resume: async () => this.handlePauseResumeSlashCommand("resume", msg),
+        },
+      })
+    ) {
       return;
     }
 
-    const config = getChannelAccount(msg.channel, accountId);
     if (!config) return;
 
     if (msg.channel === "slack" && isSlackChannelAccount(config)) {
@@ -830,6 +1318,36 @@ export class ChannelRegistry {
         turnSources: [
           buildChannelTurnSource(slackResult.route, preparedMessage),
         ],
+        defaultPermissionMode: config.defaultPermissionMode,
+      });
+      return;
+    }
+
+    // Telegram groups/supergroups can be used as public channel surfaces.
+    // DMs keep the older explicit pairing flow below; group topics route by
+    // chat_id + message_thread_id, which makes forum mode a surprisingly sane
+    // threading primitive. Telegram, accidentally doing something useful.
+    if (
+      msg.channel === "telegram" &&
+      isTelegramChannelAccount(config) &&
+      msg.chatType === "channel"
+    ) {
+      if ((config.groupMode ?? "open") === "mention-only" && !msg.isMention) {
+        return;
+      }
+      const telegramResult = await this.ensureTelegramRoute(
+        adapter,
+        msg,
+        config,
+      );
+      if (!telegramResult) {
+        return;
+      }
+
+      this.deliverOrBuffer({
+        route: telegramResult.route,
+        content: formatChannelNotification(msg),
+        turnSources: [buildChannelTurnSource(telegramResult.route, msg)],
       });
       return;
     }
@@ -886,6 +1404,38 @@ export class ChannelRegistry {
         content: formatChannelNotification(preparedMessage),
         turnSources: [
           buildChannelTurnSource(discordResult.route, preparedMessage),
+        ],
+      });
+      return;
+    }
+
+    // WhatsApp sends through a linked human account, so the adapter performs
+    // the conservative self-chat/group gates before messages reach here.
+    // Direct chats can auto-route when not using pairing; groups auto-route
+    // through the account binding.
+    if (
+      msg.channel === "whatsapp" &&
+      isWhatsAppChannelAccount(config) &&
+      (msg.chatType === "channel" || config.dmPolicy !== "pairing")
+    ) {
+      const whatsappResult = await this.ensureWhatsAppRoute(
+        adapter,
+        msg,
+        config,
+      );
+      if (!whatsappResult) {
+        return;
+      }
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: whatsappResult.isFirstRouteTurn,
+          })
+        : msg;
+      this.deliverOrBuffer({
+        route: whatsappResult.route,
+        content: formatChannelNotification(preparedMessage),
+        turnSources: [
+          buildChannelTurnSource(whatsappResult.route, preparedMessage),
         ],
       });
       return;
@@ -1010,16 +1560,14 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "standard") {
-      this.eventHandler?.({
-        type: "slack_conversation_created",
-        channelId: "slack",
-        accountId: config.accountId,
-        agentId: config.agentId,
-        conversationId,
-        defaultPermissionMode: config.defaultPermissionMode,
-      });
-    }
+    this.eventHandler?.({
+      type: "slack_conversation_created",
+      channelId: "slack",
+      accountId: config.accountId,
+      agentId: config.agentId,
+      conversationId,
+      defaultPermissionMode: config.defaultPermissionMode,
+    });
     return route;
   }
 
@@ -1106,6 +1654,98 @@ export class ChannelRegistry {
 
     return {
       route: await this.createSlackRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
+  }
+
+  private async createTelegramRoute(
+    config: TelegramChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.binding.agentId) {
+      throw new Error("Telegram bot is missing an agent binding.");
+    }
+
+    const conversationId = await this.createConversationForAgent(
+      config.binding.agentId,
+      buildTelegramConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId: msg.threadId ?? null,
+      agentId: config.binding.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
+  }
+
+  private async ensureTelegramRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    config: TelegramChannelAccount,
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
+    if (!config.binding.agentId) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "This Telegram bot isn't connected to a Letta agent yet.\n\n" +
+          "Open Channels > Telegram in Letta Code, choose which agent this bot should represent, and try again.",
+        msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+      );
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const routeThreadId = msg.threadId ?? null;
+    let route = getRouteFromStore(
+      msg.channel,
+      msg.chatId,
+      accountId,
+      routeThreadId,
+    );
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(
+        msg.channel,
+        msg.chatId,
+        accountId,
+        routeThreadId,
+      );
+    }
+
+    if (route) {
+      return { route, isFirstRouteTurn: false };
+    }
+
+    const now = new Date().toISOString();
+    loadTargetStore(msg.channel);
+    upsertChannelTarget(msg.channel, {
+      accountId,
+      targetId: msg.threadId ? `${msg.chatId}:${msg.threadId}` : msg.chatId,
+      targetType: "channel",
+      chatId: msg.chatId,
+      label: msg.chatLabel ?? `Telegram chat ${msg.chatId}`,
+      discoveredAt: now,
+      lastSeenAt: now,
+      lastMessageId: msg.messageId,
+    });
+    this.eventHandler?.({
+      type: "targets_updated",
+      channelId: msg.channel,
+    });
+
+    return {
+      route: await this.createTelegramRoute(config, msg),
       isFirstRouteTurn: true,
     };
   }
@@ -1215,6 +1855,102 @@ export class ChannelRegistry {
     };
   }
 
+  private async createWhatsAppRoute(
+    config: WhatsAppChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.agentId) {
+      throw new Error("WhatsApp account is missing an agent binding.");
+    }
+
+    const conversationId = await this.createConversationForAgent(
+      config.agentId,
+      buildWhatsAppConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId: null,
+      agentId: config.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
+  }
+
+  private async ensureWhatsAppRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    config: WhatsAppChannelAccount,
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
+    if (!config.agentId) {
+      if (msg.chatType !== "channel" || msg.isMention) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "This WhatsApp account isn't connected to a Letta agent yet.\n\n" +
+            "Open Channels > WhatsApp in Letta Code, choose which agent this WhatsApp account should represent, and try again.",
+        );
+      }
+      return null;
+    }
+
+    if (
+      msg.chatType === "direct" &&
+      config.dmPolicy === "allowlist" &&
+      !allowedUsersIncludes(config.allowedUsers, msg.senderId)
+    ) {
+      await adapter.sendDirectReply(
+        msg.chatId,
+        "You are not on the allowed users list for this WhatsApp account.",
+      );
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    let route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
+    }
+
+    if (route) {
+      return { route, isFirstRouteTurn: false };
+    }
+
+    if (msg.chatType === "channel") {
+      const now = new Date().toISOString();
+      loadTargetStore(msg.channel);
+      upsertChannelTarget(msg.channel, {
+        accountId,
+        targetId: msg.chatId,
+        targetType: "channel",
+        chatId: msg.chatId,
+        label: msg.chatLabel ?? `WhatsApp group ${msg.chatId}`,
+        discoveredAt: now,
+        lastSeenAt: now,
+        lastMessageId: msg.messageId,
+      });
+      this.eventHandler?.({
+        type: "targets_updated",
+        channelId: msg.channel,
+      });
+    }
+
+    return {
+      route: await this.createWhatsAppRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
+  }
+
   private deliverOrBuffer(delivery: ChannelInboundDelivery): void {
     if (this.isReady()) {
       this.messageHandler?.(delivery);
@@ -1251,16 +1987,43 @@ export class ChannelRegistry {
  */
 export async function initializeChannels(
   channelNames: string[],
+  options?: { failOnStartupError?: boolean; logger?: ChannelStartupLogger },
 ): Promise<ChannelRegistry> {
   const registry = ensureChannelRegistry();
+  const failures: ChannelStartupFailure[] = [];
+
+  logChannelStartup(
+    options?.logger,
+    `requested: ${channelNames.length > 0 ? channelNames.join(",") : "none"}`,
+  );
+  logChannelStartup(options?.logger, `root: ${getChannelsRoot()}`);
 
   for (const channelId of channelNames) {
+    logChannelStartup(
+      options?.logger,
+      `loading ${channelId} accounts from ${getChannelAccountsPath(channelId)}`,
+    );
     loadChannelAccounts(channelId);
     const accounts = listChannelAccounts(channelId);
+    const enabledAccountIds = accounts
+      .filter((account) => account.enabled)
+      .map((account) => account.accountId);
+    logChannelStartup(
+      options?.logger,
+      `${channelId}: accounts=${accounts.length}, enabled=${enabledAccountIds.length > 0 ? enabledAccountIds.join(",") : "none"}`,
+    );
     if (accounts.length === 0) {
-      console.error(
-        `Channel "${channelId}" not configured. Run: letta channels configure ${channelId}`,
-      );
+      const error = `Channel "${channelId}" not configured. Run: letta channels configure ${channelId}`;
+      failures.push({ channelId, error });
+      console.error(error);
+      continue;
+    }
+
+    if (enabledAccountIds.length === 0) {
+      const error = `Channel "${channelId}" has no enabled accounts.`;
+      failures.push({ channelId, error });
+      console.error(error);
+      logChannelStartup(options?.logger, error);
       continue;
     }
 
@@ -1270,14 +2033,31 @@ export async function initializeChannels(
       }
 
       try {
-        await registry.startChannelAccount(channelId, account.accountId);
+        await registry.startChannelAccount(channelId, account.accountId, {
+          logger: options?.logger,
+        });
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push({
+          channelId,
+          accountId: account.accountId,
+          error: message,
+        });
         console.error(
           `[Channels] Failed to start ${channelId}/${account.accountId}:`,
-          error instanceof Error ? error.message : error,
+          message,
+        );
+        logChannelStartup(
+          options?.logger,
+          `failed ${channelId}/${account.accountId}: ${formatChannelStartupError(error)}`,
         );
       }
     }
+  }
+
+  if (failures.length > 0 && options?.failOnStartupError) {
+    await registry.stopAll();
+    throw new ChannelInitializationError(failures);
   }
 
   return registry;

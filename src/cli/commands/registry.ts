@@ -283,7 +283,6 @@ export const commands: Record<string, Command> = {
   "/experiments": {
     desc: "Toggle experiments",
     order: 27.1,
-    noArgs: true,
     handler: () => {
       // Handled specially in App.tsx to open experiments selector
       return "Opening experiments selector...";
@@ -417,12 +416,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/statusline": {
-    desc: "Configure status line (help|show|set|clear|test|enable|disable)",
-    args: "[subcommand]",
+    desc: "Customize the bottom statusline",
+    args: "[request]",
     order: 36.5,
     handler: () => {
       // Handled specially in App.tsx
-      return "Managing status line...";
+      return "Starting statusline setup...";
     },
   },
   "/title": {

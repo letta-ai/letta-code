@@ -172,19 +172,51 @@ export async function pollForToken(
   expiresIn: number = 900,
   deviceId: string,
   deviceName?: string,
+  signal?: AbortSignal,
 ): Promise<TokenResponse> {
   const startTime = Date.now();
   const expiresInMs = expiresIn * 1000;
   let pollInterval = interval * 1000;
 
+  const sleep = async (ms: number) => {
+    if (!signal) {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      return;
+    }
+
+    if (signal.aborted) {
+      const error = new Error("OAuth polling cancelled");
+      error.name = "AbortError";
+      throw error;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+
+      const onAbort = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+        const error = new Error("OAuth polling cancelled");
+        error.name = "AbortError";
+        reject(error);
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  };
+
   while (Date.now() - startTime < expiresInMs) {
-    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    await sleep(pollInterval);
 
     try {
       const response = await fetch(
         `${OAUTH_CONFIG.authBaseUrl}/api/oauth/token`,
         {
           method: "POST",
+          signal,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             grant_type: "urn:ietf:params:oauth:grant-type:device_code",

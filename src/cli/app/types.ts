@@ -42,6 +42,8 @@ export type AppProps = {
   reasoningTabCycleEnabled?: boolean;
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
+  startupHasCloudCredentials?: boolean;
+  startupHasAvailableLocalModels?: boolean;
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   systemInfoReminderEnabled?: boolean;
@@ -52,6 +54,7 @@ export type AppProps = {
 export type ActiveOverlay =
   | "model"
   | "experiment"
+  | "worktree-diff"
   | "sleeptime"
   | "compaction"
   | "toolset"
@@ -197,7 +200,7 @@ export type StaticItem =
       snapshot: {
         continueSession: boolean;
         agentState?: AgentState | null;
-        agentProvenance?: AgentProvenance | null;
+        startupHasAvailableLocalModels?: boolean;
         terminalWidth: number;
       };
     }

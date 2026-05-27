@@ -529,4 +529,31 @@ describe("memory tool", () => {
       `The memory tool can only be used to modify files in {${memoryDir}} or provided as a relative path`,
     );
   });
+
+  test("throws when a str_replace produces no effective changes", async () => {
+    await runScopedMemory({
+      command: "create",
+      reason: "Seed noop notes",
+      file_path: "reference/history/notes.md",
+      description: "Notes block",
+      file_text: "unchanged value",
+    });
+
+    const headBefore = await runGit(memoryDir, ["rev-parse", "HEAD"]);
+
+    // Replacing a string with itself leaves the file byte-identical.
+    await expect(
+      runScopedMemory({
+        command: "str_replace",
+        reason: "no-op replacement",
+        file_path: "reference/history/notes.md",
+        old_string: "unchanged value",
+        new_string: "unchanged value",
+      }),
+    ).rejects.toThrow(/made no effective changes/i);
+
+    // No phantom commit should have been created.
+    const headAfter = await runGit(memoryDir, ["rev-parse", "HEAD"]);
+    expect(headAfter).toBe(headBefore);
+  });
 });
