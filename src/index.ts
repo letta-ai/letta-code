@@ -39,6 +39,7 @@ import {
   isExperimentalLocalBackendEnabled,
 } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
+import { subscribePiProviderRegistry } from "./backend/dev/pi-provider-extension-registry";
 import {
   isLocalBackendNoMemfsEnvEnabled,
   LOCAL_BACKEND_NO_MEMFS_ENV,
@@ -1989,6 +1990,29 @@ async function main(): Promise<void> {
       },
       [],
     );
+
+    // Re-project agent state when an extension registers a Pi provider after
+    // boot. The initial projection at load time runs before the extension's
+    // async activate() finishes, so resolvedContextWindow can be stale.
+    useEffect(() => {
+      if (!agentId || loadingState !== "ready") return;
+      const unsubscribe = subscribePiProviderRegistry(() => {
+        const backend = getBackend();
+        backend
+          .retrieveAgent(agentId, {
+            include: ["agent.secrets", "agent.tools", "agent.tags"],
+          })
+          .then((agent) => {
+            setAgentState(agent);
+          })
+          .catch((err) => {
+            if (isDebugEnabled()) {
+              console.error("re-project agent state failed:", err);
+            }
+          });
+      });
+      return unsubscribe;
+    }, [agentId, loadingState]);
 
     useEffect(() => {
       if (loadingState !== "assembling") {

@@ -41,6 +41,28 @@ export interface RegisteredPiProvider {
 
 const registeredProviders = new Map<string, RegisteredPiProvider>();
 
+type RegistryListener = () => void;
+const registryListeners = new Set<RegistryListener>();
+
+function notifyPiProviderRegistry(): void {
+  for (const listener of [...registryListeners]) {
+    try {
+      listener();
+    } catch {
+      // ignore listener errors so one bad listener can't block the rest
+    }
+  }
+}
+
+export function subscribePiProviderRegistry(
+  listener: RegistryListener,
+): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
+
 function cloneHeaders(
   headers: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
@@ -188,6 +210,7 @@ export function registerPiProvider(
     ...(owner?.path ? { path: owner.path } : {}),
   };
   registeredProviders.set(providerName, registered);
+  notifyPiProviderRegistry();
   return getRegisteredPiProvider(providerName) as RegisteredPiProvider;
 }
 
@@ -199,18 +222,24 @@ export function unregisterPiProvider(
   if (!existing) return;
   if (ownerId && existing.ownerId && existing.ownerId !== ownerId) return;
   registeredProviders.delete(providerName);
+  notifyPiProviderRegistry();
 }
 
 export function unregisterPiProvidersForOwner(ownerId: string): void {
+  let mutated = false;
   for (const [providerName, provider] of registeredProviders.entries()) {
     if (provider.ownerId === ownerId) {
       registeredProviders.delete(providerName);
+      mutated = true;
     }
   }
+  if (mutated) notifyPiProviderRegistry();
 }
 
 export function clearRegisteredPiProviders(): void {
+  const hadProviders = registeredProviders.size > 0;
   registeredProviders.clear();
+  if (hadProviders) notifyPiProviderRegistry();
 }
 
 export function getRegisteredPiProvider(
