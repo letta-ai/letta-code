@@ -4223,10 +4223,13 @@ async function runBidirectionalMode(
         };
         writeWireMessage(initResponse);
       } else if (subtype === "interrupt") {
-        // Abort current operation if any
+        // Abort current operation if any. Do NOT null the controller — the
+        // turn's epilogue (line ~4415) reads currentAbortController?.signal.aborted
+        // to classify the result as "interrupted" vs "error", and the
+        // user-message branch's `finally` is what owns nulling. Mirrors the
+        // fast path in rl.on("line", ...).
         if (currentAbortController !== null) {
           (currentAbortController as AbortController).abort();
-          currentAbortController = null;
         }
         const interruptResponse: ControlResponse = {
           type: "control_response",
