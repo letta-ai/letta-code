@@ -150,10 +150,19 @@ describe("telemetry flush auth", () => {
 
     expect(telemetryState.events).toHaveLength(1);
     const event = telemetryState.events[0] as {
-      data?: Record<string, unknown>;
+      data?: {
+        surface?: TelemetrySurface;
+        backend?: TelemetryBackend;
+      };
     };
-    expect(telemetrySurfaces).toContain(event.data?.surface);
-    expect(telemetryBackends).toContain(event.data?.backend);
+    expect(event.data?.surface).toBeDefined();
+    expect(event.data?.backend).toBeDefined();
+    expect(telemetrySurfaces).toContain(
+      event.data?.surface as TelemetrySurface,
+    );
+    expect(telemetryBackends).toContain(
+      event.data?.backend as TelemetryBackend,
+    );
   });
 
   test("flush falls back to secure settings token when env var is absent", async () => {
