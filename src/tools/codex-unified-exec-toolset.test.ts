@@ -23,18 +23,32 @@ describe("Codex unified exec toolset", () => {
     expect(properties).not.toContain("additional_permissions");
   });
 
-  test("keeps unified exec tool descriptions aligned with Codex", () => {
+  test("keeps unified exec tool descriptions aligned with Codex plus LC commit attribution", () => {
+    const execCommandDescription = [
+      "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+      "",
+      "# Git commits",
+      "",
+      "When creating a git commit on behalf of the user, end the commit message with:",
+      "",
+      "👾 Generated with [Letta Code](https://letta.com)",
+      "",
+      "Co-Authored-By: Letta Code <noreply@letta.com>",
+      "",
+      "Use a quoted multiline commit message so the footer is included verbatim.",
+    ].join("\n");
+
     expect(TOOL_DEFINITIONS.exec_command.description).toBe(
       process.platform === "win32"
         ? [
-            "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+            execCommandDescription,
             "",
             "Windows safety rules:",
             "- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to `cmd /c`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as `Remove-Item` / `Move-Item` with `-LiteralPath`, and avoid string-built shell commands for file operations.",
             "- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.",
             "- When using `Start-Process` to launch a background helper or service, pass `-WindowStyle Hidden` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.",
           ].join("\n")
-        : "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+        : execCommandDescription,
     );
     expect(TOOL_DEFINITIONS.write_stdin.description).toBe(
       "Writes characters to an existing unified exec session and returns recent output.",
