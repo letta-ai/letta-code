@@ -32,7 +32,20 @@ export {
   parseAt,
   parseEvery,
 } from "./parse-interval";
-
+export {
+  appendCronRunLog,
+  appendCronRunLogForTask,
+  type CronRunLogEntry,
+  type CronRunLogPage,
+  type CronRunLogStatus,
+  DEFAULT_CRON_RUN_LOG_KEEP_LINES,
+  DEFAULT_CRON_RUN_LOG_MAX_BYTES,
+  getCronRunLogPath,
+  readCronRunLogEntries,
+  readCronRunLogEntriesPage,
+  resolveCronRunLogPath,
+  safeAppendCronRunLogForTask,
+} from "./run-log";
 export {
   handleMissedOneShot,
   shouldFireTask,

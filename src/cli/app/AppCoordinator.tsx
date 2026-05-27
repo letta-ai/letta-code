@@ -120,6 +120,7 @@ import {
   handleMissedOneShot,
   isProcessAlive,
   readCronFile,
+  safeAppendCronRunLogForTask,
   shouldFireTask,
   updateTask,
 } from "@/cron";
@@ -1507,6 +1508,13 @@ export function App({
                 t.fire_count = 1;
               });
             }
+
+            safeAppendCronRunLogForTask(freshTask, {
+              status: "ok",
+              runAtMs: now.getTime(),
+              scheduledFor: freshTask.scheduled_for,
+              firedAt: nowIso,
+            });
 
             debugLog("cron", `TUI shadow scheduler fired task ${taskId}`);
           };
