@@ -27,6 +27,63 @@ afterEach(() => {
 });
 
 describe("channel account list responses", () => {
+  test("creates custom app accounts on the built-in custom channel", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    try {
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_account_create",
+          request_id: "custom-create-1",
+          channel_id: "custom",
+          account: {
+            account_id: "custom-app-1",
+            display_name: "Webhook.site test",
+            enabled: false,
+            dm_policy: "pairing",
+            config: {
+              url: "https://example.com/webhook",
+              agent_id: "agent-1",
+            },
+          },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+
+      expect(messages[0]).toMatchObject({
+        type: "channel_account_create_response",
+        success: true,
+        channel_id: "custom",
+        account: {
+          channel_id: "custom",
+          account_id: "custom-app-1",
+          display_name: "Webhook.site test",
+          config: {
+            url: "https://example.com/webhook",
+            agent_id: "agent-1",
+          },
+        },
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
   test("return cached account snapshots without waiting for live display-name refresh", async () => {
     const socket = new MockSocket(WebSocket.OPEN);
     const runtime = __listenClientTestUtils.createListenerRuntime();
