@@ -1,6 +1,6 @@
 # Extension event recipes
 
-Use events when trusted local code should react to app/session changes without the human explicitly invoking a command.
+Use events when trusted local code should react to app/session changes or transform outbound turns without the human explicitly invoking a command. For event-driven extensions with state, timers, panels, or background model work, also read `architecture.md`.
 
 This is the first slice of the hooks-v2 direction. The long-term goal is for typed extension events to replace settings-based hooks. Existing hooks still own blocking decisions and model feedback injection until each event has a typed return contract.
 
@@ -139,7 +139,7 @@ Handlers also receive:
 }
 ```
 
-`ctx.conversation` is bound when the event is dispatched. Use it for scoped conversation calls made while handling that event.
+`ctx.conversation` is bound when the event is dispatched. Use it for scoped conversation calls made while handling that event. If an event needs background model work, prefer `ctx.conversation.fork()` and send to the fork. Do not send to the active conversation from `turn_start`; that event is already in the path of sending a turn.
 
 Respect `ctx.signal` for long-running async work. It is aborted on `/reload` and app shutdown.
 

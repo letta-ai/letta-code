@@ -1,11 +1,11 @@
 ---
 name: customizing-commands
-description: Creates, edits, and enables Letta Code extension-provided slash commands. Use when the user asks to add a custom /command, slash command, command shortcut, SDK-backed command, or command-driven panel behavior.
+description: Creates, edits, and enables Letta Code extension-provided slash commands. Use when the user asks to add a custom /command, slash command, command shortcut, scoped conversation-backed command, or command-driven panel behavior.
 ---
 
 # Customizing Commands
 
-Use this as the command-specific entrypoint for local extension slash commands. For broader extension work, recipes live in `../creating-extensions/references/commands.md`, `../creating-extensions/references/ui.md`, and `../creating-extensions/references/btw-command.md`.
+Use this as the command-specific entrypoint for local extension slash commands. For broader extension work, recipes live in `../creating-extensions/references/commands.md`, `../creating-extensions/references/architecture.md`, `../creating-extensions/references/ui.md`, and `../creating-extensions/references/btw-command.md`.
 
 Extension files live in:
 
@@ -23,6 +23,7 @@ Use a focused file name, e.g. `~/.letta/extensions/review.ts` or `~/.letta/exten
 | `/foo` starts a reusable agent workflow | Skill + thin extension command |
 | Agent/model should autonomously call the capability | Extension tool, not a command |
 | Command shows transient progress/results | Extension command + panel |
+| Command needs model output while the main agent is busy | `runWhenBusy: true` command + forked `ctx.conversation` |
 
 If the command is a durable workflow like `/goal`, put the workflow instructions in a skill and keep the extension command as a small launcher/prompt.
 
@@ -76,13 +77,14 @@ type ExtensionCommandResult =
 - Command IDs omit the slash: `id: "review"`, not `"/review"`.
 - Use lowercase slugs with letters, numbers, and hyphens.
 - Do not register built-in command IDs.
-- `runWhenBusy: true` commands must not return `prompt` while the main agent is busy; use SDK calls/panels and return `handled`.
+- `runWhenBusy: true` commands must not return `prompt` while the main agent is busy; use scoped conversation helpers/panels and return `handled`.
 - `showInTranscript: false` commands should usually return `handled`, not `prompt`.
 - Do not import Letta Code app internals.
 - Do not do surprising side effects on startup; extensions activate on app start and `/reload`.
 
 ## More recipes
 
-- Simple output command, panel command, SDK command: `../creating-extensions/references/commands.md`
+- Simple output command, panel command, busy-safe conversation command: `../creating-extensions/references/commands.md`
+- Complex command architecture, state, cleanup: `../creating-extensions/references/architecture.md`
 - Panel/status UI patterns: `../creating-extensions/references/ui.md`
 - Complete `/btw` side-question recipe: `../creating-extensions/references/btw-command.md`

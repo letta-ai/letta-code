@@ -2,6 +2,8 @@
 
 Use commands when the human explicitly invokes `/foo`.
 
+For complex command-driven extensions with panels, timers, local state, or background model work, also read `architecture.md`.
+
 ## Decide command vs skill vs tool
 
 | Need | Use |
@@ -10,6 +12,7 @@ Use commands when the human explicitly invokes `/foo`.
 | `/foo` starts a complex reusable workflow | Skill + thin extension command |
 | Model should call the capability by itself | Extension tool |
 | Command needs transient UI while doing local work | Extension command + panel |
+| Command needs model output while the main agent is busy | `runWhenBusy: true` command + forked `ctx.conversation` |
 
 If the command represents a durable agent workflow (for example `/goal`), put the workflow instructions in a skill and keep the command as a small launcher/prompt.
 
@@ -21,6 +24,8 @@ If the command represents a durable agent workflow (for example `/goal`), put th
 - Duplicate extension command IDs fail unless `override: true` is intentional.
 
 ## Prompt command
+
+Use `prompt` for normal slash shortcuts that should become the next agent turn. Prompt commands are not busy-safe.
 
 ```ts
 export default function activate(letta) {
@@ -45,6 +50,8 @@ export default function activate(letta) {
 ```
 
 ## Output-only command
+
+Use `output` for local results that do not need the model.
 
 ```ts
 export default function activate(letta) {
@@ -93,20 +100,20 @@ export default function activate(letta) {
 
 ## Busy-safe conversation command
 
-For commands with `runWhenBusy: true`, do not return `prompt` while the agent is running. Use the scoped conversation handle directly, update a panel if available, and return `{ type: "handled" }` quickly.
+For commands with `runWhenBusy: true`, do not return `prompt` while the agent is running. Use the scoped conversation handle directly, update a panel/status if available, and return `{ type: "handled" }` quickly.
 
-Use `ctx.conversation` for scoped conversation operations that should work across local and Constellation backends. The handle is bound to the active conversation and backend for that command invocation, so composed flows like fork-then-send stay on the same backend. Use `letta.client` only for server-specific API calls.
+Use `ctx.conversation` for conversation operations that should work across local and Constellation backends. The handle is bound to the active conversation and backend for that command invocation, so composed flows like fork-then-send stay on the same backend. Use `letta.client` only for server-specific API calls.
 
-Common calls:
+Common pattern:
 
 ```ts
-const forked = await ctx.conversation.fork({
-  hidden: true,
-});
+const forked = await ctx.conversation.fork({ hidden: true });
 
 const stream = await forked.sendMessageStream([
   { role: "user", content: input },
 ]);
 ```
+
+Do not send directly to the active conversation from a busy command; fork first unless the user explicitly asked to affect the main conversation later.
 
 For a complete side-question example, see `btw-command.md`.
