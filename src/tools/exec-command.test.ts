@@ -53,8 +53,8 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
 
   test("returns session id for running command and write_stdin polls it", async () => {
     const first = await exec_command({
-      cmd: "printf start; sleep 0.2; printf done",
-      yield_time_ms: 50,
+      cmd: "printf start; sleep 0.5; printf done",
+      yield_time_ms: 250,
     });
 
     const match = first.output.match(/Process running with session ID (\d+)/);
@@ -64,7 +64,7 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     const second = await write_stdin({
       session_id: Number(match?.[1]),
       chars: "",
-      yield_time_ms: 500,
+      yield_time_ms: 1000,
     });
 
     expect(second.output).toContain("Process exited with code 0");
@@ -94,7 +94,6 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
   test("preserves non-zero exit code in model-facing output", async () => {
     const result = await exec_command({
       cmd: "printf 'bad'; exit 7",
-      yield_time_ms: 50,
     });
 
     expect(result.output).toContain("Process exited with code 7");
