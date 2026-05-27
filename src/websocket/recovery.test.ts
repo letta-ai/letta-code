@@ -11,7 +11,7 @@ const capabilities = {
   byokProviderRefresh: false,
   localModelCatalog: true,
   localMemfs: false,
-  modelFacingCustomTools: false,
+  customTypeToolPayloads: false,
 };
 
 function setRunErrorMetadata(error: unknown): void {

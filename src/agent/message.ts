@@ -197,7 +197,7 @@ export async function sendMessageStreamWithBackend(
   const clientTools =
     getClientToolsForExecutionContext(
       contextId,
-      backend.capabilities.modelFacingCustomTools
+      backend.capabilities.customTypeToolPayloads
         ? "custom-capable"
         : "function-only",
     ) ?? preparedToolContext.clientTools;

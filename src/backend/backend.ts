@@ -116,7 +116,7 @@ export interface BackendCapabilities {
   byokProviderRefresh: boolean;
   localModelCatalog: boolean;
   localMemfs: boolean;
-  modelFacingCustomTools: boolean;
+  customTypeToolPayloads: boolean;
 }
 
 export interface Backend {
@@ -257,7 +257,7 @@ export class APIBackend implements Backend {
     byokProviderRefresh: true,
     localModelCatalog: false,
     localMemfs: false,
-    modelFacingCustomTools: false,
+    customTypeToolPayloads: false,
   };
 
   private readonly getApiClientOverride?: GetAPIClient;
