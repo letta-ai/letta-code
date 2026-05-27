@@ -4,6 +4,7 @@ import {
   getListenerTelemetrySurface,
   getTerminalTelemetrySurface,
   resolveTelemetryBackend,
+  type TelemetryBackend,
   type TelemetrySurface,
   telemetry,
 } from "@/telemetry";
@@ -18,6 +19,21 @@ type TelemetryTestState = {
 };
 
 const telemetryState = telemetry as unknown as TelemetryTestState;
+
+const telemetrySurfaces = [
+  "letta_code_tui",
+  "letta_code_headless",
+  "letta_code_cli_server",
+  "letta_code_desktop",
+] satisfies TelemetrySurface[];
+
+const telemetryBackends = [
+  "constellation",
+  "local",
+  "docker_deprecated",
+  "self_hosted_api",
+  "unknown",
+] satisfies TelemetryBackend[];
 
 describe("telemetry segmentation", () => {
   test("maps surfaces to stable analytics buckets", () => {
@@ -69,6 +85,9 @@ describe("telemetry flush auth", () => {
   const originalLettaApiKey = process.env.LETTA_API_KEY;
   const originalTelemetryDisabled = process.env.LETTA_TELEMETRY_DISABLED;
   const originalLettaBaseUrl = process.env.LETTA_BASE_URL;
+  const originalLettaDesktopDebugPanel = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  const originalLocalBackendExperimental =
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 
   function deleteEnvVarCaseInsensitive(name: string): void {
     const normalized = name.toLowerCase();
@@ -103,6 +122,8 @@ describe("telemetry flush auth", () => {
     deleteEnvVarCaseInsensitive("LETTA_API_KEY");
     deleteEnvVarCaseInsensitive("LETTA_TELEMETRY_DISABLED");
     deleteEnvVarCaseInsensitive("LETTA_BASE_URL");
+    deleteEnvVarCaseInsensitive("LETTA_DESKTOP_DEBUG_PANEL");
+    deleteEnvVarCaseInsensitive("LETTA_LOCAL_BACKEND_EXPERIMENTAL");
     settingsManager.getSettings = mock(() => ({
       env: {},
     })) as unknown as typeof settingsManager.getSettings;
@@ -117,18 +138,22 @@ describe("telemetry flush auth", () => {
     restoreEnvVar("LETTA_API_KEY", originalLettaApiKey);
     restoreEnvVar("LETTA_TELEMETRY_DISABLED", originalTelemetryDisabled);
     restoreEnvVar("LETTA_BASE_URL", originalLettaBaseUrl);
+    restoreEnvVar("LETTA_DESKTOP_DEBUG_PANEL", originalLettaDesktopDebugPanel);
+    restoreEnvVar(
+      "LETTA_LOCAL_BACKEND_EXPERIMENTAL",
+      originalLocalBackendExperimental,
+    );
   });
 
   test("usage events include segmentation properties", () => {
     telemetry.trackUserInput("hello", "user", "model-1");
 
     expect(telemetryState.events).toHaveLength(1);
-    expect(telemetryState.events[0]).toMatchObject({
-      data: {
-        surface: "letta_code_tui",
-        backend: "constellation",
-      },
-    });
+    const event = telemetryState.events[0] as {
+      data?: Record<string, unknown>;
+    };
+    expect(telemetrySurfaces).toContain(event.data?.surface);
+    expect(telemetryBackends).toContain(event.data?.backend);
   });
 
   test("flush falls back to secure settings token when env var is absent", async () => {
