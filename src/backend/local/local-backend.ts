@@ -45,7 +45,11 @@ import {
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
 import type { LocalMessage } from "./local-message";
-import { listLocalModels, resolveLocalModelConfig } from "./local-model-config";
+import {
+  listLocalModels,
+  localModelSettingsForHandle,
+  resolveLocalModelConfig,
+} from "./local-model-config";
 import type {
   LocalAgentRecord,
   LocalStoreOptions,
@@ -254,6 +258,7 @@ export class LocalBackend extends HeadlessBackend {
       defaultAgentName: "Letta Code",
       defaultAgentModel: modelConfig.handle,
       defaultAgentModelSettings: modelConfig.modelSettings,
+      modelSettingsForModel: localModelSettingsForHandle,
       conversationIdPrefix: "local-conv-",
       storedMessageIdPrefix: "letta-msg-",
       localMessageIdPrefix: "ui-msg-",

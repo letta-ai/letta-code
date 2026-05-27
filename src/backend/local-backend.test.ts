@@ -546,6 +546,105 @@ describe("local backend pi transcript", () => {
     );
   });
 
+  test("uses extension-registered context windows for local agent state", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-registered-context-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+
+    expect(agent.model).toBe("lmstudio/gemma-4-26B-A4B-it-oQ6");
+    expect(
+      (agent as { llm_config?: { context_window?: number } }).llm_config
+        ?.context_window,
+    ).toBe(256000);
+    expect(
+      (agent as { llm_config?: { max_tokens?: number } }).llm_config
+        ?.max_tokens,
+    ).toBe(8192);
+  });
+
+  test("projects legacy local 128k defaults through registered model metadata", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-legacy-context-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+    await mkdir(join(storageDir, "agents"), { recursive: true });
+    await writeFile(
+      join(storageDir, "agents", "agent-local-default.json"),
+      JSON.stringify(
+        {
+          id: "agent-local-default",
+          name: "Letta Code",
+          description: null,
+          system: "",
+          tags: [],
+          model: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+          model_settings: {
+            provider_type: "lmstudio",
+            context_window_limit: 128000,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.retrieveAgent("agent-local-default");
+
+    expect(
+      (agent as { llm_config?: { context_window?: number } }).llm_config
+        ?.context_window,
+    ).toBe(256000);
+  });
+
   test("discovers configured Ollama Cloud models from OpenAI-compatible catalog", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-ollama-cloud-discovery-"),
