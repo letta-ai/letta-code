@@ -212,6 +212,7 @@ export function formatArgsDisplay(
   toolName?: string,
   options?: {
     unifiedExecCommandDisplay?: string;
+    suppressUnifiedExecInteractionLabel?: boolean;
   },
 ): {
   display: string;
@@ -371,6 +372,9 @@ export function formatArgsDisplay(
             const suffix = commandDisplay
               ? ` · ${commandDisplay}`
               : ` (session ${sessionId})`;
+            if (options?.suppressUnifiedExecInteractionLabel) {
+              return { display: suffix, parsed };
+            }
             return {
               display: suffix,
               displayName: isWrite

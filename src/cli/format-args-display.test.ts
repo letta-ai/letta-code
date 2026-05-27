@@ -122,4 +122,18 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     expect(formatted.display).toBe(" (session 8)");
     expect(formatted.shellSemantic).toBeUndefined();
   });
+
+  test("does not label failed write_stdin as a terminal interaction", () => {
+    const args = JSON.stringify({
+      session_id: 8,
+      chars: "hello from stdin\n",
+    });
+
+    const formatted = formatArgsDisplay(args, "write_stdin", {
+      unifiedExecCommandDisplay: "cat",
+      suppressUnifiedExecInteractionLabel: true,
+    });
+    expect(formatted.displayName).toBeUndefined();
+    expect(formatted.display).toBe(" · cat");
+  });
 });

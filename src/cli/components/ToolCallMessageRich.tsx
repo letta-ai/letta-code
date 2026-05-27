@@ -241,6 +241,10 @@ export const ToolCallMessage = memo(
           try {
             const formatted = formatArgsDisplay(argsText, rawName, {
               unifiedExecCommandDisplay: line.unifiedExecCommandDisplay,
+              suppressUnifiedExecInteractionLabel:
+                rawName === "write_stdin" &&
+                line.phase === "finished" &&
+                line.resultOk === false,
             });
             return { formatted, parseable: true };
           } catch {
@@ -263,6 +267,10 @@ export const ToolCallMessage = memo(
             formatted ??
             formatArgsDisplay(argsText, rawName, {
               unifiedExecCommandDisplay: line.unifiedExecCommandDisplay,
+              suppressUnifiedExecInteractionLabel:
+                rawName === "write_stdin" &&
+                line.phase === "finished" &&
+                line.resultOk === false,
             });
           if (formattedArgs.shellSemantic) {
             shellSemanticKind = formattedArgs.shellSemantic.kind;

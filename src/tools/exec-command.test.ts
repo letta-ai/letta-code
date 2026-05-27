@@ -69,6 +69,32 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
 
     expect(second.output).toContain("Process exited with code 0");
     expect(second.output).toContain("Output:\ndone");
+
+    await expect(
+      write_stdin({
+        session_id: Number(match?.[1]),
+        chars: "",
+      }),
+    ).rejects.toThrow("Unknown process id");
+  });
+
+  test("empty write_stdin polls wait like Codex background terminal polls", async () => {
+    const first = await exec_command({
+      cmd: "printf start; sleep 0.8; printf done",
+      yield_time_ms: 250,
+    });
+
+    const match = first.output.match(/Process running with session ID (\d+)/);
+    expect(match?.[1]).toBeDefined();
+
+    const second = await write_stdin({
+      session_id: Number(match?.[1]),
+      chars: "",
+      yield_time_ms: 100,
+    });
+
+    expect(second.output).toContain("Process exited with code 0");
+    expect(second.output).toContain("Output:\ndone");
   });
 
   test("write_stdin sends input to tty-enabled sessions", async () => {
@@ -91,6 +117,16 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(second.output).toContain("Output:\nhello");
   });
 
+  test("tty-enabled sessions allocate a terminal device", async () => {
+    const result = await exec_command({
+      cmd: "test -t 0 && printf tty || printf pipe",
+      tty: true,
+    });
+
+    expect(result.output).toContain("Process exited with code 0");
+    expect(result.output).toContain("Output:\ntty");
+  });
+
   test("non-tty sessions close stdin like Codex pipe mode", async () => {
     const result = await exec_command({
       cmd: "cat",
@@ -100,6 +136,25 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(result.output).toContain("Process exited with code 0");
     expect(result.output).not.toContain("Process running with session ID");
     expect(result.output).toContain("Output:\n");
+  });
+
+  test("write_stdin reports Codex stdin-closed error for non-tty sessions", async () => {
+    const first = await exec_command({
+      cmd: "sleep 2",
+      yield_time_ms: 250,
+    });
+
+    const match = first.output.match(/Process running with session ID (\d+)/);
+    expect(match?.[1]).toBeDefined();
+
+    await expect(
+      write_stdin({
+        session_id: Number(match?.[1]),
+        chars: "hello\n",
+      }),
+    ).rejects.toThrow(
+      "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open",
+    );
   });
 
   test("preserves non-zero exit code in model-facing output", async () => {
