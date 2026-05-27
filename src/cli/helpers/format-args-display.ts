@@ -215,6 +215,7 @@ export function formatArgsDisplay(
   },
 ): {
   display: string;
+  displayName?: string;
   parsed: Record<string, unknown>;
   shellSemantic?: ShellSemanticDisplay;
 } {
@@ -370,10 +371,13 @@ export function formatArgsDisplay(
             const suffix = commandDisplay
               ? ` · ${commandDisplay}`
               : ` (session ${sessionId})`;
-            display = isWrite
-              ? `Interacted with background terminal${suffix}`
-              : `Waited for background terminal${suffix}`;
-            return { display, parsed };
+            return {
+              display: suffix,
+              displayName: isWrite
+                ? "Interacted with background terminal"
+                : "Waited for background terminal",
+              parsed,
+            };
           }
 
           // Plan tools: only show compact plan item count.

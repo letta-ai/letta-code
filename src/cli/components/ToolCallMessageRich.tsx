@@ -270,6 +270,8 @@ export const ToolCallMessage = memo(
             if (formattedArgs.shellSemantic.kind === "run") {
               shellCommand = formattedArgs.shellSemantic.rawCommand;
             }
+          } else if (formattedArgs.displayName) {
+            displayName = formattedArgs.displayName;
           }
           // Normalize newlines to spaces to prevent forced line breaks
           const normalizedDisplay = formattedArgs.display.replace(/\n/g, " ");

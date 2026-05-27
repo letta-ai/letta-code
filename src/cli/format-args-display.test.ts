@@ -89,9 +89,8 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
 
     const formatted = formatArgsDisplay(args, "write_stdin");
-    expect(formatted.display).toBe(
-      "Interacted with background terminal (session 8)",
-    );
+    expect(formatted.displayName).toBe("Interacted with background terminal");
+    expect(formatted.display).toBe(" (session 8)");
     expect(formatted.shellSemantic).toBeUndefined();
   });
 
@@ -106,9 +105,8 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     const formatted = formatArgsDisplay(args, "write_stdin", {
       unifiedExecCommandDisplay: "python3 repl.py",
     });
-    expect(formatted.display).toBe(
-      "Interacted with background terminal · python3 repl.py",
-    );
+    expect(formatted.displayName).toBe("Interacted with background terminal");
+    expect(formatted.display).toBe(" · python3 repl.py");
     expect(formatted.shellSemantic).toBeUndefined();
   });
 
@@ -120,9 +118,8 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
 
     const formatted = formatArgsDisplay(args, "write_stdin");
-    expect(formatted.display).toBe(
-      "Waited for background terminal (session 8)",
-    );
+    expect(formatted.displayName).toBe("Waited for background terminal");
+    expect(formatted.display).toBe(" (session 8)");
     expect(formatted.shellSemantic).toBeUndefined();
   });
 });
