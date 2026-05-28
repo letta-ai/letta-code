@@ -73,9 +73,20 @@
               -C "$out/lib/letta-code" \
               --strip-components=1
 
+            # letta.js intentionally leaves native/runtime-sensitive packages external
+            # (for example ws, node-pty, grammy, and @vscode/ripgrep). Keep the
+            # installed dependency tree next to the packed CLI so Node can resolve
+            # those imports from the Nix store at runtime.
+            cp -rL node_modules "$out/lib/letta-code/node_modules"
+
             makeWrapper ${pkgs.nodejs_22}/bin/node "$out/bin/letta" \
               --add-flags "$out/lib/letta-code/letta.js" \
               --prefix PATH : ${lib.makeBinPath [ pkgs.git pkgs.ripgrep ]}
+
+            ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+              wrapProgram "$out/bin/letta" \
+                --prefix LD_LIBRARY_PATH : ${pkgs.stdenv.cc.cc.lib}/lib
+            ''}
 
             runHook postInstall
           '';
