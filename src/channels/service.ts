@@ -1366,7 +1366,7 @@ export async function refreshChannelAccountDisplayNameLive(
   options?: { force?: boolean },
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
-  const existing = getChannelAccount(channelId, accountId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     throw new Error(
       `Channel account "${accountId}" was not found for ${channelId}.`,
@@ -1375,7 +1375,7 @@ export async function refreshChannelAccountDisplayNameLive(
   if (!isAccountConfigured(existing)) {
     return toAccountSnapshot(existing);
   }
-  if (!options?.force && existing.displayName) {
+  if (existing.displayName) {
     return toAccountSnapshot(existing);
   }
 
@@ -1389,7 +1389,7 @@ export async function refreshChannelAccountDisplayNameLive(
     return toAccountSnapshot(existing);
   }
 
-  const updated = upsertChannelAccount(channelId, {
+  const updated = await upsertChannelAccountWithSecrets(channelId, {
     ...existing,
     displayName: nextDisplayName,
     updatedAt: new Date().toISOString(),

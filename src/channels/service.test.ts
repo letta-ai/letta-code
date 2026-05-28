@@ -459,7 +459,7 @@ describe("channel service", () => {
     expect(refreshed.displayName).toBe("Letta Code");
   });
 
-  test("forced display-name refresh clears stale labels when identity lookup returns empty", async () => {
+  test("forced display-name refresh preserves user-provided labels", async () => {
     __testOverrideResolveChannelAccountDisplayName(async () => undefined);
 
     createChannelAccountLive(
@@ -478,7 +478,7 @@ describe("channel service", () => {
       { force: true },
     );
 
-    expect(refreshed.displayName).toBeUndefined();
+    expect(refreshed.displayName).toBe("Old Slack Name");
   });
 
   test("config helpers resolve the sole account instead of assuming a default id", async () => {
