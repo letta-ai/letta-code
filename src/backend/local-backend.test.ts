@@ -304,6 +304,9 @@ describe("local backend pi transcript", () => {
     const agentId = "agent-local-default";
     const conversationId = "local-conv-tail";
     const conversationDir = join(storageDir, "conversations", "tail");
+    const messageIds = Array.from({ length: 120 }, (_, i) =>
+      i === 119 ? "ui-msg-latest" : `ui-msg-${i}`,
+    );
     await mkdir(join(storageDir, "agents"), { recursive: true });
     await writeFile(
       join(storageDir, "agents", `${agentId}.json`),
@@ -326,7 +329,7 @@ describe("local backend pi transcript", () => {
         created_at: "2026-05-22T12:00:00.000Z",
         updated_at: "2026-05-22T13:00:00.000Z",
         last_message_at: "2026-05-22T13:00:00.000Z",
-        in_context_message_ids: ["ui-msg-latest"],
+        in_context_message_ids: messageIds,
       })}\n`,
     );
     await writeFile(
@@ -341,7 +344,7 @@ describe("local backend pi transcript", () => {
 
     const rows = ["{ definitely not json }"];
     for (let i = 0; i < 120; i += 1) {
-      const id = i === 119 ? "ui-msg-latest" : `ui-msg-${i}`;
+      const id = messageIds[i];
       rows.push(
         JSON.stringify({
           id,
@@ -352,12 +355,20 @@ describe("local backend pi transcript", () => {
               text: `${i === 119 ? "latest" : "older"} ${"x".repeat(2048)}`,
             },
           ],
-          metadata: {
-            created_at: new Date(Date.UTC(2026, 4, 22, 12, i)).toISOString(),
-            updated_at: new Date(Date.UTC(2026, 4, 22, 12, i)).toISOString(),
-            agent_id: agentId,
-            conversation_id: conversationId,
-          },
+          ...(i === 119
+            ? {}
+            : {
+                metadata: {
+                  created_at: new Date(
+                    Date.UTC(2026, 4, 22, 12, i),
+                  ).toISOString(),
+                  updated_at: new Date(
+                    Date.UTC(2026, 4, 22, 12, i),
+                  ).toISOString(),
+                  agent_id: agentId,
+                  conversation_id: conversationId,
+                },
+              }),
         }),
       );
     }
@@ -368,7 +379,7 @@ describe("local backend pi transcript", () => {
 
     const backend = new LocalBackend({ storageDir, memfsEnabled: false });
     const conversation = await backend.retrieveConversation(conversationId);
-    expect(conversation.in_context_message_ids).toEqual(["ui-msg-latest"]);
+    expect(conversation.in_context_message_ids).toEqual(messageIds);
     const messages = pageItems(
       await backend.listConversationMessages(conversationId, {
         agent_id: agentId,
@@ -379,6 +390,16 @@ describe("local backend pi transcript", () => {
 
     expect(messages).toHaveLength(1);
     expect(messages[0]?.id).toBe("ui-msg-latest");
+    expect(messages[0]?.date).toBe("2026-01-01T00:02:00.000Z");
+
+    const backendForDirectLookup = new LocalBackend({
+      storageDir,
+      memfsEnabled: false,
+    });
+    const latestVariants =
+      await backendForDirectLookup.retrieveMessage("ui-msg-latest");
+    expect(latestVariants[0]?.id).toBe("ui-msg-latest");
+    expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
   });
 
   test("reuses cached compiled system prompt across turns until explicit recompile", async () => {

@@ -1445,6 +1445,10 @@ export class LocalStore {
       messages = this.messagesById.get(messageId) ?? [];
     }
     if (messages.length === 0) {
+      this.indexMessageFromTranscriptTail(messageId);
+      messages = this.messagesById.get(messageId) ?? [];
+    }
+    if (messages.length === 0) {
       this.loadConversationContainingMessage(messageId);
       messages = this.messagesById.get(messageId) ?? [];
     }
@@ -2098,11 +2102,19 @@ export class LocalStore {
         metadata.conversationDir,
       );
       const localMessages = tail.items.map(normalizeLocalMessageForPi);
+      const conversation = this.conversations.get(key);
+      const sourceStartIndex = tail.reachedStart
+        ? 0
+        : Math.max(
+            0,
+            (conversation?.in_context_message_ids.length ?? 0) -
+              localMessages.length,
+          );
       const projected = this.projectLocalMessages(
         localMessages,
         agentId,
         conversationId,
-        { updateIndex: false },
+        { sourceStartIndex },
       );
       const cursorFound =
         !before || projected.some((message) => message.id === before);
@@ -2173,6 +2185,62 @@ export class LocalStore {
         conversation.agent_id,
       );
       if ((this.messagesById.get(messageId) ?? []).length > 0) return;
+    }
+  }
+
+  private indexMessageFromTranscriptTail(messageId: string): boolean {
+    const sourceMessageId = sourceLocalMessageIdFromStoredMessageId(messageId);
+    for (const conversation of this.conversations.values()) {
+      const key = this.conversationKey(conversation.id, conversation.agent_id);
+      if (this.loadedConversationKeys.has(key)) continue;
+      if (
+        !conversation.in_context_message_ids.includes(sourceMessageId) &&
+        !conversation.in_context_message_ids.includes(messageId)
+      ) {
+        continue;
+      }
+      if (this.indexMessageFromConversationTail(key, conversation, messageId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private indexMessageFromConversationTail(
+    key: string,
+    conversation: StoredConversation,
+    messageId: string,
+  ): boolean {
+    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    if (!metadata || metadata.requiresFullTimestampRepair) return false;
+
+    let maxBytes = 64 * 1024;
+    for (;;) {
+      const tail = readJsonlFileSuffix<LocalMessage>(
+        metadata.messagesPath,
+        maxBytes,
+      );
+      assertNoLegacyUiMessageRows(
+        tail.items,
+        this.storageDir ?? "",
+        metadata.conversationDir,
+      );
+      const localMessages = tail.items.map(normalizeLocalMessageForPi);
+      const sourceStartIndex = tail.reachedStart
+        ? 0
+        : Math.max(
+            0,
+            conversation.in_context_message_ids.length - localMessages.length,
+          );
+      this.projectLocalMessages(
+        localMessages,
+        conversation.agent_id,
+        conversation.id,
+        { sourceStartIndex },
+      );
+      if ((this.messagesById.get(messageId) ?? []).length > 0) return true;
+      if (tail.reachedStart) return false;
+      maxBytes *= 2;
     }
   }
 
