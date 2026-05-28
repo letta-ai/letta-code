@@ -6,6 +6,7 @@ import type {
 import type {
   LocalAssistantMessage,
   LocalMessage,
+  LocalToolCall,
   LocalToolResultMessage,
   LocalUserMessage,
 } from "./local-message";
@@ -15,7 +16,7 @@ type AssistantContent = LocalAssistantMessage["content"][number];
 
 export function isLocalToolCallContent(
   content: AssistantContent,
-): content is ToolCall {
+): content is LocalToolCall {
   return content.type === "toolCall" && typeof content.id === "string";
 }
 

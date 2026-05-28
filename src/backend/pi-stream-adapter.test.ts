@@ -5,13 +5,13 @@ import { join } from "node:path";
 import type {
   AssistantMessage,
   AssistantMessageEvent,
+  Context,
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import {
   PiStreamAdapter,
   type PiStreamFunction,
-  type ProviderContext,
   toPiTools,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
@@ -78,7 +78,7 @@ function input(): ProviderTurnInput {
   };
 }
 
-function emptyTextBlocks(messages: ProviderContext["messages"]) {
+function emptyTextBlocks(messages: Context["messages"]) {
   return messages.flatMap((message) => {
     const content = message.content;
     if (!Array.isArray(content)) return [];
@@ -139,7 +139,7 @@ describe("PiStreamAdapter", () => {
     let sanitizedPayload: unknown;
     const stream: PiStreamFunction = (
       _model: Model<string>,
-      _context: ProviderContext,
+      _context: Context,
       options?: SimpleStreamOptions & Record<string, unknown>,
     ) => {
       const payload = {
@@ -229,10 +229,10 @@ describe("PiStreamAdapter", () => {
         apiKey: "secret-key",
       });
 
-      let capturedContext: ProviderContext | undefined;
+      let capturedContext: Context | undefined;
       const stream: PiStreamFunction = (
         _model: Model<string>,
-        context: ProviderContext,
+        context: Context,
         _options?: SimpleStreamOptions & Record<string, unknown>,
       ) => {
         capturedContext = context;
@@ -355,7 +355,7 @@ describe("PiStreamAdapter", () => {
       let capturedEnv: Record<string, string | undefined> | undefined;
       const stream: PiStreamFunction = (
         _model: Model<string>,
-        _context: ProviderContext,
+        _context: Context,
         options?: SimpleStreamOptions & Record<string, unknown>,
       ) => {
         capturedOptions = options;
@@ -409,10 +409,10 @@ describe("PiStreamAdapter", () => {
   });
 
   test("strips trailing assistant messages from context before calling provider", async () => {
-    let capturedContext: ProviderContext | undefined;
+    let capturedContext: Context | undefined;
     const stream: PiStreamFunction = (
       _model: Model<string>,
-      context: ProviderContext,
+      context: Context,
     ) => {
       capturedContext = context;
       const finalMessage = assistantMessage();

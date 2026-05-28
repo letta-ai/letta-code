@@ -2,6 +2,7 @@ import {
   type AssistantMessage,
   type AssistantMessageEvent,
   type Context,
+  type CustomToolInputFormat,
   isContextOverflow,
   type Message,
   type Model,
@@ -9,7 +10,7 @@ import {
   stream,
   streamSimple,
   type ThinkingLevel,
-  type Tool,
+  type ToolDefinition,
   type TSchema,
   Type,
   type Usage,
@@ -20,10 +21,6 @@ import {
   type LocalAssistantMessage,
   type LocalMessage,
 } from "@/backend/local/local-message";
-import type {
-  CustomToolInputFormat,
-  JsonSchema,
-} from "@/tools/model-facing-tool";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
@@ -51,7 +48,7 @@ const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 
 export type PiStreamFunction = (
   model: Model<string>,
-  context: ProviderContext,
+  context: Context,
   options?: SimpleStreamOptions & Record<string, unknown>,
 ) => AsyncIterable<AssistantMessageEvent> & {
   result(): Promise<AssistantMessage>;
@@ -142,31 +139,12 @@ async function sleepWithAbort(
   });
 }
 
-type ProviderFunctionTool = Tool;
-
-type ProviderCustomTool = {
-  type: "custom";
-  name: string;
-  description: string;
-  format?: CustomToolInputFormat;
-  fallback?: {
-    description?: string;
-    parameters: JsonSchema;
-  };
-};
-
-export type ProviderToolDefinition = ProviderFunctionTool | ProviderCustomTool;
-
-export type ProviderContext = Omit<Context, "tools"> & {
-  tools?: ProviderToolDefinition[];
-};
-
 function stringField(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function jsonSchemaField(value: unknown): JsonSchema | undefined {
-  return isRecord(value) ? (value as JsonSchema) : undefined;
+function jsonSchemaField(value: unknown): TSchema | undefined {
+  return isRecord(value) ? (value as unknown as TSchema) : undefined;
 }
 
 function customToolInputFormat(
@@ -188,7 +166,7 @@ function customToolInputFormat(
   return undefined;
 }
 
-function toPiTool(value: unknown): ProviderToolDefinition | undefined {
+function toPiTool(value: unknown): ToolDefinition | undefined {
   if (!isRecord(value)) return undefined;
   const name = stringField(value.name);
   if (!name) return undefined;
@@ -219,16 +197,14 @@ function toPiTool(value: unknown): ProviderToolDefinition | undefined {
   return {
     name,
     description,
-    parameters: jsonSchemaField(value.parameters)
-      ? (value.parameters as unknown as TSchema)
-      : Type.Object({}),
+    parameters: jsonSchemaField(value.parameters) ?? Type.Object({}),
   };
 }
 
 export function toPiTools(
   clientTools: unknown[],
-): ProviderToolDefinition[] | undefined {
-  const tools: ProviderToolDefinition[] = [];
+): ToolDefinition[] | undefined {
+  const tools: ToolDefinition[] = [];
   for (const value of clientTools) {
     const tool = toPiTool(value);
     if (tool) tools.push(tool);
@@ -486,14 +462,13 @@ function isOverflowError(error: unknown, contextWindow?: number): boolean {
 
 function defaultStream(
   model: Model<string>,
-  context: ProviderContext,
+  context: Context,
   options?: SimpleStreamOptions & Record<string, unknown>,
 ) {
-  const piContext = context as Context;
   if (model.api === "bedrock-converse-stream") {
-    return stream(model, piContext, options);
+    return stream(model, context, options);
   }
-  return streamSimple(model, piContext, options);
+  return streamSimple(model, context, options);
 }
 
 export class PiStreamAdapter implements ProviderStreamAdapter {
@@ -537,7 +512,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       input.agent.model_settings,
       { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
     );
-    const context: ProviderContext = {
+    const context: Context = {
       systemPrompt: input.systemPrompt ?? input.agent.system,
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),

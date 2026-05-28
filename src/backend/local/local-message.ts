@@ -51,7 +51,7 @@ export type LocalImageContent = ImageContent;
 export type LocalToolCall = ToolCall & {
   input?: string;
   customInput?: string;
-  kind?: "custom";
+  kind?: "function" | "custom";
 };
 
 export interface LocalUserMessage

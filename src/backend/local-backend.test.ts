@@ -13,6 +13,7 @@ import { join } from "node:path";
 import type {
   AssistantMessage,
   AssistantMessageEvent,
+  Context,
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
@@ -24,10 +25,7 @@ import {
   clearRegisteredPiProviders,
   registerPiProvider,
 } from "@/backend/dev/pi-provider-extension-registry";
-import type {
-  PiStreamFunction,
-  ProviderContext,
-} from "@/backend/dev/pi-stream-adapter";
+import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
 import { emptyLocalUsage } from "@/backend/local/local-message";
@@ -686,10 +684,10 @@ describe("local backend pi transcript", () => {
 
   test("persists pi tool calls and sends tool results back through provider context", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-pi-tool-"));
-    const contexts: ProviderContext[] = [];
+    const contexts: Context[] = [];
     const stream: PiStreamFunction = (
       _model: Model<string>,
-      context: ProviderContext,
+      context: Context,
       _options?: SimpleStreamOptions,
     ) => {
       contexts.push(context);
@@ -868,10 +866,10 @@ describe("local backend pi transcript", () => {
       join(tmpdir(), "local-backend-custom-tool-"),
     );
     const patch = "*** Begin Patch\n*** Add File: note.txt\n+hi\n*** End Patch";
-    const contexts: ProviderContext[] = [];
+    const contexts: Context[] = [];
     const stream: PiStreamFunction = (
       _model: Model<string>,
-      context: ProviderContext,
+      context: Context,
       _options?: SimpleStreamOptions,
     ) => {
       contexts.push(context);
