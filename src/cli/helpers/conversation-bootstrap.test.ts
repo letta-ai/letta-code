@@ -22,7 +22,7 @@ describe("filterBootstrapRelevantConversations", () => {
   test("rejects weak single-channel RRF matches", () => {
     expect(
       filterBootstrapRelevantConversations(
-        [result("one", 0.0164), result("two", 0.014)],
+        [result("one", 0.0082), result("two", 0.008)],
         {},
       ),
     ).toEqual([]);
@@ -31,10 +31,37 @@ describe("filterBootstrapRelevantConversations", () => {
   test("keeps only high-confidence results near the strongest score", () => {
     expect(
       filterBootstrapRelevantConversations(
-        [result("one", 0.033), result("two", 0.026), result("three", 0.018)],
+        [
+          result("one", 0.016393),
+          result("two", 0.015388),
+          result("three", 0.015038),
+        ],
         {},
       ).map((item) => item.conversation.id),
     ).toEqual(["one", "two"]);
+  });
+
+  test("keeps prod-like CI matches while dropping the weaker tail", () => {
+    expect(
+      filterBootstrapRelevantConversations(
+        [
+          result("ci-rank-1", 0.016393),
+          result("ci-rank-2", 0.016001),
+          result("ci-rank-3", 0.015757),
+          result("ci-rank-4", 0.015749),
+          result("ci-rank-5", 0.015388),
+          result("weak-tail-1", 0.015038),
+          result("weak-tail-2", 0.014939),
+        ],
+        {},
+      ).map((item) => item.conversation.id),
+    ).toEqual([
+      "ci-rank-1",
+      "ci-rank-2",
+      "ci-rank-3",
+      "ci-rank-4",
+      "ci-rank-5",
+    ]);
   });
 
   test("dedupes and excludes the active conversation before scoring", () => {
