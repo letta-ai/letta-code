@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -506,7 +507,7 @@ function encodePathSegment(value: string): string {
   return Buffer.from(value).toString("base64url");
 }
 
-function jsonl<T>(items: T[]): string {
+function jsonl<T>(items: readonly T[]): string {
   return `${items.map((item) => JSON.stringify(item)).join("\n")}\n`;
 }
 
@@ -521,6 +522,23 @@ function readJsonlFile<T>(path: string): T[] {
     .split("\n")
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as T);
+}
+
+function coalesceLocalMessageSnapshots(
+  messages: readonly LocalMessage[],
+): LocalMessage[] {
+  const coalesced: LocalMessage[] = [];
+  const indexById = new Map<string, number>();
+  for (const message of messages) {
+    const existingIndex = indexById.get(message.id);
+    if (existingIndex === undefined) {
+      indexById.set(message.id, coalesced.length);
+      coalesced.push(message);
+    } else {
+      coalesced[existingIndex] = message;
+    }
+  }
+  return coalesced;
 }
 
 function readJsonlFileSuffix<T>(
@@ -729,6 +747,10 @@ interface LocalConversationTranscriptMetadata {
   requiresFullTimestampRepair: boolean;
 }
 
+type LocalTranscriptPersistOptions =
+  | { mode: "append"; message: LocalMessage }
+  | { mode: "rewrite" };
+
 function fileIsoTimestamp(value: number | undefined): string | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? new Date(value).toISOString()
@@ -858,6 +880,10 @@ export class LocalStore {
     string,
     LocalConversationTranscriptMetadata
   >();
+  private readonly persistedMessageSnapshotsByConversationKey = new Map<
+    string,
+    Map<string, string>
+  >();
   private readonly compiledSystemPromptByConversationKey = new Map<
     string,
     LocalCompiledSystemPrompt
@@ -956,6 +982,7 @@ export class LocalStore {
         this.localMessagesByConversationKey.delete(key);
         this.loadedConversationKeys.delete(key);
         this.transcriptMetadataByConversationKey.delete(key);
+        this.persistedMessageSnapshotsByConversationKey.delete(key);
         if (this.storageDir) {
           rmSync(
             join(this.storageDir, "conversations", encodePathSegment(key)),
@@ -1242,7 +1269,9 @@ export class LocalStore {
     this.conversations.set(targetKey, forked);
     this.localMessagesByConversationKey.set(targetKey, forkedMessages);
     this.loadedConversationKeys.add(targetKey);
-    this.persistConversationState(forked.id, targetAgentId);
+    this.persistConversationState(forked.id, targetAgentId, {
+      mode: "rewrite",
+    });
     return { id: forked.id };
   }
 
@@ -1505,7 +1534,9 @@ export class LocalStore {
     conversation.last_message_at = date;
     conversation.updated_at = date;
     this.conversations.set(key, conversation);
-    this.persistConversationState(conversation.id, input.agentId);
+    this.persistConversationState(conversation.id, input.agentId, {
+      mode: "rewrite",
+    });
     this.rebuildMessageIndex();
     return {
       numMessagesBefore: previousMessages.length,
@@ -1646,7 +1677,10 @@ export class LocalStore {
       agentId,
       localMessage,
     );
-    this.persistConversationState(conversation.id, agentId);
+    this.persistConversationState(conversation.id, agentId, {
+      mode: "append",
+      message: localMessage,
+    });
   }
 
   private appendAssistantText(
@@ -1959,6 +1993,7 @@ export class LocalStore {
     this.persistConversationState(
       storedChunk.conversation_id,
       storedChunk.agent_id,
+      { mode: "append", message },
     );
   }
 
@@ -2101,7 +2136,9 @@ export class LocalStore {
         this.storageDir ?? "",
         metadata.conversationDir,
       );
-      const localMessages = tail.items.map(normalizeLocalMessageForPi);
+      const localMessages = coalesceLocalMessageSnapshots(
+        tail.items.map(normalizeLocalMessageForPi),
+      );
       const conversation = this.conversations.get(key);
       const sourceStartIndex = tail.reachedStart
         ? 0
@@ -2225,7 +2262,9 @@ export class LocalStore {
         this.storageDir ?? "",
         metadata.conversationDir,
       );
-      const localMessages = tail.items.map(normalizeLocalMessageForPi);
+      const localMessages = coalesceLocalMessageSnapshots(
+        tail.items.map(normalizeLocalMessageForPi),
+      );
       const sourceStartIndex = tail.reachedStart
         ? 0
         : Math.max(
@@ -2280,7 +2319,9 @@ export class LocalStore {
       metadata.conversationDir,
     );
     const localMessages = repairSyntheticLocalMessageTimestamps(
-      rawMessages.map(normalizeLocalMessageForPi),
+      coalesceLocalMessageSnapshots(
+        rawMessages.map(normalizeLocalMessageForPi),
+      ),
       metadata.timing,
     );
     const conversation = this.conversations.get(key);
@@ -2296,6 +2337,7 @@ export class LocalStore {
     }
     this.localMessagesByConversationKey.set(key, localMessages);
     this.loadedConversationKeys.add(key);
+    this.resetPersistedMessageSnapshots(key, localMessages);
     for (const message of localMessages) {
       this.localMessageSeq = Math.max(
         this.localMessageSeq,
@@ -2316,7 +2358,10 @@ export class LocalStore {
     this.localMessagesByConversationKey.set(key, messages);
     this.loadedConversationKeys.add(key);
     this.touchConversationForLocalMessage(conversationId, agentId, message);
-    this.persistConversationState(conversationId, agentId);
+    this.persistConversationState(conversationId, agentId, {
+      mode: "append",
+      message,
+    });
   }
 
   private touchConversationForLocalMessage(
@@ -2504,6 +2549,7 @@ export class LocalStore {
   private persistConversationState(
     conversationId: string,
     agentId: string,
+    transcriptOptions?: LocalTranscriptPersistOptions,
   ): void {
     if (!this.storageDir) return;
     const key = this.conversationKey(conversationId, agentId);
@@ -2523,14 +2569,81 @@ export class LocalStore {
     if (!existsSync(transcriptManifestPath(conversationDir))) {
       writeLocalTranscriptManifest(conversationDir);
     }
-    const messagesPath = transcriptMessagesPath(conversationDir);
-    if (this.loadedConversationKeys.has(key) || !existsSync(messagesPath)) {
-      writeFileSync(
-        messagesPath,
-        jsonl(this.localMessagesByConversationKey.get(key) ?? []),
-      );
-    }
+    this.persistConversationTranscript(
+      key,
+      transcriptMessagesPath(conversationDir),
+      transcriptOptions,
+    );
     this.persistCompiledSystemPrompt(conversationId, agentId);
+  }
+
+  private persistConversationTranscript(
+    key: string,
+    messagesPath: string,
+    options?: LocalTranscriptPersistOptions,
+  ): void {
+    const messages = this.localMessagesByConversationKey.get(key) ?? [];
+    if (options?.mode === "rewrite" || !existsSync(messagesPath)) {
+      this.rewriteConversationTranscript(key, messagesPath, messages);
+      return;
+    }
+
+    if (options?.mode === "append") {
+      this.appendConversationTranscriptMessage(
+        key,
+        messagesPath,
+        options.message,
+      );
+      return;
+    }
+
+    if (!this.loadedConversationKeys.has(key)) return;
+  }
+
+  private rewriteConversationTranscript(
+    key: string,
+    messagesPath: string,
+    messages: readonly LocalMessage[],
+  ): void {
+    writeFileSync(messagesPath, jsonl(messages));
+    this.resetPersistedMessageSnapshots(key, messages);
+  }
+
+  private appendConversationTranscriptMessage(
+    key: string,
+    messagesPath: string,
+    message: LocalMessage,
+  ): void {
+    const snapshots = this.persistedMessageSnapshotsByConversationKey.get(key);
+    const snapshot = JSON.stringify(message);
+    if (snapshots?.get(message.id) === snapshot) return;
+    appendFileSync(messagesPath, `${snapshot}\n`);
+    this.persistedMessageSnapshotsForConversation(key).set(
+      message.id,
+      snapshot,
+    );
+  }
+
+  private resetPersistedMessageSnapshots(
+    key: string,
+    messages: readonly LocalMessage[],
+  ): void {
+    const snapshots = new Map<string, string>();
+    for (const message of messages) {
+      snapshots.set(message.id, JSON.stringify(message));
+    }
+    this.persistedMessageSnapshotsByConversationKey.set(key, snapshots);
+  }
+
+  private persistedMessageSnapshotsForConversation(
+    key: string,
+  ): Map<string, string> {
+    let snapshots = this.persistedMessageSnapshotsByConversationKey.get(key);
+    if (!snapshots) {
+      snapshots = new Map<string, string>();
+      this.persistedMessageSnapshotsByConversationKey.set(key, snapshots);
+    }
+    return snapshots;
   }
 
   private persistCompiledSystemPrompt(
