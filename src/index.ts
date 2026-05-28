@@ -1656,20 +1656,13 @@ async function main(): Promise<void> {
           !settings.refreshToken &&
           !apiKey;
         setStartupHasCloudCredentials(Boolean(settings.refreshToken || apiKey));
+        const startupModelsPromise =
+          startupBackendMode === "local" || isSelfHosted
+            ? backend.listModels()
+            : Promise.resolve([]);
         if (startupBackendMode === "local") {
           try {
-            const models = await backend.listModels();
-            setStartupHasAvailableLocalModels(models.length > 0);
-          } catch {
-            setStartupHasAvailableLocalModels(false);
-          }
-        } else {
-          setStartupHasAvailableLocalModels(true);
-        }
-
-        if (startupBackendMode === "local") {
-          try {
-            const models = await backend.listModels();
+            const models = await startupModelsPromise;
             setStartupHasAvailableLocalModels(models.length > 0);
           } catch {
             setStartupHasAvailableLocalModels(false);
@@ -1687,7 +1680,7 @@ async function main(): Promise<void> {
             const { getDefaultModel } = await import("@/agent/model");
             const defaultModel = getDefaultModel();
             setSelfHostedDefaultModel(defaultModel);
-            const modelsList = await backend.listModels();
+            const modelsList = await startupModelsPromise;
             const handles = modelsList
               .map((m) => m.handle)
               .filter((h): h is string => typeof h === "string");
