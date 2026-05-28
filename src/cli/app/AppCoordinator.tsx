@@ -40,6 +40,7 @@ import {
 import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
+import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-extension-registry";
 import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
@@ -3029,6 +3030,98 @@ export function App({
     }
     return undefined;
   }, [loadingState, agentId, initialAgentState]);
+
+  // Extension provider metadata can arrive after the first local AgentState
+  // projection on cold boot. Re-project the active local agent when the provider
+  // registry changes so statusline context windows reflect registered models.
+  useEffect(() => {
+    if (
+      !isLocalBackend ||
+      loadingState !== "ready" ||
+      !agentId ||
+      agentId === "loading"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let refreshQueued = false;
+
+    const refreshAgentFromRegisteredProviderMetadata = () => {
+      if (refreshQueued) return;
+      refreshQueued = true;
+
+      queueMicrotask(() => {
+        refreshQueued = false;
+        const currentAgentId = agentIdRef.current;
+        if (cancelled || !currentAgentId || currentAgentId === "loading") {
+          return;
+        }
+
+        void getBackend()
+          .retrieveAgent(currentAgentId)
+          .then((agent) => {
+            if (cancelled || agentIdRef.current !== agent.id) return;
+            setAgentState(agent);
+            setAgentDescription(agent.description ?? null);
+            setAgentLastRunAt(
+              (agent as { last_run_completion?: string | null })
+                .last_run_completion ?? null,
+            );
+
+            if (
+              conversationIdRef.current === "default" &&
+              !hasConversationModelOverrideRef.current
+            ) {
+              const agentModelHandle = getPreferredAgentModelHandle(agent);
+              setLlmConfig(agent.llm_config);
+              setCurrentModelHandle(agentModelHandle ?? null);
+              const modelInfo = getModelInfoForLlmConfig(
+                agentModelHandle || "",
+                {
+                  ...(agent.llm_config as unknown as {
+                    reasoning_effort?: string | null;
+                    enable_reasoner?: boolean | null;
+                  }),
+                  context_window:
+                    (
+                      agent as unknown as {
+                        context_window_limit?: number | null;
+                      }
+                    ).context_window_limit ?? null,
+                },
+              );
+              setCurrentModelId(modelInfo?.id ?? (agentModelHandle || null));
+            }
+          })
+          .catch((error) => {
+            debugLog(
+              "agent-config",
+              "Failed to refresh local agent after provider registry change: %O",
+              error,
+            );
+          });
+      });
+    };
+
+    if (!extensionRuntime.isLoading) {
+      refreshAgentFromRegisteredProviderMetadata();
+    }
+
+    const unsubscribe = subscribePiProviderRegistry(
+      refreshAgentFromRegisteredProviderMetadata,
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [
+    agentId,
+    extensionRuntime.isLoading,
+    hasConversationModelOverrideRef,
+    isLocalBackend,
+    loadingState,
+  ]);
 
   // Keep effective model state in sync with the active conversation override.
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref.current is intentionally read dynamically
