@@ -43,7 +43,6 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   allowed_channels: "allowedChannels",
   auto_thread_on_mention: "autoThreadOnMention",
   acknowledge_message_reaction: "acknowledgeMessageReaction",
-  display_name_source: "displayNameSource",
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
   remove_stale_routes: "removeStaleRoutes",
@@ -284,14 +283,6 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     (isWhatsAppChannelAccount(next) && next.displayName === "WhatsApp")
   ) {
     next.displayName = undefined;
-    next.displayNameSource = undefined;
-  }
-  if (
-    next.displayNameSource !== undefined &&
-    next.displayNameSource !== "auto" &&
-    next.displayNameSource !== "user"
-  ) {
-    next.displayNameSource = undefined;
   }
   if (isSlackChannelAccount(next)) {
     const migrated = migratePermissionMode(

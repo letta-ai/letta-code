@@ -60,7 +60,6 @@ import {
 import { validateTelegramToken } from "./telegram/adapter";
 import type {
   ChannelAccount,
-  ChannelAccountDisplayNameSource,
   ChannelBindableTarget,
   ChannelDefaultPermissionMode,
   ChannelRoute,
@@ -98,7 +97,6 @@ export interface ChannelConfigSnapshot {
   channelId: string;
   accountId: string;
   displayName?: string;
-  displayNameSource?: ChannelAccountDisplayNameSource;
   enabled: boolean;
   mode?: SlackChannelMode;
   dmPolicy: DmPolicy;
@@ -182,7 +180,6 @@ export interface ChannelAccountSnapshot {
   channelId: string;
   accountId: string;
   displayName?: string;
-  displayNameSource?: ChannelAccountDisplayNameSource;
   enabled: boolean;
   configured: boolean;
   running: boolean;
@@ -239,25 +236,6 @@ function getErrorMessage(error: unknown, fallback: string): string {
 function normalizeDisplayName(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
-}
-
-function displayNameSourceFromPatch(
-  patch: Pick<ChannelAccountPatch, "displayName">,
-): ChannelAccountDisplayNameSource | undefined {
-  return patch.displayName !== undefined &&
-    normalizeDisplayName(patch.displayName)
-    ? "user"
-    : undefined;
-}
-
-function nextDisplayNameSourceFromPatch(
-  existing: ChannelAccount,
-  patch: Pick<ChannelAccountPatch, "displayName">,
-): ChannelAccountDisplayNameSource | undefined {
-  if (patch.displayName === undefined) {
-    return existing.displayNameSource;
-  }
-  return displayNameSourceFromPatch(patch);
 }
 
 async function resolveChannelAccountDisplayName(
@@ -502,7 +480,6 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       channelId: "telegram",
       accountId: account.accountId,
       displayName: account.displayName,
-      displayNameSource: account.displayNameSource,
       enabled: account.enabled,
       configured: isAccountConfigured(account),
       running,
@@ -524,7 +501,6 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       channelId: "discord",
       accountId: account.accountId,
       displayName: account.displayName,
-      displayNameSource: account.displayNameSource,
       enabled: account.enabled,
       configured: isAccountConfigured(account),
       running,
@@ -554,7 +530,6 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       channelId: "whatsapp",
       accountId: account.accountId,
       displayName: account.displayName,
-      displayNameSource: account.displayNameSource,
       enabled: account.enabled,
       configured: isAccountConfigured(account),
       running,
@@ -579,7 +554,6 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       channelId: account.channel,
       accountId: account.accountId,
       displayName: account.displayName,
-      displayNameSource: account.displayNameSource,
       enabled: account.enabled,
       configured: isAccountConfigured(account),
       running,
@@ -595,7 +569,6 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     channelId: "slack",
     accountId: account.accountId,
     displayName: account.displayName,
-    displayNameSource: account.displayNameSource,
     enabled: account.enabled,
     configured: isAccountConfigured(account),
     running,
@@ -619,14 +592,12 @@ function createAccountFromPatch(
   patch: ChannelAccountPatch,
 ): ChannelAccount {
   const normalizedPatch = normalizeChannelAccountPatch(channelId, patch);
-  const displayNameSource = displayNameSourceFromPatch(normalizedPatch);
   const now = new Date().toISOString();
   if (channelId === "telegram") {
     return {
       channel: "telegram",
       accountId,
       displayName: normalizeDisplayName(normalizedPatch.displayName),
-      displayNameSource,
       enabled: normalizedPatch.enabled ?? false,
       token: normalizedPatch.token ?? "",
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
@@ -649,7 +620,6 @@ function createAccountFromPatch(
       channel: "discord",
       accountId,
       displayName: normalizeDisplayName(normalizedPatch.displayName),
-      displayNameSource,
       enabled: normalizedPatch.enabled ?? false,
       token: normalizedPatch.token ?? "",
       agentId: normalizedPatch.agentId ?? null,
@@ -673,7 +643,6 @@ function createAccountFromPatch(
       channel: "whatsapp",
       accountId,
       displayName: normalizeDisplayName(normalizedPatch.displayName),
-      displayNameSource,
       enabled: normalizedPatch.enabled ?? false,
       agentId: normalizedPatch.agentId ?? null,
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
@@ -696,7 +665,6 @@ function createAccountFromPatch(
       channel: channelId,
       accountId,
       displayName: normalizeDisplayName(normalizedPatch.displayName),
-      displayNameSource,
       enabled: normalizedPatch.enabled ?? false,
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
@@ -710,7 +678,6 @@ function createAccountFromPatch(
     channel: "slack",
     accountId,
     displayName: normalizeDisplayName(normalizedPatch.displayName),
-    displayNameSource,
     enabled: normalizedPatch.enabled ?? false,
     mode: normalizedPatch.mode ?? "socket",
     botToken: normalizedPatch.botToken ?? "",
@@ -738,10 +705,6 @@ function mergeAccountPatch(
         normalizedPatch.displayName !== undefined
           ? normalizeDisplayName(normalizedPatch.displayName)
           : existing.displayName,
-      displayNameSource: nextDisplayNameSourceFromPatch(
-        existing,
-        normalizedPatch,
-      ),
       enabled: normalizedPatch.enabled ?? existing.enabled,
       token: normalizedPatch.token ?? existing.token,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
@@ -765,10 +728,6 @@ function mergeAccountPatch(
         normalizedPatch.displayName !== undefined
           ? normalizeDisplayName(normalizedPatch.displayName)
           : existing.displayName,
-      displayNameSource: nextDisplayNameSourceFromPatch(
-        existing,
-        normalizedPatch,
-      ),
       enabled: normalizedPatch.enabled ?? existing.enabled,
       token: normalizedPatch.token ?? existing.token,
       agentId: normalizedPatch.agentId ?? existing.agentId,
@@ -802,10 +761,6 @@ function mergeAccountPatch(
         normalizedPatch.displayName !== undefined
           ? normalizeDisplayName(normalizedPatch.displayName)
           : existing.displayName,
-      displayNameSource: nextDisplayNameSourceFromPatch(
-        existing,
-        normalizedPatch,
-      ),
       enabled: normalizedPatch.enabled ?? existing.enabled,
       agentId: normalizedPatch.agentId ?? existing.agentId,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
@@ -839,10 +794,6 @@ function mergeAccountPatch(
         normalizedPatch.displayName !== undefined
           ? normalizeDisplayName(normalizedPatch.displayName)
           : existing.displayName,
-      displayNameSource: nextDisplayNameSourceFromPatch(
-        existing,
-        normalizedPatch,
-      ),
       enabled: normalizedPatch.enabled ?? existing.enabled,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
@@ -860,10 +811,6 @@ function mergeAccountPatch(
       normalizedPatch.displayName !== undefined
         ? normalizeDisplayName(normalizedPatch.displayName)
         : existing.displayName,
-    displayNameSource: nextDisplayNameSourceFromPatch(
-      existing,
-      normalizedPatch,
-    ),
     enabled: normalizedPatch.enabled ?? existing.enabled,
     mode: normalizedPatch.mode ?? existing.mode,
     botToken: normalizedPatch.botToken ?? existing.botToken,
@@ -935,7 +882,6 @@ export function getChannelConfigSnapshot(
       channelId: "telegram",
       accountId: account.accountId,
       displayName: account.displayName,
-      displayNameSource: account.displayNameSource,
       enabled: account.enabled,
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
@@ -949,7 +895,6 @@ export function getChannelConfigSnapshot(
       channelId: "discord",
       accountId: account.accountId,
       displayName: account.displayName,
-      displayNameSource: account.displayNameSource,
       enabled: account.enabled,
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
@@ -975,7 +920,6 @@ export function getChannelConfigSnapshot(
       channelId: "whatsapp",
       accountId: account.accountId,
       displayName: account.displayName,
-      displayNameSource: account.displayNameSource,
       enabled: account.enabled,
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
@@ -996,7 +940,6 @@ export function getChannelConfigSnapshot(
       channelId: account.channel,
       accountId: account.accountId,
       displayName: account.displayName,
-      displayNameSource: account.displayNameSource,
       enabled: account.enabled,
       dmPolicy: account.dmPolicy,
       allowedUsers: [...account.allowedUsers],
@@ -1008,7 +951,6 @@ export function getChannelConfigSnapshot(
     channelId: "slack",
     accountId: account.accountId,
     displayName: account.displayName,
-    displayNameSource: account.displayNameSource,
     enabled: account.enabled,
     mode: account.mode,
     dmPolicy: account.dmPolicy,
@@ -1433,32 +1375,23 @@ export async function refreshChannelAccountDisplayNameLive(
   if (!isAccountConfigured(existing)) {
     return toAccountSnapshot(existing);
   }
-
-  // User-provided names are authoritative. Only provider-derived names may be
-  // refreshed automatically; legacy names without a source are treated as user
-  // names to avoid overwriting existing custom labels.
-  if (existing.displayName && existing.displayNameSource !== "auto") {
+  if (existing.displayName) {
     return toAccountSnapshot(existing);
   }
 
   const resolvedDisplayName = await resolveChannelAccountDisplayName(existing);
   const nextDisplayName =
-    options?.force === true && resolvedDisplayName === undefined
+    options?.force && resolvedDisplayName === undefined
       ? undefined
       : (resolvedDisplayName ?? existing.displayName);
-  const nextDisplayNameSource = nextDisplayName ? "auto" : undefined;
 
-  if (
-    nextDisplayName === existing.displayName &&
-    nextDisplayNameSource === existing.displayNameSource
-  ) {
+  if (nextDisplayName === existing.displayName) {
     return toAccountSnapshot(existing);
   }
 
   const updated = await upsertChannelAccountWithSecrets(channelId, {
     ...existing,
     displayName: nextDisplayName,
-    displayNameSource: nextDisplayNameSource,
     updatedAt: new Date().toISOString(),
   });
   return toAccountSnapshot(updated);

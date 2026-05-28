@@ -297,13 +297,9 @@ export interface ChannelAccountBinding {
   conversationId: string | null;
 }
 
-export type ChannelAccountDisplayNameSource = "auto" | "user";
-
 interface ChannelAccountBase {
   accountId: string;
   displayName?: string;
-  /** Whether displayName was resolved from the provider or explicitly set by the user. */
-  displayNameSource?: ChannelAccountDisplayNameSource;
   enabled: boolean;
   dmPolicy: DmPolicy;
   allowedUsers: string[];

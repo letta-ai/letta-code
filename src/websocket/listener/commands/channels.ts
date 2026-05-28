@@ -464,8 +464,7 @@ export async function handleChannelsProtocolCommand(
       );
 
       const accountsNeedingRefresh = accounts.filter(
-        (account) =>
-          !account.displayName || account.displayNameSource === "auto",
+        (account) => !account.displayName,
       );
 
       if (accountsNeedingRefresh.length > 0) {
