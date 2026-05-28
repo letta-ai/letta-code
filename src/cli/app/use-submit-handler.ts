@@ -2793,6 +2793,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const {
               spawnBackgroundSubagentTask,
               waitForBackgroundSubagentAgentId,
+              REFLECTION_AGENT_ID_WAIT_MS,
             } = await import("@/tools/impl/task");
             const { subagentId } = spawnBackgroundSubagentTask({
               subagentType: "reflection",
@@ -2810,7 +2811,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 agentId: reflectionAgentId,
               }) => {
                 telemetry.trackReflectionEnd("manual", success, {
-                  subagentId: reflectionAgentId ?? undefined,
+                  reflectionAgentId: reflectionAgentId ?? undefined,
                   conversationId: reflectionConversationId,
                   error,
                 });
@@ -2842,12 +2843,19 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 appendTaskNotificationEvents([msg]);
               },
             });
+            // Wait up to REFLECTION_AGENT_ID_WAIT_MS for the spawned
+            // subagent's init event so `reflection_agent_id` is reliably
+            // populated on the PostHog event. Previously this used a 1s
+            // timeout which often expired before init, producing telemetry
+            // rows with no agent ID. A bounded wait keeps telemetry
+            // reliable without risking a user-visible hang if the spawn
+            // never makes progress.
             const reflectionAgentId = await waitForBackgroundSubagentAgentId(
               subagentId,
-              1000,
+              REFLECTION_AGENT_ID_WAIT_MS,
             );
             telemetry.trackReflectionStart("manual", {
-              subagentId: reflectionAgentId ?? undefined,
+              reflectionAgentId: reflectionAgentId ?? undefined,
               conversationId: reflectionConversationId,
               startMessageId: autoPayload.startMessageId,
               endMessageId: autoPayload.endMessageId,
@@ -3463,6 +3471,7 @@ ${SYSTEM_REMINDER_CLOSE}
           const {
             spawnBackgroundSubagentTask,
             waitForBackgroundSubagentAgentId,
+            REFLECTION_AGENT_ID_WAIT_MS,
           } = await import("@/tools/impl/task");
           const { subagentId } = spawnBackgroundSubagentTask({
             subagentType: "reflection",
@@ -3480,7 +3489,7 @@ ${SYSTEM_REMINDER_CLOSE}
               agentId: reflectionAgentId,
             }) => {
               telemetry.trackReflectionEnd(triggerSource, success, {
-                subagentId: reflectionAgentId ?? undefined,
+                reflectionAgentId: reflectionAgentId ?? undefined,
                 conversationId: reflectionConversationId,
                 error,
               });
@@ -3512,12 +3521,16 @@ ${SYSTEM_REMINDER_CLOSE}
               appendTaskNotificationEvents([msg]);
             },
           });
+          // Wait up to REFLECTION_AGENT_ID_WAIT_MS for the spawned
+          // subagent's init event so `reflection_agent_id` is reliably
+          // populated. Bounded to avoid a user-visible hang if the spawn
+          // stalls.
           const reflectionAgentId = await waitForBackgroundSubagentAgentId(
             subagentId,
-            1000,
+            REFLECTION_AGENT_ID_WAIT_MS,
           );
           telemetry.trackReflectionStart(triggerSource, {
-            subagentId: reflectionAgentId ?? undefined,
+            reflectionAgentId: reflectionAgentId ?? undefined,
             conversationId: reflectionConversationId,
             startMessageId: autoPayload.startMessageId,
             endMessageId: autoPayload.endMessageId,

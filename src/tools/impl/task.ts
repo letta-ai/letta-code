@@ -57,6 +57,20 @@ interface TaskArgs {
 const VALID_DEPLOY_TYPES = new Set(["general-purpose"]);
 const BACKGROUND_STARTUP_POLL_MS = 50;
 
+/**
+ * Generous upper bound (ms) used by reflection launch sites when awaiting
+ * the spawned subagent's Letta `agent_id` before emitting telemetry.
+ *
+ * Background: `reflection_start` telemetry needs `reflection_agent_id`
+ * populated so downstream pipelines (PostHog dashboards, letta-train)
+ * can join exactly instead of by ±15-min timestamp window. The init
+ * event that publishes `agent_id` normally lands in <500ms, but spawn
+ * failures or backend stalls can take longer. A bounded wait keeps
+ * telemetry reliable without risking a user-visible hang if the spawn
+ * never makes progress.
+ */
+export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
+
 type TaskRunResult = {
   agentId: string;
   conversationId?: string;

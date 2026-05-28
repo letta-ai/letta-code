@@ -637,8 +637,11 @@ export async function wireChannelIngress(
         parentMemory,
       });
 
-      const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-        await import("@/tools/impl/task");
+      const {
+        spawnBackgroundSubagentTask,
+        waitForBackgroundSubagentAgentId,
+        REFLECTION_AGENT_ID_WAIT_MS,
+      } = await import("@/tools/impl/task");
       const { subagentId } = spawnBackgroundSubagentTask({
         subagentType: "reflection",
         prompt: reflectionPrompt,
@@ -648,7 +651,7 @@ export async function wireChannelIngress(
         parentScope: { agentId, conversationId },
         onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
           telemetry.trackReflectionEnd("manual", success, {
-            subagentId: reflectionAgentId ?? undefined,
+            reflectionAgentId: reflectionAgentId ?? undefined,
             conversationId,
             error,
           });
@@ -704,12 +707,15 @@ export async function wireChannelIngress(
         },
       });
 
+      // Wait up to REFLECTION_AGENT_ID_WAIT_MS for the spawned subagent's
+      // init event so `reflection_agent_id` is reliably populated. Bounded
+      // to avoid blocking listener turn handling if the spawn stalls.
       const reflectionAgentId = await waitForBackgroundSubagentAgentId(
         subagentId,
-        1000,
+        REFLECTION_AGENT_ID_WAIT_MS,
       );
       telemetry.trackReflectionStart("manual", {
-        subagentId: reflectionAgentId ?? undefined,
+        reflectionAgentId: reflectionAgentId ?? undefined,
         conversationId,
         startMessageId: autoPayload.startMessageId,
         endMessageId: autoPayload.endMessageId,

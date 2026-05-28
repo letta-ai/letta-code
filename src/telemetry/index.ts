@@ -1,3 +1,7 @@
+import { mkdirSync } from "node:fs";
+import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { getServerUrl } from "@/backend/api/client";
 import { getServerHealth } from "@/backend/api/health";
 import { submitTelemetryMetadata } from "@/backend/api/metadata";
@@ -75,6 +79,18 @@ export interface UserInputData {
 
 export interface ReflectionStartData {
   trigger_source: "manual" | "step-count" | "compaction-event";
+  /**
+   * Letta `agent-...` ID of the spawned reflection subagent. This is the
+   * canonical join key for downstream pipelines (Postgres, ClickHouse,
+   * letta-train). Should always be populated — call sites wait for the
+   * subagent's init event before emitting `reflection_start`.
+   */
+  reflection_agent_id?: string;
+  /**
+   * Back-compat alias for `reflection_agent_id`. Older PostHog dashboards
+   * and queries key off this field. New consumers should use
+   * `reflection_agent_id`.
+   */
   subagent_id?: string;
   conversation_id?: string;
   start_message_id?: string;
@@ -84,6 +100,15 @@ export interface ReflectionStartData {
 export interface ReflectionEndData {
   trigger_source: "manual" | "step-count" | "compaction-event";
   success: boolean;
+  /**
+   * Letta `agent-...` ID of the spawned reflection subagent. Should match
+   * the `reflection_agent_id` of the corresponding `reflection_start`
+   * event, enabling exact start↔end joins in PostHog.
+   */
+  reflection_agent_id?: string;
+  /**
+   * Back-compat alias for `reflection_agent_id`. See `ReflectionStartData`.
+   */
   subagent_id?: string;
   conversation_id?: string;
   error?: string;
@@ -111,6 +136,32 @@ function isNonActionableError(message: string): boolean {
   );
 }
 
+/**
+ * Resolve the path to the on-disk telemetry queue file. Returns `null` if
+ * the queue is disabled (e.g. tests set `LETTA_CODE_TELEM_QUEUE=0`).
+ *
+ * The queue is a JSONL file storing events that have been emitted but not
+ * yet confirmed flushed to the backend. It exists so that reflection
+ * telemetry (and other events) survive process crashes / abnormal exits,
+ * which is the dominant cause of `letta_code:reflection_start` events
+ * being missing from PostHog in production.
+ */
+function resolveTelemetryQueuePath(): string | null {
+  const override = process.env.LETTA_CODE_TELEM_QUEUE;
+  if (override === "0" || override === "false") {
+    return null;
+  }
+  if (override && override.length > 0) {
+    return override;
+  }
+  try {
+    const home = process.env.HOME || homedir();
+    return join(home, ".letta", "telemetry-queue.jsonl");
+  } catch {
+    return null;
+  }
+}
+
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
   private sessionId: string;
@@ -124,6 +175,17 @@ class TelemetryManager {
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
   private serverVersion: string | null = null;
+  /**
+   * Path to the disk-backed queue, resolved lazily. `null` means the queue
+   * is disabled (env override) or its directory could not be resolved.
+   */
+  private queuePath: string | null | undefined = undefined;
+  /**
+   * Serialize queue writes so concurrent appends/rewrites don't interleave.
+   * Best-effort: all queue operations swallow errors so telemetry never
+   * affects user-facing behavior.
+   */
+  private queueWriteChain: Promise<void> = Promise.resolve();
 
   private async resolveTelemetryApiKey(): Promise<string | undefined> {
     if (process.env.LETTA_API_KEY) {
@@ -204,6 +266,11 @@ class TelemetryManager {
     // Initialize device ID (persistent across sessions)
     this.deviceId = settingsManager.getOrCreateDeviceId();
 
+    // Drain any events left behind by a previous crashed/abnormal exit
+    // before we start recording new ones. Best-effort, never throws —
+    // replayed events get retried on the next flush.
+    this.drainQueueFromDisk().catch(() => {});
+
     this.trackSessionStart();
 
     // Fetch server version for diagnostics (best-effort, non-blocking)
@@ -276,12 +343,12 @@ class TelemetryManager {
       }
     });
 
-    // TODO: Add telemetry for crashes and abnormal exits
-    // Current limitation: We can't reliably flush telemetry on process.on("exit")
-    // because the event loop is shut down and async operations don't work.
-    // Potential solution: Write unsent events to ~/.letta/telemetry-queue.json
-    // and send them on next startup. This would capture crash telemetry without
-    // risking hangs on exit.
+    // Note: events are also persisted to ~/.letta/telemetry-queue.jsonl
+    // on every `track()`. If the process exits abnormally before a
+    // successful flush, those events are replayed on next startup via
+    // `drainQueueFromDisk()` (called from `init`). This is the durability
+    // backbone for reflection telemetry, which was previously lost on
+    // ~60% of invocations because flushes are best-effort on SIGINT.
   }
 
   /**
@@ -315,6 +382,9 @@ class TelemetryManager {
     };
 
     this.events.push(event);
+    // Persist to disk so the event survives process crashes / abnormal
+    // exits before the next flush. Best-effort, async, never throws.
+    this.enqueueOnDisk(event);
 
     // Flush if batch size is reached
     if (this.events.length >= this.MAX_BATCH_SIZE) {
@@ -575,7 +645,12 @@ class TelemetryManager {
   trackReflectionStart(
     triggerSource: "manual" | "step-count" | "compaction-event",
     options?: {
-      subagentId?: string;
+      /**
+       * Letta `agent-...` ID of the spawned reflection subagent. Callers
+       * should wait for the subagent's init event before invoking this
+       * method so this field is reliably populated.
+       */
+      reflectionAgentId?: string;
       conversationId?: string;
       startMessageId?: string;
       endMessageId?: string;
@@ -583,7 +658,11 @@ class TelemetryManager {
   ) {
     const data: ReflectionStartData = {
       trigger_source: triggerSource,
-      subagent_id: options?.subagentId,
+      reflection_agent_id: options?.reflectionAgentId,
+      // Emit both names: `subagent_id` for back-compat with existing
+      // PostHog dashboards, `reflection_agent_id` as the new canonical
+      // field. New consumers should prefer `reflection_agent_id`.
+      subagent_id: options?.reflectionAgentId,
       conversation_id: options?.conversationId,
       start_message_id: options?.startMessageId,
       end_message_id: options?.endMessageId,
@@ -598,7 +677,12 @@ class TelemetryManager {
     triggerSource: "manual" | "step-count" | "compaction-event",
     success: boolean,
     options?: {
-      subagentId?: string;
+      /**
+       * Letta `agent-...` ID of the spawned reflection subagent. Should
+       * match the `reflection_agent_id` of the corresponding
+       * `reflection_start` event.
+       */
+      reflectionAgentId?: string;
       conversationId?: string;
       error?: string;
     },
@@ -606,7 +690,8 @@ class TelemetryManager {
     const data: ReflectionEndData = {
       trigger_source: triggerSource,
       success,
-      subagent_id: options?.subagentId,
+      reflection_agent_id: options?.reflectionAgentId,
+      subagent_id: options?.reflectionAgentId,
       conversation_id: options?.conversationId,
       error: options?.error,
     };
@@ -637,10 +722,124 @@ class TelemetryManager {
         },
         { signal: AbortSignal.timeout(5000) },
       );
+      // Successful flush — rewrite the disk queue to drop the events we
+      // just confirmed delivered. Anything still in `this.events` (new
+      // events recorded during the flush) is preserved.
+      this.rewriteQueueOnDisk();
     } catch {
-      // If flush fails, put events back in queue, but don't throw error
+      // If flush fails, put events back in queue, but don't throw error.
+      // We intentionally do NOT rewrite the disk queue here — the on-disk
+      // copy is still our durable backup for these events.
       this.events.unshift(...eventsToSend);
     }
+  }
+
+  /**
+   * Resolve and cache the disk queue path. Returns `null` if disabled or
+   * unresolvable.
+   */
+  private getQueuePath(): string | null {
+    if (this.queuePath === undefined) {
+      this.queuePath = resolveTelemetryQueuePath();
+    }
+    return this.queuePath;
+  }
+
+  /**
+   * Append a single event to the on-disk queue. Serialized via the write
+   * chain. Errors are swallowed.
+   */
+  private enqueueOnDisk(event: TelemetryEvent): void {
+    const path = this.getQueuePath();
+    if (!path) return;
+    this.queueWriteChain = this.queueWriteChain
+      .then(async () => {
+        try {
+          mkdirSync(dirname(path), { recursive: true });
+          await appendFile(path, `${JSON.stringify(event)}\n`, "utf8");
+        } catch {
+          // Best-effort: telemetry must never break user-facing behavior.
+        }
+      })
+      .catch(() => {
+        // Defensive — the inner catch already swallows, but ensure the
+        // chain itself never rejects.
+      });
+  }
+
+  /**
+   * Drain the on-disk queue into the in-memory queue at startup. This is
+   * how events from previous crashed sessions get retried. Errors are
+   * swallowed; a malformed line is skipped.
+   */
+  private async drainQueueFromDisk(): Promise<void> {
+    const path = this.getQueuePath();
+    if (!path) return;
+
+    let raw: string;
+    try {
+      raw = await readFile(path, "utf8");
+    } catch {
+      // No queue file yet — nothing to drain.
+      return;
+    }
+
+    const replayed: TelemetryEvent[] = [];
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed = JSON.parse(trimmed) as TelemetryEvent;
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof parsed.type === "string" &&
+          typeof parsed.timestamp === "string"
+        ) {
+          replayed.push(parsed);
+        }
+      } catch {
+        // Skip malformed line.
+      }
+    }
+
+    if (replayed.length === 0) {
+      // File existed but was empty/all-malformed — delete it.
+      await rm(path, { force: true }).catch(() => {});
+      return;
+    }
+
+    // Prepend replayed events so they get retried before any new ones
+    // recorded during init (e.g. session_start).
+    this.events.unshift(...replayed);
+  }
+
+  /**
+   * Rewrite the disk queue to reflect the current in-memory events. Called
+   * after a successful flush to remove the just-flushed events. Serialized
+   * via the write chain. Errors are swallowed.
+   */
+  private rewriteQueueOnDisk(): void {
+    const path = this.getQueuePath();
+    if (!path) return;
+    const snapshot = [...this.events];
+    this.queueWriteChain = this.queueWriteChain
+      .then(async () => {
+        try {
+          if (snapshot.length === 0) {
+            await rm(path, { force: true });
+            return;
+          }
+          mkdirSync(dirname(path), { recursive: true });
+          const body = `${snapshot
+            .map((event) => JSON.stringify(event))
+            .join("\n")}\n`;
+          await writeFile(path, body, "utf8");
+        } catch {
+          // Best-effort.
+        }
+      })
+      .catch(() => {});
   }
 
   /**
