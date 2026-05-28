@@ -15,6 +15,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type Letta from "@letta-ai/letta-client";
 import * as ts from "typescript";
+import { clearAvailableModelsCache } from "@/agent/available-models";
 import type { PiProviderRegistration } from "@/backend/dev/pi-provider-extension-registry";
 import {
   registerPiProvider,
@@ -392,6 +393,7 @@ function removeOwnerCapabilities(
   owner: ExtensionOwner,
 ): void {
   unregisterPiProvidersForOwner(owner.id);
+  clearAvailableModelsCache();
 
   for (const [id, command] of Object.entries(registry.commands)) {
     if (command.owner?.id === owner.id) {
@@ -871,6 +873,7 @@ function createLettaExtensionApi(
     if (!capabilities.providers) return;
     if (!guardLive({ id: name, kind: "provider" })) return;
     unregisterPiProvider(name, owner.id);
+    clearAvailableModelsCache();
     onChange();
   };
 
@@ -888,6 +891,7 @@ function createLettaExtensionApi(
       id: owner.id,
       path: owner.path,
     });
+    clearAvailableModelsCache();
     onChange();
     return () => unregisterProvider(name);
   };
@@ -1312,6 +1316,7 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
     unregisterPiProvidersForOwner(owner.id);
     unregisterExtensionToolsForOwner(owner);
   }
+  clearAvailableModelsCache();
 
   registry.commands = {};
   registry.events = {};

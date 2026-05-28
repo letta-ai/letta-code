@@ -2,7 +2,12 @@ import {
   DEFAULT_PI_PROVIDER,
   type PiProvider,
 } from "@/backend/dev/pi-model-factory";
-import { listRegisteredPiProviders } from "@/backend/dev/pi-provider-extension-registry";
+import {
+  getRegisteredPiProvider,
+  listRegisteredPiProviders,
+  resolveRegisteredPiProviderFromModelHandle,
+  stripRegisteredProviderHandlePrefix,
+} from "@/backend/dev/pi-provider-extension-registry";
 import {
   getPiProviderSpec,
   isPiProvider,
@@ -11,6 +16,8 @@ import {
   localModelHandle,
   localProviderType,
   resolveLocalModel,
+  resolveProviderFromModelHandle,
+  stripProviderHandlePrefix,
 } from "@/backend/dev/pi-provider-registry";
 import {
   type LocalProviderRecord,
@@ -235,14 +242,64 @@ export function resolveLocalProvider(storageDir?: string): PiProvider {
 
 export { localModelHandle, localProviderType, resolveLocalModel };
 
+function registeredModelSettingsForProviderModel(
+  provider: PiProvider | string,
+  modelId: string | undefined,
+): Record<string, unknown> | undefined {
+  if (!modelId) return undefined;
+  const registeredProvider = getRegisteredPiProvider(provider);
+  const registeredModel = registeredProvider?.config.models?.find(
+    (model) => model.id === modelId,
+  );
+  if (!registeredModel) return undefined;
+  return {
+    provider_type: isPiProviderForLocalModelHandle(provider)
+      ? localProviderType(provider)
+      : provider,
+    context_window_limit: registeredModel.contextWindow,
+    max_tokens: registeredModel.maxTokens,
+  };
+}
+
+export function localModelSettingsForHandle(
+  handle: string | undefined,
+): Record<string, unknown> | undefined {
+  if (!handle) return undefined;
+  const registeredProvider = resolveRegisteredPiProviderFromModelHandle(handle);
+  if (registeredProvider) {
+    return registeredModelSettingsForProviderModel(
+      registeredProvider,
+      stripRegisteredProviderHandlePrefix(handle, registeredProvider),
+    );
+  }
+
+  const provider = resolveProviderFromModelHandle(handle);
+  if (!provider) return undefined;
+  return registeredModelSettingsForProviderModel(
+    provider,
+    stripProviderHandlePrefix(handle, provider),
+  );
+}
+
 export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
   const provider = resolveLocalProvider(storageDir);
-  const model = resolveLocalModel(provider);
+  const registeredModel = getRegisteredPiProvider(provider)?.config.models?.[0];
+  const model = registeredModel?.id ?? resolveLocalModel(provider);
+  const handle = registeredModel
+    ? `${provider}/${registeredModel.id}`
+    : localModelHandle(provider, model);
+  const registeredModelSettings = registeredModelSettingsForProviderModel(
+    provider,
+    registeredModel?.id,
+  );
   return {
     provider,
     model,
-    handle: localModelHandle(provider, model),
-    modelSettings: { provider_type: localProviderType(provider) },
+    handle,
+    modelSettings: {
+      provider_type: localProviderType(provider),
+      ...(registeredModelSettings ?? {}),
+    },
   };
 }
 

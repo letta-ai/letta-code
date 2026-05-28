@@ -39,7 +39,30 @@ export interface RegisteredPiProvider {
   path?: string;
 }
 
+type PiProviderRegistryListener = () => void;
+
 const registeredProviders = new Map<string, RegisteredPiProvider>();
+const registryListeners = new Set<PiProviderRegistryListener>();
+
+function notifyRegistryListeners(): void {
+  for (const listener of [...registryListeners]) {
+    try {
+      listener();
+    } catch {
+      // Registry listeners are observers; a UI refresh failure should not make
+      // extension provider registration fail.
+    }
+  }
+}
+
+export function subscribePiProviderRegistry(
+  listener: PiProviderRegistryListener,
+): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
 
 function cloneHeaders(
   headers: Record<string, string> | undefined,
@@ -188,6 +211,7 @@ export function registerPiProvider(
     ...(owner?.path ? { path: owner.path } : {}),
   };
   registeredProviders.set(providerName, registered);
+  notifyRegistryListeners();
   return getRegisteredPiProvider(providerName) as RegisteredPiProvider;
 }
 
@@ -199,18 +223,24 @@ export function unregisterPiProvider(
   if (!existing) return;
   if (ownerId && existing.ownerId && existing.ownerId !== ownerId) return;
   registeredProviders.delete(providerName);
+  notifyRegistryListeners();
 }
 
 export function unregisterPiProvidersForOwner(ownerId: string): void {
+  let changed = false;
   for (const [providerName, provider] of registeredProviders.entries()) {
     if (provider.ownerId === ownerId) {
       registeredProviders.delete(providerName);
+      changed = true;
     }
   }
+  if (changed) notifyRegistryListeners();
 }
 
 export function clearRegisteredPiProviders(): void {
+  if (registeredProviders.size === 0) return;
   registeredProviders.clear();
+  notifyRegistryListeners();
 }
 
 export function getRegisteredPiProvider(

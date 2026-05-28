@@ -10,6 +10,9 @@ import {
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
+  subscribePiProviderRegistry,
+  unregisterPiProvider,
+  unregisterPiProvidersForOwner,
 } from "@/backend/dev/pi-provider-extension-registry";
 import {
   createOrUpdateLocalProvider,
@@ -36,6 +39,61 @@ async function withEnv<T>(
 describe("pi model factory", () => {
   afterEach(() => {
     clearRegisteredPiProviders();
+  });
+
+  test("notifies subscribers when extension provider registry changes", () => {
+    const changes: string[] = [];
+    const unsubscribe = subscribePiProviderRegistry(() => {
+      changes.push("changed");
+    });
+    const config = {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions" as const,
+      models: [
+        {
+          id: "gemma-4",
+          name: "Gemma 4",
+          reasoning: false,
+          input: ["text" as const],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    };
+
+    try {
+      clearRegisteredPiProviders();
+      expect(changes).toEqual([]);
+
+      registerPiProvider("lmstudio", config, { id: "owner-1" });
+      expect(changes).toHaveLength(1);
+
+      unregisterPiProvider("lmstudio", "other-owner");
+      expect(changes).toHaveLength(1);
+
+      unregisterPiProvider("lmstudio", "owner-1");
+      expect(changes).toHaveLength(2);
+
+      registerPiProvider("lmstudio", config, { id: "owner-1" });
+      registerPiProvider("ollama", config, { id: "owner-2" });
+      expect(changes).toHaveLength(4);
+
+      unregisterPiProvidersForOwner("owner-1");
+      expect(changes).toHaveLength(5);
+
+      unregisterPiProvidersForOwner("missing-owner");
+      expect(changes).toHaveLength(5);
+
+      clearRegisteredPiProviders();
+      expect(changes).toHaveLength(6);
+
+      clearRegisteredPiProviders();
+      expect(changes).toHaveLength(6);
+    } finally {
+      unsubscribe();
+    }
   });
 
   test("uses KIMI_API_KEY for Kimi For Coding", async () => {
