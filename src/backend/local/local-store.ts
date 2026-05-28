@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -42,7 +45,6 @@ import {
   isLocalToolCallContent,
   mergeSnapshotContentWithExistingToolCalls,
   projectedMessageLookupKeys,
-  projectLocalMessagesToStoredMessages,
   projectLocalMessageToStoredMessages,
   withProjectedMessageDates,
 } from "./local-message-projection";
@@ -440,6 +442,13 @@ function getIncludedMessageTypes(
   return messageTypes.length > 0 ? new Set(messageTypes) : undefined;
 }
 
+function sourceLocalMessageIdFromStoredMessageId(messageId: string): string {
+  const variantSeparator = messageId.search(/:(assistant|reasoning|tool):/);
+  return variantSeparator >= 0
+    ? messageId.slice(0, variantSeparator)
+    : messageId;
+}
+
 function toStoredOutputFields(chunk: Record<string, unknown>) {
   const { id: _id, date: _date, agent_id, conversation_id, ...fields } = chunk;
   void agent_id;
@@ -514,6 +523,40 @@ function readJsonlFile<T>(path: string): T[] {
     .map((line) => JSON.parse(line) as T);
 }
 
+function readJsonlFileSuffix<T>(
+  path: string,
+  maxBytes: number,
+): { items: T[]; reachedStart: boolean } {
+  if (!existsSync(path)) return { items: [], reachedStart: true };
+  const size = statSync(path).size;
+  if (size === 0) return { items: [], reachedStart: true };
+
+  const bytesToRead = Math.min(size, Math.max(1, maxBytes));
+  const start = size - bytesToRead;
+  const buffer = Buffer.alloc(bytesToRead);
+  const fd = openSync(path, "r");
+  try {
+    readSync(fd, buffer, 0, bytesToRead, start);
+  } finally {
+    closeSync(fd);
+  }
+
+  let text = buffer.toString("utf8");
+  const reachedStart = start === 0;
+  if (!reachedStart) {
+    const firstNewline = text.indexOf("\n");
+    text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
+  }
+
+  return {
+    items: text
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as T),
+    reachedStart,
+  };
+}
+
 export const LOCAL_TRANSCRIPT_SCHEMA_VERSION = 1;
 export const LOCAL_TRANSCRIPT_MESSAGE_FORMAT = "pi-ai-message-jsonl";
 export const LOCAL_TRANSCRIPT_PROVIDER_STACK = "pi-ai";
@@ -572,24 +615,35 @@ function transcriptMessagesPath(conversationDir: string): string {
 
 function hasNonEmptyJsonl(path: string): boolean {
   if (!existsSync(path)) return false;
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .some((line) => line.trim().length > 0);
+  const stats = statSync(path);
+  if (stats.size === 0) return false;
+  const bytesToRead = Math.min(stats.size, 4096);
+  const fd = openSync(path, "r");
+  const buffer = Buffer.alloc(bytesToRead);
+  try {
+    readSync(fd, buffer, 0, bytesToRead, 0);
+  } finally {
+    closeSync(fd);
+  }
+  return buffer.toString("utf8").trim().length > 0 || stats.size > bytesToRead;
 }
 
-function hasLegacyUiMessageRows(path: string): boolean {
-  if (!existsSync(path)) return false;
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .some((line) => {
-      const message = JSON.parse(line) as unknown;
-      return (
-        isRecord(message) &&
-        Array.isArray(message.parts) &&
-        (!Object.hasOwn(message, "content") || message.content === null)
-      );
-    });
+function isLegacyUiMessageRow(message: unknown): boolean {
+  return (
+    isRecord(message) &&
+    Array.isArray(message.parts) &&
+    (!Object.hasOwn(message, "content") || message.content === null)
+  );
+}
+
+function assertNoLegacyUiMessageRows(
+  messages: readonly unknown[],
+  storageDir: string,
+  conversationDir: string,
+): void {
+  if (messages.some(isLegacyUiMessageRow)) {
+    throw new LocalTranscriptRepairRequiredError(storageDir, conversationDir);
+  }
 }
 
 function createLocalTranscriptManifest(
@@ -632,9 +686,6 @@ function validateLocalTranscriptManifest(
       `Unsupported local transcript format in ${conversationDir}. Run ${localTranscriptMigrationCommand(storageDir)} or start a new local conversation.`,
     );
   }
-  if (hasLegacyUiMessageRows(transcriptMessagesPath(conversationDir))) {
-    throw new LocalTranscriptRepairRequiredError(storageDir, conversationDir);
-  }
   return manifest;
 }
 
@@ -669,6 +720,13 @@ function localMessageDate(message: LocalMessage, fallbackDate: string): string {
 interface LocalTranscriptTiming {
   createdAt?: string;
   updatedAt?: string;
+}
+
+interface LocalConversationTranscriptMetadata {
+  conversationDir: string;
+  messagesPath: string;
+  timing: LocalTranscriptTiming;
+  requiresFullTimestampRepair: boolean;
 }
 
 function fileIsoTimestamp(value: number | undefined): string | undefined {
@@ -795,6 +853,11 @@ export class LocalStore {
     string,
     LocalMessage[]
   >();
+  private readonly loadedConversationKeys = new Set<string>();
+  private readonly transcriptMetadataByConversationKey = new Map<
+    string,
+    LocalConversationTranscriptMetadata
+  >();
   private readonly compiledSystemPromptByConversationKey = new Map<
     string,
     LocalCompiledSystemPrompt
@@ -891,6 +954,8 @@ export class LocalStore {
       if (conversation.agent_id === agentId) {
         this.conversations.delete(key);
         this.localMessagesByConversationKey.delete(key);
+        this.loadedConversationKeys.delete(key);
+        this.transcriptMetadataByConversationKey.delete(key);
         if (this.storageDir) {
           rmSync(
             join(this.storageDir, "conversations", encodePathSegment(key)),
@@ -1096,6 +1161,7 @@ export class LocalStore {
     const key = this.conversationKey(conversation.id, agentId);
     this.conversations.set(key, conversation);
     this.localMessagesByConversationKey.set(key, []);
+    this.loadedConversationKeys.add(key);
     this.persistConversationState(conversation.id, agentId);
     return conversation;
   }
@@ -1175,6 +1241,7 @@ export class LocalStore {
     const targetKey = this.conversationKey(forked.id, targetAgentId);
     this.conversations.set(targetKey, forked);
     this.localMessagesByConversationKey.set(targetKey, forkedMessages);
+    this.loadedConversationKeys.add(targetKey);
     this.persistConversationState(forked.id, targetAgentId);
     return { id: forked.id };
   }
@@ -1341,6 +1408,13 @@ export class LocalStore {
       }
       this.ensureConversation(conversationId, agentId);
     }
+    const tailMessages = this.projectTailMessagesForConversation(
+      conversationId,
+      agentId,
+      body,
+    );
+    if (tailMessages) return tailMessages;
+
     const messages = this.projectedMessagesForConversation(
       conversationId,
       agentId,
@@ -1365,8 +1439,15 @@ export class LocalStore {
   }
 
   retrieveMessage(messageId: string): StoredMessage[] {
-    this.rebuildMessageIndex();
-    const messages = this.messagesById.get(messageId) ?? [];
+    let messages = this.messagesById.get(messageId) ?? [];
+    if (messages.length === 0) {
+      this.rebuildMessageIndex();
+      messages = this.messagesById.get(messageId) ?? [];
+    }
+    if (messages.length === 0) {
+      this.loadConversationContainingMessage(messageId);
+      messages = this.messagesById.get(messageId) ?? [];
+    }
     if (messages.length === 0 && this.strictConversationAccess) {
       throw new LocalBackendNotFoundError("Message", messageId);
     }
@@ -1386,7 +1467,10 @@ export class LocalStore {
       input.agentId,
     );
     const key = this.conversationKey(conversation.id, input.agentId);
-    const previousMessages = this.localMessagesByConversationKey.get(key) ?? [];
+    const previousMessages = this.localMessagesForConversation(
+      conversation.id,
+      input.agentId,
+    );
     const id = this.nextLocalMessageId();
     const date = this.currentLocalMessageDate();
     const summaryMessage: LocalMessage = {
@@ -1410,6 +1494,7 @@ export class LocalStore {
       ...(input.remainingMessages ?? []).map(cloneLocalMessage),
     ];
     this.localMessagesByConversationKey.set(key, compactedMessages);
+    this.loadedConversationKeys.add(key);
     conversation.in_context_message_ids = compactedMessages.map(
       (message) => message.id,
     );
@@ -1519,7 +1604,10 @@ export class LocalStore {
     if (message.role !== "assistant") return;
     const conversation = this.ensureConversation(conversationId, agentId);
     const key = this.conversationKey(conversation.id, agentId);
-    const localMessages = this.localMessagesByConversationKey.get(key) ?? [];
+    const localMessages = this.localMessagesForConversation(
+      conversation.id,
+      agentId,
+    );
     const last = localMessages.at(-1);
     const existingAssistant = last?.role === "assistant" ? last : undefined;
     const id = existingAssistant?.id ?? this.nextLocalMessageId();
@@ -1815,7 +1903,10 @@ export class LocalStore {
   ): LocalAssistantMessage {
     const conversation = this.ensureConversation(conversationId, agentId);
     const key = this.conversationKey(conversation.id, agentId);
-    const messages = this.localMessagesByConversationKey.get(key) ?? [];
+    const messages = this.localMessagesForConversation(
+      conversation.id,
+      agentId,
+    );
     const last = messages.at(-1);
     if (last?.role === "assistant") {
       return last;
@@ -1947,28 +2038,29 @@ export class LocalStore {
     return limit === undefined ? items : items.slice(0, limit);
   }
 
-  private projectedMessagesForConversation(
-    conversationId: string,
+  private projectLocalMessages(
+    localMessages: readonly LocalMessage[],
     agentId: string,
+    conversationId: string,
+    options: { sourceStartIndex?: number; updateIndex?: boolean } = {},
   ): StoredMessage[] {
-    const key = this.conversationKey(conversationId, agentId);
-    const conversation = this.conversations.get(key);
-    const resolvedConversationId = conversation?.id ?? conversationId;
-    const localMessages = this.localMessagesByConversationKey.get(key) ?? [];
     const messages: StoredMessage[] = [];
+    const sourceStartIndex = options.sourceStartIndex ?? 0;
     for (let index = 0; index < localMessages.length; index++) {
       const localMessage = localMessages[index];
       if (!localMessage) continue;
+      const sourceIndex = sourceStartIndex + index;
       const projected = withProjectedMessageDates(
         projectLocalMessageToStoredMessages(
           localMessage,
           agentId,
-          resolvedConversationId,
-          new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+          conversationId,
+          new Date(Date.UTC(2026, 0, 1, 0, 0, sourceIndex + 1)).toISOString(),
         ),
-        index,
+        sourceIndex,
       );
       messages.push(...projected);
+      if (options.updateIndex === false) continue;
       for (const [lookupKey, lookupMessages] of projectedMessageLookupKeys(
         localMessage,
         projected,
@@ -1979,13 +2071,108 @@ export class LocalStore {
     return messages;
   }
 
+  private projectTailMessagesForConversation(
+    conversationId: string,
+    agentId: string,
+    body?: ConversationMessageListBody,
+  ): StoredMessage[] | undefined {
+    const limit = getListLimit(body);
+    if (limit === undefined || getListOrder(body) !== "desc") return undefined;
+    if (getCursor(body, "after")) return undefined;
+
+    const key = this.conversationKey(conversationId, agentId);
+    if (this.loadedConversationKeys.has(key)) return undefined;
+    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    if (!metadata || metadata.requiresFullTimestampRepair) return undefined;
+
+    const before = getCursor(body, "before");
+    let maxBytes = 64 * 1024;
+    for (;;) {
+      const tail = readJsonlFileSuffix<LocalMessage>(
+        metadata.messagesPath,
+        maxBytes,
+      );
+      assertNoLegacyUiMessageRows(
+        tail.items,
+        this.storageDir ?? "",
+        metadata.conversationDir,
+      );
+      const localMessages = tail.items.map(normalizeLocalMessageForPi);
+      const projected = this.projectLocalMessages(
+        localMessages,
+        agentId,
+        conversationId,
+        { updateIndex: false },
+      );
+      const cursorFound =
+        !before || projected.some((message) => message.id === before);
+      const items = this.applyListOptions(projected, body);
+      if (cursorFound && (items.length >= limit || tail.reachedStart)) {
+        return items;
+      }
+      if (tail.reachedStart) return items;
+      maxBytes *= 2;
+    }
+  }
+
+  private projectedMessagesForConversation(
+    conversationId: string,
+    agentId: string,
+  ): StoredMessage[] {
+    const key = this.conversationKey(conversationId, agentId);
+    const conversation = this.conversations.get(key);
+    const resolvedConversationId = conversation?.id ?? conversationId;
+    const localMessages = this.localMessagesForConversation(
+      resolvedConversationId,
+      agentId,
+    );
+    return this.projectLocalMessages(
+      localMessages,
+      agentId,
+      resolvedConversationId,
+    );
+  }
+
   private rebuildMessageIndex(): void {
     this.messagesById.clear();
     for (const conversation of this.conversations.values()) {
+      const key = this.conversationKey(conversation.id, conversation.agent_id);
+      if (!this.loadedConversationKeys.has(key)) continue;
       this.projectedMessagesForConversation(
         conversation.id,
         conversation.agent_id,
       );
+    }
+  }
+
+  private loadConversationContainingMessage(messageId: string): void {
+    const sourceMessageId = sourceLocalMessageIdFromStoredMessageId(messageId);
+    for (const conversation of this.conversations.values()) {
+      const key = this.conversationKey(conversation.id, conversation.agent_id);
+      if (this.loadedConversationKeys.has(key)) continue;
+      if (
+        !conversation.in_context_message_ids.includes(sourceMessageId) &&
+        !conversation.in_context_message_ids.includes(messageId)
+      ) {
+        continue;
+      }
+      this.loadConversationMessages(
+        key,
+        conversation.id,
+        conversation.agent_id,
+      );
+      if ((this.messagesById.get(messageId) ?? []).length > 0) return;
+    }
+
+    for (const conversation of this.conversations.values()) {
+      const key = this.conversationKey(conversation.id, conversation.agent_id);
+      if (this.loadedConversationKeys.has(key)) continue;
+      this.loadConversationMessages(
+        key,
+        conversation.id,
+        conversation.agent_id,
+      );
+      if ((this.messagesById.get(messageId) ?? []).length > 0) return;
     }
   }
 
@@ -1994,9 +2181,60 @@ export class LocalStore {
     agentId: string,
   ): LocalMessage[] {
     const key = this.conversationKey(conversationId, agentId);
+    if (!this.loadedConversationKeys.has(key)) {
+      this.loadConversationMessages(key, conversationId, agentId);
+    }
     const messages = this.localMessagesByConversationKey.get(key) ?? [];
     this.localMessagesByConversationKey.set(key, messages);
+    this.loadedConversationKeys.add(key);
     return messages;
+  }
+
+  private loadConversationMessages(
+    key: string,
+    conversationId: string,
+    agentId: string,
+  ): void {
+    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    if (!metadata) {
+      this.localMessagesByConversationKey.set(
+        key,
+        this.localMessagesByConversationKey.get(key) ?? [],
+      );
+      this.loadedConversationKeys.add(key);
+      return;
+    }
+
+    const rawMessages = readJsonlFile<LocalMessage>(metadata.messagesPath);
+    assertNoLegacyUiMessageRows(
+      rawMessages,
+      this.storageDir ?? "",
+      metadata.conversationDir,
+    );
+    const localMessages = repairSyntheticLocalMessageTimestamps(
+      rawMessages.map(normalizeLocalMessageForPi),
+      metadata.timing,
+    );
+    const conversation = this.conversations.get(key);
+    if (conversation) {
+      this.conversations.set(
+        key,
+        repairSyntheticConversationTimestamps(
+          conversation,
+          localMessages,
+          metadata.timing,
+        ),
+      );
+    }
+    this.localMessagesByConversationKey.set(key, localMessages);
+    this.loadedConversationKeys.add(key);
+    for (const message of localMessages) {
+      this.localMessageSeq = Math.max(
+        this.localMessageSeq,
+        numericSuffix(message.id, this.localMessageIdPrefix),
+      );
+    }
+    this.projectLocalMessages(localMessages, agentId, conversationId);
   }
 
   private pushLocalMessage(
@@ -2004,10 +2242,11 @@ export class LocalStore {
     agentId: string,
     message: LocalMessage,
   ): void {
-    const key = this.conversationKey(conversationId, agentId);
-    const messages = this.localMessagesByConversationKey.get(key) ?? [];
+    const messages = this.localMessagesForConversation(conversationId, agentId);
     messages.push(message);
+    const key = this.conversationKey(conversationId, agentId);
     this.localMessagesByConversationKey.set(key, messages);
+    this.loadedConversationKeys.add(key);
     this.touchConversationForLocalMessage(conversationId, agentId, message);
     this.persistConversationState(conversationId, agentId);
   }
@@ -2123,28 +2362,26 @@ export class LocalStore {
           conversationDir,
           manifest,
         );
-        const localMessages = repairSyntheticLocalMessageTimestamps(
-          readJsonlFile<LocalMessage>(
-            transcriptMessagesPath(conversationDir),
-          ).map(normalizeLocalMessageForPi),
-          timing,
-        );
+        const requiresFullTimestampRepair =
+          isSyntheticLocalTimestamp(conversation.created_at) ||
+          isSyntheticLocalTimestamp(conversation.updated_at) ||
+          isSyntheticLocalTimestamp(conversation.last_message_at);
         conversation = repairSyntheticConversationTimestamps(
           conversation,
-          localMessages,
+          [],
           timing,
         );
         const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
           join(conversationDir, "system-prompt.json"),
         );
-        const messages = projectLocalMessagesToStoredMessages(
-          localMessages,
-          conversation.agent_id,
-          conversation.id,
-        );
 
         this.conversations.set(key, conversation);
-        this.localMessagesByConversationKey.set(key, localMessages);
+        this.transcriptMetadataByConversationKey.set(key, {
+          conversationDir,
+          messagesPath: transcriptMessagesPath(conversationDir),
+          timing,
+          requiresFullTimestampRepair,
+        });
         if (compiledSystemPrompt?.content) {
           this.compiledSystemPromptByConversationKey.set(
             key,
@@ -2156,17 +2393,10 @@ export class LocalStore {
           numericSuffix(conversation.id, this.conversationIdPrefix),
         );
 
-        for (const localMessage of localMessages) {
+        for (const messageId of conversation.in_context_message_ids ?? []) {
           this.localMessageSeq = Math.max(
             this.localMessageSeq,
-            numericSuffix(localMessage.id, this.localMessageIdPrefix),
-          );
-        }
-        for (const message of messages) {
-          this.messagesById.set(message.id, [message]);
-          this.messageSeq = Math.max(
-            this.messageSeq,
-            numericSuffix(message.id, this.storedMessageIdPrefix),
+            numericSuffix(messageId, this.localMessageIdPrefix),
           );
         }
       }
@@ -2187,14 +2417,14 @@ export class LocalStore {
 
   private projectAgent(record: LocalAgentRecord): AgentState {
     const key = this.conversationKey("default", record.id);
-    const defaultMessages = this.projectedMessagesForConversation(
-      "default",
-      record.id,
-    );
-    const messageIds = defaultMessages.map((message) => message.id);
+    const defaultConversation = this.conversations.get(key);
+    const messageIds = defaultConversation?.in_context_message_ids ?? [];
     const inContextMessageIds =
-      this.conversations.get(key)?.in_context_message_ids ?? messageIds;
-    const lastRunCompletion = defaultMessages.at(-1)?.date ?? null;
+      defaultConversation?.in_context_message_ids ?? messageIds;
+    const lastRunCompletion =
+      defaultConversation?.last_message_at ??
+      defaultConversation?.updated_at ??
+      null;
     return projectLocalAgentState(
       record,
       messageIds,
@@ -2225,10 +2455,13 @@ export class LocalStore {
     if (!existsSync(transcriptManifestPath(conversationDir))) {
       writeLocalTranscriptManifest(conversationDir);
     }
-    writeFileSync(
-      transcriptMessagesPath(conversationDir),
-      jsonl(this.localMessagesByConversationKey.get(key) ?? []),
-    );
+    const messagesPath = transcriptMessagesPath(conversationDir);
+    if (this.loadedConversationKeys.has(key) || !existsSync(messagesPath)) {
+      writeFileSync(
+        messagesPath,
+        jsonl(this.localMessagesByConversationKey.get(key) ?? []),
+      );
+    }
     this.persistCompiledSystemPrompt(conversationId, agentId);
   }
 
@@ -2272,6 +2505,7 @@ export class LocalStore {
     );
     this.conversations.set(key, conversation);
     this.localMessagesByConversationKey.set(key, []);
+    this.loadedConversationKeys.add(key);
     this.persistConversationState(conversation.id, resolvedAgentId);
     return conversation;
   }
