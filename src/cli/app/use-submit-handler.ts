@@ -2064,6 +2064,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             try {
               const backend = getBackend();
+              if (conversationId === "default" && !shouldAutoGenerate) {
+                cmd.fail("Default conversation cannot be manually renamed");
+                return { submitted: true };
+              }
+
               if (shouldAutoGenerate) {
                 const conversationTitle = await generateConversationTitle();
                 if (!conversationTitle) {
