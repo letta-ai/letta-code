@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rm,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -194,6 +195,23 @@ describe("local backend pi transcript", () => {
       const parsed = Date.parse(timestamp ?? "");
       expect(parsed).toBeGreaterThanOrEqual(before);
       expect(parsed).toBeLessThanOrEqual(after);
+    }
+  });
+
+  test("rejects updates to the virtual default conversation", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-default-conversation-update-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+
+      expect(() =>
+        backend.updateConversation("default", {
+          summary: "Default rename",
+        } as never),
+      ).toThrow("Default conversation cannot be updated");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
     }
   });
 
