@@ -304,6 +304,29 @@ describe("tool execution context snapshot", () => {
     expect(customTypeTools?.[0]).not.toHaveProperty("parameters");
   });
 
+  test("serializes Pascal ApplyPatch custom description with matching tool name", async () => {
+    const prepared = await prepareToolExecutionContextForSpecificTools([
+      "ApplyPatch",
+    ]);
+
+    const customTypeTools = getClientToolsForExecutionContext(
+      prepared.contextId,
+      "custom-type",
+    );
+    expect(customTypeTools).toEqual([
+      expect.objectContaining({
+        type: "custom",
+        name: "ApplyPatch",
+        description: expect.stringContaining("`ApplyPatch`"),
+        format: expect.objectContaining({
+          type: "grammar",
+          syntax: "lark",
+        }),
+      }),
+    ]);
+    expect(customTypeTools?.[0]?.description).not.toContain("`apply_patch`");
+  });
+
   test("request-scoped allowlist filters external tools by name", async () => {
     registerExternalTools([
       {

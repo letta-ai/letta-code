@@ -147,6 +147,8 @@ function execCommandDescription(): string {
 
 const APPLY_PATCH_FREEFORM_DESCRIPTION =
   "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.";
+const APPLY_PATCH_PASCAL_FREEFORM_DESCRIPTION =
+  "Use the `ApplyPatch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.";
 
 const applyPatchFunctionForm = functionToolForm({
   description: ApplyPatchDescription.trim(),
@@ -155,6 +157,16 @@ const applyPatchFunctionForm = functionToolForm({
 
 const applyPatchModelForm = customToolForm({
   description: APPLY_PATCH_FREEFORM_DESCRIPTION,
+  format: {
+    type: "grammar",
+    syntax: "lark",
+    definition: ApplyPatchLarkGrammar,
+  },
+  functionFallback: applyPatchFunctionForm,
+});
+
+const applyPatchPascalModelForm = customToolForm({
+  description: APPLY_PATCH_PASCAL_FREEFORM_DESCRIPTION,
   format: {
     type: "grammar",
     syntax: "lark",
@@ -416,7 +428,7 @@ const toolDefinitions = {
   ApplyPatch: defineTool({
     schema: ApplyPatchSchema,
     description: ApplyPatchDescription.trim(),
-    modelForm: applyPatchModelForm,
+    modelForm: applyPatchPascalModelForm,
     impl: apply_patch,
   }),
   UpdatePlan: defineTool({
