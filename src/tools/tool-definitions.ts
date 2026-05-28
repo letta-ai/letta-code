@@ -1,3 +1,4 @@
+import { defineTool, type ToolAssets } from "./define-tool";
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
@@ -5,6 +6,7 @@ import BashOutputDescription from "./descriptions/BashOutput.md";
 import CreateGoalDescription from "./descriptions/CreateGoal.md";
 import CreateWorktreeDescription from "./descriptions/CreateWorktree.md";
 import EditDescription from "./descriptions/Edit.md";
+import ExecCommandDescription from "./descriptions/ExecCommand.md";
 import GetGoalDescription from "./descriptions/GetGoal.md";
 import GlobDescription from "./descriptions/Glob.md";
 // Gemini toolset
@@ -39,6 +41,7 @@ import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
 import WriteDescription from "./descriptions/Write.md";
 import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
+import WriteStdinDescription from "./descriptions/WriteStdin.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
 import { apply_patch } from "./impl/apply-patch";
 import { ask_user_question } from "./impl/ask-user-question";
@@ -47,6 +50,7 @@ import { bash_output } from "./impl/bash-output";
 import { create_goal } from "./impl/create-goal";
 import { create_worktree } from "./impl/create-worktree";
 import { edit } from "./impl/edit";
+import { exec_command, write_stdin } from "./impl/exec-command";
 import { get_goal } from "./impl/get-goal";
 import { glob } from "./impl/glob";
 // Gemini toolset
@@ -82,6 +86,7 @@ import { view_image } from "./impl/view-image";
 import { write } from "./impl/write";
 import { write_file_gemini } from "./impl/write-file-gemini";
 import { write_todos } from "./impl/write-todos-gemini";
+
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
@@ -89,6 +94,7 @@ import BashOutputSchema from "./schemas/BashOutput.json";
 import CreateGoalSchema from "./schemas/CreateGoal.json";
 import CreateWorktreeSchema from "./schemas/CreateWorktree.json";
 import EditSchema from "./schemas/Edit.json";
+import ExecCommandSchema from "./schemas/ExecCommand.json";
 import GetGoalSchema from "./schemas/GetGoal.json";
 import GlobSchema from "./schemas/Glob.json";
 // Gemini toolset
@@ -123,326 +129,341 @@ import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
 import WriteSchema from "./schemas/Write.json";
 import WriteFileGeminiSchema from "./schemas/WriteFileGemini.json";
+import WriteStdinSchema from "./schemas/WriteStdin.json";
 import WriteTodosGeminiSchema from "./schemas/WriteTodosGemini.json";
 
-type ToolImplementation = (args: Record<string, unknown>) => Promise<unknown>;
+const WINDOWS_UNIFIED_EXEC_GUIDANCE = `Windows safety rules:
+- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to \`cmd /c\`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as \`Remove-Item\` / \`Move-Item\` with \`-LiteralPath\`, and avoid string-built shell commands for file operations.
+- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.
+- When using \`Start-Process\` to launch a background helper or service, pass \`-WindowStyle Hidden\` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.`;
 
-interface ToolAssets {
-  schema: Record<string, unknown>;
-  description: string;
-  impl: ToolImplementation;
+function execCommandDescription(): string {
+  const baseDescription = ExecCommandDescription.trim();
+  return process.platform === "win32"
+    ? `${baseDescription}\n\n${WINDOWS_UNIFIED_EXEC_GUIDANCE}`
+    : baseDescription;
 }
 
 const toolDefinitions = {
-  AskUserQuestion: {
+  AskUserQuestion: defineTool({
     schema: AskUserQuestionSchema,
     description: AskUserQuestionDescription.trim(),
-    impl: ask_user_question as unknown as ToolImplementation,
-  },
-  Bash: {
+    impl: ask_user_question,
+  }),
+  Bash: defineTool({
     schema: BashSchema,
     description: BashDescription.trim(),
-    impl: bash as unknown as ToolImplementation,
-  },
-  BashOutput: {
+    impl: bash,
+  }),
+  BashOutput: defineTool({
     schema: BashOutputSchema,
     description: BashOutputDescription.trim(),
-    impl: bash_output as unknown as ToolImplementation,
-  },
-  CreateWorktree: {
+    impl: bash_output,
+  }),
+  CreateWorktree: defineTool({
     schema: CreateWorktreeSchema,
     description: CreateWorktreeDescription.trim(),
-    impl: create_worktree as unknown as ToolImplementation,
-  },
-  Edit: {
+    impl: create_worktree,
+  }),
+  Edit: defineTool({
     schema: EditSchema,
     description: EditDescription.trim(),
-    impl: edit as unknown as ToolImplementation,
-  },
-  Glob: {
+    impl: edit,
+  }),
+  Glob: defineTool({
     schema: GlobSchema,
     description: GlobDescription.trim(),
-    impl: glob as unknown as ToolImplementation,
-  },
-  Grep: {
+    impl: glob,
+  }),
+  Grep: defineTool({
     schema: GrepSchema,
     description: GrepDescription.trim(),
-    impl: grep as unknown as ToolImplementation,
-  },
-  KillBash: {
+    impl: grep,
+  }),
+  KillBash: defineTool({
     schema: KillBashSchema,
     description: KillBashDescription.trim(),
-    impl: kill_bash as unknown as ToolImplementation,
-  },
-  TaskOutput: {
+    impl: kill_bash,
+  }),
+  TaskOutput: defineTool({
     schema: TaskOutputSchema,
     description: TaskOutputDescription.trim(),
-    impl: task_output as unknown as ToolImplementation,
-  },
-  TaskStop: {
+    impl: task_output,
+  }),
+  TaskStop: defineTool({
     schema: TaskStopSchema,
     description: TaskStopDescription.trim(),
-    impl: task_stop as unknown as ToolImplementation,
-  },
-  LS: {
+    impl: task_stop,
+  }),
+  LS: defineTool({
     schema: LSSchema,
     description: LSDescription.trim(),
-    impl: ls as unknown as ToolImplementation,
-  },
-  memory: {
+    impl: ls,
+  }),
+  memory: defineTool({
     schema: MemorySchema,
     description: MemoryDescription.trim(),
-    impl: memory as unknown as ToolImplementation,
-  },
-  memory_apply_patch: {
+    impl: memory,
+  }),
+  memory_apply_patch: defineTool({
     schema: MemoryApplyPatchSchema,
     description: MemoryApplyPatchDescription.trim(),
-    impl: memory_apply_patch as unknown as ToolImplementation,
-  },
-  MessageChannel: {
+    impl: memory_apply_patch,
+  }),
+  MessageChannel: defineTool({
     schema: MessageChannelSchema,
     description: MessageChannelDescription.trim(),
-    impl: message_channel as unknown as ToolImplementation,
-  },
-  MultiEdit: {
+    impl: message_channel,
+  }),
+  MultiEdit: defineTool({
     schema: MultiEditSchema,
     description: MultiEditDescription.trim(),
-    impl: multi_edit as unknown as ToolImplementation,
-  },
-  Read: {
+    impl: multi_edit,
+  }),
+  Read: defineTool({
     schema: ReadSchema,
     description: ReadDescription.trim(),
-    impl: read as unknown as ToolImplementation,
-  },
-  view_image: {
+    impl: read,
+  }),
+  view_image: defineTool({
     schema: ViewImageSchema,
     description: ViewImageDescription.trim(),
-    impl: view_image as unknown as ToolImplementation,
-  },
-  ViewImage: {
+    impl: view_image,
+  }),
+  ViewImage: defineTool({
     schema: ViewImageSchema,
     description: ViewImageDescription.trim(),
-    impl: view_image as unknown as ToolImplementation,
-  },
+    impl: view_image,
+  }),
   // LSP-enhanced Read - used when LETTA_ENABLE_LSP is set
-  ReadLSP: {
+  ReadLSP: defineTool({
     schema: ReadLSPSchema,
     description: ReadLSPDescription.trim(),
-    impl: read_lsp as unknown as ToolImplementation,
-  },
-  Skill: {
+    impl: read_lsp,
+  }),
+  Skill: defineTool({
     schema: SkillSchema,
     description: SkillDescription.trim(),
-    impl: skill as unknown as ToolImplementation,
-  },
-  Task: {
+    impl: skill,
+  }),
+  Task: defineTool({
     schema: TaskSchema,
     description: TaskDescription.trim(),
-    impl: task as unknown as ToolImplementation,
-  },
-  TodoWrite: {
+    impl: task,
+  }),
+  TodoWrite: defineTool({
     schema: TodoWriteSchema,
     description: TodoWriteDescription.trim(),
-    impl: todo_write as unknown as ToolImplementation,
-  },
-  Write: {
+    impl: todo_write,
+  }),
+  Write: defineTool({
     schema: WriteSchema,
     description: WriteDescription.trim(),
-    impl: write as unknown as ToolImplementation,
-  },
-  shell_command: {
+    impl: write,
+  }),
+  shell_command: defineTool({
     schema: ShellCommandSchema,
     description: ShellCommandDescription.trim(),
-    impl: shell_command as unknown as ToolImplementation,
-  },
-  shell: {
+    impl: shell_command,
+  }),
+  exec_command: defineTool({
+    schema: ExecCommandSchema,
+    description: execCommandDescription(),
+    impl: exec_command,
+  }),
+  write_stdin: defineTool({
+    schema: WriteStdinSchema,
+    description: WriteStdinDescription.trim(),
+    impl: write_stdin,
+  }),
+  shell: defineTool({
     schema: ShellSchema,
     description: ShellDescription.trim(),
-    impl: shell as unknown as ToolImplementation,
-  },
-  read_file: {
+    impl: shell,
+  }),
+  read_file: defineTool({
     schema: ReadFileCodexSchema,
     description: ReadFileCodexDescription.trim(),
-    impl: read_file as unknown as ToolImplementation,
-  },
-  list_dir: {
+    impl: read_file,
+  }),
+  list_dir: defineTool({
     schema: ListDirCodexSchema,
     description: ListDirCodexDescription.trim(),
-    impl: list_dir as unknown as ToolImplementation,
-  },
-  grep_files: {
+    impl: list_dir,
+  }),
+  grep_files: defineTool({
     schema: GrepFilesSchema,
     description: GrepFilesDescription.trim(),
-    impl: grep_files as unknown as ToolImplementation,
-  },
-  apply_patch: {
+    impl: grep_files,
+  }),
+  apply_patch: defineTool({
     schema: ApplyPatchSchema,
     description: ApplyPatchDescription.trim(),
-    impl: apply_patch as unknown as ToolImplementation,
-  },
-  update_plan: {
+    impl: apply_patch,
+  }),
+  update_plan: defineTool({
     schema: UpdatePlanSchema,
     description: UpdatePlanDescription.trim(),
-    impl: update_plan as unknown as ToolImplementation,
-  },
-  get_goal: {
+    impl: update_plan,
+  }),
+  get_goal: defineTool({
     schema: GetGoalSchema,
     description: GetGoalDescription.trim(),
-    impl: get_goal as unknown as ToolImplementation,
-  },
-  create_goal: {
+    impl: get_goal,
+  }),
+  create_goal: defineTool({
     schema: CreateGoalSchema,
     description: CreateGoalDescription.trim(),
-    impl: create_goal as unknown as ToolImplementation,
-  },
-  update_goal: {
+    impl: create_goal,
+  }),
+  update_goal: defineTool({
     schema: UpdateGoalSchema,
     description: UpdateGoalDescription.trim(),
-    impl: update_goal as unknown as ToolImplementation,
-  },
+    impl: update_goal,
+  }),
   // Gemini toolset
-  glob_gemini: {
+  glob_gemini: defineTool({
     schema: GlobGeminiSchema,
     description: GlobGeminiDescription.trim(),
-    impl: glob_gemini as unknown as ToolImplementation,
-  },
-  list_directory: {
+    impl: glob_gemini,
+  }),
+  list_directory: defineTool({
     schema: ListDirectoryGeminiSchema,
     description: ListDirectoryGeminiDescription.trim(),
-    impl: list_directory as unknown as ToolImplementation,
-  },
-  read_file_gemini: {
+    impl: list_directory,
+  }),
+  read_file_gemini: defineTool({
     schema: ReadFileGeminiSchema,
     description: ReadFileGeminiDescription.trim(),
-    impl: read_file_gemini as unknown as ToolImplementation,
-  },
-  read_many_files: {
+    impl: read_file_gemini,
+  }),
+  read_many_files: defineTool({
     schema: ReadManyFilesGeminiSchema,
     description: ReadManyFilesGeminiDescription.trim(),
-    impl: read_many_files as unknown as ToolImplementation,
-  },
-  replace: {
+    impl: read_many_files,
+  }),
+  replace: defineTool({
     schema: ReplaceGeminiSchema,
     description: ReplaceGeminiDescription.trim(),
-    impl: replace as unknown as ToolImplementation,
-  },
-  run_shell_command: {
+    impl: replace,
+  }),
+  run_shell_command: defineTool({
     schema: RunShellCommandGeminiSchema,
     description: RunShellCommandGeminiDescription.trim(),
-    impl: run_shell_command as unknown as ToolImplementation,
-  },
-  search_file_content: {
+    impl: run_shell_command,
+  }),
+  search_file_content: defineTool({
     schema: SearchFileContentGeminiSchema,
     description: SearchFileContentGeminiDescription.trim(),
-    impl: search_file_content as unknown as ToolImplementation,
-  },
-  write_todos: {
+    impl: search_file_content,
+  }),
+  write_todos: defineTool({
     schema: WriteTodosGeminiSchema,
     description: WriteTodosGeminiDescription.trim(),
-    impl: write_todos as unknown as ToolImplementation,
-  },
-  write_file_gemini: {
+    impl: write_todos,
+  }),
+  write_file_gemini: defineTool({
     schema: WriteFileGeminiSchema,
     description: WriteFileGeminiDescription.trim(),
-    impl: write_file_gemini as unknown as ToolImplementation,
-  },
+    impl: write_file_gemini,
+  }),
   // Codex-2 toolset (PascalCase aliases for OpenAI tools)
-  ShellCommand: {
+  ShellCommand: defineTool({
     schema: ShellCommandSchema,
     description: ShellCommandDescription.trim(),
-    impl: shell_command as unknown as ToolImplementation,
-  },
-  Shell: {
+    impl: shell_command,
+  }),
+  Shell: defineTool({
     schema: ShellSchema,
     description: ShellDescription.trim(),
-    impl: shell as unknown as ToolImplementation,
-  },
-  ReadFile: {
+    impl: shell,
+  }),
+  ReadFile: defineTool({
     schema: ReadFileCodexSchema,
     description: ReadFileCodexDescription.trim(),
-    impl: read_file as unknown as ToolImplementation,
-  },
-  ListDir: {
+    impl: read_file,
+  }),
+  ListDir: defineTool({
     schema: ListDirCodexSchema,
     description: ListDirCodexDescription.trim(),
-    impl: list_dir as unknown as ToolImplementation,
-  },
-  GrepFiles: {
+    impl: list_dir,
+  }),
+  GrepFiles: defineTool({
     schema: GrepFilesSchema,
     description: GrepFilesDescription.trim(),
-    impl: grep_files as unknown as ToolImplementation,
-  },
-  ApplyPatch: {
+    impl: grep_files,
+  }),
+  ApplyPatch: defineTool({
     schema: ApplyPatchSchema,
     description: ApplyPatchDescription.trim(),
-    impl: apply_patch as unknown as ToolImplementation,
-  },
-  UpdatePlan: {
+    impl: apply_patch,
+  }),
+  UpdatePlan: defineTool({
     schema: UpdatePlanSchema,
     description: UpdatePlanDescription.trim(),
-    impl: update_plan as unknown as ToolImplementation,
-  },
-  GetGoal: {
+    impl: update_plan,
+  }),
+  GetGoal: defineTool({
     schema: GetGoalSchema,
     description: GetGoalDescription.trim(),
-    impl: get_goal as unknown as ToolImplementation,
-  },
-  CreateGoal: {
+    impl: get_goal,
+  }),
+  CreateGoal: defineTool({
     schema: CreateGoalSchema,
     description: CreateGoalDescription.trim(),
-    impl: create_goal as unknown as ToolImplementation,
-  },
-  UpdateGoal: {
+    impl: create_goal,
+  }),
+  UpdateGoal: defineTool({
     schema: UpdateGoalSchema,
     description: UpdateGoalDescription.trim(),
-    impl: update_goal as unknown as ToolImplementation,
-  },
+    impl: update_goal,
+  }),
   // Gemini-2 toolset (PascalCase aliases for Gemini tools)
-  RunShellCommand: {
+  RunShellCommand: defineTool({
     schema: RunShellCommandGeminiSchema,
     description: RunShellCommandGeminiDescription.trim(),
-    impl: run_shell_command as unknown as ToolImplementation,
-  },
-  ReadFileGemini: {
+    impl: run_shell_command,
+  }),
+  ReadFileGemini: defineTool({
     schema: ReadFileGeminiSchema,
     description: ReadFileGeminiDescription.trim(),
-    impl: read_file_gemini as unknown as ToolImplementation,
-  },
-  ListDirectory: {
+    impl: read_file_gemini,
+  }),
+  ListDirectory: defineTool({
     schema: ListDirectoryGeminiSchema,
     description: ListDirectoryGeminiDescription.trim(),
-    impl: list_directory as unknown as ToolImplementation,
-  },
-  GlobGemini: {
+    impl: list_directory,
+  }),
+  GlobGemini: defineTool({
     schema: GlobGeminiSchema,
     description: GlobGeminiDescription.trim(),
-    impl: glob_gemini as unknown as ToolImplementation,
-  },
-  SearchFileContent: {
+    impl: glob_gemini,
+  }),
+  SearchFileContent: defineTool({
     schema: SearchFileContentGeminiSchema,
     description: SearchFileContentGeminiDescription.trim(),
-    impl: search_file_content as unknown as ToolImplementation,
-  },
-  Replace: {
+    impl: search_file_content,
+  }),
+  Replace: defineTool({
     schema: ReplaceGeminiSchema,
     description: ReplaceGeminiDescription.trim(),
-    impl: replace as unknown as ToolImplementation,
-  },
-  WriteFileGemini: {
+    impl: replace,
+  }),
+  WriteFileGemini: defineTool({
     schema: WriteFileGeminiSchema,
     description: WriteFileGeminiDescription.trim(),
-    impl: write_file_gemini as unknown as ToolImplementation,
-  },
-  WriteTodos: {
+    impl: write_file_gemini,
+  }),
+  WriteTodos: defineTool({
     schema: WriteTodosGeminiSchema,
     description: WriteTodosGeminiDescription.trim(),
-    impl: write_todos as unknown as ToolImplementation,
-  },
-  ReadManyFiles: {
+    impl: write_todos,
+  }),
+  ReadManyFiles: defineTool({
     schema: ReadManyFilesGeminiSchema,
     description: ReadManyFilesGeminiDescription.trim(),
-    impl: read_many_files as unknown as ToolImplementation,
-  },
+    impl: read_many_files,
+  }),
 } as const satisfies Record<string, ToolAssets>;
 
 export type ToolName = keyof typeof toolDefinitions;

@@ -105,6 +105,7 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
+import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
@@ -211,6 +212,9 @@ type SubmitHandlerContext = {
   extensionRuntime: LocalExtensionRuntime;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
+  generateConversationDescription: (options?: {
+    force?: boolean;
+  }) => Promise<void>;
   generateConversationTitle: () => Promise<string | null>;
   handleAgentSelect: (
     targetAgentId: string,
@@ -353,6 +357,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     extensionRuntime,
     firstUserQueryRef,
     flushPendingReasoningEffort,
+    generateConversationDescription,
     generateConversationTitle,
     handleAgentSelect,
     handleBtwCommand,
@@ -391,6 +396,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setConversationOverrideContextWindowLimit,
     setConversationOverrideModelSettings,
     setCurrentPersonalityId,
@@ -1982,6 +1988,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Manual /compact bypasses stream compaction events, so trigger
             // post-compaction reflection reminder/auto-launch on the next user turn.
             contextTrackerRef.current.pendingReflectionTrigger = true;
+            void generateConversationDescription({ force: true });
           } catch (error) {
             const apiError = error as {
               status?: number;
@@ -2023,7 +2030,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "",
               "USAGE",
               "  /rename agent [name]      — rename the agent",
-              "  /rename convo [name]      — rename the convo, or auto-generate when omitted",
+              "  /rename convo [name]      — rename a non-default convo, or auto-generate when omitted",
               "  /rename help              — show this help",
             ].join("\n");
             cmd.finish(output, true);
@@ -2068,6 +2075,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 await backend.updateConversation(conversationId, {
                   summary: conversationTitle,
                 });
+                setConversationSummary(conversationTitle);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(
                   `Conversation title set to "${conversationTitle}"`,
@@ -2077,6 +2085,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 await backend.updateConversation(conversationId, {
                   summary: newValue,
                 });
+                setConversationSummary(newValue);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(`Conversation renamed to "${newValue}"`, true);
               }
@@ -3137,14 +3146,20 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           try {
             const extensionContext = extensionRuntime.getContext();
+            const cwd = getCurrentWorkingDirectory();
+            const conversation = createExtensionConversationHandle({
+              agentId,
+              backend: extensionRuntime.getBackendApi(),
+              conversationId: conversationIdRef.current,
+              workingDirectory: cwd,
+            });
             const commandContext: ExtensionCommandContext = {
               agent: { id: agentId, name: agentName },
               args: parsedExtensionCommand.args,
               argv: parseExtensionCommandArgv(parsedExtensionCommand.args),
-              backend: extensionRuntime.getBackendApi(),
               command: parsedExtensionCommand.command,
-              conversation: { id: conversationIdRef.current },
-              cwd: getCurrentWorkingDirectory(),
+              conversation: { ...conversation, id: conversationIdRef.current },
+              cwd,
               getContext: extensionRuntime.getContext,
               model: {
                 id:

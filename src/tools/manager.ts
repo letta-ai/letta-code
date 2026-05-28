@@ -18,6 +18,7 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
 import {
   type ExtensionToolDefinition,
   extensionToolRequiresApproval,
@@ -48,6 +49,12 @@ import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
 import { refreshFileIndex } from "@/utils/file-index";
 import { isRecord } from "@/utils/type-guards";
+import {
+  functionToolForm,
+  type JsonSchema,
+  type ModelFacingToolForm,
+  serializeFunctionOnlyToolPayload,
+} from "./model-facing-tool";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
@@ -136,6 +143,28 @@ async function resolveBackendSpecificToolDescription(
   return description;
 }
 
+function resolvedModelForm(
+  base: ModelFacingToolForm,
+  description: string,
+  inputSchema: JsonSchema,
+): ModelFacingToolForm {
+  if (base.type === "custom") {
+    return {
+      ...base,
+      functionFallback: {
+        ...base.functionFallback,
+        description,
+        parameters: inputSchema,
+      },
+    };
+  }
+
+  return functionToolForm({
+    description,
+    parameters: inputSchema,
+  });
+}
+
 function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
   const nextRegistry = new Map(registry);
   const existing = nextRegistry.get("MessageChannel");
@@ -168,9 +197,11 @@ function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
       description: cachedMessageChannel.description,
       input_schema: cachedMessageChannel.schema as JsonSchema,
     },
-    fn:
-      existing?.fn ??
-      (TOOL_DEFINITIONS.MessageChannel.impl as ToolDefinition["fn"]),
+    modelForm: functionToolForm({
+      description: cachedMessageChannel.description,
+      parameters: cachedMessageChannel.schema as JsonSchema,
+    }),
+    fn: existing?.fn ?? TOOL_DEFINITIONS.MessageChannel.impl,
   });
   return nextRegistry;
 }
@@ -178,6 +209,8 @@ const STREAMING_SHELL_TOOLS = new Set([
   "Bash",
   "BashOutput",
   "TaskOutput",
+  "exec_command",
+  "write_stdin",
   "shell_command",
   "ShellCommand",
   "shell",
@@ -332,7 +365,8 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
 ];
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
-  "shell_command",
+  "exec_command",
+  "write_stdin",
   // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
   // "request_user_input",
   "apply_patch",
@@ -368,7 +402,8 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "TaskStop",
   "Skill",
   // Standard Codex tools
-  "ShellCommand",
+  "exec_command",
+  "write_stdin",
   "ViewImage",
   "ApplyPatch",
   "UpdatePlan",
@@ -419,6 +454,8 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
   shell_command: { requiresApproval: true },
+  exec_command: { requiresApproval: true },
+  write_stdin: { requiresApproval: false },
   shell: { requiresApproval: true },
   read_file: { requiresApproval: false },
   list_dir: { requiresApproval: false },
@@ -461,12 +498,6 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   ReadManyFiles: { requiresApproval: false },
 };
 
-interface JsonSchema {
-  properties?: Record<string, JsonSchema>;
-  required?: string[];
-  [key: string]: unknown;
-}
-
 type ToolArgs = Record<string, unknown>;
 
 interface ToolSchema {
@@ -477,6 +508,7 @@ interface ToolSchema {
 
 interface ToolDefinition {
   schema: ToolSchema;
+  modelForm: ModelFacingToolForm;
   fn: (args: ToolArgs) => Promise<unknown>;
 }
 
@@ -917,11 +949,9 @@ function buildClientToolsFromSnapshot(
   externalTools: Map<string, ExternalToolDefinition>,
   extensionTools: Map<string, ExtensionToolDefinition>,
 ): ClientTool[] {
-  const builtInTools = Array.from(registry.entries()).map(([name, tool]) => ({
-    name: getServerToolName(name),
-    description: tool.schema.description,
-    parameters: tool.schema.input_schema,
-  }));
+  const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
+    serializeFunctionOnlyToolPayload(getServerToolName(name), tool.modelForm),
+  );
   for (const name of externalTools.keys()) {
     if (extensionTools.has(name)) {
       debugLog(
@@ -1257,6 +1287,7 @@ function maybeApplyLspReadOverride(registry: ToolRegistry): void {
       description: lspDefinition.description,
       input_schema: lspDefinition.schema,
     },
+    modelForm: lspDefinition.modelForm,
     fn: lspDefinition.impl,
   });
 }
@@ -1312,6 +1343,11 @@ async function buildSpecificToolRegistry(
 
     newRegistry.set(internalName, {
       schema: toolSchema,
+      modelForm: resolvedModelForm(
+        definition.modelForm,
+        resolvedTool.description,
+        resolvedTool.input_schema as JsonSchema,
+      ),
       fn: definition.impl,
     });
   }
@@ -1441,6 +1477,11 @@ async function buildRegistryForModel(
 
       newRegistry.set(name, {
         schema: toolSchema,
+        modelForm: resolvedModelForm(
+          definition.modelForm,
+          resolvedTool.description,
+          resolvedTool.input_schema as JsonSchema,
+        ),
         fn: definition.impl,
       });
     } catch (error) {
@@ -1905,7 +1946,20 @@ async function executeExtensionTool(
           : {}),
         permissionMode: executionScope.permissionMode ?? null,
         agent: { id: executionScope.agentId ?? null },
-        conversation: { id: executionScope.conversationId ?? null },
+        conversation: {
+          id: executionScope.conversationId ?? null,
+          getHistory: async (historyOptions) => {
+            const { getBackend } = await import("@/backend");
+            return loadExtensionConversationHistoryFromBackend(
+              getBackend(),
+              {
+                agentId: executionScope.agentId,
+                conversationId: executionScope.conversationId,
+              },
+              historyOptions,
+            );
+          },
+        },
         getContext: tool.getContext,
       };
       const result = await runExtensionTool(tool, context);
@@ -2151,6 +2205,14 @@ export async function executeTool(
       };
     }
 
+    // Apply rewritten tool input from PreToolUse hooks (e.g. rtk command rewrite)
+    if (preHookResult.updatedInput) {
+      args = {
+        ...(args as Record<string, unknown>),
+        ...preHookResult.updatedInput,
+      };
+    }
+
     try {
       // Inject options for tools that support them without altering schemas
       let enhancedArgs = args;
@@ -2174,7 +2236,7 @@ export async function executeTool(
         // Inject secrets as environment variables instead of substituting into
         // the command string. This prevents shell metacharacters in secrets
         // (e.g. $$, backticks, quotes) from being interpreted by the shell.
-        const command = enhancedArgs.command;
+        const command = enhancedArgs.command ?? enhancedArgs.cmd;
         const secretEnv =
           typeof command === "string" ||
           (Array.isArray(command) &&
@@ -2504,6 +2566,10 @@ export async function refreshDynamicChannelToolsInLoadedRegistry(): Promise<void
       description: resolvedTool.description,
       input_schema: resolvedTool.input_schema as JsonSchema,
     },
+    modelForm: functionToolForm({
+      description: resolvedTool.description,
+      parameters: resolvedTool.input_schema as JsonSchema,
+    }),
     fn: definition.impl,
   });
 }

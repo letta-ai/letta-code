@@ -9,6 +9,8 @@ import {
   updateTask,
 } from "@/cron/cron-file";
 import { cronMatchesTime } from "@/cron/parse-interval";
+import { getCronRunLogPath, readCronRunLogEntries } from "@/cron/run-log";
+import { handleMissedOneShot } from "@/cron/scheduler";
 
 // ── Test setup ──────────────────────────────────────────────────────
 
@@ -155,6 +157,31 @@ describe("task lifecycle", () => {
     );
     // jitter_offset_ms should be a number (may be 0 or negative for :00/:30)
     expect(typeof task.jitter_offset_ms).toBe("number");
+  });
+
+  test("missed one-shot writes a skipped run log", () => {
+    const scheduledFor = new Date(Date.now() - 10 * 60 * 1000);
+    const { task } = addTask(
+      makeInput({
+        recurring: false,
+        scheduled_for: scheduledFor,
+      }),
+    );
+
+    expect(handleMissedOneShot(task, new Date())).toBe(true);
+
+    const entries = readCronRunLogEntries(getCronRunLogPath(task.id), {
+      jobId: task.id,
+      limit: 10,
+    });
+    expect(entries).toEqual([
+      expect.objectContaining({
+        jobId: task.id,
+        status: "skipped",
+        summary: "missed",
+        scheduledFor: scheduledFor.toISOString(),
+      }),
+    ]);
   });
 });
 

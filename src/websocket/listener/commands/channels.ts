@@ -3,10 +3,7 @@ import {
   channelPluginConfigShouldRefreshDisplayName,
   getChannelPluginConfig,
 } from "@/channels/account-config";
-import {
-  removeUserPlugin,
-  scaffoldUserPlugin,
-} from "@/channels/custom/scaffolding";
+import { removeUserPlugin } from "@/channels/custom/scaffolding";
 import { getChannelPluginMetadata } from "@/channels/plugin-registry";
 import type { ChannelRegistryEvent } from "@/channels/registry";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
@@ -257,7 +254,7 @@ export async function handleChannelsProtocolCommand(
     bindChannelPairing,
     bindChannelAccountLive,
     bindChannelTarget,
-    createChannelAccountLive,
+    createChannelAccountLiveWithSecrets,
     refreshChannelAccountDisplayNameLive,
     getChannelConfigSnapshot,
     listChannelAccountSnapshots,
@@ -273,7 +270,7 @@ export async function handleChannelsProtocolCommand(
     stopChannelAccountLive,
     stopChannelLive,
     unbindChannelAccountLive,
-    updateChannelAccountLive,
+    updateChannelAccountLiveWithSecrets,
     updateChannelRouteLive,
   } = await loadChannelsService();
 
@@ -466,25 +463,18 @@ export async function handleChannelsProtocolCommand(
         "listener_channels_command",
       );
 
-      const accountsNeedingRefresh = accounts.filter((account) =>
-        parsed.channel_id === "slack" ? true : !account.displayName,
+      const accountsNeedingRefresh = accounts.filter(
+        (account) => !account.displayName,
       );
 
       if (accountsNeedingRefresh.length > 0) {
         runDetachedListenerTask("channel_accounts_refresh", async () => {
           const refreshResults = await Promise.allSettled(
             accountsNeedingRefresh.map(async (account) => {
-              const refreshed =
-                parsed.channel_id === "slack"
-                  ? await refreshChannelAccountDisplayNameLive(
-                      parsed.channel_id,
-                      account.accountId,
-                      { force: true },
-                    )
-                  : await refreshChannelAccountDisplayNameLive(
-                      parsed.channel_id,
-                      account.accountId,
-                    );
+              const refreshed = await refreshChannelAccountDisplayNameLive(
+                parsed.channel_id,
+                account.accountId,
+              );
 
               return refreshed.displayName !== account.displayName;
             }),
@@ -525,23 +515,14 @@ export async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_create") {
     try {
-      // For the first-party "custom" channel, scaffold a dedicated user plugin
-      // folder so the new app gets its own channel ID (e.g. "my-webhook-app").
-      // The folder must exist before createChannelAccountLive validates the ID.
-      let effectiveChannelId = parsed.channel_id;
-      if (parsed.channel_id === "custom") {
-        const displayName =
-          typeof (parsed.account as Record<string, unknown>).display_name ===
-          "string"
-            ? ((parsed.account as Record<string, unknown>)
-                .display_name as string)
-            : "custom-app";
-        effectiveChannelId = scaffoldUserPlugin(displayName);
-      }
+      // Custom-app model: multiple custom apps are represented as
+      // multiple accounts under the first-party "custom" channel. Do not
+      // scaffold per-app plugin folders/channel IDs here.
+      const effectiveChannelId = parsed.channel_id;
 
       const pluginConfig =
         getChannelPluginConfig(parsed.account as Record<string, unknown>) ?? {};
-      const created = createChannelAccountLive(
+      const created = await createChannelAccountLiveWithSecrets(
         effectiveChannelId,
         {
           displayName:
@@ -612,7 +593,7 @@ export async function handleChannelsProtocolCommand(
     try {
       const pluginConfig =
         getChannelPluginConfig(parsed.patch as Record<string, unknown>) ?? {};
-      const updated = updateChannelAccountLive(
+      const updated = await updateChannelAccountLiveWithSecrets(
         parsed.channel_id,
         parsed.account_id,
         {

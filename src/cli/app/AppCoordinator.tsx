@@ -18,6 +18,7 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import { prefetchAvailableModelHandles } from "@/agent/available-models";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
+import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getModelInfoForLlmConfig,
@@ -39,6 +40,7 @@ import {
 import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
+import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-extension-registry";
 import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
@@ -118,6 +120,7 @@ import {
   handleMissedOneShot,
   isProcessAlive,
   readCronFile,
+  safeAppendCronRunLogForTask,
   shouldFireTask,
   updateTask,
 } from "@/cron";
@@ -643,12 +646,19 @@ export function App({
           return args.file_path || undefined;
         }
         if (isShellTool(approval.toolName)) {
-          const cmd =
-            typeof args.command === "string"
-              ? args.command
-              : Array.isArray(args.command)
-                ? args.command.join(" ")
-                : "";
+          const cmd = (() => {
+            if (typeof args.cmd === "string") return args.cmd;
+            if (typeof args.command === "string") return args.command;
+            if (Array.isArray(args.command)) return args.command.join(" ");
+            if (
+              approval.toolName === "write_stdin" &&
+              (typeof args.session_id === "string" ||
+                typeof args.session_id === "number")
+            ) {
+              return `write_stdin ${String(args.session_id)}`;
+            }
+            return "";
+          })();
           return cmd.length > 50 ? `${cmd.slice(0, 50)}...` : cmd || undefined;
         }
         if (isPatchTool(approval.toolName)) {
@@ -1152,11 +1162,17 @@ export function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
+  const shouldAutoGenerateConversationDescriptionRef = useRef(
+    !resumedExistingConversation,
+  );
+  const isAutoConversationDescriptionInFlightRef = useRef(false);
   const firstUserQueryRef = useRef<string | null>(null);
   const setConversationAutoTitleEligibility = useCallback(
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
+      shouldAutoGenerateConversationDescriptionRef.current = enabled;
+      isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
     },
     [],
@@ -1210,6 +1226,43 @@ export function App({
       return fallback;
     }
   }, [deriveAutoConversationTitle]);
+  const generateConversationDescription = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {
+        return;
+      }
+      if (
+        (!options?.force &&
+          !shouldAutoGenerateConversationDescriptionRef.current) ||
+        isAutoConversationDescriptionInFlightRef.current
+      ) {
+        return;
+      }
+      if (getBackend().capabilities.localModelCatalog) {
+        return;
+      }
+
+      const conversationId = conversationIdRef.current;
+      if (!conversationId || conversationId === "default") {
+        return;
+      }
+
+      isAutoConversationDescriptionInFlightRef.current = true;
+      try {
+        const updated = await regenerateConversationDescription(conversationId);
+        if (updated) {
+          shouldAutoGenerateConversationDescriptionRef.current = false;
+        }
+      } catch (err) {
+        if (isDebugEnabled()) {
+          console.error("[DEBUG] generateConversationDescription failed:", err);
+        }
+      } finally {
+        isAutoConversationDescriptionInFlightRef.current = false;
+      }
+    },
+    [],
+  );
   const resetBootstrapReminderState = useCallback(
     (pendingConversationBootstrap = false) => {
       resetSharedReminderState(sharedReminderStateRef.current);
@@ -1450,6 +1503,13 @@ export function App({
                 t.fire_count = 1;
               });
             }
+
+            safeAppendCronRunLogForTask(freshTask, {
+              status: "ok",
+              runAtMs: now.getTime(),
+              scheduledFor: freshTask.scheduled_for,
+              firedAt: nowIso,
+            });
 
             debugLog("cron", `TUI shadow scheduler fired task ${taskId}`);
           };
@@ -2279,7 +2339,20 @@ export function App({
         let command = "(no command)";
         let description = "";
 
-        if (t === "shell") {
+        if (t === "exec_command") {
+          command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+        } else if (t === "write_stdin") {
+          const sessionId =
+            typeof args.session_id === "string" ||
+            typeof args.session_id === "number"
+              ? String(args.session_id)
+              : "unknown";
+          command = `write_stdin ${sessionId}`;
+          description =
+            typeof args.chars === "string" && args.chars.length > 0
+              ? "Write input to running shell session"
+              : "Poll running shell session";
+        } else if (t === "shell") {
           const cmdVal = args.command;
           command = Array.isArray(cmdVal)
             ? cmdVal.join(" ")
@@ -2958,6 +3031,98 @@ export function App({
     return undefined;
   }, [loadingState, agentId, initialAgentState]);
 
+  // Extension provider metadata can arrive after the first local AgentState
+  // projection on cold boot. Re-project the active local agent when the provider
+  // registry changes so statusline context windows reflect registered models.
+  useEffect(() => {
+    if (
+      !isLocalBackend ||
+      loadingState !== "ready" ||
+      !agentId ||
+      agentId === "loading"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let refreshQueued = false;
+
+    const refreshAgentFromRegisteredProviderMetadata = () => {
+      if (refreshQueued) return;
+      refreshQueued = true;
+
+      queueMicrotask(() => {
+        refreshQueued = false;
+        const currentAgentId = agentIdRef.current;
+        if (cancelled || !currentAgentId || currentAgentId === "loading") {
+          return;
+        }
+
+        void getBackend()
+          .retrieveAgent(currentAgentId)
+          .then((agent) => {
+            if (cancelled || agentIdRef.current !== agent.id) return;
+            setAgentState(agent);
+            setAgentDescription(agent.description ?? null);
+            setAgentLastRunAt(
+              (agent as { last_run_completion?: string | null })
+                .last_run_completion ?? null,
+            );
+
+            if (
+              conversationIdRef.current === "default" &&
+              !hasConversationModelOverrideRef.current
+            ) {
+              const agentModelHandle = getPreferredAgentModelHandle(agent);
+              setLlmConfig(agent.llm_config);
+              setCurrentModelHandle(agentModelHandle ?? null);
+              const modelInfo = getModelInfoForLlmConfig(
+                agentModelHandle || "",
+                {
+                  ...(agent.llm_config as unknown as {
+                    reasoning_effort?: string | null;
+                    enable_reasoner?: boolean | null;
+                  }),
+                  context_window:
+                    (
+                      agent as unknown as {
+                        context_window_limit?: number | null;
+                      }
+                    ).context_window_limit ?? null,
+                },
+              );
+              setCurrentModelId(modelInfo?.id ?? (agentModelHandle || null));
+            }
+          })
+          .catch((error) => {
+            debugLog(
+              "agent-config",
+              "Failed to refresh local agent after provider registry change: %O",
+              error,
+            );
+          });
+      });
+    };
+
+    if (!extensionRuntime.isLoading) {
+      refreshAgentFromRegisteredProviderMetadata();
+    }
+
+    const unsubscribe = subscribePiProviderRegistry(
+      refreshAgentFromRegisteredProviderMetadata,
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [
+    agentId,
+    extensionRuntime.isLoading,
+    hasConversationModelOverrideRef,
+    isLocalBackend,
+    loadingState,
+  ]);
+
   // Keep effective model state in sync with the active conversation override.
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref.current is intentionally read dynamically
   useEffect(() => {
@@ -3417,6 +3582,8 @@ export function App({
     currentModelId,
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
+    generateConversationDescription,
+    extensionRuntime,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -3827,6 +3994,7 @@ export function App({
     extensionRuntime,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
+    generateConversationDescription,
     generateConversationTitle,
     handleAgentSelect,
     handleBtwCommand,

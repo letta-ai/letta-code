@@ -13,6 +13,7 @@ describe("contextTracker", () => {
     ];
     tracker.pendingCompaction = true;
     tracker.pendingReflectionTrigger = true;
+    tracker.pendingConversationDescriptionRegeneration = true;
     tracker.currentTurnId = 9;
 
     resetContextHistory(tracker);
@@ -21,6 +22,7 @@ describe("contextTracker", () => {
     expect(tracker.contextTokensHistory).toEqual([]);
     expect(tracker.pendingCompaction).toBe(false);
     expect(tracker.pendingReflectionTrigger).toBe(false);
+    expect(tracker.pendingConversationDescriptionRegeneration).toBe(false);
     expect(tracker.currentTurnId).toBe(9);
   });
 });

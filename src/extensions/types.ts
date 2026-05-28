@@ -2,6 +2,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type {
   ApprovalCreate,
   LettaStreamingResponse,
+  Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 
 export interface ExtensionWorkspaceContext {
@@ -70,24 +71,24 @@ export interface ExtensionUiCapabilities {
 
 export interface ExtensionEventCapabilities {
   lifecycle: boolean;
+  turns: boolean;
 }
 
 export interface ExtensionCapabilities {
   tools: boolean;
   commands: boolean;
   events: ExtensionEventCapabilities;
+  providers: boolean;
   ui: ExtensionUiCapabilities;
 }
 
-export interface ExtensionBackendForkConversationOptions {
-  agentId?: string;
+export interface ExtensionConversationForkOptions {
   hidden?: boolean;
 }
 
-export type ExtensionBackendMessage = MessageCreate | ApprovalCreate;
+export type ExtensionConversationMessage = MessageCreate | ApprovalCreate;
 
-export interface ExtensionBackendSendMessageOptions {
-  agentId?: string;
+export interface ExtensionConversationSendMessageOptions {
   background?: boolean;
   overrideModel?: string;
   skipImageNormalization?: boolean;
@@ -95,22 +96,65 @@ export interface ExtensionBackendSendMessageOptions {
   workingDirectory?: string;
 }
 
-export interface ExtensionBackendSendMessageRequestOptions {
+export interface ExtensionConversationSendMessageRequestOptions {
   headers?: Record<string, string>;
   maxRetries?: number;
   signal?: AbortSignal;
 }
 
-export interface ExtensionBackendApi {
+export interface ExtensionConversationHistoryOptions {
+  /** Maximum number of recent messages to return. Defaults to 100. */
+  limit?: number;
+  /** Return chronological (asc, default) or newest-first (desc) messages. */
+  order?: "asc" | "desc";
+  /** Include error messages and error statuses. Defaults to true. */
+  includeErrors?: boolean;
+}
+
+export interface ExtensionConversationHandle {
+  id: string | null;
+  fork: (
+    options?: ExtensionConversationForkOptions,
+  ) => Promise<ExtensionConversationHandle>;
+  getHistory: (
+    options?: ExtensionConversationHistoryOptions,
+  ) => Promise<Message[]>;
+  sendMessageStream: (
+    messages: ExtensionConversationMessage[],
+    options?: ExtensionConversationSendMessageOptions,
+    requestOptions?: ExtensionConversationSendMessageRequestOptions,
+  ) => Promise<AsyncIterable<LettaStreamingResponse>>;
+}
+
+export interface ExtensionRuntimeBackendForkConversationOptions
+  extends ExtensionConversationForkOptions {
+  agentId?: string;
+}
+
+export interface ExtensionRuntimeBackendSendMessageOptions
+  extends ExtensionConversationSendMessageOptions {
+  agentId?: string;
+}
+
+export interface ExtensionRuntimeBackendHistoryOptions
+  extends ExtensionConversationHistoryOptions {
+  agentId?: string | null;
+}
+
+export interface ExtensionRuntimeBackendApi {
   forkConversation: (
     conversationId: string,
-    options?: ExtensionBackendForkConversationOptions,
+    options?: ExtensionRuntimeBackendForkConversationOptions,
   ) => Promise<{ id: string }>;
+  getConversationHistory: (
+    conversationId: string,
+    options?: ExtensionRuntimeBackendHistoryOptions,
+  ) => Promise<Message[]>;
   sendMessageStream: (
     conversationId: string,
-    messages: ExtensionBackendMessage[],
-    options?: ExtensionBackendSendMessageOptions,
-    requestOptions?: ExtensionBackendSendMessageRequestOptions,
+    messages: ExtensionConversationMessage[],
+    options?: ExtensionRuntimeBackendSendMessageOptions,
+    requestOptions?: ExtensionConversationSendMessageRequestOptions,
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
@@ -123,7 +167,10 @@ export interface ExtensionOwner {
   generation: number;
 }
 
-export type ExtensionEventName = "conversation_open" | "conversation_close";
+export type ExtensionEventName =
+  | "conversation_open"
+  | "conversation_close"
+  | "turn_start";
 
 export type ExtensionConversationOpenReason =
   | "startup"
@@ -154,18 +201,30 @@ export interface ExtensionConversationCloseEvent {
   toolCallCount: number | null;
 }
 
+export interface ExtensionTurnStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  input: Array<MessageCreate | ApprovalCreate>;
+}
+
+export interface ExtensionTurnStartResult {
+  input?: Array<MessageCreate | ApprovalCreate>;
+}
+
 export interface ExtensionEventMap {
   conversation_open: ExtensionConversationOpenEvent;
   conversation_close: ExtensionConversationCloseEvent;
+  turn_start: ExtensionTurnStartEvent;
 }
 
 export interface ExtensionEventResultMap {
   conversation_open: undefined;
   conversation_close: undefined;
+  turn_start: ExtensionTurnStartResult | undefined;
 }
 
 export interface ExtensionEventContext {
-  backend?: ExtensionBackendApi;
+  conversation: ExtensionConversationHandle;
   context: ExtensionContext;
   getContext: () => ExtensionContext;
   signal: AbortSignal;
@@ -187,15 +246,19 @@ export interface ExtensionEventRegistration<
   path: string;
 }
 
-export interface ExtensionEventEmissionResult {
+export interface ExtensionEventEmissionResult<
+  TName extends ExtensionEventName = ExtensionEventName,
+> {
   diagnostics: ExtensionDiagnostic[];
   handlerCount: number;
-  name: ExtensionEventName;
+  name: TName;
+  results: Array<NonNullable<ExtensionEventResultMap[TName]>>;
 }
 
 export type ExtensionCapabilityKind =
   | "command"
   | "event"
+  | "provider"
   | "tool"
   | "panel"
   | "status"
@@ -257,15 +320,12 @@ export interface ExtensionCommandContext {
   command: string;
   args: string;
   argv: string[];
-  backend?: ExtensionBackendApi;
   cwd: string;
   agent: {
     id: string;
     name: string | null;
   };
-  conversation: {
-    id: string;
-  };
+  conversation: ExtensionConversationHandle & { id: string };
   model: {
     id: string | null;
     displayName: string | null;
@@ -375,6 +435,9 @@ export interface ExtensionToolRunContext {
   };
   conversation: {
     id: string | null;
+    getHistory: (
+      options?: ExtensionConversationHistoryOptions,
+    ) => Promise<Message[]>;
   };
   getContext: () => ExtensionContext;
 }

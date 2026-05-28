@@ -2,6 +2,7 @@ import { Box } from "ink";
 import { memo } from "react";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
+import { isShellTool } from "@/cli/helpers/tool-name-mapping";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
@@ -108,21 +109,33 @@ export const ApprovalPreview = memo(
     const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
 
     // Bash/Shell: Use BashPreview component
-    if (
-      toolName === "Bash" ||
-      toolName === "shell" ||
-      toolName === "Shell" ||
-      toolName === "shell_command"
-    ) {
+    if (isShellTool(toolName)) {
       try {
         const args = JSON.parse(toolArgs);
-        const command =
-          typeof args.command === "string"
-            ? args.command
-            : Array.isArray(args.command)
-              ? args.command.join(" ")
-              : "";
-        const description = args.description || args.justification || "";
+        let command = "";
+        let description = "";
+        if (toolName === "exec_command") {
+          command = typeof args.cmd === "string" ? args.cmd : "";
+        } else if (toolName === "write_stdin") {
+          const sessionId =
+            typeof args.session_id === "string" ||
+            typeof args.session_id === "number"
+              ? String(args.session_id)
+              : "unknown";
+          command = `write_stdin ${sessionId}`;
+          description =
+            typeof args.chars === "string" && args.chars.length > 0
+              ? "Write input to running shell session"
+              : "Poll running shell session";
+        } else {
+          command =
+            typeof args.command === "string"
+              ? args.command
+              : Array.isArray(args.command)
+                ? args.command.join(" ")
+                : "";
+          description = args.description || args.justification || "";
+        }
 
         return (
           <Box flexDirection="column">

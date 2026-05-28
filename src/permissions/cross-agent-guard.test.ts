@@ -258,7 +258,7 @@ describe("extractTargetAgentPaths", () => {
     ).toEqual(new Set([OTHER]));
   });
 
-  test("shell tool aliases (run_shell_command, shell_command) work", () => {
+  test("shell tool aliases (run_shell_command, shell_command, exec_command) work", () => {
     expect(
       extractTargetAgentPaths(
         "run_shell_command",
@@ -270,6 +270,13 @@ describe("extractTargetAgentPaths", () => {
       extractTargetAgentPaths(
         "shell_command",
         { command: `ls ${otherMemory()}` },
+        "/tmp",
+      ).agentIds,
+    ).toEqual(new Set([OTHER]));
+    expect(
+      extractTargetAgentPaths(
+        "exec_command",
+        { cmd: `ls ${otherMemory()}` },
         "/tmp",
       ).agentIds,
     ).toEqual(new Set([OTHER]));

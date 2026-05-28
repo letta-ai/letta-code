@@ -6,11 +6,11 @@ import {
   resolveLocalExtensionSources,
 } from "@/extensions/extension-host";
 import type {
-  ExtensionBackendApi,
   ExtensionContext,
   ExtensionEventEmissionResult,
   ExtensionEventMap,
   ExtensionEventName,
+  ExtensionRuntimeBackendApi,
 } from "@/extensions/types";
 import { debugLog } from "@/utils/debug";
 
@@ -26,7 +26,7 @@ export interface ExtensionRuntimeSnapshot extends ExtensionRuntimeLoadState {
 
 export interface CreateExtensionRuntimeOptions
   extends Omit<CreateExtensionHostOptions, "backend" | "getContext"> {
-  getBackendApi?: () => ExtensionBackendApi | undefined;
+  getBackendApi?: () => ExtensionRuntimeBackendApi | undefined;
   getClient: () => Promise<Letta>;
   initialContext: ExtensionContext;
 }
@@ -36,8 +36,8 @@ export interface ExtensionRuntime {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-  ) => Promise<ExtensionEventEmissionResult>;
-  getBackendApi: () => ExtensionBackendApi | undefined;
+  ) => Promise<ExtensionEventEmissionResult<TName>>;
+  getBackendApi: () => ExtensionRuntimeBackendApi | undefined;
   getContext: () => ExtensionContext;
   getSnapshot: () => ExtensionRuntimeSnapshot;
   host: ExtensionHost;
@@ -57,9 +57,9 @@ function hasExtensionSources(
   );
 }
 
-function createActivationBackendApi(
-  getBackendApi: () => ExtensionBackendApi | undefined,
-): ExtensionBackendApi {
+function createLazyRuntimeBackendApi(
+  getBackendApi: () => ExtensionRuntimeBackendApi | undefined,
+): ExtensionRuntimeBackendApi {
   const requireBackend = () => {
     const backend = getBackendApi();
     if (!backend) {
@@ -71,6 +71,9 @@ function createActivationBackendApi(
   return {
     forkConversation(conversationId, options) {
       return requireBackend().forkConversation(conversationId, options);
+    },
+    getConversationHistory(conversationId, options) {
+      return requireBackend().getConversationHistory(conversationId, options);
     },
     sendMessageStream(conversationId, messages, options, requestOptions) {
       return requireBackend().sendMessageStream(
@@ -104,7 +107,7 @@ export function createExtensionRuntime(
   const getBackendApi = () => resolveBackendApi?.();
   const getContext = () => context;
   const backend = resolveBackendApi
-    ? createActivationBackendApi(getBackendApi)
+    ? createLazyRuntimeBackendApi(getBackendApi)
     : undefined;
 
   const host = createExtensionHost({

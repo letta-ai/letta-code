@@ -210,8 +210,13 @@ export function parsePatchOperations(input: string): PatchOperation[] {
 export function formatArgsDisplay(
   argsJson: string,
   toolName?: string,
+  options?: {
+    unifiedExecCommandDisplay?: string;
+    suppressUnifiedExecInteractionLabel?: boolean;
+  },
 ): {
   display: string;
+  displayName?: string;
   parsed: Record<string, unknown>;
   shellSemantic?: ShellSemanticDisplay;
 } {
@@ -352,6 +357,33 @@ export function formatArgsDisplay(
             return { display, parsed };
           }
 
+          // write_stdin is part of Codex unified exec: keep it on the shell
+          // rendering path, but don't dump raw polling/truncation args in the
+          // transcript header.
+          if (toolName.toLowerCase() === "write_stdin") {
+            const sessionId =
+              typeof parsed.session_id === "string" ||
+              typeof parsed.session_id === "number"
+                ? String(parsed.session_id)
+                : "unknown";
+            const isWrite =
+              typeof parsed.chars === "string" && parsed.chars.length > 0;
+            const commandDisplay = options?.unifiedExecCommandDisplay?.trim();
+            const suffix = commandDisplay
+              ? `· ${commandDisplay}`
+              : `(session ${sessionId})`;
+            if (options?.suppressUnifiedExecInteractionLabel) {
+              return { display: suffix, parsed };
+            }
+            return {
+              display: suffix,
+              displayName: isWrite
+                ? "Interacted with background terminal"
+                : "Waited for background terminal",
+              parsed,
+            };
+          }
+
           // Plan tools: only show compact plan item count.
           if (isPlanTool(toolName) && Array.isArray(parsed.plan)) {
             display = formatItemCount(parsed.plan.length);
@@ -365,13 +397,14 @@ export function formatArgsDisplay(
           }
 
           // Shell/Bash tools: show just the command
-          if (isShellTool(toolName) && parsed.command) {
+          if (isShellTool(toolName) && (parsed.command || parsed.cmd)) {
+            const commandValue = parsed.cmd ?? parsed.command;
             shellSemantic = summarizeShellDisplay(
-              Array.isArray(parsed.command)
-                ? parsed.command.filter(
+              Array.isArray(commandValue)
+                ? commandValue.filter(
                     (part): part is string => typeof part === "string",
                   )
-                : String(parsed.command),
+                : String(commandValue),
             );
             display = shellSemantic.summary;
             return { display, parsed, shellSemantic };

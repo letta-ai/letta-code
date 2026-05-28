@@ -15,6 +15,13 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type Letta from "@letta-ai/letta-client";
 import * as ts from "typescript";
+import { clearAvailableModelsCache } from "@/agent/available-models";
+import type { PiProviderRegistration } from "@/backend/dev/pi-provider-extension-registry";
+import {
+  registerPiProvider,
+  unregisterPiProvider,
+  unregisterPiProvidersForOwner,
+} from "@/backend/dev/pi-provider-extension-registry";
 import type {
   StatuslineRenderContext,
   StatuslineRenderer,
@@ -24,6 +31,7 @@ import {
   cloneExtensionCapabilities,
   resolveExtensionCapabilities,
 } from "@/extensions/capabilities";
+import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import {
   getExtensionToolDefinition,
   registerExtensionTool,
@@ -31,7 +39,6 @@ import {
   unregisterExtensionToolsForOwner,
 } from "@/extensions/tool-registry";
 import type {
-  ExtensionBackendApi,
   ExtensionCapabilities,
   ExtensionCommand,
   ExtensionCommandRegistration,
@@ -43,14 +50,17 @@ import type {
   ExtensionEventMap,
   ExtensionEventName,
   ExtensionEventRegistration,
+  ExtensionEventResultMap,
   ExtensionOwner,
   ExtensionPanel,
   ExtensionPanelContent,
   ExtensionPanelHandle,
   ExtensionPanelOptions,
   ExtensionPanelUpdate,
+  ExtensionRuntimeBackendApi,
   ExtensionTool,
   ExtensionToolRegistration,
+  ExtensionTurnStartEvent,
 } from "@/extensions/types";
 
 export const GLOBAL_EXTENSIONS_DIRECTORY = path.join(
@@ -87,18 +97,29 @@ export type LettaExtensionFactory = (
   | Promise<undefined | LettaExtensionDisposer>;
 
 export interface LettaExtensionApi {
-  backend?: ExtensionBackendApi;
   capabilities: ExtensionCapabilities;
   client: Letta;
   getClient: () => Promise<Letta>;
   getContext: () => ExtensionContext;
   signal: AbortSignal;
+  registerProvider: (
+    name: string,
+    config: PiProviderRegistration,
+  ) => LettaExtensionDisposer;
+  unregisterProvider: (name: string) => void;
   commands: {
     register: (command: ExtensionCommandRegistration) => LettaExtensionDisposer;
     unregister: (id: string) => void;
   };
   tools: {
     register: (tool: ExtensionToolRegistration) => LettaExtensionDisposer;
+    unregister: (name: string) => void;
+  };
+  providers: {
+    register: (
+      name: string,
+      config: PiProviderRegistration,
+    ) => LettaExtensionDisposer;
     unregister: (name: string) => void;
   };
   events: {
@@ -185,7 +206,7 @@ export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionBackendApi;
+  backend?: ExtensionRuntimeBackendApi;
   capabilities?: ExtensionCapabilities;
   generation?: number;
   onChange?: () => void;
@@ -199,8 +220,8 @@ export interface ExtensionHost {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-    backend?: ExtensionBackendApi,
-  ) => Promise<ExtensionEventEmissionResult>;
+    backend?: ExtensionRuntimeBackendApi,
+  ) => Promise<ExtensionEventEmissionResult<TName>>;
   getSnapshot: () => LocalExtensionRegistry;
   reload: () => Promise<void>;
   subscribe: (listener: () => void) => () => void;
@@ -210,7 +231,7 @@ export interface CreateExtensionHostOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionBackendApi;
+  backend?: ExtensionRuntimeBackendApi;
   capabilities?: ExtensionCapabilities;
   reservedCommandIds?: Iterable<string>;
   reservedToolNames?: Iterable<string>;
@@ -371,6 +392,9 @@ function removeOwnerCapabilities(
   registry: LocalExtensionRegistry,
   owner: ExtensionOwner,
 ): void {
+  unregisterPiProvidersForOwner(owner.id);
+  clearAvailableModelsCache();
+
   for (const [id, command] of Object.entries(registry.commands)) {
     if (command.owner?.id === owner.id) {
       delete registry.commands[id];
@@ -579,6 +603,7 @@ function createLazyClient(getClient: () => Promise<Letta>): Letta {
 const SUPPORTED_EXTENSION_EVENT_NAMES = new Set<ExtensionEventName>([
   "conversation_open",
   "conversation_close",
+  "turn_start",
 ]);
 
 function validateExtensionEventName(
@@ -587,6 +612,46 @@ function validateExtensionEventName(
   if (!SUPPORTED_EXTENSION_EVENT_NAMES.has(name as ExtensionEventName)) {
     throw new Error(`Unsupported extension event '${name}'`);
   }
+}
+
+function isExtensionEventCapabilityEnabled(
+  capabilities: ExtensionCapabilities,
+  name: ExtensionEventName,
+): boolean {
+  switch (name) {
+    case "conversation_open":
+    case "conversation_close":
+      return capabilities.events.lifecycle;
+    case "turn_start":
+      return capabilities.events.turns;
+  }
+}
+
+function isTurnStartResultWithInput(
+  name: ExtensionEventName,
+  result: unknown,
+): result is { input: ExtensionTurnStartEvent["input"] } {
+  return (
+    name === "turn_start" &&
+    typeof result === "object" &&
+    result !== null &&
+    isTurnStartInput((result as { input?: unknown }).input)
+  );
+}
+
+function isTurnStartInput(
+  value: unknown,
+): value is ExtensionTurnStartEvent["input"] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
+function cloneTurnStartInput(
+  input: ExtensionTurnStartEvent["input"],
+): ExtensionTurnStartEvent["input"] {
+  return input.map((item) => structuredClone(item));
 }
 
 function validateExtensionCommandId(id: string): void {
@@ -729,7 +794,6 @@ function upsertExtensionPanel(
 function createLettaExtensionApi(
   registry: LocalExtensionRegistry,
   owner: ExtensionOwner,
-  backend: ExtensionBackendApi | undefined,
   capabilities: ExtensionCapabilities,
   getClient: () => Promise<Letta>,
   getContext: () => ExtensionContext,
@@ -752,8 +816,8 @@ function createLettaExtensionApi(
     name: TName,
     handler: ExtensionEventHandler<TName>,
   ) => {
-    if (!capabilities.events.lifecycle) return;
     validateExtensionEventName(name);
+    if (!isExtensionEventCapabilityEnabled(capabilities, name)) return;
     if (!guardLive({ id: name, kind: "event" })) return;
     const registrations = registry.events[name];
     if (!registrations) return;
@@ -805,14 +869,41 @@ function createLettaExtensionApi(
     }
   };
 
+  const unregisterProvider = (name: string) => {
+    if (!capabilities.providers) return;
+    if (!guardLive({ id: name, kind: "provider" })) return;
+    unregisterPiProvider(name, owner.id);
+    clearAvailableModelsCache();
+    onChange();
+  };
+
+  const registerProviderForOwner = (
+    name: string,
+    config: PiProviderRegistration,
+  ): LettaExtensionDisposer => {
+    if (!capabilities.providers) {
+      return () => undefined;
+    }
+    if (!guardLive({ id: name, kind: "provider" })) {
+      return () => undefined;
+    }
+    registerPiProvider(name, config, {
+      id: owner.id,
+      path: owner.path,
+    });
+    clearAvailableModelsCache();
+    onChange();
+    return () => unregisterProvider(name);
+  };
+
   const onEvent = <TName extends ExtensionEventName>(
     name: TName,
     handler: ExtensionEventHandler<TName>,
   ): LettaExtensionDisposer => {
-    if (!capabilities.events.lifecycle) {
+    validateExtensionEventName(name);
+    if (!isExtensionEventCapabilityEnabled(capabilities, name)) {
       return () => undefined;
     }
-    validateExtensionEventName(name);
     if (typeof handler !== "function") {
       throw new Error("Extension event registration must include a handler");
     }
@@ -835,12 +926,13 @@ function createLettaExtensionApi(
   };
 
   return {
-    ...(backend ? { backend } : {}),
     capabilities: cloneExtensionCapabilities(capabilities),
     client: createLazyClient(getClient),
     getClient,
     getContext,
     signal,
+    registerProvider: registerProviderForOwner,
+    unregisterProvider,
     commands: {
       register(command) {
         if (!capabilities.commands) {
@@ -910,6 +1002,12 @@ function createLettaExtensionApi(
         return () => unregisterTool(normalized.name);
       },
       unregister: unregisterTool,
+    },
+    providers: {
+      register(name, config) {
+        return registerProviderForOwner(name, config);
+      },
+      unregister: unregisterProvider,
     },
     events: {
       off: unregisterEvent,
@@ -1046,7 +1144,6 @@ export async function loadLocalExtensions(
           createLettaExtensionApi(
             registry,
             owner,
-            options.backend,
             capabilities,
             getConfiguredClient,
             getContext,
@@ -1114,33 +1211,67 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
   name: TName,
   event: ExtensionEventMap[TName],
   getContext: () => ExtensionContext,
-  backend?: ExtensionBackendApi,
+  backend?: ExtensionRuntimeBackendApi,
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
-): Promise<ExtensionEventEmissionResult> {
+): Promise<ExtensionEventEmissionResult<TName>> {
   if (!registry) {
-    return { diagnostics: [], handlerCount: 0, name };
+    return { diagnostics: [], handlerCount: 0, name, results: [] };
   }
 
   validateExtensionEventName(name);
   const registrations = [...(registry.events[name] ?? [])];
   const diagnostics: ExtensionDiagnostic[] = [];
+  const results: Array<NonNullable<ExtensionEventResultMap[TName]>> = [];
 
   for (const registration of registrations) {
     const signal = registration.owner
       ? registry.ownerAbortControllers[registration.owner.id]?.signal
       : undefined;
     if (signal?.aborted) continue;
+    const turnStartEvent =
+      name === "turn_start" ? (event as ExtensionTurnStartEvent) : null;
+    const turnStartInputBeforeHandler =
+      turnStartEvent && isTurnStartInput(turnStartEvent.input)
+        ? cloneTurnStartInput(turnStartEvent.input)
+        : null;
 
     try {
       const context = getContext();
       const eventContext: ExtensionEventContext = {
-        ...(backend ? { backend } : {}),
+        conversation: createExtensionConversationHandle({
+          agentId:
+            typeof event.agentId === "string"
+              ? event.agentId
+              : context.agent.id,
+          backend,
+          conversationId:
+            typeof event.conversationId === "string"
+              ? event.conversationId
+              : context.sessionId,
+          workingDirectory: context.cwd,
+        }),
         context,
         getContext,
         signal: signal ?? new AbortController().signal,
       };
-      await registration.handler(event, eventContext);
+      const result = await registration.handler(event, eventContext);
+      if (isTurnStartResultWithInput(name, result)) {
+        (event as ExtensionTurnStartEvent).input = result.input;
+      }
+      if (result != null) {
+        results.push(result as NonNullable<ExtensionEventResultMap[TName]>);
+      }
+      if (
+        turnStartEvent &&
+        turnStartInputBeforeHandler &&
+        !isTurnStartInput(turnStartEvent.input)
+      ) {
+        turnStartEvent.input = turnStartInputBeforeHandler;
+      }
     } catch (error) {
+      if (turnStartEvent && turnStartInputBeforeHandler) {
+        turnStartEvent.input = turnStartInputBeforeHandler;
+      }
       recordExtensionDiagnostic(
         registry,
         {
@@ -1157,7 +1288,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
     }
   }
 
-  return { diagnostics, handlerCount: registrations.length, name };
+  return { diagnostics, handlerCount: registrations.length, name, results };
 }
 
 export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
@@ -1182,8 +1313,10 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   }
 
   for (const owner of Object.values(registry.owners)) {
+    unregisterPiProvidersForOwner(owner.id);
     unregisterExtensionToolsForOwner(owner);
   }
+  clearAvailableModelsCache();
 
   registry.commands = {};
   registry.events = {};
@@ -1295,7 +1428,7 @@ export function createExtensionHost(
     },
     async emitEvent(name, payload, backend) {
       if (disposed) {
-        return { diagnostics: [], handlerCount: 0, name };
+        return { diagnostics: [], handlerCount: 0, name, results: [] };
       }
       const result = await emitLocalExtensionEvent(
         activeRegistry,

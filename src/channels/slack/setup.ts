@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "@/channels/accounts";
+import { upsertChannelAccountWithSecrets } from "@/channels/accounts";
 import {
   DEFAULT_SLACK_PERMISSION_MODE,
   type DmPolicy,
@@ -106,7 +106,7 @@ export async function runSlackSetup(): Promise<boolean> {
       updatedAt: now,
     };
 
-    upsertChannelAccount("slack", account);
+    await upsertChannelAccountWithSecrets("slack", account);
     console.log("\n✓ Slack app configured!");
     console.log("Config written to: ~/.letta/channels/slack/accounts.json\n");
     console.log("Next steps:");

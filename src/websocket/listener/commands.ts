@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
   applySetMaxContext,
   formatSetMaxContextResult,
@@ -290,6 +291,7 @@ async function handleCompactCommand(
     );
 
     conversationRuntime.contextTracker.pendingReflectionTrigger = true;
+    void regenerateConversationDescription(conversationRuntime.conversationId);
 
     return [
       `Compaction completed${modeDisplay}. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,

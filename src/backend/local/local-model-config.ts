@@ -3,12 +3,21 @@ import {
   type PiProvider,
 } from "@/backend/dev/pi-model-factory";
 import {
+  getRegisteredPiProvider,
+  listRegisteredPiProviders,
+  resolveRegisteredPiProviderFromModelHandle,
+  stripRegisteredProviderHandlePrefix,
+} from "@/backend/dev/pi-provider-extension-registry";
+import {
   getPiProviderSpec,
+  isPiProvider,
   listCatalogModelsForProvider,
   listConfiguredPiProviders,
   localModelHandle,
   localProviderType,
   resolveLocalModel,
+  resolveProviderFromModelHandle,
+  stripProviderHandlePrefix,
 } from "@/backend/dev/pi-provider-registry";
 import {
   type LocalProviderRecord,
@@ -25,6 +34,7 @@ export interface LocalModelConfig {
 
 interface LocalModelListEntry {
   handle: string;
+  max_context_window?: number;
   model: string;
   model_endpoint_type: string;
 }
@@ -184,6 +194,12 @@ function isDiscoverableLocalProvider(provider: PiProvider): boolean {
   return getPiProviderSpec(provider).localModelDiscovery !== undefined;
 }
 
+function isPiProviderForLocalModelHandle(
+  provider: PiProvider | string,
+): provider is PiProvider {
+  return isPiProvider(provider);
+}
+
 async function discoverModelIdsForProvider(
   provider: PiProvider,
   records: readonly LocalProviderRecord[],
@@ -226,14 +242,64 @@ export function resolveLocalProvider(storageDir?: string): PiProvider {
 
 export { localModelHandle, localProviderType, resolveLocalModel };
 
+function registeredModelSettingsForProviderModel(
+  provider: PiProvider | string,
+  modelId: string | undefined,
+): Record<string, unknown> | undefined {
+  if (!modelId) return undefined;
+  const registeredProvider = getRegisteredPiProvider(provider);
+  const registeredModel = registeredProvider?.config.models?.find(
+    (model) => model.id === modelId,
+  );
+  if (!registeredModel) return undefined;
+  return {
+    provider_type: isPiProviderForLocalModelHandle(provider)
+      ? localProviderType(provider)
+      : provider,
+    context_window_limit: registeredModel.contextWindow,
+    max_tokens: registeredModel.maxTokens,
+  };
+}
+
+export function localModelSettingsForHandle(
+  handle: string | undefined,
+): Record<string, unknown> | undefined {
+  if (!handle) return undefined;
+  const registeredProvider = resolveRegisteredPiProviderFromModelHandle(handle);
+  if (registeredProvider) {
+    return registeredModelSettingsForProviderModel(
+      registeredProvider,
+      stripRegisteredProviderHandlePrefix(handle, registeredProvider),
+    );
+  }
+
+  const provider = resolveProviderFromModelHandle(handle);
+  if (!provider) return undefined;
+  return registeredModelSettingsForProviderModel(
+    provider,
+    stripProviderHandlePrefix(handle, provider),
+  );
+}
+
 export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
   const provider = resolveLocalProvider(storageDir);
-  const model = resolveLocalModel(provider);
+  const registeredModel = getRegisteredPiProvider(provider)?.config.models?.[0];
+  const model = registeredModel?.id ?? resolveLocalModel(provider);
+  const handle = registeredModel
+    ? `${provider}/${registeredModel.id}`
+    : localModelHandle(provider, model);
+  const registeredModelSettings = registeredModelSettingsForProviderModel(
+    provider,
+    registeredModel?.id,
+  );
   return {
     provider,
     model,
-    handle: localModelHandle(provider, model),
-    modelSettings: { provider_type: localProviderType(provider) },
+    handle,
+    modelSettings: {
+      provider_type: localProviderType(provider),
+      ...(registeredModelSettings ?? {}),
+    },
   };
 }
 
@@ -245,15 +311,51 @@ export async function listLocalModels(
   const providerNames = localProviderNamesFromRecords(records);
   const configured = resolveLocalModelConfig(storageDir);
   const models: LocalModelListEntry[] = [];
-  const addModel = (provider: PiProvider, model: string) => {
-    const handle = localModelHandle(provider, model);
+  const registeredProviders = listRegisteredPiProviders();
+  const registeredProvidersWithModels = new Set(
+    registeredProviders
+      .filter((provider) => provider.config.models !== undefined)
+      .map((provider) => provider.providerName),
+  );
+  const addModel = (
+    provider: PiProvider | string,
+    model: string,
+    options: {
+      handle?: string;
+      maxContextWindow?: number;
+      modelEndpointType?: string;
+    } = {},
+  ) => {
+    const handle =
+      options.handle ??
+      (typeof provider === "string" &&
+      !isPiProviderForLocalModelHandle(provider)
+        ? `${provider}/${model}`
+        : localModelHandle(provider as PiProvider, model));
     if (models.some((entry) => entry.handle === handle)) return;
     models.push({
       handle,
+      ...(options.maxContextWindow
+        ? { max_context_window: options.maxContextWindow }
+        : {}),
       model: handle,
-      model_endpoint_type: localProviderType(provider),
+      model_endpoint_type:
+        options.modelEndpointType ??
+        (isPiProviderForLocalModelHandle(provider)
+          ? localProviderType(provider)
+          : provider),
     });
   };
+
+  for (const provider of registeredProviders) {
+    for (const model of provider.config.models ?? []) {
+      addModel(provider.providerName, model.id, {
+        handle: `${provider.providerName}/${model.id}`,
+        maxContextWindow: model.contextWindow,
+        modelEndpointType: provider.providerName,
+      });
+    }
+  }
 
   // Only add the configured model if its provider is actually reachable
   // (has keys/env configured). Otherwise we'd show models the user can't use.
@@ -262,6 +364,7 @@ export async function listLocalModels(
   ).includes(configured.provider);
   if (
     !isDiscoverableLocalProvider(configured.provider) &&
+    !registeredProvidersWithModels.has(configured.provider) &&
     configuredProviderIsConfigured
   ) {
     addModel(configured.provider, configured.model);
@@ -273,6 +376,7 @@ export async function listLocalModels(
       LOCAL_MODEL_DISCOVERY_TIMEOUT_MS,
   };
   for (const provider of listConfiguredPiProviders(providerNames)) {
+    if (registeredProvidersWithModels.has(provider)) continue;
     if (isDiscoverableLocalProvider(provider)) {
       try {
         for (const model of await discoverModelIdsForProvider(

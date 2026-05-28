@@ -16,6 +16,7 @@ import {
   setConversationId,
   setCurrentAgentId,
 } from "@/agent/context";
+import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getStreamToolContextId,
@@ -890,6 +891,10 @@ export async function handleIncomingMessage(
                 : String(reflectionError)
             }`,
           );
+        }
+        if (runtime.contextTracker.pendingConversationDescriptionRegeneration) {
+          runtime.contextTracker.pendingConversationDescriptionRegeneration = false;
+          void regenerateConversationDescription(conversationId);
         }
         runtime.lastStopReason = "end_turn";
         runtime.isProcessing = false;

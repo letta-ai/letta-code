@@ -467,3 +467,30 @@ test("ShellCommand auto-allows captured read-only inspection scripts", () => {
     expect(result.reason).toBe("Read-only shell command");
   }
 });
+
+test("exec_command uses cmd for Bash permission matching", () => {
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const readOnly = checkPermission(
+    "exec_command",
+    { cmd: "git status --short" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(readOnly.decision).toBe("allow");
+  expect(readOnly.reason).toBe("Read-only shell command");
+
+  cliPermissions.setAllowedTools("Bash(npm run test:*)");
+  const allowed = checkPermission(
+    "exec_command",
+    { cmd: "npm run test:unit" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(allowed.decision).toBe("allow");
+  expect(allowed.matchedRule).toBe("Bash(npm run test:*) (CLI)");
+});

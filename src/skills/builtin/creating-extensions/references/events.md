@@ -1,6 +1,6 @@
 # Extension event recipes
 
-Use events when trusted local code should react to app/session changes without the human explicitly invoking a command.
+Use events when trusted local code should react to app/session changes or transform outbound turns without the human explicitly invoking a command. For event-driven extensions with state, timers, panels, or background model work, also read `architecture.md`.
 
 This is the first slice of the hooks-v2 direction. The long-term goal is for typed extension events to replace settings-based hooks. Existing hooks still own blocking decisions and model feedback injection until each event has a typed return contract.
 
@@ -8,6 +8,7 @@ This is the first slice of the hooks-v2 direction. The long-term goal is for typ
 
 ```ts
 letta.capabilities.events.lifecycle
+letta.capabilities.events.turns
 ```
 
 Guard events when writing portable extensions:
@@ -43,15 +44,16 @@ letta.events.on("tool_call", (event, ctx) => {
 });
 ```
 
-Only lifecycle events are wired today, and existing settings-based hooks still own blocking behavior.
+Lifecycle and turn-start events are wired today, and existing settings-based hooks still own blocking behavior.
 
-Lifecycle handlers are notification-only and should not return values. Future events will define event-specific return contracts.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn.
 
 ## Supported events
 
 ```ts
 "conversation_open"
 "conversation_close"
+"turn_start"
 ```
 
 `conversation_open` event:
@@ -79,18 +81,65 @@ Lifecycle handlers are notification-only and should not return values. Future ev
 }
 ```
 
+`turn_start` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  input: Array<MessageCreate | ApprovalCreate>;
+}
+```
+
+`turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns.
+
+Handlers can mutate `event.input` directly or return replacement input:
+
+```ts
+function replaceTextContent(content, from, to) {
+  if (typeof content === "string") return content.replaceAll(from, to);
+  if (!Array.isArray(content)) return content;
+  return content.map((part) =>
+    part?.type === "text" && typeof part.text === "string"
+      ? { ...part, text: part.text.replaceAll(from, to) }
+      : part,
+  );
+}
+
+letta.events.on("turn_start", (event) => {
+  event.input = event.input.map((item) =>
+    item.type !== "approval" && item.role === "user"
+      ? { ...item, content: replaceTextContent(item.content, "??", new Date().toLocaleString()) }
+      : item,
+  );
+});
+
+letta.events.on("turn_start", (event) => {
+  return { input: event.input };
+});
+```
+
+Handlers run in registration order. Later handlers see the current input after earlier mutations/returns. If a handler throws, its partial `event.input` mutation is rolled back and the error is recorded as an extension diagnostic.
+
+`turn_start` is intentionally a trusted local extension point: it can rewrite user messages, approval results, and ordering. Keep transforms focused and unsurprising.
+
 Handlers also receive:
 
 ```ts
 {
-  backend?: letta.backend;
+  conversation: {
+    id: string | null;
+    fork(options?): Promise<conversation>;
+    getHistory(options?): Promise<Message[]>;
+    sendMessageStream(messages, options?): Promise<AsyncIterable<chunk>>;
+  };
   context: letta.getContext();
   getContext: () => letta.getContext();
   signal: AbortSignal;
 }
 ```
 
-`ctx.backend` is bound when the event is dispatched. Use it for backend calls made while handling that event.
+`ctx.conversation` is bound when the event is dispatched. Use it for scoped conversation calls made while handling that event. If an event needs background model work, prefer `ctx.conversation.fork()` and send to the fork. Do not send to the active conversation from `turn_start`; that event is already in the path of sending a turn.
 
 Respect `ctx.signal` for long-running async work. It is aborted on `/reload` and app shutdown.
 

@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import {
+  clearRegisteredPiProviders,
+  getRegisteredPiProvider,
+} from "@/backend/dev/pi-provider-extension-registry";
+import {
   createExtensionHost,
   type ExtensionHost,
 } from "@/extensions/extension-host";
@@ -12,14 +16,14 @@ import {
   getExtensionToolDefinition,
 } from "@/extensions/tool-registry";
 import type {
-  ExtensionBackendApi,
   ExtensionCapabilities,
   ExtensionContext,
   ExtensionPanelHandle,
+  ExtensionRuntimeBackendApi,
 } from "@/extensions/types";
 
 type ExtensionTestGlobal = typeof globalThis & {
-  __lettaExtensionBackend?: ExtensionBackendApi;
+  __lettaExtensionBackend?: unknown;
   __lettaExtensionForkResult?: { id: string };
   __lettaExtensionCapabilities?: ExtensionCapabilities;
   __lettaExtensionEvents?: string[];
@@ -80,7 +84,7 @@ function createExtensionContext(): ExtensionContext {
 function createHost(
   root: string,
   capabilities?: ExtensionCapabilities,
-  backend?: ExtensionBackendApi,
+  backend?: ExtensionRuntimeBackendApi,
 ): ExtensionHost {
   return createExtensionHost({
     cacheDirectory: path.join(root, "extension-cache"),
@@ -95,7 +99,8 @@ function createHost(
 const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   tools: true,
   commands: false,
-  events: { lifecycle: false },
+  events: { lifecycle: false, turns: false },
+  providers: false,
   ui: {
     panels: false,
     statusValues: false,
@@ -106,6 +111,7 @@ const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
 describe("extension host", () => {
   afterEach(() => {
     clearExtensionTools();
+    clearRegisteredPiProviders();
   });
 
   test("reload publishes snapshots with owner metadata", async () => {
@@ -202,16 +208,17 @@ describe("extension host", () => {
     }
   });
 
-  test("exposes configured backend to extensions", async () => {
+  test("keeps backend internal and exposes scoped conversation helpers to events", async () => {
     const root = createTempDir();
     const testGlobal = globalThis as ExtensionTestGlobal;
     delete testGlobal.__lettaExtensionBackend;
     delete testGlobal.__lettaExtensionForkResult;
 
-    const backend: ExtensionBackendApi = {
+    const backend: ExtensionRuntimeBackendApi = {
       forkConversation: async (conversationId, options) => ({
-        id: `${conversationId}:${options?.hidden ? "hidden" : "visible"}`,
+        id: `${conversationId}:${options?.agentId}:${options?.hidden ? "hidden" : "visible"}`,
       }),
+      getConversationHistory: async () => [],
       sendMessageStream: async () =>
         (async function* () {
           // Empty stream for host plumbing tests.
@@ -226,27 +233,77 @@ describe("extension host", () => {
         extensionPath,
         `export default async function(letta) {
           globalThis.__lettaExtensionBackend = letta.backend;
-          globalThis.__lettaExtensionForkResult = await letta.backend.forkConversation("conv-1", { hidden: true });
+          letta.events.on("conversation_open", async (_event, ctx) => {
+            globalThis.__lettaExtensionForkResult = await ctx.conversation.fork({ hidden: true });
+          });
         }`,
       );
 
       const host = createHost(root, undefined, backend);
       await host.reload();
+      await host.emitEvent("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conv-1",
+        reason: "startup",
+      });
 
-      const observedBackend = testGlobal.__lettaExtensionBackend as
-        | ExtensionBackendApi
-        | undefined;
       const forkResult = testGlobal.__lettaExtensionForkResult as
         | { id: string }
         | undefined;
-      expect(observedBackend).toBe(backend);
-      expect(forkResult).toEqual({
-        id: "conv-1:hidden",
+      expect(testGlobal.__lettaExtensionBackend).toBeUndefined();
+      expect(forkResult).toMatchObject({
+        id: "conv-1:agent-1:hidden",
       });
       expect(host.getSnapshot().errors).toEqual([]);
     } finally {
       delete testGlobal.__lettaExtensionBackend;
       delete testGlobal.__lettaExtensionForkResult;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("lets extensions register pi providers for local backend", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const extensionPath = path.join(extensionDir, "provider.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          letta.registerProvider("lmstudio", {
+            baseUrl: "http://localhost:8000/v1",
+            apiKey: "not-needed",
+            api: "openai-completions",
+            models: [{
+              id: "gemma-4-26B-A4B-it-oQ6",
+              name: "Gemma 4 VLM",
+              reasoning: true,
+              input: ["text", "image"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 256000,
+              maxTokens: 8192,
+            }],
+          });
+        }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+
+      expect(
+        getRegisteredPiProvider("lmstudio")?.config.models?.[0],
+      ).toMatchObject({
+        id: "gemma-4-26B-A4B-it-oQ6",
+        input: ["text", "image"],
+        contextWindow: 256000,
+        reasoning: true,
+      });
+
+      host.dispose();
+      expect(getRegisteredPiProvider("lmstudio")).toBeUndefined();
+    } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });
@@ -305,7 +362,7 @@ describe("extension host", () => {
         `export default function(letta) {
           letta.events.on("conversation_open", (event, ctx) => {
             globalThis.__lettaExtensionEvents.push(
-              event.reason + ":" + event.agentId + ":" + ctx.context.agent.name + ":" + Boolean(ctx.backend),
+              event.reason + ":" + event.agentId + ":" + ctx.context.agent.name + ":" + ctx.conversation.id,
             );
             letta.ui.setStatus("lifecycle", event.reason);
           });
@@ -315,8 +372,9 @@ describe("extension host", () => {
         }`,
       );
 
-      const backend: ExtensionBackendApi = {
+      const backend: ExtensionRuntimeBackendApi = {
         forkConversation: async () => ({ id: "forked" }),
+        getConversationHistory: async () => [],
         sendMessageStream: async () => (async function* () {})(),
       };
       const host = createHost(root, undefined, backend);
@@ -337,7 +395,7 @@ describe("extension host", () => {
       });
       expect(result.diagnostics).toHaveLength(1);
       expect(testGlobal.__lettaExtensionEvents).toEqual([
-        "startup:agent-1:Amelia:true",
+        "startup:agent-1:Amelia:conversation-1",
       ]);
       expect(snapshot.ui.statusValues.lifecycle).toBe("startup");
       expect(snapshot.errors.at(-1)).toMatchObject({
@@ -348,6 +406,70 @@ describe("extension host", () => {
       host.dispose();
     } finally {
       delete testGlobal.__lettaExtensionEvents;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("lets turn_start handlers replace input in registration order", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "turn-start.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_start", (event) => ({
+            input: event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: String(item.content).replaceAll("??", "first") }
+                : item,
+            ),
+          }));
+          letta.events.on("turn_start", (event) => {
+            event.input = event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: String(item.content).replaceAll("first", "second") }
+                : item,
+            );
+          });
+          letta.events.on("turn_start", (event) => {
+            event.input = event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: "broken" }
+                : item,
+            );
+            throw new Error("turn_start failed");
+          });
+          letta.events.on("turn_start", (event) => {
+            event.input = event.input.map((item) =>
+              item.role === "user"
+                ? { ...item, content: String(item.content).replaceAll("second", "final") }
+                : item,
+            );
+          });
+        }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        input: [{ role: "user" as const, content: "hello ??" }],
+      };
+
+      const result = await host.emitEvent("turn_start", event);
+
+      expect(result).toMatchObject({
+        handlerCount: 4,
+        name: "turn_start",
+      });
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.results).toHaveLength(1);
+      expect(event.input).toEqual([{ role: "user", content: "hello final" }]);
+
+      host.dispose();
+    } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });

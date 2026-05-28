@@ -36,6 +36,7 @@ import {
   verifySchedulerLease,
 } from "./cron-file";
 import { cronMatchesTime } from "./parse-interval";
+import { safeAppendCronRunLogForTask } from "./run-log";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -140,7 +141,7 @@ function fireCronTask(
 
   const text = wrapCronPrompt(task);
 
-  conversationRuntime.queueRuntime.enqueue({
+  const queuedItem = conversationRuntime.queueRuntime.enqueue({
     kind: "cron_prompt",
     source: "cron" as import("@/types/protocol").QueueItemSource,
     text,
@@ -148,6 +149,16 @@ function fireCronTask(
     agentId: task.agent_id,
     conversationId: task.conversation_id,
   } as Omit<CronPromptQueueItem, "id" | "enqueuedAt">);
+
+  if (!queuedItem) {
+    safeAppendCronRunLogForTask(task, {
+      status: "error",
+      error: "queue buffer limit",
+      runAtMs: now.getTime(),
+      scheduledFor: task.scheduled_for,
+    });
+    return;
+  }
 
   scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
 
@@ -167,6 +178,14 @@ function fireCronTask(
       t.fire_count = 1;
     });
   }
+
+  safeAppendCronRunLogForTask(task, {
+    status: "ok",
+    runAtMs: now.getTime(),
+    queueItemId: queuedItem.id,
+    scheduledFor: task.scheduled_for,
+    firedAt: nowIso,
+  });
 }
 
 /** Returns true if the task was marked as missed (caller should skip firing). */
@@ -179,6 +198,12 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
     updateTask(task.id, (t) => {
       t.status = "missed";
       t.missed_at = now.toISOString();
+    });
+    safeAppendCronRunLogForTask(task, {
+      status: "skipped",
+      summary: "missed",
+      runAtMs: now.getTime(),
+      scheduledFor: task.scheduled_for,
     });
     return true;
   }
@@ -237,6 +262,12 @@ function tick(
           fireCronTask(freshTask, now, socket, opts, processQueuedTurn);
         } catch (err) {
           console.error(`[Cron] Error firing task ${taskId}:`, err);
+          safeAppendCronRunLogForTask(freshTask, {
+            status: "error",
+            error: err instanceof Error ? err.message : String(err),
+            runAtMs: now.getTime(),
+            scheduledFor: freshTask.scheduled_for,
+          });
         }
       };
 

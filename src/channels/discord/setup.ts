@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "@/channels/accounts";
+import { upsertChannelAccountWithSecrets } from "@/channels/accounts";
 import type {
   DiscordChannelAccount,
   DiscordChannelMode,
@@ -187,7 +187,7 @@ export async function runDiscordSetup(): Promise<boolean> {
       updatedAt: now,
     };
 
-    upsertChannelAccount("discord", account);
+    await upsertChannelAccountWithSecrets("discord", account);
     console.log("\n✓ Discord bot configured!");
     console.log("Config written to: ~/.letta/channels/discord/accounts.json\n");
     console.log("Next steps:");

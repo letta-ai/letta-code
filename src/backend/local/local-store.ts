@@ -62,6 +62,7 @@ type StoredConversation = Conversation & {
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
 const DEFAULT_LOCAL_MODEL = "local/default";
+const LEGACY_LOCAL_CONTEXT_WINDOW_LIMIT = 128000;
 const DEFAULT_LOCAL_CONVERSATION_ID_PREFIX = "local-conv-";
 const DEFAULT_LOCAL_STORED_MESSAGE_ID_PREFIX = "letta-msg-";
 const DEFAULT_LOCAL_UI_MESSAGE_ID_PREFIX = "ui-msg-";
@@ -115,9 +116,7 @@ function createDefaultAgentRecord(
     system: "",
     tags: [],
     model: defaultAgentModel,
-    model_settings: {
-      context_window_limit: 128000,
-    },
+    model_settings: {},
   };
 }
 
@@ -466,6 +465,9 @@ export interface LocalStoreOptions {
   defaultAgentName?: string;
   defaultAgentModel?: string;
   defaultAgentModelSettings?: Record<string, unknown>;
+  modelSettingsForModel?: (
+    model: string,
+  ) => Record<string, unknown> | undefined;
   conversationIdPrefix?: string;
   storedMessageIdPrefix?: string;
   localMessageIdPrefix?: string;
@@ -786,6 +788,9 @@ export class LocalStore {
   private readonly defaultAgentName: string;
   private readonly defaultAgentModel: string;
   private readonly defaultAgentModelSettings: Record<string, unknown>;
+  private readonly modelSettingsForModel?: (
+    model: string,
+  ) => Record<string, unknown> | undefined;
   private readonly conversationIdPrefix: string;
   private readonly storedMessageIdPrefix: string;
   private readonly localMessageIdPrefix: string;
@@ -818,6 +823,7 @@ export class LocalStore {
     this.defaultAgentModelSettings = {
       ...(options.defaultAgentModelSettings ?? {}),
     };
+    this.modelSettingsForModel = options.modelSettingsForModel;
     this.conversationIdPrefix =
       options.conversationIdPrefix ?? DEFAULT_LOCAL_CONVERSATION_ID_PREFIX;
     this.storedMessageIdPrefix =
@@ -1047,6 +1053,40 @@ export class LocalStore {
     };
   }
 
+  private modelSettingsDefaultsForModel(
+    model: string,
+  ): Record<string, unknown> | undefined {
+    return (
+      this.modelSettingsForModel?.(model) ??
+      (model === this.defaultAgentModel
+        ? this.defaultAgentModelSettings
+        : undefined)
+    );
+  }
+
+  private projectableAgentRecord(record: LocalAgentRecord): LocalAgentRecord {
+    const defaults = this.modelSettingsDefaultsForModel(record.model);
+    if (!defaults || Object.keys(defaults).length === 0) return record;
+
+    const contextWindowLimit = record.model_settings.context_window_limit;
+    const defaultContextWindowLimit = defaults.context_window_limit;
+    const shouldReplaceLegacyContextWindow =
+      contextWindowLimit === LEGACY_LOCAL_CONTEXT_WINDOW_LIMIT &&
+      typeof defaultContextWindowLimit === "number" &&
+      defaultContextWindowLimit > LEGACY_LOCAL_CONTEXT_WINDOW_LIMIT;
+
+    return {
+      ...record,
+      model_settings: {
+        ...defaults,
+        ...record.model_settings,
+        ...(shouldReplaceLegacyContextWindow
+          ? { context_window_limit: defaultContextWindowLimit }
+          : {}),
+      },
+    };
+  }
+
   retrieveConversation(conversationId: string, agentId?: string): Conversation {
     const existing = this.findConversation(conversationId, agentId);
     if (existing) return existing;
@@ -1104,6 +1144,10 @@ export class LocalStore {
     conversationId: string,
     body: ConversationUpdateBody,
   ): Conversation {
+    if (conversationId === "default") {
+      throw new Error("Default conversation cannot be updated");
+    }
+
     const current = this.findConversation(conversationId);
     if (!current) {
       if (this.strictConversationAccess) {
@@ -2196,7 +2240,7 @@ export class LocalStore {
       this.conversations.get(key)?.in_context_message_ids ?? messageIds;
     const lastRunCompletion = defaultMessages.at(-1)?.date ?? null;
     return projectLocalAgentState(
-      record,
+      this.projectableAgentRecord(record),
       messageIds,
       inContextMessageIds,
       lastRunCompletion,

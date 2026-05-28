@@ -58,6 +58,8 @@ const READ_ONLY_SHELL_TOOLS = new Set([
   "Shell",
   "shell_command",
   "ShellCommand",
+  "exec_command",
+  "write_stdin",
   "run_shell_command",
   "RunShellCommand",
 ]);
@@ -617,23 +619,30 @@ function buildPermissionQuery(
     case "Bash": {
       // Bash: "Bash(command with args)"
       const command =
-        typeof toolArgs.command === "string"
-          ? toolArgs.command
-          : Array.isArray(toolArgs.command)
-            ? toolArgs.command.join(" ")
-            : "";
+        typeof toolArgs.cmd === "string"
+          ? toolArgs.cmd
+          : typeof toolArgs.command === "string"
+            ? toolArgs.command
+            : Array.isArray(toolArgs.command)
+              ? toolArgs.command.join(" ")
+              : "";
       return `Bash(${command})`;
     }
     case "shell":
-    case "shell_command": {
+    case "shell_command":
+    case "exec_command": {
       const command =
-        typeof toolArgs.command === "string"
-          ? toolArgs.command
-          : Array.isArray(toolArgs.command)
-            ? toolArgs.command.join(" ")
-            : "";
+        typeof toolArgs.cmd === "string"
+          ? toolArgs.cmd
+          : typeof toolArgs.command === "string"
+            ? toolArgs.command
+            : Array.isArray(toolArgs.command)
+              ? toolArgs.command.join(" ")
+              : "";
       return `Bash(${command})`;
     }
+    case "write_stdin":
+      return "Bash(write_stdin)";
     case "run_shell_command":
     case "RunShellCommand": {
       if (engine === "v1") {
@@ -656,6 +665,10 @@ function buildPermissionQuery(
 }
 
 function extractShellCommand(toolArgs: ToolArgs): string | string[] | null {
+  const cmd = toolArgs.cmd;
+  if (typeof cmd === "string") {
+    return cmd;
+  }
   const command = toolArgs.command;
   if (typeof command === "string" || Array.isArray(command)) {
     return command;
@@ -739,6 +752,7 @@ function getDefaultDecision(
     "read_file",
     "list_dir",
     "grep_files",
+    "write_stdin",
     "update_plan",
     // Codex toolset (PascalCase) - tools that don't require approval
     "ReadFile",
