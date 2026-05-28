@@ -50,12 +50,12 @@ import { debugLog } from "@/utils/debug";
 import { refreshFileIndex } from "@/utils/file-index";
 import { isRecord } from "@/utils/type-guards";
 import {
-  type CustomCapableToolPayload,
   functionToolForm,
   type JsonSchema,
   type ModelFacingToolForm,
-  serializeCustomCapableToolPayload,
+  serializeCustomTypeToolPayload,
   serializeFunctionOnlyToolPayload,
+  type ToolPayload,
 } from "./model-facing-tool";
 import {
   extractSecretEnvFromCommand,
@@ -781,9 +781,9 @@ function resolveInternalToolName(
 }
 
 /** Model-facing client tool payload sent through the client_tools field. */
-export type ClientTool = CustomCapableToolPayload;
+export type ClientTool = ToolPayload;
 
-export type ClientToolSerializationTarget = "function-only" | "custom-capable";
+export type ClientToolSerializationTarget = "function-only" | "custom-type";
 
 // ═══════════════════════════════════════════════════════════════
 // EXTERNAL TOOLS (SDK-side execution)
@@ -949,8 +949,8 @@ function buildClientToolsFromSnapshot(
 ): ClientTool[] {
   const builtInTools = Array.from(registry.entries()).map(([name, tool]) => {
     const serverName = getServerToolName(name);
-    return target === "custom-capable"
-      ? serializeCustomCapableToolPayload(serverName, tool.modelForm)
+    return target === "custom-type"
+      ? serializeCustomTypeToolPayload(serverName, tool.modelForm)
       : serializeFunctionOnlyToolPayload(serverName, tool.modelForm);
   });
   for (const name of externalTools.keys()) {

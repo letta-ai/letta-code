@@ -5,13 +5,13 @@ import { join } from "node:path";
 import type {
   AssistantMessage,
   AssistantMessageEvent,
-  Context,
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import {
   PiStreamAdapter,
   type PiStreamFunction,
+  type ProviderContext,
   toPiTools,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
@@ -78,7 +78,7 @@ function input(): ProviderTurnInput {
   };
 }
 
-function emptyTextBlocks(messages: Context["messages"]) {
+function emptyTextBlocks(messages: ProviderContext["messages"]) {
   return messages.flatMap((message) => {
     const content = message.content;
     if (!Array.isArray(content)) return [];
@@ -89,7 +89,7 @@ function emptyTextBlocks(messages: Context["messages"]) {
 }
 
 describe("PiStreamAdapter", () => {
-  test("preserves custom-capable tool metadata when building pi context", async () => {
+  test("preserves custom-type tool metadata when building pi context", async () => {
     const fallbackParameters = {
       type: "object",
       properties: { input: { type: "string" } },
@@ -119,7 +119,6 @@ describe("PiStreamAdapter", () => {
         type: "custom",
         name: "apply_patch",
         description: "Use apply_patch as a freeform tool",
-        parameters: fallbackParameters,
         format: {
           type: "grammar",
           syntax: "lark",
@@ -131,13 +130,16 @@ describe("PiStreamAdapter", () => {
         },
       },
     ]);
+    expect(
+      (tools?.[0] as Record<string, unknown> | undefined)?.parameters,
+    ).toBe(undefined);
   });
 
   test("removes OpenAI Responses replay item IDs before provider submission", async () => {
     let sanitizedPayload: unknown;
     const stream: PiStreamFunction = (
       _model: Model<string>,
-      _context: Context,
+      _context: ProviderContext,
       options?: SimpleStreamOptions & Record<string, unknown>,
     ) => {
       const payload = {
@@ -227,10 +229,10 @@ describe("PiStreamAdapter", () => {
         apiKey: "secret-key",
       });
 
-      let capturedContext: Context | undefined;
+      let capturedContext: ProviderContext | undefined;
       const stream: PiStreamFunction = (
         _model: Model<string>,
-        context: Context,
+        context: ProviderContext,
         _options?: SimpleStreamOptions & Record<string, unknown>,
       ) => {
         capturedContext = context;
@@ -353,7 +355,7 @@ describe("PiStreamAdapter", () => {
       let capturedEnv: Record<string, string | undefined> | undefined;
       const stream: PiStreamFunction = (
         _model: Model<string>,
-        _context: Context,
+        _context: ProviderContext,
         options?: SimpleStreamOptions & Record<string, unknown>,
       ) => {
         capturedOptions = options;
@@ -407,10 +409,10 @@ describe("PiStreamAdapter", () => {
   });
 
   test("strips trailing assistant messages from context before calling provider", async () => {
-    let capturedContext: Context | undefined;
+    let capturedContext: ProviderContext | undefined;
     const stream: PiStreamFunction = (
       _model: Model<string>,
-      context: Context,
+      context: ProviderContext,
     ) => {
       capturedContext = context;
       const finalMessage = assistantMessage();

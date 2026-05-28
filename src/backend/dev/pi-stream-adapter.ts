@@ -51,7 +51,7 @@ const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 
 export type PiStreamFunction = (
   model: Model<string>,
-  context: Context,
+  context: ProviderContext,
   options?: SimpleStreamOptions & Record<string, unknown>,
 ) => AsyncIterable<AssistantMessageEvent> & {
   result(): Promise<AssistantMessage>;
@@ -142,13 +142,23 @@ async function sleepWithAbort(
   });
 }
 
-type CustomCapableProviderTool = Tool & {
-  type?: "custom";
+type ProviderFunctionTool = Tool;
+
+type ProviderCustomTool = {
+  type: "custom";
+  name: string;
+  description: string;
   format?: CustomToolInputFormat;
   fallback?: {
     description?: string;
     parameters: JsonSchema;
   };
+};
+
+export type ProviderToolDefinition = ProviderFunctionTool | ProviderCustomTool;
+
+export type ProviderContext = Omit<Context, "tools"> & {
+  tools?: ProviderToolDefinition[];
 };
 
 function stringField(value: unknown): string | undefined {
@@ -178,7 +188,7 @@ function customToolInputFormat(
   return undefined;
 }
 
-function toPiTool(value: unknown): CustomCapableProviderTool | undefined {
+function toPiTool(value: unknown): ProviderToolDefinition | undefined {
   if (!isRecord(value)) return undefined;
   const name = stringField(value.name);
   if (!name) return undefined;
@@ -187,20 +197,22 @@ function toPiTool(value: unknown): CustomCapableProviderTool | undefined {
   if (value.type === "custom") {
     const fallback = isRecord(value.fallback) ? value.fallback : undefined;
     const fallbackParameters = jsonSchemaField(fallback?.parameters);
-    if (!fallback || !fallbackParameters) return undefined;
     const format = customToolInputFormat(value.format);
     return {
       type: "custom",
       name,
       description,
-      parameters: fallbackParameters as unknown as TSchema,
       ...(format ? { format } : {}),
-      fallback: {
-        ...(typeof fallback.description === "string"
-          ? { description: fallback.description }
-          : {}),
-        parameters: fallbackParameters,
-      },
+      ...(fallback && fallbackParameters
+        ? {
+            fallback: {
+              ...(typeof fallback.description === "string"
+                ? { description: fallback.description }
+                : {}),
+              parameters: fallbackParameters,
+            },
+          }
+        : {}),
     };
   }
 
@@ -213,8 +225,10 @@ function toPiTool(value: unknown): CustomCapableProviderTool | undefined {
   };
 }
 
-export function toPiTools(clientTools: unknown[]): Tool[] | undefined {
-  const tools: CustomCapableProviderTool[] = [];
+export function toPiTools(
+  clientTools: unknown[],
+): ProviderToolDefinition[] | undefined {
+  const tools: ProviderToolDefinition[] = [];
   for (const value of clientTools) {
     const tool = toPiTool(value);
     if (tool) tools.push(tool);
@@ -472,13 +486,14 @@ function isOverflowError(error: unknown, contextWindow?: number): boolean {
 
 function defaultStream(
   model: Model<string>,
-  context: Context,
+  context: ProviderContext,
   options?: SimpleStreamOptions & Record<string, unknown>,
 ) {
+  const piContext = context as Context;
   if (model.api === "bedrock-converse-stream") {
-    return stream(model, context, options);
+    return stream(model, piContext, options);
   }
-  return streamSimple(model, context, options);
+  return streamSimple(model, piContext, options);
 }
 
 export class PiStreamAdapter implements ProviderStreamAdapter {
@@ -522,7 +537,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       input.agent.model_settings,
       { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
     );
-    const context: Context = {
+    const context: ProviderContext = {
       systemPrompt: input.systemPrompt ?? input.agent.system,
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),

@@ -263,7 +263,7 @@ describe("tool execution context snapshot", () => {
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Agent"]);
   });
 
-  test("serializes apply_patch as custom-capable without changing function-only payloads", async () => {
+  test("serializes apply_patch as custom-type without changing function-only payloads", async () => {
     const prepared = await prepareToolExecutionContextForSpecificTools([
       "apply_patch",
     ]);
@@ -279,9 +279,11 @@ describe("tool execution context snapshot", () => {
     ]);
     expect(prepared.clientTools[0]).not.toHaveProperty("type", "custom");
 
-    expect(
-      getClientToolsForExecutionContext(prepared.contextId, "custom-capable"),
-    ).toEqual([
+    const customTypeTools = getClientToolsForExecutionContext(
+      prepared.contextId,
+      "custom-type",
+    );
+    expect(customTypeTools).toEqual([
       expect.objectContaining({
         type: "custom",
         name: "apply_patch",
@@ -299,6 +301,7 @@ describe("tool execution context snapshot", () => {
         }),
       }),
     ]);
+    expect(customTypeTools?.[0]).not.toHaveProperty("parameters");
   });
 
   test("request-scoped allowlist filters external tools by name", async () => {
@@ -516,7 +519,7 @@ describe("tool execution context snapshot", () => {
       throw new Error("MessageChannel tool was not prepared");
     }
 
-    if (!messageChannel.parameters) {
+    if (!("parameters" in messageChannel) || !messageChannel.parameters) {
       throw new Error("MessageChannel tool is missing parameters");
     }
 
@@ -642,11 +645,14 @@ describe("tool execution context snapshot", () => {
     );
     expect(messageChannel?.description).not.toContain("Telegram");
     expect(
-      (
-        messageChannel?.parameters?.properties as Record<
-          string,
-          { enum?: string[] }
-        >
+      (messageChannel &&
+      "parameters" in messageChannel &&
+      messageChannel.parameters
+        ? (messageChannel.parameters.properties as Record<
+            string,
+            { enum?: string[] }
+          >)
+        : {}
       ).channel?.enum,
     ).toEqual(["slack"]);
   });

@@ -3,7 +3,7 @@ import {
   customToolForm,
   functionToolForm,
   type ModelFacingToolForm,
-  serializeCustomCapableToolPayload,
+  serializeCustomTypeToolPayload,
   serializeFunctionOnlyToolPayload,
 } from "@/tools/model-facing-tool";
 
@@ -80,7 +80,7 @@ describe("model-facing tool serialization", () => {
     });
   });
 
-  test("serializes custom-capable payloads with custom metadata and fallback", () => {
+  test("serializes custom-type payloads with custom metadata and fallback", () => {
     const form: ModelFacingToolForm = customToolForm({
       description: "Custom freeform description",
       format: {
@@ -95,7 +95,7 @@ describe("model-facing tool serialization", () => {
       },
     });
 
-    expect(serializeCustomCapableToolPayload("ExampleTool", form)).toEqual({
+    expect(serializeCustomTypeToolPayload("ExampleTool", form)).toEqual({
       type: "custom",
       name: "ExampleTool",
       description: "Custom freeform description",

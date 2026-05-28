@@ -198,7 +198,7 @@ export async function sendMessageStreamWithBackend(
     getClientToolsForExecutionContext(
       contextId,
       backend.capabilities.customTypeToolPayloads
-        ? "custom-capable"
+        ? "custom-type"
         : "function-only",
     ) ?? preparedToolContext.clientTools;
   const { clientSkills, errors: clientSkillDiscoveryErrors } =

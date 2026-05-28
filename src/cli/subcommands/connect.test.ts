@@ -13,7 +13,7 @@ function setProviderTarget(target: "api" | "local") {
       byokProviderRefresh: target === "api",
       localModelCatalog: target === "local",
       localMemfs: target === "local",
-      customTypeToolPayloads: target === "local",
+      customTypeToolPayloads: false,
     },
   } as Backend);
 }

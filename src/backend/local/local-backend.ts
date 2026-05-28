@@ -236,7 +236,9 @@ export class LocalBackend extends HeadlessBackend {
     byokProviderRefresh: false,
     localModelCatalog: true,
     localMemfs: true,
-    customTypeToolPayloads: true,
+    // Keep current pi-ai on function-style tool payloads until its OpenAI
+    // Responses custom/freeform tool support is available in this package.
+    customTypeToolPayloads: false,
   };
 
   private readonly memoryDir?: string;

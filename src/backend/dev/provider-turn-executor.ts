@@ -104,14 +104,14 @@ function stringifyToolInput(input: unknown): string {
   return JSON.stringify(input ?? {});
 }
 
-type CustomCapableToolCall = ToolCall & {
+type CustomTypeToolCall = ToolCall & {
   input?: string;
   customInput?: string;
   kind?: "custom";
 };
 
 function customToolCallInput(toolCall: ToolCall): string | undefined {
-  const customToolCall = toolCall as CustomCapableToolCall;
+  const customToolCall = toolCall as CustomTypeToolCall;
   return customToolCall.input ?? customToolCall.customInput;
 }
 

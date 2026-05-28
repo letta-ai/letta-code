@@ -35,11 +35,10 @@ export type FunctionOnlyToolPayload = {
   parameters: JsonSchema;
 };
 
-export type CustomCapableCustomToolPayload = {
+export type CustomTypeToolPayload = {
   type: "custom";
   name: string;
   description: string;
-  parameters?: JsonSchema;
   format?: CustomToolInputFormat;
   fallback: {
     description: string;
@@ -47,9 +46,7 @@ export type CustomCapableCustomToolPayload = {
   };
 };
 
-export type CustomCapableToolPayload =
-  | FunctionOnlyToolPayload
-  | CustomCapableCustomToolPayload;
+export type ToolPayload = FunctionOnlyToolPayload | CustomTypeToolPayload;
 
 export function functionToolForm(input: {
   description: string;
@@ -94,10 +91,10 @@ export function serializeFunctionOnlyToolPayload(
   };
 }
 
-export function serializeCustomCapableToolPayload(
+export function serializeCustomTypeToolPayload(
   name: string,
   form: ModelFacingToolForm,
-): CustomCapableToolPayload {
+): ToolPayload {
   if (form.type === "custom") {
     return {
       type: "custom",
