@@ -2205,6 +2205,14 @@ export async function executeTool(
       };
     }
 
+    // Apply rewritten tool input from PreToolUse hooks (e.g. rtk command rewrite)
+    if (preHookResult.updatedInput) {
+      args = {
+        ...(args as Record<string, unknown>),
+        ...preHookResult.updatedInput,
+      };
+    }
+
     try {
       // Inject options for tools that support them without altering schemas
       let enhancedArgs = args;

@@ -354,6 +354,7 @@ export async function executeHooks(
   const feedback: string[] = [];
   let blocked = false;
   let errored = false;
+  let updatedInput: Record<string, unknown> | undefined;
 
   for (const hook of hooks) {
     const result = await executeHookCommand(hook, input, workingDirectory);
@@ -362,12 +363,30 @@ export async function executeHooks(
     // Collect feedback from stdout when hook succeeds (exit 0)
     // Only for UserPromptSubmit and SessionStart hooks
     if (result.exitCode === HookExitCode.ALLOW) {
-      if (
-        result.stdout?.trim() &&
-        (input.event_type === "UserPromptSubmit" ||
-          input.event_type === "SessionStart")
-      ) {
-        feedback.push(result.stdout.trim());
+      if (result.stdout?.trim()) {
+        // Try to parse updatedInput from hook output (PreToolUse rewrite protocol)
+        if (input.event_type === "PreToolUse" && !updatedInput) {
+          try {
+            const json = JSON.parse(result.stdout.trim());
+            const rewritten = json?.hookSpecificOutput?.updatedInput;
+            if (
+              rewritten &&
+              typeof rewritten === "object" &&
+              !Array.isArray(rewritten)
+            ) {
+              updatedInput = rewritten as Record<string, unknown>;
+            }
+          } catch {
+            // Not JSON or no updatedInput — ignore
+          }
+        }
+
+        if (
+          input.event_type === "UserPromptSubmit" ||
+          input.event_type === "SessionStart"
+        ) {
+          feedback.push(result.stdout.trim());
+        }
       }
       continue;
     }
@@ -398,6 +417,7 @@ export async function executeHooks(
     errored,
     feedback,
     results,
+    ...(updatedInput && { updatedInput }),
   };
 }
 
