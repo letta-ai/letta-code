@@ -269,6 +269,93 @@ describe("channel account list responses", () => {
     }
   });
 
+  test("refreshes Slack accounts with auto-derived display names", async () => {
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    let refreshCalls = 0;
+
+    __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
+      ...actualChannelsService,
+      listChannelAccountSnapshots: () => [
+        {
+          channelId: "slack" as const,
+          accountId: "slack-app-1",
+          displayName: "Old Slack Name",
+          displayNameSource: "auto" as const,
+          enabled: true,
+          configured: true,
+          running: false,
+          mode: "socket" as const,
+          dmPolicy: "open" as const,
+          allowedUsers: [],
+          config: {
+            mode: "socket",
+            has_bot_token: true,
+            has_app_token: true,
+            agent_id: "agent-1",
+            default_permission_mode: "standard",
+          },
+          hasBotToken: true,
+          hasAppToken: true,
+          agentId: "agent-1",
+          defaultPermissionMode: "standard" as const,
+          createdAt: "2026-04-13T00:00:00.000Z",
+          updatedAt: "2026-04-13T00:00:00.000Z",
+        },
+      ],
+      refreshChannelAccountDisplayNameLive: async () => {
+        refreshCalls += 1;
+        return {
+          channelId: "slack" as const,
+          accountId: "slack-app-1",
+          displayName: "New Slack Name",
+          displayNameSource: "auto" as const,
+          enabled: true,
+          configured: true,
+          running: false,
+          mode: "socket" as const,
+          dmPolicy: "open" as const,
+          allowedUsers: [],
+          config: {
+            mode: "socket",
+            has_bot_token: true,
+            has_app_token: true,
+            agent_id: "agent-1",
+            default_permission_mode: "standard",
+          },
+          hasBotToken: true,
+          hasAppToken: true,
+          agentId: "agent-1",
+          defaultPermissionMode: "standard" as const,
+          createdAt: "2026-04-13T00:00:00.000Z",
+          updatedAt: "2026-04-13T00:00:00.000Z",
+        };
+      },
+    }));
+
+    try {
+      await __listenClientTestUtils.handleChannelsProtocolCommand(
+        {
+          type: "channel_accounts_list",
+          request_id: "channel-accounts-list-auto-name-1",
+          channel_id: "slack",
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {
+          onStatusChange: undefined,
+          connectionId: "conn-test",
+        },
+        async () => {},
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(refreshCalls).toBe(1);
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
   test("round-trips plugin config through create, update, list, and get", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => []);

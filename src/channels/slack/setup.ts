@@ -94,6 +94,7 @@ export async function runSlackSetup(): Promise<boolean> {
       channel: "slack",
       accountId: randomUUID(),
       displayName,
+      displayNameSource: displayName ? "auto" : undefined,
       enabled: true,
       mode: "socket",
       botToken,

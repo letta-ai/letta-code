@@ -460,12 +460,40 @@ describe("channel service", () => {
   });
 
   test("forced display-name refresh clears stale labels when identity lookup returns empty", async () => {
+    createChannelAccountLive(
+      "slack",
+      {
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+      },
+      { accountId: "slack-bot" },
+    );
+
+    __testOverrideResolveChannelAccountDisplayName(
+      async () => "Old Slack Name",
+    );
+    await refreshChannelAccountDisplayNameLive("slack", "slack-bot");
+
     __testOverrideResolveChannelAccountDisplayName(async () => undefined);
+
+    const refreshed = await refreshChannelAccountDisplayNameLive(
+      "slack",
+      "slack-bot",
+      { force: true },
+    );
+
+    expect(refreshed.displayName).toBeUndefined();
+  });
+
+  test("forced display-name refresh preserves user-provided labels", async () => {
+    __testOverrideResolveChannelAccountDisplayName(
+      async () => "Slack API Name",
+    );
 
     createChannelAccountLive(
       "slack",
       {
-        displayName: "Old Slack Name",
+        displayName: "Custom Slack Name",
         botToken: "xoxb-test-token",
         appToken: "xapp-test-token",
       },
@@ -478,7 +506,7 @@ describe("channel service", () => {
       { force: true },
     );
 
-    expect(refreshed.displayName).toBeUndefined();
+    expect(refreshed.displayName).toBe("Custom Slack Name");
   });
 
   test("config helpers resolve the sole account instead of assuming a default id", async () => {
