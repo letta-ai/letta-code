@@ -396,6 +396,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setConversationOverrideContextWindowLimit,
     setConversationOverrideModelSettings,
     setCurrentPersonalityId,
@@ -2029,7 +2030,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "",
               "USAGE",
               "  /rename agent [name]      — rename the agent",
-              "  /rename convo [name]      — rename the convo, or auto-generate when omitted",
+              "  /rename convo [name]      — rename a non-default convo, or auto-generate when omitted",
               "  /rename help              — show this help",
             ].join("\n");
             cmd.finish(output, true);
@@ -2074,6 +2075,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 await backend.updateConversation(conversationId, {
                   summary: conversationTitle,
                 });
+                setConversationSummary(conversationTitle);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(
                   `Conversation title set to "${conversationTitle}"`,
@@ -2083,6 +2085,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 await backend.updateConversation(conversationId, {
                   summary: newValue,
                 });
+                setConversationSummary(newValue);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(`Conversation renamed to "${newValue}"`, true);
               }

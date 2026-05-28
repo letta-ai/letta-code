@@ -1144,6 +1144,10 @@ export class LocalStore {
     conversationId: string,
     body: ConversationUpdateBody,
   ): Conversation {
+    if (conversationId === "default") {
+      throw new Error("Default conversation cannot be updated");
+    }
+
     const current = this.findConversation(conversationId);
     if (!current) {
       if (this.strictConversationAccess) {
