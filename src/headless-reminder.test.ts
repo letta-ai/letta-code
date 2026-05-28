@@ -66,4 +66,28 @@ describe("headless shared reminder wiring", () => {
     expect(source).toContain("await drainStreamWithResume(");
     expect(source).not.toContain("for await (const _ of approvalStream)");
   });
+
+  test("bidirectional mode wires reflection launcher into shared reminders", () => {
+    const headlessPath = fileURLToPath(
+      new URL("./headless.ts", import.meta.url),
+    );
+    const source = readFileSync(headlessPath, "utf-8");
+
+    expect(source).toContain("const maybeLaunchReflectionSubagent = async (");
+    expect(source).toContain("buildAutoReflectionPayload(");
+    expect(source).toContain('subagentType: "reflection"');
+    expect(source).toContain("maybeLaunchReflectionSubagent,");
+  });
+
+  test("bidirectional mode records successful turns for reflection", () => {
+    const headlessPath = fileURLToPath(
+      new URL("./headless.ts", import.meta.url),
+    );
+    const source = readFileSync(headlessPath, "utf-8");
+
+    expect(source).toContain("const userOtid = randomUUID();");
+    expect(source).toContain("buffers.userLineIdByOtid.set(userOtid");
+    expect(source).toContain("content: enrichedContent, otid: userOtid");
+    expect(source).toContain("appendTranscriptDeltaJsonl(");
+  });
 });
