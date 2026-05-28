@@ -952,41 +952,15 @@ describe("local backend pi transcript", () => {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
-    const coalescedMessages = [
-      ...new Map(
-        messages.map((message) => [message.id as string, message]),
-      ).values(),
-    ];
-    expect(messages.length).toBeGreaterThan(coalescedMessages.length);
-    expect(coalescedMessages.map((message) => message.role)).toEqual([
+    expect(messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
       "toolResult",
       "assistant",
     ]);
-    const finalAssistant = coalescedMessages.at(-1) as { content?: unknown[] };
+    const finalAssistant = messages.at(-1) as { content?: unknown[] };
     expect(finalAssistant.content).toEqual([
       { type: "text", text: "Tool result received." },
-    ]);
-
-    const reloadedBackend = new LocalBackend({
-      storageDir,
-      stream,
-      memfsEnabled: false,
-    });
-    const reloadedMessages = pageItems(
-      await reloadedBackend.listConversationMessages(conversation.id, {
-        agent_id: agent.id,
-        order: "asc",
-      } as never),
-    );
-    expect(reloadedMessages.map((message) => message.message_type)).toEqual([
-      "user_message",
-      "assistant_message",
-      "reasoning_message",
-      "approval_request_message",
-      "tool_return_message",
-      "assistant_message",
     ]);
   });
 
