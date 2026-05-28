@@ -10,18 +10,48 @@ const headlessSource = readFileSync(
 );
 
 describe("provider fallback maps", () => {
+  test("interactive Opus 4.8 fallbacks use Bedrock Opus 4.8", () => {
+    expect(PROVIDER_FALLBACK_MAP.opus).toBe("bedrock-opus-4.8");
+    for (const model of [
+      "opus-4.8-low",
+      "opus-4.8-medium",
+      "opus-4.8-high",
+      "opus-4.8-xhigh",
+      "opus-4.8-max",
+    ]) {
+      expect(PROVIDER_FALLBACK_MAP[model]).toBe("bedrock-opus-4.8");
+    }
+  });
+
   test("interactive Opus 4.7 fallbacks use Bedrock Opus 4.7", () => {
-    expect(PROVIDER_FALLBACK_MAP.opus).toBe("bedrock-opus-4.7");
-    expect(PROVIDER_FALLBACK_MAP["opus-4.7-low"]).toBe("bedrock-opus-4.7");
-    expect(PROVIDER_FALLBACK_MAP["opus-4.7-high"]).toBe("bedrock-opus-4.7");
-    expect(PROVIDER_FALLBACK_MAP["opus-4.7-xhigh"]).toBe("bedrock-opus-4.7");
-    expect(PROVIDER_FALLBACK_MAP["opus-4.7-max"]).toBe("bedrock-opus-4.7");
+    for (const model of [
+      "opus-4.7-low",
+      "opus-4.7-medium",
+      "opus-4.7-high",
+      "opus-4.7-xhigh",
+      "opus-4.7-max",
+    ]) {
+      expect(PROVIDER_FALLBACK_MAP[model]).toBe("bedrock-opus-4.7");
+    }
+  });
+
+  test("headless Opus 4.8 fallbacks use Bedrock Opus 4.8", () => {
+    expect(headlessSource).toContain('opus: "bedrock-opus-4.8"');
+    for (const model of [
+      "opus-4.8-low",
+      "opus-4.8-medium",
+      "opus-4.8-high",
+      "opus-4.8-xhigh",
+      "opus-4.8-max",
+    ]) {
+      expect(headlessSource).toContain(`"${model}": "bedrock-opus-4.8"`);
+    }
   });
 
   test("headless Opus 4.7 fallbacks use Bedrock Opus 4.7", () => {
-    expect(headlessSource).toContain('opus: "bedrock-opus-4.7"');
     for (const model of [
       "opus-4.7-low",
+      "opus-4.7-medium",
       "opus-4.7-high",
       "opus-4.7-xhigh",
       "opus-4.7-max",

@@ -255,12 +255,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           | { reasoning_effort?: unknown; enable_reasoner?: unknown }
           | undefined;
         const rawReasoningEffort = modelUpdateArgs?.reasoning_effort;
+        const usesDistinctXHighLabel =
+          model.label.includes("Opus 4.7") || model.label.includes("Opus 4.8");
         const reasoningLevel =
           typeof rawReasoningEffort === "string"
             ? rawReasoningEffort === "none"
               ? "no"
               : rawReasoningEffort === "xhigh"
-                ? model.label.includes("Opus 4.7")
+                ? usesDistinctXHighLabel
                   ? "extra-high"
                   : "max"
                 : rawReasoningEffort

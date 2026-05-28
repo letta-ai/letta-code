@@ -169,9 +169,16 @@ const EMPTY_RESPONSE_MAX_RETRIES = 2;
 // Provider fallback: Anthropic model ID → Bedrock model ID.
 // After 1 failed retry against Anthropic, automatically retry via Bedrock.
 const PROVIDER_FALLBACK_MAP: Record<string, string> = {
+  // Opus 4.8 variants → Bedrock Opus 4.8
+  opus: "bedrock-opus-4.8",
+  "opus-4.8-low": "bedrock-opus-4.8",
+  "opus-4.8-medium": "bedrock-opus-4.8",
+  "opus-4.8-high": "bedrock-opus-4.8",
+  "opus-4.8-xhigh": "bedrock-opus-4.8",
+  "opus-4.8-max": "bedrock-opus-4.8",
   // Opus 4.7 variants → Bedrock Opus 4.7
-  opus: "bedrock-opus-4.7",
   "opus-4.7-low": "bedrock-opus-4.7",
+  "opus-4.7-medium": "bedrock-opus-4.7",
   "opus-4.7-high": "bedrock-opus-4.7",
   "opus-4.7-xhigh": "bedrock-opus-4.7",
   "opus-4.7-max": "bedrock-opus-4.7",
