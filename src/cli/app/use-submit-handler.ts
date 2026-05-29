@@ -89,9 +89,11 @@ import {
 import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-toggle";
 import {
   buildAutoReflectionPayload,
+  buildMultiReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
+  finalizeMultiReflectionPayload,
 } from "@/cli/helpers/reflection-transcript";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
@@ -326,6 +328,55 @@ type SubmitHandlerContext = {
   userCancelledRef: MutableRefObject<boolean>;
   onReload?: (agentId: string, conversationId: string) => Promise<void>;
 };
+
+type ReflectCommandArgs =
+  | { kind: "single" }
+  | { kind: "recent"; limit: number }
+  | { kind: "conversations"; conversationIds: string[] };
+
+function parseReflectCommandArgs(input: string): ReflectCommandArgs {
+  const parts = input.trim().split(/\s+/).slice(1);
+  if (parts.length === 0) {
+    return { kind: "single" };
+  }
+
+  let recentLimit: number | null = null;
+  const conversationIds: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === "--recent") {
+      const raw = parts[index + 1];
+      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error("Usage: /reflect --recent <positive integer>");
+      }
+      recentLimit = parsed;
+      index += 1;
+      continue;
+    }
+    if (part === "--conversation") {
+      const conversationId = parts[index + 1];
+      if (!conversationId) {
+        throw new Error("Usage: /reflect --conversation <conversation-id>");
+      }
+      conversationIds.push(conversationId);
+      index += 1;
+      continue;
+    }
+    throw new Error("Usage: /reflect [--recent N | --conversation <id> ...]");
+  }
+
+  if (recentLimit !== null && conversationIds.length > 0) {
+    throw new Error("Use either --recent or --conversation, not both.");
+  }
+  if (recentLimit !== null) {
+    return { kind: "recent", limit: recentLimit };
+  }
+  if (conversationIds.length > 0) {
+    return { kind: "conversations", conversationIds };
+  }
+  return { kind: "single" };
+}
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
   const {
@@ -2744,7 +2795,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
 
         // Special handling for /reflect command - manually launch reflection subagent
-        if (trimmed === "/reflect") {
+        if (trimmed === "/reflect" || trimmed.startsWith("/reflect ")) {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
 
           if (!isActiveMemfsEnabled(agentId)) {
@@ -2763,6 +2814,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           try {
+            const reflectArgs = parseReflectCommandArgs(trimmed);
             const reflectionConversationId = conversationIdRef.current;
 
             // Fetch the agent's system prompt so the reflection payload includes
@@ -2775,14 +2827,31 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               // Non-fatal — the reflection payload will just omit the system prompt.
             }
 
-            const autoPayload = await buildAutoReflectionPayload(
-              agentId,
-              reflectionConversationId,
-              systemPrompt,
-            );
+            const reflectionPayload =
+              reflectArgs.kind === "single"
+                ? await buildAutoReflectionPayload(
+                    agentId,
+                    reflectionConversationId,
+                    systemPrompt,
+                  )
+                : await buildMultiReflectionPayload({
+                    agentId,
+                    selectionPolicy:
+                      reflectArgs.kind === "recent"
+                        ? { mode: "recent", limit: reflectArgs.limit }
+                        : {
+                            mode: "explicit-conversations",
+                            conversationIds: reflectArgs.conversationIds,
+                          },
+                    systemPrompt,
+                  });
 
-            if (!autoPayload) {
-              cmd.fail("No new transcript content to reflect on.");
+            if (!reflectionPayload) {
+              cmd.fail(
+                reflectArgs.kind === "single"
+                  ? "No new transcript content to reflect on."
+                  : "No transcript content found for the selected conversations.",
+              );
               return { submitted: true };
             }
 
@@ -2802,7 +2871,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               prompt: reflectionPrompt,
               description: "Reflecting on conversation",
               silentCompletion: true,
-              transcriptPath: autoPayload.payloadPath,
+              transcriptPath: reflectionPayload.payloadPath,
               parentScope: {
                 agentId,
                 conversationId: reflectionConversationId,
@@ -2817,13 +2886,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   conversationId: reflectionConversationId,
                   error,
                 });
-                await finalizeAutoReflectionPayload(
-                  agentId,
-                  reflectionConversationId,
-                  autoPayload.payloadPath,
-                  autoPayload.endSnapshotLine,
-                  success,
-                );
+                if ("manifest" in reflectionPayload) {
+                  await finalizeMultiReflectionPayload(
+                    agentId,
+                    reflectionPayload.manifest,
+                    success,
+                  );
+                } else {
+                  await finalizeAutoReflectionPayload(
+                    agentId,
+                    reflectionConversationId,
+                    reflectionPayload.payloadPath,
+                    reflectionPayload.endSnapshotLine,
+                    success,
+                  );
+                }
 
                 const msg = await handleMemorySubagentCompletion(
                   {
@@ -2852,12 +2929,16 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             telemetry.trackReflectionStart("manual", {
               subagentId: reflectionAgentId ?? undefined,
               conversationId: reflectionConversationId,
-              startMessageId: autoPayload.startMessageId,
-              endMessageId: autoPayload.endMessageId,
+              startMessageId: reflectionPayload.startMessageId,
+              endMessageId: reflectionPayload.endMessageId,
             });
 
+            const reflectedDescription =
+              "manifest" in reflectionPayload
+                ? `${reflectionPayload.manifest.transcripts.length} transcript(s)`
+                : "the recent conversation";
             cmd.finish(
-              `Reflecting on the recent conversation. View the transcript here: ${autoPayload.payloadPath}`,
+              `Reflecting on ${reflectedDescription}. View the payload here: ${reflectionPayload.payloadPath}`,
               true,
             );
           } catch (error) {

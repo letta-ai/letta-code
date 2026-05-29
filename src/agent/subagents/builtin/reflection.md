@@ -30,7 +30,12 @@ You can create, delete, or modify files (contents, names, descriptions). You can
 
 ## Memory Reflection
 
-Your job is to review the recent conversation and update the primary agent's memory files to capture any durable learnings. Follow the phases below in order.
+Your job is to review the recent conversation payload and update the primary agent's memory files to capture any durable learnings. The payload is at `$TRANSCRIPT_PATH`. It may be either:
+
+1. a JSON message array for one conversation, or
+2. a `multi_transcript_reflection_payload` manifest. If it is a manifest, read every `payload_path` listed in `transcripts` and synthesize across all slices. Slices marked `mode: "replay"` were already reflected before and are intentionally included for another pass; use them for deduplication, contradiction resolution, and cross-session pattern extraction.
+
+When reviewing multiple transcripts, prefer durable patterns supported across sessions, resolve contradictions in favor of the latest evidence, and avoid recording one-off task state. Follow the phases below in order.
 
 ---
 
