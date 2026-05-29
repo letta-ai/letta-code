@@ -251,7 +251,7 @@
       "description": "Anthropic's best model (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
-        "context_window": 950000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "reasoning_effort": "high",
         "enable_reasoner": true,
@@ -264,7 +264,7 @@
       "label": "Opus 4.8",
       "description": "Opus 4.8 (low reasoning)",
       "updateArgs": {
-        "context_window": 950000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "reasoning_effort": "low",
         "enable_reasoner": true,
@@ -278,7 +278,7 @@
       "label": "Opus 4.8",
       "description": "Opus 4.8 (med reasoning)",
       "updateArgs": {
-        "context_window": 950000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "reasoning_effort": "medium",
         "enable_reasoner": true,
@@ -292,7 +292,7 @@
       "label": "Opus 4.8",
       "description": "Opus 4.8 (high reasoning)",
       "updateArgs": {
-        "context_window": 950000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "reasoning_effort": "high",
         "enable_reasoner": true,
@@ -305,7 +305,7 @@
       "label": "Opus 4.8",
       "description": "Opus 4.8 (extra-high reasoning)",
       "updateArgs": {
-        "context_window": 950000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "reasoning_effort": "xhigh",
         "enable_reasoner": true,
@@ -318,7 +318,7 @@
       "label": "Opus 4.8",
       "description": "Opus 4.8 (max reasoning)",
       "updateArgs": {
-        "context_window": 950000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "reasoning_effort": "max",
         "enable_reasoner": true,
