@@ -11,17 +11,17 @@ const headlessSource = readFileSync(
 
 describe("provider fallback maps", () => {
   test("interactive Opus 4.7 fallbacks use Bedrock Opus 4.7", () => {
-    expect(PROVIDER_FALLBACK_MAP.opus).toBe("bedrock-opus-4.7");
     expect(PROVIDER_FALLBACK_MAP["opus-4.7-low"]).toBe("bedrock-opus-4.7");
+    expect(PROVIDER_FALLBACK_MAP["opus-4.7-medium"]).toBe("bedrock-opus-4.7");
     expect(PROVIDER_FALLBACK_MAP["opus-4.7-high"]).toBe("bedrock-opus-4.7");
     expect(PROVIDER_FALLBACK_MAP["opus-4.7-xhigh"]).toBe("bedrock-opus-4.7");
     expect(PROVIDER_FALLBACK_MAP["opus-4.7-max"]).toBe("bedrock-opus-4.7");
   });
 
   test("headless Opus 4.7 fallbacks use Bedrock Opus 4.7", () => {
-    expect(headlessSource).toContain('opus: "bedrock-opus-4.7"');
     for (const model of [
       "opus-4.7-low",
+      "opus-4.7-medium",
       "opus-4.7-high",
       "opus-4.7-xhigh",
       "opus-4.7-max",

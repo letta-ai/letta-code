@@ -53,7 +53,7 @@ describe("listener provider fallback", () => {
 
   test("maps Opus 4.7 aliases to Bedrock Opus 4.7", () => {
     for (const [model, sourceModelId] of [
-      ["anthropic/claude-opus-4-7", "opus"],
+      ["anthropic/claude-opus-4-7", "opus-4.7-medium"],
       ["opus-4.7-high", "opus-4.7-high"],
       ["opus-4.7-max", "opus-4.7-max"],
     ] as const) {

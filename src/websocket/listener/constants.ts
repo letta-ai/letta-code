@@ -16,8 +16,8 @@ export const MAX_POST_STOP_APPROVAL_RECOVERY = 2;
 // generic/latest aliases unless the Bedrock target is the same model family.
 export const PROVIDER_FALLBACK_MAP: Record<string, string> = {
   // Opus 4.7 variants -> Bedrock Opus 4.7.
-  opus: "bedrock-opus-4.7",
   "opus-4.7-low": "bedrock-opus-4.7",
+  "opus-4.7-medium": "bedrock-opus-4.7",
   "opus-4.7-high": "bedrock-opus-4.7",
   "opus-4.7-xhigh": "bedrock-opus-4.7",
   "opus-4.7-max": "bedrock-opus-4.7",
