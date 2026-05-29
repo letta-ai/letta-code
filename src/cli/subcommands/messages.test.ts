@@ -1,5 +1,4 @@
 import {
-  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -8,7 +7,9 @@ import {
   spyOn,
   test,
 } from "bun:test";
+import { runMessagesSubcommand } from "@/cli/subcommands/messages";
 
+const initializeSettingsMock = mock(() => Promise.resolve());
 const searchMessagesForBackendMock = mock((_body: Record<string, unknown>) =>
   Promise.resolve([]),
 );
@@ -16,20 +17,6 @@ const backendMock = {
   listAgentMessages: mock(() => Promise.resolve({ items: [] })),
   listConversationMessages: mock(() => Promise.resolve({ items: [] })),
 };
-
-mock.module("@/backend", () => ({
-  getBackend: mock(() => backendMock),
-}));
-
-mock.module("@/backend/message-search", () => ({
-  searchMessagesForBackend: searchMessagesForBackendMock,
-}));
-
-const { runMessagesSubcommand } = await import("@/cli/subcommands/messages");
-
-afterAll(() => {
-  mock.restore();
-});
 
 function captureConsole() {
   const stdout: string[] = [];
@@ -55,12 +42,21 @@ function captureConsole() {
   };
 }
 
+function runMessages(argv: string[]) {
+  return runMessagesSubcommand(argv, {
+    initializeSettings: initializeSettingsMock,
+    getBackend: () => backendMock as never,
+    searchMessagesForBackend: searchMessagesForBackendMock as never,
+  });
+}
+
 describe("messages subcommand conversation scoping", () => {
   let priorAgentId: string | undefined;
 
   beforeEach(() => {
     priorAgentId = process.env.LETTA_AGENT_ID;
     delete process.env.LETTA_AGENT_ID;
+    initializeSettingsMock.mockClear();
     searchMessagesForBackendMock.mockClear();
     backendMock.listAgentMessages.mockClear();
     backendMock.listConversationMessages.mockClear();
@@ -74,7 +70,7 @@ describe("messages subcommand conversation scoping", () => {
   test("search rejects default conversation without an agent", async () => {
     const capture = captureConsole();
     try {
-      const code = await runMessagesSubcommand([
+      const code = await runMessages([
         "search",
         "--query",
         "needle",
@@ -96,7 +92,7 @@ describe("messages subcommand conversation scoping", () => {
     process.env.LETTA_AGENT_ID = "agent-current";
     const capture = captureConsole();
     try {
-      const code = await runMessagesSubcommand([
+      const code = await runMessages([
         "search",
         "--query",
         "needle",
@@ -122,7 +118,7 @@ describe("messages subcommand conversation scoping", () => {
     process.env.LETTA_AGENT_ID = "agent-current";
     const capture = captureConsole();
     try {
-      const code = await runMessagesSubcommand([
+      const code = await runMessages([
         "search",
         "--query",
         "needle",
@@ -145,7 +141,7 @@ describe("messages subcommand conversation scoping", () => {
   test("list allows non-default conversation without an agent", async () => {
     const capture = captureConsole();
     try {
-      const code = await runMessagesSubcommand([
+      const code = await runMessages([
         "list",
         "--conversation",
         "local-conv-1",
@@ -165,7 +161,7 @@ describe("messages subcommand conversation scoping", () => {
   test("list rejects default conversation without an agent", async () => {
     const capture = captureConsole();
     try {
-      const code = await runMessagesSubcommand(["list"]);
+      const code = await runMessages(["list"]);
 
       expect(code).toBe(1);
       expect(backendMock.listConversationMessages).not.toHaveBeenCalled();

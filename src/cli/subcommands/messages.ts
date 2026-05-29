@@ -8,6 +8,12 @@ import { settingsManager } from "@/settings-manager";
 type SearchMode = "vector" | "fts" | "hybrid";
 type ListOrder = "asc" | "desc";
 
+type MessagesSubcommandDeps = {
+  initializeSettings?: () => Promise<void>;
+  getBackend?: typeof getBackend;
+  searchMessagesForBackend?: typeof searchMessagesForBackend;
+};
+
 type TranscriptMessage = {
   id?: string;
   date?: string;
@@ -157,7 +163,10 @@ function parseMessagesArgs(argv: string[]) {
   });
 }
 
-export async function runMessagesSubcommand(argv: string[]): Promise<number> {
+export async function runMessagesSubcommand(
+  argv: string[],
+  deps: MessagesSubcommandDeps = {},
+): Promise<number> {
   let parsed: ReturnType<typeof parseMessagesArgs>;
   try {
     parsed = parseMessagesArgs(argv);
@@ -175,8 +184,10 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
   }
 
   try {
-    await settingsManager.initialize();
-    const backend = getBackend();
+    await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
+    const backend = (deps.getBackend ?? getBackend)();
+    const searchMessages =
+      deps.searchMessagesForBackend ?? searchMessagesForBackend;
 
     const renderText = (value: unknown): string => {
       if (typeof value === "string") return value;
@@ -388,7 +399,7 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
           : {}),
       };
 
-      const result = await searchMessagesForBackend(searchBody);
+      const result = await searchMessages(searchBody);
 
       console.log(JSON.stringify(result, null, 2));
       return 0;
