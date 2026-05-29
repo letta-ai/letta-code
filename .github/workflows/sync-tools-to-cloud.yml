@@ -26,6 +26,7 @@ jobs:
       pull-requests: read
     env:
       PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
 
     steps:
       - uses: actions/checkout@v6
@@ -63,7 +64,16 @@ jobs:
                - Any test files adjacent to the above
                If the src/tools/ change has no user-visible impact in the cloud UI (e.g. pure impl refactor, no schema/name changes), respond with exactly: `NO_SYNC_NEEDED` and stop.
 
-            4. Clone letta-cloud and make the change:
+            4. Resolve the PR author's login. For auto-triggered runs it is already set:
+               ```bash
+               PR_AUTHOR="${{ env.PR_AUTHOR }}"
+               ```
+               If that is empty (manual dispatch), look it up:
+               ```bash
+               PR_AUTHOR=$(gh pr view $PR_NUMBER --repo letta-ai/letta-code --json author --jq '.author.login')
+               ```
+
+            5. Clone letta-cloud and make the change:
                ```bash
                gh repo clone letta-ai/letta-cloud /tmp/letta-cloud
                cd /tmp/letta-cloud
@@ -71,7 +81,7 @@ jobs:
                ```
                Make the necessary edits. Keep the change minimal and focused on what the letta-code PR actually changed.
 
-            5. Push the branch and open a PR:
+            6. Push the branch and open a PR, tagging the original author as reviewer:
                ```bash
                cd /tmp/letta-cloud
                git add -A
@@ -80,10 +90,11 @@ jobs:
                gh pr create \
                  --repo letta-ai/letta-cloud \
                  --title "sync(tools): reflect letta-code PR #$PR_NUMBER changes" \
-                 --body "Automated sync from letta-ai/letta-code#$PR_NUMBER.\n\nSee the source PR for context on what changed."
+                 --body "Automated sync from letta-ai/letta-code#$PR_NUMBER.\n\nSee the source PR for context on what changed." \
+                 --reviewer "$PR_AUTHOR"
                ```
 
-            6. Respond with exactly: `PR_CREATED <url>` where `<url>` is the letta-cloud PR URL.
+            7. Respond with exactly: `PR_CREATED <url>` where `<url>` is the letta-cloud PR URL.
 
             ## Voice
             You are Amelia. Work quietly and precisely. Do not leave comments or reviews — just open the PR.
