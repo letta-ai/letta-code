@@ -28,7 +28,6 @@ letta messages search --query <text> [options]
 | `--limit <n>` | Max results (default: 10) |
 | `--all-agents` | Search all agents, not just current agent |
 | `--agent <id>` | Explicit agent ID (overrides LETTA_AGENT_ID) |
-| `--conversation <id>` | Filter to a specific conversation ID |
 
 ### Search Modes
 
@@ -50,10 +49,6 @@ letta messages list [options]
 | `--before <message-id>` | Get messages before this ID (cursor) |
 | `--order <asc\|desc>` | Sort order (default: desc = newest first) |
 | `--limit <n>` | Max results (default: 20) |
-| `--agent <id>` | Agent ID from the search result; required when `conversation_id` is `default` |
-| `--conversation <id>` | Conversation ID from the search result |
-
-Use `--conversation` from the search result when expanding context. Also include `--agent` from the search result when available, and always include it when `conversation_id` is `default`.
 
 ### Search Strategies
 
@@ -64,16 +59,16 @@ Use `--conversation` from the search result when expanding context. Also include
    letta messages search --query "topic keywords" --limit 5
    ```
 
-2. Note the `message_id`, `conversation_id`, and `agent_id` of the most relevant result.
+2. Note the `message_id` of the most relevant result
 
 3. Expand before to get leading context:
    ```bash
-   letta messages list --agent "agent-xyz" --conversation "conversation-xyz" --before "message-xyz" --limit 10
+   letta messages list --before "message-xyz" --limit 10
    ```
 
 4. Expand after for following context:
    ```bash
-   letta messages list --agent "agent-xyz" --conversation "conversation-xyz" --after "message-xyz" --order asc --limit 10
+   letta messages list --after "message-xyz" --order asc --limit 10
    ```
 
 **Strategy 2: Date-Bounded Search**
@@ -100,4 +95,3 @@ Results include:
 - `content` or `reasoning` - The message text
 - `created_at` - Timestamp (ISO format)
 - `agent_id` - Which agent the message belongs to
-- `conversation_id` - Which conversation the message belongs to

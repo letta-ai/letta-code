@@ -22,8 +22,8 @@ describe("recallPromptForBackend", () => {
 
     expect(apiPrompt).toContain("Semantic similarity search");
     expect(apiPrompt).not.toContain("transcript-backed exact text search");
+    expect(apiPrompt).not.toContain("when `conversation_id` is `default`");
     expect(localPrompt).toContain("transcript-backed exact text search");
-    expect(apiPrompt).toContain("when `conversation_id` is `default`");
     expect(localPrompt).toContain("when `conversation_id` is `default`");
   });
 });
