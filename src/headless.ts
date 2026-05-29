@@ -129,9 +129,9 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import { getTerminalTelemetrySurface, telemetry } from "./telemetry";
-import { trackBoundaryError } from "./telemetry/error-reporting";
-import { extractTelemetryInputText } from "./telemetry/input";
+import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { extractTelemetryInputText } from "@/telemetry/input";
 import { isInteractiveApprovalTool } from "./tools/interactive-policy";
 import {
   type ExternalToolDefinition,

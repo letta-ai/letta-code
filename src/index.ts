@@ -82,8 +82,8 @@ import {
   shouldPersistSessionState,
 } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
-import { getTerminalTelemetrySurface, telemetry } from "./telemetry";
-import { trackBoundaryError } from "./telemetry/error-reporting";
+import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";

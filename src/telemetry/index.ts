@@ -763,5 +763,20 @@ class TelemetryManager {
   }
 }
 
-// Export singleton instance
-export const telemetry = new TelemetryManager();
+// Export singleton instance.
+//
+// Stash on globalThis so accidental module duplication (e.g. a stray
+// relative-vs-aliased import causing the bundler to emit two copies of
+// this module) still yields a single TelemetryManager. Without this
+// guard, one copy gets init()'d while another receives track() calls,
+// producing events with deviceId="" and silent 400s from the metadata
+// endpoint ("Organization ID is required for telemetry events.").
+const TELEMETRY_GLOBAL_KEY = "__lettaCodeTelemetrySingleton" as const;
+type GlobalWithTelemetry = typeof globalThis & {
+  [TELEMETRY_GLOBAL_KEY]?: TelemetryManager;
+};
+const globalScope = globalThis as GlobalWithTelemetry;
+if (!globalScope[TELEMETRY_GLOBAL_KEY]) {
+  globalScope[TELEMETRY_GLOBAL_KEY] = new TelemetryManager();
+}
+export const telemetry: TelemetryManager = globalScope[TELEMETRY_GLOBAL_KEY];
