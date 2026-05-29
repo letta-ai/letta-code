@@ -924,11 +924,10 @@ export function emitQueueUpdateIfOpen(
 
 /**
  * Per-transport, per-scope cache of the last emitted device-status JSON.
- * When a periodic sync produces the exact same status as the previous one
- * (common when idle), we skip the WS send entirely — avoiding redundant
- * JSON serialization, WS framing, and Redis pub/sub in the cloud relay
- * path. Keyed by transport (WeakMap) so cache is naturally cleaned up when
- * the socket closes and gets GC'd. (LET-8948)
+ * Periodic syncs can opt into this cache to avoid redundant device-status
+ * frames when idle, while recovery/visibility syncs can force a full replay.
+ * Keyed by transport (WeakMap) so cache is naturally cleaned up when the
+ * socket closes and gets GC'd. (LET-8948)
  */
 const lastSyncDeviceStatusByTransport = new WeakMap<
   ListenerTransport,
@@ -939,6 +938,7 @@ export function emitStateSync(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope: RuntimeScope,
+  options?: { forceDeviceStatus?: boolean },
 ): void {
   const deviceStatus = buildDeviceStatus(runtime, scope);
   const deviceStatusJson = JSON.stringify(deviceStatus);
@@ -951,7 +951,7 @@ export function emitStateSync(
   }
   const prev = scopeCache.get(cacheKey);
 
-  if (deviceStatusJson !== prev) {
+  if (options?.forceDeviceStatus || deviceStatusJson !== prev) {
     scopeCache.set(cacheKey, deviceStatusJson);
     const message: Omit<
       DeviceStatusUpdateMessage,

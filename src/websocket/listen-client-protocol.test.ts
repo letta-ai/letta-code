@@ -409,6 +409,7 @@ describe("listen-client parseServerMessage", () => {
           type: "sync",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
           recover_approvals: false,
+          force_device_status: true,
         }),
       ),
     );
@@ -417,6 +418,7 @@ describe("listen-client parseServerMessage", () => {
       throw new Error("expected sync command");
     }
     expect(sync.recover_approvals).toBe(false);
+    expect(sync.force_device_status).toBe(true);
   });
 
   test("parses cron CRUD commands", () => {
@@ -3348,6 +3350,58 @@ describe("listen-client v2 status builders", () => {
         client_message_id: "cm-1",
         kind: "message",
       }),
+    ]);
+  });
+
+  test("sync can force update_device_status even when cached", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const scope = { agent_id: "agent-1", conversation_id: "default" };
+
+    __listenClientTestUtils.emitStateSync(
+      socket as unknown as WebSocket,
+      runtime,
+      scope,
+    );
+    socket.sentPayloads = [];
+
+    __listenClientTestUtils.emitStateSync(
+      socket as unknown as WebSocket,
+      runtime,
+      scope,
+    );
+    expect(
+      socket.sentPayloads
+        .map((payload) => JSON.parse(payload as string))
+        .map((message) => message.type),
+    ).toEqual([
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
+
+    socket.sentPayloads = [];
+    __listenClientTestUtils.emitStateSync(
+      socket as unknown as WebSocket,
+      runtime,
+      scope,
+      { forceDeviceStatus: true },
+    );
+
+    expect(
+      socket.sentPayloads
+        .map((payload) => JSON.parse(payload as string))
+        .map((message) => message.type),
+    ).toEqual([
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
     ]);
   });
 
