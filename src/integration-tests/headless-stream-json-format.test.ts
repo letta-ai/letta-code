@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 import type {
   ResultMessage,
   StreamEvent,
   SystemInitMessage,
 } from "@/types/protocol";
-import {
-  formatAttemptDiagnostics,
-  formatCapturedOutput,
-} from "./process-diagnostics";
+import { formatCapturedOutput } from "./process-diagnostics";
 
 /**
  * Tests for stream-json output format.
@@ -19,69 +19,56 @@ import {
 async function runHeadlessCommandOnce(
   prompt: string,
   extraArgs: string[] = [],
-  timeoutMs = 90000, // Keep two retry attempts within Bun's 200s test timeout
+  timeoutMs = 15000,
 ): Promise<{
   lines: string[];
   stdout: string;
   stderr: string;
 }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(
-      "bun",
-      [
-        "run",
-        "dev",
-        "--new-agent",
-        "--no-memfs",
-        "-p",
-        prompt,
-        "--output-format",
-        "stream-json",
-        "--yolo",
-        "-m",
-        "sonnet-4.6-low",
-        ...extraArgs,
-      ],
-      {
-        cwd: process.cwd(),
-        env: createAuthenticatedCliTestEnv(),
-      },
-    );
-
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout.on("data", (data) => {
-      stdout += data.toString();
-    });
-
-    proc.stderr.on("data", (data) => {
-      stderr += data.toString();
-    });
-
-    // Safety timeout for CI
-    const timeout = setTimeout(() => {
-      proc.kill();
-      reject(
-        new Error(
-          `Process timeout after ${timeoutMs}ms.\n${formatCapturedOutput({
-            stdout,
-            stderr,
-            extra: {
-              args: extraArgs.join(" "),
-              saw_result_event: stdout.includes('"type":"result"'),
-            },
-          })}`,
-        ),
+  const devBackendDir = await mkdtemp(join(tmpdir(), "letta-stream-json-"));
+  try {
+    return await new Promise((resolve, reject) => {
+      const proc = spawn(
+        "bun",
+        [
+          "run",
+          "dev",
+          "--dev-backend",
+          "fake-headless",
+          "--new-agent",
+          "--no-memfs",
+          "-p",
+          prompt,
+          "--output-format",
+          "stream-json",
+          "--yolo",
+          ...extraArgs,
+        ],
+        {
+          cwd: process.cwd(),
+          env: createIsolatedCliTestEnv({
+            LETTA_CODE_DEV_BACKEND_DIR: devBackendDir,
+          }),
+        },
       );
-    }, timeoutMs);
 
-    proc.on("close", (code) => {
-      clearTimeout(timeout);
-      if (code !== 0 && !stdout.includes('"type":"result"')) {
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      // Safety timeout for CI
+      const timeout = setTimeout(() => {
+        proc.kill();
         reject(
           new Error(
-            `Process exited with code ${code}.\n${formatCapturedOutput({
+            `Process timeout after ${timeoutMs}ms.\n${formatCapturedOutput({
               stdout,
               stderr,
               extra: {
@@ -91,102 +78,76 @@ async function runHeadlessCommandOnce(
             })}`,
           ),
         );
-      } else {
-        // Parse line-delimited JSON
-        const lines = stdout
-          .split("\n")
-          .filter((line) => line.trim())
-          .filter((line) => {
-            try {
-              JSON.parse(line);
-              return true;
-            } catch {
-              return false;
-            }
-          });
-        resolve({ lines, stdout, stderr });
-      }
+      }, timeoutMs);
+
+      proc.on("close", (code) => {
+        clearTimeout(timeout);
+        if (code !== 0 && !stdout.includes('"type":"result"')) {
+          reject(
+            new Error(
+              `Process exited with code ${code}.\n${formatCapturedOutput({
+                stdout,
+                stderr,
+                extra: {
+                  args: extraArgs.join(" "),
+                  saw_result_event: stdout.includes('"type":"result"'),
+                },
+              })}`,
+            ),
+          );
+        } else {
+          // Parse line-delimited JSON
+          const lines = stdout
+            .split("\n")
+            .filter((line) => line.trim())
+            .filter((line) => {
+              try {
+                JSON.parse(line);
+                return true;
+              } catch {
+                return false;
+              }
+            });
+          resolve({ lines, stdout, stderr });
+        }
+      });
     });
-  });
+  } finally {
+    await rm(devBackendDir, { recursive: true, force: true });
+  }
 }
 
 async function runHeadlessCommand(
   prompt: string,
   extraArgs: string[] = [],
-  timeoutMs = 90000,
+  timeoutMs = 15000,
 ): Promise<string[]> {
-  const maxRetries = 1;
-  const failedAttempts: Array<{ attempt: number; message: string }> = [];
-
-  for (let attempt = 0; ; attempt += 1) {
-    let result: Awaited<ReturnType<typeof runHeadlessCommandOnce>>;
+  const result = await runHeadlessCommandOnce(prompt, extraArgs, timeoutMs);
+  const hasResultLine = result.lines.some((line) => {
     try {
-      result = await runHeadlessCommandOnce(prompt, extraArgs, timeoutMs);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      failedAttempts.push({
-        attempt: attempt + 1,
-        message,
-      });
-
-      const isRetriableError =
-        error instanceof Error &&
-        (error.message.includes("Process timeout after") ||
-          error.message.includes("without a result envelope"));
-
-      if (!isRetriableError || attempt >= maxRetries) {
-        throw new Error(
-          failedAttempts.length === 1
-            ? message
-            : `${message}\n${formatAttemptDiagnostics(
-                failedAttempts.slice(0, -1),
-              )}`,
-        );
-      }
-
-      console.warn(
-        `[headless-stream-json] retrying after transient/incomplete run (${attempt + 1}/${maxRetries})`,
-      );
-      continue;
+      const obj = JSON.parse(line);
+      return obj.type === "result";
+    } catch {
+      return false;
     }
+  });
 
-    const hasResultLine = result.lines.some((line) => {
-      try {
-        const obj = JSON.parse(line);
-        return obj.type === "result";
-      } catch {
-        return false;
-      }
-    });
-
-    if (hasResultLine) {
-      return result.lines;
-    }
-
-    failedAttempts.push({
-      attempt: attempt + 1,
-      message: formatCapturedOutput({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        extra: {
-          args: extraArgs.join(" ") || "(none)",
-          saw_result_event: result.stdout.includes('"type":"result"'),
+  if (!hasResultLine) {
+    throw new Error(
+      `Headless command completed without a result envelope.\n${formatCapturedOutput(
+        {
+          stdout: result.stdout,
+          stderr: result.stderr,
+          extra: {
+            args: extraArgs.join(" ") || "(none)",
+            saw_result_event: result.stdout.includes('"type":"result"'),
+          },
         },
-      }),
-    });
-
-    if (attempt >= maxRetries) {
-      throw new Error(
-        `Headless command completed without a result envelope after ${attempt + 1} attempt(s).\n${formatAttemptDiagnostics(
-          failedAttempts,
-        )}`,
-      );
-    }
-
-    console.warn(
-      `[headless-stream-json] retrying after missing result envelope (${attempt + 1}/${maxRetries})`,
+      )}`,
     );
   }
+
+  return result.lines;
 }
 
 // Prescriptive prompt to ensure single-step response without tool use

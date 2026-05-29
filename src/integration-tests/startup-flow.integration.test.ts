@@ -1,6 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createAuthenticatedCliTestEnv,
+  createIsolatedCliTestEnv,
+} from "@/test-utils/test-process-env";
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
@@ -14,8 +20,8 @@ import {
  */
 
 const projectRoot = process.cwd();
-const STARTUP_FLOW_CLI_TIMEOUT_MS = 60000;
-const STARTUP_FLOW_TEST_TIMEOUT_MS = 200000;
+const DEV_BACKEND_CLI_TIMEOUT_MS = 15000;
+const DEV_BACKEND_TEST_TIMEOUT_MS = 30000;
 
 async function runCli(
   args: string[],
@@ -23,18 +29,38 @@ async function runCli(
     timeoutMs?: number;
     expectExit?: number;
     retryOnTimeouts?: number;
+    devBackend?: string;
+    env?: NodeJS.ProcessEnv;
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  const { timeoutMs = 30000, expectExit, retryOnTimeouts = 1 } = options;
+  const {
+    timeoutMs = 30000,
+    expectExit,
+    retryOnTimeouts = 1,
+    devBackend,
+    env: extraEnv = {},
+  } = options;
   const failedAttempts: Array<{ attempt: number; message: string }> = [];
 
   const runOnce = () =>
     new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
       (resolve, reject) => {
-        const proc = spawn("bun", ["run", "dev", "--no-memfs", ...args], {
-          cwd: projectRoot,
-          env: createAuthenticatedCliTestEnv(),
-        });
+        const proc = spawn(
+          "bun",
+          [
+            "run",
+            "dev",
+            ...(devBackend ? ["--dev-backend", devBackend] : []),
+            "--no-memfs",
+            ...args,
+          ],
+          {
+            cwd: projectRoot,
+            env: devBackend
+              ? createIsolatedCliTestEnv(extraEnv)
+              : createAuthenticatedCliTestEnv(extraEnv),
+          },
+        );
 
         let stdout = "";
         let stderr = "";
@@ -140,6 +166,8 @@ async function runCliJson(
     timeoutMs?: number;
     retryOnTimeouts?: number;
     retryOnParseErrors?: number;
+    devBackend?: string;
+    env?: NodeJS.ProcessEnv;
   } = {},
 ): Promise<{
   stdout: string;
@@ -227,11 +255,33 @@ describe("Startup Flow - Invalid Inputs", () => {
 });
 
 // ============================================================================
-// Integration Tests (require API access, create real agents)
+// Startup routing tests. These use the deterministic dev backend because the
+// assertions are about CLI startup/argument routing, not live provider behavior.
 // ============================================================================
 
 describe("Startup Flow - Integration", () => {
   let testAgentId: string | null = null;
+  let devBackendDir = "";
+
+  beforeAll(async () => {
+    devBackendDir = await mkdtemp(join(tmpdir(), "letta-startup-flow-"));
+  });
+
+  afterAll(async () => {
+    if (devBackendDir) {
+      await rm(devBackendDir, { recursive: true, force: true });
+    }
+  });
+
+  function devBackendOptions() {
+    return {
+      devBackend: "fake-headless",
+      env: { LETTA_CODE_DEV_BACKEND_DIR: devBackendDir },
+      timeoutMs: DEV_BACKEND_CLI_TIMEOUT_MS,
+      retryOnTimeouts: 0,
+      retryOnParseErrors: 0,
+    };
+  }
 
   test(
     "--new-agent creates agent and responds",
@@ -239,14 +289,12 @@ describe("Startup Flow - Integration", () => {
       const result = await runCliJson(
         [
           "--new-agent",
-          "-m",
-          "sonnet-4.6-low",
           "-p",
           "Say OK and nothing else",
           "--output-format",
           "json",
         ],
-        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
+        devBackendOptions(),
       );
 
       expect(result.exitCode).toBe(0);
@@ -256,7 +304,7 @@ describe("Startup Flow - Integration", () => {
 
       testAgentId = String(output.agent_id);
     },
-    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
+    { timeout: DEV_BACKEND_TEST_TIMEOUT_MS },
   );
 
   test(
@@ -268,24 +316,15 @@ describe("Startup Flow - Integration", () => {
       }
 
       const result = await runCliJson(
-        [
-          "--agent",
-          testAgentId,
-          "-m",
-          "sonnet-4.6-low",
-          "-p",
-          "Say OK",
-          "--output-format",
-          "json",
-        ],
-        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
+        ["--agent", testAgentId, "-p", "Say OK", "--output-format", "json"],
+        devBackendOptions(),
       );
 
       expect(result.exitCode).toBe(0);
       const output = result.output;
       expect(output.agent_id).toBe(testAgentId);
     },
-    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
+    { timeout: DEV_BACKEND_TEST_TIMEOUT_MS },
   );
 
   test(
@@ -302,14 +341,12 @@ describe("Startup Flow - Integration", () => {
           "--agent",
           testAgentId,
           "--new",
-          "-m",
-          "sonnet-4.6-low",
           "-p",
           "Say CREATED",
           "--output-format",
           "json",
         ],
-        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
+        devBackendOptions(),
       );
       expect(createResult.exitCode).toBe(0);
       const realConversationId = createResult.output.conversation_id;
@@ -324,14 +361,12 @@ describe("Startup Flow - Integration", () => {
         [
           "--conversation",
           realConversationId,
-          "-m",
-          "sonnet-4.6-low",
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
+        devBackendOptions(),
       );
 
       expect(result.exitCode).toBe(0);
@@ -339,7 +374,7 @@ describe("Startup Flow - Integration", () => {
       expect(output.agent_id).toBe(testAgentId);
       expect(output.conversation_id).toBe(realConversationId);
     },
-    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
+    { timeout: DEV_BACKEND_TEST_TIMEOUT_MS },
   );
 
   test(
@@ -348,16 +383,8 @@ describe("Startup Flow - Integration", () => {
       let agentIdForTest = testAgentId;
       if (!agentIdForTest) {
         const bootstrapResult = await runCliJson(
-          [
-            "--new-agent",
-            "-m",
-            "sonnet-4.6-low",
-            "-p",
-            "Say OK",
-            "--output-format",
-            "json",
-          ],
-          { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
+          ["--new-agent", "-p", "Say OK", "--output-format", "json"],
+          devBackendOptions(),
         );
         expect(bootstrapResult.exitCode).toBe(0);
         agentIdForTest = String(bootstrapResult.output.agent_id);
@@ -370,14 +397,12 @@ describe("Startup Flow - Integration", () => {
           agentIdForTest,
           "--conversation",
           "default",
-          "-m",
-          "sonnet-4.6-low",
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
+        devBackendOptions(),
       );
 
       expect(result.exitCode).toBe(0);
@@ -385,7 +410,7 @@ describe("Startup Flow - Integration", () => {
       expect(output.agent_id).toBe(agentIdForTest);
       expect(output.conversation_id).toBe("default");
     },
-    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
+    { timeout: DEV_BACKEND_TEST_TIMEOUT_MS },
   );
 
   test(
@@ -396,20 +421,18 @@ describe("Startup Flow - Integration", () => {
           "--new-agent",
           "--init-blocks",
           "none",
-          "-m",
-          "sonnet-4.6-low",
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
+        devBackendOptions(),
       );
 
       expect(result.exitCode).toBe(0);
       const output = result.output;
       expect(output.agent_id).toBeDefined();
     },
-    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
+    { timeout: DEV_BACKEND_TEST_TIMEOUT_MS },
   );
 });
