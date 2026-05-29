@@ -11,6 +11,7 @@ import {
   type OAuthCredentials,
 } from "@earendil-works/pi-ai/oauth";
 import type { ProviderResponse } from "@/backend/api/providers";
+import { getRegisteredPiProvider } from "@/backend/dev/pi-provider-extension-registry";
 import {
   LOCAL_CHATGPT_PROVIDER_NAME,
   SUPPORTED_LOCAL_PROVIDER_TYPES,
@@ -78,7 +79,10 @@ interface LocalProviderAuthFile {
 }
 
 export function isLocalProviderTypeSupported(providerType: string): boolean {
-  return SUPPORTED_LOCAL_PROVIDER_TYPES.has(providerType);
+  return (
+    SUPPORTED_LOCAL_PROVIDER_TYPES.has(providerType) ||
+    getRegisteredPiProvider(providerType) !== undefined
+  );
 }
 
 export function getLocalProviderAuthPath(

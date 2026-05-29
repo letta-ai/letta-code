@@ -1,5 +1,6 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clearAvailableModelsCache } from "@/agent/available-models";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
@@ -410,6 +411,7 @@ export function ProviderSelector({
           {},
           { target: selectedTarget },
         );
+        clearAvailableModelsCache();
         // Refresh connected providers
         const providers = await getConnectedProviders({
           target: selectedTarget,
@@ -476,6 +478,7 @@ export function ProviderSelector({
     const accessKey = fieldValues.accessKey?.trim();
     const region = fieldValues.region?.trim();
     const profile = fieldValues.profile?.trim();
+    const baseURL = fieldValues.baseUrl?.trim();
 
     // If already validated, save
     if (validationState === "valid") {
@@ -488,9 +491,10 @@ export function ProviderSelector({
           accessKey,
           region,
           profile,
-          {},
+          baseURL ? { baseURL } : {},
           { target: selectedTarget },
         );
+        clearAvailableModelsCache();
         // Refresh connected providers
         const providers = await getConnectedProviders({
           target: selectedTarget,

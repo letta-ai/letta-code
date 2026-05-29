@@ -22,14 +22,38 @@ export interface PiProviderModelRegistration {
   compat?: Model<Api>["compat"];
 }
 
+export interface PiProviderConnection {
+  id: string;
+  providerName: string;
+  baseUrl?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+}
+
+export interface PiProviderConnectField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean;
+}
+
+export interface PiProviderConnectConfig {
+  fields?: PiProviderConnectField[];
+}
+
 export interface PiProviderRegistration {
   name?: string;
+  description?: string;
   baseUrl?: string;
   apiKey?: string;
   api?: Api;
   headers?: Record<string, string>;
   authHeader?: boolean;
   models?: PiProviderModelRegistration[];
+  listModels?: (
+    connection: PiProviderConnection,
+  ) => Promise<PiProviderModelRegistration[]> | PiProviderModelRegistration[];
+  connect?: boolean | PiProviderConnectConfig;
 }
 
 export interface RegisteredPiProvider {
@@ -70,6 +94,17 @@ function cloneHeaders(
   return headers ? { ...headers } : undefined;
 }
 
+function resolveHeaderValues(
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const resolved: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    resolved[key] = process.env[value] ?? value;
+  }
+  return resolved;
+}
+
 function cloneModel(
   model: PiProviderModelRegistration,
 ): PiProviderModelRegistration {
@@ -94,9 +129,9 @@ function cloneConfig(config: PiProviderRegistration): PiProviderRegistration {
 }
 
 function validateProviderName(providerName: string): void {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(providerName)) {
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(providerName)) {
     throw new Error(
-      "Provider name must start with a letter or number and contain only letters, numbers, dots, underscores, or hyphens",
+      "Provider name must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens",
     );
   }
 }
@@ -150,6 +185,9 @@ function validateModel(
   if (!model.id || typeof model.id !== "string") {
     throw new Error(`${label}: id is required`);
   }
+  if (model.id.includes("/")) {
+    throw new Error(`${label}: id must be unprefixed and cannot contain "/"`);
+  }
   if (!model.name || typeof model.name !== "string") {
     throw new Error(`${label}: name is required`);
   }
@@ -169,12 +207,68 @@ function validateModel(
   validateHeaders(model.headers, `${label}.headers`);
 }
 
+function validateConnectConfig(
+  providerName: string,
+  connect: PiProviderRegistration["connect"],
+): void {
+  if (connect === undefined || connect === true || connect === false) return;
+  if (!connect || typeof connect !== "object" || Array.isArray(connect)) {
+    throw new Error(
+      `Provider ${providerName}.connect must be boolean or object`,
+    );
+  }
+  if (connect.fields !== undefined) {
+    if (!Array.isArray(connect.fields)) {
+      throw new Error(
+        `Provider ${providerName}.connect.fields must be an array`,
+      );
+    }
+    for (const field of connect.fields) {
+      if (!field || typeof field !== "object") {
+        throw new Error(
+          `Provider ${providerName}.connect.fields entries must be objects`,
+        );
+      }
+      if (typeof field.key !== "string" || field.key.length === 0) {
+        throw new Error(
+          `Provider ${providerName}.connect.fields entries need a key`,
+        );
+      }
+      if (typeof field.label !== "string" || field.label.length === 0) {
+        throw new Error(
+          `Provider ${providerName}.connect.fields entries need a label`,
+        );
+      }
+      if (
+        field.placeholder !== undefined &&
+        typeof field.placeholder !== "string"
+      ) {
+        throw new Error(
+          `Provider ${providerName}.connect.fields placeholder must be a string`,
+        );
+      }
+      if (field.secret !== undefined && typeof field.secret !== "boolean") {
+        throw new Error(
+          `Provider ${providerName}.connect.fields secret must be boolean`,
+        );
+      }
+    }
+  }
+}
+
 function validateProviderConfig(
   providerName: string,
   config: PiProviderRegistration,
 ): void {
   validateProviderName(providerName);
   validateHeaders(config.headers, `Provider ${providerName}.headers`);
+  validateConnectConfig(providerName, config.connect);
+  if (
+    config.listModels !== undefined &&
+    typeof config.listModels !== "function"
+  ) {
+    throw new Error(`Provider ${providerName}.listModels must be a function`);
+  }
   if (
     config.authHeader !== undefined &&
     typeof config.authHeader !== "boolean"
@@ -204,6 +298,12 @@ export function registerPiProvider(
   owner?: { id?: string; path?: string },
 ): RegisteredPiProvider {
   validateProviderConfig(providerName, config);
+  const existing = registeredProviders.get(providerName);
+  if (existing && existing.ownerId !== owner?.id) {
+    throw new Error(
+      `Provider "${providerName}" is already registered${existing.path ? ` by ${existing.path}` : ""}`,
+    );
+  }
   const registered: RegisteredPiProvider = {
     providerName,
     config: cloneConfig(config),
@@ -284,4 +384,10 @@ export function resolveRegisteredPiProviderApiKey(
 ): string | undefined {
   if (!apiKey) return undefined;
   return process.env[apiKey] ?? apiKey;
+}
+
+export function resolveRegisteredPiProviderHeaders(
+  headers: PiProviderRegistration["headers"],
+): Record<string, string> | undefined {
+  return resolveHeaderValues(headers);
 }

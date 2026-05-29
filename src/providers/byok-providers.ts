@@ -17,6 +17,7 @@ import {
   updateProvider as updateProviderRequest,
 } from "@/backend/api/providers";
 import { getBackend } from "@/backend/backend";
+import { listRegisteredPiProviders } from "@/backend/dev/pi-provider-extension-registry";
 import {
   getPiProviderSpec,
   LMSTUDIO_OPENAI_PROVIDER_TYPE,
@@ -357,6 +358,52 @@ function localApiKeyProviderIds(): string[] {
   );
 }
 
+function defaultExtensionProviderFields(providerName: string): ProviderField[] {
+  return [
+    { key: "apiKey", label: `${providerName} API Key`, secret: true },
+    { key: "baseUrl", label: "Base URL" },
+  ];
+}
+
+function extensionProviderEnvApiKey(
+  apiKey: string | undefined,
+): string | undefined {
+  if (!apiKey) return undefined;
+  const value = process.env[apiKey];
+  return value && value.length > 0 ? value : undefined;
+}
+
+function byokProviderFromRegisteredProvider(
+  provider: ReturnType<typeof listRegisteredPiProviders>[number],
+): ByokProvider | undefined {
+  if (provider.config.connect === false) return undefined;
+  const connect =
+    provider.config.connect && typeof provider.config.connect === "object"
+      ? provider.config.connect
+      : undefined;
+  const defaultApiKey = extensionProviderEnvApiKey(provider.config.apiKey);
+  return {
+    id: provider.providerName,
+    displayName:
+      provider.config.name ??
+      displayNameForLocalProvider(provider.providerName),
+    description:
+      provider.config.description ??
+      `Connect ${provider.config.name ?? displayNameForLocalProvider(provider.providerName)}`,
+    providerType: provider.providerName,
+    providerName: provider.providerName,
+    providerNames: [provider.providerName],
+    requiresApiKey: defaultApiKey === undefined,
+    ...(defaultApiKey ? { defaultApiKey } : {}),
+    fields:
+      connect?.fields ??
+      defaultExtensionProviderFields(
+        provider.config.name ??
+          displayNameForLocalProvider(provider.providerName),
+      ),
+  };
+}
+
 export function getProviderConfigs(
   target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): readonly ByokProvider[] {
@@ -372,6 +419,10 @@ export function getProviderConfigs(
   }
   for (const provider of LOCAL_EXTRA_PROVIDER_CONFIGS) {
     byId.set(provider.id, provider);
+  }
+  for (const provider of listRegisteredPiProviders()) {
+    const config = byokProviderFromRegisteredProvider(provider);
+    if (config) byId.set(config.id, config);
   }
   return [...byId.values()].sort((left, right) =>
     left.displayName.localeCompare(right.displayName),

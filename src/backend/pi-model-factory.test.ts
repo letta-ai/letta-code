@@ -333,6 +333,78 @@ describe("pi model factory", () => {
     });
   });
 
+  test("uses dynamic extension provider models at turn time", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-kilo-dynamic-"));
+    try {
+      const connections: unknown[] = [];
+      registerPiProvider("kilo", {
+        baseUrl: "http://localhost:8000/v1",
+        apiKey: "KILO_API_KEY",
+        api: "openai-completions",
+        headers: { "X-Kilo": "KILO_HEADER" },
+        listModels(connection) {
+          connections.push(connection);
+          return [
+            {
+              id: "dynamic-kilo-code",
+              name: "Dynamic Kilo Code",
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 64000,
+              maxTokens: 4096,
+            },
+          ];
+        },
+      });
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "kilo",
+        providerName: "kilo",
+        apiKey: "stored-kilo-key",
+        baseURL: "http://stored-kilo/v1",
+      });
+
+      await withEnv(
+        { KILO_API_KEY: "env-kilo-key", KILO_HEADER: "header" },
+        async () => {
+          const resolved = await resolvePiModelForAgent(
+            "kilo/dynamic-kilo-code",
+            {},
+            { localProviderAuthStorageDir: storageDir },
+          );
+
+          expect(resolved.apiKey).toBe("stored-kilo-key");
+          expect(resolved.model).toMatchObject({
+            id: "dynamic-kilo-code",
+            provider: "kilo",
+            baseUrl: "http://stored-kilo/v1",
+            contextWindow: 64000,
+            maxTokens: 4096,
+            headers: { "X-Kilo": "header" },
+          });
+        },
+      );
+      expect(connections).toEqual([
+        {
+          id: "kilo",
+          providerName: "kilo",
+          baseUrl: "http://stored-kilo/v1",
+          apiKey: "stored-kilo-key",
+          headers: { "X-Kilo": "header" },
+        },
+      ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports unresolved prefixed model providers clearly", async () => {
+    await expect(resolvePiModelForAgent("kilo/kilo-code")).rejects.toThrow(
+      'Model provider "kilo" is not registered',
+    );
+  });
+
   test("local provider connection base URL overrides extension default", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "pi-lmstudio-extension-url-"),
