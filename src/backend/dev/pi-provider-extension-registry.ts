@@ -298,12 +298,6 @@ export function registerPiProvider(
   owner?: { id?: string; path?: string },
 ): RegisteredPiProvider {
   validateProviderConfig(providerName, config);
-  const existing = registeredProviders.get(providerName);
-  if (existing && existing.ownerId !== owner?.id) {
-    throw new Error(
-      `Provider "${providerName}" is already registered${existing.path ? ` by ${existing.path}` : ""}`,
-    );
-  }
   const registered: RegisteredPiProvider = {
     providerName,
     config: cloneConfig(config),
