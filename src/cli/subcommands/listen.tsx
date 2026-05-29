@@ -18,7 +18,7 @@ import {
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
@@ -381,7 +381,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   }
 
   await settingsManager.initialize();
-  telemetry.setSurface("websocket");
+  telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
   const exitWithTelemetry = async (

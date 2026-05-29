@@ -31,7 +31,11 @@ import type { DequeuedBatch } from "@/queue/queue-runtime";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import {
+  getListenerTelemetrySurface,
+  getTerminalTelemetrySurface,
+  telemetry,
+} from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
@@ -1107,7 +1111,7 @@ export async function startListenerClient(
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
   setActiveRuntime(runtime);
-  telemetry.setSurface("websocket");
+  telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
   await connectWithRetry(runtime, opts);
@@ -1140,7 +1144,7 @@ export async function startLocalChannelListener(
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
   setActiveRuntime(runtime);
-  telemetry.setSurface("websocket");
+  telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
   try {
@@ -1500,6 +1504,6 @@ export function stopListenerClient(): void {
     return;
   }
   setActiveRuntime(null);
-  telemetry.setSurface(process.stdin.isTTY ? "tui" : "headless");
+  telemetry.setSurface(getTerminalTelemetrySurface(!process.stdin.isTTY));
   stopRuntime(runtime, true);
 }

@@ -82,7 +82,7 @@ import {
   shouldPersistSessionState,
 } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
-import { telemetry } from "./telemetry";
+import { getTerminalTelemetrySurface, telemetry } from "./telemetry";
 import { trackBoundaryError } from "./telemetry/error-reporting";
 import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
@@ -930,7 +930,7 @@ async function main(): Promise<void> {
 
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   // Surface is set here so session_start captures the correct mode.
-  telemetry.setSurface(isHeadless ? "headless" : "tui");
+  telemetry.setSurface(getTerminalTelemetrySurface(isHeadless));
   telemetry.init();
 
   if (!isHeadless) {
