@@ -330,6 +330,7 @@ export function App({
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
+  demoScript = null,
   onReload,
 }: AppProps) {
   // Warm the model-access cache in the background so /model is fast on first open.
@@ -1623,6 +1624,7 @@ export function App({
 
   // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
+  const [demoInput, setDemoInput] = useState<string | undefined>(undefined);
 
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
@@ -4082,6 +4084,94 @@ export function App({
   useEffect(() => {
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
+  const isAgentBusyRef = useRef(isAgentBusy);
+  useEffect(() => {
+    isAgentBusyRef.current = isAgentBusy;
+  }, [isAgentBusy]);
+
+  const demoPlaybackStateRef = useRef({
+    anySelectorOpen,
+    loadingState,
+    pendingApprovalsCount: pendingApprovals.length,
+  });
+  useEffect(() => {
+    demoPlaybackStateRef.current = {
+      anySelectorOpen,
+      loadingState,
+      pendingApprovalsCount: pendingApprovals.length,
+    };
+  }, [anySelectorOpen, loadingState, pendingApprovals.length]);
+
+  useEffect(() => {
+    if (!demoScript || !isLocalBackendEnabled()) return;
+
+    const activeDemoScript = demoScript;
+    let cancelled = false;
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const waitUntilIdle = async () => {
+      while (!cancelled) {
+        const state = demoPlaybackStateRef.current;
+        if (
+          state.loadingState === "ready" &&
+          state.pendingApprovalsCount === 0 &&
+          !state.anySelectorOpen &&
+          !isAgentBusyRef.current()
+        ) {
+          return;
+        }
+        await sleep(250);
+      }
+    };
+    const typeMessage = async (text: string, typingMs: number) => {
+      if (text.length === 0) {
+        setDemoInput("");
+        return;
+      }
+      const delayMs = typingMs > 0 ? typingMs / text.length : 0;
+      let nextValue = "";
+      setDemoInput(nextValue);
+      for (const character of text) {
+        if (cancelled) return;
+        nextValue += character;
+        setDemoInput(nextValue);
+        if (delayMs > 0) {
+          await sleep(delayMs);
+        }
+      }
+    };
+
+    async function runDemoScript() {
+      await sleep(activeDemoScript.startDelayMs ?? 1000);
+
+      do {
+        for (const message of activeDemoScript.messages) {
+          if (cancelled) return;
+          if (message.waitForIdle !== false) {
+            await waitUntilIdle();
+          }
+          if (cancelled) return;
+          await sleep(message.delayMs ?? 1000);
+          if (cancelled) return;
+          await typeMessage(message.text, message.typingMs ?? 1000);
+          if (cancelled) return;
+          if (message.submit !== false) {
+            await sleep(200);
+            if (cancelled) return;
+            setDemoInput("");
+            await onSubmitRef.current(message.text);
+          }
+        }
+      } while (!cancelled && activeDemoScript.loop === true);
+    }
+
+    void runDemoScript();
+
+    return () => {
+      cancelled = true;
+      setDemoInput(undefined);
+    };
+  }, [demoScript]);
 
   // Process queued messages when streaming ends.
   // QueueRuntime is authoritative: consumeItems drives the dequeue and fires
@@ -4833,6 +4923,7 @@ export function App({
       resetDeferredToolCallCommits={resetDeferredToolCallCommits}
       resetTrajectoryBases={resetTrajectoryBases}
       restoredInput={restoredInput}
+      demoInput={demoInput}
       resumeKey={resumeKey}
       searchQuery={searchQuery}
       sessionStatsRef={sessionStatsRef}

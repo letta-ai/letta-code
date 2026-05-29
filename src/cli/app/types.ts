@@ -13,6 +13,7 @@ import type {
 import type { AgentProvenance } from "@/agent/create";
 import type { PersonalityId } from "@/agent/personality";
 import type { CommandHandle, createCommandRunner } from "@/cli/commands/runner";
+import type { DemoScript } from "@/cli/demo/demo-script";
 import type { Line } from "@/cli/helpers/accumulator";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -47,6 +48,7 @@ export type AppProps = {
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   systemInfoReminderEnabled?: boolean;
+  demoScript?: DemoScript | null;
   /** Callback to soft-restart the TUI (re-runs startup path, remounts App). */
   onReload?: (agentId: string, conversationId: string) => Promise<void>;
 };

@@ -922,6 +922,7 @@ export function Input({
   conversationId,
   onPasteError,
   restoredInput,
+  demoInput,
   onRestoredInputConsumed,
   networkPhase = null,
   executionPhase = null,
@@ -974,6 +975,7 @@ export function Input({
   conversationId?: string;
   onPasteError?: (message: string) => void;
   restoredInput?: string | null;
+  demoInput?: string;
   onRestoredInputConsumed?: () => void;
   networkPhase?: "upload" | "download" | "error" | null;
   executionPhase?: ExecutionPhase;
@@ -1153,6 +1155,13 @@ export function Input({
 
   // Track preferred column for vertical navigation (sticky column behavior)
   const [preferredColumn, setPreferredColumn] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (demoInput !== undefined) {
+      setValue(demoInput);
+      setCursorPos(demoInput.length);
+    }
+  }, [demoInput]);
 
   // Restore input from error (only if current value is empty)
   useEffect(() => {

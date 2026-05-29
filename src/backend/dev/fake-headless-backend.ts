@@ -426,7 +426,7 @@ export class HeadlessBackend implements Backend {
         turnInput.agentId,
       ),
     );
-    const systemPrompt = await this.resolveSystemPromptForTurn({
+    const resolvedPrompt = await this.resolveSystemPromptForTurn({
       conversationId: turnInput.conversationId,
       agentId: turnInput.agentId,
       agent,
@@ -434,6 +434,14 @@ export class HeadlessBackend implements Backend {
       history,
       uiMessages,
     });
+    const systemPrompt =
+      typeof resolvedPrompt === "string"
+        ? resolvedPrompt
+        : resolvedPrompt.systemPrompt;
+    const midConversationSystemPrompt =
+      typeof resolvedPrompt === "string"
+        ? undefined
+        : resolvedPrompt.midConversationSystemPrompt;
     let stream: Stream<LettaStreamingResponse>;
     try {
       stream = await this.executor.execute({
@@ -441,6 +449,7 @@ export class HeadlessBackend implements Backend {
         agentId: turnInput.agentId,
         agent,
         systemPrompt,
+        midConversationSystemPrompt,
         body,
         history,
         uiMessages,
@@ -465,7 +474,9 @@ export class HeadlessBackend implements Backend {
     body: ConversationMessageCreateBody | ConversationMessageStreamBody;
     history: ReturnType<LocalStore["listConversationMessages"]>;
     uiMessages: ReturnType<LocalStore["listLocalMessages"]>;
-  }): Promise<string> {
+  }): Promise<
+    string | { systemPrompt: string; midConversationSystemPrompt?: string }
+  > {
     return input.agent.system;
   }
 

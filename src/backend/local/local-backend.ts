@@ -62,6 +62,7 @@ import {
 import {
   appendAvailableSkillsBlock,
   compileLocalSystemPrompt,
+  getCommittedMemfsRevision,
   hashRawSystemPrompt,
   type LocalCompiledSystemPrompt,
 } from "./system-prompt-compilation";
@@ -195,6 +196,25 @@ function localCompactionSettingsForStorage(
   if (!hasLocalSetting) return undefined;
 
   return { ...settings };
+}
+
+function supportsMidConversationSystemMessages(
+  agent: LocalAgentRecord,
+): boolean {
+  return agent.model === "anthropic/claude-opus-4-8";
+}
+
+function formatMidConversationMemoryUpdate(
+  compiled: LocalCompiledSystemPrompt,
+): string {
+  return [
+    "<memory_update>",
+    `The local memory filesystem has been edited and committed at revision ${compiled.memfsRevision ?? "unknown"}.`,
+    "This updates part of your persona/system memory. Treat the following freshly rendered memory context as authoritative from now on; where it conflicts with earlier memory context, this newer memory context wins.",
+    "",
+    compiled.coreMemory.trimEnd(),
+    "</memory_update>",
+  ].join("\n");
 }
 
 function createLocalExecutor(
@@ -411,7 +431,7 @@ export class LocalBackend extends HeadlessBackend {
     body: ConversationMessageCreateBody | ConversationMessageStreamBody;
     history: StoredMessage[];
     uiMessages: LocalMessage[];
-  }): Promise<string> {
+  }): Promise<{ systemPrompt: string; midConversationSystemPrompt?: string }> {
     const persisted = await this.getOrCompileSystemPrompt(
       input.conversationId,
       input.agentId,
@@ -423,7 +443,12 @@ export class LocalBackend extends HeadlessBackend {
     )
       ? ((input.body as Record<string, unknown>).client_skills as unknown[])
       : [];
-    return appendAvailableSkillsBlock(persisted.content, clientSkills);
+    return {
+      systemPrompt: appendAvailableSkillsBlock(persisted.content, clientSkills),
+      ...(persisted.midConversationSystemPrompt
+        ? { midConversationSystemPrompt: persisted.midConversationSystemPrompt }
+        : {}),
+    };
   }
 
   private memoryDirForAgent(agentId: string): string {
@@ -770,9 +795,44 @@ export class LocalBackend extends HeadlessBackend {
       conversationId,
       agentId,
     );
-    if (existing?.rawSystemHash === hashRawSystemPrompt(agent.system)) {
+    const rawSystemHash = hashRawSystemPrompt(agent.system);
+    const memfsRevision = this.isLocalMemfsEnabled()
+      ? getCommittedMemfsRevision(this.memoryDirForAgent(agentId))
+      : undefined;
+    if (
+      existing?.rawSystemHash === rawSystemHash &&
+      existing.memfsRevision === memfsRevision
+    ) {
       return existing;
     }
+
+    if (
+      existing?.rawSystemHash === rawSystemHash &&
+      existing.memfsRevision !== memfsRevision &&
+      supportsMidConversationSystemMessages(agent)
+    ) {
+      const compiled = await this.compileAndMaybePersistSystemPrompt(
+        conversationId,
+        agentId,
+        {
+          dryRun: true,
+          previousMessageCount,
+        },
+      );
+      if (compiled.memfsRevision !== existing.memfsRevision) {
+        const midConversationSystemPrompt =
+          formatMidConversationMemoryUpdate(compiled);
+        this.store.setCompiledSystemPrompt(conversationId, agentId, {
+          ...existing,
+          compiledAt: compiled.compiledAt,
+          coreMemory: compiled.coreMemory,
+          memfsRevision: compiled.memfsRevision,
+        });
+        return { ...existing, midConversationSystemPrompt };
+      }
+      return existing;
+    }
+
     return this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
       dryRun: false,
       previousMessageCount,

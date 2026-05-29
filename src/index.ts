@@ -53,6 +53,7 @@ import {
   renderCliOptionsHelp,
 } from "./cli/args";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
+import type { DemoScript } from "./cli/demo/demo-script";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
@@ -185,6 +186,7 @@ USAGE
   letta messages ...    Messages subcommands (JSON-only)
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
+  letta analytics        Start local Anthropic cache analytics page
   letta setup           Re-run first-run setup
   letta install ...     Install a skill into an agent memfs repository
   letta skills ...      List or delete installed agent skills
@@ -211,6 +213,7 @@ SUBCOMMANDS
   letta skills list [--agent <id> | -n <name>]
   letta skills delete <skill_name> --agent <id>
   letta backend [api|local]
+  letta analytics [--port <port>] [--persist]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR
@@ -841,6 +844,7 @@ async function main(): Promise<void> {
   const memoryBlocksJson = values["memory-blocks"] ?? undefined;
   const specifiedToolset = values.toolset ?? undefined;
   const skillsDirectory = values.skills ?? undefined;
+  const demoScriptPath = values["demo-script"] ?? undefined;
   const memfsFlag = values.memfs;
   const noMemfsFlag = values["no-memfs"];
   const noSkillsFlag = values["no-skills"];
@@ -911,6 +915,26 @@ async function main(): Promise<void> {
   });
 
   const startupBackend = getBackend();
+  let demoScript: DemoScript | null = null;
+  if (demoScriptPath) {
+    if (!startupBackend.capabilities.localModelCatalog) {
+      console.error(
+        "Error: --demo-script is only supported with local backend mode.",
+      );
+      console.error("Run with: letta --backend local --demo-script <path>");
+      process.exit(1);
+    }
+    try {
+      const { resolve } = await import("node:path");
+      const { loadDemoScript } = await import("@/cli/demo/demo-script");
+      demoScript = await loadDemoScript(resolve(process.cwd(), demoScriptPath));
+    } catch (error) {
+      console.error(
+        error instanceof Error ? `Error: ${error.message}` : String(error),
+      );
+      process.exit(1);
+    }
+  }
   const localNoMemfsRequested = Boolean(
     startupBackend.capabilities.localMemfs &&
       (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
@@ -1513,6 +1537,7 @@ async function main(): Promise<void> {
     skillsDirectory,
     fromAfFile,
     isRegistryImport,
+    demoScript,
   }: {
     forceNew: boolean;
     initBlocks?: string[];
@@ -1525,6 +1550,7 @@ async function main(): Promise<void> {
     skillsDirectory?: string;
     fromAfFile?: string;
     isRegistryImport?: boolean;
+    demoScript?: DemoScript | null;
   }) {
     const [showKeybindingSetup, setShowKeybindingSetup] = useState<
       boolean | null
@@ -2798,6 +2824,7 @@ async function main(): Promise<void> {
         startupHasAvailableLocalModels,
         releaseNotes,
         systemInfoReminderEnabled: !noSystemInfoReminderFlag,
+        demoScript,
       });
     }
 
@@ -2821,6 +2848,7 @@ async function main(): Promise<void> {
       releaseNotes,
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
+      demoScript,
       onReload: handleReload,
     });
   }
@@ -2844,6 +2872,7 @@ async function main(): Promise<void> {
       skillsDirectory: skillsDirectory,
       fromAfFile: fromAfFile,
       isRegistryImport: isRegistryImport,
+      demoScript: demoScript,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard

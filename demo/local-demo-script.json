@@ -1,0 +1,105 @@
+{
+  "startDelayMs": 1000,
+  "messages": [
+    {
+      "text": "Hi, I'm Ari. For this demo, please treat me as a hands-on learner who likes short explanations followed by one concrete example.",
+      "delayMs": 500,
+      "typingMs": 2200
+    },
+    {
+      "text": "Before we do anything technical, remember that I prefer you to ask at most one clarifying question before giving me a next step.",
+      "delayMs": 1000,
+      "typingMs": 2200
+    },
+    {
+      "text": "What is Letta Code in two sentences?",
+      "delayMs": 1000,
+      "typingMs": 1200
+    },
+    {
+      "text": "Please remember that when teaching me, you should use the pattern: concept, why it matters, tiny example.",
+      "delayMs": 1000,
+      "typingMs": 2200
+    },
+    {
+      "text": "Show me a tiny example of how an agent can remember something across turns.",
+      "delayMs": 1000,
+      "typingMs": 1800
+    },
+    {
+      "text": "Update your persona so you avoid long motivational speeches. Keep encouragement brief and practical.",
+      "delayMs": 1000,
+      "typingMs": 2200
+    },
+    {
+      "text": "Now explain memory blocks like I'm familiar with git but new to agent memory.",
+      "delayMs": 1000,
+      "typingMs": 1800
+    },
+    {
+      "text": "Remember that I like command examples I can copy paste, but only after you explain what the command does.",
+      "delayMs": 1000,
+      "typingMs": 2200
+    },
+    {
+      "text": "What's the difference between persona memory and human memory?",
+      "delayMs": 1000,
+      "typingMs": 1600
+    },
+    {
+      "text": "Add to your persona that for tutorials you should check in after each major step with a short 'Want to keep going?' question.",
+      "delayMs": 1000,
+      "typingMs": 2400
+    },
+    {
+      "text": "Give me a quick example of something you would store about yourself versus something you would store about me.",
+      "delayMs": 1000,
+      "typingMs": 2000
+    },
+    {
+      "text": "Please remember that I dislike hidden magic. When you do something persistent, say where it was saved.",
+      "delayMs": 1000,
+      "typingMs": 2200
+    },
+    {
+      "text": "Can you summarize the rules you've learned about how to teach me so far?",
+      "delayMs": 1000,
+      "typingMs": 1800
+    },
+    {
+      "text": "Update your persona to prefer numbered steps when explaining multi-step workflows.",
+      "delayMs": 1000,
+      "typingMs": 2000
+    },
+    {
+      "text": "Now teach me how slash commands fit into the Letta Code workflow.",
+      "delayMs": 1000,
+      "typingMs": 1700
+    },
+    {
+      "text": "Remember that if I ask for a demo, you should optimize for predictable, repeatable behavior over cleverness.",
+      "delayMs": 1000,
+      "typingMs": 2200
+    },
+    {
+      "text": "Give me a simple checklist for setting up a new local agent.",
+      "delayMs": 1000,
+      "typingMs": 1700
+    },
+    {
+      "text": "Please add to your persona that you should call out assumptions explicitly before acting on them.",
+      "delayMs": 1000,
+      "typingMs": 2200
+    },
+    {
+      "text": "What would you do differently next time you teach me this topic, based on what you remembered?",
+      "delayMs": 1000,
+      "typingMs": 2000
+    },
+    {
+      "text": "End by summarizing the personalized teaching style you now have for me in five bullets.",
+      "delayMs": 1000,
+      "typingMs": 1900
+    }
+  ]
+}

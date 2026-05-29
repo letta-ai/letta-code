@@ -144,6 +144,14 @@ export const CLI_FLAG_CATALOG = {
       description: 'Backend mode: "api" or "local"',
     },
   },
+  "demo-script": {
+    parser: { type: "string" },
+    mode: "interactive",
+    help: {
+      argLabel: "<path>",
+      description: "Play demo prompts from a JSON file (local backend only)",
+    },
+  },
   tools: { parser: { type: "string" }, mode: "both" },
   allowedTools: { parser: { type: "string" }, mode: "both" },
   disallowedTools: { parser: { type: "string" }, mode: "both" },
