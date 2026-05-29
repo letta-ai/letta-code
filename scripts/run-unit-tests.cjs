@@ -57,7 +57,20 @@ const channelTestFiles = findTestFiles("src/channels", [
   "src/channels/slack-media.test.ts",
 ]);
 
-const opts = { stdio: "inherit", shell: process.platform === "win32" };
+const testEnv = {
+  ...process.env,
+  // Unit tests should not touch the OS keychain. On hosted macOS runners,
+  // Bun.secrets can report available and then hang on set/delete operations,
+  // causing unrelated channel tests to hit Bun's per-test timeout and leaving
+  // live handles that keep the whole job open until the GitHub step timeout.
+  LETTA_SKIP_KEYCHAIN_CHECK: process.env.LETTA_SKIP_KEYCHAIN_CHECK ?? "1",
+};
+
+const opts = {
+  stdio: "inherit",
+  shell: process.platform === "win32",
+  env: testEnv,
+};
 let exitCode = 0;
 
 // Run slack-media in isolation first (clean module registry)

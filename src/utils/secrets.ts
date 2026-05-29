@@ -37,11 +37,44 @@ function isDuplicateKeychainItemError(error: unknown): boolean {
   );
 }
 
+function shouldSkipKeychain(): boolean {
+  return process.env.LETTA_SKIP_KEYCHAIN_CHECK === "1";
+}
+
+function warnSecretReadFailure(
+  name: string,
+  label: string,
+  error: unknown,
+): void {
+  const message = `Failed to retrieve ${label} from secrets: ${error}`;
+  if (!warnedSecretReadFailures.has(name)) {
+    warnedSecretReadFailures.add(name);
+    console.warn(message);
+  } else {
+    debugWarn("secrets", message);
+  }
+}
+
 export async function getSecretValue(
   name: string,
   label: string,
 ): Promise<string | null> {
-  if (!secretsAvailable && !secretGetOverrideForTests) {
+  if (secretGetOverrideForTests) {
+    try {
+      const options = {
+        service: SERVICE_NAME,
+        name,
+      };
+      const value = await secretGetOverrideForTests(options);
+      warnedSecretReadFailures.delete(name);
+      return value;
+    } catch (error) {
+      warnSecretReadFailure(name, label, error);
+      return null;
+    }
+  }
+
+  if (shouldSkipKeychain() || !secretsAvailable) {
     return null;
   }
 
@@ -50,19 +83,11 @@ export async function getSecretValue(
       service: SERVICE_NAME,
       name,
     };
-    const value = secretGetOverrideForTests
-      ? await secretGetOverrideForTests(options)
-      : await secrets.get(options);
+    const value = await secrets.get(options);
     warnedSecretReadFailures.delete(name);
     return value;
   } catch (error) {
-    const message = `Failed to retrieve ${label} from secrets: ${error}`;
-    if (!warnedSecretReadFailures.has(name)) {
-      warnedSecretReadFailures.add(name);
-      console.warn(message);
-    } else {
-      debugWarn("secrets", message);
-    }
+    warnSecretReadFailure(name, label, error);
     return null;
   }
 }
@@ -71,7 +96,7 @@ export async function setSecretValue(
   name: string,
   value: string,
 ): Promise<void> {
-  if (!secretsAvailable) {
+  if (shouldSkipKeychain() || !secretsAvailable) {
     throw new Error("Secrets API unavailable");
   }
 
@@ -106,7 +131,7 @@ export async function setSecretValue(
 }
 
 export async function deleteSecretValue(name: string): Promise<boolean> {
-  if (!secretsAvailable) {
+  if (shouldSkipKeychain() || !secretsAvailable) {
     return false;
   }
 
@@ -266,7 +291,7 @@ export async function deleteSecureTokens(): Promise<void> {
  */
 export async function isKeychainAvailable(): Promise<boolean> {
   // Skip keychain check in test/CI environments to avoid error dialogs
-  if (process.env.LETTA_SKIP_KEYCHAIN_CHECK === "1") {
+  if (shouldSkipKeychain()) {
     return false;
   }
 
