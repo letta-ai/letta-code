@@ -7,6 +7,7 @@ import { getSupportedChannelIds } from "@/channels/plugin-registry";
 import { getChannelRegistry } from "@/channels/registry";
 import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
 import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
+import type { ExtensionEventEmitter } from "@/extensions/event-emitter";
 import {
   type InheritedChannelContextPayload,
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
@@ -195,6 +196,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  extensionEventEmitter?: ExtensionEventEmitter;
   runtimeContext?: Partial<RuntimeContextSnapshot>;
 }): Promise<PreparedScopeToolContext> {
   const {
@@ -206,6 +208,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     workingDirectory,
     permissionModeState,
     channelToolScope,
+    extensionEventEmitter,
     runtimeContext,
   } = params;
   const effectiveModel =
@@ -231,6 +234,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
         workingDirectory,
         permissionModeState,
         channelToolScope,
+        extensionEventEmitter,
         runtimeContext,
       },
     );
@@ -261,6 +265,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       workingDirectory,
       permissionModeState,
       channelToolScope,
+      extensionEventEmitter,
       runtimeContext,
     },
   );
@@ -429,6 +434,7 @@ export async function prepareToolExecutionContextForScope(params: {
   permissionModeState?: PermissionModeState;
   cachedAgent?: AgentState | null;
   channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
+  extensionEventEmitter?: ExtensionEventEmitter;
 }): Promise<PreparedScopeToolContext> {
   const {
     agentId,
@@ -441,6 +447,7 @@ export async function prepareToolExecutionContextForScope(params: {
     permissionModeState,
     cachedAgent,
     channelTurnSources: explicitChannelTurnSources,
+    extensionEventEmitter,
   } = params;
 
   const backend = getBackend();
@@ -500,6 +507,7 @@ export async function prepareToolExecutionContextForScope(params: {
     clientToolAllowlist,
     workingDirectory,
     permissionModeState,
+    extensionEventEmitter,
     runtimeContext: {
       agentId,
       conversationId: scopedConversationId,

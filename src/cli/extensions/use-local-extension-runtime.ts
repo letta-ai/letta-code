@@ -21,6 +21,7 @@ export interface LocalExtensionRuntime {
     name: TName,
     event: ExtensionEventMap[TName],
   ) => Promise<ExtensionEventEmissionResult<TName>>;
+  eventEmitter: ExtensionRuntime["eventEmitter"];
   getBackendApi: () => ExtensionRuntimeBackendApi | undefined;
   getContext: () => ExtensionContext;
   hadStatuslineRenderer: boolean;
@@ -96,6 +97,7 @@ export function useLocalExtensionRuntime(
   return useMemo(
     () => ({
       emitEvent: runtime.emitEvent,
+      eventEmitter: runtime.eventEmitter,
       getBackendApi: runtime.getBackendApi,
       getContext: runtime.getContext,
       hadStatuslineRenderer: snapshot.hadStatuslineRenderer,

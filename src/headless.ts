@@ -430,6 +430,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   conversationId: string;
   overrideModel?: string | null;
   cachedAgent?: AgentState | null;
+  extensionEventEmitter?: ExtensionRuntime["eventEmitter"];
 }): Promise<{
   preparedToolContext: Awaited<
     ReturnType<typeof prepareToolExecutionContextForScope>
@@ -443,6 +444,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
     cachedAgent: params.cachedAgent,
+    extensionEventEmitter: params.extensionEventEmitter,
   });
 
   return {
@@ -488,10 +490,12 @@ async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
   approvalMessages: Array<MessageCreate | ApprovalCreate>;
+  extensionEventEmitter?: ExtensionRuntime["eventEmitter"];
 }): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   const approvalToolContext = await prepareHeadlessToolExecutionContext({
     agentId: params.agentId,
     conversationId: params.conversationId,
+    extensionEventEmitter: params.extensionEventEmitter,
   });
 
   return await sendMessageStream(
@@ -1699,6 +1703,7 @@ export async function handleHeadlessCommand(
       agentId: agent.id,
       conversationId,
       cachedAgent: agent as AgentState,
+      extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
     });
     availableTools = initialToolContext.availableTools;
     cachedAgent = initialToolContext.preparedToolContext.agent;
@@ -1870,6 +1875,7 @@ export async function handleHeadlessCommand(
         agentId: agent.id,
         conversationId,
         approvalMessages,
+        extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -2119,6 +2125,7 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId,
           overrideModel: overrideModelHandle ?? preparedEffectiveModel,
           cachedAgent,
+          extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
         });
         availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
@@ -3343,6 +3350,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId,
         approvalMessages,
+        extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -3722,6 +3730,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId: targetConversationId,
         approvalMessages: [approvalInput],
+        extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
       });
 
       const drainResult = await drainStreamWithResume(
@@ -4176,6 +4185,7 @@ async function runBidirectionalMode(
             const turnToolContext = await prepareHeadlessToolExecutionContext({
               agentId: agent.id,
               conversationId,
+              extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
             });
             availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {

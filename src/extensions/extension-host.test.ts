@@ -99,7 +99,7 @@ function createHost(
 const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   tools: true,
   commands: false,
-  events: { lifecycle: false, turns: false },
+  events: { lifecycle: false, tools: false, turns: false },
   providers: false,
   ui: {
     panels: false,
@@ -325,6 +325,7 @@ describe("extension host", () => {
           letta.ui.setStatus("hidden", "hidden");
           letta.ui.setStatuslineRenderer(() => "hidden");
           letta.events.on("conversation_open", () => {});
+          letta.events.on("tool_start", () => {});
           letta.tools.register({
             name: "visible_tool",
             description: "Visible tool",
@@ -467,6 +468,62 @@ describe("extension host", () => {
       expect(result.diagnostics).toHaveLength(1);
       expect(result.results).toHaveLength(1);
       expect(event.input).toEqual([{ role: "user", content: "hello final" }]);
+
+      host.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("lets tool_start handlers replace args in registration order", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "tool-start.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_start", (event) => ({
+            args: { ...event.args, command: String(event.args.command).replaceAll("??", "first") },
+          }));
+          letta.events.on("tool_start", (event) => {
+            event.args = {
+              ...event.args,
+              command: String(event.args.command).replaceAll("first", "second"),
+            };
+          });
+          letta.events.on("tool_start", (event) => {
+            event.args = { ...event.args, command: "broken" };
+            throw new Error("tool_start failed");
+          });
+          letta.events.on("tool_start", (event) => {
+            event.args = {
+              ...event.args,
+              command: String(event.args.command).replaceAll("second", "final"),
+            };
+          });
+        }`,
+      );
+
+      const host = createHost(root);
+      await host.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        args: { command: "echo ??" },
+      };
+
+      const result = await host.emitEvent("tool_start", event);
+
+      expect(result).toMatchObject({
+        handlerCount: 4,
+        name: "tool_start",
+      });
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.results).toHaveLength(1);
+      expect(event.args).toEqual({ command: "echo final" });
 
       host.dispose();
     } finally {

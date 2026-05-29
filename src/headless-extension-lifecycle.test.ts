@@ -41,6 +41,7 @@ describe("headless extension runtime", () => {
       commands: false,
       events: {
         lifecycle: true,
+        tools: true,
         turns: true,
       },
       providers: true,
@@ -123,6 +124,15 @@ describe("headless extension runtime", () => {
           });
           letta.ui.openPanel({ id: "hidden", content: "hidden" });
           letta.ui.setStatus("hidden", "hidden");
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName !== "${toolName}") return;
+            return {
+              args: {
+                ...event.args,
+                message: String(event.args.message) + ":tool_start",
+              },
+            };
+          });
           letta.tools.register({
             name: "${toolName}",
             description: "Echo from headless extension",
@@ -162,6 +172,7 @@ describe("headless extension runtime", () => {
           agentId: agent.id,
           cachedAgent: agent,
           conversationId: "default",
+          extensionEventEmitter: runtime.eventEmitter,
         });
       const clientToolNames =
         prepared.preparedToolContext.preparedToolContext.clientTools.map(
@@ -181,11 +192,170 @@ describe("headless extension runtime", () => {
       );
 
       expect(result.status).toBe("success");
-      expect(result.toolReturn).toBe("headless:ok:agent-1:default");
+      expect(result.toolReturn).toBe("headless:ok:tool_start:agent-1:default");
 
       runtime.dispose();
       expect(getExtensionToolDefinition(toolName)).toBeUndefined();
     } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("emits tool_start before built-in tool execution", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "letta-headless-tool-start-"));
+    const extensionDir = path.join(root, "global-extensions");
+    const originalPath = path.join(root, "original.txt");
+    const replacementPath = path.join(root, "replacement.txt");
+    const agent = {
+      id: "agent-1",
+      name: "Amelia",
+      llm_config: { model: "anthropic/claude-sonnet-4" },
+    } as AgentState;
+    const backend = {
+      forkConversation: async () => ({ id: "forked" }),
+      sendMessageStream: async () => (async function* () {})(),
+    } as unknown as Backend;
+
+    try {
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(originalPath, "original content");
+      writeFileSync(replacementPath, "replacement content");
+      writeFileSync(
+        path.join(extensionDir, "tool-start.ts"),
+        `export default function activate(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName !== "Read") return;
+            return { args: { ...event.args, file_path: ${JSON.stringify(replacementPath)} } };
+          });
+        }`,
+      );
+
+      const runtime = createHeadlessExtensionRuntime({
+        agent,
+        backend,
+        cacheDirectory: path.join(root, "extension-cache"),
+        conversationId: "default",
+        globalExtensionsDirectory: extensionDir,
+      });
+
+      await runtime.reload();
+      const prepared =
+        await __headlessTestUtils.prepareHeadlessToolExecutionContext({
+          agentId: agent.id,
+          cachedAgent: agent,
+          conversationId: "default",
+          extensionEventEmitter: runtime.eventEmitter,
+        });
+
+      const result = await executeTool(
+        "Read",
+        { file_path: originalPath },
+        {
+          toolContextId:
+            prepared.preparedToolContext.preparedToolContext.contextId,
+        },
+      );
+
+      expect(result.status).toBe("success");
+      expect(result.toolReturn).toContain("replacement content");
+      expect(result.toolReturn).not.toContain("original content");
+
+      runtime.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("uses the captured runtime emitter for tool_start", async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "letta-headless-tool-start-captured-"),
+    );
+    const firstExtensionDir = path.join(root, "first-extensions");
+    const secondExtensionDir = path.join(root, "second-extensions");
+    const originalPath = path.join(root, "original.txt");
+    const firstPath = path.join(root, "first.txt");
+    const secondPath = path.join(root, "second.txt");
+    const agent = {
+      id: "agent-1",
+      name: "Amelia",
+      llm_config: { model: "anthropic/claude-sonnet-4" },
+    } as AgentState;
+    const backend = {
+      forkConversation: async () => ({ id: "forked" }),
+      sendMessageStream: async () => (async function* () {})(),
+    } as unknown as Backend;
+    let firstRuntime: ReturnType<typeof createHeadlessExtensionRuntime> | null =
+      null;
+    let secondRuntime: ReturnType<
+      typeof createHeadlessExtensionRuntime
+    > | null = null;
+
+    try {
+      mkdirSync(firstExtensionDir, { recursive: true });
+      mkdirSync(secondExtensionDir, { recursive: true });
+      writeFileSync(originalPath, "original content");
+      writeFileSync(firstPath, "first runtime content");
+      writeFileSync(secondPath, "second runtime content");
+      writeFileSync(
+        path.join(firstExtensionDir, "tool-start.ts"),
+        `export default function activate(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName !== "Read") return;
+            return { args: { ...event.args, file_path: ${JSON.stringify(firstPath)} } };
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(secondExtensionDir, "tool-start.ts"),
+        `export default function activate(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName !== "Read") return;
+            return { args: { ...event.args, file_path: ${JSON.stringify(secondPath)} } };
+          });
+        }`,
+      );
+
+      firstRuntime = createHeadlessExtensionRuntime({
+        agent,
+        backend,
+        cacheDirectory: path.join(root, "first-cache"),
+        conversationId: "default",
+        globalExtensionsDirectory: firstExtensionDir,
+      });
+      await firstRuntime.reload();
+      const prepared =
+        await __headlessTestUtils.prepareHeadlessToolExecutionContext({
+          agentId: agent.id,
+          cachedAgent: agent,
+          conversationId: "default",
+          extensionEventEmitter: firstRuntime.eventEmitter,
+        });
+
+      secondRuntime = createHeadlessExtensionRuntime({
+        agent,
+        backend,
+        cacheDirectory: path.join(root, "second-cache"),
+        conversationId: "default",
+        globalExtensionsDirectory: secondExtensionDir,
+      });
+      await secondRuntime.reload();
+
+      const result = await executeTool(
+        "Read",
+        { file_path: originalPath },
+        {
+          toolContextId:
+            prepared.preparedToolContext.preparedToolContext.contextId,
+        },
+      );
+
+      expect(result.status).toBe("success");
+      expect(result.toolReturn).toContain("first runtime content");
+      expect(result.toolReturn).not.toContain("second runtime content");
+      expect(result.toolReturn).not.toContain("original content");
+    } finally {
+      firstRuntime?.dispose();
+      secondRuntime?.dispose();
       rmSync(root, { force: true, recursive: true });
     }
   });

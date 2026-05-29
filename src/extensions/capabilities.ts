@@ -5,6 +5,7 @@ export const DEFAULT_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   commands: true,
   events: {
     lifecycle: true,
+    tools: true,
     turns: true,
   },
   providers: true,
@@ -23,6 +24,7 @@ export function cloneExtensionCapabilities(
     commands: capabilities.commands,
     events: {
       lifecycle: capabilities.events.lifecycle,
+      tools: capabilities.events.tools,
       turns: capabilities.events.turns,
     },
     providers: capabilities.providers,
