@@ -7,6 +7,7 @@ import {
   getIndexRoot,
   refreshFileIndex,
   searchFileIndex,
+  searchFileIndexWithDiskFallback,
   setIndexRoot,
 } from "@/utils/file-index";
 import { runGrepInFiles } from "./grep-in-files";
@@ -208,12 +209,18 @@ export function createFileCommandSession(params: {
             }
           }
 
-          const files = searchFileIndex({
+          const files = searchFileIndexWithDiskFallback({
             searchDir,
+            absoluteSearchDir: parsed.cwd ?? getIndexRoot(),
             pattern: parsed.query,
             deep: true,
             maxResults: parsed.max_results ?? 5,
-          });
+          }).map((entry) => ({
+            ...entry,
+            path: parsed.cwd
+              ? path.relative(parsed.cwd, path.join(getIndexRoot(), entry.path))
+              : entry.path,
+          }));
           safeSocketSend(
             socket,
             {

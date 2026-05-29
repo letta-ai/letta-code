@@ -11,7 +11,10 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, relative, sep } from "node:path";
-import { shouldExcludeEntry } from "@/cli/helpers/file-search-config";
+import {
+  shouldExcludeEntry,
+  shouldHardExcludeEntry,
+} from "@/cli/helpers/file-search-config";
 import { debugLog } from "@/utils/debug";
 import { readIntSetting } from "@/utils/letta-settings";
 
@@ -27,6 +30,11 @@ interface SearchFileIndexOptions {
   pattern: string;
   deep: boolean;
   maxResults: number;
+}
+
+interface SearchFileIndexWithDiskOptions extends SearchFileIndexOptions {
+  /** Absolute directory corresponding to `searchDir`. */
+  absoluteSearchDir: string;
 }
 
 interface FileStats {
@@ -62,6 +70,7 @@ const CACHE_VERSION = 2;
  * on large binaries/assets while still content-hashing all normal source files.
  */
 const MAX_CONTENT_HASH_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_DISK_FALLBACK_VISITED = 25_000;
 
 // Read from ~/.letta/.lettasettings (MAX_ENTRIES), falling back to 50 000.
 // The file is auto-created with comments on first run so users can find it.
@@ -879,4 +888,91 @@ export function searchFileIndex(options: SearchFileIndexOptions): FileMatch[] {
   }
 
   return results;
+}
+
+function searchDiskForMissingFiles(
+  options: SearchFileIndexWithDiskOptions,
+  seen: Set<string>,
+): FileMatch[] {
+  const { absoluteSearchDir, pattern, deep, maxResults } = options;
+  const lowerPattern = pattern.toLowerCase();
+  const results: FileMatch[] = [];
+  const stack: string[] = [absoluteSearchDir];
+  let visited = 0;
+
+  while (stack.length > 0 && results.length < maxResults) {
+    if (visited >= MAX_DISK_FALLBACK_VISITED) break;
+    const dir = stack.pop();
+    if (!dir) break;
+
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+
+    for (const name of entries) {
+      if (results.length >= maxResults) break;
+      if (visited >= MAX_DISK_FALLBACK_VISITED) break;
+      if (shouldHardExcludeEntry(name, indexRoot)) continue;
+
+      const fullPath = join(dir, name);
+      let type: "file" | "dir";
+      try {
+        const stat = statSync(fullPath);
+        type = stat.isDirectory() ? "dir" : "file";
+      } catch {
+        continue;
+      }
+      visited++;
+
+      const relativePath = relative(indexRoot, fullPath);
+      if (relativePath.startsWith("..")) continue;
+      const key = `${type}:${relativePath}`;
+      if (seen.has(key)) {
+        if (deep && type === "dir") stack.push(fullPath);
+        continue;
+      }
+
+      if (
+        pattern.length === 0 ||
+        relativePath.toLowerCase().includes(lowerPattern)
+      ) {
+        results.push({ path: relativePath, type });
+        seen.add(key);
+      }
+
+      if (deep && type === "dir") stack.push(fullPath);
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Search the in-memory index, then merge a bounded live disk scan for misses.
+ *
+ * The file index is refreshed asynchronously after tool calls, so a file that
+ * was just created can exist on disk before it appears in cachedEntries. This
+ * helper keeps interactive file search correct in that window while preserving
+ * the index as the fast primary path.
+ */
+export function searchFileIndexWithDiskFallback(
+  options: SearchFileIndexWithDiskOptions,
+): FileMatch[] {
+  const indexed = searchFileIndex(options);
+  if (indexed.length >= options.maxResults) return indexed;
+
+  const seen = new Set(indexed.map((entry) => `${entry.type}:${entry.path}`));
+  const missing = searchDiskForMissingFiles(
+    { ...options, maxResults: options.maxResults - indexed.length },
+    seen,
+  );
+
+  if (missing.length > 0) {
+    addEntriesToCache(missing);
+  }
+
+  return [...indexed, ...missing];
 }
