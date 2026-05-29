@@ -105,7 +105,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 }
 ```
 
-`tool_start` fires immediately before a client-side tool executes. This includes built-in tools, extension tools, and external tools executed through the local tool manager.
+`tool_start` fires immediately before a client-side tool executes. This includes built-in tools, extension tools, and external tools executed through the local tool manager. It runs after permission/approval classification and before `PreToolUse` hooks, so trusted local extensions can change the actual executed arguments after the approval UI has already classified the original request.
 
 Handlers can inspect `event.args`, mutate it directly, or return replacement args:
 
