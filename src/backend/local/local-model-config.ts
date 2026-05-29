@@ -25,6 +25,7 @@ import {
   stripProviderHandlePrefix,
 } from "@/backend/dev/pi-provider-registry";
 import {
+  getLocalOAuthApiKey,
   type LocalProviderRecord,
   listLocalProviderRecords,
   localProviderApiKeyFromRecord,
@@ -250,16 +251,26 @@ function registeredProviderRecordFor(
   return records.find((record) => providerNames.includes(record.name));
 }
 
-function registeredProviderConnection(
+async function registeredProviderConnection(
   provider: RegisteredPiProvider,
   records: readonly LocalProviderRecord[],
-): PiProviderConnection {
+  storageDir?: string,
+): Promise<PiProviderConnection> {
   const record = registeredProviderRecordFor(provider, records);
+  const oauth =
+    record?.auth.type === "oauth" && provider.config.oauth
+      ? await getLocalOAuthApiKey({
+          providerId: provider.providerName,
+          providerNames: registeredProviderLocalNames(provider),
+          storageDir,
+        })
+      : undefined;
   return {
     id: provider.providerName,
     providerName: provider.providerName,
     baseUrl: record?.base_url ?? provider.config.baseUrl,
     apiKey:
+      oauth?.apiKey ??
       localProviderApiKeyFromRecord(record) ??
       resolveRegisteredPiProviderApiKey(provider.config.apiKey),
     headers: resolveRegisteredPiProviderHeaders(provider.config.headers),
@@ -282,9 +293,10 @@ function isRegisteredProviderConfigured(
 async function listRegisteredProviderModels(
   provider: RegisteredPiProvider,
   records: readonly LocalProviderRecord[],
+  storageDir?: string,
 ): Promise<PiProviderModelRegistration[]> {
   const listed = await provider.config.listModels?.(
-    registeredProviderConnection(provider, records),
+    await registeredProviderConnection(provider, records, storageDir),
   );
   return listed ?? provider.config.models ?? [];
 }
@@ -422,6 +434,7 @@ export async function listLocalModels(
       for (const model of await listRegisteredProviderModels(
         provider,
         records,
+        storageDir,
       )) {
         addModel(provider.providerName, model.id, {
           handle: `${provider.providerName}/${model.id}`,

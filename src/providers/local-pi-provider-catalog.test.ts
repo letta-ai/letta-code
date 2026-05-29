@@ -3,7 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModels, getProviders } from "@earendil-works/pi-ai";
-import { getOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import {
+  getOAuthProvider,
+  getOAuthProviders,
+} from "@earendil-works/pi-ai/oauth";
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
@@ -13,7 +16,11 @@ import {
   resolveProviderFromProviderType,
 } from "@/backend/dev/pi-provider-registry";
 import { listLocalModels } from "@/backend/local/local-model-config";
-import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
+import {
+  createOrUpdateLocalProvider,
+  localOAuthAuthFromCredentials,
+  setLocalOAuthProvider,
+} from "@/backend/local/local-provider-auth-store";
 import { getProviderConfigs } from "@/providers/byok-providers";
 
 describe("local pi provider catalog", () => {
@@ -124,6 +131,90 @@ describe("local pi provider catalog", () => {
     });
   });
 
+  test("local /connect configs include registered extension OAuth providers", () => {
+    registerPiProvider("kilo", {
+      name: "Kilo",
+      description: "Connect Kilo account",
+      baseUrl: "https://api.kilo.dev/v1",
+      api: "openai-completions",
+      oauth: {
+        name: "Kilo",
+        login: async () => ({
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
+        }),
+        refreshToken: async (credentials) => credentials,
+        getApiKey: (credentials) => String(credentials.access),
+      },
+      models: [
+        {
+          id: "kilo-code",
+          name: "Kilo Code",
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+
+    expect(getOAuthProvider("kilo")?.name).toBe("Kilo");
+
+    const provider = getProviderConfigs("local").find(
+      (candidate) => candidate.id === "kilo",
+    );
+
+    expect(provider).toMatchObject({
+      id: "kilo",
+      displayName: "Kilo",
+      description: "Connect Kilo account",
+      providerType: "kilo",
+      providerName: "kilo",
+      providerNames: ["kilo"],
+      isOAuth: true,
+      oauthProviderId: "kilo",
+      requiresApiKey: false,
+    });
+    expect(provider?.fields).toBeUndefined();
+  });
+
+  test("local /connect configs respect connect false for registered extension OAuth providers", () => {
+    registerPiProvider("kilo", {
+      name: "Kilo",
+      baseUrl: "https://api.kilo.dev/v1",
+      api: "openai-completions",
+      connect: false,
+      oauth: {
+        name: "Kilo",
+        login: async () => ({
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
+        }),
+        refreshToken: async (credentials) => credentials,
+        getApiKey: (credentials) => String(credentials.access),
+      },
+      models: [
+        {
+          id: "kilo-code",
+          name: "Kilo Code",
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+
+    expect(getOAuthProvider("kilo")?.name).toBe("Kilo");
+    expect(
+      getProviderConfigs("local").some((provider) => provider.id === "kilo"),
+    ).toBe(false);
+  });
+
   test("local model listing includes dynamic extension provider models when configured", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-kilo-provider-"));
     try {
@@ -169,6 +260,70 @@ describe("local pi provider catalog", () => {
           providerName: "kilo",
           baseUrl: "https://custom.kilo/v1",
           apiKey: "kilo-key",
+          headers: undefined,
+        },
+      ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("local model listing passes extension OAuth api keys to listModels", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-kilo-oauth-"));
+    try {
+      const connections: unknown[] = [];
+      registerPiProvider("kilo", {
+        baseUrl: "https://api.kilo.dev/v1",
+        api: "openai-completions",
+        oauth: {
+          login: async () => ({
+            access: "login-token",
+            refresh: "refresh-token",
+            expires: Date.now() + 60_000,
+          }),
+          refreshToken: async (credentials) => credentials,
+          getApiKey: (credentials) => `oauth:${credentials.access}`,
+        },
+        listModels(connection) {
+          connections.push(connection);
+          return [
+            {
+              id: "oauth-kilo-code",
+              name: "OAuth Kilo Code",
+              reasoning: true,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 128000,
+              maxTokens: 8192,
+            },
+          ];
+        },
+      });
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "kilo",
+        providerType: "kilo",
+        auth: localOAuthAuthFromCredentials({
+          access: "stored-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
+        }),
+      });
+
+      const models = await listLocalModels(storageDir);
+
+      expect(models).toContainEqual({
+        handle: "kilo/oauth-kilo-code",
+        max_context_window: 128000,
+        model: "kilo/oauth-kilo-code",
+        model_endpoint_type: "kilo",
+      });
+      expect(connections).toEqual([
+        {
+          id: "kilo",
+          providerName: "kilo",
+          baseUrl: "https://api.kilo.dev/v1",
+          apiKey: "oauth:stored-token",
           headers: undefined,
         },
       ]);

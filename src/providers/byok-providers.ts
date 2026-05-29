@@ -323,28 +323,33 @@ function localOAuthConfigId(providerId: string): string {
 }
 
 function localOAuthProviderConfigs(): ByokProvider[] {
-  return getOAuthProviders().map((provider) => {
-    const spec = PI_PROVIDER_SPECS.find(
-      (candidate) => candidate.piProvider === provider.id,
-    );
-    const providerName =
-      provider.id === "openai-codex"
-        ? "chatgpt-plus-pro"
-        : (spec?.localProviderNames[0] ?? provider.id);
-    return {
-      id: localOAuthConfigId(provider.id),
-      displayName: provider.name,
-      description: "Connect a subscription account",
-      providerType: spec?.providerTypes[0] ?? provider.id,
-      providerName,
-      providerNames:
+  const registeredProviderIds = new Set(
+    listRegisteredPiProviders().map((provider) => provider.providerName),
+  );
+  return getOAuthProviders()
+    .filter((provider) => !registeredProviderIds.has(provider.id))
+    .map((provider) => {
+      const spec = PI_PROVIDER_SPECS.find(
+        (candidate) => candidate.piProvider === provider.id,
+      );
+      const providerName =
         provider.id === "openai-codex"
-          ? [providerName, "openai-codex"]
-          : spec?.localProviderNames,
-      isOAuth: true,
-      oauthProviderId: provider.id,
-    };
-  });
+          ? "chatgpt-plus-pro"
+          : (spec?.localProviderNames[0] ?? provider.id);
+      return {
+        id: localOAuthConfigId(provider.id),
+        displayName: provider.name,
+        description: "Connect a subscription account",
+        providerType: spec?.providerTypes[0] ?? provider.id,
+        providerName,
+        providerNames:
+          provider.id === "openai-codex"
+            ? [providerName, "openai-codex"]
+            : spec?.localProviderNames,
+        isOAuth: true,
+        oauthProviderId: provider.id,
+      };
+    });
 }
 
 function localApiKeyProviderIds(): string[] {
@@ -382,25 +387,29 @@ function byokProviderFromRegisteredProvider(
       ? provider.config.connect
       : undefined;
   const defaultApiKey = extensionProviderEnvApiKey(provider.config.apiKey);
-  return {
+  const displayName =
+    provider.config.name ?? displayNameForLocalProvider(provider.providerName);
+  const baseConfig: ByokProvider = {
     id: provider.providerName,
-    displayName:
-      provider.config.name ??
-      displayNameForLocalProvider(provider.providerName),
-    description:
-      provider.config.description ??
-      `Connect ${provider.config.name ?? displayNameForLocalProvider(provider.providerName)}`,
+    displayName,
+    description: provider.config.description ?? `Connect ${displayName}`,
     providerType: provider.providerName,
     providerName: provider.providerName,
     providerNames: [provider.providerName],
+  };
+  if (provider.config.oauth) {
+    return {
+      ...baseConfig,
+      isOAuth: true,
+      oauthProviderId: provider.providerName,
+      requiresApiKey: false,
+    };
+  }
+  return {
+    ...baseConfig,
     requiresApiKey: defaultApiKey === undefined,
     ...(defaultApiKey ? { defaultApiKey } : {}),
-    fields:
-      connect?.fields ??
-      defaultExtensionProviderFields(
-        provider.config.name ??
-          displayNameForLocalProvider(provider.providerName),
-      ),
+    fields: connect?.fields ?? defaultExtensionProviderFields(displayName),
   };
 }
 

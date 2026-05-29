@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModels } from "@earendil-works/pi-ai";
+import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
@@ -394,6 +395,79 @@ describe("pi model factory", () => {
           headers: { "X-Kilo": "header" },
         },
       ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses extension OAuth credentials at turn time", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-kilo-oauth-"));
+    try {
+      const refreshes: unknown[] = [];
+      registerPiProvider("kilo", {
+        baseUrl: "https://api.kilo.dev/v1",
+        api: "openai-completions",
+        authHeader: true,
+        oauth: {
+          name: "Kilo",
+          login: async () => ({
+            access: "login-token",
+            refresh: "refresh-token",
+            expires: Date.now() + 60_000,
+          }),
+          refreshToken: async (credentials) => {
+            refreshes.push(credentials);
+            return {
+              ...credentials,
+              access: "refreshed-token",
+              expires: Date.now() + 60_000,
+            };
+          },
+          getApiKey: (credentials) => `oauth:${credentials.access}`,
+          modifyModels: (models, credentials) =>
+            models.map((model) => ({
+              ...model,
+              baseUrl: `https://${credentials.access}.kilo.dev/v1`,
+            })),
+        },
+        models: [
+          {
+            id: "kilo-code",
+            name: "Kilo Code",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 8192,
+          },
+        ],
+      });
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "kilo",
+        providerType: "kilo",
+        auth: localOAuthAuthFromCredentials({
+          access: "expired-token",
+          refresh: "refresh-token",
+          expires: Date.now() - 1,
+        }),
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "kilo/kilo-code",
+        {},
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(getOAuthProvider("kilo")?.name).toBe("Kilo");
+      expect(refreshes).toHaveLength(1);
+      expect(resolved.apiKey).toBe("oauth:refreshed-token");
+      expect(resolved.model).toMatchObject({
+        id: "kilo-code",
+        provider: "kilo",
+        baseUrl: "https://refreshed-token.kilo.dev/v1",
+        headers: { Authorization: "Bearer oauth:refreshed-token" },
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

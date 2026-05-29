@@ -1,4 +1,10 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  type OAuthCredentials,
+  type OAuthLoginCallbacks,
+  registerOAuthProvider,
+  unregisterOAuthProvider,
+} from "@earendil-works/pi-ai/oauth";
 
 export type PiProviderInputType = "text" | "image";
 
@@ -41,6 +47,31 @@ export interface PiProviderConnectConfig {
   fields?: PiProviderConnectField[];
 }
 
+export interface PiProviderOAuthDeviceCodeInfo {
+  verificationUri: string;
+  userCode: string;
+  intervalSeconds?: number;
+  expiresInSeconds?: number;
+}
+
+export interface PiProviderOAuthLoginCallbacks
+  extends Omit<OAuthLoginCallbacks, "onDeviceCode"> {
+  onDeviceCode?: (info: PiProviderOAuthDeviceCodeInfo) => void;
+}
+
+export interface PiProviderOAuthConfig {
+  name?: string;
+  login: (
+    callbacks: PiProviderOAuthLoginCallbacks,
+  ) => Promise<OAuthCredentials>;
+  refreshToken: (credentials: OAuthCredentials) => Promise<OAuthCredentials>;
+  getApiKey: (credentials: OAuthCredentials) => string;
+  modifyModels?: (
+    models: Model<Api>[],
+    credentials: OAuthCredentials,
+  ) => Model<Api>[];
+}
+
 export interface PiProviderRegistration {
   name?: string;
   description?: string;
@@ -54,6 +85,7 @@ export interface PiProviderRegistration {
     connection: PiProviderConnection,
   ) => Promise<PiProviderModelRegistration[]> | PiProviderModelRegistration[];
   connect?: boolean | PiProviderConnectConfig;
+  oauth?: PiProviderOAuthConfig;
 }
 
 export interface RegisteredPiProvider {
@@ -256,6 +288,34 @@ function validateConnectConfig(
   }
 }
 
+function validateOAuthConfig(
+  providerName: string,
+  oauth: PiProviderRegistration["oauth"],
+): void {
+  if (oauth === undefined) return;
+  if (!oauth || typeof oauth !== "object" || Array.isArray(oauth)) {
+    throw new Error(`Provider ${providerName}.oauth must be an object`);
+  }
+  if (oauth.name !== undefined && typeof oauth.name !== "string") {
+    throw new Error(`Provider ${providerName}.oauth.name must be a string`);
+  }
+  for (const key of ["login", "refreshToken", "getApiKey"] as const) {
+    if (typeof oauth[key] !== "function") {
+      throw new Error(
+        `Provider ${providerName}.oauth.${key} must be a function`,
+      );
+    }
+  }
+  if (
+    oauth.modifyModels !== undefined &&
+    typeof oauth.modifyModels !== "function"
+  ) {
+    throw new Error(
+      `Provider ${providerName}.oauth.modifyModels must be a function`,
+    );
+  }
+}
+
 function validateProviderConfig(
   providerName: string,
   config: PiProviderRegistration,
@@ -263,6 +323,7 @@ function validateProviderConfig(
   validateProviderName(providerName);
   validateHeaders(config.headers, `Provider ${providerName}.headers`);
   validateConnectConfig(providerName, config.connect);
+  validateOAuthConfig(providerName, config.oauth);
   if (
     config.listModels !== undefined &&
     typeof config.listModels !== "function"
@@ -292,6 +353,45 @@ function validateProviderConfig(
   }
 }
 
+function registerPiOAuthProvider(
+  providerName: string,
+  config: PiProviderRegistration,
+): void {
+  unregisterOAuthProvider(providerName);
+  if (!config.oauth) return;
+  registerOAuthProvider({
+    id: providerName,
+    name: config.oauth.name ?? config.name ?? providerName,
+    login: (callbacks) =>
+      config.oauth?.login(callbacks as PiProviderOAuthLoginCallbacks) ??
+      Promise.reject(
+        new Error(`Provider "${providerName}" OAuth is not registered`),
+      ),
+    refreshToken: (credentials) => {
+      if (!config.oauth) {
+        throw new Error(`Provider "${providerName}" OAuth is not registered`);
+      }
+      return config.oauth.refreshToken(credentials);
+    },
+    getApiKey: (credentials) => {
+      if (!config.oauth) {
+        throw new Error(`Provider "${providerName}" OAuth is not registered`);
+      }
+      return config.oauth.getApiKey(credentials);
+    },
+    ...(config.oauth.modifyModels
+      ? {
+          modifyModels: (models, credentials) =>
+            config.oauth?.modifyModels?.(models, credentials) ?? models,
+        }
+      : {}),
+  });
+}
+
+function unregisterPiOAuthProvider(providerName: string): void {
+  unregisterOAuthProvider(providerName);
+}
+
 export function registerPiProvider(
   providerName: string,
   config: PiProviderRegistration,
@@ -305,6 +405,7 @@ export function registerPiProvider(
     ...(owner?.path ? { path: owner.path } : {}),
   };
   registeredProviders.set(providerName, registered);
+  registerPiOAuthProvider(providerName, registered.config);
   notifyRegistryListeners();
   return getRegisteredPiProvider(providerName) as RegisteredPiProvider;
 }
@@ -317,6 +418,7 @@ export function unregisterPiProvider(
   if (!existing) return;
   if (ownerId && existing.ownerId && existing.ownerId !== ownerId) return;
   registeredProviders.delete(providerName);
+  unregisterPiOAuthProvider(providerName);
   notifyRegistryListeners();
 }
 
@@ -325,6 +427,7 @@ export function unregisterPiProvidersForOwner(ownerId: string): void {
   for (const [providerName, provider] of registeredProviders.entries()) {
     if (provider.ownerId === ownerId) {
       registeredProviders.delete(providerName);
+      unregisterPiOAuthProvider(providerName);
       changed = true;
     }
   }
@@ -333,6 +436,9 @@ export function unregisterPiProvidersForOwner(ownerId: string): void {
 
 export function clearRegisteredPiProviders(): void {
   if (registeredProviders.size === 0) return;
+  for (const providerName of registeredProviders.keys()) {
+    unregisterPiOAuthProvider(providerName);
+  }
   registeredProviders.clear();
   notifyRegistryListeners();
 }
