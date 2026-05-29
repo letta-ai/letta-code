@@ -19,7 +19,7 @@ import {
 async function runHeadlessCommandOnce(
   prompt: string,
   extraArgs: string[] = [],
-  timeoutMs = 180000, // 180s timeout - CI can be very slow
+  timeoutMs = 90000, // Keep two retry attempts within Bun's 200s test timeout
 ): Promise<{
   lines: string[];
   stdout: string;
@@ -113,13 +113,43 @@ async function runHeadlessCommandOnce(
 async function runHeadlessCommand(
   prompt: string,
   extraArgs: string[] = [],
-  timeoutMs = 180000,
+  timeoutMs = 90000,
 ): Promise<string[]> {
   const maxRetries = 1;
   const failedAttempts: Array<{ attempt: number; message: string }> = [];
 
   for (let attempt = 0; ; attempt += 1) {
-    const result = await runHeadlessCommandOnce(prompt, extraArgs, timeoutMs);
+    let result: Awaited<ReturnType<typeof runHeadlessCommandOnce>>;
+    try {
+      result = await runHeadlessCommandOnce(prompt, extraArgs, timeoutMs);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failedAttempts.push({
+        attempt: attempt + 1,
+        message,
+      });
+
+      const isRetriableError =
+        error instanceof Error &&
+        (error.message.includes("Process timeout after") ||
+          error.message.includes("without a result envelope"));
+
+      if (!isRetriableError || attempt >= maxRetries) {
+        throw new Error(
+          failedAttempts.length === 1
+            ? message
+            : `${message}\n${formatAttemptDiagnostics(
+                failedAttempts.slice(0, -1),
+              )}`,
+        );
+      }
+
+      console.warn(
+        `[headless-stream-json] retrying after transient/incomplete run (${attempt + 1}/${maxRetries})`,
+      );
+      continue;
+    }
+
     const hasResultLine = result.lines.some((line) => {
       try {
         const obj = JSON.parse(line);
