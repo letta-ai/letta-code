@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Backend } from "@/backend";
+import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
 import {
   clearExtensionTools,
   getExtensionToolDefinition,
@@ -205,6 +206,7 @@ describe("headless extension runtime", () => {
     const root = mkdtempSync(
       path.join(tmpdir(), "letta-headless-ext-disabled-"),
     );
+    const originalDisableEnv = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
     const extensionDir = path.join(root, "global-extensions");
     const toolName = "disabled_headless_tool";
     const agent = {
@@ -255,9 +257,15 @@ describe("headless extension runtime", () => {
       expect(snapshot.registry.tools).toEqual({});
       expect(snapshot.registry.ui.statuslineRenderer).toBeNull();
       expect(getExtensionToolDefinition(toolName)).toBeUndefined();
+      expect(process.env[LETTA_DISABLE_EXTENSIONS_ENV]).toBe("1");
 
       runtime.dispose();
     } finally {
+      if (originalDisableEnv === undefined) {
+        delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+      } else {
+        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = originalDisableEnv;
+      }
       rmSync(root, { force: true, recursive: true });
     }
   });

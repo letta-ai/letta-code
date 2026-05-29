@@ -4,7 +4,10 @@ import {
   cloneExtensionCapabilities,
   DISABLED_EXTENSION_CAPABILITIES,
 } from "@/extensions/capabilities";
-import { areExtensionsDisabled } from "@/extensions/disable";
+import {
+  areExtensionsDisabled,
+  disableExtensionsForProcess,
+} from "@/extensions/disable";
 import {
   type ExtensionEventEmitter,
   emptyEventEmissionResult,
@@ -198,6 +201,10 @@ function createLazyRuntimeBackendApi(
 export function createExtensionRuntime(
   options: CreateExtensionRuntimeOptions,
 ): ExtensionRuntime {
+  if (options.disabled) {
+    disableExtensionsForProcess();
+  }
+
   if (options.disabled || areExtensionsDisabled()) {
     return createDisabledExtensionRuntime(options);
   }

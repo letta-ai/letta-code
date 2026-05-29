@@ -103,6 +103,7 @@ describe("extension runtime", () => {
   test("disabled runtime does not load extensions or expose extension capabilities", async () => {
     const root = createTempDir();
     const testGlobal = globalThis as ExtensionRuntimeTestGlobal;
+    const originalDisableEnv = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
 
     try {
       const extensionDir = path.join(root, "global-extensions");
@@ -179,6 +180,24 @@ describe("extension runtime", () => {
         globalExtensionsDirectory: extensionDir,
         initialContext: createExtensionContext(),
       });
+      registerExtensionTool({
+        activationSignal: new AbortController().signal,
+        description: "Post-disable tool",
+        getContext: () => createExtensionContext(),
+        isAvailable: () => true,
+        name: "post_disabled_extension_tool",
+        owner: {
+          generation: 0,
+          id: "test:post-disabled",
+          path: "post-disabled.ts",
+          scope: "global",
+        },
+        parameters: { type: "object", properties: {} },
+        parallelSafe: false,
+        path: "post-disabled.ts",
+        requiresApproval: false,
+        run: () => "post-disabled",
+      });
 
       expect(runtime.getSnapshot()).toMatchObject({
         hadStatuslineRenderer: false,
@@ -208,11 +227,20 @@ describe("extension runtime", () => {
       expect(
         getExtensionToolDefinition("stale_extension_tool"),
       ).toBeUndefined();
+      expect(
+        getExtensionToolDefinition("post_disabled_extension_tool"),
+      ).toBeUndefined();
+      expect(process.env[LETTA_DISABLE_EXTENSIONS_ENV]).toBe("1");
       expect(listRegisteredPiProviders()).toEqual([]);
     } finally {
       delete testGlobal.__lettaDisabledExtensionLoaded;
       clearExtensionTools();
       clearRegisteredPiProviders();
+      if (originalDisableEnv === undefined) {
+        delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+      } else {
+        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = originalDisableEnv;
+      }
       rmSync(root, { force: true, recursive: true });
     }
   });
