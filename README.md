@@ -35,15 +35,6 @@ Letta Code is a frontier coding agent and can also be used as a long-lived perso
 
 See the full list of slash commands in our [documentation](https://docs.letta.com/letta-code/slash-commands).
 
-## Skills
-
-Install skills into a specific agent's MemFS with `letta install <skill> --agent <agent-id>`.
-
-| Source | Example |
-|---|---|
-| GitHub repositories/directories | `https://github.com/owner/repo`, `https://github.com/owner/repo/tree/main/path/to/skill`, `https://github.com/owner/repo/blob/main/path/to/skill/SKILL.md`, `owner/repo/path/to/skill` | 
-| [ClawHub](https://clawhub.ai/)  | `clawhub/<slug>`, `clawhub:<slug>`, `clawhub:<slug>@<version>`, `https://clawhub.ai/skills/<slug>` | 
-| Hermes | `hermes skills install {skill_path}` -> `letta skills install {skill_path}` | 
 ## Get started
 
 Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm):
@@ -135,6 +126,18 @@ letta server --env-name "work-laptop"
 ```
 
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
+
+## Installing Skills
+
+Install skills into a specific agent's memory with `letta skills install <skill>`: 
+
+| Source | Example |
+|---|---|
+| GitHub repositories/directories | `letta skills install https://github.com/owner/repo`<br>`letta skills install https://github.com/owner/repo/tree/main/path/to/skill`<br>`letta skills install https://github.com/owner/repo/blob/main/path/to/skill/SKILL.md` |
+| [ClawHub](https://clawhub.ai/) | `openclaw skills install <skill-slug>` → `letta skills install <skill-slug>` |
+| [Hermes Skills Hub](https://hermes-agent.nousresearch.com/docs/skills/) | `hermes skills install <skill-path>` → `letta skills install <skill-path>` |
+
+To view skills run `letta skills list --agent <agent-id>`, and delete skills with `letta skills delete <skill-name> --agent <agent-id>`.
 
 ## Research
 
