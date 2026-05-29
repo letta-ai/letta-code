@@ -84,7 +84,6 @@
     "check": "bun run scripts/check.js",
     "dev": "LETTA_DEBUG=${LETTA_DEBUG:-1} LETTA_RESPONSES_WS=${LETTA_RESPONSES_WS:-1} bun --loader=.md:text --loader=.mdx:text --loader=.txt:text run src/index.ts",
     "build": "node scripts/postinstall-patches.js && bun run build.js",
-    "smoke:reflection": "bun run src/test-utils/reflection-live-smoke.ts",
     "test:update-chain:manual": "bun run src/test-utils/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/test-utils/update-chain-smoke.ts --mode startup",
     "prepublishOnly": "bun run build",
