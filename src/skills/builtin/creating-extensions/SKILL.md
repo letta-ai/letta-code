@@ -72,6 +72,7 @@ Use `letta.capabilities` for optional behavior:
 letta.capabilities.tools
 letta.capabilities.commands
 letta.capabilities.events.lifecycle
+letta.capabilities.events.tools
 letta.capabilities.events.turns
 letta.capabilities.ui.panels
 letta.capabilities.ui.statusValues

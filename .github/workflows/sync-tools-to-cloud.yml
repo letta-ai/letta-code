@@ -1,0 +1,103 @@
+name: Sync Tools to letta-cloud
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+    paths:
+      - "src/tools/**"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number whose src/tools/ changes should be synced"
+        required: true
+        type: number
+
+jobs:
+  sync:
+    # Only run on merged PRs (path filter already scopes to src/tools/ changes)
+    # or on manual dispatch
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: letta-ai/letta-code-action@daa80f29e345315623ff759f5ecf5018946bbc15
+        id: letta_sync
+        with:
+          letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
+          track_progress: ""
+          tracking_comment: "false"
+          model: auto
+          prompt: |
+            A pull request that modifies `src/tools/` in letta-ai/letta-code has just been merged.
+            PR number: ${{ env.PR_NUMBER }}
+
+            Your job is to sync the relevant changes to letta-ai/letta-cloud by opening a PR there.
+
+            ## Steps
+
+            1. Read your memory and review-knowledge.md for context on the letta-code/letta-cloud relationship.
+
+            2. Understand what changed:
+               ```bash
+               gh pr view $PR_NUMBER --repo letta-ai/letta-code --json title,body,files
+               gh pr diff $PR_NUMBER --repo letta-ai/letta-code
+               ```
+
+            3. Determine what, if anything, needs updating in letta-cloud. Follow the FunctionCall sync pattern and focus on:
+               - `libs/ui-component-library/src/lib/reusable/FunctionCall/toolNameUtils.ts` — add/adjust tool variant detection + canonical naming
+               - `libs/ui-component-library/src/lib/reusable/FunctionCall/FunctionCall.types.ts` — add/adjust Zod literals / typed schemas
+               - `libs/ui-component-library/src/lib/reusable/FunctionCall/FunctionCallPreview.tsx` — renderPreview routing, hasPrettyFunctionCallPreview, and inline summary updates
+               - `libs/ui-component-library/src/lib/reusable/FunctionCall/FunctionCall.tsx` — header/chat prefix behavior (hasCustomChatPrefix, chatPrefix, default-open behavior)
+               - `libs/ui-component-library/src/lib/translations/en.json`, `fr.json`, `cn.json` — add matching translation keys when labels/prefixes/previews change
+               - Adjacent tests for the files above
+               If the src/tools/ change has no user-visible impact in the cloud UI (for example, internal-only refactors with no schema/name/label changes), respond with exactly: `NO_SYNC_NEEDED` and stop.
+
+            4. Resolve the PR author's login. For auto-triggered runs it is already set:
+               ```bash
+               PR_AUTHOR="${{ env.PR_AUTHOR }}"
+               ```
+               If that is empty (manual dispatch), look it up:
+               ```bash
+               PR_AUTHOR=$(gh pr view $PR_NUMBER --repo letta-ai/letta-code --json author --jq '.author.login')
+               ```
+
+            5. Clone letta-cloud and make the change:
+               ```bash
+               gh repo clone letta-ai/letta-cloud /tmp/letta-cloud
+               cd /tmp/letta-cloud
+               git checkout -b sync/tools-from-letta-code-pr-$PR_NUMBER
+               ```
+               Make the necessary edits. Keep the change minimal and focused on what the letta-code PR actually changed.
+
+            6. Push the branch and open a PR, tagging the original author as reviewer:
+               ```bash
+               cd /tmp/letta-cloud
+               git add -A
+               git commit -m "sync(tools): reflect letta-code PR #$PR_NUMBER changes"
+               git push origin sync/tools-from-letta-code-pr-$PR_NUMBER
+               gh pr create \
+                 --repo letta-ai/letta-cloud \
+                 --title "sync(tools): reflect letta-code PR #$PR_NUMBER changes" \
+                 --body "Automated sync from letta-ai/letta-code#$PR_NUMBER.\n\nSee the source PR for context on what changed." \
+                 --reviewer "$PR_AUTHOR"
+               ```
+
+            7. Respond with exactly: `PR_CREATED <url>` where `<url>` is the letta-cloud PR URL.
+
+            ## Voice
+            You are Amelia. Work quietly and precisely. Do not leave comments or reviews — just open the PR.

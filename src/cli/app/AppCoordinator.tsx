@@ -1565,6 +1565,7 @@ export function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
+          extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
         });
       }
 
@@ -1572,6 +1573,7 @@ export function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
+          extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -1580,6 +1582,7 @@ export function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
+        extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });

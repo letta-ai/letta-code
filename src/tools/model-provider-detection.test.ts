@@ -17,6 +17,10 @@ describe("isOpenAIModel", () => {
     expect(isOpenAIModel("chatgpt_oauth/gpt-5.3-codex")).toBe(true);
   });
 
+  test("detects local ChatGPT OAuth handles", () => {
+    expect(isOpenAIModel("openai-codex/gpt-5.5")).toBe(true);
+  });
+
   test("detects chatgpt-plus-pro model ids via models.json metadata", () => {
     expect(isOpenAIModel("gpt-5.3-codex-plus-pro-high")).toBe(true);
   });
@@ -36,6 +40,10 @@ describe("isOpenAIModel", () => {
 describe("deriveToolsetFromModel", () => {
   test("maps chatgpt_oauth handles to codex toolset", () => {
     expect(deriveToolsetFromModel("chatgpt_oauth/gpt-5.3-codex")).toBe("codex");
+  });
+
+  test("maps local ChatGPT OAuth handles to codex toolset", () => {
+    expect(deriveToolsetFromModel("openai-codex/gpt-5.5")).toBe("codex");
   });
 
   test("maps Gemini models to default (anthropic) toolset", () => {
