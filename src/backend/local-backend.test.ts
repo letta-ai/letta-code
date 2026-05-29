@@ -515,14 +515,14 @@ describe("local backend pi transcript", () => {
   });
 
   test("lists extension-registered local provider models with context windows", async () => {
-    registerPiProvider("kilo", {
+    registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",
       api: "openai-completions",
       models: [
         {
-          id: "kilo-code",
-          name: "Kilo Code",
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
           reasoning: true,
           input: ["text", "image"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -535,8 +535,8 @@ describe("local backend pi transcript", () => {
       join(tmpdir(), "local-backend-pi-registered-provider-"),
     );
     await createOrUpdateLocalProvider({
-      providerType: "kilo",
-      providerName: "kilo",
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
       apiKey: "not-needed",
       baseURL: "http://127.0.0.1:1234/v1",
       storageDir,
@@ -554,10 +554,10 @@ describe("local backend pi transcript", () => {
 
     expect(calls).toEqual([]);
     expect(models).toContainEqual({
-      handle: "kilo/kilo-code",
+      handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
       max_context_window: 256000,
-      model: "kilo/kilo-code",
-      model_endpoint_type: "kilo",
+      model: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+      model_endpoint_type: "lmstudio",
     });
     expect(models.map((model) => model.handle)).not.toContain(
       "lmstudio/heuristic-only-model",
@@ -565,14 +565,14 @@ describe("local backend pi transcript", () => {
   });
 
   test("uses extension-registered context windows for local agent state", async () => {
-    registerPiProvider("kilo", {
+    registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",
       api: "openai-completions",
       models: [
         {
-          id: "kilo-code",
-          name: "Kilo Code",
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
           reasoning: true,
           input: ["text", "image"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -585,8 +585,8 @@ describe("local backend pi transcript", () => {
       join(tmpdir(), "local-backend-pi-registered-context-"),
     );
     await createOrUpdateLocalProvider({
-      providerType: "kilo",
-      providerName: "kilo",
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
       apiKey: "not-needed",
       baseURL: "http://127.0.0.1:1234/v1",
       storageDir,
@@ -595,7 +595,7 @@ describe("local backend pi transcript", () => {
     const backend = new LocalBackend({ storageDir, memfsEnabled: false });
     const agent = await backend.createAgent({ name: "Local" } as never);
 
-    expect(agent.model).toBe("kilo/kilo-code");
+    expect(agent.model).toBe("lmstudio/gemma-4-26B-A4B-it-oQ6");
     expect(
       (agent as { llm_config?: { context_window?: number } }).llm_config
         ?.context_window,
@@ -607,14 +607,14 @@ describe("local backend pi transcript", () => {
   });
 
   test("projects legacy local 128k defaults through registered model metadata", async () => {
-    registerPiProvider("kilo", {
+    registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",
       api: "openai-completions",
       models: [
         {
-          id: "kilo-code",
-          name: "Kilo Code",
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
           reasoning: true,
           input: ["text", "image"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -627,8 +627,8 @@ describe("local backend pi transcript", () => {
       join(tmpdir(), "local-backend-pi-legacy-context-"),
     );
     await createOrUpdateLocalProvider({
-      providerType: "kilo",
-      providerName: "kilo",
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
       apiKey: "not-needed",
       baseURL: "http://127.0.0.1:1234/v1",
       storageDir,
@@ -643,9 +643,9 @@ describe("local backend pi transcript", () => {
           description: null,
           system: "",
           tags: [],
-          model: "kilo/kilo-code",
+          model: "lmstudio/gemma-4-26B-A4B-it-oQ6",
           model_settings: {
-            provider_type: "kilo",
+            provider_type: "lmstudio",
             context_window_limit: 128000,
           },
         },

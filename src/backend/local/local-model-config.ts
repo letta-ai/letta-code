@@ -234,11 +234,20 @@ async function discoverModelIdsForProvider(
   }
 }
 
+function registeredProviderLocalNames(
+  provider: RegisteredPiProvider,
+): readonly string[] {
+  return isPiProviderForLocalModelHandle(provider.providerName)
+    ? getPiProviderSpec(provider.providerName).localProviderNames
+    : [provider.providerName];
+}
+
 function registeredProviderRecordFor(
   provider: RegisteredPiProvider,
   records: readonly LocalProviderRecord[],
 ): LocalProviderRecord | undefined {
-  return records.find((record) => record.name === provider.providerName);
+  const providerNames = registeredProviderLocalNames(provider);
+  return records.find((record) => providerNames.includes(record.name));
 }
 
 function registeredProviderConnection(

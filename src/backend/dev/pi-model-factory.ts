@@ -179,6 +179,14 @@ function localProviderConnection(
   };
 }
 
+function registeredProviderLocalNames(
+  provider: RegisteredPiProvider,
+): readonly string[] {
+  return isPiProvider(provider.providerName)
+    ? getPiProviderSpec(provider.providerName).localProviderNames
+    : [provider.providerName];
+}
+
 function registeredProviderConnection(
   provider: RegisteredPiProvider,
   storageDir?: string,
@@ -189,10 +197,8 @@ function registeredProviderConnection(
   headers?: Record<string, string>;
   record?: LocalProviderRecord;
 } {
-  const record = getLocalProviderRecordByName(
-    provider.providerName,
-    storageDir,
-  );
+  const providerNames = registeredProviderLocalNames(provider);
+  const record = localProviderRecord(providerNames, storageDir);
   return {
     apiKey:
       localProviderApiKeyFromRecord(record) ??
@@ -200,7 +206,7 @@ function registeredProviderConnection(
     baseURL: record?.base_url ?? provider.config.baseUrl,
     timeout: resolveLocalProviderTimeout({
       configuredTimeout: record?.timeout,
-      providerIds: [provider.providerName],
+      providerIds: providerNames,
     }),
     headers: resolveRegisteredPiProviderHeaders(provider.config.headers),
     ...(record ? { record } : {}),

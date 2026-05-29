@@ -1,5 +1,4 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { KNOWN_PI_PROVIDERS } from "@/backend/dev/pi-provider-registry";
 
 export type PiProviderInputType = "text" | "image";
 
@@ -133,11 +132,6 @@ function validateProviderName(providerName: string): void {
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(providerName)) {
     throw new Error(
       "Provider name must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens",
-    );
-  }
-  if ((KNOWN_PI_PROVIDERS as ReadonlySet<string>).has(providerName)) {
-    throw new Error(
-      `Provider name "${providerName}" conflicts with a built-in provider`,
     );
   }
 }
