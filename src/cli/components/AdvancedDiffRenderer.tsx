@@ -1,6 +1,7 @@
 import { relative } from "node:path";
 import { Box } from "ink";
 import { useMemo } from "react";
+import stringWidth from "string-width";
 import {
   ADV_DIFF_CONTEXT_LINES,
   type AdvancedDiffSuccess,
@@ -101,6 +102,42 @@ export function exceedsAdvancedDiffHighlightLimits(
   return false;
 }
 
+function takePrefixByDisplayWidth(
+  text: string,
+  maxWidth: number,
+): { prefix: string; rest: string; width: number } {
+  if (maxWidth <= 0) {
+    return { prefix: "", rest: text, width: 0 };
+  }
+
+  let prefix = "";
+  let width = 0;
+
+  for (const char of text) {
+    const charWidth = stringWidth(char);
+    if (width + charWidth > maxWidth) {
+      break;
+    }
+    prefix += char;
+    width += charWidth;
+  }
+
+  return { prefix, rest: text.slice(prefix.length), width };
+}
+
+function takeFirstCharacter(text: string): {
+  prefix: string;
+  rest: string;
+  width: number;
+} {
+  const prefix = Array.from(text)[0] ?? "";
+  return {
+    prefix,
+    rest: text.slice(prefix.length),
+    width: stringWidth(prefix),
+  };
+}
+
 // Split styled chunks into rows of exactly `cols` characters, padding the last row.
 // Continuation rows start with a blank indent of `contIndent` characters
 // (matching Codex's empty-gutter + 2-space continuation, diff_render.rs:922-929).
@@ -112,30 +149,41 @@ function buildPaddedRows(
   if (cols <= 0) return [chunks];
   const rows: StyledChunk[][] = [];
   let row: StyledChunk[] = [];
-  let len = 0;
+  let width = 0;
   for (const chunk of chunks) {
     let rem = chunk.text;
     while (rem.length > 0) {
-      const space = cols - len;
-      if (rem.length <= space) {
+      if (width >= cols) {
+        rows.push(row);
+        row = [{ text: " ".repeat(contIndent) }];
+        width = contIndent;
+      }
+
+      const space = Math.max(1, cols - width);
+      if (stringWidth(rem) <= space) {
         row.push({ text: rem, color: chunk.color, dimColor: chunk.dimColor });
-        len += rem.length;
+        width += stringWidth(rem);
         rem = "";
       } else {
+        let next = takePrefixByDisplayWidth(rem, space);
+        if (!next.prefix) {
+          next = takeFirstCharacter(rem);
+        }
         row.push({
-          text: rem.slice(0, space),
+          text: next.prefix,
           color: chunk.color,
           dimColor: chunk.dimColor,
         });
+        width += next.width;
+        rem = next.rest;
         rows.push(row);
         // Start continuation row with blank gutter indent
         row = [{ text: " ".repeat(contIndent) }];
-        len = contIndent;
-        rem = rem.slice(space);
+        width = contIndent;
       }
     }
   }
-  if (len < cols) row.push({ text: " ".repeat(cols - len) });
+  if (width < cols) row.push({ text: " ".repeat(cols - width) });
   if (row.length > 0) rows.push(row);
   return rows;
 }
