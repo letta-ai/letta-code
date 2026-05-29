@@ -16,6 +16,7 @@ mock.module("../backend/api/search", () => ({
 const {
   buildMessageSearchRequestBody,
   buildSearchTargetPlan,
+  getMessageText,
   warmMessageSearchCache,
 } = await import("@/cli/components/MessageSearch");
 
@@ -73,6 +74,22 @@ describe("buildSearchTargetPlan", () => {
       ],
     });
   });
+
+  test("skips equivalent mode prefetches when search modes are text-only", () => {
+    expect(
+      buildSearchTargetPlan("hybrid", "agent", {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        textOnlyModes: true,
+      }),
+    ).toEqual({
+      primary: { mode: "hybrid", range: "agent" },
+      prefetch: [
+        { mode: "hybrid", range: "all" },
+        { mode: "hybrid", range: "conv" },
+      ],
+    });
+  });
 });
 
 describe("buildMessageSearchRequestBody", () => {
@@ -90,5 +107,17 @@ describe("buildMessageSearchRequestBody", () => {
       agent_id: "agent-1",
       conversation_id: "default",
     });
+  });
+});
+
+describe("message text formatting", () => {
+  test("does not assume tool returns are strings", () => {
+    expect(
+      getMessageText({
+        message_type: "tool_return_message",
+        name: "tool",
+        tool_return: { nested: ["value"] },
+      } as never),
+    ).toBe('tool: {"nested":["value"]}');
   });
 });
