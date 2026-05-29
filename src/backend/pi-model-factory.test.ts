@@ -245,17 +245,6 @@ describe("pi model factory", () => {
     }
   });
 
-  test("resolves Bedrock Opus 4.8 from the Pi model catalog", async () => {
-    const resolved = await resolvePiModelForAgent(
-      "bedrock/us.anthropic.claude-opus-4-8",
-      { provider_type: "bedrock" },
-    );
-
-    expect(resolved.provider).toBe("amazon-bedrock");
-    expect(resolved.model.id).toBe("us.anthropic.claude-opus-4-8");
-    expect(resolved.model.reasoning).toBe(true);
-  });
-
   test("resolves Bedrock Opus 4.7 from the Pi model catalog", async () => {
     const resolved = await resolvePiModelForAgent(
       "bedrock/us.anthropic.claude-opus-4-7",

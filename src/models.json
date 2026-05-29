@@ -542,20 +542,6 @@
       }
     },
     {
-      "id": "bedrock-opus-4.8",
-      "handle": "bedrock/us.anthropic.claude-opus-4-8",
-      "label": "Bedrock Opus 4.8",
-      "shortLabel": "Opus 4.8 BR",
-      "description": "Anthropic's Opus 4.8 (via AWS Bedrock)",
-      "updateArgs": {
-        "context_window": 950000,
-        "max_output_tokens": 128000,
-        "reasoning_effort": "high",
-        "enable_reasoner": true,
-        "parallel_tool_calls": true
-      }
-    },
-    {
       "id": "bedrock-opus-4.7",
       "handle": "bedrock/us.anthropic.claude-opus-4-7",
       "label": "Bedrock Opus 4.7",

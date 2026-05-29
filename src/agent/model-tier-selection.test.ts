@@ -19,17 +19,6 @@ describe("getModelInfo", () => {
     });
   });
 
-  test("includes Bedrock Opus 4.8", () => {
-    const info = getModelInfo("bedrock-opus-4.8");
-    expect(info?.handle).toBe("bedrock/us.anthropic.claude-opus-4-8");
-    expect(info?.label).toBe("Bedrock Opus 4.8");
-    expect(info?.updateArgs).toMatchObject({
-      context_window: 950000,
-      reasoning_effort: "high",
-      enable_reasoner: true,
-    });
-  });
-
   test("preserves Bedrock Opus 4.7", () => {
     const info = getModelInfo("bedrock-opus-4.7");
     expect(info?.handle).toBe("bedrock/us.anthropic.claude-opus-4-7");

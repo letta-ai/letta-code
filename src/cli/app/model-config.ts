@@ -152,18 +152,14 @@ export function getErrorHintForStopReason(
   // Build the /model swap suggestion -- mention Bedrock Opus if applicable.
   const bedrockOpusSuggestion =
     modelEndpointType === "anthropic" &&
-    (currentModelId === "opus" || currentModelId?.startsWith("opus-4.8")) &&
-    getModelInfo("bedrock-opus-4.8")
-      ? "Opus 4.8 via Amazon Bedrock"
+    (currentModelId === "opus" || currentModelId?.startsWith("opus-4.7")) &&
+    getModelInfo("bedrock-opus-4.7")
+      ? "Opus 4.7 via Amazon Bedrock"
       : modelEndpointType === "anthropic" &&
-          currentModelId?.startsWith("opus-4.7") &&
-          getModelInfo("bedrock-opus-4.7")
-        ? "Opus 4.7 via Amazon Bedrock"
-        : modelEndpointType === "anthropic" &&
-            currentModelId?.startsWith("opus-4.6") &&
-            getModelInfo("bedrock-opus-4.6")
-          ? "Opus 4.6 via Amazon Bedrock"
-          : null;
+          currentModelId?.startsWith("opus-4.6") &&
+          getModelInfo("bedrock-opus-4.6")
+        ? "Opus 4.6 via Amazon Bedrock"
+        : null;
   const modelSwapSuffix = bedrockOpusSuggestion
     ? ` (e.g. ${bedrockOpusSuggestion})`
     : "";

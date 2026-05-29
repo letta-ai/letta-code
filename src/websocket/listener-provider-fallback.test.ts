@@ -51,25 +51,9 @@ describe("listener provider fallback", () => {
     expect(state.overrideModel).toBeUndefined();
   });
 
-  test("maps Opus 4.8 aliases to Bedrock Opus 4.8", () => {
-    for (const [model, sourceModelId] of [
-      ["anthropic/claude-opus-4-8", "opus"],
-      ["opus-4.8-high", "opus-4.8-high"],
-      ["opus-4.8-max", "opus-4.8-max"],
-    ] as const) {
-      const state = createProviderFallbackState(agentWithModel(model));
-
-      expect(state.sourceModelId).toBe(sourceModelId);
-      expect(maybeApplyProviderFallback(state, 2)).toBe(
-        "bedrock/us.anthropic.claude-opus-4-8",
-      );
-      expect(state.overrideModel).toBe("bedrock/us.anthropic.claude-opus-4-8");
-    }
-  });
-
   test("maps Opus 4.7 aliases to Bedrock Opus 4.7", () => {
     for (const [model, sourceModelId] of [
-      ["anthropic/claude-opus-4-7", "opus-4.7-medium"],
+      ["anthropic/claude-opus-4-7", "opus"],
       ["opus-4.7-high", "opus-4.7-high"],
       ["opus-4.7-max", "opus-4.7-max"],
     ] as const) {
