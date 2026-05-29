@@ -22,15 +22,13 @@ letta messages search --query <text> [options]
 | Option | Description |
 |--------|-------------|
 | `--query <text>` | Search query (required) |
-| `--mode <mode>` | Search mode: `fts`, `hybrid`, or `vector` (default: hybrid) |
 | `--start-date <date>` | Filter messages after this date (ISO format) |
 | `--end-date <date>` | Filter messages before this date (ISO format) |
 | `--limit <n>` | Max results (default: 10) |
 | `--all-agents` | Search all agents, not just current agent |
 | `--agent <id>` | Explicit agent ID (overrides LETTA_AGENT_ID) |
-| `--conversation <id>` | Filter to a specific conversation ID |
 
-Local search is transcript-backed exact text search. Prefer distinctive keywords, exact strings, quoted phrases, and date bounds when possible. The CLI accepts `hybrid` and `vector`, but in local mode those are not semantic searches; use them only as aliases for text search.
+Local search is transcript-backed full-text search. Prefer distinctive keywords, exact strings, quoted phrases, and date bounds when possible.
 
 ### Expanding Context: messages list
 
@@ -46,30 +44,26 @@ letta messages list [options]
 | `--before <message-id>` | Get messages before this ID (cursor) |
 | `--order <asc\|desc>` | Sort order (default: desc = newest first) |
 | `--limit <n>` | Max results (default: 20) |
-| `--agent <id>` | Agent ID from the search result; required when `conversation_id` is `default` |
-| `--conversation <id>` | Conversation ID from the search result |
-
-Use `--conversation` from the search result when expanding context. Also include `--agent` from the search result when available, and always include it when `conversation_id` is `default`.
 
 ### Search Strategies
 
 **Strategy 1: Needle + Expand (Recommended)**
 
-1. Search with distinctive keywords:
+1. Search with keywords to find relevant messages:
    ```bash
-   letta messages search --query "topic keywords" --mode fts --limit 5
+   letta messages search --query "topic keywords" --limit 5
    ```
 
-2. Note the `message_id`, `agent_id`, and `conversation_id` of the most relevant result.
+2. Note the `message_id` of the most relevant result
 
 3. Expand before to get leading context:
    ```bash
-   letta messages list --agent "agent-xyz" --conversation "conversation-xyz" --before "message-xyz" --limit 10
+   letta messages list --before "message-xyz" --limit 10
    ```
 
 4. Expand after for following context:
    ```bash
-   letta messages list --agent "agent-xyz" --conversation "conversation-xyz" --after "message-xyz" --order asc --limit 10
+   letta messages list --after "message-xyz" --order asc --limit 10
    ```
 
 **Strategy 2: Date-Bounded Search**
@@ -77,19 +71,18 @@ Use `--conversation` from the search result when expanding context. Also include
 When you know approximately when something was discussed:
 
 ```bash
-letta messages search --query "topic" --mode fts --start-date "2025-12-31T00:00:00Z" --end-date "2025-12-31T23:59:59Z"
+letta messages search --query "topic" --start-date "2025-12-31T00:00:00Z" --end-date "2025-12-31T23:59:59Z"
 ```
 
 **Strategy 3: Broaden Terms**
 
-When exact keywords miss, try alternate terms, abbreviations, filenames, issue IDs, branch names, or user quotes. Do not rely on semantic vector matching in local mode.
+When exact keywords miss, try alternate terms, abbreviations, filenames, issue IDs, branch names, or user quotes.
 
 ### Search Output
 
 Results include:
 - `message_id` - Use for cursor-based expansion
-- `message_type` - `user_message`, `assistant_message`, `reasoning_message`, `summary_message`, tool messages, etc.
-- `content`, `reasoning`, `summary`, or tool payload fields - The message text
+- `message_type` - `user_message`, `assistant_message`, `reasoning_message`
+- `content` or `reasoning` - The message text
 - `created_at` - Timestamp (ISO format)
 - `agent_id` - Which agent the message belongs to
-- `conversation_id` - Which conversation the message belongs to
