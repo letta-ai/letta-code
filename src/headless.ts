@@ -6,6 +6,9 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { extractTelemetryInputText } from "@/telemetry/input";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
@@ -129,9 +132,6 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
-import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { extractTelemetryInputText } from "@/telemetry/input";
 import { isInteractiveApprovalTool } from "./tools/interactive-policy";
 import {
   type ExternalToolDefinition,
