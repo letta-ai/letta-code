@@ -23,6 +23,9 @@ describe("recallPromptForBackend", () => {
     expect(apiPrompt).toContain("Semantic similarity search");
     expect(apiPrompt).not.toContain("transcript-backed exact text search");
     expect(localPrompt).toContain("transcript-backed exact text search");
+    expect(apiPrompt).toContain(
+      "Always include both `--agent` and `--conversation`",
+    );
     expect(localPrompt).toContain(
       "Always include both `--agent` and `--conversation`",
     );
