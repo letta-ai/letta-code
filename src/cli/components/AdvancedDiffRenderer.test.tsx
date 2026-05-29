@@ -6,6 +6,7 @@ import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import {
   AdvancedDiffRenderer,
   buildAdvancedDiffRows,
+  exceedsAdvancedDiffHighlightLimits,
 } from "./AdvancedDiffRenderer";
 
 class CaptureStream extends Writable {
@@ -129,4 +130,16 @@ test("advanced diff renderer expands tabs before writing terminal rows", async (
   expect(output).not.toContain("\t");
   expect(output).toContain("-     const before = true;");
   expect(output).toContain("+     const after = true;");
+});
+
+test("advanced diff syntax highlighting uses Codex-sized safety limits", () => {
+  expect(
+    exceedsAdvancedDiffHighlightLimits([
+      {
+        oldStart: 1,
+        newStart: 1,
+        lines: Array.from({ length: 10_001 }, () => ({ raw: " const x = 1;" })),
+      },
+    ]),
+  ).toBe(true);
 });

@@ -18,6 +18,8 @@ import {
 import { Text } from "./Text";
 
 const TAB_WIDTH = 4;
+const HIGHLIGHT_MAX_BYTES = 512 * 1024;
+const HIGHLIGHT_MAX_LINES = 10_000;
 
 type EditItem = {
   old_string: string;
@@ -73,6 +75,30 @@ export type AdvancedDiffRenderRow = {
 
 export function expandTabsForDiffDisplay(text: string): string {
   return text.replaceAll("\t", " ".repeat(TAB_WIDTH));
+}
+
+export function exceedsAdvancedDiffHighlightLimits(
+  hunks: AdvancedDiffSuccess["hunks"],
+): boolean {
+  let totalBytes = 0;
+  let totalLines = 0;
+
+  for (const hunk of hunks) {
+    for (const line of hunk.lines) {
+      const raw = line.raw || "";
+      if (raw.charAt(0) === "\\") continue;
+      totalBytes += Buffer.byteLength(raw.slice(1), "utf8");
+      totalLines += 1;
+      if (
+        totalBytes > HIGHLIGHT_MAX_BYTES ||
+        totalLines > HIGHLIGHT_MAX_LINES
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 // Split styled chunks into rows of exactly `cols` characters, padding the last row.
@@ -344,6 +370,7 @@ export function AdvancedDiffRenderer(
   // Syntax-highlight all hunk content at once per hunk (preserves parser state
   // across consecutive lines, like Codex's hunk-level highlighting approach).
   const lang = languageFromPath(filePath);
+  const shouldHighlight = lang && !exceedsAdvancedDiffHighlightLimits(hunks);
   const hunkSyntaxLines: (StyledSpan[] | undefined)[][] = [];
   for (const h of hunks) {
     // Concatenate all displayable lines in the hunk for a single highlight pass.
@@ -355,9 +382,13 @@ export function AdvancedDiffRenderer(
       textLines.push(raw.slice(1));
     }
     const block = textLines.join("\n");
-    const highlighted = lang ? highlightCode(block, lang) : undefined;
+    const highlighted = shouldHighlight
+      ? highlightCode(block, lang)
+      : undefined;
+    const syntaxLines =
+      highlighted?.length === textLines.length ? highlighted : undefined;
     // Map highlighted per-line spans back; undefined when highlighting failed.
-    hunkSyntaxLines.push(textLines.map((_, i) => highlighted?.[i]));
+    hunkSyntaxLines.push(textLines.map((_, i) => syntaxLines?.[i]));
   }
 
   const rows = buildAdvancedDiffRows(hunks, hunkSyntaxLines);
