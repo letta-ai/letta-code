@@ -13,7 +13,7 @@ describe("getModelInfo", () => {
     expect(info?.handle).toBe("anthropic/claude-opus-4-8");
     expect(info?.label).toBe("Opus 4.8");
     expect(info?.updateArgs).toMatchObject({
-      context_window: 950000,
+      context_window: 200000,
       reasoning_effort: "high",
       enable_reasoner: true,
     });
