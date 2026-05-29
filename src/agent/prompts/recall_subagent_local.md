@@ -78,6 +78,18 @@ letta messages search --query "topic" --start-date "2025-12-31T00:00:00Z" --end-
 
 When exact keywords miss, try alternate terms, abbreviations, filenames, issue IDs, branch names, or user quotes.
 
+### Accessing the Underlying Files
+
+Prefer `letta messages search` first. If local full-text search misses or you need custom inspection, local backend transcripts are JSONL files on disk. The storage root is `$LETTA_LOCAL_BACKEND_DIR`, or `~/.letta/lc-local-backend` by default. Conversation directories live under `conversations/` and contain `conversation.json`, `manifest.json`, and `messages.jsonl`.
+
+Use read-only Bash tools such as `find`, `rg`, or small scripts for custom searches, for example:
+
+```bash
+ROOT="${LETTA_LOCAL_BACKEND_DIR:-$HOME/.letta/lc-local-backend}"
+find "$ROOT/conversations" -name messages.jsonl -print
+rg -n "needle" "$ROOT/conversations"
+```
+
 ### Search Output
 
 Results include:
