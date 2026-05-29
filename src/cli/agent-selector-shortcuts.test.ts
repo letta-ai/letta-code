@@ -9,10 +9,10 @@ describe("agent selector shortcuts", () => {
     );
     const source = readFileSync(selectorPath, "utf-8");
 
-    expect(source).toContain('} else if (input === "D") {');
+    expect(source).toContain('allowDelete && input === "D"');
     expect(source).not.toContain('input === "d" || input === "D"');
 
-    const deleteShortcutIndex = source.indexOf('} else if (input === "D") {');
+    const deleteShortcutIndex = source.indexOf('allowDelete && input === "D"');
     const searchTypingIndex = source.indexOf(
       '} else if (activeTab !== "pinned" && input && !key.ctrl && !key.meta) {',
     );

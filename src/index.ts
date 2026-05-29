@@ -186,6 +186,8 @@ USAGE
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
+  letta install ...     Install a skill into an agent memfs repository
+  letta skills ...      List or delete installed agent skills
 
 OPTIONS
 ${renderCliOptionsHelp()}
@@ -205,6 +207,9 @@ SUBCOMMANDS
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
   letta connect <provider> [options]
+  letta install <skill> [--agent <id> | -n <name>]
+  letta skills list [--agent <id> | -n <name>]
+  letta skills delete <skill_name> --agent <id>
   letta backend [api|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
@@ -226,6 +231,7 @@ EXAMPLES
   letta                    # Show profile selector or create new
   letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
+  letta install official/finance/stocks --agent agent-123
 
   # inside the interactive session
   /profile save MyAgent    # Save current agent as profile
