@@ -41,7 +41,7 @@ function printUsage(): void {
   console.log(
     `
 Usage:
-  letta skills install <skill> [--agent <id> | -n <name>] [--force]
+  letta install <skill> [--agent <id> | -n <name>] [--force]
 
 Sources:
   official/<path>         Hermes official optional skill, e.g. official/finance/stocks
@@ -546,7 +546,7 @@ async function installSkill(
   }
 }
 
-export async function runSkillsSubcommand(argv: string[]): Promise<number> {
+async function runInstall(argv: string[]): Promise<number> {
   let parsed: ReturnType<typeof parseSkillsArgs>;
   try {
     parsed = parseSkillsArgs(argv);
@@ -558,20 +558,14 @@ export async function runSkillsSubcommand(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const [action, specifier] = parsed.positionals;
-  if (parsed.values.help || !action || action === "help") {
+  const [specifier] = parsed.positionals;
+  if (parsed.values.help || !specifier || specifier === "help") {
     printUsage();
     return 0;
   }
 
-  if (action !== "install") {
-    console.error(`Unknown action: ${action}`);
-    printUsage();
-    return 1;
-  }
-
-  if (!specifier) {
-    console.error("Missing skill identifier or GitHub URL.");
+  if (parsed.positionals.length > 1) {
+    console.error(`Unexpected argument: ${parsed.positionals[1]}`);
     printUsage();
     return 1;
   }
@@ -591,4 +585,22 @@ export async function runSkillsSubcommand(argv: string[]): Promise<number> {
     console.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
+}
+
+export async function runInstallSubcommand(argv: string[]): Promise<number> {
+  return runInstall(argv);
+}
+
+export async function runSkillsSubcommand(argv: string[]): Promise<number> {
+  const [action, ...rest] = argv;
+  if (action === "install") {
+    return runInstall(rest);
+  }
+  if (!action || action === "help" || action === "--help" || action === "-h") {
+    printUsage();
+    return 0;
+  }
+  console.error(`Unknown action: ${action}`);
+  printUsage();
+  return 1;
 }
