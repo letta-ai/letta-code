@@ -209,7 +209,7 @@ async function handleUpgradeLettaCodeCommand(opts: {
   );
   const { manualUpdate } = await import("@/updater/auto-update");
   log("starting manualUpdate()");
-  const result = await manualUpdate();
+  const result = await manualUpdate({ progressLog: log });
   log(
     `manualUpdate() completed: success=${result.success}; message=${result.message}`,
   );

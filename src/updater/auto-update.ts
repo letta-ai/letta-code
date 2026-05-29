@@ -278,7 +278,7 @@ async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
   }
 }
 
-async function performUpdate(): Promise<{
+async function performUpdate(progressLog?: (message: string) => void): Promise<{
   success: boolean;
   error?: string;
   enotemptyFailed?: boolean;
@@ -301,14 +301,14 @@ async function performUpdate(): Promise<{
 
   try {
     debugLog(`Running ${installCmd}...`);
-    console.log(`Running update command: ${installCmd}`);
+    progressLog?.(`Running update command: ${installCmd}`);
     await execFileAsync(pm, installArgs, { timeout: 60000 });
     debugLog("Update completed successfully");
-    console.log("Update command completed successfully.");
+    progressLog?.("Update command completed successfully.");
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`Update command failed: ${message}`);
+    progressLog?.(`Update command failed: ${message}`);
     trackBoundaryError({
       errorType: "auto_update_install_failed",
       error,
@@ -440,7 +440,9 @@ export async function checkAndAutoUpdate(): Promise<
   return undefined;
 }
 
-export async function manualUpdate(): Promise<{
+export async function manualUpdate(options?: {
+  progressLog?: (message: string) => void;
+}): Promise<{
   success: boolean;
   message: string;
 }> {
@@ -467,11 +469,12 @@ export async function manualUpdate(): Promise<{
     };
   }
 
-  console.log(
+  const progressLog = options?.progressLog ?? console.log;
+  progressLog(
     `Updating from ${result.currentVersion} to ${result.latestVersion}...`,
   );
 
-  const updateResult = await performUpdate();
+  const updateResult = await performUpdate(progressLog);
 
   if (updateResult.success) {
     return {
