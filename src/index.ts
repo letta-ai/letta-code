@@ -74,6 +74,10 @@ import {
 } from "./cli/startup-flag-validation";
 import { runSubcommand } from "./cli/subcommands/router";
 import {
+  disableExtensionsForProcess,
+  shouldDisableExtensions,
+} from "./extensions/disable";
+import {
   migratePermissionMode,
   permissionMode,
   VALID_PERMISSION_MODES,
@@ -847,6 +851,12 @@ async function main(): Promise<void> {
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const noSystemInfoReminderFlag = values["no-system-info-reminder"];
+  const extensionsDisabled = shouldDisableExtensions({
+    cliFlag: values["no-extensions"],
+  });
+  if (extensionsDisabled) {
+    disableExtensionsForProcess();
+  }
   const resolvedSkillSources = (() => {
     try {
       return resolveSkillSourcesSelection({
@@ -2798,6 +2808,7 @@ async function main(): Promise<void> {
         startupHasAvailableLocalModels,
         releaseNotes,
         systemInfoReminderEnabled: !noSystemInfoReminderFlag,
+        extensionsDisabled,
       });
     }
 
@@ -2821,6 +2832,7 @@ async function main(): Promise<void> {
       releaseNotes,
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
+      extensionsDisabled,
       onReload: handleReload,
     });
   }
