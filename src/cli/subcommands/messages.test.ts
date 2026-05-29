@@ -1,4 +1,5 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -8,7 +9,6 @@ import {
   test,
 } from "bun:test";
 
-const initializeMock = mock(() => Promise.resolve());
 const searchMessagesForBackendMock = mock((_body: Record<string, unknown>) =>
   Promise.resolve([]),
 );
@@ -16,12 +16,6 @@ const backendMock = {
   listAgentMessages: mock(() => Promise.resolve({ items: [] })),
   listConversationMessages: mock(() => Promise.resolve({ items: [] })),
 };
-
-mock.module("@/settings-manager", () => ({
-  settingsManager: {
-    initialize: initializeMock,
-  },
-}));
 
 mock.module("@/backend", () => ({
   getBackend: mock(() => backendMock),
@@ -32,6 +26,10 @@ mock.module("@/backend/message-search", () => ({
 }));
 
 const { runMessagesSubcommand } = await import("@/cli/subcommands/messages");
+
+afterAll(() => {
+  mock.restore();
+});
 
 function captureConsole() {
   const stdout: string[] = [];
@@ -63,7 +61,6 @@ describe("messages subcommand conversation scoping", () => {
   beforeEach(() => {
     priorAgentId = process.env.LETTA_AGENT_ID;
     delete process.env.LETTA_AGENT_ID;
-    initializeMock.mockClear();
     searchMessagesForBackendMock.mockClear();
     backendMock.listAgentMessages.mockClear();
     backendMock.listConversationMessages.mockClear();
