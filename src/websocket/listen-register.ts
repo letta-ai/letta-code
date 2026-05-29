@@ -2,6 +2,8 @@
  * Shared registration helper for letta server / /server command.
  * Owns the HTTP request contract and error handling; callers own UX strings and logging.
  */
+
+import { getSelfUpdateStatus } from "@/updater/auto-update";
 import { getVersion } from "@/version.ts";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
 
@@ -94,6 +96,7 @@ export async function registerWithCloud(
         os: process.platform,
         nodeVersion: process.version,
         supported_commands: SUPPORTED_REMOTE_COMMANDS,
+        self_update: getSelfUpdateStatus(),
       },
     }),
   }).catch((fetchError: unknown) => {

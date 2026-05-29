@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { accessSync, constants, realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { getVersion } from "@/version";
@@ -41,6 +41,14 @@ const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
 
 const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
 type FetchImpl = typeof fetch;
+
+export interface SelfUpdateStatus {
+  supported: boolean;
+  writable: boolean;
+  reason?: string;
+  install_path?: string;
+  manual_command: string;
+}
 
 function normalizeUpdatePackageName(raw: string | undefined): string | null {
   if (!raw) return null;
@@ -107,6 +115,61 @@ export function buildInstallCommand(
   return `${pm} ${buildInstallArgs(pm, env).join(" ")}`;
 }
 
+function getResolvedEntrypoint(): string {
+  const argv = process.argv[1] || "";
+  try {
+    return realpathSync(argv);
+  } catch {
+    return argv;
+  }
+}
+
+function findInstalledPackagePath(resolvedPath: string): string | null {
+  const marker = `${join("node_modules", "@letta-ai", "letta-code")}`;
+  const index = resolvedPath.lastIndexOf(marker);
+  if (index === -1) {
+    return null;
+  }
+  return resolvedPath.slice(0, index + marker.length);
+}
+
+function canWritePath(path: string): boolean {
+  try {
+    accessSync(path, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getSelfUpdateStatus(): SelfUpdateStatus {
+  const pm = detectPackageManager();
+  const manualCommand = buildInstallCommand(pm);
+  const resolvedEntrypoint = getResolvedEntrypoint();
+  const installPath = findInstalledPackagePath(resolvedEntrypoint);
+
+  if (!installPath) {
+    return {
+      supported: false,
+      writable: false,
+      reason: "Self-update is disabled for development/source checkouts.",
+      manual_command: manualCommand,
+    };
+  }
+
+  const packageParentPath = dirname(installPath);
+  const writable = canWritePath(installPath) && canWritePath(packageParentPath);
+  return {
+    supported: true,
+    writable,
+    reason: writable
+      ? undefined
+      : `Self-update requires write access to ${packageParentPath}. Run ${manualCommand} manually or reinstall Letta Code in a user-writable npm prefix.`,
+    install_path: installPath,
+    manual_command: manualCommand,
+  };
+}
+
 export function buildInstallArgs(
   pm: PackageManager,
   env: NodeJS.ProcessEnv = process.env,
@@ -136,13 +199,7 @@ export function detectPackageManager(): PackageManager {
     );
   }
 
-  const argv = process.argv[1] || "";
-  let resolvedPath = argv;
-  try {
-    resolvedPath = realpathSync(argv);
-  } catch {
-    // If realpath fails, use original path
-  }
+  const resolvedPath = getResolvedEntrypoint();
 
   if (/[/\\]\.bun[/\\]/.test(resolvedPath)) {
     debugLog("Detected package manager from path: bun");
@@ -163,16 +220,7 @@ function isAutoUpdateEnabled(): boolean {
 
 function isRunningLocally(): boolean {
   const argv = process.argv[1] || "";
-
-  // Resolve symlinks to get the real path
-  // npm creates symlinks in /bin/ that point to /lib/node_modules/
-  // Without resolving, argv would be like ~/.nvm/.../bin/letta (no node_modules)
-  let resolvedPath = argv;
-  try {
-    resolvedPath = realpathSync(argv);
-  } catch {
-    // If realpath fails (file doesn't exist), use original path
-  }
+  const resolvedPath = getResolvedEntrypoint();
 
   debugLog("argv[1]:", argv);
   debugLog("resolved path:", resolvedPath);
