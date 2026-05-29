@@ -271,6 +271,7 @@ type AppViewProps = {
   resetDeferredToolCallCommits: () => void;
   resetTrajectoryBases: () => void;
   restoredInput: string | null;
+  demoInput?: string;
   resumeKey: number;
   searchQuery: string;
   sessionStatsRef: RefObject<SessionStats>;
@@ -427,6 +428,7 @@ export function AppView(props: AppViewProps) {
     resetDeferredToolCallCommits,
     resetTrajectoryBases,
     restoredInput,
+    demoInput,
     resumeKey,
     searchQuery,
     sessionStatsRef,
@@ -729,6 +731,7 @@ export function AppView(props: AppViewProps) {
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
+                demoInput={demoInput}
                 networkPhase={networkPhase}
                 executionPhase={executionPhase}
                 terminalWidth={chromeColumns}

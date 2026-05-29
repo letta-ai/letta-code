@@ -1,0 +1,15 @@
+{
+  "startDelayMs": 1000,
+  "messages": [
+    {
+      "text": "Give me a quick tour of this local Letta Code repo.",
+      "delayMs": 500,
+      "typingMs": 1600
+    },
+    {
+      "text": "Now summarize the most important files in three bullets.",
+      "delayMs": 1000,
+      "typingMs": 1600
+    }
+  ]
+}
