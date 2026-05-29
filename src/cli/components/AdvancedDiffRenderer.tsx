@@ -17,6 +17,8 @@ import {
 } from "./SyntaxHighlightedCommand";
 import { Text } from "./Text";
 
+const TAB_WIDTH = 4;
+
 type EditItem = {
   old_string: string;
   new_string: string;
@@ -61,6 +63,17 @@ function padLeft(n: number, width: number): string {
 
 // A styled text chunk with optional color/dim for row-splitting.
 type StyledChunk = { text: string; color?: string; dimColor?: boolean };
+
+export type AdvancedDiffRenderRow = {
+  kind: "context" | "remove" | "add";
+  displayNo: number;
+  text: string;
+  syntaxSpans?: StyledSpan[];
+};
+
+export function expandTabsForDiffDisplay(text: string): string {
+  return text.replaceAll("\t", " ".repeat(TAB_WIDTH));
+}
 
 // Split styled chunks into rows of exactly `cols` characters, padding the last row.
 // Continuation rows start with a blank indent of `contIndent` characters
@@ -144,10 +157,13 @@ function Line({
   chunks.push({ text: " " });
   if (syntaxSpans && syntaxSpans.length > 0) {
     for (const span of syntaxSpans) {
-      chunks.push({ text: span.text, color: span.color });
+      chunks.push({
+        text: expandTabsForDiffDisplay(span.text),
+        color: span.color,
+      });
     }
   } else {
-    chunks.push({ text });
+    chunks.push({ text: expandTabsForDiffDisplay(text) });
   }
 
   // Continuation indent = indent + gutter + sign + space (blank, same width)
@@ -169,6 +185,75 @@ function Line({
       ))}
     </>
   );
+}
+
+export function buildAdvancedDiffRows(
+  hunks: AdvancedDiffSuccess["hunks"],
+  hunkSyntaxLines: (StyledSpan[] | undefined)[][] = [],
+): AdvancedDiffRenderRow[] {
+  const rows: AdvancedDiffRenderRow[] = [];
+
+  for (let hIdx = 0; hIdx < hunks.length; hIdx++) {
+    const h = hunks[hIdx];
+    if (!h) {
+      continue;
+    }
+
+    const syntaxForHunk = hunkSyntaxLines[hIdx] ?? [];
+    let oldNo = h.oldStart;
+    let newNo = h.newStart;
+    let displayLineIdx = 0; // index into syntaxForHunk
+    for (let i = 0; i < h.lines.length; i++) {
+      const line = h.lines[i];
+      if (!line) continue;
+      const raw = line.raw || "";
+      const ch = raw.charAt(0);
+      const body = raw.slice(1);
+      // Skip meta lines (e.g., "\ No newline at end of file")
+      if (ch === "\\") continue;
+
+      const spans = syntaxForHunk[displayLineIdx];
+      displayLineIdx++;
+
+      if (ch === " ") {
+        rows.push({
+          kind: "context",
+          displayNo: newNo,
+          text: body,
+          syntaxSpans: spans,
+        });
+        oldNo++;
+        newNo++;
+      } else if (ch === "-") {
+        rows.push({
+          kind: "remove",
+          displayNo: oldNo,
+          text: body,
+          syntaxSpans: spans,
+        });
+        oldNo++;
+      } else if (ch === "+") {
+        rows.push({
+          kind: "add",
+          displayNo: newNo,
+          text: body,
+          syntaxSpans: spans,
+        });
+        newNo++;
+      } else {
+        rows.push({
+          kind: "context",
+          displayNo: newNo,
+          text: raw,
+          syntaxSpans: spans,
+        });
+        oldNo++;
+        newNo++;
+      }
+    }
+  }
+
+  return rows;
 }
 
 export function AdvancedDiffRenderer(
@@ -275,74 +360,7 @@ export function AdvancedDiffRenderer(
     hunkSyntaxLines.push(textLines.map((_, i) => highlighted?.[i]));
   }
 
-  // Prepare display rows with shared-line-number behavior.
-  type Row = {
-    kind: "context" | "remove" | "add";
-    displayNo: number;
-    text: string;
-    syntaxSpans?: StyledSpan[];
-  };
-  const rows: Row[] = [];
-  for (let hIdx = 0; hIdx < hunks.length; hIdx++) {
-    const h = hunks[hIdx];
-    if (!h) {
-      continue;
-    }
-
-    const syntaxForHunk = hunkSyntaxLines[hIdx] ?? [];
-    let oldNo = h.oldStart;
-    let newNo = h.newStart;
-    let lastRemovalNo: number | null = null;
-    let displayLineIdx = 0; // index into syntaxForHunk
-    for (let i = 0; i < h.lines.length; i++) {
-      const line = h.lines[i];
-      if (!line) continue;
-      const raw = line.raw || "";
-      const ch = raw.charAt(0);
-      const body = raw.slice(1);
-      // Skip meta lines (e.g., "\ No newline at end of file")
-      if (ch === "\\") continue;
-
-      const spans = syntaxForHunk[displayLineIdx];
-      displayLineIdx++;
-
-      if (ch === " ") {
-        rows.push({
-          kind: "context",
-          displayNo: oldNo,
-          text: body,
-          syntaxSpans: spans,
-        });
-        oldNo++;
-        newNo++;
-        lastRemovalNo = null;
-      } else if (ch === "-") {
-        rows.push({
-          kind: "remove",
-          displayNo: oldNo,
-          text: body,
-          syntaxSpans: spans,
-        });
-        lastRemovalNo = oldNo;
-        oldNo++;
-      } else if (ch === "+") {
-        const displayNo = lastRemovalNo !== null ? lastRemovalNo : newNo;
-        rows.push({ kind: "add", displayNo, text: body, syntaxSpans: spans });
-        newNo++;
-        lastRemovalNo = null;
-      } else {
-        rows.push({
-          kind: "context",
-          displayNo: oldNo,
-          text: raw,
-          syntaxSpans: spans,
-        });
-        oldNo++;
-        newNo++;
-        lastRemovalNo = null;
-      }
-    }
-  }
+  const rows = buildAdvancedDiffRows(hunks, hunkSyntaxLines);
   // Compute gutter width based on the maximum display number we will render,
   // so multi-digit line numbers (e.g., 10) never wrap.
   const maxDisplayNo = rows.reduce((m, r) => Math.max(m, r.displayNo), 1);
