@@ -1,0 +1,78 @@
+name: PR Title
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - ready_for_review
+  workflow_dispatch:
+    inputs:
+      title:
+        description: "PR title to validate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Conventional PR title
+    runs-on: ubuntu-latest
+    steps:
+      # This workflow intentionally uses pull_request_target and does not check
+      # out or execute pull request code. That keeps the check enforceable even
+      # when a PR changes workflow files.
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          MANUAL_TITLE: ${{ inputs.title }}
+        run: |
+          node <<'NODE'
+          const title = process.env.PR_TITLE || process.env.MANUAL_TITLE || "";
+          const allowedTypes = [
+            "build",
+            "chore",
+            "ci",
+            "docs",
+            "feat",
+            "fix",
+            "perf",
+            "refactor",
+            "revert",
+            "style",
+            "test",
+          ];
+          const scope = "\\([a-z0-9][a-z0-9._/-]*\\)";
+          const conventionalTitle = new RegExp(
+            `^(${allowedTypes.join("|")})(${scope})?!?: .+`,
+          );
+
+          if (conventionalTitle.test(title)) {
+            console.log(`Valid PR title: ${title}`);
+            process.exit(0);
+          }
+
+          console.error(`Invalid PR title: ${title}`);
+          console.error("");
+          console.error("PR titles must follow Conventional Commits:");
+          console.error("  <type>[optional scope][!]: <description>");
+          console.error("");
+          console.error(`Allowed types: ${allowedTypes.join(", ")}`);
+          console.error("");
+          console.error("Examples:");
+          console.error("  feat(extensions): add provider registry");
+          console.error("  fix(conversations): regenerate descriptions after compaction");
+          console.error("  ci: enforce conventional PR titles");
+          console.error("");
+          console.error(
+            "Plain titles like 'Regenerate conversation descriptions after compaction' must be renamed before merge.",
+          );
+          process.exit(1);
+          NODE

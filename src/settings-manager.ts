@@ -4,9 +4,11 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { isCloudAgentId, isLocalAgentId } from "./agent/agent-id";
 import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
+  LOCAL_BACKEND_DIR_ENV,
 } from "./backend/local/paths";
 import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
@@ -30,20 +32,6 @@ import {
 export interface SessionRef {
   agentId: string;
   conversationId: string;
-}
-
-/**
- * Configuration for a user-defined status line command.
- */
-export interface StatusLineConfig {
-  type?: "command";
-  command: string; // Shell command (receives JSON stdin, outputs text)
-  padding?: number; // Left padding for status line output
-  timeout?: number; // Execution timeout ms (default 5000, max 30000)
-  debounceMs?: number; // Debounce for event-driven refreshes (default 300)
-  refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
-  disabled?: boolean; // Disable at this level
-  prompt?: string; // Custom input prompt character (default "›")
 }
 
 export interface WindowTitleConfig {
@@ -72,7 +60,7 @@ export interface AgentSettings {
 
 export interface ConversationGoal {
   objective: string;
-  status: "active" | "paused" | "complete" | "budget_limited";
+  status: "active" | "paused" | "complete" | "blocked" | "budget_limited";
   createdAt: string;
   updatedAt: string;
   activeStartedAt?: string | null;
@@ -92,6 +80,7 @@ export interface Settings {
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
   includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
+  channelCredentialsStore?: "file" | "keyring" | "auto"; // Where channel/connection tokens are persisted
   recentModels: string[]; // Recently used model IDs (most recent first, max 5)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: "off" | "step-count" | "compaction-event";
@@ -109,7 +98,6 @@ export interface Settings {
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
-  statusLine?: StatusLineConfig; // Configurable status line command
   windowTitle?: WindowTitleConfig; // Configurable terminal window title
   env?: Record<string, string>;
   experiments?: Partial<Record<ExperimentId, boolean>>;
@@ -136,7 +124,6 @@ export interface Settings {
 
 export interface ProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
-  statusLine?: StatusLineConfig; // Project-specific status line command
   windowTitle?: WindowTitleConfig; // Project-specific terminal window title
 }
 
@@ -145,7 +132,6 @@ export interface LocalProjectSettings {
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Project-specific hook commands
-  statusLine?: StatusLineConfig; // Local project-specific status line command
   windowTitle?: WindowTitleConfig; // Local project-specific terminal window title
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
@@ -218,6 +204,34 @@ function normalizeBaseUrl(baseUrl: string): string {
 
 function getLocalBackendSettingsKey(): string {
   return `local:${resolve(getLocalBackendStorageDir())}`;
+}
+
+function isLocalServerKey(serverKey: string): boolean {
+  return serverKey.startsWith("local:");
+}
+
+function isAgentIdCompatibleWithServerKey(
+  agentId: string,
+  serverKey: string,
+): boolean {
+  return isLocalServerKey(serverKey)
+    ? isLocalAgentId(agentId)
+    : isCloudAgentId(agentId);
+}
+
+function isSessionCompatibleWithServerKey(
+  session: SessionRef,
+  serverKey: string,
+): boolean {
+  return isAgentIdCompatibleWithServerKey(session.agentId, serverKey);
+}
+
+function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
+  return (
+    isLocalBackendEnvEnabled() &&
+    typeof process.env[LOCAL_BACKEND_DIR_ENV] === "string" &&
+    process.env[LOCAL_BACKEND_DIR_ENV].length > 0
+  );
 }
 
 /**
@@ -764,7 +778,6 @@ class SettingsManager {
 
       const projectSettings: ProjectSettings = {
         hooks: rawSettings.hooks as HooksConfig | undefined,
-        statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
         windowTitle: rawSettings.windowTitle as WindowTitleConfig | undefined,
       };
 
@@ -806,9 +819,6 @@ class SettingsManager {
       const globalUpdates: Partial<Settings> = {};
       if ("hooks" in updates) {
         globalUpdates.hooks = updates.hooks;
-      }
-      if ("statusLine" in updates) {
-        globalUpdates.statusLine = updates.statusLine;
       }
       if ("windowTitle" in updates) {
         globalUpdates.windowTitle = updates.windowTitle;
@@ -1121,12 +1131,28 @@ class SettingsManager {
     const serverKey = getCurrentServerKey(settings);
 
     // Try server-indexed lookup first
-    if (settings.sessionsByServer?.[serverKey]) {
-      return settings.sessionsByServer[serverKey];
+    const serverSession = settings.sessionsByServer?.[serverKey];
+    if (serverSession) {
+      if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
+        return serverSession;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible global session for server %s: %s",
+        serverKey,
+        serverSession.agentId,
+      );
+    }
+
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
     }
 
     // Fall back to legacy lastSession for migration
-    if (settings.lastSession) {
+    if (
+      settings.lastSession &&
+      isSessionCompatibleWithServerKey(settings.lastSession, serverKey)
+    ) {
       return settings.lastSession;
     }
 
@@ -1143,15 +1169,37 @@ class SettingsManager {
     const serverKey = getCurrentServerKey(settings);
 
     // Try server-indexed lookup first
-    if (settings.sessionsByServer?.[serverKey]) {
-      return settings.sessionsByServer[serverKey].agentId;
+    const serverSession = settings.sessionsByServer?.[serverKey];
+    if (serverSession) {
+      if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
+        return serverSession.agentId;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible global agent for server %s: %s",
+        serverKey,
+        serverSession.agentId,
+      );
+    }
+
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
     }
 
     // Fall back to legacy for migration
-    if (settings.lastSession) {
+    if (
+      settings.lastSession &&
+      isSessionCompatibleWithServerKey(settings.lastSession, serverKey)
+    ) {
       return settings.lastSession.agentId;
     }
-    return settings.lastAgent;
+    if (
+      settings.lastAgent &&
+      isAgentIdCompatibleWithServerKey(settings.lastAgent, serverKey)
+    ) {
+      return settings.lastAgent;
+    }
+    return null;
   }
 
   /**
@@ -1162,18 +1210,33 @@ class SettingsManager {
     const settings = this.getSettings();
     const serverKey = getCurrentServerKey(settings);
 
+    if (!isSessionCompatibleWithServerKey(session, serverKey)) {
+      debugWarn(
+        "settings",
+        "Skipping incompatible global session write for server %s: %s",
+        serverKey,
+        session.agentId,
+      );
+      return;
+    }
+
     // Update server-indexed storage
     const sessionsByServer = {
       ...settings.sessionsByServer,
       [serverKey]: session,
     };
 
-    // Also update legacy fields for backwards compat with older CLI versions
-    this.updateSettings({
-      sessionsByServer,
-      lastSession: session,
-      lastAgent: session.agentId,
-    });
+    // Keep legacy global fields for cloud/self-hosted agents only.
+    if (isCloudAgentId(session.agentId)) {
+      this.updateSettings({
+        sessionsByServer,
+        lastSession: session,
+        lastAgent: session.agentId,
+      });
+      return;
+    }
+
+    this.updateSettings({ sessionsByServer });
   }
 
   /**
@@ -1189,12 +1252,28 @@ class SettingsManager {
     const localSettings = this.getLocalProjectSettings(workingDirectory);
 
     // Try server-indexed lookup first
-    if (localSettings.sessionsByServer?.[serverKey]) {
-      return localSettings.sessionsByServer[serverKey];
+    const serverSession = localSettings.sessionsByServer?.[serverKey];
+    if (serverSession) {
+      if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
+        return serverSession;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible local session for server %s: %s",
+        serverKey,
+        serverSession.agentId,
+      );
+    }
+
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
     }
 
     // Fall back to legacy lastSession for migration
-    if (localSettings.lastSession) {
+    if (
+      localSettings.lastSession &&
+      isSessionCompatibleWithServerKey(localSettings.lastSession, serverKey)
+    ) {
       return localSettings.lastSession;
     }
 
@@ -1212,15 +1291,37 @@ class SettingsManager {
     const localSettings = this.getLocalProjectSettings(workingDirectory);
 
     // Try server-indexed lookup first
-    if (localSettings.sessionsByServer?.[serverKey]) {
-      return localSettings.sessionsByServer[serverKey].agentId;
+    const serverSession = localSettings.sessionsByServer?.[serverKey];
+    if (serverSession) {
+      if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
+        return serverSession.agentId;
+      }
+      debugWarn(
+        "settings",
+        "Ignoring incompatible local agent for server %s: %s",
+        serverKey,
+        serverSession.agentId,
+      );
+    }
+
+    if (shouldSkipLegacyLocalBackendSessionFallback()) {
+      return null;
     }
 
     // Fall back to legacy for migration
-    if (localSettings.lastSession) {
+    if (
+      localSettings.lastSession &&
+      isSessionCompatibleWithServerKey(localSettings.lastSession, serverKey)
+    ) {
       return localSettings.lastSession.agentId;
     }
-    return localSettings.lastAgent;
+    if (
+      localSettings.lastAgent &&
+      isAgentIdCompatibleWithServerKey(localSettings.lastAgent, serverKey)
+    ) {
+      return localSettings.lastAgent;
+    }
+    return null;
   }
 
   /**
@@ -1234,6 +1335,16 @@ class SettingsManager {
     const globalSettings = this.getSettings();
     const serverKey = getCurrentServerKey(globalSettings);
     const localSettings = this.getLocalProjectSettings(workingDirectory);
+
+    if (!isSessionCompatibleWithServerKey(session, serverKey)) {
+      debugWarn(
+        "settings",
+        "Skipping incompatible local session write for server %s: %s",
+        serverKey,
+        session.agentId,
+      );
+      return;
+    }
 
     // Update server-indexed storage
     const sessionsByServer = {
@@ -2149,10 +2260,6 @@ class SettingsManager {
         this.markDirty("refreshToken", "tokenExpiresAt", "deviceId", "env");
         await this.persistSettings();
       }
-
-      console.log(
-        "Successfully logged out and cleared all authentication data",
-      );
     } catch (error) {
       trackBoundaryError({
         errorType: "settings_logout_failed",

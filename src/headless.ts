@@ -10,6 +10,7 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
+import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
@@ -50,6 +51,7 @@ import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
+  type BackendMode,
   type ConversationCreateBody,
   type ConversationMessageStreamBody,
   getBackend,
@@ -96,6 +98,14 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import type { ExtensionRuntime } from "./extensions/extension-runtime";
+import type { ExtensionConversationOpenReason } from "./extensions/types";
+import {
+  createHeadlessExtensionContext,
+  createHeadlessExtensionRuntime,
+  emitHeadlessConversationClose,
+  emitHeadlessConversationOpen,
+} from "./headless-extension-runtime";
 import { computeDiffPreviews } from "./helpers/diff-preview";
 import { formatPermissionDenial } from "./permissions/format-denial";
 import { QueueRuntime } from "./queue/queue-runtime";
@@ -302,6 +312,7 @@ export const __headlessTestUtils = {
   shouldTrackTelemetryForQueuedMessage,
   contentToTaskNotificationText,
   toBidirectionalQueuedInput,
+  prepareHeadlessToolExecutionContext,
 };
 
 type ReflectionOverrides = {
@@ -435,6 +446,37 @@ async function prepareHeadlessToolExecutionContext(params: {
   };
 }
 
+function isTurnInputArray(
+  value: unknown,
+): value is Array<MessageCreate | ApprovalCreate> {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
+async function emitHeadlessTurnStart(options: {
+  agent: AgentState;
+  conversationId: string;
+  input: Array<MessageCreate | ApprovalCreate>;
+  runtime: ExtensionRuntime;
+}): Promise<Array<MessageCreate | ApprovalCreate>> {
+  if (!options.runtime.getSnapshot().hasExtensionSources) return options.input;
+
+  try {
+    const event = {
+      agentId: options.agent.id,
+      conversationId: options.conversationId,
+      input: options.input,
+    };
+    await options.runtime.emitEvent("turn_start", event);
+    return isTurnInputArray(event.input) ? event.input : options.input;
+  } catch {
+    // Extension turn_start handlers should not block sending the turn.
+    return options.input;
+  }
+}
+
 async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
@@ -492,6 +534,7 @@ export async function handleHeadlessCommand(
   skillsDirectoryOverride?: string,
   skillSourcesOverride?: SkillSource[],
   systemInfoReminderEnabledOverride?: boolean,
+  startupOptions: { requestedBackendMode?: BackendMode } = {},
 ) {
   const { values, positionals } = parsedArgs;
   telemetry.setSurface("headless");
@@ -615,9 +658,13 @@ export async function handleHeadlessCommand(
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
   let autoEnableMemfsForFreshAgent = false;
+  const startupBackendMode = backend.capabilities.localModelCatalog
+    ? "local"
+    : "api";
   let specifiedAgentId = values.agent;
   const specifiedAgentName = values.name;
   let specifiedConversationId = values.conversation;
+  let specifiedAgentIdFromAmbientBackendSwitch = false;
   const forceNew = values["new-agent"];
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
@@ -745,6 +792,25 @@ export async function handleHeadlessCommand(
       error,
       "headless_startup_conversation_shorthand",
     );
+  }
+
+  const ambientAgentId = (
+    process.env.LETTA_AGENT_ID ||
+    process.env.AGENT_ID ||
+    ""
+  ).trim();
+  if (
+    startupOptions.requestedBackendMode &&
+    ambientAgentId &&
+    !specifiedAgentId &&
+    !specifiedAgentName &&
+    !specifiedConversationId &&
+    !forceNew &&
+    !fromAfFile &&
+    !fromAgentId
+  ) {
+    specifiedAgentId = ambientAgentId;
+    specifiedAgentIdFromAmbientBackendSwitch = true;
   }
 
   // Validate --conv default requires --agent (unless --new-agent will create one)
@@ -906,7 +972,7 @@ export async function handleHeadlessCommand(
     : null;
   if (personalityInput && !personality) {
     console.error(
-      `Error: Unknown personality "${personalityInput}". Valid: letta-code, blank, linus, kawaii, claude, codex`,
+      `Error: Unknown personality "${personalityInput}". Valid: letta-code, tutorial, blank, linus, kawaii, claude, codex`,
     );
     process.exit(1);
   }
@@ -1078,6 +1144,24 @@ export async function handleHeadlessCommand(
         include: ["agent.secrets", "agent.tools", "agent.tags"],
       });
     } catch (_error) {
+      if (specifiedAgentIdFromAmbientBackendSwitch) {
+        console.error(
+          `Active agent ${specifiedAgentId} is not available on the ${startupOptions.requestedBackendMode} backend.`,
+        );
+        if (startupOptions.requestedBackendMode === "local") {
+          console.error(
+            "--backend local uses the local backend store and will not silently switch to a different cwd-local agent.",
+          );
+          console.error(
+            "Use --new-agent to create a local agent, or pass --agent <local-agent-id> to choose one explicitly.",
+          );
+        } else {
+          console.error(
+            "Pass --agent <id>, --conversation <id>, or --new-agent to choose the target explicitly.",
+          );
+        }
+        process.exit(1);
+      }
       console.error(`Agent ${specifiedAgentId} not found`);
       process.exit(1);
     }
@@ -1141,12 +1225,26 @@ export async function handleHeadlessCommand(
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
-  if (!agent) {
+  if (!agent && startupBackendMode === "local") {
     await settingsManager.loadLocalProjectSettings();
     const localAgentId = settingsManager.getLocalLastAgentId(
       getCurrentWorkingDirectory(),
     );
-    if (localAgentId) {
+    if (
+      localAgentId &&
+      process.env.AGENT_ID &&
+      process.env.AGENT_ID !== localAgentId
+    ) {
+      console.error(
+        `Using local backend agent ${localAgentId} from project-local settings (.letta/settings.local.json). \n` +
+          `Current session AGENT_ID=${process.env.AGENT_ID}; ` +
+          `--backend local switches to a separate persisted local agent.\n`,
+      );
+    }
+    if (
+      localAgentId &&
+      isAgentIdCompatibleWithBackend(localAgentId, startupBackendMode)
+    ) {
       try {
         agent = await backend.retrieveAgent(localAgentId, {
           include: ["agent.tags"],
@@ -1160,9 +1258,12 @@ export async function handleHeadlessCommand(
 
   // Priority 5: Try to reuse global LRU (covers directory-switching case)
   // Do NOT restore global conversation — use default (project-scoped conversations)
-  if (!agent) {
+  if (!agent && startupBackendMode === "api") {
     const globalAgentId = settingsManager.getGlobalLastAgentId();
-    if (globalAgentId) {
+    if (
+      globalAgentId &&
+      isAgentIdCompatibleWithBackend(globalAgentId, startupBackendMode)
+    ) {
       try {
         agent = await backend.retrieveAgent(globalAgentId, {
           include: ["agent.tags"],
@@ -1230,6 +1331,7 @@ export async function handleHeadlessCommand(
 
   // Determine which conversation to use
   let conversationId: string;
+  let conversationOpenReason: ExtensionConversationOpenReason = "startup";
   let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
@@ -1465,6 +1567,7 @@ export async function handleHeadlessCommand(
       // "default" is the agent's primary message history (no explicit conversation)
       // Don't validate - just use it directly
       conversationId = "default";
+      conversationOpenReason = "resume";
     } else {
       // User specified an explicit conversation to resume - validate it exists
       try {
@@ -1474,6 +1577,7 @@ export async function handleHeadlessCommand(
         );
         await backend.retrieveConversation(specifiedConversationId);
         conversationId = specifiedConversationId;
+        conversationOpenReason = "resume";
       } catch {
         console.error(
           `Error: Conversation ${specifiedConversationId} not found`,
@@ -1498,10 +1602,12 @@ export async function handleHeadlessCommand(
     }
     const conversation = await backend.createConversation(createParams);
     conversationId = conversation.id;
+    conversationOpenReason = "new";
   } else if (isSubagent) {
     // Freshly created subagents have no concurrency risk — use the default
     // conversation so it's easy to inspect in the ADE.
     conversationId = "default";
+    conversationOpenReason = "startup";
   } else {
     // Default for headless: always create a new conversation to avoid
     // 409 "conversation busy" races (e.g., parent agent calling letta -p).
@@ -1512,6 +1618,7 @@ export async function handleHeadlessCommand(
       isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
+    conversationOpenReason = "new";
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
 
@@ -1542,6 +1649,32 @@ export async function handleHeadlessCommand(
       `Error: Invalid input format "${inputFormat}". Valid formats: stream-json`,
     );
     process.exit(1);
+  }
+
+  const sessionStats = new SessionStats();
+  const headlessPermissionMode = yoloMode
+    ? "unrestricted"
+    : typeof permissionModeValue === "string"
+      ? permissionModeValue
+      : null;
+  const headlessExtensionRuntime = createHeadlessExtensionRuntime({
+    agent,
+    backend,
+    conversationId,
+    permissionMode: headlessPermissionMode,
+    reflectionSettings: effectiveReflectionSettings,
+    sessionStats,
+  });
+  await headlessExtensionRuntime.reload();
+  try {
+    await emitHeadlessConversationOpen({
+      agent,
+      conversationId,
+      reason: conversationOpenReason,
+      runtime: headlessExtensionRuntime,
+    });
+  } catch {
+    // Extension lifecycle events should not block headless startup.
   }
 
   let availableTools =
@@ -1577,6 +1710,7 @@ export async function handleHeadlessCommand(
       resolvedSkillSources,
       systemInfoReminderEnabled,
       effectiveReflectionSettings,
+      headlessExtensionRuntime,
     );
     return;
   }
@@ -1584,20 +1718,44 @@ export async function handleHeadlessCommand(
   // Create buffers to accumulate stream (pass agent.id for server-side tool hooks)
   const buffers = createBuffers(agent.id);
 
-  // Initialize session stats
-  const sessionStats = new SessionStats();
   telemetry.setSessionStatsGetter(() => sessionStats.getSnapshot());
 
   // Use agent.id as session_id for all stream-json messages
   const sessionId = agent.id;
+  let headlessConversationClosed = false;
+  let lastKnownRunId: string | null = null;
   const exitHeadless = async (
     code: number,
     exitReason: string,
   ): Promise<never> => {
     try {
+      if (!headlessConversationClosed) {
+        headlessConversationClosed = true;
+        headlessExtensionRuntime.updateContext(
+          createHeadlessExtensionContext({
+            agent,
+            conversationId,
+            lastRunId: lastKnownRunId,
+            permissionMode: headlessPermissionMode,
+            reflectionSettings: effectiveReflectionSettings,
+            sessionStats,
+          }),
+        );
+        try {
+          await emitHeadlessConversationClose({
+            agent,
+            conversationId,
+            durationMs: sessionStats.getSnapshot().totalWallMs,
+            runtime: headlessExtensionRuntime,
+          });
+        } catch {
+          // Extension lifecycle events should not block headless shutdown.
+        }
+      }
       telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
       await telemetry.flush();
     } finally {
+      headlessExtensionRuntime.dispose();
       telemetry.setSessionStatsGetter(undefined);
     }
     return await flushAndExit(code);
@@ -1864,9 +2022,23 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
+  headlessExtensionRuntime.updateContext(
+    createHeadlessExtensionContext({
+      agent,
+      conversationId,
+      permissionMode: headlessPermissionMode,
+      reflectionSettings: effectiveReflectionSettings,
+      sessionStats,
+    }),
+  );
+  currentInput = await emitHeadlessTurnStart({
+    agent,
+    conversationId,
+    input: currentInput,
+    runtime: headlessExtensionRuntime,
+  });
 
   // Track lastRunId outside the while loop so it's available in catch block
-  let lastKnownRunId: string | null = null;
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
@@ -2923,6 +3095,7 @@ async function runBidirectionalMode(
   skillSources: SkillSource[],
   systemInfoReminderEnabled: boolean,
   reflectionSettings: ReflectionSettings,
+  headlessExtensionRuntime: ExtensionRuntime,
 ): Promise<void> {
   const sessionId = agent.id;
   const backend = getBackend();
@@ -2930,12 +3103,30 @@ async function runBidirectionalMode(
   const readline = await import("node:readline");
   const systemPromptRecompileByConversation = new Map<string, Promise<void>>();
   const queuedSystemPromptRecompileByConversation = new Set<string>();
+  let headlessConversationClosed = false;
   const exitBidirectional = async (
     code: number,
     exitReason: string,
   ): Promise<never> => {
-    telemetry.trackSessionEnd(undefined, exitReason);
-    await telemetry.flush();
+    try {
+      if (!headlessConversationClosed) {
+        headlessConversationClosed = true;
+        try {
+          await emitHeadlessConversationClose({
+            agent,
+            conversationId,
+            durationMs: null,
+            runtime: headlessExtensionRuntime,
+          });
+        } catch {
+          // Extension lifecycle events should not block headless shutdown.
+        }
+      }
+      telemetry.trackSessionEnd(undefined, exitReason);
+      await telemetry.flush();
+    } finally {
+      headlessExtensionRuntime.dispose();
+    }
     return await flushAndExit(code);
   };
 
@@ -3821,15 +4012,27 @@ async function runBidirectionalMode(
           skillSources,
           maybeLaunchReflectionSubagent,
         });
-        const enrichedContent = prependReminderPartsToContent(
-          userContent,
-          sharedReminderParts,
+        headlessExtensionRuntime.updateContext(
+          createHeadlessExtensionContext({
+            agent,
+            conversationId,
+            reflectionSettings,
+          }),
         );
+        const enrichedContent = prependReminderPartsToContent(userContent, [
+          ...sharedReminderParts,
+        ]);
 
         // Initial input is the user message
-        let currentInput: MessageCreate[] = [
+        let currentInput: Array<MessageCreate | ApprovalCreate> = [
           { role: "user", content: enrichedContent, otid: userOtid },
         ];
+        currentInput = await emitHeadlessTurnStart({
+          agent,
+          conversationId,
+          input: currentInput,
+          runtime: headlessExtensionRuntime,
+        });
 
         // Approval handling loop - continue until end_turn or error
         while (true) {

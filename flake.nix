@@ -3,9 +3,11 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    bun2nix.url = "github:nix-community/bun2nix";
+    bun2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, bun2nix }:
     let
       lib = nixpkgs.lib;
       packageJson = builtins.fromJSON (builtins.readFile ./package.json);
@@ -16,36 +18,79 @@
         "aarch64-darwin"
       ];
       forAllSystems = lib.genAttrs supportedSystems;
-      pkgsFor = system: import nixpkgs { inherit system; };
+      pkgsFor = system: import nixpkgs {
+        inherit system;
+        overlays = [ bun2nix.overlays.default ];
+      };
       mkPackage = pkgs:
-        pkgs.buildNpmPackage rec {
+        pkgs.stdenv.mkDerivation rec {
           pname = "letta-code";
           version = packageJson.version;
           src = ./.;
 
-          npmDeps = pkgs.importNpmLock { npmRoot = src; };
+          bunDeps = pkgs.bun2nix.fetchBunDeps {
+            bunNix = ./bun.nix;
+          };
+
           nativeBuildInputs = [
+            pkgs.nodejs_22
             pkgs.bun
-            pkgs.importNpmLock.npmConfigHook
             pkgs.makeWrapper
             pkgs.pkg-config
             pkgs.python3
+            pkgs.bun2nix.hook
           ];
 
-          npmFlags = [ "--legacy-peer-deps" ];
-          npmInstallFlags = [ "--legacy-peer-deps" ];
-          npmBuildScript = "build";
+          bunInstallFlags = if pkgs.stdenv.hostPlatform.isDarwin then [
+            "--linker=hoisted"
+            "--backend=copyfile"
+          ] else [
+            "--linker=hoisted"
+          ];
 
           CI = "true";
-          npm_config_legacy_peer_deps = "true";
+
+          dontUseBunCheck = true;
 
           preBuild = ''
             export HOME="$TMPDIR"
+            substituteInPlace build.js \
+              --replace-fail 'await Bun.$`bunx tsc -p tsconfig.types.json`' 'true'
+          '';
+
+          buildPhase = ''
+            runHook preBuild
+            bun run build
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+
+            pack_dir="$TMPDIR/package"
+            mkdir -p "$pack_dir" "$out/lib/letta-code" "$out/bin"
+
+            npm pack --ignore-scripts --pack-destination "$pack_dir"
+            tar -xzf "$pack_dir"/letta-ai-letta-code-*.tgz \
+              -C "$out/lib/letta-code" \
+              --strip-components=1
+
+            cp -rL node_modules "$out/lib/letta-code/node_modules"
+
+            makeWrapperArgs=(
+              --add-flags "$out/lib/letta-code/letta.js"
+              --prefix PATH : ${lib.makeBinPath [ pkgs.git pkgs.ripgrep ]}
+            )
+            ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+              makeWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.stdenv.cc.cc.lib}/lib) # libstdc++.so.6 for sharp
+            ''}
+            makeWrapper ${pkgs.bun}/bin/bun "$out/bin/letta" "''${makeWrapperArgs[@]}"
+
+            runHook postInstall
           '';
 
           postInstall = ''
-            wrapProgram "$out/bin/letta" \
-              --prefix PATH : ${lib.makeBinPath [ pkgs.git pkgs.ripgrep ]}
+            chmod +x "$out/bin/letta"
           '';
 
           meta = {

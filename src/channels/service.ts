@@ -9,10 +9,13 @@ import {
 } from "./account-config";
 import {
   getChannelAccount,
+  getChannelAccountWithSecrets,
   LEGACY_CHANNEL_ACCOUNT_ID,
   listChannelAccounts,
-  removeChannelAccount,
+  listChannelAccountsWithSecrets,
+  removeChannelAccountWithSecrets,
   upsertChannelAccount,
+  upsertChannelAccountWithSecrets,
 } from "./accounts";
 import { resolveDiscordAccountDisplayName } from "./discord/adapter";
 import {
@@ -66,11 +69,15 @@ import type {
   PendingPairing,
   SlackChannelMode,
   SupportedChannelId,
+  TelegramGroupMode,
+  WhatsAppGroupMode,
 } from "./types";
 import {
+  DEFAULT_SLACK_PERMISSION_MODE,
   isDiscordChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
+  isWhatsAppChannelAccount,
 } from "./types";
 
 export interface ChannelSummary {
@@ -98,6 +105,7 @@ export interface ChannelConfigSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
@@ -106,6 +114,12 @@ export interface ChannelConfigSnapshot {
   acknowledgeMessageReaction?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  selfChatMode?: boolean;
+  allowedGroups?: string[];
+  mentionPatterns?: string[];
+  transcribeVoice?: boolean;
+  downloadMedia?: boolean;
+  mediaMaxBytes?: number;
 }
 
 export interface PendingPairingSnapshot {
@@ -147,6 +161,20 @@ async function refreshLoadedMessageChannelTool(): Promise<void> {
   await refreshDynamicChannelToolsInLoadedRegistry();
 }
 
+function normalizeTelegramGroupMode(
+  value: ChannelAccountPatch["groupMode"],
+): TelegramGroupMode | undefined {
+  return value === "open" || value === "mention-only" ? value : undefined;
+}
+
+function normalizeWhatsAppGroupMode(
+  value: ChannelAccountPatch["groupMode"],
+): WhatsAppGroupMode | undefined {
+  return value === "disabled" || value === "mention" || value === "open"
+    ? value
+    : undefined;
+}
+
 export interface ChannelAccountSnapshot {
   [key: string]: unknown;
   channelId: string;
@@ -162,6 +190,7 @@ export interface ChannelAccountSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   transcribeVoice?: boolean;
   binding?: {
     agentId: string | null;
@@ -175,6 +204,11 @@ export interface ChannelAccountSnapshot {
   acknowledgeMessageReaction?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  selfChatMode?: boolean;
+  allowedGroups?: string[];
+  mentionPatterns?: string[];
+  downloadMedia?: boolean;
+  mediaMaxBytes?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -259,6 +293,28 @@ function getSelectedChannelAccount(
   }
 
   const accounts = listChannelAccounts(channelId);
+  if (accounts.length === 0) {
+    return null;
+  }
+  if (accounts.length === 1) {
+    return accounts[0] ?? null;
+  }
+
+  throw new Error(
+    `Channel "${channelId}" has multiple accounts. Specify account_id.`,
+  );
+}
+
+async function getSelectedChannelAccountWithSecrets(
+  channelId: string,
+  accountId?: string,
+): Promise<ChannelAccount | null> {
+  const normalizedAccountId = accountId?.trim();
+  if (normalizedAccountId) {
+    return getChannelAccountWithSecrets(channelId, normalizedAccountId);
+  }
+
+  const accounts = await listChannelAccountsWithSecrets(channelId);
   if (accounts.length === 0) {
     return null;
   }
@@ -378,6 +434,10 @@ function isAccountConfigured(account: ChannelAccount): boolean {
     return account.token.trim().length > 0;
   }
 
+  if (isWhatsAppChannelAccount(account)) {
+    return true;
+  }
+
   if (!isSlackChannelAccount(account)) {
     return Object.keys(account.config).length > 0;
   }
@@ -428,6 +488,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       config,
       hasToken: account.token.trim().length > 0,
       transcribeVoice: account.transcribeVoice === true,
+      groupMode: account.groupMode ?? "open",
+      inboundDebounceMs: account.inboundDebounceMs,
       binding,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -463,6 +525,30 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     };
   }
 
+  if (isWhatsAppChannelAccount(account)) {
+    return {
+      channelId: "whatsapp",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      configured: isAccountConfigured(account),
+      running,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelAccountProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
   if (!isSlackChannelAccount(account)) {
     return {
       channelId: account.channel,
@@ -493,7 +579,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     hasBotToken: account.botToken.trim().length > 0,
     hasAppToken: account.appToken.trim().length > 0,
     agentId: account.agentId,
-    defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+    defaultPermissionMode:
+      account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -515,7 +602,10 @@ function createAccountFromPatch(
       token: normalizedPatch.token ?? "",
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
+      groupMode:
+        normalizeTelegramGroupMode(normalizedPatch.groupMode) ?? "open",
       transcribeVoice: normalizedPatch.transcribeVoice === true,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       binding: {
         agentId: null,
         conversationId: null,
@@ -548,6 +638,28 @@ function createAccountFromPatch(
     };
   }
 
+  if (channelId === "whatsapp") {
+    return {
+      channel: "whatsapp",
+      accountId,
+      displayName: normalizeDisplayName(normalizedPatch.displayName),
+      enabled: normalizedPatch.enabled ?? false,
+      agentId: normalizedPatch.agentId ?? null,
+      dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      allowedUsers: normalizedPatch.allowedUsers ?? [],
+      selfChatMode: normalizedPatch.selfChatMode ?? true,
+      groupMode:
+        normalizeWhatsAppGroupMode(normalizedPatch.groupMode) ?? "disabled",
+      allowedGroups: normalizedPatch.allowedGroups ?? [],
+      mentionPatterns: normalizedPatch.mentionPatterns ?? [],
+      transcribeVoice: normalizedPatch.transcribeVoice === true,
+      downloadMedia: normalizedPatch.downloadMedia === true,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   if (channelId !== "slack") {
     return {
       channel: channelId,
@@ -571,7 +683,8 @@ function createAccountFromPatch(
     botToken: normalizedPatch.botToken ?? "",
     appToken: normalizedPatch.appToken ?? "",
     agentId: normalizedPatch.agentId ?? null,
-    defaultPermissionMode: normalizedPatch.defaultPermissionMode ?? "standard",
+    defaultPermissionMode:
+      normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
@@ -596,8 +709,14 @@ function mergeAccountPatch(
       token: normalizedPatch.token ?? existing.token,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      groupMode:
+        normalizeTelegramGroupMode(normalizedPatch.groupMode) ??
+        existing.groupMode ??
+        "open",
       transcribeVoice:
         normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -631,6 +750,33 @@ function mergeAccountPatch(
         normalizedPatch.removeStaleRoutes ?? existing.removeStaleRoutes,
       inboundDebounceMs:
         normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
+      updatedAt: nextUpdatedAt,
+    };
+  }
+
+  if (isWhatsAppChannelAccount(existing)) {
+    return {
+      ...existing,
+      displayName:
+        normalizedPatch.displayName !== undefined
+          ? normalizeDisplayName(normalizedPatch.displayName)
+          : existing.displayName,
+      enabled: normalizedPatch.enabled ?? existing.enabled,
+      agentId: normalizedPatch.agentId ?? existing.agentId,
+      dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      selfChatMode: normalizedPatch.selfChatMode ?? existing.selfChatMode,
+      groupMode:
+        normalizeWhatsAppGroupMode(normalizedPatch.groupMode) ??
+        existing.groupMode,
+      allowedGroups: normalizedPatch.allowedGroups ?? existing.allowedGroups,
+      mentionPatterns:
+        normalizedPatch.mentionPatterns ?? existing.mentionPatterns,
+      transcribeVoice:
+        normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      downloadMedia:
+        normalizedPatch.downloadMedia ?? existing.downloadMedia ?? false,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
       updatedAt: nextUpdatedAt,
     };
   }
@@ -673,7 +819,7 @@ function mergeAccountPatch(
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ??
       existing.defaultPermissionMode ??
-      "standard",
+      DEFAULT_SLACK_PERMISSION_MODE,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
@@ -769,6 +915,26 @@ export function getChannelConfigSnapshot(
     };
   }
 
+  if (isWhatsAppChannelAccount(account)) {
+    return {
+      channelId: "whatsapp",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelConfigSnapshotProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
+    };
+  }
+
   if (!isSlackChannelAccount(account)) {
     return {
       channelId: account.channel,
@@ -793,8 +959,18 @@ export function getChannelConfigSnapshot(
     hasBotToken: account.botToken.trim().length > 0,
     hasAppToken: account.appToken.trim().length > 0,
     agentId: account.agentId,
-    defaultPermissionMode: account.defaultPermissionMode ?? "standard",
+    defaultPermissionMode:
+      account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
   };
+}
+
+export async function getChannelConfigSnapshotWithSecrets(
+  channelId: string,
+  accountId?: string,
+): Promise<ChannelConfigSnapshot | null> {
+  assertSupportedChannelId(channelId);
+  await getSelectedChannelAccountWithSecrets(channelId, accountId);
+  return getChannelConfigSnapshot(channelId, accountId);
 }
 
 export async function setChannelConfigLive(
@@ -804,11 +980,14 @@ export async function setChannelConfigLive(
 ): Promise<ChannelConfigSnapshot> {
   assertSupportedChannelId(channelId);
   const normalizedPatch = normalizeChannelConfigPatch(channelId, patch);
-  const existing = getSelectedChannelAccount(channelId, accountId);
+  const existing = await getSelectedChannelAccountWithSecrets(
+    channelId,
+    accountId,
+  );
   let targetAccountId = existing?.accountId;
   let shouldRefreshDisplayName = false;
   if (existing) {
-    updateChannelAccountLive(channelId, existing.accountId, {
+    await updateChannelAccountLiveWithSecrets(channelId, existing.accountId, {
       enabled: existing.enabled,
       token: normalizedPatch.token,
       botToken: normalizedPatch.botToken,
@@ -818,11 +997,19 @@ export async function setChannelConfigLive(
       dmPolicy: normalizedPatch.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers,
       allowedChannels: normalizedPatch.allowedChannels,
+      agentId: normalizedPatch.agentId,
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
+      selfChatMode: normalizedPatch.selfChatMode,
+      groupMode: normalizedPatch.groupMode,
+      allowedGroups: normalizedPatch.allowedGroups,
+      mentionPatterns: normalizedPatch.mentionPatterns,
+      transcribeVoice: normalizedPatch.transcribeVoice,
+      downloadMedia: normalizedPatch.downloadMedia,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes,
       config: normalizedPatch.config,
       displayName: existing.displayName,
     });
@@ -831,7 +1018,7 @@ export async function setChannelConfigLive(
       normalizedPatch,
     );
   } else {
-    const created = createChannelAccountLive(
+    const created = await createChannelAccountLiveWithSecrets(
       channelId,
       {
         enabled: false,
@@ -843,12 +1030,19 @@ export async function setChannelConfigLive(
         dmPolicy: normalizedPatch.dmPolicy,
         allowedUsers: normalizedPatch.allowedUsers,
         allowedChannels: normalizedPatch.allowedChannels,
+        agentId: normalizedPatch.agentId,
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
         threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
         acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
         removeStaleRoutes: normalizedPatch.removeStaleRoutes,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
+        selfChatMode: normalizedPatch.selfChatMode,
+        groupMode: normalizedPatch.groupMode,
+        allowedGroups: normalizedPatch.allowedGroups,
+        mentionPatterns: normalizedPatch.mentionPatterns,
         transcribeVoice: normalizedPatch.transcribeVoice,
+        downloadMedia: normalizedPatch.downloadMedia,
+        mediaMaxBytes: normalizedPatch.mediaMaxBytes,
         config: normalizedPatch.config,
       },
       accountId ? { accountId } : undefined,
@@ -872,7 +1066,8 @@ export async function setChannelConfigLive(
   }
 
   if (
-    (getChannelAccount(channelId, targetAccountId)?.enabled ?? false) === true
+    ((await getChannelAccountWithSecrets(channelId, targetAccountId))
+      ?.enabled ?? false) === true
   ) {
     await ensureChannelRegistry().startChannelAccount(
       channelId,
@@ -880,7 +1075,10 @@ export async function setChannelConfigLive(
     );
   }
 
-  const snapshot = getChannelConfigSnapshot(channelId, targetAccountId);
+  const snapshot = await getChannelConfigSnapshotWithSecrets(
+    channelId,
+    targetAccountId,
+  );
   if (!snapshot) {
     throw new Error(`Failed to write ${channelId} channel config`);
   }
@@ -894,7 +1092,10 @@ export async function startChannelLive(
 ): Promise<ChannelSummary> {
   assertSupportedChannelId(channelId);
 
-  const existing = getSelectedChannelAccount(channelId, accountId);
+  const existing = await getSelectedChannelAccountWithSecrets(
+    channelId,
+    accountId,
+  );
   if (!existing) {
     throw new Error(
       `Channel "${channelId}" is not configured. Configure it first.`,
@@ -922,7 +1123,7 @@ export async function startChannelLive(
   }
 
   if (!existing.enabled) {
-    upsertChannelAccount(channelId, {
+    await upsertChannelAccountWithSecrets(channelId, {
       ...existing,
       enabled: true,
       updatedAt: new Date().toISOString(),
@@ -953,14 +1154,17 @@ export async function stopChannelLive(
 ): Promise<ChannelSummary> {
   assertSupportedChannelId(channelId);
 
-  const existing = getSelectedChannelAccount(channelId, accountId);
+  const existing = await getSelectedChannelAccountWithSecrets(
+    channelId,
+    accountId,
+  );
   if (!existing) {
     throw new Error(
       `Channel "${channelId}" is not configured. Configure it first.`,
     );
   }
 
-  upsertChannelAccount(channelId, {
+  await upsertChannelAccountWithSecrets(channelId, {
     ...existing,
     enabled: false,
     updatedAt: new Date().toISOString(),
@@ -985,12 +1189,30 @@ export function listChannelAccountSnapshots(
   return listChannelAccounts(channelId).map(toAccountSnapshot);
 }
 
+export async function listChannelAccountSnapshotsWithSecrets(
+  channelId: string,
+): Promise<ChannelAccountSnapshot[]> {
+  assertSupportedChannelId(channelId);
+  return (await listChannelAccountsWithSecrets(channelId)).map(
+    toAccountSnapshot,
+  );
+}
+
 export function getChannelAccountSnapshot(
   channelId: string,
   accountId: string,
 ): ChannelAccountSnapshot | null {
   assertSupportedChannelId(channelId);
   const account = getChannelAccount(channelId, accountId);
+  return account ? toAccountSnapshot(account) : null;
+}
+
+export async function getChannelAccountSnapshotWithSecrets(
+  channelId: string,
+  accountId: string,
+): Promise<ChannelAccountSnapshot | null> {
+  assertSupportedChannelId(channelId);
+  const account = await getChannelAccountWithSecrets(channelId, accountId);
   return account ? toAccountSnapshot(account) : null;
 }
 
@@ -1009,6 +1231,27 @@ export function createChannelAccountLive(
   }
 
   const created = upsertChannelAccount(
+    channelId,
+    createAccountFromPatch(channelId, accountId, patch),
+  );
+  return toAccountSnapshot(created);
+}
+
+export async function createChannelAccountLiveWithSecrets(
+  channelId: string,
+  patch: ChannelAccountPatch,
+  options?: { accountId?: string },
+): Promise<ChannelAccountSnapshot> {
+  assertSupportedChannelId(channelId);
+  const accountId = options?.accountId?.trim() || randomUUID();
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
+  if (existing) {
+    throw new Error(
+      `Channel account "${accountId}" already exists for ${channelId}.`,
+    );
+  }
+
+  const created = await upsertChannelAccountWithSecrets(
     channelId,
     createAccountFromPatch(channelId, accountId, patch),
   );
@@ -1069,13 +1312,61 @@ export function updateChannelAccountLive(
   return toAccountSnapshot(updated);
 }
 
+export async function updateChannelAccountLiveWithSecrets(
+  channelId: string,
+  accountId: string,
+  patch: ChannelAccountPatch,
+): Promise<ChannelAccountSnapshot> {
+  assertSupportedChannelId(channelId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
+  if (!existing) {
+    throw new Error(
+      `Channel account "${accountId}" was not found for ${channelId}.`,
+    );
+  }
+
+  const nextAccount = mergeAccountPatch(existing, patch);
+  const shouldResetRoutes =
+    (isSlackChannelAccount(existing) || isDiscordChannelAccount(existing)) &&
+    (isSlackChannelAccount(nextAccount) ||
+      isDiscordChannelAccount(nextAccount)) &&
+    typeof nextAccount.agentId === "string" &&
+    nextAccount.agentId !== existing.agentId;
+
+  const updated = await upsertChannelAccountWithSecrets(channelId, nextAccount);
+
+  if (shouldResetRoutes) {
+    try {
+      loadRoutes(channelId);
+      removeRoutesForAccount(channelId, accountId);
+    } catch (error) {
+      try {
+        await upsertChannelAccountWithSecrets(channelId, existing);
+      } catch (rollbackError) {
+        throw new Error(
+          `Failed to reset channel routes after updating account: ${getErrorMessage(
+            error,
+            "route reset failed",
+          )}; rollback also failed: ${getErrorMessage(
+            rollbackError,
+            "rollback failed",
+          )}`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  return toAccountSnapshot(updated);
+}
+
 export async function refreshChannelAccountDisplayNameLive(
   channelId: string,
   accountId: string,
   options?: { force?: boolean },
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
-  const existing = getChannelAccount(channelId, accountId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     throw new Error(
       `Channel account "${accountId}" was not found for ${channelId}.`,
@@ -1084,7 +1375,7 @@ export async function refreshChannelAccountDisplayNameLive(
   if (!isAccountConfigured(existing)) {
     return toAccountSnapshot(existing);
   }
-  if (!options?.force && existing.displayName) {
+  if (existing.displayName) {
     return toAccountSnapshot(existing);
   }
 
@@ -1098,7 +1389,7 @@ export async function refreshChannelAccountDisplayNameLive(
     return toAccountSnapshot(existing);
   }
 
-  const updated = upsertChannelAccount(channelId, {
+  const updated = await upsertChannelAccountWithSecrets(channelId, {
     ...existing,
     displayName: nextDisplayName,
     updatedAt: new Date().toISOString(),
@@ -1129,9 +1420,10 @@ export function bindChannelAccountLive(
     });
   } else if (
     isSlackChannelAccount(existing) ||
-    isDiscordChannelAccount(existing)
+    isDiscordChannelAccount(existing) ||
+    isWhatsAppChannelAccount(existing)
   ) {
-    // Slack and Discord both use a top-level agentId
+    // Slack, Discord, and WhatsApp use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId,
@@ -1168,9 +1460,10 @@ export function unbindChannelAccountLive(
     });
   } else if (
     isSlackChannelAccount(existing) ||
-    isDiscordChannelAccount(existing)
+    isDiscordChannelAccount(existing) ||
+    isWhatsAppChannelAccount(existing)
   ) {
-    // Slack and Discord both use a top-level agentId
+    // Slack, Discord, and WhatsApp use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId: null,
@@ -1191,7 +1484,7 @@ export async function startChannelAccountLive(
   accountId: string,
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
-  const existing = getChannelAccount(channelId, accountId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     throw new Error(
       `Channel account "${accountId}" was not found for ${channelId}.`,
@@ -1219,7 +1512,7 @@ export async function startChannelAccountLive(
   }
 
   if (!existing.enabled) {
-    upsertChannelAccount(channelId, {
+    await upsertChannelAccountWithSecrets(channelId, {
       ...existing,
       enabled: true,
       updatedAt: new Date().toISOString(),
@@ -1243,7 +1536,7 @@ export async function stopChannelAccountLive(
   accountId: string,
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
-  const existing = getChannelAccount(channelId, accountId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     throw new Error(
       `Channel account "${accountId}" was not found for ${channelId}.`,
@@ -1251,7 +1544,7 @@ export async function stopChannelAccountLive(
   }
 
   const next = existing.enabled
-    ? upsertChannelAccount(channelId, {
+    ? await upsertChannelAccountWithSecrets(channelId, {
         ...existing,
         enabled: false,
         updatedAt: new Date().toISOString(),
@@ -1268,7 +1561,7 @@ export async function removeChannelAccountLive(
   accountId: string,
 ): Promise<boolean> {
   assertSupportedChannelId(channelId);
-  const existing = getChannelAccount(channelId, accountId);
+  const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     return false;
   }
@@ -1280,7 +1573,7 @@ export async function removeChannelAccountLive(
   removeRoutesForAccount(channelId, accountId);
   removeChannelTargetsForAccount(channelId, accountId);
   removePairingStateForAccount(channelId, accountId);
-  const removed = removeChannelAccount(channelId, accountId);
+  const removed = await removeChannelAccountWithSecrets(channelId, accountId);
   await refreshLoadedMessageChannelTool();
   return removed;
 }

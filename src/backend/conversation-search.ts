@@ -3,10 +3,12 @@ import { searchConversations } from "./api/search";
 import { type Backend, getBackend } from "./backend";
 
 type SearchMode = "vector" | "fts" | "hybrid";
+type SearchTarget = "summary" | "description";
 
 export type ConversationSearchBody = {
   query?: unknown;
   search_mode?: unknown;
+  search_target?: unknown;
   limit?: unknown;
   agent_id?: unknown;
 };
@@ -105,5 +107,9 @@ export async function searchConversationsForBackend(
       body.search_mode === "hybrid"
         ? (body.search_mode as SearchMode)
         : body.search_mode,
+    search_target:
+      body.search_target === "summary" || body.search_target === "description"
+        ? (body.search_target as SearchTarget)
+        : "description",
   } as Record<string, unknown>);
 }

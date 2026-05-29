@@ -15,6 +15,14 @@ export type ModelReasoningEffort =
   | "xhigh"
   | "max";
 
+type ModelConfigSnapshot = {
+  model?: string | null;
+  model_endpoint_type?: string | null;
+  reasoning_effort?: string | null;
+  enable_reasoner?: boolean | null;
+  context_window?: number | null;
+};
+
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
   "minimal",
@@ -24,6 +32,36 @@ const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "xhigh",
   "max",
 ];
+
+const LOCAL_REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
+  "none",
+  "low",
+  "medium",
+  "high",
+];
+
+const LOCAL_MODEL_HANDLE_PREFIXES = [
+  "ollama/",
+  "ollama-cloud/",
+  "lmstudio/",
+  "llama.cpp/",
+  "llama-cpp/",
+];
+
+export function isLocalModelHandle(modelHandle: string): boolean {
+  return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
+    modelHandle.startsWith(prefix),
+  );
+}
+
+export function getLocalModelLabel(modelHandle: string): string {
+  const providerPrefix = LOCAL_MODEL_HANDLE_PREFIXES.find((prefix) =>
+    modelHandle.startsWith(prefix),
+  );
+  return providerPrefix
+    ? modelHandle.slice(providerPrefix.length)
+    : modelHandle;
+}
 
 function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
   return (
@@ -54,6 +92,13 @@ export function getReasoningTierOptionsForHandle(
     if (!byEffort.has(effort)) {
       byEffort.set(effort, model.id);
     }
+  }
+
+  if (byEffort.size === 0 && isLocalModelHandle(modelHandle)) {
+    return LOCAL_REASONING_EFFORT_ORDER.map((effort) => ({
+      effort,
+      modelId: modelHandle,
+    }));
   }
 
   return REASONING_EFFORT_ORDER.flatMap((effort) => {
@@ -212,6 +257,70 @@ export function getModelInfoForLlmConfig(
     return candidates[0] ?? direct ?? null;
   }
   return direct ?? candidates[0] ?? null;
+}
+
+function buildModelHandleFromConfig(
+  config: ModelConfigSnapshot | null | undefined,
+): string | null {
+  if (!config) return null;
+  if (config.model_endpoint_type && config.model) {
+    return `${config.model_endpoint_type}/${config.model}`;
+  }
+  return config.model ?? null;
+}
+
+export function normalizeModelHandleForRegistry(
+  modelHandle: string | null | undefined,
+): string | null {
+  if (!modelHandle) return null;
+  const [provider, ...modelParts] = modelHandle.split("/");
+  if (provider === "chatgpt_oauth" && modelParts.length > 0) {
+    return `${OPENAI_CODEX_PROVIDER_NAME}/${modelParts.join("/")}`;
+  }
+  return modelHandle;
+}
+
+export function shouldPreserveContextWindowForModelSelection(input: {
+  currentModelHandle?: string | null;
+  currentModelId?: string | null;
+  currentLlmConfig?: ModelConfigSnapshot | null;
+  selectedModelHandle: string;
+  selectedContextWindow?: number;
+}): boolean {
+  const currentRegistryModelHandle = normalizeModelHandleForRegistry(
+    input.currentModelHandle ??
+      buildModelHandleFromConfig(input.currentLlmConfig),
+  );
+  const selectedRegistryModelHandle = normalizeModelHandleForRegistry(
+    input.selectedModelHandle,
+  );
+
+  if (
+    selectedRegistryModelHandle === null ||
+    selectedRegistryModelHandle !== currentRegistryModelHandle
+  ) {
+    return false;
+  }
+
+  const currentModelInfo = input.currentModelId
+    ? getModelInfo(input.currentModelId)
+    : currentRegistryModelHandle
+      ? getModelInfoForLlmConfig(
+          currentRegistryModelHandle,
+          input.currentLlmConfig,
+        )
+      : null;
+  const currentPresetContextWindow = (
+    currentModelInfo?.updateArgs as { context_window?: unknown } | undefined
+  )?.context_window;
+
+  return (
+    typeof input.selectedContextWindow !== "number" ||
+    (typeof currentPresetContextWindow === "number" &&
+      input.selectedContextWindow === currentPresetContextWindow) ||
+    (typeof currentPresetContextWindow !== "number" &&
+      input.selectedContextWindow === input.currentLlmConfig?.context_window)
+  );
 }
 
 /**

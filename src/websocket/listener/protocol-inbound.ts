@@ -37,6 +37,7 @@ import type {
   EnableMemfsCommand,
   ExecuteCommandCommand,
   FileOpsCommand,
+  GetCwdMapCommand,
   GetExperimentsCommand,
   GetReflectionSettingsCommand,
   GetTreeCommand,
@@ -644,6 +645,12 @@ export function isEnableMemfsCommand(
   );
 }
 
+export function isGetCwdMapCommand(value: unknown): value is GetCwdMapCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as { type?: unknown; request_id?: unknown };
+  return c.type === "get_cwd_map" && typeof c.request_id === "string";
+}
+
 export function isListModelsCommand(
   value: unknown,
 ): value is ListModelsCommand {
@@ -853,6 +860,7 @@ export function isCreateAgentCommand(
     typeof c.request_id === "string" &&
     (c.personality === "memo" ||
       c.personality === "blank" ||
+      c.personality === "tutorial" ||
       c.personality === "linus" ||
       c.personality === "kawaii") &&
     (c.model === undefined || typeof c.model === "string") &&
@@ -1604,6 +1612,7 @@ export function parseServerMessage(
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
+      isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||

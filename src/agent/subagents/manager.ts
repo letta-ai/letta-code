@@ -34,7 +34,13 @@ import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+  type InheritedChannelContextPayload,
+  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
+  type RuntimeContextSnapshot,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,
@@ -644,6 +650,26 @@ export interface ComposeSubagentChildEnvOptions {
    * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
    * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
   transcriptPath?: string | null;
+  /** Serializable channel scope for child processes. Execution-context IDs are
+   * process-local, so channel scope must be copied explicitly across spawn. */
+  inheritedChannelContext?: InheritedChannelContextPayload | null;
+}
+
+function buildInheritedChannelContextPayload(
+  runtimeContext: RuntimeContextSnapshot | undefined,
+): InheritedChannelContextPayload | null {
+  const channelToolScope = runtimeContext?.channelToolScope;
+  const channelTurnSources = runtimeContext?.channelTurnSources ?? [];
+  if (!channelToolScope?.channels.length && channelTurnSources.length === 0) {
+    return null;
+  }
+
+  return {
+    ...(channelToolScope?.channels.length ? { channelToolScope } : {}),
+    ...(channelTurnSources.length
+      ? { channelTurnSources: [...channelTurnSources] }
+      : {}),
+  };
 }
 
 /**
@@ -676,6 +702,7 @@ export function composeSubagentChildEnv(
     inheritedApiKey,
     inheritedBaseUrl,
     transcriptPath,
+    inheritedChannelContext,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -685,6 +712,11 @@ export function composeSubagentChildEnv(
     LETTA_CODE_AGENT_ROLE: "subagent",
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
+    ...(inheritedChannelContext && {
+      [LETTA_INHERITED_CHANNEL_CONTEXT_ENV]: JSON.stringify(
+        inheritedChannelContext,
+      ),
+    }),
   };
 
   if (backendMode === "local") {
@@ -827,6 +859,7 @@ export function buildSubagentPrompt(
 interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
+  extraTools?: string[];
 }
 
 /**
@@ -941,7 +974,10 @@ export function buildSubagentArgs(
     Array.isArray(config.allowedTools) &&
     config.allowedTools.length > 0
   ) {
-    args.push("--tools", config.allowedTools.join(","));
+    const scopedTools = Array.from(
+      new Set([...(config.allowedTools ?? []), ...(options.extraTools ?? [])]),
+    );
+    args.push("--tools", scopedTools.join(","));
   }
 
   // Add max turns limit if specified
@@ -995,6 +1031,9 @@ async function executeSubagent(
     const backendMode: BackendMode = activeBackend.capabilities.localMemfs
       ? "local"
       : "api";
+    const runtimeContext = getRuntimeContext();
+    const inheritedChannelContext =
+      buildInheritedChannelContextPayload(runtimeContext);
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
     const cliArgs = buildSubagentArgs(
       type,
@@ -1004,7 +1043,14 @@ async function executeSubagent(
       existingAgentId,
       existingConversationId,
       maxTurns,
-      { backendMode, promptTransport: "stdin" },
+      {
+        backendMode,
+        promptTransport: "stdin",
+        extraTools:
+          config.fork && inheritedChannelContext
+            ? ["MessageChannel"]
+            : undefined,
+      },
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
@@ -1061,6 +1107,7 @@ async function executeSubagent(
       inheritedApiKey,
       inheritedBaseUrl,
       transcriptPath,
+      inheritedChannelContext,
     });
 
     const proc = spawn(launcher.command, launcher.args, {

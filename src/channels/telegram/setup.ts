@@ -13,7 +13,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "@/channels/accounts";
+import { upsertChannelAccountWithSecrets } from "@/channels/accounts";
 import type { DmPolicy, TelegramChannelAccount } from "@/channels/types";
 import { validateTelegramToken } from "./adapter";
 import { ensureTelegramRuntimeInstalled } from "./runtime";
@@ -66,6 +66,17 @@ export async function runTelegramSetup(): Promise<boolean> {
       return false;
     }
 
+    const groupModeInput = await rl.question(
+      "Group mode (open, mention-only) [open]: ",
+    );
+    const groupMode = (groupModeInput.trim() || "open") as
+      | "open"
+      | "mention-only";
+    if (!["open", "mention-only"].includes(groupMode)) {
+      console.error(`Invalid group mode "${groupMode}". Setup cancelled.`);
+      return false;
+    }
+
     // Step 4: Allowlist if needed
     let allowedUsers: string[] = [];
     if (policy === "allowlist") {
@@ -83,6 +94,16 @@ export async function runTelegramSetup(): Promise<boolean> {
     );
     const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
 
+    const debounceInput = await rl.question(
+      "Inbound debounce for group/topic messages in ms [0]: ",
+    );
+    const parsedDebounce = Number(debounceInput.trim() || "0");
+    if (!Number.isFinite(parsedDebounce) || parsedDebounce < 0) {
+      console.error("Invalid debounce window. Use a non-negative number.");
+      return false;
+    }
+    const inboundDebounceMs = Math.trunc(Math.min(parsedDebounce, 10000));
+
     // Step 5: Write account
     const now = new Date().toISOString();
     const account: TelegramChannelAccount = {
@@ -93,7 +114,9 @@ export async function runTelegramSetup(): Promise<boolean> {
       token: token.trim(),
       dmPolicy: policy,
       allowedUsers,
+      groupMode,
       transcribeVoice,
+      inboundDebounceMs,
       binding: {
         agentId: null,
         conversationId: null,
@@ -102,7 +125,7 @@ export async function runTelegramSetup(): Promise<boolean> {
       updatedAt: now,
     };
 
-    upsertChannelAccount("telegram", account);
+    await upsertChannelAccountWithSecrets("telegram", account);
     console.log("\n✓ Telegram bot configured!");
     console.log(
       "Config written to: ~/.letta/channels/telegram/accounts.json\n",

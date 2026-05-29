@@ -12,10 +12,11 @@ on:
 
 jobs:
   review:
-    # Only run on non-draft PRs or manual dispatch
+    # Only run on non-draft PRs or manual dispatch. Dependabot PRs do not get
+    # access to the Amelia secrets used by this workflow.
     if: >
       (github.event_name == 'workflow_dispatch') ||
-      (github.event.pull_request.draft == false)
+      (github.event.pull_request.draft == false && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read

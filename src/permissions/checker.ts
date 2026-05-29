@@ -3,6 +3,7 @@
 
 import { resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
+import { extensionToolRequiresApproval } from "@/extensions/tool-registry";
 import { runPermissionRequestHooks } from "@/hooks";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
@@ -57,6 +58,8 @@ const READ_ONLY_SHELL_TOOLS = new Set([
   "Shell",
   "shell_command",
   "ShellCommand",
+  "exec_command",
+  "write_stdin",
   "run_shell_command",
   "RunShellCommand",
 ]);
@@ -616,23 +619,30 @@ function buildPermissionQuery(
     case "Bash": {
       // Bash: "Bash(command with args)"
       const command =
-        typeof toolArgs.command === "string"
-          ? toolArgs.command
-          : Array.isArray(toolArgs.command)
-            ? toolArgs.command.join(" ")
-            : "";
+        typeof toolArgs.cmd === "string"
+          ? toolArgs.cmd
+          : typeof toolArgs.command === "string"
+            ? toolArgs.command
+            : Array.isArray(toolArgs.command)
+              ? toolArgs.command.join(" ")
+              : "";
       return `Bash(${command})`;
     }
     case "shell":
-    case "shell_command": {
+    case "shell_command":
+    case "exec_command": {
       const command =
-        typeof toolArgs.command === "string"
-          ? toolArgs.command
-          : Array.isArray(toolArgs.command)
-            ? toolArgs.command.join(" ")
-            : "";
+        typeof toolArgs.cmd === "string"
+          ? toolArgs.cmd
+          : typeof toolArgs.command === "string"
+            ? toolArgs.command
+            : Array.isArray(toolArgs.command)
+              ? toolArgs.command.join(" ")
+              : "";
       return `Bash(${command})`;
     }
+    case "write_stdin":
+      return "Bash(write_stdin)";
     case "run_shell_command":
     case "RunShellCommand": {
       if (engine === "v1") {
@@ -655,6 +665,10 @@ function buildPermissionQuery(
 }
 
 function extractShellCommand(toolArgs: ToolArgs): string | string[] | null {
+  const cmd = toolArgs.cmd;
+  if (typeof cmd === "string") {
+    return cmd;
+  }
   const command = toolArgs.command;
   if (typeof command === "string" || Array.isArray(command)) {
     return command;
@@ -718,6 +732,11 @@ function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
 ): PermissionDecision {
+  const extensionRequiresApproval = extensionToolRequiresApproval(toolName);
+  if (extensionRequiresApproval !== undefined) {
+    return extensionRequiresApproval ? "ask" : "allow";
+  }
+
   // Check TOOL_PERMISSIONS to determine if tool requires approval
   // Import is async so we need to do this synchronously - get the permissions from manager
   // For now, use a hardcoded check that matches TOOL_PERMISSIONS configuration
@@ -733,6 +752,7 @@ function getDefaultDecision(
     "read_file",
     "list_dir",
     "grep_files",
+    "write_stdin",
     "update_plan",
     // Codex toolset (PascalCase) - tools that don't require approval
     "ReadFile",

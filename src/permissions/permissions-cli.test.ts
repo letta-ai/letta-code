@@ -67,6 +67,13 @@ test("tracks disable-memory-guard CLI override", () => {
   expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
 });
 
+test("stores singleton on global symbol for bundled duplicate modules", () => {
+  const key = Symbol.for("@letta/cliPermissions");
+  const globals = globalThis as unknown as Record<symbol, unknown>;
+
+  expect(globals[key]).toBe(cliPermissions);
+});
+
 test("clear resets disable-memory-guard CLI override", () => {
   cliPermissions.setMemoryGuardDisabled(true);
   cliPermissions.clear();
@@ -459,4 +466,31 @@ test("ShellCommand auto-allows captured read-only inspection scripts", () => {
     expect(result.decision).toBe("allow");
     expect(result.reason).toBe("Read-only shell command");
   }
+});
+
+test("exec_command uses cmd for Bash permission matching", () => {
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const readOnly = checkPermission(
+    "exec_command",
+    { cmd: "git status --short" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(readOnly.decision).toBe("allow");
+  expect(readOnly.reason).toBe("Read-only shell command");
+
+  cliPermissions.setAllowedTools("Bash(npm run test:*)");
+  const allowed = checkPermission(
+    "exec_command",
+    { cmd: "npm run test:unit" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(allowed.decision).toBe("allow");
+  expect(allowed.matchedRule).toBe("Bash(npm run test:*) (CLI)");
 });

@@ -97,7 +97,6 @@ export async function executeHookCommand(
     return executePromptHook(hook, input, workingDirectory);
   }
 
-  // Default to command hook execution
   if (isCommandHook(hook)) {
     return executeCommandHook(hook, input, workingDirectory);
   }
@@ -126,7 +125,6 @@ export async function executeCommandHook(
   const timeout = hook.timeout ?? DEFAULT_TIMEOUT_MS;
   const inputJson = JSON.stringify(input);
 
-  // Get platform-appropriate shell launchers
   const launchers = buildShellLaunchers(hook.command);
   if (launchers.length === 0) {
     return {
@@ -152,6 +150,7 @@ export async function executeCommandHook(
         timeout,
         hook.command,
         startTime,
+        hook.quiet,
       );
       return result;
     } catch (error) {
@@ -191,6 +190,7 @@ function executeWithLauncher(
   timeout: number,
   command: string,
   startTime: number,
+  quiet?: boolean,
 ): Promise<HookResult> {
   return new Promise<HookResult>((resolve, reject) => {
     let stdout = "";
@@ -218,25 +218,27 @@ function executeWithLauncher(
         const exitLabel = result.timedOut
           ? `${exitColor}timeout\x1b[0m`
           : `${exitColor}exit ${exitCode}\x1b[0m`;
-        console.log(`\x1b[90m[hook:${input.event_type}] ${command}\x1b[0m`);
-        console.log(
-          `\x1b[90m  \u23BF ${exitLabel} (${result.durationMs}ms)\x1b[0m`,
-        );
-        if (result.stdout) {
-          console.log(`\x1b[90m  \u23BF (stdout)\x1b[0m`);
-          const indented = result.stdout
-            .split("\n")
-            .map((line) => `    ${line}`)
-            .join("\n");
-          console.log(`\x1b[90m${indented}\x1b[0m`);
-        }
-        if (result.stderr) {
-          console.log(`\x1b[90m  \u23BF (stderr)\x1b[0m`);
-          const indented = result.stderr
-            .split("\n")
-            .map((line) => `    ${line}`)
-            .join("\n");
-          console.log(`\x1b[90m${indented}\x1b[0m`);
+        if (!quiet) {
+          console.log(`\x1b[90m[hook:${input.event_type}] ${command}\x1b[0m`);
+          console.log(
+            `\x1b[90m  \u23BF ${exitLabel} (${result.durationMs}ms)\x1b[0m`,
+          );
+          if (result.stdout) {
+            console.log(`\x1b[90m  \u23BF (stdout)\x1b[0m`);
+            const indented = result.stdout
+              .split("\n")
+              .map((line) => `    ${line}`)
+              .join("\n");
+            console.log(`\x1b[90m${indented}\x1b[0m`);
+          }
+          if (result.stderr) {
+            console.log(`\x1b[90m  \u23BF (stderr)\x1b[0m`);
+            const indented = result.stderr
+              .split("\n")
+              .map((line) => `    ${line}`)
+              .join("\n");
+            console.log(`\x1b[90m${indented}\x1b[0m`);
+          }
         }
         resolve(result);
       }
@@ -352,6 +354,7 @@ export async function executeHooks(
   const feedback: string[] = [];
   let blocked = false;
   let errored = false;
+  let updatedInput: Record<string, unknown> | undefined;
 
   for (const hook of hooks) {
     const result = await executeHookCommand(hook, input, workingDirectory);
@@ -360,12 +363,30 @@ export async function executeHooks(
     // Collect feedback from stdout when hook succeeds (exit 0)
     // Only for UserPromptSubmit and SessionStart hooks
     if (result.exitCode === HookExitCode.ALLOW) {
-      if (
-        result.stdout?.trim() &&
-        (input.event_type === "UserPromptSubmit" ||
-          input.event_type === "SessionStart")
-      ) {
-        feedback.push(result.stdout.trim());
+      if (result.stdout?.trim()) {
+        // Try to parse updatedInput from hook output (PreToolUse rewrite protocol)
+        if (input.event_type === "PreToolUse" && !updatedInput) {
+          try {
+            const json = JSON.parse(result.stdout.trim());
+            const rewritten = json?.hookSpecificOutput?.updatedInput;
+            if (
+              rewritten &&
+              typeof rewritten === "object" &&
+              !Array.isArray(rewritten)
+            ) {
+              updatedInput = rewritten as Record<string, unknown>;
+            }
+          } catch {
+            // Not JSON or no updatedInput — ignore
+          }
+        }
+
+        if (
+          input.event_type === "UserPromptSubmit" ||
+          input.event_type === "SessionStart"
+        ) {
+          feedback.push(result.stdout.trim());
+        }
       }
       continue;
     }
@@ -396,6 +417,7 @@ export async function executeHooks(
     errored,
     feedback,
     results,
+    ...(updatedInput && { updatedInput }),
   };
 }
 

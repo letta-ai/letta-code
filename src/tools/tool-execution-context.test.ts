@@ -9,6 +9,9 @@ import {
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import { __testSetBackend, type Backend } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
@@ -17,15 +20,28 @@ import {
 } from "@/channels/accounts";
 import { clearDynamicMessageChannelToolCache } from "@/channels/message-tool";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
-import { setRouteInMemory } from "@/channels/routing";
+import {
+  __testOverrideLoadRoutes,
+  __testOverrideSaveRoutes,
+  clearAllRoutes,
+  setRouteInMemory,
+} from "@/channels/routing";
 import type { ChannelAdapter } from "@/channels/types";
-import { runWithRuntimeContext } from "@/runtime-context";
+import {
+  clearExtensionTools,
+  registerExtensionTool,
+} from "@/extensions/tool-registry";
+import {
+  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
+  runWithRuntimeContext,
+} from "@/runtime-context";
 import {
   captureToolExecutionContext,
   clearCapturedToolExecutionContexts,
   clearExternalTools,
   clearTools,
   executeTool,
+  getExecutionContextById,
   getToolNames,
   getToolSchema,
   loadSpecificTools,
@@ -35,7 +51,10 @@ import {
   refreshDynamicChannelToolsInLoadedRegistry,
   registerExternalTools,
 } from "@/tools/manager";
-import { resolveConversationChannelToolScope } from "@/tools/toolset";
+import {
+  prepareToolExecutionContextForScope,
+  resolveConversationChannelToolScope,
+} from "@/tools/toolset";
 
 function asText(
   toolReturn: Awaited<ReturnType<typeof executeTool>>["toolReturn"],
@@ -65,6 +84,33 @@ describe("tool execution context snapshot", () => {
     };
   }
 
+  function registerEchoExtensionTool(signal: AbortSignal): void {
+    registerExtensionTool({
+      name: "local_echo",
+      description: "Echo input from a local extension",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" } },
+        required: ["message"],
+      },
+      owner: {
+        id: "global:/tmp/local-echo.ts",
+        path: "/tmp/local-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/local-echo.ts",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: signal,
+      getContext: () => {
+        throw new Error("context should not be needed for this test");
+      },
+      isAvailable: () => true,
+      run: (ctx) => `echo:${ctx.args.message}`,
+    });
+  }
+
   beforeAll(() => {
     initialTools = getToolNames();
   });
@@ -77,9 +123,15 @@ describe("tool execution context snapshot", () => {
     clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
     clearExternalTools();
+    clearExtensionTools();
+    clearAllRoutes();
+    __testOverrideLoadRoutes(null);
+    __testOverrideSaveRoutes(null);
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
+    delete process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV];
+    __testSetBackend(null);
   });
 
   function installChannelAccountTestOverrides(): void {
@@ -89,6 +141,7 @@ describe("tool execution context snapshot", () => {
 
   afterAll(async () => {
     clearExternalTools();
+    clearExtensionTools();
     if (initialTools.length > 0) {
       await loadSpecificTools(initialTools);
     } else {
@@ -253,6 +306,156 @@ describe("tool execution context snapshot", () => {
     expect(prepared.clientTools).toEqual([]);
   });
 
+  test("prepares and executes extension tools from turn snapshots", async () => {
+    const controller = new AbortController();
+    registerEchoExtensionTool(controller.signal);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["local_echo"] },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "local_echo",
+    ]);
+
+    clearExtensionTools();
+
+    const result = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("echo:hi");
+  });
+
+  test("exposes recent conversation history to extension tools", async () => {
+    const newestFirstMessages = [
+      {
+        id: "msg-2",
+        date: "2026-05-27T00:00:02.000Z",
+        message_type: "assistant_message",
+        content: "hello",
+      },
+      {
+        id: "msg-1",
+        date: "2026-05-27T00:00:01.000Z",
+        message_type: "user_message",
+        content: "hi",
+      },
+    ] as unknown as Message[];
+    const listCalls: Array<{ body: unknown; conversationId: string }> = [];
+    __testSetBackend({
+      listConversationMessages: async (
+        conversationId: string,
+        body: unknown,
+      ) => {
+        listCalls.push({ conversationId, body });
+        return {
+          getPaginatedItems: () => newestFirstMessages,
+        };
+      },
+    } as unknown as Backend);
+
+    const controller = new AbortController();
+    registerExtensionTool({
+      name: "history_echo",
+      description: "Echo conversation history ids",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/history-echo.ts",
+        path: "/tmp/history-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/history-echo.ts",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      getContext: () => {
+        throw new Error("context should not be needed for this test");
+      },
+      isAvailable: () => true,
+      run: async (ctx) => {
+        const history = await ctx.conversation.getHistory({ limit: 2 });
+        return history.map((message) => message.id).join(",");
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-1", conversationId: "default" },
+      () => executeTool("history_echo", {}),
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("msg-1,msg-2");
+    expect(listCalls).toEqual([
+      {
+        conversationId: "default",
+        body: {
+          agent_id: "agent-1",
+          include_err: true,
+          limit: 2,
+          order: "desc",
+        },
+      },
+    ]);
+  });
+
+  test("extension tools take precedence over external tools with the same name", async () => {
+    registerExternalTools([
+      {
+        name: "local_echo",
+        description: "External tool with duplicate name",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+    const controller = new AbortController();
+    registerEchoExtensionTool(controller.signal);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["local_echo"] },
+    );
+
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "local_echo",
+    ]);
+
+    const result = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("echo:hi");
+  });
+
+  test("aborted extension activations stop captured tool execution", async () => {
+    const controller = new AbortController();
+    registerEchoExtensionTool(controller.signal);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["local_echo"] },
+    );
+
+    controller.abort();
+
+    const result = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("error");
+    expect(asText(result.toolReturn)).toBe("Interrupted by user");
+  });
+
   test("prepares current tool snapshots with fresh MessageChannel discovery", async () => {
     await loadSpecificTools(["Read"]);
 
@@ -411,6 +614,8 @@ describe("tool execution context snapshot", () => {
 
   test("does not leak MessageChannel into conversations that only share an agent-level Slack account", async () => {
     installChannelAccountTestOverrides();
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
     await loadSpecificTools(["Read"]);
 
     const registry = new ChannelRegistry();
@@ -447,6 +652,8 @@ describe("tool execution context snapshot", () => {
 
   test("includes MessageChannel in scoped snapshots when the conversation has a Slack route", async () => {
     installChannelAccountTestOverrides();
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
     await loadSpecificTools(["Read"]);
 
     const registry = new ChannelRegistry();
@@ -492,6 +699,63 @@ describe("tool execution context snapshot", () => {
     );
 
     expect(prepared.loadedToolNames).toContain("MessageChannel");
+  });
+
+  test("hydrates inherited channel scope from serialized child env", async () => {
+    await loadSpecificTools(["Read"]);
+    __testSetBackend(
+      new FakeHeadlessBackend(
+        "agent-1",
+        undefined,
+        {},
+        {
+          modelHandle: "anthropic/claude-opus-4-1-20250805",
+        },
+      ),
+    );
+    process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV] = JSON.stringify({
+      channelToolScope: {
+        channels: [{ channelId: "telegram", accountId: "acct-telegram" }],
+      },
+      channelTurnSources: [
+        {
+          channel: "telegram",
+          accountId: "acct-telegram",
+          chatId: "7952253975",
+          chatType: "channel",
+          threadId: "42",
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    const prepared = await prepareToolExecutionContextForScope({
+      agentId: "agent-1",
+      conversationId: "default",
+      overrideModel: "anthropic/claude-opus-4-1-20250805",
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toContain(
+      "MessageChannel",
+    );
+    const captured = getExecutionContextById(
+      prepared.preparedToolContext.contextId,
+    );
+    expect(captured?.runtimeContext.channelToolScope).toEqual({
+      channels: [{ channelId: "telegram", accountId: "acct-telegram" }],
+    });
+    expect(captured?.runtimeContext.channelTurnSources).toEqual([
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        chatId: "7952253975",
+        chatType: "channel",
+        threadId: "42",
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    ]);
   });
 
   test("does not grant proactive MessageChannel scope for Telegram-only accounts", async () => {

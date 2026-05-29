@@ -110,7 +110,7 @@ export const CLI_FLAG_CATALOG = {
     help: {
       argLabel: "<name>",
       description:
-        'Personality preset for --new-agent: "letta-code", "linus", "kawaii", "claude", or "codex"',
+        'Personality preset for --new-agent: "letta-code", "tutorial", "blank", "linus", "kawaii", "claude", or "codex"',
     },
   },
   "memory-blocks": { parser: { type: "string" }, mode: "both" },

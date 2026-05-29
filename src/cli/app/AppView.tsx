@@ -52,7 +52,9 @@ import { ToolsetSelector } from "@/cli/components/ToolsetSelector";
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
+import { WorktreeDiffSelector } from "@/cli/components/WorktreeDiffSelector";
 import { AnimationProvider } from "@/cli/contexts/AnimationContext";
+import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
@@ -66,6 +68,8 @@ import {
   getReflectionSettings,
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
+import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
+import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
@@ -73,7 +77,6 @@ import {
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
-import type { StatusLineState } from "@/cli/hooks/use-configurable-status-line";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -100,6 +103,7 @@ type ModelSelectorOptions = {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
+  initialEffort?: ModelReasoningEffort;
   options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
 };
 
@@ -137,6 +141,7 @@ type AppViewProps = {
   currentModelHandle: string | null;
   currentModelId: string | null;
   currentModelProvider: string | null;
+  isLocalBackend: boolean;
   currentPersonalityId: PersonalityId | null;
   currentReasoningEffort: ModelReasoningEffort | null;
   currentSystemPromptId: string | null;
@@ -152,6 +157,8 @@ type AppViewProps = {
 
   feedbackPrefill: string;
   footerUpdateText: string | null;
+  showInspirationalPromptHints: boolean;
+  onEscapeCommandCancel?: () => boolean;
   handleAgentSelect: (
     targetAgentId: string,
     opts?: {
@@ -178,7 +185,10 @@ type AppViewProps = {
   ) => Promise<void>;
   handleCreateNewAgent: (
     name: string,
-    opts?: { commandId?: string },
+    opts?: {
+      commandId?: string;
+      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
+    },
   ) => Promise<void>;
   handleCycleReasoningEffort: () => void;
   handleDenyCurrent: (reason: string) => Promise<void>;
@@ -192,7 +202,11 @@ type AppViewProps = {
   handleModelSelect: (
     modelId: string,
     commandId?: string | null,
-    opts?: { skipReasoningPrompt?: boolean },
+    opts?: {
+      promptReasoning?: boolean;
+      skipReasoningPrompt?: boolean;
+      reasoningEffort?: ModelReasoningEffort;
+    },
   ) => Promise<void>;
   handlePasteError: (message: string) => void;
   handlePermissionModeChange: (mode: PermissionMode) => void;
@@ -225,12 +239,14 @@ type AppViewProps = {
   liveItems: Line[];
   liveTrajectoryElapsedBaseMs: number;
   loadingState: AppLoadingState;
+  markLocalModelsAvailable: () => void;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
   ) => Promise<void>;
   modelReasoningPrompt: ModelReasoningPrompt | null;
   modelSelectorOptions: ModelSelectorOptions;
   networkPhase: "error" | "upload" | "download" | null;
+  executionPhase: ExecutionPhase;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
@@ -258,6 +274,14 @@ type AppViewProps = {
   resumeKey: number;
   searchQuery: string;
   sessionStatsRef: RefObject<SessionStats>;
+  worktreeDiffSelectorPending: {
+    worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+  } | null;
+  setWorktreeDiffSelectorPending: Dispatch<
+    SetStateAction<{
+      worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+    } | null>
+  >;
   setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
   setBtwState: Dispatch<SetStateAction<BtwState>>;
   setCommandRunning: (value: boolean) => void;
@@ -285,11 +309,15 @@ type AppViewProps = {
   ) => CommandHandle;
   staticItems: StaticItem[];
   staticRenderEpoch: number;
-  statusLine: StatusLineState;
+  statusLinePayload: StatusLinePayload;
+  statusLinePrompt: string;
+  extensionRuntime: LocalExtensionRuntime;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
   thinkingMessage: string;
   trajectoryTokenDisplay: number;
+  usedContextTokens: number;
+  contextWindowSize: number | null | undefined;
   uiPermissionMode: PermissionMode;
   uiGoalLoopActive: boolean;
   updateAgentName: (name: string) => void;
@@ -323,6 +351,7 @@ export function AppView(props: AppViewProps) {
     currentModelHandle,
     currentModelId,
     currentModelProvider,
+    isLocalBackend,
     currentPersonalityId,
     currentReasoningEffort,
     currentSystemPromptId,
@@ -337,6 +366,8 @@ export function AppView(props: AppViewProps) {
     handleCtrlD,
     feedbackPrefill,
     footerUpdateText,
+    showInspirationalPromptHints,
+    onEscapeCommandCancel,
     handleAgentSelect,
     handleApproveAlways,
     handleApproveCurrent,
@@ -373,10 +404,12 @@ export function AppView(props: AppViewProps) {
     liveItems,
     liveTrajectoryElapsedBaseMs,
     loadingState,
+    markLocalModelsAvailable,
     maybeCarryOverActiveConversationModel,
     modelReasoningPrompt,
     modelSelectorOptions,
     networkPhase,
+    executionPhase,
     onSubmit,
     pendingApprovals,
     pendingConversationSwitchRef,
@@ -397,6 +430,8 @@ export function AppView(props: AppViewProps) {
     resumeKey,
     searchQuery,
     sessionStatsRef,
+    worktreeDiffSelectorPending,
+    setWorktreeDiffSelectorPending,
     setActiveOverlay,
     setBtwState,
     setCommandRunning,
@@ -417,11 +452,15 @@ export function AppView(props: AppViewProps) {
     openOverlay,
     staticItems,
     staticRenderEpoch,
-    statusLine,
+    statusLinePayload,
+    statusLinePrompt,
+    extensionRuntime,
     streaming,
     stubDescriptions,
     thinkingMessage,
     trajectoryTokenDisplay,
+    usedContextTokens,
+    contextWindowSize,
     uiPermissionMode,
     uiGoalLoopActive,
     updateAgentName,
@@ -433,7 +472,7 @@ export function AppView(props: AppViewProps) {
         renderEpoch={staticRenderEpoch}
         items={staticItems}
         columns={columns}
-        statusLinePrompt={statusLine.prompt}
+        statusLinePrompt={statusLinePrompt}
         showCompactionsEnabled={showCompactionsEnabled}
         precomputedDiffs={precomputedDiffsRef.current}
         hiddenToolCallId={expandedToolCallId ?? undefined}
@@ -527,7 +566,7 @@ export function AppView(props: AppViewProps) {
                             showPreview={showApprovalPreview}
                           />
                         ) : ln.kind === "user" ? (
-                          <UserMessage line={ln} prompt={statusLine.prompt} />
+                          <UserMessage line={ln} prompt={statusLinePrompt} />
                         ) : ln.kind === "reasoning" ? (
                           <ReasoningMessage line={ln} />
                         ) : ln.kind === "assistant" ? (
@@ -643,6 +682,8 @@ export function AppView(props: AppViewProps) {
                 visible={inputVisible}
                 streaming={streaming}
                 tokenCount={trajectoryTokenDisplay}
+                usedContextTokens={usedContextTokens}
+                contextWindowSize={contextWindowSize}
                 elapsedBaseMs={liveTrajectoryElapsedBaseMs}
                 thinkingMessage={thinkingMessage}
                 includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
@@ -672,6 +713,7 @@ export function AppView(props: AppViewProps) {
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
+                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
                 messageQueue={queueDisplay}
@@ -679,6 +721,7 @@ export function AppView(props: AppViewProps) {
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
+                onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
                 goalLoopActive={uiGoalLoopActive}
                 onGoalLoopExit={handleGoalLoopExit}
@@ -687,12 +730,14 @@ export function AppView(props: AppViewProps) {
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
                 networkPhase={networkPhase}
+                executionPhase={executionPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
-                statusLineText={statusLine.text || undefined}
-                statusLineRight={statusLine.rightText || undefined}
-                statusLinePrompt={statusLine.prompt}
+                statusLinePayload={statusLinePayload}
+                extensionRuntime={extensionRuntime}
+                statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
+                showInspirationalPromptHints={showInspirationalPromptHints}
               />
             </Box>
 
@@ -703,10 +748,12 @@ export function AppView(props: AppViewProps) {
                   modelLabel={modelReasoningPrompt.modelLabel}
                   options={modelReasoningPrompt.options}
                   initialModelId={modelReasoningPrompt.initialModelId}
-                  onSelect={(selectedModelId) => {
+                  initialEffort={modelReasoningPrompt.initialEffort}
+                  onSelect={(selectedOption) => {
                     setModelReasoningPrompt(null);
-                    void handleModelSelect(selectedModelId, null, {
+                    void handleModelSelect(selectedOption.modelId, null, {
                       skipReasoningPrompt: true,
+                      reasoningEffort: selectedOption.effort,
                     });
                   }}
                   onCancel={() => setModelReasoningPrompt(null)}
@@ -715,7 +762,31 @@ export function AppView(props: AppViewProps) {
                 <ModelSelector
                   currentModelId={currentModelId ?? undefined}
                   currentModelHandle={currentModelHandle}
-                  onSelect={handleModelSelect}
+                  onSelect={(modelId) => {
+                    void handleModelSelect(modelId, null, {
+                      promptReasoning: true,
+                    });
+                  }}
+                  onOpenConnect={() => {
+                    const overlayCommand = completeOverlay("model");
+                    overlayCommand?.finish("Models dialog dismissed", true);
+                    openOverlay(
+                      "connect",
+                      "/connect",
+                      "Opening provider selector...",
+                      "Connect dialog dismissed",
+                    );
+                  }}
+                  onOpenLogin={() => {
+                    const overlayCommand = completeOverlay("model");
+                    overlayCommand?.finish("Models dialog dismissed", true);
+                    openOverlay(
+                      "login",
+                      "/login",
+                      "Opening login...",
+                      "Login dismissed",
+                    );
+                  }}
                   onCancel={closeOverlay}
                   filterProvider={modelSelectorOptions.filterProvider}
                   forceRefresh={modelSelectorOptions.forceRefresh}
@@ -841,7 +912,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
-                onStartOAuth={async () => {
+                onStartOAuth={async (provider, target) => {
                   const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
@@ -857,7 +928,9 @@ export function AppView(props: AppViewProps) {
                         buffersRef,
                         refreshDerived,
                         setCommandRunning,
+                        target,
                         onCodexConnected: () => {
+                          markLocalModelsAvailable();
                           setModelSelectorOptions({
                             filterProvider: "chatgpt-plus-pro",
                             forceRefresh: true,
@@ -870,7 +943,7 @@ export function AppView(props: AppViewProps) {
                           );
                         },
                       },
-                      "/connect chatgpt",
+                      `/connect ${provider.id === "openai-codex-oauth" ? "chatgpt" : provider.id}`,
                     );
                   } finally {
                     setActiveConnectCommandId(null);
@@ -887,6 +960,51 @@ export function AppView(props: AppViewProps) {
                 onCancel={closeOverlay}
               />
             )}
+
+            {activeOverlay === "worktree-diff" &&
+              worktreeDiffSelectorPending && (
+                <WorktreeDiffSelector
+                  worktrees={worktreeDiffSelectorPending.worktrees}
+                  onSelect={(path) => {
+                    setWorktreeDiffSelectorPending(null);
+                    const overlayCommand = completeOverlay("worktree-diff");
+                    const cmd =
+                      overlayCommand ??
+                      commandRunner.start(
+                        "/experiments",
+                        "Opening worktree diff...",
+                      );
+                    void import("@/web/generate-diff-viewer")
+                      .then(({ generateAndOpenDiffViewer }) =>
+                        generateAndOpenDiffViewer(path),
+                      )
+                      .then((result) => {
+                        const fileSummary = `${result.fileCount} file${result.fileCount === 1 ? "" : "s"}`;
+                        if (result.opened) {
+                          cmd.finish(
+                            `Opened worktree diff (${fileSummary})`,
+                            true,
+                          );
+                        } else {
+                          cmd.finish(
+                            `Open manually: ${result.filePath} (${fileSummary})`,
+                            true,
+                          );
+                        }
+                      })
+                      .catch((err: unknown) => {
+                        cmd.finish(
+                          `Failed to open diff: ${err instanceof Error ? err.message : String(err)}`,
+                          false,
+                        );
+                      });
+                  }}
+                  onCancel={() => {
+                    setWorktreeDiffSelectorPending(null);
+                    closeOverlay();
+                  }}
+                />
+              )}
 
             {/* Toolset Selector - conditionally mounted as overlay */}
             {activeOverlay === "toolset" && (
@@ -931,11 +1049,21 @@ export function AppView(props: AppViewProps) {
                     backendMode,
                   });
                 }}
+                onLogin={() => {
+                  completeOverlay("resume");
+                  openOverlay(
+                    "login",
+                    "/login",
+                    "Opening login...",
+                    "Login dismissed",
+                  );
+                }}
                 onCancel={closeOverlay}
-                onCreateNewAgent={(name: string) => {
+                onCreateNewAgent={(name: string, backendMode) => {
                   const overlayCommand = completeOverlay("resume");
                   void handleCreateNewAgent(name, {
                     commandId: overlayCommand?.id,
+                    backendMode,
                   });
                 }}
               />
@@ -969,6 +1097,7 @@ export function AppView(props: AppViewProps) {
                     true,
                   );
                 }}
+                onCancel={closeOverlay}
               />
             )}
 
@@ -1431,6 +1560,18 @@ export function AppView(props: AppViewProps) {
                   agentName={agentState?.name}
                   onClose={closeOverlay}
                   conversationId={conversationId}
+                  contextUsage={
+                    usedContextTokens > 0
+                      ? {
+                          usedTokens: usedContextTokens,
+                          contextWindow: contextWindowSize ?? 0,
+                          model:
+                            currentModelHandle ??
+                            currentModelDisplay ??
+                            "unknown",
+                        }
+                      : undefined
+                  }
                 />
               ) : (
                 <MemoryTabViewer

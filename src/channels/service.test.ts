@@ -41,6 +41,7 @@ import {
   clearTargetStores,
   upsertChannelTarget,
 } from "@/channels/targets";
+import type { SlackChannelAccount } from "@/channels/types";
 
 describe("channel service", () => {
   function upsertTargetForRouteTest(chatId: string): string {
@@ -213,7 +214,7 @@ describe("channel service", () => {
         configured: true,
         hasBotToken: true,
         hasAppToken: true,
-        defaultPermissionMode: "standard",
+        defaultPermissionMode: "unrestricted",
       }),
     );
 
@@ -413,6 +414,31 @@ describe("channel service", () => {
     }
   });
 
+  test("Slack accounts without persisted permission mode default to unrestricted", () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "legacy-slack",
+        enabled: false,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        agentId: null,
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      } as unknown as SlackChannelAccount,
+    ]);
+
+    const snapshot = getChannelAccountSnapshot("slack", "legacy-slack");
+    expect(snapshot?.channelId).toBe("slack");
+    if (snapshot?.channelId === "slack") {
+      expect(snapshot.defaultPermissionMode).toBe("unrestricted");
+    }
+  });
+
   test("refreshChannelAccountDisplayNameLive hydrates a real platform name", async () => {
     __testOverrideResolveChannelAccountDisplayName(async () => "Letta Code");
 
@@ -433,7 +459,7 @@ describe("channel service", () => {
     expect(refreshed.displayName).toBe("Letta Code");
   });
 
-  test("forced display-name refresh clears stale labels when identity lookup returns empty", async () => {
+  test("forced display-name refresh preserves user-provided labels", async () => {
     __testOverrideResolveChannelAccountDisplayName(async () => undefined);
 
     createChannelAccountLive(
@@ -452,7 +478,7 @@ describe("channel service", () => {
       { force: true },
     );
 
-    expect(refreshed.displayName).toBeUndefined();
+    expect(refreshed.displayName).toBe("Old Slack Name");
   });
 
   test("config helpers resolve the sole account instead of assuming a default id", async () => {

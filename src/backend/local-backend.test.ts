@@ -1,5 +1,14 @@
-import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -9,7 +18,14 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
+import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
+import {
+  clearRegisteredPiProviders,
+  registerPiProvider,
+} from "@/backend/dev/pi-provider-extension-registry";
 import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -47,6 +63,37 @@ async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   return chunks;
 }
 
+function pageItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
+  return Array.isArray(value) ? value : value.getPaginatedItems();
+}
+
+async function withEnv<T>(
+  updates: Record<string, string | undefined>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = Object.fromEntries(
+    Object.keys(updates).map((key) => [key, process.env[key]]),
+  );
+  try {
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    return await run();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 function assistantMessage(input: {
   content: AssistantMessage["content"];
   stopReason: AssistantMessage["stopReason"];
@@ -77,7 +124,436 @@ function streamFromEvents(
   });
 }
 
+function lettaStreamFromChunks(
+  chunks: LettaStreamingResponse[],
+): Stream<LettaStreamingResponse> {
+  const controller = new AbortController();
+  return {
+    controller,
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) yield chunk;
+    },
+  } as unknown as Stream<LettaStreamingResponse>;
+}
+
 describe("local backend pi transcript", () => {
+  afterEach(() => {
+    clearRegisteredPiProviders();
+  });
+
+  test("uses wall-clock timestamps for new local conversations and messages", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-time-"));
+    const before = Date.now() - 1_000;
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "hello" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const after = Date.now() + 1_000;
+    const conversations = (await backend.listConversations({
+      agent_id: agent.id,
+    } as never)) as Array<{ last_message_at?: string | null }>;
+    const messages = pageItems(
+      await backend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    const timestamps = [
+      conversation.created_at,
+      conversations[0]?.last_message_at,
+      messages[0]?.date,
+      messages.at(-1)?.date,
+    ];
+    for (const timestamp of timestamps) {
+      expect(typeof timestamp).toBe("string");
+      const parsed = Date.parse(timestamp ?? "");
+      expect(parsed).toBeGreaterThanOrEqual(before);
+      expect(parsed).toBeLessThanOrEqual(after);
+    }
+  });
+
+  test("rejects updates to the virtual default conversation", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-default-conversation-update-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+
+      expect(() =>
+        backend.updateConversation("default", {
+          summary: "Default rename",
+        } as never),
+      ).toThrow("Default conversation cannot be updated");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("repairs legacy synthetic transcript timestamps from manifest and file mtime", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-time-"));
+    const agentId = "agent-local-default";
+    const conversationId = "local-conv-old";
+    const conversationDir = join(
+      storageDir,
+      "conversations",
+      `${conversationId}--${agentId}`,
+    );
+    const createdAt = "2026-05-22T12:00:00.000Z";
+    const activeAt = "2026-05-22T13:00:00.000Z";
+    await mkdir(join(storageDir, "agents"), { recursive: true });
+    await writeFile(
+      join(storageDir, "agents", `${agentId}.json`),
+      `${JSON.stringify({
+        id: agentId,
+        name: "Local",
+        description: null,
+        system: "",
+        tags: [],
+        model: "openai/gpt-5-mini",
+        model_settings: { model: "openai/gpt-5-mini" },
+      })}\n`,
+    );
+    await mkdir(conversationDir, { recursive: true });
+    await writeFile(
+      join(conversationDir, "conversation.json"),
+      `${JSON.stringify({
+        id: conversationId,
+        agent_id: agentId,
+        created_at: "2026-01-01T00:00:01.000Z",
+        updated_at: "2026-01-01T00:00:02.000Z",
+        last_message_at: "2026-01-01T00:00:02.000Z",
+        in_context_message_ids: ["local-ui-msg-1", "local-ui-msg-2"],
+      })}\n`,
+    );
+    await writeFile(
+      join(conversationDir, "manifest.json"),
+      `${JSON.stringify({
+        schema_version: 1,
+        message_format: "pi-ai-message-jsonl",
+        provider_stack: "pi-ai",
+        created_at: createdAt,
+      })}\n`,
+    );
+    const messagesPath = join(conversationDir, "messages.jsonl");
+    const transcriptRows = [
+      {
+        id: "local-ui-msg-1",
+        role: "user",
+        content: [{ type: "text", text: "old" }],
+        timestamp: Date.parse("2026-01-01T00:00:01.000Z"),
+        metadata: {
+          created_at: "2026-01-01T00:00:01.000Z",
+          updated_at: "2026-01-01T00:00:01.000Z",
+          agent_id: agentId,
+          conversation_id: conversationId,
+        },
+      },
+      {
+        id: "local-ui-msg-2",
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        api: "local",
+        provider: "local",
+        model: "local",
+        usage: emptyLocalUsage(),
+        stopReason: "stop",
+        timestamp: Date.parse("2026-01-01T00:00:02.000Z"),
+        metadata: {
+          created_at: "2026-01-01T00:00:02.000Z",
+          updated_at: "2026-01-01T00:00:02.000Z",
+          agent_id: agentId,
+          conversation_id: conversationId,
+        },
+      },
+    ].map((message) => JSON.stringify(message));
+    await writeFile(messagesPath, `${transcriptRows.join("\n")}\n`);
+    await utimes(messagesPath, new Date(activeAt), new Date(activeAt));
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const conversations = (await backend.listConversations({
+      agent_id: agentId,
+    } as never)) as Array<{
+      created_at?: string | null;
+      updated_at?: string | null;
+      last_message_at?: string | null;
+    }>;
+    const messages = pageItems(
+      await backend.listConversationMessages(conversationId, {
+        agent_id: agentId,
+        order: "asc",
+      } as never),
+    );
+
+    expect(conversations[0]?.created_at).toBe(createdAt);
+    expect(conversations[0]?.updated_at).toBe(activeAt);
+    expect(conversations[0]?.last_message_at).toBe(activeAt);
+    expect(messages[0]?.date).toBe(createdAt);
+    expect(messages.at(-1)?.date).toBe(activeAt);
+  });
+
+  test("loads bounded transcript tails without parsing the full jsonl", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-tail-"));
+    const agentId = "agent-local-default";
+    const conversationId = "local-conv-tail";
+    const conversationDir = join(storageDir, "conversations", "tail");
+    const messageIds = Array.from({ length: 120 }, (_, i) =>
+      i === 119 ? "ui-msg-latest" : `ui-msg-${i}`,
+    );
+    await mkdir(join(storageDir, "agents"), { recursive: true });
+    await writeFile(
+      join(storageDir, "agents", `${agentId}.json`),
+      `${JSON.stringify({
+        id: agentId,
+        name: "Local",
+        description: null,
+        system: "",
+        tags: [],
+        model: "openai/gpt-5-mini",
+        model_settings: { model: "openai/gpt-5-mini" },
+      })}\n`,
+    );
+    await mkdir(conversationDir, { recursive: true });
+    await writeFile(
+      join(conversationDir, "conversation.json"),
+      `${JSON.stringify({
+        id: conversationId,
+        agent_id: agentId,
+        created_at: "2026-05-22T12:00:00.000Z",
+        updated_at: "2026-05-22T13:00:00.000Z",
+        last_message_at: "2026-05-22T13:00:00.000Z",
+        in_context_message_ids: messageIds,
+      })}\n`,
+    );
+    await writeFile(
+      join(conversationDir, "manifest.json"),
+      `${JSON.stringify({
+        schema_version: 1,
+        message_format: "pi-ai-message-jsonl",
+        provider_stack: "pi-ai",
+        created_at: "2026-05-22T12:00:00.000Z",
+      })}\n`,
+    );
+
+    const rows = ["{ definitely not json }"];
+    for (let i = 0; i < 120; i += 1) {
+      const id = messageIds[i];
+      rows.push(
+        JSON.stringify({
+          id,
+          role: i % 2 === 0 ? "user" : "assistant",
+          content: [
+            {
+              type: "text",
+              text: `${i === 119 ? "latest" : "older"} ${"x".repeat(2048)}`,
+            },
+          ],
+          ...(i === 119
+            ? {}
+            : {
+                metadata: {
+                  created_at: new Date(
+                    Date.UTC(2026, 4, 22, 12, i),
+                  ).toISOString(),
+                  updated_at: new Date(
+                    Date.UTC(2026, 4, 22, 12, i),
+                  ).toISOString(),
+                  agent_id: agentId,
+                  conversation_id: conversationId,
+                },
+              }),
+        }),
+      );
+    }
+    await writeFile(
+      join(conversationDir, "messages.jsonl"),
+      `${rows.join("\n")}\n`,
+    );
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const conversation = await backend.retrieveConversation(conversationId);
+    expect(conversation.in_context_message_ids).toEqual(messageIds);
+    const messages = pageItems(
+      await backend.listConversationMessages(conversationId, {
+        agent_id: agentId,
+        order: "desc",
+        limit: 1,
+      } as never),
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe("ui-msg-latest");
+    expect(messages[0]?.date).toBe("2026-01-01T00:02:00.000Z");
+
+    const backendForDirectLookup = new LocalBackend({
+      storageDir,
+      memfsEnabled: false,
+    });
+    const latestVariants =
+      await backendForDirectLookup.retrieveMessage("ui-msg-latest");
+    expect(latestVariants[0]?.id).toBe("ui-msg-latest");
+    expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
+  });
+
+  test("reuses cached compiled system prompt across turns until explicit recompile", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-cache-"));
+    const systemPrompts: string[] = [];
+    const executor: HeadlessTurnExecutor = {
+      async execute(input) {
+        systemPrompts.push(input.systemPrompt ?? "");
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    const memoryDir = join(storageDir, "memfs", agent.id, "memory");
+    await mkdir(join(memoryDir, "system"), { recursive: true });
+    await writeFile(
+      join(memoryDir, "system", "persona.md"),
+      "---\ndescription: Persona\n---\nChanged but not explicitly recompiled.\n",
+      "utf8",
+    );
+    execFileSync("git", ["add", "system/persona.md"], { cwd: memoryDir });
+    execFileSync("git", ["commit", "-m", "test memory change"], {
+      cwd: memoryDir,
+    });
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "second" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    expect(systemPrompts).toHaveLength(2);
+    expect(systemPrompts[1]).toBe(systemPrompts[0]);
+    expect(systemPrompts[1]).not.toContain(
+      "Changed but not explicitly recompiled.",
+    );
+
+    await backend.recompileConversation(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "third" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    expect(systemPrompts[2]).toContain(
+      "Changed but not explicitly recompiled.",
+    );
+    expect(systemPrompts[2]).not.toBe(systemPrompts[1]);
+  });
+
+  test("recompiles cached system prompt after local compaction", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-compact-"));
+    const systemPrompts: string[] = [];
+    const executor: HeadlessTurnExecutor = {
+      async execute(input) {
+        systemPrompts.push(input.systemPrompt ?? "");
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "summary-response",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Compacted summary." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
+    expect(systemPrompts[0]).toContain("- 0 previous messages");
+
+    await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "after compaction" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    expect(systemPrompts[1]).toContain("- 1 previous messages");
+    expect(systemPrompts[1]).not.toBe(systemPrompts[0]);
+  });
+
   test("lists pi catalog models for configured zAI coding provider", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-pi-zai-"));
     await createOrUpdateLocalProvider({
@@ -139,6 +615,219 @@ describe("local backend pi transcript", () => {
     expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
     expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
+  });
+
+  test("lists extension-registered local provider models with context windows", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-registered-provider-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      calls.push(typeof input === "string" ? input : String(input));
+      return new Response(
+        JSON.stringify({ data: [{ id: "heuristic-only-model" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const models = await listLocalModels(storageDir, { fetch: fetchImpl });
+
+    expect(calls).toEqual([]);
+    expect(models).toContainEqual({
+      handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+      max_context_window: 256000,
+      model: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+      model_endpoint_type: "lmstudio",
+    });
+    expect(models.map((model) => model.handle)).not.toContain(
+      "lmstudio/heuristic-only-model",
+    );
+  });
+
+  test("uses extension-registered context windows for local agent state", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-registered-context-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+
+    expect(agent.model).toBe("lmstudio/gemma-4-26B-A4B-it-oQ6");
+    expect(
+      (agent as { llm_config?: { context_window?: number } }).llm_config
+        ?.context_window,
+    ).toBe(256000);
+    expect(
+      (agent as { llm_config?: { max_tokens?: number } }).llm_config
+        ?.max_tokens,
+    ).toBe(8192);
+  });
+
+  test("projects legacy local 128k defaults through registered model metadata", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-legacy-context-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+    await mkdir(join(storageDir, "agents"), { recursive: true });
+    await writeFile(
+      join(storageDir, "agents", "agent-local-default.json"),
+      JSON.stringify(
+        {
+          id: "agent-local-default",
+          name: "Letta Code",
+          description: null,
+          system: "",
+          tags: [],
+          model: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+          model_settings: {
+            provider_type: "lmstudio",
+            context_window_limit: 128000,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.retrieveAgent("agent-local-default");
+
+    expect(
+      (agent as { llm_config?: { context_window?: number } }).llm_config
+        ?.context_window,
+    ).toBe(256000);
+  });
+
+  test("discovers configured Ollama Cloud models from OpenAI-compatible catalog", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-ollama-cloud-discovery-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "ollama_cloud",
+      providerName: "lc-ollama-cloud",
+      apiKey: "ollama-key",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const captured: { authorization?: string | null } = {};
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      captured.authorization = new Headers(init?.headers).get("Authorization");
+      return new Response(
+        JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual(["https://ollama.com/v1/models"]);
+    expect(captured.authorization).toBe("Bearer ollama-key");
+    expect(handles).toContain("ollama-cloud/rnj-1:8b");
+    expect(handles).toContain("ollama-cloud/glm-5.1");
+    expect(handles).not.toContain("ollama-cloud/gpt-oss:20b");
+    expect(handles).not.toContain("ollama-cloud/gpt-oss:120b");
+  });
+
+  test("uses LM Studio env API key for discovery when stored key is placeholder", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-lmstudio-env-key-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://localhost:8000/v1",
+      storageDir,
+    });
+    const captured: { authorization?: string | null } = {};
+    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
+      captured.authorization = new Headers(init?.headers).get("Authorization");
+      return new Response(JSON.stringify({ data: [{ id: "secure-model" }] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {
+      const handles = (
+        await listLocalModels(storageDir, { fetch: fetchImpl })
+      ).map((model) => model.handle);
+
+      expect(handles).toContain("lmstudio/secure-model");
+    });
+
+    expect(captured.authorization).toBe("Bearer 1234");
   });
 
   test("discovers configured llama.cpp models from OpenAI-compatible catalog", async () => {
@@ -266,6 +955,18 @@ describe("local backend pi transcript", () => {
         );
       }
 
+      if (contexts.length === 2) {
+        const emptyMessage = assistantMessage({
+          responseId: "response-empty-after-tool",
+          stopReason: "stop",
+          content: [],
+        });
+        return streamFromEvents(
+          [{ type: "done", reason: "stop", message: emptyMessage }],
+          emptyMessage,
+        );
+      }
+
       const finalMessage = assistantMessage({
         responseId: "response-final",
         stopReason: "stop",
@@ -325,7 +1026,7 @@ describe("local backend pi transcript", () => {
       "approval_request_message",
     ]);
 
-    await drain(
+    const continuationChunks = await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: agent.id,
         messages: [
@@ -344,13 +1045,40 @@ describe("local backend pi transcript", () => {
       } as never),
     );
 
-    expect(contexts).toHaveLength(2);
+    expect(
+      continuationChunks.some((chunk) => {
+        const event = chunk as { message_type?: string; event_type?: string };
+        return (
+          event.message_type === "event_message" && event.event_type === "retry"
+        );
+      }),
+    ).toBe(true);
+
+    expect(contexts).toHaveLength(3);
     const secondContextMessages = contexts[1]?.messages ?? [];
     expect(secondContextMessages.at(-1)).toMatchObject({
       role: "toolResult",
       toolCallId: "call-readme",
       content: [{ type: "text", text: "README contents" }],
     });
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const messages = (
+      await readFile(join(conversationDir, "messages.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "assistant",
+    ]);
+    const finalAssistant = messages.at(-1) as { content?: unknown[] };
+    expect(finalAssistant.content).toEqual([
+      { type: "text", text: "Tool result received." },
+    ]);
   });
 
   test("refuses to load unversioned non-empty transcripts with exact migration command", async () => {
@@ -380,11 +1108,24 @@ describe("local backend pi transcript", () => {
     );
   });
 
-  test("refuses to load versioned transcripts with legacy UI rows and repairs them with migrate-transcripts", async () => {
+  test("refuses to read versioned transcripts with legacy UI rows and repairs them with migrate-transcripts", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-repair-"),
     );
     const conversationDir = join(storageDir, "conversations", "mismatched");
+    await mkdir(join(storageDir, "agents"), { recursive: true });
+    await writeFile(
+      join(storageDir, "agents", "agent-local-default.json"),
+      `${JSON.stringify({
+        id: "agent-local-default",
+        name: "Local",
+        description: null,
+        system: "",
+        tags: [],
+        model: "openai/gpt-5-mini",
+        model_settings: { model: "openai/gpt-5-mini" },
+      })}\n`,
+    );
     await mkdir(conversationDir, { recursive: true });
     await writeFile(
       join(conversationDir, "conversation.json"),
@@ -408,10 +1149,19 @@ describe("local backend pi transcript", () => {
       `${JSON.stringify({ id: "ui-msg-1", role: "user", parts: [{ type: "text", text: "legacy after manifest" }] })}\n`,
     );
 
-    expect(() => new LocalBackend({ storageDir, memfsEnabled: false })).toThrow(
-      LocalTranscriptRepairRequiredError,
-    );
-    expect(() => new LocalBackend({ storageDir, memfsEnabled: false })).toThrow(
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    await expect(
+      backend.listConversationMessages("local-conv-1", {
+        agent_id: "agent-local-default",
+        order: "asc",
+      } as never),
+    ).rejects.toThrow(LocalTranscriptRepairRequiredError);
+    await expect(
+      backend.listConversationMessages("local-conv-1", {
+        agent_id: "agent-local-default",
+        order: "asc",
+      } as never),
+    ).rejects.toThrow(
       `letta local-backend migrate-transcripts --storage-dir "${storageDir}"`,
     );
 

@@ -16,6 +16,7 @@ import {
   setConversationId,
   setCurrentAgentId,
 } from "@/agent/context";
+import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getStreamToolContextId,
@@ -30,23 +31,32 @@ import {
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import { createBuffers, toLines } from "@/cli/helpers/accumulator";
+import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
   getReflectionSettings,
+  type ReflectionSettings,
   type ReflectionTrigger,
+  shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
 } from "@/cli/helpers/reflection-launcher";
-import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
+import {
+  appendTranscriptDeltaJsonl,
+  getReflectionTranscriptState,
+} from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
-import { syncReminderStateFromContextTracker } from "@/reminders/state";
+import {
+  type SharedReminderState,
+  syncReminderStateFromContextTracker,
+} from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -138,6 +148,7 @@ function trackListenerUserInput(
 
 export const __listenerTurnTestUtils = {
   trackListenerUserInput,
+  maybeLaunchPostTurnChannelReflection,
 };
 
 function escapeTaskNotificationSummary(summary: string): string {
@@ -196,6 +207,63 @@ function buildMaybeLaunchReflectionSubagent(params: {
     });
     return result.launched;
   };
+}
+
+type PostTurnReflectionLauncher = (
+  triggerSource: Exclude<ReflectionTrigger, "off">,
+) => Promise<boolean>;
+
+async function maybeLaunchPostTurnChannelReflection(params: {
+  hasChannelTurnSources: boolean;
+  agentId?: string | null;
+  conversationId: string;
+  memfsEnabled: boolean;
+  reflectionSettings: ReflectionSettings;
+  reminderState: SharedReminderState;
+  contextTracker: ContextTracker;
+  launch: PostTurnReflectionLauncher;
+  getTranscriptState?: typeof getReflectionTranscriptState;
+}): Promise<boolean> {
+  if (
+    !params.hasChannelTurnSources ||
+    !params.agentId ||
+    !params.memfsEnabled
+  ) {
+    return false;
+  }
+
+  switch (params.reflectionSettings.trigger) {
+    case "off":
+      return false;
+    case "compaction-event": {
+      syncReminderStateFromContextTracker(
+        params.reminderState,
+        params.contextTracker,
+      );
+      if (!params.reminderState.pendingReflectionTrigger) {
+        return false;
+      }
+      params.reminderState.pendingReflectionTrigger = false;
+      return params.launch("compaction-event");
+    }
+    case "step-count": {
+      const readTranscriptState =
+        params.getTranscriptState ?? getReflectionTranscriptState;
+      const transcriptState = await readTranscriptState(
+        params.agentId,
+        params.conversationId,
+      );
+      if (
+        !shouldFireStepCountTrigger(
+          transcriptState.turns_since_last_successful_reflection,
+          params.reflectionSettings,
+        )
+      ) {
+        return false;
+      }
+      return params.launch("step-count");
+    }
+  }
 }
 
 function finalizeInterruptedTurn(
@@ -476,6 +544,7 @@ export async function handleIncomingMessage(
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       cachedAgent,
+      channelTurnSources: msg.channelTurnSources,
     });
     runtime.currentToolset = preparedToolContext.toolset;
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
@@ -666,6 +735,43 @@ export async function handleIncomingMessage(
                 : String(transcriptError)
             }`,
           );
+        }
+        try {
+          const reflectionSettings = getReflectionSettings(
+            agentId || undefined,
+            turnWorkingDirectory,
+          );
+          await maybeLaunchPostTurnChannelReflection({
+            hasChannelTurnSources: (msg.channelTurnSources?.length ?? 0) > 0,
+            agentId,
+            conversationId,
+            memfsEnabled: Boolean(
+              agentId && settingsManager.isMemfsEnabled(agentId),
+            ),
+            reflectionSettings,
+            reminderState: runtime.reminderState,
+            contextTracker: runtime.contextTracker,
+            launch: buildMaybeLaunchReflectionSubagent({
+              runtime,
+              socket,
+              agentId: agentId || "",
+              conversationId,
+              cachedAgent,
+            }),
+          });
+        } catch (reflectionError) {
+          debugWarn(
+            "memory",
+            `Failed to evaluate post-turn channel reflection: ${
+              reflectionError instanceof Error
+                ? reflectionError.message
+                : String(reflectionError)
+            }`,
+          );
+        }
+        if (runtime.contextTracker.pendingConversationDescriptionRegeneration) {
+          runtime.contextTracker.pendingConversationDescriptionRegeneration = false;
+          void regenerateConversationDescription(conversationId);
         }
         runtime.lastStopReason = "end_turn";
         runtime.isProcessing = false;

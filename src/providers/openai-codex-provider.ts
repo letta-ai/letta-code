@@ -10,6 +10,7 @@ import {
   deleteProvider,
   getProviderByName,
   listProviders,
+  type ProviderOperationOptions,
   type ProviderResponse,
   updateProvider,
 } from "./byok-providers";
@@ -52,8 +53,10 @@ function encodeOAuthConfig(config: ChatGPTOAuthConfig): string {
 /**
  * Get the chatgpt-plus-pro provider if it exists
  */
-export async function getOpenAICodexProvider(): Promise<ProviderResponse | null> {
-  return getProviderByName(OPENAI_CODEX_PROVIDER_NAME);
+export async function getOpenAICodexProvider(
+  options: ProviderOperationOptions = {},
+): Promise<ProviderResponse | null> {
+  return getProviderByName(OPENAI_CODEX_PROVIDER_NAME, options);
 }
 
 /**
@@ -62,11 +65,17 @@ export async function getOpenAICodexProvider(): Promise<ProviderResponse | null>
  */
 export async function createOpenAICodexProvider(
   config: ChatGPTOAuthConfig,
+  options: ProviderOperationOptions = {},
 ): Promise<ProviderResponse> {
   return createProvider(
     CHATGPT_OAUTH_PROVIDER_TYPE,
     OPENAI_CODEX_PROVIDER_NAME,
     encodeOAuthConfig(config),
+    undefined,
+    undefined,
+    undefined,
+    {},
+    options,
   );
 }
 
@@ -77,8 +86,16 @@ export async function createOpenAICodexProvider(
 export async function updateOpenAICodexProvider(
   providerId: string,
   config: ChatGPTOAuthConfig,
+  options: ProviderOperationOptions = {},
 ): Promise<ProviderResponse> {
-  return updateProvider(providerId, encodeOAuthConfig(config));
+  return updateProvider(
+    providerId,
+    encodeOAuthConfig(config),
+    undefined,
+    undefined,
+    undefined,
+    options,
+  );
 }
 
 /**
@@ -86,8 +103,9 @@ export async function updateOpenAICodexProvider(
  */
 export async function deleteOpenAICodexProvider(
   providerId: string,
+  options: ProviderOperationOptions = {},
 ): Promise<void> {
-  await deleteProvider(providerId);
+  await deleteProvider(providerId, options);
 }
 
 /**
@@ -103,23 +121,26 @@ export async function deleteOpenAICodexProvider(
  */
 export async function createOrUpdateOpenAICodexProvider(
   config: ChatGPTOAuthConfig,
+  options: ProviderOperationOptions = {},
 ): Promise<ProviderResponse> {
-  const existing = await getOpenAICodexProvider();
+  const existing = await getOpenAICodexProvider(options);
 
   if (existing) {
-    return updateOpenAICodexProvider(existing.id, config);
+    return updateOpenAICodexProvider(existing.id, config, options);
   }
 
-  return createOpenAICodexProvider(config);
+  return createOpenAICodexProvider(config, options);
 }
 
 /**
  * Remove the ChatGPT OAuth provider (called on /disconnect)
  */
-export async function removeOpenAICodexProvider(): Promise<void> {
-  const existing = await getOpenAICodexProvider();
+export async function removeOpenAICodexProvider(
+  options: ProviderOperationOptions = {},
+): Promise<void> {
+  const existing = await getOpenAICodexProvider(options);
   if (existing) {
-    await deleteOpenAICodexProvider(existing.id);
+    await deleteOpenAICodexProvider(existing.id, options);
   }
 }
 

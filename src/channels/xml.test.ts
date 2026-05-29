@@ -64,7 +64,7 @@ describe("formatChannelNotification", () => {
       "Plain assistant text is not delivered to the user.",
     );
     expect(reminder).toContain(
-      'If you should reply to the external user, your final action for this turn must be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
+      'If you should reply to the external user, use MessageChannel with action="send", channel="telegram", and chat_id="12345"',
     );
     expect(reminder).toContain(
       "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
@@ -90,7 +90,7 @@ describe("formatChannelNotification", () => {
     const xml = buildChannelNotificationXml(msg);
 
     expect(reminder).toContain(
-      'If you should reply to the external user, your final action for this turn must be exactly one MessageChannel call with action="send", channel="telegram", and chat_id="12345"',
+      'If you should reply to the external user, use MessageChannel with action="send", channel="telegram", and chat_id="12345"',
     );
     expect(reminder).not.toContain('accountId="account-1"');
     expect(xml).toContain('account_id="account-1"');
@@ -137,6 +137,22 @@ describe("formatChannelNotification", () => {
 
     expect(reminder).toContain("stay in the same Slack thread automatically");
     expect(reminder).not.toContain("reply_to_message_id");
+  });
+
+  test("adds WhatsApp media guidance for voice memo uploads", () => {
+    const msg: InboundChannelMessage = {
+      channel: "whatsapp",
+      chatId: "15551234567@s.whatsapp.net",
+      senderId: "15551234567@s.whatsapp.net",
+      text: "send voice",
+      timestamp: Date.now(),
+    };
+
+    const reminder = buildChannelReminderText(msg);
+
+    expect(reminder).toContain("Ogg/Opus");
+    expect(reminder).toContain(".ogg");
+    expect(reminder).toContain("not MP3/M4A/WAV");
   });
 
   test("escapes XML special characters in notification text without over-escaping quotes", () => {
@@ -280,6 +296,33 @@ describe("formatChannelNotification", () => {
     expect(xml).not.toContain("</attachment>");
   });
 
+  test("renders attempted_transcription_error child node when transcription fails", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [
+        {
+          kind: "audio",
+          localPath: "/tmp/voice.ogg",
+          name: "voice.ogg",
+          mimeType: "audio/ogg",
+          transcriptionError: "OpenAI transcription API error (429): nope",
+        },
+      ],
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(xml).toContain(
+      "<attempted_transcription_error>OpenAI transcription API error (429): nope</attempted_transcription_error>",
+    );
+    expect(xml).toContain("</attachment>");
+    expect(xml).not.toMatch(/<attachment[^>]*\/>/);
+  });
+
   test("escapes XML in transcription text", () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",
@@ -350,6 +393,35 @@ describe("formatChannelNotification", () => {
     );
     expect(xml).toContain("Some follow-up before the bot was tagged");
     expect(xml).toContain("please help");
+  });
+
+  test("includes platform reply context in the notification xml", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      accountId: "telegram-bot",
+      chatId: "-100123",
+      senderId: "user-1",
+      senderName: "Cameron",
+      text: "please respond",
+      timestamp: 1_736_380_800_000,
+      messageId: "78",
+      chatType: "channel",
+      replyContext: {
+        messageId: "77",
+        senderId: "user-2",
+        senderName: "Blink",
+        text: "Am I allowed as this user to mutate your configuration?",
+      },
+    };
+
+    const xml = buildChannelNotificationXml(msg);
+    expect(xml).toContain(
+      '<reply-context message_id="77" sender_id="user-2" sender_name="Blink">',
+    );
+    expect(xml).toContain(
+      "Am I allowed as this user to mutate your configuration?",
+    );
+    expect(xml).toContain("please respond");
   });
 
   test("emits image content parts for inbound image attachments", () => {

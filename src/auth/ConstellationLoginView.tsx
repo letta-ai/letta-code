@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { Box } from "ink";
+import { Box, useInput } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { configureBackendMode } from "@/backend";
 import { Text } from "@/cli/components/Text";
@@ -9,21 +9,39 @@ import { pollForToken, requestDeviceCode } from "./oauth";
 interface ConstellationLoginViewProps {
   onComplete?: () => void;
   onAlreadyLoggedIn?: () => void;
+  onCancel?: () => void;
 }
 
 export function ConstellationLoginView({
   onComplete,
   onAlreadyLoggedIn,
+  onCancel,
 }: ConstellationLoginViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
   const startedRef = useRef(false);
+  const cancelledRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  const onAlreadyLoggedInRef = useRef(onAlreadyLoggedIn);
+
+  onCompleteRef.current = onComplete;
+  onAlreadyLoggedInRef.current = onAlreadyLoggedIn;
+
+  useInput((input, key) => {
+    if (key.escape || (key.ctrl && input === "c")) {
+      cancelledRef.current = true;
+      abortControllerRef.current?.abort();
+      onCancel?.();
+    }
+  });
 
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
+    abortControllerRef.current = new AbortController();
 
     const run = async () => {
       try {
@@ -33,7 +51,7 @@ export function ConstellationLoginView({
           process.env.LETTA_API_KEY || currentSettings.env?.LETTA_API_KEY;
 
         if (hasApiKey) {
-          onAlreadyLoggedIn?.();
+          onAlreadyLoggedInRef.current?.();
           return;
         }
 
@@ -56,12 +74,17 @@ export function ConstellationLoginView({
 
         const deviceId = settingsManager.getOrCreateDeviceId();
         const deviceName = hostname();
+        const controller = abortControllerRef.current;
+        if (!controller) {
+          return;
+        }
         const tokens = await pollForToken(
           deviceData.device_code,
           deviceData.interval,
           deviceData.expires_in,
           deviceId,
           deviceName,
+          controller.signal,
         );
 
         const now = Date.now();
@@ -80,14 +103,24 @@ export function ConstellationLoginView({
         setDoneMessage(
           "Signed in to Constellation. Switch to a Constellation agent with /agents.",
         );
-        setTimeout(() => onComplete?.(), 500);
+        setTimeout(() => onCompleteRef.current?.(), 500);
       } catch (err) {
+        if (
+          cancelledRef.current ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          return;
+        }
         setError(err instanceof Error ? err.message : String(err));
       }
     };
 
     void run();
-  }, [onAlreadyLoggedIn, onComplete]);
+    return () => {
+      cancelledRef.current = true;
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   if (doneMessage) {
     return (
@@ -119,6 +152,7 @@ export function ConstellationLoginView({
       <Text dimColor>If browser didn't open, visit: {verificationUri}</Text>
       <Text> </Text>
       <Text dimColor>Waiting for you to authorize in the browser...</Text>
+      <Text dimColor>Press Esc to cancel</Text>
     </Box>
   );
 }

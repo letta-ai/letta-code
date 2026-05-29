@@ -185,6 +185,17 @@ function buildModelSettings(
           ? updateArgs.parallel_tool_calls
           : true,
     };
+    if (updateArgs?.reasoning_effort) {
+      openaiProxySettings.reasoning = {
+        reasoning_effort: updateArgs.reasoning_effort as
+          | "none"
+          | "minimal"
+          | "low"
+          | "medium"
+          | "high"
+          | "xhigh",
+      };
+    }
     if (typeof updateArgs?.strict === "boolean") {
       (openaiProxySettings as Record<string, unknown>).strict =
         updateArgs.strict;

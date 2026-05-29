@@ -32,7 +32,6 @@ import {
   isActiveMemfsEnabled,
   isLocalMemfsActive,
 } from "@/agent/memory-runtime";
-import type { ModelReasoningEffort } from "@/agent/model";
 import {
   detectPersonalityFromPersonaFile,
   type PersonalityId,
@@ -43,6 +42,18 @@ import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
+import {
+  buildExtensionCommandPrompt,
+  parseExtensionCommandArgv,
+  parseExtensionSlashCommand,
+  runExtensionCommandWithTimeout,
+} from "@/cli/extensions/command-runtime";
+import type {
+  ExtensionCommand,
+  ExtensionCommandContext,
+  ExtensionConversationCloseReason,
+} from "@/cli/extensions/types";
+import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
@@ -90,6 +101,8 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
+import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
@@ -99,7 +112,10 @@ import {
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
-import { buildSharedReminderParts } from "@/reminders/engine";
+import {
+  buildSharedReminderParts,
+  prependReminderPartsToContent,
+} from "@/reminders/engine";
 import {
   type SharedReminderState,
   syncReminderStateFromContextTracker,
@@ -107,7 +123,6 @@ import {
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import type { ToolsetName } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
@@ -145,10 +160,19 @@ type ProfileConfirmPending = {
   cmdId: string;
 };
 
+type WorktreeDiffSelectorPending = {
+  worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+};
+
 type ModelSelectorOptions = {
   filterProvider?: string;
   forceRefresh?: boolean;
 };
+
+async function hasCustomCommand(commandName: string): Promise<boolean> {
+  const { findCustomCommand } = await import("@/cli/commands/custom.js");
+  return Boolean(await findCustomCommand(commandName));
+}
 
 type SubmitHandlerContext = {
   abortControllerRef: MutableRefObject<AbortController | null>;
@@ -165,7 +189,6 @@ type SubmitHandlerContext = {
   checkPendingApprovalsForSlashCommand: () => Promise<
     { blocked: true } | { blocked: false }
   >;
-  chromeColumns: number;
   commandRunner: AppCommandRunner;
   commandRunning: boolean;
   consumeQueuedApprovalInputForCurrentConversation: (
@@ -175,18 +198,18 @@ type SubmitHandlerContext = {
   conversationGenerationRef: MutableRefObject<number>;
   conversationId: string;
   conversationIdRef: MutableRefObject<string>;
-  currentModelDisplay: string | null;
   currentModelHandle: string | null;
   currentModelId: string | null;
   currentModelLabel: string | null;
   currentModelProvider: string | null;
-  currentReasoningEffort: ModelReasoningEffort | null;
-  currentSystemPromptId: string | null;
-  currentToolset: ToolsetName | null;
   effectiveContextWindowSize: number | undefined;
   emittedIdsRef: MutableRefObject<Set<string>>;
+  extensionRuntime: LocalExtensionRuntime;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
+  generateConversationDescription: (options?: {
+    force?: boolean;
+  }) => Promise<void>;
   generateConversationTitle: () => Promise<string | null>;
   handleAgentSelect: (
     targetAgentId: string,
@@ -201,13 +224,11 @@ type SubmitHandlerContext = {
   hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   isExecutingTool: boolean;
-  lastRunIdRef: MutableRefObject<string | null>;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
   ) => Promise<void>;
   needsEagerApprovalCheck: boolean;
-  networkPhase: "error" | "upload" | "download" | null;
   openTrajectorySegment: () => void;
   overrideContentPartsRef: MutableRefObject<MessageCreate["content"] | null>;
   pendingApprovals: ApprovalRequest[];
@@ -229,7 +250,7 @@ type SubmitHandlerContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: () => Promise<void>;
+  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;
@@ -257,11 +278,15 @@ type SubmitHandlerContext = {
   setHasConversationModelOverride: (value: boolean) => void;
   setLines: Dispatch<SetStateAction<Line[]>>;
   setLlmConfig: Dispatch<SetStateAction<LlmConfig | null>>;
+  markLocalModelsAvailable: () => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
   setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
+  >;
+  setWorktreeDiffSelectorPending: Dispatch<
+    SetStateAction<WorktreeDiffSelectorPending | null>
   >;
   setReasoningTabCycleEnabled: Dispatch<SetStateAction<boolean>>;
   setSearchQuery: Dispatch<SetStateAction<string>>;
@@ -284,9 +309,7 @@ type SubmitHandlerContext = {
   tokenStreamingEnabled: boolean;
   trajectoryRunTokenStartRef: MutableRefObject<number>;
   trajectoryTokenDisplayRef: MutableRefObject<number>;
-  triggerStatusLineRefresh: () => void;
   tuiQueueRef: MutableRefObject<QueueRuntime | null>;
-  uiPermissionMode: PermissionMode;
   updateAgentName: (name: string) => void;
   updateMemorySyncCommand: (
     commandId: string,
@@ -313,7 +336,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     bashCommandCacheRef,
     buffersRef,
     checkPendingApprovalsForSlashCommand,
-    chromeColumns,
     commandRunner,
     commandRunning,
     consumeQueuedApprovalInputForCurrentConversation,
@@ -321,18 +343,16 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
-    currentModelDisplay,
     currentModelHandle,
     currentModelId,
     currentModelLabel,
     currentModelProvider,
-    currentReasoningEffort,
-    currentSystemPromptId,
-    currentToolset,
     effectiveContextWindowSize,
     emittedIdsRef,
+    extensionRuntime,
     firstUserQueryRef,
     flushPendingReasoningEffort,
+    generateConversationDescription,
     generateConversationTitle,
     handleAgentSelect,
     handleBtwCommand,
@@ -340,11 +360,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
-    lastRunIdRef,
     llmConfigRef,
     maybeCarryOverActiveConversationModel,
     needsEagerApprovalCheck,
-    networkPhase,
     openTrajectorySegment,
     overrideContentPartsRef,
     pendingApprovals,
@@ -373,6 +391,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setConversationOverrideContextWindowLimit,
     setConversationOverrideModelSettings,
     setCurrentPersonalityId,
@@ -381,10 +400,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setHasConversationModelOverride,
     setLines,
     setLlmConfig,
+    markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setPinDialogLocal,
     setProfileConfirmPending,
+    setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
     setSearchQuery,
     setStaticItems,
@@ -404,9 +425,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     tokenStreamingEnabled,
     trajectoryRunTokenStartRef,
     trajectoryTokenDisplayRef,
-    triggerStatusLineRefresh,
     tuiQueueRef,
-    uiPermissionMode,
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
@@ -556,12 +575,24 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       const isSlashCommand = userTextForInput.startsWith("/");
+      const parsedExtensionCommand = isSlashCommand
+        ? parseExtensionSlashCommand(userTextForInput.trim())
+        : null;
+      const queueBypassExtensionCommand = parsedExtensionCommand
+        ? extensionRuntime.registry?.commands[parsedExtensionCommand.command]
+        : undefined;
+      const isExtensionCommandShadowedByCustom =
+        isAgentBusy() && queueBypassExtensionCommand?.runWhenBusy === true
+          ? await hasCustomCommand(parsedExtensionCommand?.command ?? "")
+          : false;
       // Interactive/non-state slash commands bypass queueing so menus stay responsive
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
         isSlashCommand &&
         (isInteractiveCommand(userTextForInput) ||
-          isNonStateCommand(userTextForInput));
+          isNonStateCommand(userTextForInput) ||
+          (queueBypassExtensionCommand?.runWhenBusy === true &&
+            !isExtensionCommandShadowedByCustom));
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
         const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
@@ -670,6 +701,81 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        const [slashCommand, experimentsSubcommand, ...experimentsArgs] =
+          trimmed.split(/\s+/);
+        if (
+          slashCommand === "/experiments" &&
+          experimentsSubcommand === "diffs"
+        ) {
+          const args = experimentsArgs;
+          if (args.length > 1) {
+            const cmd = commandRunner.start(
+              "/experiments",
+              "Usage: /experiments diffs [path]",
+            );
+            cmd.fail("Usage: /experiments diffs [path]");
+            return { submitted: true };
+          }
+          if (!experimentManager.isEnabled("diffs")) {
+            const cmd = commandRunner.start(
+              "/experiments",
+              "Diffs experiment is disabled.",
+            );
+            cmd.fail("Enable the diffs experiment with /experiments first.");
+            return { submitted: true };
+          }
+
+          if (!args[0]) {
+            const cmd = openOverlay(
+              "worktree-diff",
+              "/experiments diffs",
+              "Loading worktrees...",
+              "Worktree diff selector dismissed",
+            );
+            const { listWorktreeDiffOptions } = await import(
+              "@/web/worktree-diff-list"
+            );
+            listWorktreeDiffOptions()
+              .then((worktrees) => {
+                setWorktreeDiffSelectorPending({ worktrees });
+                cmd.update({ output: "Select a worktree to diff" });
+              })
+              .catch((err: unknown) => {
+                cmd.fail(
+                  `Failed to list worktrees: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              });
+            return { submitted: true };
+          }
+
+          const cmd = commandRunner.start(
+            "/experiments",
+            "Opening worktree diff...",
+          );
+          const { generateAndOpenDiffViewer } = await import(
+            "@/web/generate-diff-viewer"
+          );
+          generateAndOpenDiffViewer(args[0])
+            .then((result) => {
+              const fileSummary = `${result.fileCount} file${result.fileCount === 1 ? "" : "s"}`;
+              if (result.opened) {
+                cmd.finish(`Opened worktree diff (${fileSummary})`, true);
+              } else {
+                cmd.finish(
+                  `Open manually: ${result.filePath} (${fileSummary})`,
+                  true,
+                );
+              }
+            })
+            .catch((err: unknown) => {
+              cmd.finish(
+                `Failed to open diff: ${err instanceof Error ? err.message : String(err)}`,
+                false,
+              );
+            });
+          return { submitted: true };
+        }
+
         if (trimmed === "/title") {
           if (isAgentBusy()) {
             const cmd = commandRunner.start(
@@ -703,6 +809,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "Reloading settings and restarting TUI effects...",
             );
             cmd.finish("Reloading...", true);
+            try {
+              const { refreshCustomCommands } = await import(
+                "@/cli/commands/custom.js"
+              );
+              refreshCustomCommands();
+            } catch (error) {
+              debugLog(
+                "commands",
+                "refreshCustomCommands failed during /reload: %s",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
             // Defer the reload to let the command UI render first
             setTimeout(
               () =>
@@ -739,7 +857,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             sharedReminderStateRef.current.hasSentSessionContext = false;
             sharedReminderStateRef.current.pendingSessionContextReason =
               "cwd_changed";
-            triggerStatusLineRefresh();
             cmd.finish(
               `Working directory changed to ${nextWorkingDirectory}`,
               true,
@@ -869,10 +986,20 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           const { generateAndOpenMemoryViewer } = await import(
             "@/web/generate-memory-viewer"
           );
+          const latestContextTokens =
+            contextTrackerRef.current.lastContextTokens;
           generateAndOpenMemoryViewer(agentId, {
             agentName: agentName ?? undefined,
             conversationId:
               conversationId !== "default" ? conversationId : undefined,
+            contextUsage:
+              latestContextTokens > 0
+                ? {
+                    usedTokens: latestContextTokens,
+                    contextWindow: effectiveContextWindowSize ?? 0,
+                    model: llmConfigRef.current?.model ?? "unknown",
+                  }
+                : undefined,
           })
             .then((result) => {
               if (result.opened) {
@@ -902,6 +1029,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             refreshDerived,
             openOverlay,
             setCommandRunning,
+            markLocalModelsAvailable,
             setModelSelectorOptions,
           },
         );
@@ -931,27 +1059,73 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        if (trimmed === "/statusline" || trimmed.startsWith("/statusline ")) {
+          const args = trimmed.slice("/statusline".length).trim();
+          const cmd = commandRunner.start(
+            msg,
+            args
+              ? `Starting statusline setup for: ${args}`
+              : "Starting statusline setup...",
+          );
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /statusline.",
+            );
+            return { submitted: false };
+          }
+
+          setCommandRunning(true);
+          try {
+            const { loadRenderedSkillContent, wrapSkillContent } = await import(
+              "@/tools/impl/skill"
+            );
+            const skillContent = await loadRenderedSkillContent(
+              "customizing-statusline",
+              {
+                agentId,
+                args,
+                allowDisabledModelInvocation: true,
+              },
+            );
+            const request = args
+              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline extension.`
+              : "The user ran `/statusline` without arguments. Use the loaded skill's bare `/statusline` behavior.";
+
+            cmd.finish("Running statusline setup...", true);
+            await processConversationWithQueuedApprovals([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(
+                  `${wrapSkillContent("customizing-statusline", skillContent)}\n\n${SYSTEM_REMINDER_OPEN}\n${request}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
+                otid: randomUUID(),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to run statusline setup: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         const diagnosticsCommandResult = await handleDiagnosticsCommand(
           trimmed,
           {
             agentId,
             agentIdRef,
-            agentName,
-            chromeColumns,
             commandRunner,
             contextTrackerRef,
             conversationIdRef,
-            currentModelDisplay,
             currentModelHandle,
             currentModelId,
-            currentReasoningEffort,
-            currentSystemPromptId,
-            currentToolset,
             effectiveContextWindowSize,
-            lastRunIdRef,
             llmConfigRef,
-            networkPhase,
-            projectDirectory,
             sessionStatsRef,
             setAgentState,
             setCommandRunning,
@@ -959,9 +1133,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setConversationOverrideModelSettings,
             setHasConversationModelOverride,
             setLlmConfig,
-            sharedReminderStateRef,
-            triggerStatusLineRefresh,
-            uiPermissionMode,
           },
         );
         if (diagnosticsCommandResult) {
@@ -1022,8 +1193,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /logout command - clear credentials and exit
+        // Special handling for /logout command
         if (trimmed === "/logout") {
+          if (isAgentBusy()) {
+            const cmd = commandRunner.start(
+              "/logout",
+              "Cannot log out while the agent is running.",
+            );
+            cmd.fail("Wait for the current turn to finish and try again.");
+            return { submitted: true };
+          }
+
           const cmd = commandRunner.start(msg.trim(), "Logging out...");
 
           setCommandRunning(true);
@@ -1032,6 +1212,24 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const { settingsManager } = await import("@/settings-manager");
             const currentSettings =
               await settingsManager.getSettingsWithSecureTokens();
+            const hasEnvApiKey = Boolean(process.env.LETTA_API_KEY);
+            const hasStoredCloudAuth = Boolean(
+              currentSettings.refreshToken ||
+                currentSettings.env?.LETTA_API_KEY,
+            );
+
+            if (!hasEnvApiKey && !hasStoredCloudAuth) {
+              cmd.finish(
+                "Already logged out. Run /login to sign into Constellation.",
+                true,
+              );
+              return { submitted: true };
+            }
+
+            const currentAgentId = agentIdRef.current;
+            const currentConversationId =
+              conversationIdRef.current ?? "default";
+            const currentAgentIsLocal = isLocalAgentId(currentAgentId);
 
             // Revoke refresh token on server if we have one
             if (currentSettings.refreshToken) {
@@ -1042,12 +1240,23 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Clear all credentials including secrets
             await settingsManager.logout();
 
-            cmd.finish(
-              buildLogoutSuccessMessage(Boolean(process.env.LETTA_API_KEY)),
-              true,
-            );
+            // Logged out while already using a local agent → stay in place.
+            if (currentAgentIsLocal) {
+              const localAgentLabel = agentName ?? currentAgentId;
+              const baseMessage = `Logged out successfully. You're still using your local agent ${localAgentLabel}.`;
+              cmd.finish(
+                hasEnvApiKey
+                  ? `${baseMessage}\n\n${buildLogoutSuccessMessage(true)}`
+                  : baseMessage,
+                true,
+              );
+              refreshDerived();
+              return { submitted: true };
+            }
 
-            saveLastSessionBeforeExit(conversationIdRef.current);
+            cmd.finish(buildLogoutSuccessMessage(hasEnvApiKey), true);
+
+            saveLastSessionBeforeExit(currentConversationId);
 
             // Track session end explicitly (before exit) with stats
             const stats = sessionStatsRef.current.getSnapshot();
@@ -1078,7 +1287,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Flush telemetry before exit
             await telemetry.flush();
 
-            // Exit after a brief delay to show the message
+            // No valid local session to return to after logging out of cloud.
+            // Exit after a brief delay to show the message.
             setTimeout(() => process.exit(0), 500);
           } catch (error) {
             let errorOutput = formatErrorDetails(error, agentId);
@@ -1206,7 +1416,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           // Run SessionEnd hooks for current session before starting new one
-          await runEndHooks();
+          await runEndHooks("new");
 
           try {
             const backend = getBackend();
@@ -1255,6 +1465,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
+            void extensionRuntime.emitEvent("conversation_open", {
+              agentId,
+              agentName: agentName ?? null,
+              conversationId: conversation.id,
+              previousConversationId: prevConversationId ?? null,
+              reason: "new",
+            });
 
             // Update command with success
             cmd.finish(
@@ -1296,7 +1513,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             );
           }
 
-          await runEndHooks();
+          await runEndHooks("fork");
 
           try {
             // For default conversation, pass agent_id
@@ -1327,14 +1544,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               isDefault: false,
             };
 
-            settingsManager.setLocalLastSession(
-              { agentId, conversationId: forked.id },
-              process.cwd(),
-            );
-            settingsManager.setGlobalLastSession({
-              agentId,
-              conversationId: forked.id,
-            });
+            settingsManager.persistSession(agentId, forked.id, process.cwd());
 
             resetContextHistory(contextTrackerRef.current);
             resetBootstrapReminderState();
@@ -1353,6 +1563,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
+            void extensionRuntime.emitEvent("conversation_open", {
+              agentId,
+              agentName: agentName ?? null,
+              conversationId: forked.id,
+              previousConversationId: forkPrevConversationId ?? null,
+              reason: "fork",
+            });
 
             cmd.finish(
               "Forked conversation (use /resume to switch back)",
@@ -1404,7 +1621,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           // Run SessionEnd hooks for current session before clearing
-          await runEndHooks();
+          await runEndHooks("new");
 
           try {
             const backend = getBackend();
@@ -1462,6 +1679,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
+            void extensionRuntime.emitEvent("conversation_open", {
+              agentId,
+              agentName: agentName ?? null,
+              conversationId: conversation.id,
+              previousConversationId: clearPrevConversationId ?? null,
+              reason: "new",
+            });
 
             // Update command with success
             cmd.finish(
@@ -1759,6 +1983,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Manual /compact bypasses stream compaction events, so trigger
             // post-compaction reflection reminder/auto-launch on the next user turn.
             contextTrackerRef.current.pendingReflectionTrigger = true;
+            void generateConversationDescription({ force: true });
           } catch (error) {
             const apiError = error as {
               status?: number;
@@ -1800,7 +2025,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "",
               "USAGE",
               "  /rename agent [name]      — rename the agent",
-              "  /rename convo [name]      — rename the convo, or auto-generate when omitted",
+              "  /rename convo [name]      — rename a non-default convo, or auto-generate when omitted",
               "  /rename help              — show this help",
             ].join("\n");
             cmd.finish(output, true);
@@ -1845,6 +2070,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 await backend.updateConversation(conversationId, {
                   summary: conversationTitle,
                 });
+                setConversationSummary(conversationTitle);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(
                   `Conversation title set to "${conversationTitle}"`,
@@ -1854,6 +2080,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 await backend.updateConversation(conversationId, {
                   summary: newValue,
                 });
+                setConversationSummary(newValue);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(`Conversation renamed to "${newValue}"`, true);
               }
@@ -2825,6 +3052,119 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
         // === END custom command handling ===
 
+        const matchedExtensionCommand: ExtensionCommand | undefined =
+          parsedExtensionCommand
+            ? extensionRuntime.registry?.commands[
+                parsedExtensionCommand.command
+              ]
+            : undefined;
+
+        if (parsedExtensionCommand && matchedExtensionCommand) {
+          const showInTranscript = matchedExtensionCommand.showInTranscript;
+          const shouldLockCommand = !matchedExtensionCommand.runWhenBusy;
+          const cmd = showInTranscript
+            ? commandRunner.start(
+                trimmed,
+                `Running /${matchedExtensionCommand.id}...`,
+              )
+            : null;
+          const getFeedbackCommand = () =>
+            cmd ??
+            commandRunner.start(
+              trimmed,
+              `Running /${matchedExtensionCommand.id}...`,
+            );
+          if (shouldLockCommand) {
+            setCommandRunning(true);
+          }
+
+          try {
+            const extensionContext = extensionRuntime.getContext();
+            const cwd = getCurrentWorkingDirectory();
+            const conversation = createExtensionConversationHandle({
+              agentId,
+              backend: extensionRuntime.getBackendApi(),
+              conversationId: conversationIdRef.current,
+              workingDirectory: cwd,
+            });
+            const commandContext: ExtensionCommandContext = {
+              agent: { id: agentId, name: agentName },
+              args: parsedExtensionCommand.args,
+              argv: parseExtensionCommandArgv(parsedExtensionCommand.args),
+              command: parsedExtensionCommand.command,
+              conversation: { ...conversation, id: conversationIdRef.current },
+              cwd,
+              getContext: extensionRuntime.getContext,
+              model: {
+                id:
+                  currentModelId ??
+                  llmConfigRef.current?.model ??
+                  extensionContext.model.id,
+                displayName: extensionContext.model.displayName,
+              },
+              permissionMode: extensionContext.permissionMode,
+              rawInput: trimmed,
+            };
+            const result = await runExtensionCommandWithTimeout(
+              matchedExtensionCommand,
+              commandContext,
+            );
+
+            if (result.type === "prompt") {
+              if (!showInTranscript) {
+                getFeedbackCommand().fail(
+                  `/${matchedExtensionCommand.id} returned a prompt with showInTranscript: false. Hidden extension commands must return output or handled and own their UI.`,
+                );
+                return { submitted: true };
+              }
+
+              if (matchedExtensionCommand.runWhenBusy && isAgentBusy()) {
+                getFeedbackCommand().fail(
+                  `/${matchedExtensionCommand.id} returned a prompt while the agent is running. Busy-safe extension commands must handle their own SDK calls or return output.`,
+                );
+                return { submitted: true };
+              }
+
+              const approvalCheck =
+                await checkPendingApprovalsForSlashCommand();
+              if (approvalCheck.blocked) {
+                getFeedbackCommand().fail(
+                  `Pending approval(s). Resolve approvals before running /${matchedExtensionCommand.id}.`,
+                );
+                return { submitted: false };
+              }
+
+              cmd?.finish(`Running /${matchedExtensionCommand.id}...`, true);
+              await processConversationWithQueuedApprovals([
+                {
+                  type: "message",
+                  role: "user",
+                  content: buildTextParts(buildExtensionCommandPrompt(result)),
+                  otid: randomUUID(),
+                },
+              ]);
+            } else if (result.type === "output") {
+              getFeedbackCommand().finish(
+                result.output,
+                result.success ?? true,
+              );
+            } else {
+              cmd?.finish("Handled.", true, true);
+            }
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            getFeedbackCommand().fail(
+              `Failed to run /${matchedExtensionCommand.id}: ${errorDetails}`,
+            );
+          } finally {
+            if (shouldLockCommand) {
+              setCommandRunning(false);
+            }
+          }
+
+          return { submitted: true };
+        }
+
         // Check if this is a known command before treating it as a slash command
         const { commands, executeCommand } = await import(
           "@/cli/commands/registry"
@@ -3083,10 +3423,10 @@ ${SYSTEM_REMINDER_CLOSE}
       if (currentGoal) {
         pushReminder(buildGoalReminder(currentGoal));
       }
-      const messageContent =
-        reminderParts.length > 0
-          ? [...reminderParts, ...contentParts]
-          : contentParts;
+      const messageContent = prependReminderPartsToContent(
+        contentParts as MessageCreate["content"],
+        reminderParts,
+      );
 
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
@@ -3184,6 +3524,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversationId,
       currentModelHandle,
       currentModelId,
+      extensionRuntime,
       effectiveContextWindowSize,
       commandRunner,
       handleExit,

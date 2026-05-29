@@ -625,6 +625,42 @@ describe("memory_apply_patch tool", () => {
     expect(rescuedContent).toContain("new");
   });
 
+  test("throws when an update produces no effective changes", async () => {
+    await runScopedMemoryApplyPatch({
+      reason: "seed noop memory",
+      input: [
+        "*** Begin Patch",
+        "*** Add File: system/noop.md",
+        "+---",
+        "+description: Noop block",
+        "+---",
+        "+unchanged",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    const headBefore = await runGit(memoryDir, ["rev-parse", "HEAD"]);
+
+    // Replacing a line with the identical text yields no on-disk diff.
+    await expect(
+      runScopedMemoryApplyPatch({
+        reason: "no-op update",
+        input: [
+          "*** Begin Patch",
+          "*** Update File: system/noop.md",
+          "@@",
+          "-unchanged",
+          "+unchanged",
+          "*** End Patch",
+        ].join("\n"),
+      }),
+    ).rejects.toThrow(/made no effective changes/i);
+
+    // No phantom commit should have been created.
+    const headAfter = await runGit(memoryDir, ["rev-parse", "HEAD"]);
+    expect(headAfter).toBe(headBefore);
+  });
+
   test("updates files that omit frontmatter limit", async () => {
     await runScopedMemoryApplyPatch({
       reason: "seed no-limit memory",
