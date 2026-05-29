@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  deleteSkillDirectory,
   installSkillDirectory,
+  listSkillDirectories,
   parseClawHubSpecifier,
   parseGitHubSpecifier,
 } from "./skills";
@@ -72,6 +74,46 @@ describe("skills subcommand", () => {
       expect(
         await readFile(join(result.path, "scripts", "client.py"), "utf8"),
       ).toBe("print('ok')\n");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("lists installed skill directories with frontmatter metadata", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-skills-test-"));
+    try {
+      const memoryDir = join(tempRoot, "memory");
+      const skillDir = join(memoryDir, "skills", "stocks");
+      await mkdir(skillDir, { recursive: true });
+      writeFileSync(
+        join(skillDir, "SKILL.md"),
+        "---\nname: stocks\ndescription: Stock quotes\n---\n\n# Stocks\n",
+      );
+
+      expect(await listSkillDirectories({ memoryDir })).toEqual([
+        {
+          name: "stocks",
+          description: "Stock quotes",
+          path: skillDir,
+        },
+      ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("deletes an installed skill directory", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-skills-test-"));
+    try {
+      const memoryDir = join(tempRoot, "memory");
+      const skillDir = join(memoryDir, "skills", "stocks");
+      await mkdir(skillDir, { recursive: true });
+      writeFileSync(join(skillDir, "SKILL.md"), "# Stocks\n");
+
+      const result = await deleteSkillDirectory({ memoryDir, name: "stocks" });
+
+      expect(result).toEqual({ name: "stocks", path: skillDir });
+      expect(existsSync(skillDir)).toBe(false);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

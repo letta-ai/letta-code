@@ -7,7 +7,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
@@ -30,6 +30,19 @@ interface InstallResult {
   source: string;
 }
 
+interface SkillListItem {
+  name: string;
+  path: string;
+  description?: string;
+}
+
+interface DeleteResult {
+  agentId: string;
+  name: string;
+  path: string;
+  deleted: true;
+}
+
 interface ClawHubSourceLocation {
   slug: string;
   version: string | null;
@@ -41,7 +54,9 @@ function printUsage(): void {
   console.log(
     `
 Usage:
-  letta install <skill> [--agent <id> | -n <name>] [--force]
+  letta install <skill> [--agent <id> | -n <agent name>] [--force]
+  letta skills list [--agent <id> | -n <agent name>]
+  letta skills delete <skill_name> [--agent <id> | -n <agent name>]
 
 Sources:
   official/<path>         Hermes official optional skill, e.g. official/finance/stocks
@@ -508,6 +523,66 @@ export async function installSkillDirectory(params: {
   return { name, path: normalize(targetPath) };
 }
 
+export async function listSkillDirectories(params: {
+  memoryDir: string;
+}): Promise<SkillListItem[]> {
+  const memoryDir = resolve(params.memoryDir);
+  const skillsDir = join(memoryDir, "skills");
+  if (!existsSync(skillsDir)) return [];
+
+  const entries = await readdir(skillsDir, { withFileTypes: true });
+  const skills: SkillListItem[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const skillDir = join(skillsDir, entry.name);
+    const skillMdPath = join(skillDir, "SKILL.md");
+    if (!existsSync(skillMdPath)) continue;
+
+    let name = entry.name;
+    let description: string | undefined;
+    try {
+      const skillMd = readFileSync(skillMdPath, "utf8");
+      const { frontmatter } = parseFrontmatter(skillMd);
+      if (typeof frontmatter.name === "string" && frontmatter.name.trim()) {
+        name = frontmatter.name.trim();
+      }
+      if (
+        typeof frontmatter.description === "string" &&
+        frontmatter.description.trim()
+      ) {
+        description = frontmatter.description.trim();
+      }
+    } catch {
+      // Keep listing valid skill directories even if their frontmatter is malformed.
+    }
+
+    skills.push({ name, path: normalize(skillDir), description });
+  }
+
+  return skills.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function deleteSkillDirectory(params: {
+  memoryDir: string;
+  name: string;
+}): Promise<{ name: string; path: string }> {
+  const memoryDir = resolve(params.memoryDir);
+  const skillsDir = join(memoryDir, "skills");
+  const name = sanitizeSkillName(params.name);
+  const targetPath = join(skillsDir, name);
+  assertInside(skillsDir, targetPath);
+
+  if (!existsSync(targetPath)) {
+    throw new Error(`Skill "${name}" is not installed at ${targetPath}.`);
+  }
+  if (!statSync(targetPath).isDirectory()) {
+    throw new Error(`Skill path is not a directory: ${targetPath}`);
+  }
+
+  rmSync(targetPath, { recursive: true, force: true });
+  return { name, path: normalize(targetPath) };
+}
+
 async function installSkill(
   specifier: string,
   agentId: string,
@@ -521,10 +596,7 @@ async function installSkill(
     throw new Error(`Unsupported skill source: ${specifier}`);
   }
 
-  const { ensureLocalMemfsCheckout, getScopedMemoryFilesystemRoot } =
-    await import("@/agent/memory-filesystem");
-  await ensureLocalMemfsCheckout(agentId);
-  const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+  const memoryDir = await getAgentMemoryDir(agentId);
   let tmpDir: string | null = null;
   try {
     const downloaded = gitSource
@@ -544,6 +616,39 @@ async function installSkill(
   } finally {
     if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
   }
+}
+
+async function getAgentMemoryDir(agentId: string): Promise<string> {
+  const { ensureLocalMemfsCheckout, getScopedMemoryFilesystemRoot } =
+    await import("@/agent/memory-filesystem");
+  await ensureLocalMemfsCheckout(agentId);
+  return getScopedMemoryFilesystemRoot(agentId);
+}
+
+async function listSkills(agentId: string): Promise<{
+  agentId: string;
+  skills: SkillListItem[];
+}> {
+  const memoryDir = await getAgentMemoryDir(agentId);
+  const skills = await listSkillDirectories({ memoryDir });
+  return { agentId, skills };
+}
+
+async function deleteSkill(
+  skillName: string,
+  agentId: string,
+): Promise<DeleteResult> {
+  const memoryDir = await getAgentMemoryDir(agentId);
+  const result = await deleteSkillDirectory({ memoryDir, name: skillName });
+  return { agentId, deleted: true, ...result };
+}
+
+async function initializeAndResolveAgent(
+  values: ReturnType<typeof parseSkillsArgs>["values"],
+): Promise<string> {
+  const { settingsManager } = await import("@/settings-manager");
+  await settingsManager.initialize();
+  return resolveAgentId(values);
 }
 
 async function runInstall(argv: string[]): Promise<number> {
@@ -571,9 +676,7 @@ async function runInstall(argv: string[]): Promise<number> {
   }
 
   try {
-    const { settingsManager } = await import("@/settings-manager");
-    await settingsManager.initialize();
-    const agentId = await resolveAgentId(parsed.values);
+    const agentId = await initializeAndResolveAgent(parsed.values);
     const result = await installSkill(
       specifier,
       agentId,
@@ -591,16 +694,91 @@ export async function runInstallSubcommand(argv: string[]): Promise<number> {
   return runInstall(argv);
 }
 
-export async function runSkillsSubcommand(argv: string[]): Promise<number> {
-  const [action, ...rest] = argv;
-  if (action === "install") {
-    return runInstall(rest);
+async function runList(argv: string[]): Promise<number> {
+  let parsed: ReturnType<typeof parseSkillsArgs>;
+  try {
+    parsed = parseSkillsArgs(argv);
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    printUsage();
+    return 1;
   }
-  if (!action || action === "help" || action === "--help" || action === "-h") {
+
+  if (parsed.values.help) {
     printUsage();
     return 0;
   }
-  console.error(`Unknown action: ${action}`);
-  printUsage();
-  return 1;
+  if (parsed.positionals.length > 0) {
+    console.error(`Unexpected argument: ${parsed.positionals[0]}`);
+    printUsage();
+    return 1;
+  }
+
+  try {
+    const agentId = await initializeAndResolveAgent(parsed.values);
+    console.log(JSON.stringify(await listSkills(agentId), null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+async function runDelete(argv: string[]): Promise<number> {
+  let parsed: ReturnType<typeof parseSkillsArgs>;
+  try {
+    parsed = parseSkillsArgs(argv);
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    printUsage();
+    return 1;
+  }
+
+  const [skillName] = parsed.positionals;
+  if (parsed.values.help || !skillName || skillName === "help") {
+    printUsage();
+    return 0;
+  }
+  if (parsed.positionals.length > 1) {
+    console.error(`Unexpected argument: ${parsed.positionals[1]}`);
+    printUsage();
+    return 1;
+  }
+
+  try {
+    const agentId = await initializeAndResolveAgent(parsed.values);
+    console.log(JSON.stringify(await deleteSkill(skillName, agentId), null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+export async function runSkillsSubcommand(argv: string[]): Promise<number> {
+  const [action, ...rest] = argv;
+  switch (action) {
+    case "install":
+      return runInstall(rest);
+    case "list":
+      return runList(rest);
+    case "delete":
+    case "remove":
+    case "rm":
+      return runDelete(rest);
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
+      printUsage();
+      return 0;
+    default:
+      console.error(`Unknown action: ${action}`);
+      printUsage();
+      return 1;
+  }
 }
