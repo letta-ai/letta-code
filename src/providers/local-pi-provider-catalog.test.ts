@@ -1,9 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModels, getProviders } from "@earendil-works/pi-ai";
 import { getOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import {
+  clearRegisteredPiProviders,
+  registerPiProvider,
+} from "@/backend/dev/pi-provider-extension-registry";
 import {
   PI_PROVIDER_SPECS,
   resolveProviderFromProviderType,
@@ -13,6 +17,10 @@ import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth
 import { getProviderConfigs } from "@/providers/byok-providers";
 
 describe("local pi provider catalog", () => {
+  afterEach(() => {
+    clearRegisteredPiProviders();
+  });
+
   test("Constellation /connect configs exclude local-only providers", () => {
     const apiProviderIds = new Set(
       getProviderConfigs("api").map((provider) => provider.id),
@@ -70,6 +78,103 @@ describe("local pi provider catalog", () => {
     expect(localApiKeyProviderIds.has("anthropic")).toBe(true);
     expect(localApiKeyProviderIds.has("openai-codex")).toBe(false);
     expect(localApiKeyProviderIds.has("github-copilot")).toBe(false);
+  });
+
+  test("local /connect configs include registered extension providers", () => {
+    registerPiProvider("kilo", {
+      name: "Kilo",
+      description: "Connect Kilo",
+      baseUrl: "https://api.kilo.dev/v1",
+      apiKey: "KILO_API_KEY",
+      api: "openai-completions",
+      connect: {
+        fields: [
+          { key: "apiKey", label: "Kilo API Key", secret: true },
+          { key: "baseUrl", label: "Base URL" },
+        ],
+      },
+      models: [
+        {
+          id: "kilo-code",
+          name: "Kilo Code",
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+
+    const provider = getProviderConfigs("local").find(
+      (candidate) => candidate.id === "kilo",
+    );
+
+    expect(provider).toMatchObject({
+      id: "kilo",
+      displayName: "Kilo",
+      description: "Connect Kilo",
+      providerType: "kilo",
+      providerName: "kilo",
+      providerNames: ["kilo"],
+      fields: [
+        { key: "apiKey", label: "Kilo API Key", secret: true },
+        { key: "baseUrl", label: "Base URL" },
+      ],
+    });
+  });
+
+  test("local model listing includes dynamic extension provider models when configured", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-kilo-provider-"));
+    try {
+      const connections: unknown[] = [];
+      registerPiProvider("kilo", {
+        baseUrl: "https://api.kilo.dev/v1",
+        apiKey: "KILO_API_KEY",
+        api: "openai-completions",
+        listModels(connection) {
+          connections.push(connection);
+          return [
+            {
+              id: "dynamic-kilo-code",
+              name: "Dynamic Kilo Code",
+              reasoning: true,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 128000,
+              maxTokens: 8192,
+            },
+          ];
+        },
+      });
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "kilo",
+        providerName: "kilo",
+        apiKey: "kilo-key",
+        baseURL: "https://custom.kilo/v1",
+      });
+
+      const models = await listLocalModels(storageDir);
+
+      expect(models).toContainEqual({
+        handle: "kilo/dynamic-kilo-code",
+        max_context_window: 128000,
+        model: "kilo/dynamic-kilo-code",
+        model_endpoint_type: "kilo",
+      });
+      expect(connections).toEqual([
+        {
+          id: "kilo",
+          providerName: "kilo",
+          baseUrl: "https://custom.kilo/v1",
+          apiKey: "kilo-key",
+          headers: undefined,
+        },
+      ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("local model listing uses the upstream pi-ai catalog for generic providers", async () => {

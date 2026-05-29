@@ -272,7 +272,7 @@ describe("extension host", () => {
       writeFileSync(
         extensionPath,
         `export default function(letta) {
-          letta.registerProvider("lmstudio", {
+          letta.registerProvider("kilo", {
             baseUrl: "http://localhost:8000/v1",
             apiKey: "not-needed",
             api: "openai-completions",
@@ -292,17 +292,17 @@ describe("extension host", () => {
       const host = createHost(root);
       await host.reload();
 
-      expect(
-        getRegisteredPiProvider("lmstudio")?.config.models?.[0],
-      ).toMatchObject({
-        id: "gemma-4-26B-A4B-it-oQ6",
-        input: ["text", "image"],
-        contextWindow: 256000,
-        reasoning: true,
-      });
+      expect(getRegisteredPiProvider("kilo")?.config.models?.[0]).toMatchObject(
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          input: ["text", "image"],
+          contextWindow: 256000,
+          reasoning: true,
+        },
+      );
 
       host.dispose();
-      expect(getRegisteredPiProvider("lmstudio")).toBeUndefined();
+      expect(getRegisteredPiProvider("kilo")).toBeUndefined();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
