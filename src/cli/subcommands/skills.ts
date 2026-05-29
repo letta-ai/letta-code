@@ -51,6 +51,8 @@ interface ClawHubSourceLocation {
 
 const CLAWHUB_API_BASE_URL = "https://clawhub.ai/api/v1";
 
+let activeAgentPromptStatus: { stop: () => void } | null = null;
+
 function printUsage(): void {
   console.log(
     `
@@ -130,18 +132,30 @@ async function resolveAgentByName(name: string): Promise<string> {
   return id;
 }
 
-async function promptForAgent(): Promise<string> {
+async function promptForAgent(statusMessage: string): Promise<string> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("Missing agent id. Pass --agent <id> or -n <agent name>.");
   }
 
-  const { render } = await import("ink");
+  const { Box, render } = await import("ink");
+  const Spinner = (await import("ink-spinner")).default;
   const React = await import("react");
   const { AgentSelector } = await import("@/cli/components/AgentSelector");
+  const { Text } = await import("@/cli/components/Text");
 
   return new Promise<string>((resolveAgent, rejectAgent) => {
     let settled = false;
-    const { unmount } = render(
+    const statusView = React.createElement(
+      Box,
+      { paddingX: 1, paddingY: 1 },
+      React.createElement(
+        Text,
+        null,
+        React.createElement(Spinner, { type: "dots" }),
+        ` ${statusMessage}`,
+      ),
+    );
+    const instance = render(
       React.createElement(AgentSelector, {
         currentAgentId:
           process.env.LETTA_AGENT_ID || process.env.AGENT_ID || "",
@@ -153,13 +167,23 @@ async function promptForAgent(): Promise<string> {
         onSelect: (agentId: string) => {
           if (settled) return;
           settled = true;
-          unmount();
-          resolveAgent(agentId);
+          instance.rerender(statusView);
+          activeAgentPromptStatus = {
+            stop: () => {
+              instance.unmount();
+              instance.clear?.();
+              if (activeAgentPromptStatus?.stop) {
+                activeAgentPromptStatus = null;
+              }
+            },
+          };
+          setTimeout(() => resolveAgent(agentId), 0);
         },
         onCancel: () => {
           if (settled) return;
           settled = true;
-          unmount();
+          instance.unmount();
+          instance.clear?.();
           rejectAgent(new Error("Agent selection cancelled."));
         },
       }),
@@ -169,6 +193,7 @@ async function promptForAgent(): Promise<string> {
 
 async function resolveAgentId(
   values: ReturnType<typeof parseSkillsArgs>["values"],
+  promptStatusMessage = "Working...",
 ): Promise<string> {
   const explicitAgent = values.agent || values["agent-id"];
   if (typeof explicitAgent === "string" && explicitAgent.trim()) {
@@ -184,7 +209,7 @@ async function resolveAgentId(
   const envAgent = process.env.LETTA_AGENT_ID || process.env.AGENT_ID;
   if (envAgent?.trim()) return envAgent.trim();
 
-  return promptForAgent();
+  return promptForAgent(promptStatusMessage);
 }
 
 export function parseGitHubSpecifier(
@@ -651,10 +676,16 @@ async function deleteSkill(
 
 async function initializeAndResolveAgent(
   values: ReturnType<typeof parseSkillsArgs>["values"],
+  promptStatusMessage?: string,
 ): Promise<string> {
   const { settingsManager } = await import("@/settings-manager");
   await settingsManager.initialize();
-  return resolveAgentId(values);
+  return resolveAgentId(values, promptStatusMessage);
+}
+
+function stopAgentPromptStatus(): void {
+  activeAgentPromptStatus?.stop();
+  activeAgentPromptStatus = null;
 }
 
 async function runInstall(argv: string[]): Promise<number> {
@@ -682,15 +713,20 @@ async function runInstall(argv: string[]): Promise<number> {
   }
 
   try {
-    const agentId = await initializeAndResolveAgent(parsed.values);
+    const agentId = await initializeAndResolveAgent(
+      parsed.values,
+      `Installing ${specifier}...`,
+    );
     const result = await installSkill(
       specifier,
       agentId,
       Boolean(parsed.values.force),
     );
+    stopAgentPromptStatus();
     console.log(JSON.stringify(result, null, 2));
     return 0;
   } catch (error) {
+    stopAgentPromptStatus();
     console.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
@@ -723,10 +759,16 @@ async function runList(argv: string[]): Promise<number> {
   }
 
   try {
-    const agentId = await initializeAndResolveAgent(parsed.values);
-    console.log(JSON.stringify(await listSkills(agentId), null, 2));
+    const agentId = await initializeAndResolveAgent(
+      parsed.values,
+      "Loading skills...",
+    );
+    const result = await listSkills(agentId);
+    stopAgentPromptStatus();
+    console.log(JSON.stringify(result, null, 2));
     return 0;
   } catch (error) {
+    stopAgentPromptStatus();
     console.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
@@ -756,10 +798,16 @@ async function runDelete(argv: string[]): Promise<number> {
   }
 
   try {
-    const agentId = await initializeAndResolveAgent(parsed.values);
-    console.log(JSON.stringify(await deleteSkill(skillName, agentId), null, 2));
+    const agentId = await initializeAndResolveAgent(
+      parsed.values,
+      `Deleting ${skillName}...`,
+    );
+    const result = await deleteSkill(skillName, agentId);
+    stopAgentPromptStatus();
+    console.log(JSON.stringify(result, null, 2));
     return 0;
   } catch (error) {
+    stopAgentPromptStatus();
     console.error(error instanceof Error ? error.message : String(error));
     return 1;
   }
