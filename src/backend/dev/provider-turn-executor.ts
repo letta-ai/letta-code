@@ -24,6 +24,7 @@ export interface ProviderTurnInput {
   agentId: string;
   agent: LocalAgentRecord;
   systemPrompt?: string;
+  midConversationSystemPrompt?: string;
   body: HeadlessTurnBody;
   history: StoredMessage[];
   uiMessages: LocalMessage[];
@@ -87,6 +88,7 @@ export function buildProviderTurnInput(
     agentId: input.agentId,
     agent: input.agent,
     systemPrompt: input.systemPrompt,
+    midConversationSystemPrompt: input.midConversationSystemPrompt,
     body: input.body,
     history: input.history,
     uiMessages: input.uiMessages,

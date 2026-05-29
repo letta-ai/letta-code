@@ -75,6 +75,25 @@ describe("local pi provider catalog", () => {
     }
   });
 
+  test("local Anthropic catalog includes Opus 4.8 override", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-anthropic-opus-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "anthropic",
+        providerName: "lc-anthropic",
+        apiKey: "test-key",
+      });
+
+      const models = await listLocalModels(storageDir);
+      expect(
+        models.some((model) => model.handle === "anthropic/claude-opus-4-8"),
+      ).toBe(true);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("local /connect API-key providers mirror Pi TUI OAuth split", () => {
     const localApiKeyProviderIds = new Set(
       getProviderConfigs("local")

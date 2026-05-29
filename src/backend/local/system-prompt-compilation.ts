@@ -18,6 +18,8 @@ interface LocalMemoryFile {
 
 export interface LocalCompiledSystemPrompt {
   content: string;
+  coreMemory: string;
+  midConversationSystemPrompt?: string;
   compiledAt: string;
   rawSystemHash: string;
   memfsRevision?: string;
@@ -56,7 +58,9 @@ function gitOutput(memoryDir: string, args: string[]): string {
   });
 }
 
-function getCommittedMemfsRevision(memoryDir: string): string | undefined {
+export function getCommittedMemfsRevision(
+  memoryDir: string,
+): string | undefined {
   if (!existsSync(memoryDir)) return undefined;
   try {
     const revision = gitOutput(memoryDir, [
@@ -446,6 +450,7 @@ export function compileLocalSystemPrompt(
     .join("\n\n");
   return {
     content: injectCoreMemory(options.agent.system, coreMemory),
+    coreMemory,
     compiledAt: compiledAt.toISOString(),
     rawSystemHash: hashRawSystemPrompt(options.agent.system),
     memfsRevision: memfs.revision,
