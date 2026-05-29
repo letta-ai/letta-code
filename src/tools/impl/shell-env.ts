@@ -4,7 +4,7 @@
  * including bundled tools like ripgrep in PATH and Letta context for skill scripts.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -29,7 +29,11 @@ function getRipgrepBinDir(): string | undefined {
     const require = createRequire(__filename);
     const rgPackage = require("@vscode/ripgrep");
     // rgPath is the full path to the binary, we want the directory
-    return path.dirname(rgPackage.rgPath);
+    const bundledPath = rgPackage.rgPath as string;
+    if (!bundledPath || !existsSync(bundledPath)) {
+      return undefined;
+    }
+    return path.dirname(bundledPath);
   } catch (_error) {
     return undefined;
   }
