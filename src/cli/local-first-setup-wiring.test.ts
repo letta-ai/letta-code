@@ -13,9 +13,7 @@ describe("local-first setup wiring", () => {
     expect(source).toContain(
       'const AUTH_LOGIN_LABEL = "Login to Constellation"',
     );
-    expect(source).toContain(
-      "const [selectedOption, setSelectedOption] = useState(1)",
-    );
+    expect(source).toContain('initialMode === "device-code" ? 0 : 1');
     expect(source).toContain('configureBackendMode("local")');
     expect(source).toContain(
       'settingsManager.updateSettings({ preferredBackendMode: "local" })',
@@ -39,6 +37,47 @@ describe("local-first setup wiring", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     expect(source.slice(start, end)).toContain('preferredBackendMode: "api"');
+  });
+
+  test("reauthentication starts a fresh device-code login instead of trusting stale stored credentials", () => {
+    const loginSource = readSource("../auth/ConstellationLoginView.tsx");
+    const setupSource = readSource("../auth/setup-ui.tsx");
+    const setupRunnerSource = readSource("../auth/setup.ts");
+    const overlaySource = readSource(
+      "./components/ConstellationLoginOverlay.tsx",
+    );
+    const indexSource = readSource("../index.ts");
+
+    expect(loginSource).not.toContain("onAlreadyLoggedIn");
+    expect(loginSource).not.toContain("currentSettings.env?.LETTA_API_KEY");
+    expect(loginSource).toContain("Requesting authorization code...");
+    expect(loginSource).toContain(
+      "LETTA_API_KEY is set in your environment, so OAuth login cannot replace the credential Letta Code is using.",
+    );
+
+    expect(setupSource).toContain('initialMode === "device-code" ? 0 : 1');
+    expect(setupSource).toContain('onCancel={() => setMode("menu")}');
+    expect(setupRunnerSource).toContain("initialMode?: SetupInitialMode");
+    expect(setupRunnerSource).toContain("Promise<SetupResult>");
+    expect(setupRunnerSource).toContain('settle({ kind: "cancelled" })');
+    expect(setupRunnerSource).toContain("instance.unmount()");
+
+    expect(overlaySource).toContain(
+      "validateCredentialsWithResult(baseURL, apiKey)",
+    );
+    expect(overlaySource).toContain("onAlreadyLoggedInRef.current()");
+    expect(overlaySource).toContain("Could not verify current credentials");
+    expect(indexSource).toContain(
+      "LETTA_API_KEY is set in your environment, so setup cannot replace the credential Letta Code is using.",
+    );
+    expect(indexSource).toContain(
+      'initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu"',
+    );
+    expect(indexSource).toContain('setupResult.kind === "cancelled"');
+    expect(indexSource).toContain("const shouldValidateCredentials =");
+    expect(indexSource).toContain(
+      "baseURL === LETTA_CLOUD_API_URL || Boolean(apiKey)",
+    );
   });
 
   test("startup auto-enters local mode for credentialless new users while honoring saved local preference", () => {

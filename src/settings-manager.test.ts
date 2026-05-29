@@ -1541,6 +1541,51 @@ describe("Settings Manager - Managed Keys Preservation", () => {
       );
     }
   });
+
+  test("Auth-only token updates preserve unrelated env settings", async () => {
+    const previousSkipKeychain = process.env.LETTA_SKIP_KEYCHAIN_CHECK;
+    process.env.LETTA_SKIP_KEYCHAIN_CHECK = "1";
+
+    try {
+      const { writeFile, readFile, mkdir } = await import("@/utils/fs.js");
+      const settingsDir = join(testHomeDir, ".letta");
+      const settingsPath = join(settingsDir, "settings.json");
+      await mkdir(settingsDir, { recursive: true });
+
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          env: { SOME_FLAG: "1" },
+          tokenStreaming: true,
+        }),
+      );
+
+      await settingsManager.initialize();
+      settingsManager.updateSettings({
+        env: { LETTA_API_KEY: "sk-auth-only" },
+        refreshToken: "rt-auth-only",
+        tokenExpiresAt: 123,
+      });
+      await settingsManager.flush();
+
+      const raw = JSON.parse(await readFile(settingsPath)) as Record<
+        string,
+        unknown
+      >;
+      expect(raw.env).toEqual({
+        SOME_FLAG: "1",
+        LETTA_API_KEY: "sk-auth-only",
+      });
+      expect(raw.refreshToken).toBe("rt-auth-only");
+      expect(raw.tokenExpiresAt).toBe(123);
+    } finally {
+      if (previousSkipKeychain === undefined) {
+        delete process.env.LETTA_SKIP_KEYCHAIN_CHECK;
+      } else {
+        process.env.LETTA_SKIP_KEYCHAIN_CHECK = previousSkipKeychain;
+      }
+    }
+  });
 });
 
 // ============================================================================

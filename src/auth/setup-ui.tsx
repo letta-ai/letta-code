@@ -2,7 +2,7 @@
  * Ink UI components for OAuth setup flow
  */
 
-import { Box, useApp, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { useState } from "react";
 import { configureBackendMode } from "@/backend";
 import { AnimatedLogo } from "@/cli/components/AnimatedLogo";
@@ -12,23 +12,33 @@ import { settingsManager } from "@/settings-manager";
 import { ConstellationLoginView } from "./ConstellationLoginView";
 
 type SetupMode = "menu" | "device-code" | "auth-code" | "self-host" | "done";
+export type SetupInitialMode = "menu" | "device-code";
+export type SetupResult =
+  | { kind: "cloud-login" }
+  | { kind: "local" }
+  | { kind: "cancelled" };
 
 const AUTH_LOGIN_LABEL = "Login to Constellation";
 const LOCAL_MODE_LABEL = "Proceed locally";
 const AUTH_LOGO_ANIMATE = false;
 
 interface SetupUIProps {
-  onComplete: () => void;
+  onComplete: (result: SetupResult) => void;
+  onCancel: () => void;
+  initialMode?: SetupInitialMode;
 }
 
-export function SetupUI({ onComplete }: SetupUIProps) {
-  const [mode, setMode] = useState<SetupMode>("menu");
-  const [selectedOption, setSelectedOption] = useState(1);
+export function SetupUI({
+  onComplete,
+  onCancel,
+  initialMode = "menu",
+}: SetupUIProps) {
+  const [mode, setMode] = useState<SetupMode>(initialMode);
+  const [selectedOption, setSelectedOption] = useState(
+    initialMode === "device-code" ? 0 : 1,
+  );
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState("Starting Letta Code...");
-
-  const { exit } = useApp();
-
   // Handle menu navigation
   useInput(
     (_input, key) => {
@@ -44,7 +54,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
           } else if (selectedOption === 1) {
             proceedLocally();
           } else if (selectedOption === 2) {
-            exit();
+            onCancel();
           }
         }
       }
@@ -61,7 +71,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
         "Local mode enabled. Agents you create now will be stored on this device. To sign into Letta Cloud later, run `letta setup` or `letta backend api`.",
       );
       setMode("done");
-      setTimeout(() => onComplete(), 500);
+      setTimeout(() => onComplete({ kind: "local" }), 500);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -96,8 +106,9 @@ export function SetupUI({ onComplete }: SetupUIProps) {
         <Text bold>{AUTH_LOGIN_LABEL}</Text>
         <Text> </Text>
         <ConstellationLoginView
-          onComplete={onComplete}
-          onAlreadyLoggedIn={onComplete}
+          onComplete={() => onComplete({ kind: "cloud-login" })}
+          onCancel={() => setMode("menu")}
+          successMessage="Signed in to Constellation. Starting Letta Code..."
         />
       </Box>
     );
