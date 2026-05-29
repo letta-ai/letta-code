@@ -24,6 +24,13 @@ type ReasoningCycleDesired = {
   modelId: string;
 };
 
+function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
+  return (
+    modelHandle.includes("claude-opus-4-7") ||
+    modelHandle.includes("claude-opus-4-8")
+  );
+}
+
 type ReasoningCycleContext = {
   agentId: string;
   agentIdRef: MutableRefObject<string>;
@@ -341,7 +348,9 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;
 
-      const anthropicXHighEffort = modelHandle.includes("claude-opus-4-7")
+      const anthropicXHighEffort = supportsDistinctAnthropicXHighEffort(
+        modelHandle,
+      )
         ? "xhigh"
         : "max";
 
@@ -407,7 +416,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             ms.provider_type === "anthropic" ||
             ms.provider_type === "bedrock"
           ) {
-            // "xhigh" is only distinct on Opus 4.7; older Anthropic models map it to backend "max".
+            // "xhigh" is distinct on Opus 4.7+; older Anthropic models map it to backend "max".
             return {
               ...prev,
               model_settings: {

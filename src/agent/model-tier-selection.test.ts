@@ -8,7 +8,18 @@ import {
 } from "@/agent/model";
 
 describe("getModelInfo", () => {
-  test("includes Bedrock Opus 4.7", () => {
+  test("points opus alias at Opus 4.8 high", () => {
+    const info = getModelInfo("opus");
+    expect(info?.handle).toBe("anthropic/claude-opus-4-8");
+    expect(info?.label).toBe("Opus 4.8");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 200000,
+      reasoning_effort: "high",
+      enable_reasoner: true,
+    });
+  });
+
+  test("preserves Bedrock Opus 4.7", () => {
     const info = getModelInfo("bedrock-opus-4.7");
     expect(info?.handle).toBe("bedrock/us.anthropic.claude-opus-4-7");
     expect(info?.label).toBe("Bedrock Opus 4.7");
@@ -218,6 +229,26 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
+  test("returns reasoning options for anthropic opus 4.8", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-opus-4-8",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "opus-4.8-low",
+      "opus-4.8-medium",
+      "opus", // featured entry uses high; wins first-seen dedup
+      "opus-4.8-xhigh",
+      "opus-4.8-max",
+    ]);
+  });
+
   test("returns reasoning options for anthropic opus 4.7", () => {
     const options = getReasoningTierOptionsForHandle(
       "anthropic/claude-opus-4-7",
@@ -231,7 +262,7 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
     expect(options.map((option) => option.modelId)).toEqual([
       "opus-4.7-low",
-      "opus", // featured entry uses medium; wins first-seen dedup
+      "opus-4.7-medium",
       "opus-4.7-high",
       "opus-4.7-xhigh",
       "opus-4.7-max",
