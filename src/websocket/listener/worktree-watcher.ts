@@ -45,7 +45,12 @@ export function startWorktreeWatcher(params: {
   conversationId: string;
 }): WorktreeWatcherState | null {
   const { runtime, agentId, conversationId } = params;
-  const cwd = getConversationWorkingDirectory(runtime, agentId, conversationId);
+  const cwd = getConversationWorkingDirectory(
+    runtime,
+    agentId,
+    conversationId,
+    runtime.deviceId,
+  );
   const worktreesDir = path.join(cwd, WORKTREES_DIR);
 
   const abort = new AbortController();
@@ -200,6 +205,7 @@ async function handleNewWorktree(params: {
     runtime,
     agentId,
     conversationId,
+    runtime.deviceId,
   );
   if (currentCwd === newWorktreePath) {
     clearExpectedWorktreePath(conversationRuntime);

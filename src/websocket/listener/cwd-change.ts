@@ -10,6 +10,7 @@ import {
 import {
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
+  setDeviceDefaultWorkingDirectory,
 } from "./cwd";
 import { isGitWorktreeRoot } from "./file-commands";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
@@ -63,6 +64,8 @@ export async function switchConversationWorkingDirectory(params: {
   runtime: ListenerRuntime;
   agentId: string | null;
   conversationId: string;
+  /** Device ID from the connected client. When provided, also persists as device default CWD. */
+  deviceId?: string | null;
   workingDirectory: string;
   emitStatus?: boolean;
   statusRuntime?: ConversationRuntime | ListenerRuntime;
@@ -81,6 +84,13 @@ export async function switchConversationWorkingDirectory(params: {
     conversationId,
     workingDirectory,
   );
+
+  // Also persist as the device's default CWD so future conversations
+  // from this device start in the same directory.
+  const deviceId = params.deviceId ?? runtime.deviceId;
+  if (deviceId) {
+    setDeviceDefaultWorkingDirectory(runtime, deviceId, workingDirectory);
+  }
 
   if (params.updateCurrentRuntimeContext !== false) {
     updateRuntimeContext({ workingDirectory });

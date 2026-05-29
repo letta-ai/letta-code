@@ -441,6 +441,7 @@ export async function handleIncomingMessage(
     runtime.listener,
     normalizedAgentId,
     conversationId,
+    runtime.listener.deviceId,
   );
 
   // Get the canonical mutable permission mode state ref for this turn.

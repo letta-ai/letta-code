@@ -63,7 +63,7 @@ import {
   findFallbackRuntime,
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
-import { loadPersistedCwdMap } from "./cwd";
+import { loadPersistedCwdMap, loadPersistedDeviceCwdMap } from "./cwd";
 import { createFileCommandSession } from "./file-commands";
 import { createListenerMessageHandler } from "./message-router";
 import {
@@ -832,6 +832,7 @@ export function createRuntime(): ListenerRuntime {
     reminderState: createSharedReminderState(),
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
+    deviceDefaultCwdByDeviceId: loadPersistedDeviceCwdMap(),
     worktreeWatcherByConversation: new Map(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
     reminderStateByConversation: new Map(),
@@ -840,6 +841,7 @@ export function createRuntime(): ListenerRuntime {
     queuedSystemPromptRecompileByConversation: new Set(),
     connectionId: null,
     connectionName: null,
+    deviceId: null,
     conversationRuntimes: new Map(),
     approvalRuntimeKeyByRequestId: new Map(),
     memfsSyncedAgents: new Map(),
@@ -1110,6 +1112,7 @@ export async function startListenerClient(
   runtime.onWsEvent = opts.onWsEvent;
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
+  runtime.deviceId = opts.deviceId;
   setActiveRuntime(runtime);
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
@@ -1143,6 +1146,7 @@ export async function startLocalChannelListener(
   runtime.onWsEvent = opts.onWsEvent;
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
+  runtime.deviceId = opts.deviceId;
   setActiveRuntime(runtime);
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();

@@ -44,6 +44,7 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
+  setDeviceDefaultWorkingDirectory,
 } from "./cwd";
 import {
   consumeInterruptQueue,
@@ -117,6 +118,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   activeConversationId: string;
   socket: WebSocket | null;
   workingDirectoryByConversation: Map<string, string>;
+  deviceDefaultCwdByDeviceId: Map<string, string>;
   permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
   reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
   contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
@@ -125,6 +127,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   bootWorkingDirectory: string;
   connectionId: string | null;
   connectionName: string | null;
+  deviceId: string | null;
   sessionId: string;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
@@ -156,6 +159,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     activeConversationId: string;
     socket: WebSocket | null;
     workingDirectoryByConversation: Map<string, string>;
+    deviceDefaultCwdByDeviceId: Map<string, string>;
     permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
     reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
     contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
@@ -164,6 +168,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     bootWorkingDirectory: string;
     connectionId: string | null;
     connectionName: string | null;
+    deviceId: string | null;
     sessionId: string;
     eventSeqCounter: number;
     queueEmitScheduled: boolean;
@@ -199,6 +204,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.workingDirectoryByConversation,
       set: (value: Map<string, string>) => {
         listener.workingDirectoryByConversation = value;
+      },
+    },
+    deviceDefaultCwdByDeviceId: {
+      get: () => listener.deviceDefaultCwdByDeviceId,
+      set: (value: Map<string, string>) => {
+        listener.deviceDefaultCwdByDeviceId = value;
       },
     },
     permissionModeByConversation: {
@@ -249,6 +260,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.connectionName,
       set: (value: string | null) => {
         listener.connectionName = value;
+      },
+    },
+    deviceId: {
+      get: () => listener.deviceId,
+      set: (value: string | null) => {
+        listener.deviceId = value;
       },
     },
     sessionId: {
@@ -453,6 +470,7 @@ export const __listenClientTestUtils = {
   clearPendingApprovalBatchIds,
   populateInterruptQueue,
   setConversationWorkingDirectory,
+  setDeviceDefaultWorkingDirectory,
   consumeInterruptQueue,
   stashRecoveredApprovalInterrupts,
   extractInterruptToolReturns,

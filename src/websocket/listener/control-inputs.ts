@@ -24,6 +24,7 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
+  setDeviceDefaultWorkingDirectory,
 } from "./cwd";
 import { isGitWorktreeRoot } from "./file-commands";
 import { stashRecoveredApprovalInterrupts } from "./interrupts";
@@ -585,6 +586,7 @@ export async function handleCwdChange(
     runtime.listener,
     agentId,
     conversationId,
+    msg.deviceId ?? runtime.listener.deviceId,
   );
 
   try {
@@ -608,6 +610,17 @@ export async function handleCwdChange(
       conversationId,
       normalizedPath,
     );
+
+    // Also persist as the device's default CWD so future conversations
+    // from this device start in the same directory.
+    const deviceId = msg.deviceId ?? runtime.listener.deviceId;
+    if (deviceId) {
+      setDeviceDefaultWorkingDirectory(
+        runtime.listener,
+        deviceId,
+        normalizedPath,
+      );
+    }
 
     // Invalidate session-context only (not agent-info) so the agent gets
     // updated CWD/git info on the next turn.
