@@ -1,3 +1,4 @@
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
 import type { ReflectionTrigger } from "@/cli/helpers/memory-reminder";
@@ -42,7 +43,6 @@ export type ReflectionLaunchResult =
 export interface ReflectionLaunchOptions {
   agentId: string;
   conversationId: string;
-  memoryDir: string;
   memfsEnabled: boolean;
   triggerSource: ReflectionLaunchTriggerSource;
   description: string;
@@ -96,7 +96,6 @@ export async function launchReflectionSubagent(
   const {
     agentId,
     conversationId,
-    memoryDir,
     memfsEnabled,
     triggerSource,
     description,
@@ -135,6 +134,7 @@ export async function launchReflectionSubagent(
       return { launched: false, reason: "no_payload" };
     }
 
+    const memoryDir = getScopedMemoryFilesystemRoot(agentId);
     const parentMemory = await buildParentMemorySnapshot(memoryDir);
     const reflectionPrompt = buildReflectionSubagentPrompt({
       memoryDir,

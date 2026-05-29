@@ -17,7 +17,6 @@ import {
   setCurrentAgentId,
 } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getStreamToolContextId,
   type sendMessageStream,
@@ -175,7 +174,6 @@ function buildMaybeLaunchReflectionSubagent(params: {
     const result = await launchReflectionSubagent({
       agentId,
       conversationId,
-      memoryDir: getMemoryFilesystemRoot(agentId),
       memfsEnabled: settingsManager.isMemfsEnabled(agentId),
       triggerSource,
       description: AUTO_REFLECTION_DESCRIPTION,

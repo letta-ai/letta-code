@@ -32,7 +32,6 @@ import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
-import { getMemoryFilesystemRoot } from "./agent/memory-filesystem";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
   getModelInfo,
@@ -3163,7 +3162,6 @@ async function runBidirectionalMode(
     const result = await launchReflectionSubagent({
       agentId: agent.id,
       conversationId,
-      memoryDir: getMemoryFilesystemRoot(agent.id),
       memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
       triggerSource,
       description: AUTO_REFLECTION_DESCRIPTION,

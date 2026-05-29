@@ -1,12 +1,10 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   getSubagents,
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
-import { getBackend } from "@/backend";
 import {
   buildChannelModelListMessage,
   buildChannelModelListUnavailableMessage,
@@ -15,14 +13,7 @@ import {
 } from "@/channels/commands";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
-import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
-import { isReflectionSubagentActive } from "@/cli/helpers/reflection-gate";
-import {
-  buildAutoReflectionPayload,
-  buildParentMemorySnapshot,
-  buildReflectionSubagentPrompt,
-  finalizeAutoReflectionPayload,
-} from "@/cli/helpers/reflection-transcript";
+import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
 import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
@@ -595,137 +586,76 @@ export async function wireChannelIngress(
     const agentId = runtime.agent_id;
     const conversationId = runtime.conversation_id;
 
-    if (!settingsManager.isMemfsEnabled(agentId)) {
-      return {
-        handled: true,
-        text: "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.",
-      };
-    }
+    const result = await launchReflectionSubagent({
+      agentId,
+      conversationId,
+      memfsEnabled: settingsManager.isMemfsEnabled(agentId),
+      triggerSource: "manual",
+      description: "Reflecting on channel conversation",
+      recompileByConversation: listener.systemPromptRecompileByConversation,
+      recompileQueuedByConversation:
+        listener.queuedSystemPromptRecompileByConversation,
+      onCompletionMessage: async (completionMessage) => {
+        const conversationRuntime = getOrCreateConversationRuntime(
+          listener,
+          agentId,
+          conversationId,
+        );
+        const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
+          completionMessage,
+        )}</summary></task-notification>`;
+        emitStreamDelta(
+          socket,
+          conversationRuntime,
+          {
+            type: "message",
+            id: `user-msg-${crypto.randomUUID()}`,
+            date: new Date().toISOString(),
+            message_type: "user_message",
+            content: [{ type: "text", text: notificationXml }],
+          } as import("@/types/protocol_v2").StreamDelta,
+          {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          },
+        );
+      },
+    });
 
-    if (isReflectionSubagentActive(getSubagents(), agentId, conversationId)) {
-      return {
-        handled: true,
-        text: "A reflection agent is already running for this conversation.",
-      };
-    }
-
-    try {
-      let systemPrompt: string | undefined;
-      try {
-        const agent = await getBackend().retrieveAgent(agentId);
-        systemPrompt = agent.system ?? undefined;
-      } catch {
-        // Non-fatal — the reflection payload can omit the system prompt.
+    if (!result.launched) {
+      if (result.reason === "memfs_disabled") {
+        return {
+          handled: true,
+          text: "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.",
+        };
       }
-
-      const autoPayload = await buildAutoReflectionPayload(
-        agentId,
-        conversationId,
-        systemPrompt,
-      );
-      if (!autoPayload) {
+      if (result.reason === "already_active") {
+        return {
+          handled: true,
+          text: "A reflection agent is already running for this conversation.",
+        };
+      }
+      if (result.reason === "no_payload") {
         return {
           handled: true,
           text: "No new transcript content to reflect on for this conversation.",
         };
       }
 
-      const memoryDir = getMemoryFilesystemRoot(agentId);
-      const parentMemory = await buildParentMemorySnapshot(memoryDir);
-      const reflectionPrompt = buildReflectionSubagentPrompt({
-        memoryDir,
-        parentMemory,
-      });
-
-      const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-        await import("@/tools/impl/task");
-      const { subagentId } = spawnBackgroundSubagentTask({
-        subagentType: "reflection",
-        prompt: reflectionPrompt,
-        description: "Reflecting on channel conversation",
-        silentCompletion: true,
-        transcriptPath: autoPayload.payloadPath,
-        parentScope: { agentId, conversationId },
-        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
-          telemetry.trackReflectionEnd("manual", success, {
-            subagentId: reflectionAgentId ?? undefined,
-            conversationId,
-            error,
-          });
-          await finalizeAutoReflectionPayload(
-            agentId,
-            conversationId,
-            autoPayload.payloadPath,
-            autoPayload.endSnapshotLine,
-            success,
-          );
-
-          const completionMessage = await handleMemorySubagentCompletion(
-            {
-              agentId,
-              conversationId,
-              subagentType: "reflection",
-              success,
-              error,
-            },
-            {
-              recompileByConversation:
-                listener.systemPromptRecompileByConversation,
-              recompileQueuedByConversation:
-                listener.queuedSystemPromptRecompileByConversation,
-              logRecompileFailure: (message) =>
-                isDebugEnabled() && console.warn(message),
-            },
-          );
-
-          const conversationRuntime = getOrCreateConversationRuntime(
-            listener,
-            agentId,
-            conversationId,
-          );
-          const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
-            completionMessage,
-          )}</summary></task-notification>`;
-          emitStreamDelta(
-            socket,
-            conversationRuntime,
-            {
-              type: "message",
-              id: `user-msg-${crypto.randomUUID()}`,
-              date: new Date().toISOString(),
-              message_type: "user_message",
-              content: [{ type: "text", text: notificationXml }],
-            } as import("@/types/protocol_v2").StreamDelta,
-            {
-              agent_id: agentId,
-              conversation_id: conversationId,
-            },
-          );
-        },
-      });
-
-      const reflectionAgentId = await waitForBackgroundSubagentAgentId(
-        subagentId,
-        1000,
-      );
-      telemetry.trackReflectionStart("manual", {
-        subagentId: reflectionAgentId ?? undefined,
-        conversationId,
-        startMessageId: autoPayload.startMessageId,
-        endMessageId: autoPayload.endMessageId,
-      });
-
-      return {
-        handled: true,
-        text: "Started a reflection pass for this conversation.",
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message =
+        result.error instanceof Error
+          ? result.error.message
+          : String(result.error ?? "Unknown error");
       return {
         handled: true,
         text: `Failed to start reflection: ${message}`,
       };
     }
+
+    return {
+      handled: true,
+      text: "Started a reflection pass for this conversation.",
+    };
   });
 
   registry.setReady();

@@ -79,6 +79,16 @@ describe("headless shared reminder wiring", () => {
     expect(source).toContain("maybeLaunchReflectionSubagent,");
   });
 
+  test("bidirectional reflection delegates MemFS root resolution to launcher", () => {
+    const headlessPath = fileURLToPath(
+      new URL("./headless.ts", import.meta.url),
+    );
+    const source = readFileSync(headlessPath, "utf-8");
+
+    expect(source).not.toContain("memoryDir: getMemoryFilesystemRoot");
+    expect(source).not.toContain("memoryDir: getScopedMemoryFilesystemRoot");
+  });
+
   test("bidirectional mode records successful turns for reflection", () => {
     const headlessPath = fileURLToPath(
       new URL("./headless.ts", import.meta.url),

@@ -2755,7 +2755,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const result = await launchReflectionSubagent({
               agentId,
               conversationId: reflectionConversationId,
-              memoryDir: getScopedMemoryFilesystemRoot(agentId),
               memfsEnabled: isActiveMemfsEnabled(agentId),
               triggerSource: "manual",
               description: "Reflecting on conversation",
@@ -3356,7 +3355,6 @@ ${SYSTEM_REMINDER_CLOSE}
         const result = await launchReflectionSubagent({
           agentId,
           conversationId: reflectionConversationId,
-          memoryDir: getScopedMemoryFilesystemRoot(agentId),
           memfsEnabled: memfsEnabledForAgent,
           triggerSource,
           description: AUTO_REFLECTION_DESCRIPTION,
