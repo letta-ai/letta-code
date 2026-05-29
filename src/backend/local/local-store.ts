@@ -662,17 +662,44 @@ interface LocalTranscriptSessionHeader {
   cwd: string;
 }
 
-interface LocalTranscriptSessionMessageEntry {
-  type: "message";
+interface LocalTranscriptEntryBase {
   id: string;
   parentId: string | null;
   timestamp: string;
+}
+
+interface LocalTranscriptSessionMessageEntry extends LocalTranscriptEntryBase {
+  type: "message";
   message: LocalMessage;
+}
+
+interface LocalTranscriptCompactionEntry extends LocalTranscriptEntryBase {
+  type: "compaction";
+  summary: string;
+  firstKeptEntryId: string | null;
+  tokensBefore: number;
+  message: LocalMessage;
+  details?: {
+    stats?: LocalCompactionStats;
+  };
 }
 
 type LocalTranscriptSessionEntry =
   | LocalTranscriptSessionHeader
-  | LocalTranscriptSessionMessageEntry;
+  | LocalTranscriptSessionMessageEntry
+  | LocalTranscriptCompactionEntry;
+
+type LocalTranscriptAppendEntry =
+  | LocalTranscriptSessionMessageEntry
+  | LocalTranscriptCompactionEntry;
+
+interface LocalTranscriptRowsResult {
+  messages: LocalMessage[];
+  entryIds: Set<string>;
+  entryIdByMessageId: Map<string, string>;
+  lastEntryId: string | null;
+  sourceStartIndex: number;
+}
 
 function isLocalTranscriptSessionMessageEntry(
   value: unknown,
@@ -685,6 +712,33 @@ function isLocalTranscriptSessionMessageEntry(
     typeof value.timestamp === "string" &&
     isRecord(value.message) &&
     typeof value.message.id === "string"
+  );
+}
+
+function isLocalTranscriptCompactionEntry(
+  value: unknown,
+): value is LocalTranscriptCompactionEntry {
+  return (
+    isRecord(value) &&
+    value.type === "compaction" &&
+    typeof value.id === "string" &&
+    (value.parentId === null || typeof value.parentId === "string") &&
+    typeof value.timestamp === "string" &&
+    typeof value.summary === "string" &&
+    (value.firstKeptEntryId === null ||
+      typeof value.firstKeptEntryId === "string") &&
+    typeof value.tokensBefore === "number" &&
+    isRecord(value.message) &&
+    typeof value.message.id === "string"
+  );
+}
+
+function isLocalTranscriptAppendEntry(
+  value: unknown,
+): value is LocalTranscriptAppendEntry {
+  return (
+    isLocalTranscriptSessionMessageEntry(value) ||
+    isLocalTranscriptCompactionEntry(value)
   );
 }
 
@@ -710,7 +764,7 @@ function localTranscriptSessionEntries(
     ...messages.map((message) => {
       const entry: LocalTranscriptSessionMessageEntry = {
         type: "message",
-        id: message.id,
+        id: randomUUID().slice(0, 8),
         parentId,
         timestamp: localMessageDate(message, currentIsoTimestamp()),
         message,
@@ -721,16 +775,66 @@ function localTranscriptSessionEntries(
   ];
 }
 
-function localMessagesFromTranscriptRows(
+function localTranscriptRowsResult(
   rows: readonly unknown[],
   messageFormat: LocalTranscriptMessageFormat,
-): LocalMessage[] {
-  if (messageFormat === LOCAL_TRANSCRIPT_MESSAGE_FORMAT) {
-    return rows
-      .filter(isLocalTranscriptSessionMessageEntry)
-      .map((entry) => entry.message);
+  activeMessageIds: readonly string[] = [],
+): LocalTranscriptRowsResult {
+  if (messageFormat === LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT) {
+    const allMessages = rows as LocalMessage[];
+    const messageById = new Map(
+      allMessages.map((message) => [message.id, message] as const),
+    );
+    const activeMessages = activeMessageIds.length
+      ? activeMessageIds
+          .map((id) => messageById.get(id))
+          .filter((message): message is LocalMessage => message !== undefined)
+      : allMessages;
+    const firstActiveId = activeMessages[0]?.id;
+    return {
+      messages: activeMessages,
+      entryIds: new Set(allMessages.map((message) => message.id)),
+      entryIdByMessageId: new Map(
+        allMessages.map((message) => [message.id, message.id] as const),
+      ),
+      lastEntryId: allMessages.at(-1)?.id ?? null,
+      sourceStartIndex: firstActiveId
+        ? Math.max(0, activeMessageIds.indexOf(firstActiveId))
+        : 0,
+    };
   }
-  return rows as LocalMessage[];
+
+  const entryIds = new Set<string>();
+  const entryIdByMessageId = new Map<string, string>();
+  const allMessages: LocalMessage[] = [];
+  const messageById = new Map<string, LocalMessage>();
+  let lastEntryId: string | null = null;
+
+  for (const row of rows) {
+    if (!isLocalTranscriptAppendEntry(row)) continue;
+    entryIds.add(row.id);
+    lastEntryId = row.id;
+    entryIdByMessageId.set(row.message.id, row.id);
+    allMessages.push(row.message);
+    messageById.set(row.message.id, row.message);
+  }
+
+  const activeMessages = activeMessageIds.length
+    ? activeMessageIds
+        .map((id) => messageById.get(id))
+        .filter((message): message is LocalMessage => message !== undefined)
+    : allMessages;
+  const firstActiveId = activeMessages[0]?.id;
+
+  return {
+    messages: activeMessages,
+    entryIds,
+    entryIdByMessageId,
+    lastEntryId,
+    sourceStartIndex: firstActiveId
+      ? Math.max(0, activeMessageIds.indexOf(firstActiveId))
+      : 0,
+  };
 }
 
 function createLocalTranscriptManifest(
@@ -819,8 +923,15 @@ interface LocalConversationTranscriptMetadata {
 }
 
 interface LocalTranscriptPersistOptions {
-  transcript?: "append" | "rewrite" | "skip";
+  transcript?: "append" | "append-compaction" | "rewrite" | "skip";
   message?: LocalMessage;
+  compaction?: {
+    summaryMessage: LocalMessage;
+    summary: string;
+    firstKeptMessageId?: string;
+    previousMessages?: readonly LocalMessage[];
+    stats?: LocalCompactionStats;
+  };
 }
 
 function fileIsoTimestamp(value: number | undefined): string | undefined {
@@ -955,9 +1066,13 @@ export class LocalStore {
     string,
     LocalConversationTranscriptMetadata
   >();
-  private readonly persistedSessionMessageIdsByConversationKey = new Map<
+  private readonly sessionEntryIdsByConversationKey = new Map<
     string,
     Set<string>
+  >();
+  private readonly sessionEntryIdByMessageIdByConversationKey = new Map<
+    string,
+    Map<string, string>
   >();
   private readonly lastSessionEntryIdByConversationKey = new Map<
     string,
@@ -1062,7 +1177,8 @@ export class LocalStore {
         this.localMessagesByConversationKey.delete(key);
         this.loadedConversationKeys.delete(key);
         this.transcriptMetadataByConversationKey.delete(key);
-        this.persistedSessionMessageIdsByConversationKey.delete(key);
+        this.sessionEntryIdsByConversationKey.delete(key);
+        this.sessionEntryIdByMessageIdByConversationKey.delete(key);
         this.lastSessionEntryIdByConversationKey.delete(key);
         if (this.storageDir) {
           rmSync(
@@ -1658,7 +1774,14 @@ export class LocalStore {
     conversation.updated_at = date;
     this.conversations.set(key, conversation);
     this.persistConversationState(conversation.id, input.agentId, {
-      transcript: "rewrite",
+      transcript: "append-compaction",
+      compaction: {
+        summaryMessage,
+        summary: input.summary,
+        firstKeptMessageId: input.remainingMessages?.[0]?.id,
+        previousMessages,
+        ...(input.stats ? { stats: input.stats } : {}),
+      },
     });
     this.rebuildMessageIndex();
     return {
@@ -2256,29 +2379,25 @@ export class LocalStore {
         metadata.messagesPath,
         maxBytes,
       );
-      const localMessages = localMessagesFromTranscriptRows(
+      const conversation = this.conversations.get(key);
+      const transcript = localTranscriptRowsResult(
         tail.items,
         metadata.messageFormat,
+        conversation?.in_context_message_ids ?? [],
       );
       assertNoLegacyUiMessageRows(
-        localMessages,
+        transcript.messages,
         this.storageDir ?? "",
         metadata.conversationDir,
       );
-      const normalizedMessages = localMessages.map(normalizeLocalMessageForPi);
-      const conversation = this.conversations.get(key);
-      const sourceStartIndex = tail.reachedStart
-        ? 0
-        : Math.max(
-            0,
-            (conversation?.in_context_message_ids.length ?? 0) -
-              normalizedMessages.length,
-          );
+      const normalizedMessages = transcript.messages.map(
+        normalizeLocalMessageForPi,
+      );
       const projected = this.projectLocalMessages(
         normalizedMessages,
         agentId,
         conversationId,
-        { sourceStartIndex },
+        { sourceStartIndex: transcript.sourceStartIndex },
       );
       const cursorFound =
         !before || projected.some((message) => message.id === before);
@@ -2384,28 +2503,24 @@ export class LocalStore {
         metadata.messagesPath,
         maxBytes,
       );
-      const localMessages = localMessagesFromTranscriptRows(
+      const transcript = localTranscriptRowsResult(
         tail.items,
         metadata.messageFormat,
+        conversation.in_context_message_ids,
       );
       assertNoLegacyUiMessageRows(
-        localMessages,
+        transcript.messages,
         this.storageDir ?? "",
         metadata.conversationDir,
       );
-      const normalizedMessages = localMessages.map(normalizeLocalMessageForPi);
-      const sourceStartIndex = tail.reachedStart
-        ? 0
-        : Math.max(
-            0,
-            conversation.in_context_message_ids.length -
-              normalizedMessages.length,
-          );
+      const normalizedMessages = transcript.messages.map(
+        normalizeLocalMessageForPi,
+      );
       this.projectLocalMessages(
         normalizedMessages,
         conversation.agent_id,
         conversation.id,
-        { sourceStartIndex },
+        { sourceStartIndex: transcript.sourceStartIndex },
       );
       if ((this.messagesById.get(messageId) ?? []).length > 0) return true;
       if (tail.reachedStart) return false;
@@ -2443,20 +2558,21 @@ export class LocalStore {
     }
 
     const rawRows = readJsonlFile<unknown>(metadata.messagesPath);
-    const rawMessages = localMessagesFromTranscriptRows(
+    const conversation = this.conversations.get(key);
+    const transcript = localTranscriptRowsResult(
       rawRows,
       metadata.messageFormat,
+      conversation?.in_context_message_ids ?? [],
     );
     assertNoLegacyUiMessageRows(
-      rawMessages,
+      transcript.messages,
       this.storageDir ?? "",
       metadata.conversationDir,
     );
     const localMessages = repairSyntheticLocalMessageTimestamps(
-      rawMessages.map(normalizeLocalMessageForPi),
+      transcript.messages.map(normalizeLocalMessageForPi),
       metadata.timing,
     );
-    const conversation = this.conversations.get(key);
     if (conversation) {
       this.conversations.set(
         key,
@@ -2469,7 +2585,7 @@ export class LocalStore {
     }
     this.localMessagesByConversationKey.set(key, localMessages);
     this.loadedConversationKeys.add(key);
-    this.resetPersistedSessionState(key, metadata.messageFormat, localMessages);
+    this.resetPersistedSessionState(key, metadata.messageFormat, transcript);
     for (const message of localMessages) {
       this.localMessageSeq = Math.max(
         this.localMessageSeq,
@@ -2728,6 +2844,7 @@ export class LocalStore {
     this.persistConversationTranscript(
       key,
       conversation,
+      conversationDir,
       messagesPath,
       messageFormat,
       options,
@@ -2738,25 +2855,58 @@ export class LocalStore {
   private persistConversationTranscript(
     key: string,
     conversation: StoredConversation,
+    conversationDir: string,
     messagesPath: string,
     messageFormat: LocalTranscriptMessageFormat,
     options: LocalTranscriptPersistOptions,
   ): void {
     if (options.transcript === "skip") return;
     const messages = this.localMessagesByConversationKey.get(key) ?? [];
+    let activeMessageFormat = messageFormat;
     if (messageFormat === LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT) {
-      if (this.loadedConversationKeys.has(key) || !existsSync(messagesPath)) {
-        writeFileSync(messagesPath, jsonl(messages));
+      const upgradeMessages = options.compaction?.previousMessages ?? messages;
+      if (upgradeMessages.length === 0) return;
+      this.rewriteConversationSessionTranscript(
+        key,
+        conversation,
+        messagesPath,
+        upgradeMessages,
+      );
+      writeLocalTranscriptManifest(
+        conversationDir,
+        createLocalTranscriptManifest({
+          migratedFrom: "versioned-pi-ai-message-jsonl",
+        }),
+      );
+      const metadata = this.transcriptMetadataByConversationKey.get(key);
+      if (metadata) {
+        this.transcriptMetadataByConversationKey.set(key, {
+          ...metadata,
+          messageFormat: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+        });
       }
+      activeMessageFormat = LOCAL_TRANSCRIPT_MESSAGE_FORMAT;
+    }
+
+    if (activeMessageFormat !== LOCAL_TRANSCRIPT_MESSAGE_FORMAT) return;
+
+    if (options.transcript === "append" && options.message) {
+      this.appendConversationSessionMessageEntry(
+        key,
+        conversation,
+        messagesPath,
+        options.message,
+      );
       return;
     }
 
-    if (
-      options.transcript === "append" &&
-      options.message &&
-      existsSync(messagesPath)
-    ) {
-      this.appendConversationSessionEntry(key, messagesPath, options.message);
+    if (options.transcript === "append-compaction" && options.compaction) {
+      this.appendConversationSessionCompactionEntry(
+        key,
+        conversation,
+        messagesPath,
+        options.compaction,
+      );
       return;
     }
 
@@ -2765,6 +2915,7 @@ export class LocalStore {
       this.loadedConversationKeys.has(key) ||
       !existsSync(messagesPath)
     ) {
+      if (messages.length === 0) return;
       this.rewriteConversationSessionTranscript(
         key,
         conversation,
@@ -2780,57 +2931,135 @@ export class LocalStore {
     messagesPath: string,
     messages: readonly LocalMessage[],
   ): void {
-    writeFileSync(
-      messagesPath,
-      jsonl(localTranscriptSessionEntries(conversation, messages)),
-    );
-    this.resetPersistedSessionState(
-      key,
-      LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
-      messages,
-    );
+    if (messages.length === 0) return;
+    const entries = localTranscriptSessionEntries(conversation, messages);
+    writeFileSync(messagesPath, jsonl(entries));
+    this.resetPersistedSessionStateFromEntries(key, entries);
+  }
+
+  private appendConversationSessionMessageEntry(
+    key: string,
+    conversation: StoredConversation,
+    messagesPath: string,
+    message: LocalMessage,
+  ): void {
+    const entryIdByMessageId = this.sessionEntryIdsByMessageId(key);
+    if (entryIdByMessageId.has(message.id)) return;
+
+    this.ensureConversationTranscriptHeader(conversation, messagesPath);
+    const parentId = this.lastSessionEntryIdByConversationKey.get(key) ?? null;
+    const entry: LocalTranscriptSessionMessageEntry = {
+      type: "message",
+      id: this.nextSessionEntryId(key),
+      parentId,
+      timestamp: localMessageDate(message, currentIsoTimestamp()),
+      message,
+    };
+    this.appendConversationSessionEntry(key, messagesPath, entry);
+  }
+
+  private appendConversationSessionCompactionEntry(
+    key: string,
+    conversation: StoredConversation,
+    messagesPath: string,
+    compaction: NonNullable<LocalTranscriptPersistOptions["compaction"]>,
+  ): void {
+    const entryIdByMessageId = this.sessionEntryIdsByMessageId(key);
+    if (entryIdByMessageId.has(compaction.summaryMessage.id)) return;
+
+    this.ensureConversationTranscriptHeader(conversation, messagesPath);
+    const parentId = this.lastSessionEntryIdByConversationKey.get(key) ?? null;
+    const entry: LocalTranscriptCompactionEntry = {
+      type: "compaction",
+      id: this.nextSessionEntryId(key),
+      parentId,
+      timestamp: localMessageDate(
+        compaction.summaryMessage,
+        currentIsoTimestamp(),
+      ),
+      summary: compaction.summary,
+      firstKeptEntryId: compaction.firstKeptMessageId
+        ? (entryIdByMessageId.get(compaction.firstKeptMessageId) ?? null)
+        : null,
+      tokensBefore: compaction.stats?.context_tokens_before ?? 0,
+      message: compaction.summaryMessage,
+      ...(compaction.stats ? { details: { stats: compaction.stats } } : {}),
+    };
+    this.appendConversationSessionEntry(key, messagesPath, entry);
   }
 
   private appendConversationSessionEntry(
     key: string,
     messagesPath: string,
-    message: LocalMessage,
+    entry: LocalTranscriptAppendEntry,
   ): void {
-    let persistedIds =
-      this.persistedSessionMessageIdsByConversationKey.get(key);
-    if (!persistedIds) {
-      persistedIds = new Set<string>();
-      this.persistedSessionMessageIdsByConversationKey.set(key, persistedIds);
-    }
-    if (persistedIds.has(message.id)) return;
-
-    const parentId = this.lastSessionEntryIdByConversationKey.get(key) ?? null;
-    const entry: LocalTranscriptSessionMessageEntry = {
-      type: "message",
-      id: message.id,
-      parentId,
-      timestamp: localMessageDate(message, currentIsoTimestamp()),
-      message,
-    };
     appendFileSync(messagesPath, `${JSON.stringify(entry)}\n`);
-    persistedIds.add(message.id);
+    this.sessionEntryIds(key).add(entry.id);
+    this.sessionEntryIdsByMessageId(key).set(entry.message.id, entry.id);
     this.lastSessionEntryIdByConversationKey.set(key, entry.id);
+  }
+
+  private ensureConversationTranscriptHeader(
+    conversation: StoredConversation,
+    messagesPath: string,
+  ): void {
+    if (existsSync(messagesPath) && statSync(messagesPath).size > 0) return;
+    writeFileSync(
+      messagesPath,
+      `${JSON.stringify(createLocalTranscriptSessionHeader(conversation))}\n`,
+    );
   }
 
   private resetPersistedSessionState(
     key: string,
     messageFormat: LocalTranscriptMessageFormat,
-    messages: readonly LocalMessage[],
+    transcript: LocalTranscriptRowsResult,
   ): void {
     if (messageFormat !== LOCAL_TRANSCRIPT_MESSAGE_FORMAT) return;
-    this.persistedSessionMessageIdsByConversationKey.set(
+    this.sessionEntryIdsByConversationKey.set(key, transcript.entryIds);
+    this.sessionEntryIdByMessageIdByConversationKey.set(
       key,
-      new Set(messages.map((message) => message.id)),
+      transcript.entryIdByMessageId,
     );
-    this.lastSessionEntryIdByConversationKey.set(
+    this.lastSessionEntryIdByConversationKey.set(key, transcript.lastEntryId);
+  }
+
+  private resetPersistedSessionStateFromEntries(
+    key: string,
+    entries: readonly LocalTranscriptSessionEntry[],
+  ): void {
+    this.resetPersistedSessionState(
       key,
-      messages.at(-1)?.id ?? null,
+      LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+      localTranscriptRowsResult(entries, LOCAL_TRANSCRIPT_MESSAGE_FORMAT),
     );
+  }
+
+  private sessionEntryIds(key: string): Set<string> {
+    let entryIds = this.sessionEntryIdsByConversationKey.get(key);
+    if (!entryIds) {
+      entryIds = new Set<string>();
+      this.sessionEntryIdsByConversationKey.set(key, entryIds);
+    }
+    return entryIds;
+  }
+
+  private sessionEntryIdsByMessageId(key: string): Map<string, string> {
+    let entryIds = this.sessionEntryIdByMessageIdByConversationKey.get(key);
+    if (!entryIds) {
+      entryIds = new Map<string, string>();
+      this.sessionEntryIdByMessageIdByConversationKey.set(key, entryIds);
+    }
+    return entryIds;
+  }
+
+  private nextSessionEntryId(key: string): string {
+    const entryIds = this.sessionEntryIds(key);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const id = randomUUID().slice(0, 8);
+      if (!entryIds.has(id)) return id;
+    }
+    return randomUUID();
   }
 
   private persistCompiledSystemPrompt(

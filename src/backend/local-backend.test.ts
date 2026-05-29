@@ -42,7 +42,12 @@ async function firstConversationDir(storageDir: string): Promise<string> {
   expect(entries.length).toBeGreaterThan(0);
   for (const entry of entries) {
     const dir = join(storageDir, "conversations", entry);
-    const raw = await readFile(join(dir, "messages.jsonl"), "utf8");
+    let raw: string;
+    try {
+      raw = await readFile(join(dir, "messages.jsonl"), "utf8");
+    } catch {
+      continue;
+    }
     const rows = raw
       .split("\n")
       .filter((line) => line.trim().length > 0)
@@ -553,6 +558,62 @@ describe("local backend pi transcript", () => {
     await backend.compactConversationMessages(conversation.id, {
       agent_id: agent.id,
     } as never);
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const entriesAfterCompaction = (
+      await readFile(join(conversationDir, "messages.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entriesAfterCompaction.map((entry) => entry.type)).toEqual([
+      "session",
+      "message",
+      "message",
+      "compaction",
+    ]);
+    const messageEntries = entriesAfterCompaction.filter(
+      (entry) => entry.type === "message",
+    );
+    expect(
+      messageEntries.map(
+        (entry) => (entry.message as Record<string, unknown> | undefined)?.id,
+      ),
+    ).toEqual(["ui-msg-1", "ui-msg-2"]);
+    expect(
+      messageEntries.every(
+        (entry) => entry.id !== (entry.message as Record<string, unknown>).id,
+      ),
+    ).toBe(true);
+    const compactionEntry = entriesAfterCompaction.at(-1) as Record<
+      string,
+      unknown
+    >;
+    expect(compactionEntry).toMatchObject({
+      type: "compaction",
+      parentId: messageEntries.at(-1)?.id,
+      summary: "Compacted summary.",
+    });
+    expect(
+      (compactionEntry.message as Record<string, unknown> | undefined)?.id,
+    ).toBe("ui-msg-3");
+
+    const reloadedAfterCompaction = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    const activeAfterCompaction = pageItems(
+      await reloadedAfterCompaction.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(activeAfterCompaction.map((message) => message.id)).toEqual([
+      "ui-msg-3",
+    ]);
+
     await drain(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: agent.id,

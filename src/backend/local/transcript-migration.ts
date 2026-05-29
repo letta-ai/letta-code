@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -84,7 +85,7 @@ function writeSessionEntryJsonl(
     ...messages.map((message) => {
       const entry = {
         type: "message",
-        id: message.id,
+        id: randomUUID().slice(0, 8),
         parentId,
         timestamp:
           message.metadata?.created_at ??
