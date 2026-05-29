@@ -35,6 +35,16 @@ Letta Code is a frontier coding agent and can also be used as a long-lived perso
 
 See the full list of slash commands in our [documentation](https://docs.letta.com/letta-code/slash-commands).
 
+## Skills
+
+Install skills into a specific agent's MemFS with `letta install <skill> --agent <agent-id>`.
+
+| Source | Example | How it resolves |
+|---|---|---|
+| Hermes official optional skills | `official/finance/stocks` | `https://github.com/NousResearch/hermes-agent.git`, subdirectory `optional-skills/finance/stocks` |
+| GitHub repositories/directories | `https://github.com/owner/repo`, `https://github.com/owner/repo/tree/main/path/to/skill`, `https://github.com/owner/repo/blob/main/path/to/skill/SKILL.md`, `owner/repo/path/to/skill` | Uses the repository or skill directory; branch/path ambiguity is handled by checking remote branch names first |
+| ClawHub registry skills | `clawhub/<slug>`, `clawhub:<slug>`, `clawhub:<slug>@<version>`, `https://clawhub.ai/skills/<slug>` | Reads metadata from `https://clawhub.ai/api/v1/skills/<slug>`, uses `latestVersion.version`/`tags.latest` when no version is specified, then downloads from `/api/v1/download` |
+
 ## Get started
 
 Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm):
