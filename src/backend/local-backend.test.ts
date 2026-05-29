@@ -42,8 +42,23 @@ async function firstConversationDir(storageDir: string): Promise<string> {
   expect(entries.length).toBeGreaterThan(0);
   for (const entry of entries) {
     const dir = join(storageDir, "conversations", entry);
-    const raw = await readFile(join(dir, "messages.jsonl"), "utf8");
-    if (raw.trim().length > 0) return dir;
+    let raw: string;
+    try {
+      raw = await readFile(join(dir, "messages.jsonl"), "utf8");
+    } catch {
+      continue;
+    }
+    const rows = raw
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    if (
+      rows.some(
+        (row) => row.type === "message" || Object.hasOwn(row, "content"),
+      )
+    ) {
+      return dir;
+    }
   }
   const firstEntry = entries[0];
   if (!firstEntry)
@@ -543,6 +558,62 @@ describe("local backend pi transcript", () => {
     await backend.compactConversationMessages(conversation.id, {
       agent_id: agent.id,
     } as never);
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const entriesAfterCompaction = (
+      await readFile(join(conversationDir, "messages.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entriesAfterCompaction.map((entry) => entry.type)).toEqual([
+      "session",
+      "message",
+      "message",
+      "compaction",
+    ]);
+    const messageEntries = entriesAfterCompaction.filter(
+      (entry) => entry.type === "message",
+    );
+    expect(
+      messageEntries.map(
+        (entry) => (entry.message as Record<string, unknown> | undefined)?.id,
+      ),
+    ).toEqual(["ui-msg-1", "ui-msg-2"]);
+    expect(
+      messageEntries.every(
+        (entry) => entry.id !== (entry.message as Record<string, unknown>).id,
+      ),
+    ).toBe(true);
+    const compactionEntry = entriesAfterCompaction.at(-1) as Record<
+      string,
+      unknown
+    >;
+    expect(compactionEntry).toMatchObject({
+      type: "compaction",
+      parentId: messageEntries.at(-1)?.id,
+      summary: "Compacted summary.",
+    });
+    expect(
+      (compactionEntry.message as Record<string, unknown> | undefined)?.id,
+    ).toBe("ui-msg-3");
+
+    const reloadedAfterCompaction = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    const activeAfterCompaction = pageItems(
+      await reloadedAfterCompaction.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(activeAfterCompaction.map((message) => message.id)).toEqual([
+      "ui-msg-3",
+    ]);
+
     await drain(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: agent.id,
@@ -879,14 +950,18 @@ describe("local backend pi transcript", () => {
       await readFile(join(dir, "manifest.json"), "utf8"),
     );
     expect(manifest).toMatchObject({
-      schema_version: 1,
-      message_format: "pi-ai-message-jsonl",
+      schema_version: 2,
+      message_format: "pi-session-entry-jsonl",
       provider_stack: "pi-ai",
     });
-    const messages = (await readFile(join(dir, "messages.jsonl"), "utf8"))
+    const entries = (await readFile(join(dir, "messages.jsonl"), "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entries[0]).toMatchObject({ type: "session", version: 3 });
+    const messages = entries
+      .filter((entry) => entry.type === "message")
+      .map((entry) => entry.message as Record<string, unknown>);
     expect(messages.every((message) => "content" in message)).toBe(true);
     expect(JSON.stringify(messages)).not.toContain('"parts"');
 
@@ -1063,12 +1138,16 @@ describe("local backend pi transcript", () => {
     });
 
     const conversationDir = await firstConversationDir(storageDir);
-    const messages = (
+    const entries = (
       await readFile(join(conversationDir, "messages.jsonl"), "utf8")
     )
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entries[0]).toMatchObject({ type: "session", version: 3 });
+    const messages = entries
+      .filter((entry) => entry.type === "message")
+      .map((entry) => entry.message as Record<string, unknown>);
     expect(messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
@@ -1078,6 +1157,26 @@ describe("local backend pi transcript", () => {
     const finalAssistant = messages.at(-1) as { content?: unknown[] };
     expect(finalAssistant.content).toEqual([
       { type: "text", text: "Tool result received." },
+    ]);
+
+    const reloadedBackend = new LocalBackend({
+      storageDir,
+      stream,
+      memfsEnabled: false,
+    });
+    const reloadedMessages = pageItems(
+      await reloadedBackend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(reloadedMessages.map((message) => message.message_type)).toEqual([
+      "user_message",
+      "assistant_message",
+      "reasoning_message",
+      "approval_request_message",
+      "tool_return_message",
+      "assistant_message",
     ]);
   });
 
@@ -1173,9 +1272,17 @@ describe("local backend pi transcript", () => {
     expect(manifest.migrated_from).toBe(
       "versioned-pi-transcript-with-legacy-ui-message-rows",
     );
-    const converted = JSON.parse(
-      (await readFile(join(conversationDir, "messages.jsonl"), "utf8")).trim(),
-    );
+    expect(manifest.schema_version).toBe(2);
+    expect(manifest.message_format).toBe("pi-session-entry-jsonl");
+    const convertedEntries = (
+      await readFile(join(conversationDir, "messages.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(convertedEntries[0]).toMatchObject({ type: "session" });
+    const converted = convertedEntries.find((entry) => entry.type === "message")
+      ?.message as Record<string, unknown>;
     expect(converted).toMatchObject({
       id: "ui-msg-1",
       role: "user",
@@ -1228,12 +1335,18 @@ describe("local backend pi transcript", () => {
       await readFile(join(conversationDir, "manifest.json"), "utf8"),
     );
     expect(manifest.provider_stack).toBe("pi-ai");
-    const converted = (
+    expect(manifest.schema_version).toBe(2);
+    expect(manifest.message_format).toBe("pi-session-entry-jsonl");
+    const convertedEntries = (
       await readFile(join(conversationDir, "messages.jsonl"), "utf8")
     )
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { role: string });
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(convertedEntries[0]).toMatchObject({ type: "session" });
+    const converted = convertedEntries
+      .filter((entry) => entry.type === "message")
+      .map((entry) => entry.message as { role: string });
     expect(converted.map((message) => message.role)).toEqual([
       "user",
       "assistant",

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -10,6 +11,7 @@ import { join } from "node:path";
 import { isRecord } from "@/utils/type-guards";
 import { emptyLocalUsage, type LocalMessage } from "./local-message";
 import {
+  LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
   LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
   LOCAL_TRANSCRIPT_PROVIDER_STACK,
   LOCAL_TRANSCRIPT_SCHEMA_VERSION,
@@ -64,6 +66,37 @@ function writeJsonl(path: string, items: unknown[]): void {
     path,
     `${items.map((item) => JSON.stringify(item)).join("\n")}\n`,
   );
+}
+
+function writeSessionEntryJsonl(
+  path: string,
+  messages: LocalMessage[],
+  input: { conversationId: string; createdAt?: string },
+): void {
+  let parentId: string | null = null;
+  const entries = [
+    {
+      type: "session",
+      version: 3,
+      id: input.conversationId,
+      timestamp: input.createdAt ?? new Date().toISOString(),
+      cwd: process.cwd(),
+    },
+    ...messages.map((message) => {
+      const entry = {
+        type: "message",
+        id: randomUUID().slice(0, 8),
+        parentId,
+        timestamp:
+          message.metadata?.created_at ??
+          new Date(message.timestamp).toISOString(),
+        message,
+      };
+      parentId = entry.id;
+      return entry;
+    }),
+  ];
+  writeJsonl(path, entries);
 }
 
 function timestampForLegacy(message: Record<string, unknown>): number {
@@ -404,9 +437,23 @@ export function migrateLocalBackendTranscripts(input: {
     const messagesPath = join(conversationDir, "messages.jsonl");
     const manifestPath = join(conversationDir, "manifest.json");
     const hasManifest = existsSync(manifestPath);
+    const existingManifest = hasManifest
+      ? (() => {
+          try {
+            return JSON.parse(readFileSync(manifestPath, "utf8")) as {
+              message_format?: unknown;
+            };
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined;
+    const hasLegacyPiManifest =
+      existingManifest?.message_format ===
+      LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT;
     const legacyMessages = readJsonl(messagesPath);
     const hasLegacyUiRows = legacyMessages.some(isLegacyUiMessage);
-    if (hasManifest && !hasLegacyUiRows) {
+    if (hasManifest && !hasLegacyUiRows && !hasLegacyPiManifest) {
       result.skipped.push({ conversationDir, reason: "already-versioned" });
       continue;
     }
@@ -421,7 +468,8 @@ export function migrateLocalBackendTranscripts(input: {
       }
       continue;
     }
-    const repairVersioned = hasManifest && hasLegacyUiRows;
+    const repairVersioned =
+      hasManifest && (hasLegacyUiRows || hasLegacyPiManifest);
 
     // Compute the max numeric ID across all messages so that step-split
     // messages get fresh, non-colliding sequential IDs. We check both
@@ -448,16 +496,28 @@ export function migrateLocalBackendTranscripts(input: {
     const backupPath = `${messagesPath}.pre-pi-backup-${timestampSuffix()}`;
     if (!input.dryRun) {
       copyFileSync(messagesPath, backupPath);
-      writeJsonl(messagesPath, converted);
+      const conversationPath = join(conversationDir, "conversation.json");
+      let conversation: Record<string, unknown> | undefined;
+      if (existsSync(conversationPath)) {
+        try {
+          conversation = JSON.parse(readFileSync(conversationPath, "utf8"));
+        } catch {
+          conversation = undefined;
+        }
+      }
+      writeSessionEntryJsonl(messagesPath, converted, {
+        conversationId:
+          typeof conversation?.id === "string" ? conversation.id : name,
+        createdAt:
+          typeof conversation?.created_at === "string"
+            ? conversation.created_at
+            : undefined,
+      });
 
       // Remap in_context_message_ids in conversation.json for any
       // legacy assistant messages that were split into multiple messages.
-      const conversationPath = join(conversationDir, "conversation.json");
-      if (existsSync(conversationPath) && idRemapping.size > 0) {
+      if (conversation && idRemapping.size > 0) {
         try {
-          const conversation = JSON.parse(
-            readFileSync(conversationPath, "utf8"),
-          );
           if (Array.isArray(conversation.in_context_message_ids)) {
             const remapped: string[] = [];
             for (const id of conversation.in_context_message_ids) {
@@ -489,7 +549,9 @@ export function migrateLocalBackendTranscripts(input: {
           manifest({
             backupPath,
             migratedFrom: repairVersioned
-              ? "versioned-pi-transcript-with-legacy-ui-message-rows"
+              ? hasLegacyUiRows
+                ? "versioned-pi-transcript-with-legacy-ui-message-rows"
+                : "versioned-pi-ai-message-jsonl"
               : undefined,
           }),
           null,
