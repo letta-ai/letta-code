@@ -46,10 +46,10 @@ letta messages list [options]
 | `--before <message-id>` | Get messages before this ID (cursor) |
 | `--order <asc\|desc>` | Sort order (default: desc = newest first) |
 | `--limit <n>` | Max results (default: 20) |
-| `--agent <id>` | Agent ID from the search result |
+| `--agent <id>` | Agent ID from the search result; required when `conversation_id` is `default` |
 | `--conversation <id>` | Conversation ID from the search result |
 
-Always include both `--agent` and `--conversation` from the search result when expanding context.
+Use `--conversation` from the search result when expanding context. Also include `--agent` from the search result when available, and always include it when `conversation_id` is `default`.
 
 ### Search Strategies
 

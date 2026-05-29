@@ -425,6 +425,7 @@ export function searchLocalTranscriptMessages(
   const agentId = typeof body.agent_id === "string" ? body.agent_id : undefined;
   const conversationId =
     typeof body.conversation_id === "string" ? body.conversation_id : undefined;
+  if (conversationId === "default" && !agentId) return [];
   const startDate =
     typeof body.start_date === "string" ? body.start_date : undefined;
   const endDate = typeof body.end_date === "string" ? body.end_date : undefined;

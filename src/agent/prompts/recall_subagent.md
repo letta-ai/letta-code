@@ -50,10 +50,10 @@ letta messages list [options]
 | `--before <message-id>` | Get messages before this ID (cursor) |
 | `--order <asc\|desc>` | Sort order (default: desc = newest first) |
 | `--limit <n>` | Max results (default: 20) |
-| `--agent <id>` | Agent ID from the search result |
+| `--agent <id>` | Agent ID from the search result; required when `conversation_id` is `default` |
 | `--conversation <id>` | Conversation ID from the search result |
 
-Always include both `--agent` and `--conversation` from the search result when expanding context.
+Use `--conversation` from the search result when expanding context. Also include `--agent` from the search result when available, and always include it when `conversation_id` is `default`.
 
 ### Search Strategies
 
@@ -64,7 +64,7 @@ Always include both `--agent` and `--conversation` from the search result when e
    letta messages search --query "topic keywords" --limit 5
    ```
 
-2. Note the `message_id`, `agent_id`, and `conversation_id` of the most relevant result.
+2. Note the `message_id`, `conversation_id`, and `agent_id` of the most relevant result.
 
 3. Expand before to get leading context:
    ```bash

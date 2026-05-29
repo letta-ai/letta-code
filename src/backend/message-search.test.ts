@@ -238,6 +238,67 @@ describe("message search backend routing", () => {
     }
   });
 
+  test("requires agent scope for default conversation local transcript search", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-message-search-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      const agentA = await backend.createAgent({
+        name: "Default Search Agent A",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+      const agentB = await backend.createAgent({
+        name: "Default Search Agent B",
+        model: "openai/gpt-test",
+      } as AgentCreateBody);
+
+      await drain(
+        await backend.createConversationMessageStream(
+          "default",
+          createBody("LOCAL_DEFAULT_SCOPE_NEEDLE agent a", agentA.id),
+        ),
+      );
+      await drain(
+        await backend.createConversationMessageStream(
+          "default",
+          createBody("LOCAL_DEFAULT_SCOPE_NEEDLE agent b", agentB.id),
+        ),
+      );
+
+      const unscopedDefaultResults = await searchMessagesForBackend(
+        {
+          query: "LOCAL_DEFAULT_SCOPE_NEEDLE",
+          conversation_id: "default",
+          search_mode: "fts",
+          limit: 10,
+        },
+        backend,
+      );
+      expect(unscopedDefaultResults).toHaveLength(0);
+
+      const scopedDefaultResults = await searchMessagesForBackend(
+        {
+          query: "LOCAL_DEFAULT_SCOPE_NEEDLE",
+          agent_id: agentA.id,
+          conversation_id: "default",
+          search_mode: "fts",
+          limit: 10,
+        },
+        backend,
+      );
+      expect(scopedDefaultResults.length).toBeGreaterThan(0);
+      expect(
+        scopedDefaultResults.every((result) => result.agent_id === agentA.id),
+      ).toBe(true);
+      expect(JSON.stringify(scopedDefaultResults)).toContain("agent a");
+      expect(JSON.stringify(scopedDefaultResults)).not.toContain("agent b");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("searches legacy local transcript rows with date filters", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-message-search-"));
     try {

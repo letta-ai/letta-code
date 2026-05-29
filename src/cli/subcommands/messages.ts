@@ -53,6 +53,8 @@ Search options:
   --all-agents          Search all agents, not just current agent
   --agent <id>          Explicit agent ID (overrides LETTA_AGENT_ID)
   --agent-id <id>       Alias for --agent
+  --conversation <id>   Conversation ID to search; "default" requires an agent
+  --conversation-id <id> Alias for --conversation
 
 List options:
   --agent <id>          Agent ID (overrides LETTA_AGENT_ID)
@@ -337,29 +339,56 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
       }
 
       const allAgents = parsed.values["all-agents"] ?? false;
+      const explicitAgentId =
+        parsed.values.agent || parsed.values["agent-id"] || "";
       const agentId = getAgentId(
         parsed.values.agent,
         parsed.values["agent-id"],
       );
       const conversationId =
         parsed.values.conversation || parsed.values["conversation-id"];
+      if (conversationId === "default") {
+        if (!agentId) {
+          console.error(
+            'Conversation "default" requires an agent id. Set LETTA_AGENT_ID or pass --agent/--agent-id.',
+          );
+          return 1;
+        }
+        if (allAgents) {
+          console.error(
+            'Conversation "default" requires a single agent id; do not combine --all-agents with --conversation default.',
+          );
+          return 1;
+        }
+      }
       if (!allAgents && !agentId && !conversationId) {
         console.error(
           "Missing search scope. Set LETTA_AGENT_ID, pass --agent/--agent-id, pass --conversation, or use --all-agents.",
         );
         return 1;
       }
+      const scopedAgentId =
+        conversationId === "default"
+          ? agentId
+          : conversationId
+            ? explicitAgentId || undefined
+            : allAgents
+              ? undefined
+              : agentId || undefined;
 
-      const result = await searchMessagesForBackend({
+      const searchBody = {
         query,
-        agent_id: allAgents ? undefined : agentId || undefined,
-        conversation_id:
-          typeof conversationId === "string" ? conversationId : undefined,
         search_mode: parseMode(parsed.values.mode) ?? "hybrid",
         start_date: parsed.values["start-date"],
         end_date: parsed.values["end-date"],
         limit: parseLimit(parsed.values.limit, 10),
-      });
+        ...(scopedAgentId ? { agent_id: scopedAgentId } : {}),
+        ...(typeof conversationId === "string"
+          ? { conversation_id: conversationId }
+          : {}),
+      };
+
+      const result = await searchMessagesForBackend(searchBody);
 
       console.log(JSON.stringify(result, null, 2));
       return 0;
@@ -370,13 +399,6 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         parsed.values.agent,
         parsed.values["agent-id"],
       );
-      if (!agentId) {
-        console.error(
-          "Missing agent id. Set LETTA_AGENT_ID or pass --agent/--agent-id.",
-        );
-        return 1;
-      }
-
       const orderRaw = parsed.values.order;
       const order = parseOrder(orderRaw);
       if (orderRaw !== undefined && !order) {
@@ -388,6 +410,12 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         parsed.values.conversation ||
         parsed.values["conversation-id"] ||
         "default";
+      if (conversationId === "default" && !agentId) {
+        console.error(
+          'Conversation "default" requires an agent id. Set LETTA_AGENT_ID or pass --agent/--agent-id.',
+        );
+        return 1;
+      }
       const listBody = {
         limit: parseLimit(parsed.values.limit, 20),
         after: parsed.values.after,
