@@ -58,11 +58,14 @@ jobs:
                gh pr diff $PR_NUMBER --repo letta-ai/letta-code
                ```
 
-            3. Determine what, if anything, needs updating in letta-cloud. Focus on:
-               - `libs/ui-component-library/src/lib/reusable/FunctionCall/FunctionCall.types.ts` — typed tool schemas for task/bash tools
-               - `libs/ui-component-library/src/lib/reusable/FunctionCall/toolNameUtils.ts` — tool name canonicalization / aliases
-               - Any test files adjacent to the above
-               If the src/tools/ change has no user-visible impact in the cloud UI (e.g. pure impl refactor, no schema/name changes), respond with exactly: `NO_SYNC_NEEDED` and stop.
+            3. Determine what, if anything, needs updating in letta-cloud. Follow the FunctionCall sync pattern and focus on:
+               - `libs/ui-component-library/src/lib/reusable/FunctionCall/toolNameUtils.ts` — add/adjust tool variant detection + canonical naming
+               - `libs/ui-component-library/src/lib/reusable/FunctionCall/FunctionCall.types.ts` — add/adjust Zod literals / typed schemas
+               - `libs/ui-component-library/src/lib/reusable/FunctionCall/FunctionCallPreview.tsx` — renderPreview routing, hasPrettyFunctionCallPreview, and inline summary updates
+               - `libs/ui-component-library/src/lib/reusable/FunctionCall/FunctionCall.tsx` — header/chat prefix behavior (hasCustomChatPrefix, chatPrefix, default-open behavior)
+               - `libs/ui-component-library/src/lib/translations/en.json`, `fr.json`, `cn.json` — add matching translation keys when labels/prefixes/previews change
+               - Adjacent tests for the files above
+               If the src/tools/ change has no user-visible impact in the cloud UI (for example, internal-only refactors with no schema/name/label changes), respond with exactly: `NO_SYNC_NEEDED` and stop.
 
             4. Resolve the PR author's login. For auto-triggered runs it is already set:
                ```bash
