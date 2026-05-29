@@ -4,6 +4,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -78,6 +79,50 @@ export interface AutoReflectionPayload {
   endSnapshotLine: number;
 }
 
+export type ReflectionSliceMode = "unreflected" | "replay";
+
+export interface MultiReflectionTranscriptSlice {
+  conversation_id: string;
+  mode: ReflectionSliceMode;
+  payload_path: string;
+  start_message_id: string;
+  end_message_id: string;
+  start_line: number;
+  end_line: number;
+  end_snapshot_line: number;
+  completed_turns: number;
+  approx_chars: number;
+  last_updated_at?: string;
+}
+
+export interface MultiReflectionManifest {
+  schema_version: 1;
+  type: "multi_transcript_reflection_payload";
+  agent_id: string;
+  created_at: string;
+  selection_policy:
+    | { mode: "recent"; limit: number }
+    | { mode: "explicit-conversations"; conversation_ids: string[] };
+  transcripts: MultiReflectionTranscriptSlice[];
+}
+
+export interface MultiReflectionPayload {
+  payloadPath: string;
+  manifest: MultiReflectionManifest;
+  startMessageId?: string;
+  endMessageId?: string;
+}
+
+export interface ReflectionTranscriptCandidate {
+  conversationId: string;
+  transcriptPath: string;
+  statePath: string;
+  lastUpdatedAt?: string;
+  totalCompletedTurns: number;
+  reflectedCompletedTurns: number;
+  turnsSinceLastSuccessfulReflection: number;
+}
+
 export interface ReflectionPromptInput {
   memoryDir: string;
   parentMemory?: string;
@@ -89,7 +134,10 @@ export function buildReflectionSubagentPrompt(
   const lines: string[] = [];
 
   lines.push(
-    "Review the conversation transcript and update memory files. The current conversation transcript path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit/Read/Write `file_path` is literal and does NOT expand env vars.",
+    "Review the conversation transcript payload and update memory files. The payload path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit/Read/Write `file_path` is literal and does NOT expand env vars.",
+    "",
+    'The payload may be either a JSON message array for one conversation or a `multi_transcript_reflection_payload` manifest. If it is a manifest, read each `payload_path` listed in `transcripts` and synthesize across all conversations. Entries with `mode: "replay"` were already reflected before and are included intentionally for re-review/deduplication; do not ignore them just because they are replay slices.',
+    "When reviewing multiple transcripts, prefer durable patterns and latest evidence across sessions. Resolve contradictions by updating stale memory at the source, deduplicate repeated facts, and avoid storing one-off task state.",
     "",
     `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
     "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
@@ -851,9 +899,16 @@ async function writeState(
   );
 }
 
-function buildPayloadPath(rootDir: string, kind: "auto" | "remember"): string {
+function buildPayloadPath(
+  rootDir: string,
+  kind: "auto" | "remember" | "multi" | "slice",
+): string {
   const nonce = Math.random().toString(36).slice(2, 8);
   return join(rootDir, `payload-${kind}-${nonce}.json`);
+}
+
+function getAgentTranscriptRoot(agentId: string): string {
+  return join(getTranscriptRoot(), sanitizePathSegment(agentId));
 }
 
 export function getReflectionTranscriptPaths(
@@ -996,6 +1051,118 @@ function entriesForSelection(
     .map((row) => row.entry);
 }
 
+function selectReplayTranscriptRange(
+  rows: ParsedTranscriptRow[],
+  maxTurns: number,
+): TranscriptSelection | null {
+  if (rows.length === 0 || maxTurns <= 0) {
+    return null;
+  }
+
+  const endRow = rows.findLast((row) => isEligibleCanonicalEntry(row.entry));
+  if (!endRow || !isEligibleCanonicalEntry(endRow.entry)) {
+    return null;
+  }
+
+  let usersSeen = 0;
+  let startLineIndex = 0;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (!row) continue;
+    if (row.lineIndex > endRow.lineIndex) continue;
+    startLineIndex = row.lineIndex;
+    if (row.entry.kind === "user") {
+      usersSeen += 1;
+      if (usersSeen >= maxTurns) {
+        break;
+      }
+    }
+  }
+
+  const startRow = rows.find(
+    (row) =>
+      row.lineIndex >= startLineIndex &&
+      row.lineIndex <= endRow.lineIndex &&
+      isEligibleCanonicalEntry(row.entry),
+  );
+  if (!startRow || !isEligibleCanonicalEntry(startRow.entry)) {
+    return null;
+  }
+
+  return {
+    startLineIndex,
+    endLineIndex: endRow.lineIndex,
+    startMessageId: startRow.entry.source_message_id,
+    endMessageId: endRow.entry.source_message_id,
+  };
+}
+
+async function getTranscriptLastUpdatedAt(
+  paths: ReflectionTranscriptPaths,
+): Promise<string | undefined> {
+  try {
+    const info = await stat(paths.transcriptPath);
+    return info.mtime.toISOString();
+  } catch {
+    return undefined;
+  }
+}
+
+async function ensureAgentPayloadRoot(agentId: string): Promise<string> {
+  const root = join(
+    getAgentTranscriptRoot(agentId),
+    "multi-reflection-payloads",
+  );
+  await mkdir(root, { recursive: true });
+  return root;
+}
+
+export async function listReflectionTranscriptCandidates(
+  agentId: string,
+): Promise<ReflectionTranscriptCandidate[]> {
+  const agentRoot = getAgentTranscriptRoot(agentId);
+  let entries: Dirent[] = [];
+  try {
+    entries = await readdir(agentRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const candidates: ReflectionTranscriptCandidate[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === "multi-reflection-payloads") {
+      continue;
+    }
+    const conversationId = entry.name;
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    const lines = await readTranscriptLines(paths);
+    if (lines.length === 0) {
+      continue;
+    }
+    const rows = parseTranscriptRows(lines);
+    if (!rows.some((row) => isEligibleCanonicalEntry(row.entry))) {
+      continue;
+    }
+    const state = await readState(paths);
+    candidates.push({
+      conversationId,
+      transcriptPath: paths.transcriptPath,
+      statePath: paths.statePath,
+      lastUpdatedAt: await getTranscriptLastUpdatedAt(paths),
+      totalCompletedTurns: state.total_completed_turns,
+      reflectedCompletedTurns: state.reflected_completed_turns,
+      turnsSinceLastSuccessfulReflection:
+        state.turns_since_last_successful_reflection,
+    });
+  }
+
+  return candidates.sort((a, b) => {
+    const aTime = a.lastUpdatedAt ? Date.parse(a.lastUpdatedAt) : 0;
+    const bTime = b.lastUpdatedAt ? Date.parse(b.lastUpdatedAt) : 0;
+    return bTime - aTime || a.conversationId.localeCompare(b.conversationId);
+  });
+}
+
 export async function getReflectionTranscriptState(
   agentId: string,
   conversationId: string,
@@ -1051,6 +1218,160 @@ export async function buildAutoReflectionPayload(
   });
 }
 
+type MultiReflectionSelectionPolicy =
+  | { mode: "recent"; limit: number }
+  | { mode: "explicit-conversations"; conversationIds: string[] };
+
+export interface BuildMultiReflectionPayloadOptions {
+  agentId: string;
+  selectionPolicy: MultiReflectionSelectionPolicy;
+  systemPrompt?: string;
+  maxReplayTurnsPerConversation?: number;
+  maxTotalChars?: number;
+}
+
+async function resolveMultiReflectionConversationIds(
+  agentId: string,
+  selectionPolicy: MultiReflectionSelectionPolicy,
+): Promise<string[]> {
+  if (selectionPolicy.mode === "explicit-conversations") {
+    return Array.from(new Set(selectionPolicy.conversationIds));
+  }
+
+  const candidates = await listReflectionTranscriptCandidates(agentId);
+  return candidates
+    .slice(0, Math.max(0, selectionPolicy.limit))
+    .map((candidate) => candidate.conversationId);
+}
+
+function manifestSelectionPolicy(
+  selectionPolicy: MultiReflectionSelectionPolicy,
+): MultiReflectionManifest["selection_policy"] {
+  if (selectionPolicy.mode === "recent") {
+    return { mode: "recent", limit: selectionPolicy.limit };
+  }
+  return {
+    mode: "explicit-conversations",
+    conversation_ids: selectionPolicy.conversationIds,
+  };
+}
+
+export async function buildMultiReflectionPayload(
+  options: BuildMultiReflectionPayloadOptions,
+): Promise<MultiReflectionPayload | null> {
+  const {
+    agentId,
+    selectionPolicy,
+    systemPrompt,
+    maxReplayTurnsPerConversation = 50,
+    maxTotalChars = 150_000,
+  } = options;
+  const conversationIds = await resolveMultiReflectionConversationIds(
+    agentId,
+    selectionPolicy,
+  );
+  if (conversationIds.length === 0) {
+    return null;
+  }
+
+  const payloadRoot = await ensureAgentPayloadRoot(agentId);
+  const filteredSystemPrompt = systemPrompt
+    ? filterSystemPromptForReflection(systemPrompt) || undefined
+    : undefined;
+  const transcripts: MultiReflectionTranscriptSlice[] = [];
+  let totalChars = 0;
+  let firstMessageId: string | undefined;
+  let lastMessageId: string | undefined;
+
+  for (const conversationId of conversationIds) {
+    const slice = await withStateLock(agentId, conversationId, async () => {
+      const paths = getReflectionTranscriptPaths(agentId, conversationId);
+      await ensurePaths(paths);
+      const lines = await readTranscriptLines(paths);
+      const rows = parseTranscriptRows(lines);
+      const state = await readState(paths);
+      const unreflectedSelection = selectUnreflectedTranscriptRange(
+        rows,
+        state.reflected_through_message_id,
+      );
+      const mode: ReflectionSliceMode = unreflectedSelection
+        ? "unreflected"
+        : "replay";
+      const selection =
+        unreflectedSelection ??
+        selectReplayTranscriptRange(rows, maxReplayTurnsPerConversation);
+      if (!selection) {
+        return null;
+      }
+
+      const entries = entriesForSelection(rows, selection);
+      const transcript = formatTaggedTranscript(entries, filteredSystemPrompt);
+      if (!transcript || transcript === "[]") {
+        return null;
+      }
+      const approxChars = transcript.length;
+      if (transcripts.length > 0 && totalChars + approxChars > maxTotalChars) {
+        return null;
+      }
+
+      const payloadPath = buildPayloadPath(payloadRoot, "slice");
+      await writeFile(payloadPath, transcript, "utf-8");
+      state.last_reflection_started_at = new Date().toISOString();
+      await writeState(paths, state);
+
+      return {
+        conversation_id: conversationId,
+        mode,
+        payload_path: payloadPath,
+        start_message_id: selection.startMessageId,
+        end_message_id: selection.endMessageId,
+        start_line: selection.startLineIndex,
+        end_line: selection.endLineIndex,
+        end_snapshot_line: selection.endLineIndex + 1,
+        completed_turns: countUserRows(entries),
+        approx_chars: approxChars,
+        last_updated_at: await getTranscriptLastUpdatedAt(paths),
+      } satisfies MultiReflectionTranscriptSlice;
+    });
+
+    if (!slice) {
+      continue;
+    }
+    if (!firstMessageId) {
+      firstMessageId = slice.start_message_id;
+    }
+    lastMessageId = slice.end_message_id;
+    totalChars += slice.approx_chars;
+    transcripts.push(slice);
+  }
+
+  if (transcripts.length === 0) {
+    return null;
+  }
+
+  const manifest: MultiReflectionManifest = {
+    schema_version: 1,
+    type: "multi_transcript_reflection_payload",
+    agent_id: agentId,
+    created_at: new Date().toISOString(),
+    selection_policy: manifestSelectionPolicy(selectionPolicy),
+    transcripts,
+  };
+  const payloadPath = buildPayloadPath(payloadRoot, "multi");
+  await writeFile(
+    payloadPath,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf-8",
+  );
+
+  return {
+    payloadPath,
+    manifest,
+    startMessageId: firstMessageId,
+    endMessageId: lastMessageId,
+  };
+}
+
 export async function finalizeAutoReflectionPayload(
   agentId: string,
   conversationId: string,
@@ -1084,4 +1405,27 @@ export async function finalizeAutoReflectionPayload(
     }
     await writeState(paths, state);
   });
+}
+
+export async function finalizeMultiReflectionPayload(
+  agentId: string,
+  manifest: MultiReflectionManifest,
+  success: boolean,
+): Promise<void> {
+  if (!success) {
+    return;
+  }
+
+  for (const slice of manifest.transcripts) {
+    if (slice.mode !== "unreflected") {
+      continue;
+    }
+    await finalizeAutoReflectionPayload(
+      agentId,
+      slice.conversation_id,
+      slice.payload_path,
+      slice.end_snapshot_line,
+      true,
+    );
+  }
 }
