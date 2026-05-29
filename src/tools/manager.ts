@@ -19,6 +19,7 @@ import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
+import { emitActiveExtensionEvent } from "@/extensions/event-registry";
 import {
   type ExtensionToolDefinition,
   extensionToolRequiresApproval,
@@ -1889,6 +1890,42 @@ function appendHookFeedbackToToolReturn(
   return [...toolReturn, { type: "text" as const, text: feedbackMessage }];
 }
 
+function cloneToolArgsForExtensionEvent(args: ToolArgs): ToolArgs {
+  try {
+    return structuredClone(args);
+  } catch {
+    return { ...args };
+  }
+}
+
+function isToolStartArgs(value: unknown): value is ToolArgs {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function emitToolStartEvent(options: {
+  args: ToolArgs;
+  executionScope: RuntimeContextSnapshot;
+  toolCallId?: string;
+  toolName: string;
+}): Promise<ToolArgs> {
+  const event = {
+    agentId: options.executionScope.agentId ?? null,
+    conversationId: options.executionScope.conversationId ?? null,
+    toolCallId: options.toolCallId ?? null,
+    toolName: options.toolName,
+    args: cloneToolArgsForExtensionEvent(options.args),
+  };
+
+  try {
+    await emitActiveExtensionEvent("tool_start", event);
+  } catch (error) {
+    debugLog("extensions", "tool_start event failed", error);
+    return options.args;
+  }
+
+  return isToolStartArgs(event.args) ? event.args : options.args;
+}
+
 async function executeExtensionTool(
   toolName: string,
   tool: ExtensionToolDefinition,
@@ -2141,21 +2178,39 @@ export async function executeTool(
         status: "error",
       };
     }
-    return executeExtensionTool(name, extensionTool, args, executionScope, {
-      signal: options?.signal,
+    const eventArgs = await emitToolStartEvent({
+      args,
+      executionScope,
       toolCallId: options?.toolCallId,
-      onOutput: options?.onOutput,
-      workingDirectory,
-      scopedAgentId,
+      toolName: name,
     });
+    return executeExtensionTool(
+      name,
+      extensionTool,
+      eventArgs,
+      executionScope,
+      {
+        signal: options?.signal,
+        toolCallId: options?.toolCallId,
+        onOutput: options?.onOutput,
+        workingDirectory,
+        scopedAgentId,
+      },
+    );
   }
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
+    const eventArgs = await emitToolStartEvent({
+      args,
+      executionScope,
+      toolCallId: options?.toolCallId,
+      toolName: name,
+    });
     return executeExternalTool(
       options?.toolCallId ?? `ext-${Date.now()}`,
       name,
-      args as Record<string, unknown>,
+      eventArgs as Record<string, unknown>,
       activeExternalExecutor,
     );
   }
@@ -2186,6 +2241,12 @@ export async function executeTool(
     };
   }
 
+  args = await emitToolStartEvent({
+    args,
+    executionScope,
+    toolCallId: options?.toolCallId,
+    toolName: internalName,
+  });
   const startTime = Date.now();
 
   const run = async (): Promise<ToolExecutionResult> => {

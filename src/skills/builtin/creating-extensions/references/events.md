@@ -8,6 +8,7 @@ This is the first slice of the hooks-v2 direction. The long-term goal is for typ
 
 ```ts
 letta.capabilities.events.lifecycle
+letta.capabilities.events.tools
 letta.capabilities.events.turns
 ```
 
@@ -33,26 +34,27 @@ letta.events.on("event_name", (event, ctx) => {
 });
 ```
 
-Future hook-replacement events should use this same API. For example, a future tool gate should look like:
+Tool events use this same API. Existing settings-based hooks still own blocking decisions and model feedback injection until those contracts are explicitly added to extension events.
 
 ```ts
-letta.events.on("tool_call", (event, ctx) => {
+letta.events.on("tool_start", (event, ctx) => {
   if (event.toolName !== "Bash") return;
-  if (String(event.input.command).includes("rm -rf")) {
-    return { block: true, reason: "Dangerous command" };
+  if (String(event.args.command).startsWith("npm test")) {
+    return { args: { ...event.args, command: "bun test" } };
   }
 });
 ```
 
-Lifecycle and turn-start events are wired today, and existing settings-based hooks still own blocking behavior.
+Lifecycle, turn-start, and tool-start events are wired today.
 
-Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn. `tool_start` handlers can transform the tool arguments before execution.
 
 ## Supported events
 
 ```ts
 "conversation_open"
 "conversation_close"
+"tool_start"
 "turn_start"
 ```
 
@@ -90,6 +92,41 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
   input: Array<MessageCreate | ApprovalCreate>;
 }
 ```
+
+`tool_start` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  toolCallId: string | null;
+  toolName: string;
+  args: Record<string, unknown>;
+}
+```
+
+`tool_start` fires immediately before a client-side tool executes. This includes built-in tools, extension tools, and external tools executed through the local tool manager.
+
+Handlers can inspect `event.args`, mutate it directly, or return replacement args:
+
+```ts
+letta.events.on("tool_start", (event) => {
+  if (event.toolName !== "Bash") return;
+  event.args = {
+    ...event.args,
+    command: String(event.args.command).replaceAll("npm test", "bun test"),
+  };
+});
+
+letta.events.on("tool_start", (event) => {
+  if (event.toolName !== "Read") return;
+  return { args: { ...event.args, limit: 200 } };
+});
+```
+
+Handlers run in registration order. Later handlers see the current args after earlier mutations/returns. If a handler throws, its partial `event.args` mutation is rolled back and the error is recorded as an extension diagnostic.
+
+`tool_start` is intentionally a trusted local extension point: it can rewrite commands, file paths, and other tool inputs before execution. Keep transforms focused and unsurprising. It does not support blocking; use existing hooks for blocking safety decisions.
 
 `turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns.
 

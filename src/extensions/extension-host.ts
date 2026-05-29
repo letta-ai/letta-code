@@ -60,6 +60,7 @@ import type {
   ExtensionRuntimeBackendApi,
   ExtensionTool,
   ExtensionToolRegistration,
+  ExtensionToolStartEvent,
   ExtensionTurnStartEvent,
 } from "@/extensions/types";
 
@@ -603,6 +604,7 @@ function createLazyClient(getClient: () => Promise<Letta>): Letta {
 const SUPPORTED_EXTENSION_EVENT_NAMES = new Set<ExtensionEventName>([
   "conversation_open",
   "conversation_close",
+  "tool_start",
   "turn_start",
 ]);
 
@@ -622,6 +624,8 @@ function isExtensionEventCapabilityEnabled(
     case "conversation_open":
     case "conversation_close":
       return capabilities.events.lifecycle;
+    case "tool_start":
+      return capabilities.events.tools;
     case "turn_start":
       return capabilities.events.turns;
   }
@@ -652,6 +656,34 @@ function cloneTurnStartInput(
   input: ExtensionTurnStartEvent["input"],
 ): ExtensionTurnStartEvent["input"] {
   return input.map((item) => structuredClone(item));
+}
+
+function isToolStartResultWithArgs(
+  name: ExtensionEventName,
+  result: unknown,
+): result is { args: ExtensionToolStartEvent["args"] } {
+  return (
+    name === "tool_start" &&
+    typeof result === "object" &&
+    result !== null &&
+    isToolStartArgs((result as { args?: unknown }).args)
+  );
+}
+
+function isToolStartArgs(
+  value: unknown,
+): value is ExtensionToolStartEvent["args"] {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cloneToolStartArgs(
+  args: ExtensionToolStartEvent["args"],
+): ExtensionToolStartEvent["args"] {
+  try {
+    return structuredClone(args);
+  } catch {
+    return { ...args };
+  }
 }
 
 function validateExtensionCommandId(id: string): void {
@@ -1234,6 +1266,12 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       turnStartEvent && isTurnStartInput(turnStartEvent.input)
         ? cloneTurnStartInput(turnStartEvent.input)
         : null;
+    const toolStartEvent =
+      name === "tool_start" ? (event as ExtensionToolStartEvent) : null;
+    const toolStartArgsBeforeHandler =
+      toolStartEvent && isToolStartArgs(toolStartEvent.args)
+        ? cloneToolStartArgs(toolStartEvent.args)
+        : null;
 
     try {
       const context = getContext();
@@ -1258,6 +1296,9 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       if (isTurnStartResultWithInput(name, result)) {
         (event as ExtensionTurnStartEvent).input = result.input;
       }
+      if (isToolStartResultWithArgs(name, result)) {
+        (event as ExtensionToolStartEvent).args = result.args;
+      }
       if (result != null) {
         results.push(result as NonNullable<ExtensionEventResultMap[TName]>);
       }
@@ -1268,9 +1309,19 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       ) {
         turnStartEvent.input = turnStartInputBeforeHandler;
       }
+      if (
+        toolStartEvent &&
+        toolStartArgsBeforeHandler &&
+        !isToolStartArgs(toolStartEvent.args)
+      ) {
+        toolStartEvent.args = toolStartArgsBeforeHandler;
+      }
     } catch (error) {
       if (turnStartEvent && turnStartInputBeforeHandler) {
         turnStartEvent.input = turnStartInputBeforeHandler;
+      }
+      if (toolStartEvent && toolStartArgsBeforeHandler) {
+        toolStartEvent.args = toolStartArgsBeforeHandler;
       }
       recordExtensionDiagnostic(
         registry,

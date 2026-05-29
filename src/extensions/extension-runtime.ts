@@ -1,4 +1,5 @@
 import type Letta from "@letta-ai/letta-client";
+import { registerExtensionEventEmitter } from "@/extensions/event-registry";
 import {
   type CreateExtensionHostOptions,
   createExtensionHost,
@@ -116,6 +117,15 @@ export function createExtensionRuntime(
     getContext,
   });
 
+  const unregisterEventEmitter = registerExtensionEventEmitter({
+    emitEvent(name, event) {
+      return host.emitEvent(name, event, getBackendApi());
+    },
+    getSnapshot() {
+      return loadState;
+    },
+  });
+
   const buildSnapshot = (): ExtensionRuntimeSnapshot => ({
     registry: host.getSnapshot(),
     ...loadState,
@@ -181,6 +191,7 @@ export function createExtensionRuntime(
     dispose() {
       if (disposed) return;
       disposed = true;
+      unregisterEventEmitter();
       host.dispose();
       unsubscribeHost();
       listeners.clear();

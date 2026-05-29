@@ -41,6 +41,7 @@ describe("headless extension runtime", () => {
       commands: false,
       events: {
         lifecycle: true,
+        tools: true,
         turns: true,
       },
       providers: true,
@@ -123,6 +124,15 @@ describe("headless extension runtime", () => {
           });
           letta.ui.openPanel({ id: "hidden", content: "hidden" });
           letta.ui.setStatus("hidden", "hidden");
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName !== "${toolName}") return;
+            return {
+              args: {
+                ...event.args,
+                message: String(event.args.message) + ":tool_start",
+              },
+            };
+          });
           letta.tools.register({
             name: "${toolName}",
             description: "Echo from headless extension",
@@ -181,10 +191,74 @@ describe("headless extension runtime", () => {
       );
 
       expect(result.status).toBe("success");
-      expect(result.toolReturn).toBe("headless:ok:agent-1:default");
+      expect(result.toolReturn).toBe("headless:ok:tool_start:agent-1:default");
 
       runtime.dispose();
       expect(getExtensionToolDefinition(toolName)).toBeUndefined();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("emits tool_start before built-in tool execution", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "letta-headless-tool-start-"));
+    const extensionDir = path.join(root, "global-extensions");
+    const originalPath = path.join(root, "original.txt");
+    const replacementPath = path.join(root, "replacement.txt");
+    const agent = {
+      id: "agent-1",
+      name: "Amelia",
+      llm_config: { model: "anthropic/claude-sonnet-4" },
+    } as AgentState;
+    const backend = {
+      forkConversation: async () => ({ id: "forked" }),
+      sendMessageStream: async () => (async function* () {})(),
+    } as unknown as Backend;
+
+    try {
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(originalPath, "original content");
+      writeFileSync(replacementPath, "replacement content");
+      writeFileSync(
+        path.join(extensionDir, "tool-start.ts"),
+        `export default function activate(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName !== "Read") return;
+            return { args: { ...event.args, file_path: ${JSON.stringify(replacementPath)} } };
+          });
+        }`,
+      );
+
+      const runtime = createHeadlessExtensionRuntime({
+        agent,
+        backend,
+        cacheDirectory: path.join(root, "extension-cache"),
+        conversationId: "default",
+        globalExtensionsDirectory: extensionDir,
+      });
+
+      await runtime.reload();
+      const prepared =
+        await __headlessTestUtils.prepareHeadlessToolExecutionContext({
+          agentId: agent.id,
+          cachedAgent: agent,
+          conversationId: "default",
+        });
+
+      const result = await executeTool(
+        "Read",
+        { file_path: originalPath },
+        {
+          toolContextId:
+            prepared.preparedToolContext.preparedToolContext.contextId,
+        },
+      );
+
+      expect(result.status).toBe("success");
+      expect(result.toolReturn).toContain("replacement content");
+      expect(result.toolReturn).not.toContain("original content");
+
+      runtime.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
