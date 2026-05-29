@@ -6,7 +6,15 @@
     "rules": {
       "recommended": true,
       "style": {
-        "noDefaultExport": "error"
+        "noDefaultExport": "error",
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "./telemetry": "Use @/telemetry instead of a relative import — relative paths cause the bundler to emit duplicate module copies, breaking the singleton."
+            }
+          }
+        }
       }
     }
   },
