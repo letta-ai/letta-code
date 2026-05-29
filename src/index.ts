@@ -1258,105 +1258,114 @@ async function main(): Promise<void> {
       apiKey = (await refreshStartupOAuthToken(settings)) ?? apiKey;
     }
 
-    // Validate credentials by checking an authenticated endpoint.
-    const { validateCredentialsWithResult } = await import("@/auth/oauth");
-    let credentialValidation = await validateCredentialsWithResult(
-      baseURL,
-      apiKey ?? "",
-    );
-    let isValid = credentialValidation.ok;
+    // Cloud always requires credentials. Self-hosted/local API servers may be
+    // intentionally unauthenticated, so only validate them when a key is present.
+    const shouldValidateCredentials =
+      baseURL === LETTA_CLOUD_API_URL || Boolean(apiKey);
 
-    if (
-      !isValid &&
-      !process.env.LETTA_API_KEY &&
-      baseURL === LETTA_CLOUD_API_URL &&
-      settings.refreshToken
-    ) {
-      const refreshedApiKey = await refreshStartupOAuthToken(settings);
-      if (refreshedApiKey) {
-        apiKey = refreshedApiKey;
-        credentialValidation = await validateCredentialsWithResult(
-          baseURL,
-          apiKey,
-        );
-        isValid = credentialValidation.ok;
-      }
-    }
-    markMilestone("CREDENTIALS_VALIDATED");
-
-    // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
-    // Must run after credentials are validated so OAuth tokens are available.
-    if (isValid) {
-      const { bootstrapBaseToolsIfNeeded } = await import(
-        "@/agent/bootstrap-tools"
+    if (shouldValidateCredentials) {
+      // Validate credentials by checking an authenticated endpoint.
+      const { validateCredentialsWithResult } = await import("@/auth/oauth");
+      let credentialValidation = await validateCredentialsWithResult(
+        baseURL,
+        apiKey ?? "",
       );
-      await bootstrapBaseToolsIfNeeded();
-    }
-
-    if (!isValid) {
-      const validationFailure = credentialValidation.ok
-        ? null
-        : credentialValidation;
-
-      // For headless mode, error out with helpful message
-      if (isHeadless) {
-        console.error("Failed to connect to Letta server");
-        console.error(`Base URL: ${baseURL}`);
-        console.error(
-          "Your credentials may be invalid or the server may be unreachable.",
-        );
-        if (validationFailure?.message) {
-          console.error(`Details: ${validationFailure.message}`);
-        }
-        if (process.env.LETTA_API_KEY) {
-          console.error(
-            "LETTA_API_KEY is set in your environment. Unset or update LETTA_API_KEY, then run `letta` again.",
-          );
-        } else {
-          console.error("Run `letta setup` to re-authenticate.");
-        }
-        process.exit(1);
-      }
-
-      // For interactive mode, show setup flow
-      console.log("Failed to connect to Letta server.");
-      console.log(`Base URL: ${baseURL}\n`);
-      console.log(
-        "Your credentials may be invalid or the server may be unreachable.",
-      );
-      if (process.env.LETTA_API_KEY) {
-        console.log(
-          "LETTA_API_KEY is set in your environment, so setup cannot replace the credential Letta Code is using.",
-        );
-        console.log(
-          "Unset LETTA_API_KEY or update it with a valid API key, then run `letta` again.",
-        );
-        process.exit(1);
-      }
+      let isValid = credentialValidation.ok;
 
       if (
-        validationFailure?.reason === "network_error" ||
-        validationFailure?.reason === "server_unreachable"
+        !isValid &&
+        !process.env.LETTA_API_KEY &&
+        baseURL === LETTA_CLOUD_API_URL &&
+        settings.refreshToken
       ) {
-        if (validationFailure.message) {
-          console.log(`Details: ${validationFailure.message}`);
+        const refreshedApiKey = await refreshStartupOAuthToken(settings);
+        if (refreshedApiKey) {
+          apiKey = refreshedApiKey;
+          credentialValidation = await validateCredentialsWithResult(
+            baseURL,
+            apiKey,
+          );
+          isValid = credentialValidation.ok;
         }
-        console.log(
-          "Setup cannot fix a server reachability problem. Check your network or try again later.",
+      }
+      markMilestone("CREDENTIALS_VALIDATED");
+
+      // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
+      // Must run after credentials are validated so OAuth tokens are available.
+      if (isValid) {
+        const { bootstrapBaseToolsIfNeeded } = await import(
+          "@/agent/bootstrap-tools"
         );
-        process.exit(1);
+        await bootstrapBaseToolsIfNeeded();
       }
 
-      console.log("Let's reauthenticate your setup.\n");
-      const { runSetup } = await import("@/auth/setup");
-      const setupResult = await runSetup({
-        initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu",
-      });
-      if (setupResult.kind === "cancelled") {
-        process.exit(0);
+      if (!isValid) {
+        const validationFailure = credentialValidation.ok
+          ? null
+          : credentialValidation;
+
+        // For headless mode, error out with helpful message
+        if (isHeadless) {
+          console.error("Failed to connect to Letta server");
+          console.error(`Base URL: ${baseURL}`);
+          console.error(
+            "Your credentials may be invalid or the server may be unreachable.",
+          );
+          if (validationFailure?.message) {
+            console.error(`Details: ${validationFailure.message}`);
+          }
+          if (process.env.LETTA_API_KEY) {
+            console.error(
+              "LETTA_API_KEY is set in your environment. Unset or update LETTA_API_KEY, then run `letta` again.",
+            );
+          } else {
+            console.error("Run `letta setup` to re-authenticate.");
+          }
+          process.exit(1);
+        }
+
+        // For interactive mode, show setup flow
+        console.log("Failed to connect to Letta server.");
+        console.log(`Base URL: ${baseURL}\n`);
+        console.log(
+          "Your credentials may be invalid or the server may be unreachable.",
+        );
+        if (process.env.LETTA_API_KEY) {
+          console.log(
+            "LETTA_API_KEY is set in your environment, so setup cannot replace the credential Letta Code is using.",
+          );
+          console.log(
+            "Unset LETTA_API_KEY or update it with a valid API key, then run `letta` again.",
+          );
+          process.exit(1);
+        }
+
+        if (
+          validationFailure?.reason === "network_error" ||
+          validationFailure?.reason === "server_unreachable"
+        ) {
+          if (validationFailure.message) {
+            console.log(`Details: ${validationFailure.message}`);
+          }
+          console.log(
+            "Setup cannot fix a server reachability problem. Check your network or try again later.",
+          );
+          process.exit(1);
+        }
+
+        console.log("Let's reauthenticate your setup.\n");
+        const { runSetup } = await import("@/auth/setup");
+        const setupResult = await runSetup({
+          initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu",
+        });
+        if (setupResult.kind === "cancelled") {
+          process.exit(0);
+        }
+        // After setup, restart main flow
+        return main();
       }
-      // After setup, restart main flow
-      return main();
+    } else {
+      markMilestone("CREDENTIALS_VALIDATED");
     }
   } else {
     markMilestone("CREDENTIALS_VALIDATED");

@@ -74,6 +74,10 @@ describe("local-first setup wiring", () => {
       'initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu"',
     );
     expect(indexSource).toContain('setupResult.kind === "cancelled"');
+    expect(indexSource).toContain("const shouldValidateCredentials =");
+    expect(indexSource).toContain(
+      "baseURL === LETTA_CLOUD_API_URL || Boolean(apiKey)",
+    );
   });
 
   test("startup auto-enters local mode for credentialless new users while honoring saved local preference", () => {
