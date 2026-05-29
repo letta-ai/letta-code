@@ -4,6 +4,7 @@
  */
 
 import Letta from "@letta-ai/letta-client";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 
 export const LETTA_CLOUD_API_URL = "https://api.letta.com";
@@ -36,6 +37,21 @@ export interface OAuthError {
   error: string;
   error_description?: string;
 }
+
+export type CredentialValidationFailureReason =
+  | "invalid_credentials"
+  | "network_error"
+  | "server_unreachable"
+  | "unknown";
+
+export type CredentialValidationResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: CredentialValidationFailureReason;
+      message: string;
+      status?: number;
+    };
 
 function getOAuthAuthHost(): string {
   try {
@@ -356,14 +372,28 @@ export async function revokeToken(refreshToken: string): Promise<void> {
 }
 
 /**
- * Validate credentials by checking health endpoint
- * Validate credentials by checking an authenticated endpoint
- * Uses SDK's agents.list() which requires valid authentication
+ * Validate credentials by checking an authenticated endpoint.
+ * Uses SDK's agents.list() which requires valid authentication.
  */
 export async function validateCredentials(
   baseUrl: string,
   apiKey: string,
 ): Promise<boolean> {
+  return (await validateCredentialsWithResult(baseUrl, apiKey)).ok;
+}
+
+export async function validateCredentialsWithResult(
+  baseUrl: string,
+  apiKey: string,
+): Promise<CredentialValidationResult> {
+  if (!apiKey.trim()) {
+    return {
+      ok: false,
+      reason: "invalid_credentials",
+      message: "Missing API key.",
+    };
+  }
+
   try {
     // Create a temporary client to test authentication
     const client = new Letta({
@@ -375,8 +405,51 @@ export async function validateCredentials(
     // Try to list agents - this requires valid authentication
     await client.agents.list({ limit: 1 });
 
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (error) {
+    return classifyCredentialValidationError(error);
   }
+}
+
+function classifyCredentialValidationError(
+  error: unknown,
+): CredentialValidationResult {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (error instanceof APIError) {
+    if (error.status === 401 || error.status === 403) {
+      return {
+        ok: false,
+        reason: "invalid_credentials",
+        message,
+        status: error.status,
+      };
+    }
+
+    if (error.status >= 500) {
+      return {
+        ok: false,
+        reason: "server_unreachable",
+        message,
+        status: error.status,
+      };
+    }
+
+    return {
+      ok: false,
+      reason: "unknown",
+      message,
+      status: error.status,
+    };
+  }
+
+  if (
+    error instanceof TypeError ||
+    message.toLowerCase().includes("fetch failed") ||
+    message.toLowerCase().includes("network")
+  ) {
+    return { ok: false, reason: "network_error", message };
+  }
+
+  return { ok: false, reason: "unknown", message };
 }
