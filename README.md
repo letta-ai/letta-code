@@ -127,7 +127,7 @@ letta server --env-name "work-laptop"
 
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
 
-## Installing Skills
+## Installing external skills
 
 Install skills into a specific agent's memory with `letta skills install <skill>`: 
 
