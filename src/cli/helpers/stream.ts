@@ -97,6 +97,50 @@ type RunsListClient = {
 };
 
 const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
+const DEFAULT_STREAM_IDLE_COMPLETION_CHECK_MS = 5000;
+const IDLE_COMPLETION_RUN_LOOKUP_TIMEOUT_MS = 5000;
+const STOP_REASON_TYPES = new Set<StopReasonType>([
+  "end_turn",
+  "error",
+  "llm_api_error",
+  "invalid_llm_response",
+  "invalid_tool_call",
+  "max_steps",
+  "max_tokens_exceeded",
+  "no_tool_call",
+  "tool_rule",
+  "cancelled",
+  "insufficient_credits",
+  "requires_approval",
+  "context_window_overflow_in_system_prompt",
+]);
+
+let streamIdleCompletionCheckMs = DEFAULT_STREAM_IDLE_COMPLETION_CHECK_MS;
+
+type StreamNextOutcome =
+  | {
+      result: IteratorResult<LettaStreamingResponse>;
+      type: "next";
+    }
+  | {
+      error: unknown;
+      type: "error";
+    }
+  | {
+      type: "idle";
+    };
+
+type InferredTerminalRun = {
+  fallbackError: string | null;
+  stopReason: StopReasonType;
+};
+
+export function __testSetStreamIdleCompletionCheckMs(
+  nextValue: number | null,
+): void {
+  streamIdleCompletionCheckMs =
+    nextValue ?? DEFAULT_STREAM_IDLE_COMPLETION_CHECK_MS;
+}
 
 function summarizeStreamForDebug(stream: unknown): string {
   if (!stream || typeof stream !== "object") {
@@ -229,6 +273,110 @@ function withTimeout<T>(
   });
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getStreamIdleCompletionCheckMs(): number {
+  return streamIdleCompletionCheckMs;
+}
+
+function inferStopReasonFromRunStatus(status: unknown): StopReasonType | null {
+  switch (status) {
+    case "completed":
+      return "end_turn";
+    case "failed":
+    case "error":
+      return "error";
+    case "cancelled":
+      return "cancelled";
+    case "requires_approval":
+      return "requires_approval";
+    default:
+      return null;
+  }
+}
+
+function isStopReasonType(value: unknown): value is StopReasonType {
+  return (
+    typeof value === "string" && STOP_REASON_TYPES.has(value as StopReasonType)
+  );
+}
+
+function inferStopReasonFromRun(run: Run): StopReasonType | null {
+  const stopReason = (run as { stop_reason?: unknown }).stop_reason;
+  if (isStopReasonType(stopReason)) {
+    return stopReason;
+  }
+
+  return inferStopReasonFromRunStatus(run.status);
+}
+
+async function inferStopReasonForSettledRun(
+  runId: string | null,
+): Promise<InferredTerminalRun | null> {
+  if (!runId) return null;
+
+  try {
+    const run = await withTimeout(
+      getBackend().retrieveRun(runId),
+      IDLE_COMPLETION_RUN_LOOKUP_TIMEOUT_MS,
+      `Run lookup timed out after ${IDLE_COMPLETION_RUN_LOOKUP_TIMEOUT_MS}ms`,
+    );
+    const stopReason = inferStopReasonFromRun(run);
+    if (!stopReason) return null;
+
+    const runStatus = String(run.status);
+    const fallbackError =
+      stopReason === "error"
+        ? `Run ${runId} settled with status ${runStatus} before the stream emitted a terminal stop_reason`
+        : null;
+
+    debugWarn(
+      "stream",
+      "Stream idle after run settled without terminal stop_reason; inferring stopReason=%s (runId=%s, status=%s)",
+      stopReason,
+      runId,
+      runStatus,
+    );
+    telemetry.trackError(
+      "stream_idle_terminal_fallback",
+      `Stream idle after run settled without terminal stop_reason (status=${runStatus})`,
+      "stream_drain",
+      { runId },
+    );
+
+    return { fallbackError, stopReason };
+  } catch (error) {
+    debugLog(
+      "stream",
+      "Stream idle terminal check failed for run %s: %s",
+      runId,
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
+  }
+}
+
+function waitForStreamNext(
+  pendingNext: Promise<IteratorResult<LettaStreamingResponse>>,
+  idleCheckMs: number | null,
+): Promise<StreamNextOutcome> {
+  const nextPromise = pendingNext.then<StreamNextOutcome, StreamNextOutcome>(
+    (result) => ({ result, type: "next" }),
+    (error) => ({ error, type: "error" }),
+  );
+
+  if (idleCheckMs == null || idleCheckMs <= 0) {
+    return nextPromise;
+  }
+
+  return Promise.race([
+    nextPromise,
+    delay(idleCheckMs).then<StreamNextOutcome>(() => ({ type: "idle" })),
+  ]);
+}
+
 function toRunsArray(listResponse: RunsListResponse): Run[] {
   if (Array.isArray(listResponse)) return listResponse;
   if (hasPaginatedItems(listResponse)) {
@@ -352,7 +500,42 @@ export async function drainStream(
       );
     }
 
-    for await (const chunk of stream) {
+    const iterator = asyncIterator.call(
+      stream,
+    ) as AsyncIterator<LettaStreamingResponse>;
+    let pendingNext: Promise<IteratorResult<LettaStreamingResponse>> | null =
+      null;
+
+    while (true) {
+      pendingNext ??= iterator.next();
+      const nextOutcome = await waitForStreamNext(
+        pendingNext,
+        getStreamIdleCompletionCheckMs(),
+      );
+
+      if (nextOutcome.type === "idle") {
+        const inferred = await inferStopReasonForSettledRun(
+          streamProcessor.lastRunId,
+        );
+        if (inferred) {
+          stopReason = inferred.stopReason;
+          fallbackError = inferred.fallbackError;
+          abortStreamController(stream, "settled_run_without_stop_reason");
+          break;
+        }
+        continue;
+      }
+
+      if (nextOutcome.type === "error") {
+        throw nextOutcome.error;
+      }
+
+      pendingNext = null;
+      if (nextOutcome.result.done) {
+        break;
+      }
+
+      const chunk = nextOutcome.result.value;
       lastChunkDebugSummary = summarizeChunkForDebug(chunk);
       recordTuiJsonPayload(
         `stream_chunk:${chunk.message_type ?? "unknown"}`,

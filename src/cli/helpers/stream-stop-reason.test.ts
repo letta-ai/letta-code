@@ -1,10 +1,19 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { getEventListeners } from "node:events";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import { __testSetBackend, type Backend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
-import { drainStream } from "@/cli/helpers/stream";
+import {
+  __testSetStreamIdleCompletionCheckMs,
+  drainStream,
+} from "@/cli/helpers/stream";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
+
+afterEach(() => {
+  __testSetBackend(null);
+  __testSetStreamIdleCompletionCheckMs(null);
+});
 
 function makeStreamWithToolCall(
   toolCallId = "tc-1",
@@ -182,5 +191,41 @@ describe("drainStream stop reason", () => {
     );
 
     expect(result.stopReason).toBe("cancelled");
+  });
+
+  test("infers end_turn when the stream stalls after the run has completed", async () => {
+    __testSetStreamIdleCompletionCheckMs(1);
+    __testSetBackend({
+      async retrieveRun(runId: string) {
+        expect(runId).toBe("run-completed");
+        return {
+          id: runId,
+          status: "completed",
+        };
+      },
+    } as unknown as Backend);
+
+    const fakeStream = {
+      controller: new AbortController(),
+      async *[Symbol.asyncIterator]() {
+        yield {
+          message_type: "assistant_message",
+          content: "OK",
+          run_id: "run-completed",
+          seq_id: 2,
+        } as LettaStreamingResponse;
+        await new Promise(() => {});
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+
+    const result = await drainStream(
+      fakeStream,
+      createBuffers("agent-test"),
+      () => {},
+    );
+
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.sawStopReasonChunk).toBe(false);
+    expect(result.lastRunId).toBe("run-completed");
   });
 });
