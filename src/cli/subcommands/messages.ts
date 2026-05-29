@@ -57,6 +57,8 @@ Search options:
 List options:
   --agent <id>          Agent ID (overrides LETTA_AGENT_ID)
   --agent-id <id>       Alias for --agent
+  --conversation <id>   Conversation ID to list (default: default)
+  --conversation-id <id> Alias for --conversation
   --after <message-id>  Cursor: get messages after this ID
   --before <message-id> Cursor: get messages before this ID
   --order <asc|desc>    Sort order (default: desc = newest first)
@@ -339,16 +341,20 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         parsed.values.agent,
         parsed.values["agent-id"],
       );
-      if (!allAgents && !agentId) {
+      const conversationId =
+        parsed.values.conversation || parsed.values["conversation-id"];
+      if (!allAgents && !agentId && !conversationId) {
         console.error(
-          "Missing agent id. Set LETTA_AGENT_ID or pass --agent/--agent-id.",
+          "Missing search scope. Set LETTA_AGENT_ID, pass --agent/--agent-id, pass --conversation, or use --all-agents.",
         );
         return 1;
       }
 
       const result = await searchMessagesForBackend({
         query,
-        agent_id: allAgents ? undefined : agentId,
+        agent_id: allAgents ? undefined : agentId || undefined,
+        conversation_id:
+          typeof conversationId === "string" ? conversationId : undefined,
         search_mode: parseMode(parsed.values.mode) ?? "hybrid",
         start_date: parsed.values["start-date"],
         end_date: parsed.values["end-date"],
@@ -378,13 +384,23 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
 
-      const response = await backend.listAgentMessages(agentId, {
-        conversation_id: "default",
+      const conversationId =
+        parsed.values.conversation ||
+        parsed.values["conversation-id"] ||
+        "default";
+      const listBody = {
         limit: parseLimit(parsed.values.limit, 20),
         after: parsed.values.after,
         before: parsed.values.before,
         order,
-      });
+      };
+      const response =
+        conversationId === "default"
+          ? await backend.listAgentMessages(agentId, {
+              conversation_id: "default",
+              ...listBody,
+            })
+          : await backend.listConversationMessages(conversationId, listBody);
 
       const messages = pageItems<TranscriptMessage>(response);
       const startDate = parsed.values["start-date"];

@@ -9,10 +9,25 @@ import {
   buildSubagentArgs,
   buildSubagentPrompt,
   getModelHandleFromAgent,
+  recallPromptForBackend,
   resolveSubagentLauncher,
   resolveSubagentModel,
   resolveSubagentWorkingDirectory,
 } from "@/agent/subagents/manager";
+
+describe("recallPromptForBackend", () => {
+  test("uses separate API and local recall prompts", () => {
+    const apiPrompt = recallPromptForBackend("api");
+    const localPrompt = recallPromptForBackend("local");
+
+    expect(apiPrompt).toContain("Semantic similarity search");
+    expect(apiPrompt).not.toContain("transcript-backed exact text search");
+    expect(localPrompt).toContain("transcript-backed exact text search");
+    expect(localPrompt).toContain(
+      "Always include both `--agent` and `--conversation`",
+    );
+  });
+});
 
 describe("resolveSubagentLauncher", () => {
   test("explicit launcher takes precedence over .ts script autodetection", () => {

@@ -95,6 +95,30 @@ export function buildSearchTargetPlan(
   };
 }
 
+export function buildMessageSearchRequestBody(
+  query: string,
+  mode: SearchMode,
+  range: SearchRange,
+  options: { agentId?: string; conversationId?: string; limit?: number },
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    query: query.trim(),
+    search_mode: mode,
+    limit: options.limit ?? SEARCH_LIMIT,
+  };
+
+  if (range === "agent" && options.agentId) {
+    body.agent_id = options.agentId;
+  } else if (range === "conv" && options.conversationId) {
+    body.conversation_id = options.conversationId;
+    if (options.agentId) {
+      body.agent_id = options.agentId;
+    }
+  }
+
+  return body;
+}
+
 /**
  * Format a timestamp in local timezone
  */
@@ -253,18 +277,11 @@ export function MessageSearch({
   // Execute search for a single mode (returns results, doesn't set state)
   const fetchSearchResults = useCallback(
     async (query: string, mode: SearchMode, range: SearchRange) => {
-      const body: Record<string, unknown> = {
-        query: query.trim(),
-        search_mode: mode,
+      const body = buildMessageSearchRequestBody(query, mode, range, {
+        agentId,
+        conversationId,
         limit: SEARCH_LIMIT,
-      };
-
-      // Add filters based on range
-      if (range === "agent" && agentId) {
-        body.agent_id = agentId;
-      } else if (range === "conv" && conversationId) {
-        body.conversation_id = conversationId;
-      }
+      });
 
       return searchMessagesForBackend<MessageSearchResponse>(body);
     },

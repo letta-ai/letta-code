@@ -13,9 +13,11 @@ mock.module("../backend/api/search", () => ({
   warmSearchCache: warmSearchCacheMock,
 }));
 
-const { buildSearchTargetPlan, warmMessageSearchCache } = await import(
-  "@/cli/components/MessageSearch"
-);
+const {
+  buildMessageSearchRequestBody,
+  buildSearchTargetPlan,
+  warmMessageSearchCache,
+} = await import("@/cli/components/MessageSearch");
 
 afterAll(() => {
   mock.restore();
@@ -69,6 +71,24 @@ describe("buildSearchTargetPlan", () => {
         { mode: "vector", range: "agent" },
         { mode: "hybrid", range: "all" },
       ],
+    });
+  });
+});
+
+describe("buildMessageSearchRequestBody", () => {
+  test("includes agent id for current-conversation searches", () => {
+    expect(
+      buildMessageSearchRequestBody(" needle ", "fts", "conv", {
+        agentId: "agent-1",
+        conversationId: "default",
+        limit: 25,
+      }),
+    ).toEqual({
+      query: "needle",
+      search_mode: "fts",
+      limit: 25,
+      agent_id: "agent-1",
+      conversation_id: "default",
     });
   });
 });

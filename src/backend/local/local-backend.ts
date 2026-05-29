@@ -288,6 +288,10 @@ export class LocalBackend extends HeadlessBackend {
     this.memfsEnabledOverride = options.memfsEnabled;
   }
 
+  getLocalStorageDir(): string {
+    return this.storageDir;
+  }
+
   override async listModels() {
     return listLocalModels(this.storageDir) as never;
   }
