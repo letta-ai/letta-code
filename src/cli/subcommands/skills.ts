@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { parseFrontmatter } from "@/utils/frontmatter";
 
 const HERMES_REPO_URL = "https://github.com/NousResearch/hermes-agent.git";
@@ -614,6 +615,16 @@ async function installSkill(
 }
 
 async function getAgentMemoryDir(agentId: string): Promise<string> {
+  if (isLocalAgentId(agentId)) {
+    const { getLocalBackendMemoryFilesystemRoot } = await import(
+      "@/backend/local/paths"
+    );
+    const { initializeLocalMemoryRepo } = await import("@/agent/memory-git");
+    const memoryDir = getLocalBackendMemoryFilesystemRoot(agentId);
+    await initializeLocalMemoryRepo({ memoryDir, agentId, files: [] });
+    return memoryDir;
+  }
+
   const { ensureLocalMemfsCheckout, getScopedMemoryFilesystemRoot } =
     await import("@/agent/memory-filesystem");
   await ensureLocalMemfsCheckout(agentId);
