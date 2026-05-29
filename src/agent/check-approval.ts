@@ -509,10 +509,12 @@ export async function getResumeDataFromBackend(
       };
     } else {
       // For the default conversation, use the agent's in-context message IDs as
-      // the primary anchor, mirroring the explicit-conversation path. Fall back
-      // to the default-conversation message stream only when that anchor is not
-      // available, and keep using the stream for backfill/history.
-      inContextMessageIds = agentWithInContext.in_context_message_ids;
+      // the primary anchor, mirroring the explicit-conversation path. Hosted
+      // AgentState exposes this as message_ids; local compatibility shims may
+      // expose in_context_message_ids. Fall back to the message stream only when
+      // neither anchor is available, and keep using the stream for backfill/history.
+      inContextMessageIds =
+        agentWithInContext.in_context_message_ids ?? agent.message_ids;
       const lastInContextId = inContextMessageIds?.at(-1);
       let defaultConversationMessages: Message[] = [];
       if ((includeMessageHistory && isBackfillEnabled()) || !lastInContextId) {
