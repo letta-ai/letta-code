@@ -14,6 +14,8 @@ import {
  */
 
 const projectRoot = process.cwd();
+const STARTUP_FLOW_CLI_TIMEOUT_MS = 60000;
+const STARTUP_FLOW_TEST_TIMEOUT_MS = 200000;
 
 async function runCli(
   args: string[],
@@ -244,7 +246,7 @@ describe("Startup Flow - Integration", () => {
           "--output-format",
           "json",
         ],
-        { timeoutMs: 180000 },
+        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
       );
 
       expect(result.exitCode).toBe(0);
@@ -254,7 +256,7 @@ describe("Startup Flow - Integration", () => {
 
       testAgentId = String(output.agent_id);
     },
-    { timeout: 190000 },
+    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
   );
 
   test(
@@ -276,14 +278,14 @@ describe("Startup Flow - Integration", () => {
           "--output-format",
           "json",
         ],
-        { timeoutMs: 180000 },
+        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
       );
 
       expect(result.exitCode).toBe(0);
       const output = result.output;
       expect(output.agent_id).toBe(testAgentId);
     },
-    { timeout: 190000 },
+    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
   );
 
   test(
@@ -307,7 +309,7 @@ describe("Startup Flow - Integration", () => {
           "--output-format",
           "json",
         ],
-        { timeoutMs: 180000 },
+        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
       );
       expect(createResult.exitCode).toBe(0);
       const realConversationId = createResult.output.conversation_id;
@@ -329,7 +331,7 @@ describe("Startup Flow - Integration", () => {
           "--output-format",
           "json",
         ],
-        { timeoutMs: 180000 },
+        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
       );
 
       expect(result.exitCode).toBe(0);
@@ -337,7 +339,7 @@ describe("Startup Flow - Integration", () => {
       expect(output.agent_id).toBe(testAgentId);
       expect(output.conversation_id).toBe(realConversationId);
     },
-    { timeout: 180000 },
+    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
   );
 
   test(
@@ -355,7 +357,7 @@ describe("Startup Flow - Integration", () => {
             "--output-format",
             "json",
           ],
-          { timeoutMs: 180000 },
+          { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
         );
         expect(bootstrapResult.exitCode).toBe(0);
         agentIdForTest = String(bootstrapResult.output.agent_id);
@@ -375,7 +377,7 @@ describe("Startup Flow - Integration", () => {
           "--output-format",
           "json",
         ],
-        { timeoutMs: 180000 },
+        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
       );
 
       expect(result.exitCode).toBe(0);
@@ -383,7 +385,7 @@ describe("Startup Flow - Integration", () => {
       expect(output.agent_id).toBe(agentIdForTest);
       expect(output.conversation_id).toBe("default");
     },
-    { timeout: 190000 },
+    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
   );
 
   test(
@@ -401,13 +403,13 @@ describe("Startup Flow - Integration", () => {
           "--output-format",
           "json",
         ],
-        { timeoutMs: 180000 },
+        { timeoutMs: STARTUP_FLOW_CLI_TIMEOUT_MS },
       );
 
       expect(result.exitCode).toBe(0);
       const output = result.output;
       expect(output.agent_id).toBeDefined();
     },
-    { timeout: 190000 },
+    { timeout: STARTUP_FLOW_TEST_TIMEOUT_MS },
   );
 });
