@@ -3,6 +3,7 @@
  * Owns the HTTP request contract and error handling; callers own UX strings and logging.
  */
 import { getVersion } from "@/version.ts";
+import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
 
 export interface RegisterResult {
   connectionId: string;
@@ -92,6 +93,7 @@ export async function registerWithCloud(
         lettaCodeVersion: getVersion(),
         os: process.platform,
         nodeVersion: process.version,
+        supported_commands: SUPPORTED_REMOTE_COMMANDS,
       },
     }),
   }).catch((fetchError: unknown) => {

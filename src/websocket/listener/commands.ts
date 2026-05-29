@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import type WebSocket from "ws";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
@@ -67,6 +68,7 @@ export async function handleExecuteCommand(
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
     connectionId?: string;
+    connectionName?: string;
   },
 ): Promise<void> {
   const scope = {
@@ -147,6 +149,10 @@ export async function handleExecuteCommand(
         );
         break;
 
+      case "upgrade-letta-code":
+        output = await handleUpgradeLettaCodeCommand(opts);
+        break;
+
       default:
         emitSlashCommandEnd(socket, conversationRuntime, scope, {
           command_id: command.command_id,
@@ -182,6 +188,46 @@ export async function handleExecuteCommand(
     // "interrupt_in_progress"). Reset it so subsequent user messages drain.
     conversationRuntime.cancelRequested = false;
   }
+}
+
+async function handleUpgradeLettaCodeCommand(opts: {
+  connectionName?: string;
+}): Promise<string> {
+  const { manualUpdate } = await import("@/updater/auto-update");
+  const result = await manualUpdate();
+
+  if (!result.success) {
+    throw new Error(result.message);
+  }
+
+  if (!result.message.startsWith("Updated to ")) {
+    return result.message;
+  }
+
+  scheduleRemoteRestart(opts.connectionName);
+  return `${result.message}\nRestarting remote listener...`;
+}
+
+function scheduleRemoteRestart(connectionName: string | undefined): void {
+  const entrypoint = process.argv[1];
+  if (!entrypoint || !connectionName) {
+    return;
+  }
+
+  setTimeout(() => {
+    const child = spawn(
+      process.execPath,
+      [entrypoint, "remote", "--env-name", connectionName],
+      {
+        cwd: process.cwd(),
+        detached: true,
+        env: process.env,
+        stdio: "ignore",
+      },
+    );
+    child.unref();
+    process.exit(0);
+  }, 1000).unref();
 }
 
 function emitSlashCommandEnd(

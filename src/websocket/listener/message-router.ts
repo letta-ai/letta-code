@@ -588,6 +588,7 @@ export function createListenerMessageHandler(
           await handleExecuteCommand(parsed, socket, scopedRuntime, {
             onStatusChange: opts.onStatusChange,
             connectionId: opts.connectionId,
+            connectionName: opts.connectionName,
           });
         });
         return;
