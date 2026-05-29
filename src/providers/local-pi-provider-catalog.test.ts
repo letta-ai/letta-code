@@ -75,7 +75,7 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("local Anthropic catalog includes Opus 4.8 override", async () => {
+  test("local Anthropic catalog includes upstream Opus 4.8", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-anthropic-opus-"));
     try {
       await createOrUpdateLocalProvider({

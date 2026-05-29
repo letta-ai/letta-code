@@ -216,7 +216,7 @@ describe("pi model factory", () => {
     }
   });
 
-  test("resolves Anthropic Opus 4.8 from local override catalog", async () => {
+  test("resolves Anthropic Opus 4.8 from the Pi model catalog", async () => {
     const resolved = await resolvePiModelForAgent("anthropic/claude-opus-4-8", {
       provider_type: "anthropic",
     });
@@ -225,7 +225,7 @@ describe("pi model factory", () => {
     expect(resolved.model.id).toBe("claude-opus-4-8");
     expect(resolved.model.api).toBe("anthropic-messages");
     expect(resolved.model.reasoning).toBe(true);
-    expect(resolved.model.contextWindow).toBe(200000);
+    expect(resolved.model.contextWindow).toBe(1000000);
   });
 
   test("maps local Bedrock IAM records to standard AWS env overrides", async () => {

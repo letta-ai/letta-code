@@ -81,11 +81,6 @@ const PI_PROVIDER_ALIASES: Record<string, PiProvider> = {
   "kimi-code": "kimi-coding",
 };
 
-const LOCAL_CATALOG_MODEL_OVERRIDES: Partial<Record<KnownProvider, string[]>> =
-  {
-    anthropic: ["anthropic/claude-opus-4-8"],
-  };
-
 const PI_PROVIDER_OVERRIDES: Partial<
   Record<KnownProvider, PiProviderOverride>
 > = {
@@ -401,9 +396,6 @@ export function listCatalogModelsForProvider(provider: PiProvider): string[] {
   if (spec.piProvider && spec.catalogModelHandle) {
     for (const model of getModels(spec.piProvider)) {
       add(spec.catalogModelHandle(model as Model<Api>));
-    }
-    for (const model of LOCAL_CATALOG_MODEL_OVERRIDES[spec.piProvider] ?? []) {
-      add(model);
     }
   }
 

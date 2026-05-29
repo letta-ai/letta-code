@@ -62,31 +62,6 @@ export interface ResolvedPiModel {
   envOverrides?: Record<string, string | undefined>;
 }
 
-const LOCAL_ANTHROPIC_MODEL_OVERRIDES: Record<
-  string,
-  Model<"anthropic-messages">
-> = {
-  "claude-opus-4-8": {
-    id: "claude-opus-4-8",
-    name: "Claude Opus 4.8",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    compat: { forceAdaptiveThinking: true },
-    reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh" },
-    input: ["text", "image"],
-    cost: {
-      input: 5,
-      output: 25,
-      cacheRead: 0.5,
-      cacheWrite: 6.25,
-    },
-    contextWindow: 200000,
-    maxTokens: 128000,
-  },
-};
-
 export function applyPiEnvOverrides(
   overrides: Record<string, string | undefined> | undefined,
 ): () => void {
@@ -323,10 +298,6 @@ function getCatalogModel(
   modelId: string,
   oauthCredentials?: OAuthCredentials,
 ): Model<Api> | undefined {
-  if (provider === "anthropic") {
-    const override = LOCAL_ANTHROPIC_MODEL_OVERRIDES[modelId];
-    if (override) return override;
-  }
   const spec = getPiProviderSpec(provider);
   if (!spec.piProvider) return undefined;
   const model = getModels(spec.piProvider).find(
