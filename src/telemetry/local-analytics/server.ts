@@ -129,8 +129,11 @@ function html(): string {
     .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
     .card { background: #111821; border: 1px solid #263241; border-radius: 12px; padding: 14px; }
     .metric { font-size: 28px; font-weight: 700; margin-top: 6px; }
-    .chart-wrap { height: 320px; }
-    canvas { width: 100%; height: 100%; }
+    .chart-wrap { height: 360px; }
+    canvas { width: 100%; height: calc(100% - 34px); }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 16px; min-height: 24px; margin-bottom: 10px; font-size: 13px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid #243040; white-space: nowrap; }
     th { color: #9fb0c3; font-weight: 600; }
@@ -150,7 +153,7 @@ function html(): string {
     <div class="card"><div class="muted">Cache utilization</div><div id="util" class="metric">0%</div></div>
     <div class="card"><div class="muted">Cache hit/write</div><div id="hitwrite" class="metric">0%</div></div>
   </section>
-  <section class="card chart-wrap"><canvas id="chart"></canvas></section>
+  <section class="card chart-wrap"><div id="legend" class="legend"></div><canvas id="chart"></canvas></section>
   <section class="card" style="margin-top:18px; overflow:auto">
     <h2 style="font-size:16px; margin:0 0 10px">Recent requests</h2>
     <table><thead><tr><th>Time</th><th>Model</th><th>Instance</th><th>Latency</th><th>Input</th><th>Cache write</th><th>Cache read</th><th>Output</th><th>Util</th></tr></thead><tbody id="rows"></tbody></table>
@@ -161,74 +164,7 @@ function html(): string {
 }
 
 function appJs(): string {
-  return `const events = [];
-const maxEvents = 500;
-const $ = (id) => document.getElementById(id);
-const chart = $("chart");
-const ctx = chart.getContext("2d");
-function n(v) { return typeof v === "number" ? v : 0; }
-function pct(v) { return Number.isFinite(v) ? Math.round(v * 100) + "%" : "0%"; }
-function util(e) {
-  const u = e.usage || {};
-  const denom = n(u.inputTokens) + n(u.cacheCreationInputTokens) + n(u.cacheReadInputTokens);
-  return denom > 0 ? n(u.cacheReadInputTokens) / denom : 0;
-}
-function hitWrite(e) {
-  const u = e.usage || {};
-  const denom = n(u.cacheReadInputTokens) + n(u.cacheCreationInputTokens);
-  return denom > 0 ? n(u.cacheReadInputTokens) / denom : 0;
-}
-function totals() {
-  const t = { input: 0, output: 0, write: 0, read: 0 };
-  for (const e of events) {
-    const u = e.usage || {};
-    t.input += n(u.inputTokens); t.output += n(u.outputTokens); t.write += n(u.cacheCreationInputTokens); t.read += n(u.cacheReadInputTokens);
-  }
-  return t;
-}
-function resizeCanvas() {
-  const r = chart.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  chart.width = Math.floor(r.width * dpr); chart.height = Math.floor(r.height * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
-function drawChart() {
-  resizeCanvas();
-  const w = chart.getBoundingClientRect().width, h = chart.getBoundingClientRect().height;
-  ctx.clearRect(0, 0, w, h);
-  ctx.strokeStyle = "#263241"; ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) { const y = 20 + i * (h - 44) / 4; ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(w - 12, y); ctx.stroke(); }
-  const points = events.slice(-120).map((e, i, arr) => ({ x: 40 + i * ((w - 60) / Math.max(1, arr.length - 1)), y: 20 + (1 - util(e)) * (h - 44), v: util(e) }));
-  ctx.strokeStyle = "#79e2a0"; ctx.lineWidth = 2; ctx.beginPath();
-  points.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke();
-  ctx.fillStyle = "#9fb0c3"; ctx.font = "12px system-ui"; ctx.fillText("100%", 4, 24); ctx.fillText("0%", 16, h - 20);
-}
-function render() {
-  const t = totals();
-  const instances = new Set(events.map(e => e.instanceId));
-  $("events").textContent = String(events.length);
-  $("instances").textContent = String(instances.size);
-  $("util").textContent = pct(t.read / Math.max(1, t.input + t.write + t.read));
-  $("hitwrite").textContent = pct(t.read / Math.max(1, t.read + t.write));
-  $("rows").innerHTML = events.slice(-80).reverse().map(e => {
-    const u = e.usage || {};
-    const inst = (e.instanceId || "").split(":").slice(0, 2).join(":");
-    return '<tr><td>' + new Date(e.timestamp).toLocaleTimeString() + '</td><td>' + e.model + '</td><td>' + inst + '</td><td>' + Math.round(e.latencyMs) + 'ms</td><td>' + n(u.inputTokens) + '</td><td>' + n(u.cacheCreationInputTokens) + '</td><td class="ok">' + n(u.cacheReadInputTokens) + '</td><td>' + n(u.outputTokens) + '</td><td>' + pct(util(e)) + '</td></tr>';
-  }).join("");
-  drawChart();
-}
-async function init() {
-  const res = await fetch('/events/recent');
-  const data = await res.json();
-  events.push(...(data.events || []));
-  render();
-  const es = new EventSource('/stream');
-  es.onopen = () => { $('status').textContent = 'live'; $('status').className = 'ok'; };
-  es.onerror = () => { $('status').textContent = 'reconnecting…'; $('status').className = 'warn'; };
-  es.onmessage = (msg) => { events.push(JSON.parse(msg.data)); while (events.length > maxEvents) events.shift(); render(); };
-}
-window.addEventListener('resize', drawChart);
-init().catch(err => { $('status').textContent = String(err); });`;
+  return 'const events = [];\nconst maxEvents = 500;\nconst colors = ["#79e2a0", "#7dcfff", "#f6c177", "#c4a7e7", "#eb6f92", "#9ccfd8", "#f6a8b6", "#a6da95", "#f5bde6", "#8aadf4"];\nconst $ = (id) => document.getElementById(id);\nconst chart = $("chart");\nconst ctx = chart.getContext("2d");\nfunction n(v) { return typeof v === "number" ? v : 0; }\nfunction pct(v) { return Number.isFinite(v) ? Math.round(v * 100) + "%" : "0%"; }\nfunction util(e) {\n  const u = e.usage || {};\n  const denom = n(u.inputTokens) + n(u.cacheCreationInputTokens) + n(u.cacheReadInputTokens);\n  return denom > 0 ? n(u.cacheReadInputTokens) / denom : 0;\n}\nfunction totals() {\n  const t = { input: 0, output: 0, write: 0, read: 0 };\n  for (const e of events) {\n    const u = e.usage || {};\n    t.input += n(u.inputTokens);\n    t.output += n(u.outputTokens);\n    t.write += n(u.cacheCreationInputTokens);\n    t.read += n(u.cacheReadInputTokens);\n  }\n  return t;\n}\nfunction instanceKey(e) {\n  return e.instanceId || ((e.hostname || "unknown") + ":" + (e.processId || "0"));\n}\nfunction instanceLabel(key) {\n  const latest = [...events].reverse().find(e => instanceKey(e) === key);\n  if (!latest) return key;\n  const pid = latest.processId ? "pid " + latest.processId : key;\n  const host = latest.hostname || "local";\n  const name = host + " · " + pid;\n  return name.length > 34 ? name.slice(0, 31) + "…" : name;\n}\nfunction instancesWithColors() {\n  const keys = [...new Set(events.map(instanceKey))];\n  return keys.map((key, index) => ({ key, color: colors[index % colors.length], label: instanceLabel(key) }));\n}\nfunction resizeCanvas() {\n  const r = chart.getBoundingClientRect();\n  const dpr = window.devicePixelRatio || 1;\n  chart.width = Math.floor(r.width * dpr);\n  chart.height = Math.floor(r.height * dpr);\n  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);\n}\nfunction drawAxes(w, h) {\n  ctx.strokeStyle = "#263241";\n  ctx.lineWidth = 1;\n  for (let i = 0; i <= 4; i++) {\n    const y = 20 + i * (h - 44) / 4;\n    ctx.beginPath();\n    ctx.moveTo(40, y);\n    ctx.lineTo(w - 12, y);\n    ctx.stroke();\n  }\n  ctx.fillStyle = "#9fb0c3";\n  ctx.font = "12px system-ui";\n  ctx.fillText("100%", 4, 24);\n  ctx.fillText("0%", 16, h - 20);\n}\nfunction drawSeries(seriesEvents, color, minTime, maxTime, w, h) {\n  if (seriesEvents.length === 0) return;\n  const range = Math.max(1, maxTime - minTime);\n  const points = seriesEvents.map(e => ({\n    x: 40 + ((e.timestamp - minTime) / range) * (w - 60),\n    y: 20 + (1 - util(e)) * (h - 44),\n  }));\n  ctx.strokeStyle = color;\n  ctx.lineWidth = 2;\n  ctx.beginPath();\n  points.forEach((p, i) => {\n    if (i === 0) ctx.moveTo(p.x, p.y);\n    else ctx.lineTo(p.x, p.y);\n  });\n  ctx.stroke();\n  ctx.fillStyle = color;\n  for (const p of points) {\n    ctx.beginPath();\n    ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);\n    ctx.fill();\n  }\n}\nfunction drawChart() {\n  resizeCanvas();\n  const w = chart.getBoundingClientRect().width;\n  const h = chart.getBoundingClientRect().height;\n  ctx.clearRect(0, 0, w, h);\n  drawAxes(w, h);\n  const recent = events.slice(-200);\n  if (recent.length === 0) return;\n  const minTime = Math.min(...recent.map(e => e.timestamp));\n  const maxTime = Math.max(...recent.map(e => e.timestamp));\n  for (const inst of instancesWithColors()) {\n    drawSeries(recent.filter(e => instanceKey(e) === inst.key), inst.color, minTime, maxTime, w, h);\n  }\n}\nfunction renderLegend() {\n  $("legend").innerHTML = instancesWithColors().map(inst => \'<span class="legend-item"><span class="swatch" style="background:\' + inst.color + \'"></span>\' + inst.label + \'</span>\').join("");\n}\nfunction render() {\n  const t = totals();\n  const instances = new Set(events.map(instanceKey));\n  $("events").textContent = String(events.length);\n  $("instances").textContent = String(instances.size);\n  $("util").textContent = pct(t.read / Math.max(1, t.input + t.write + t.read));\n  $("hitwrite").textContent = pct(t.read / Math.max(1, t.read + t.write));\n  $("rows").innerHTML = events.slice(-80).reverse().map(e => {\n    const u = e.usage || {};\n    const inst = instanceLabel(instanceKey(e));\n    return \'<tr><td>\' + new Date(e.timestamp).toLocaleTimeString() + \'</td><td>\' + e.model + \'</td><td>\' + inst + \'</td><td>\' + Math.round(e.latencyMs) + \'ms</td><td>\' + n(u.inputTokens) + \'</td><td>\' + n(u.cacheCreationInputTokens) + \'</td><td class="ok">\' + n(u.cacheReadInputTokens) + \'</td><td>\' + n(u.outputTokens) + \'</td><td>\' + pct(util(e)) + \'</td></tr>\';\n  }).join("");\n  renderLegend();\n  drawChart();\n}\nasync function init() {\n  const res = await fetch(\'/events/recent\');\n  const data = await res.json();\n  events.push(...(data.events || []));\n  render();\n  const es = new EventSource(\'/stream\');\n  es.onopen = () => { $(\'status\').textContent = \'live\'; $(\'status\').className = \'ok\'; };\n  es.onerror = () => { $(\'status\').textContent = \'reconnecting…\'; $(\'status\').className = \'warn\'; };\n  es.onmessage = (msg) => {\n    events.push(JSON.parse(msg.data));\n    while (events.length > maxEvents) events.shift();\n    render();\n  };\n}\nwindow.addEventListener(\'resize\', drawChart);\ninit().catch(err => { $(\'status\').textContent = String(err); });';
 }
 
 export async function startLocalAnalyticsServer(
