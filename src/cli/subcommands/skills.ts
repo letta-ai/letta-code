@@ -29,6 +29,8 @@ interface InstallResult {
   name: string;
   path: string;
   source: string;
+  committed?: boolean;
+  commitSha?: string;
 }
 
 interface SkillListItem {
@@ -42,6 +44,8 @@ interface DeleteResult {
   name: string;
   path: string;
   deleted: true;
+  committed?: boolean;
+  commitSha?: string;
 }
 
 interface ClawHubSourceLocation {
@@ -633,7 +637,19 @@ async function installSkill(
       throw new Error(`Skill path not found: ${missingPath}`);
     }
     const result = await installSkillDirectory({ sourceDir, memoryDir, force });
-    return { agentId, source: specifier, ...result };
+    const commit = await commitSkillMemoryChange({
+      agentId,
+      memoryDir,
+      skillName: result.name,
+      reason: `chore(skills): install ${result.name}`,
+    });
+    return {
+      agentId,
+      source: specifier,
+      ...result,
+      committed: commit.committed,
+      commitSha: commit.sha,
+    };
   } finally {
     if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -656,6 +672,40 @@ async function getAgentMemoryDir(agentId: string): Promise<string> {
   return getScopedMemoryFilesystemRoot(agentId);
 }
 
+async function commitSkillMemoryChange(params: {
+  agentId: string;
+  memoryDir: string;
+  skillName: string;
+  reason: string;
+}): Promise<{ committed: boolean; sha?: string }> {
+  const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+  const { getBackend } = await import("@/backend");
+
+  let authorName = "Letta Code";
+  try {
+    const agent = await getBackend().retrieveAgent(params.agentId);
+    if (agent.name?.trim()) {
+      authorName = agent.name.trim();
+    }
+  } catch {
+    // Best effort only; committing should not depend on fetching display name.
+  }
+
+  const result = await commitAndSyncMemoryWrite({
+    memoryDir: params.memoryDir,
+    pathspecs: [`skills/${params.skillName}`],
+    reason: params.reason,
+    author: {
+      agentId: params.agentId,
+      authorName,
+      authorEmail: `${params.agentId}@letta.com`,
+    },
+    syncMode: isLocalAgentId(params.agentId) ? "local" : "remote",
+  });
+
+  return { committed: result.committed, sha: result.sha };
+}
+
 async function listSkills(agentId: string): Promise<{
   agentId: string;
   skills: SkillListItem[];
@@ -671,7 +721,19 @@ async function deleteSkill(
 ): Promise<DeleteResult> {
   const memoryDir = await getAgentMemoryDir(agentId);
   const result = await deleteSkillDirectory({ memoryDir, name: skillName });
-  return { agentId, deleted: true, ...result };
+  const commit = await commitSkillMemoryChange({
+    agentId,
+    memoryDir,
+    skillName: result.name,
+    reason: `chore(skills): delete ${result.name}`,
+  });
+  return {
+    agentId,
+    deleted: true,
+    ...result,
+    committed: commit.committed,
+    commitSha: commit.sha,
+  };
 }
 
 async function initializeAndResolveAgent(
