@@ -129,46 +129,41 @@ async function resolveAgentByName(name: string): Promise<string> {
   return id;
 }
 
-async function listSelectableAgents(): Promise<AgentState[]> {
-  const { getBackend } = await import("@/backend");
-  const backend = getBackend();
-  const page = await backend.listAgents({ limit: 100 } as never);
-  return paginatedItems<AgentState>(page).filter((agent) => Boolean(agent.id));
-}
-
 async function promptForAgent(): Promise<string> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("Missing agent id. Pass --agent <id> or -n <agent name>.");
   }
 
-  const agents = await listSelectableAgents();
-  if (agents.length === 0) {
-    throw new Error(
-      "No agents found. Pass --agent <id> if the agent is hidden.",
+  const { render } = await import("ink");
+  const React = await import("react");
+  const { AgentSelector } = await import("@/cli/components/AgentSelector");
+
+  return new Promise<string>((resolveAgent, rejectAgent) => {
+    let settled = false;
+    const { unmount } = render(
+      React.createElement(AgentSelector, {
+        currentAgentId:
+          process.env.LETTA_AGENT_ID || process.env.AGENT_ID || "",
+        command: "letta skills",
+        title: "Select an agent",
+        showNewTab: false,
+        allowDelete: false,
+        allowPinActions: false,
+        onSelect: (agentId: string) => {
+          if (settled) return;
+          settled = true;
+          unmount();
+          resolveAgent(agentId);
+        },
+        onCancel: () => {
+          if (settled) return;
+          settled = true;
+          unmount();
+          rejectAgent(new Error("Agent selection cancelled."));
+        },
+      }),
     );
-  }
-
-  console.log("Select an agent:");
-  agents.forEach((agent, index) => {
-    console.log(`  ${index + 1}. ${agent.name || "Unnamed"} (${agent.id})`);
   });
-  process.stdout.write("Enter number: ");
-
-  const answer = await new Promise<string>((resolveAnswer) => {
-    process.stdin.setEncoding("utf8");
-    process.stdin.resume();
-    process.stdin.once("data", (chunk) => {
-      process.stdin.pause();
-      resolveAnswer(String(chunk).trim());
-    });
-  });
-
-  const index = Number.parseInt(answer, 10) - 1;
-  const selected = agents[index];
-  if (!selected?.id) {
-    throw new Error("Invalid agent selection.");
-  }
-  return selected.id;
 }
 
 async function resolveAgentId(
