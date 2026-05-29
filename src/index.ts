@@ -209,7 +209,7 @@ SUBCOMMANDS
   letta connect <provider> [options]
   letta install <skill> [--agent <id> | -n <name>]
   letta skills list [--agent <id> | -n <name>]
-  letta skills delete <skill_name> [--agent <id> | -n <name>]
+  letta skills delete <skill_name> --agent <id>
   letta backend [api|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 

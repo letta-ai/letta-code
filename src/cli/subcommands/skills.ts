@@ -63,7 +63,7 @@ function printUsage(): void {
 Usage:
   letta install <skill> [--agent <id> | -n <agent name>] [--force]
   letta skills list [--agent <id> | -n <agent name>]
-  letta skills delete <skill_name> [--agent <id> | -n <agent name>]
+  letta skills delete <skill_name> --agent <id>
 
 Sources:
   official/<path>         Hermes official optional skill, e.g. official/finance/stocks
@@ -100,6 +100,15 @@ function parseSkillsArgs(argv: string[]) {
 
 function isAgentId(value: string): boolean {
   return value.startsWith("agent-") || value.startsWith("agent_");
+}
+
+function getExplicitAgentId(
+  values: ReturnType<typeof parseSkillsArgs>["values"],
+): string | null {
+  const explicitAgent = values.agent || values["agent-id"];
+  return typeof explicitAgent === "string" && explicitAgent.trim()
+    ? explicitAgent.trim()
+    : null;
 }
 
 function paginatedItems<T>(page: unknown): T[] {
@@ -199,10 +208,8 @@ async function resolveAgentId(
   values: ReturnType<typeof parseSkillsArgs>["values"],
   promptStatusMessage = "Working...",
 ): Promise<string> {
-  const explicitAgent = values.agent || values["agent-id"];
-  if (typeof explicitAgent === "string" && explicitAgent.trim()) {
-    return explicitAgent.trim();
-  }
+  const explicitAgent = getExplicitAgentId(values);
+  if (explicitAgent) return explicitAgent;
 
   if (typeof values.name === "string" && values.name.trim()) {
     const nameOrId = values.name.trim();
@@ -859,11 +866,24 @@ async function runDelete(argv: string[]): Promise<number> {
     return 1;
   }
 
-  try {
-    const agentId = await initializeAndResolveAgent(
-      parsed.values,
-      `Deleting ${skillName}...`,
+  const agentId = getExplicitAgentId(parsed.values);
+  if (!agentId) {
+    console.error(
+      "Deleting a skill requires an explicit agent id. Re-run with --agent <id> or --agent-id <id>.",
     );
+    return 1;
+  }
+
+  if (skillName.includes("/")) {
+    console.error(
+      `Invalid installed skill name "${skillName}". Delete expects the installed directory name, e.g. "meme-generation", not a source specifier like "official/creative/meme-generation".`,
+    );
+    return 1;
+  }
+
+  try {
+    const { settingsManager } = await import("@/settings-manager");
+    await settingsManager.initialize();
     const result = await deleteSkill(skillName, agentId);
     stopAgentPromptStatus();
     console.log(JSON.stringify(result, null, 2));
