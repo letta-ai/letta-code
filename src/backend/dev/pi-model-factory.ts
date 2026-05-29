@@ -544,6 +544,22 @@ export async function resolvePiModelForAgent(
     oauthCredentials = oauth?.credentials;
   }
 
+  if (
+    connection.record?.auth.type === "oauth" &&
+    registeredProvider?.config.oauth
+  ) {
+    const oauth = await getLocalOAuthApiKey({
+      providerId: registeredProvider.providerName,
+      providerNames: registeredProviderLocalNames(registeredProvider),
+      storageDir,
+    });
+    connection = {
+      ...connection,
+      apiKey: oauth?.apiKey,
+    };
+    oauthCredentials = oauth?.credentials;
+  }
+
   if (provider === "amazon-bedrock") {
     const bedrock = bedrockLocalProviderOptions(connection.record);
     providerOptions = bedrock.providerOptions;
@@ -575,19 +591,24 @@ export async function resolvePiModelForAgent(
     : baseURL;
   let model: Model<Api>;
   if (registeredModel && registeredProvider) {
-    model = withOverrides(
-      registeredModelToPiModel({
-        providerName: provider,
-        config: registeredProvider.config,
-        model: registeredModel,
-        baseURL: normalizedBaseURL,
-        headers: mergeHeaders(headers, registeredModel.headers),
-      }),
-      {
-        contextWindow,
-        maxTokens,
-      },
-    );
+    const baseModel = registeredModelToPiModel({
+      providerName: provider,
+      config: registeredProvider.config,
+      model: registeredModel,
+      baseURL: normalizedBaseURL,
+      headers: mergeHeaders(headers, registeredModel.headers),
+    });
+    const oauthModel =
+      oauthCredentials && registeredProvider.config.oauth?.modifyModels
+        ? (registeredProvider.config.oauth.modifyModels(
+            [baseModel],
+            oauthCredentials,
+          )[0] ?? baseModel)
+        : baseModel;
+    model = withOverrides(oauthModel, {
+      contextWindow,
+      maxTokens,
+    });
   } else if (!spec) {
     throw new Error(
       `Unknown model "${modelId}" for provider "${provider}". ` +
