@@ -157,7 +157,6 @@ describe("listen subcommand auth resolution", () => {
     expect(updateSettingsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         env: {
-          SOME_FLAG: "1",
           LETTA_API_KEY: "refreshed-key",
         },
         refreshToken: "new-refresh-token",
@@ -219,7 +218,6 @@ describe("listen subcommand auth resolution", () => {
     expect(updateSettingsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         env: {
-          SOME_FLAG: "1",
           LETTA_API_KEY: "oauth-key",
         },
         refreshToken: "oauth-refresh",
