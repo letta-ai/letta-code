@@ -186,6 +186,7 @@ USAGE
   letta messages ...    Messages subcommands (JSON-only)
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
+  letta analytics        Start local Anthropic cache analytics page
   letta setup           Re-run first-run setup
   letta install ...     Install a skill into an agent memfs repository
   letta skills ...      List or delete installed agent skills
@@ -212,6 +213,7 @@ SUBCOMMANDS
   letta skills list [--agent <id> | -n <name>]
   letta skills delete <skill_name> --agent <id>
   letta backend [api|local]
+  letta analytics [--port <port>] [--persist]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR

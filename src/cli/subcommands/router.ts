@@ -1,4 +1,5 @@
 import { runAgentsSubcommand } from "./agents";
+import { runAnalyticsSubcommand } from "./analytics";
 import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
@@ -33,6 +34,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runMemorySubcommand(rest);
     case "agents":
       return runAgentsSubcommand(rest);
+    case "analytics":
+      return runAnalyticsSubcommand(rest);
     case "messages":
       return runMessagesSubcommand(rest);
     case "server":

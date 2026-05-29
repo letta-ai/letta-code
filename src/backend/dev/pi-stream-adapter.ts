@@ -20,6 +20,7 @@ import {
   type LocalAssistantMessage,
   type LocalMessage,
 } from "@/backend/local/local-message";
+import { emitLocalAnalyticsAnthropicUsage } from "@/telemetry/local-analytics/emitter";
 import type { ClientTool } from "@/tools/manager";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
@@ -425,6 +426,18 @@ function isModelOutputEvent(event: ProviderStreamEvent): boolean {
   }
 }
 
+function isAssistantOutputEvent(event: AssistantMessageEvent): boolean {
+  switch (event.type) {
+    case "text_delta":
+    case "thinking_delta":
+    case "toolcall_end":
+    case "done":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function isOverflowError(error: unknown, contextWindow?: number): boolean {
   if (error instanceof PiProviderError) {
     return isContextOverflow(error.assistant, contextWindow);
@@ -528,6 +541,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
+    const startedAt = Date.now();
+    let ttftMs: number | undefined;
     try {
       const result = this.runStream(
         resolved.model as Model<string>,
@@ -538,6 +553,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       let streamError: unknown;
       let finalMessage: AssistantMessage | undefined;
       for await (const part of result) {
+        if (ttftMs === undefined && isAssistantOutputEvent(part)) {
+          ttftMs = Date.now() - startedAt;
+        }
         if (part.type === "error") {
           const error = new PiProviderError(part.error);
           if (
@@ -566,6 +584,19 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         finalMessage.stopReason === "aborted"
       ) {
         throw new PiProviderError(finalMessage);
+      }
+      if (resolved.provider === "anthropic") {
+        void emitLocalAnalyticsAnthropicUsage({
+          agentId: input.agentId,
+          conversationId: input.conversationId,
+          model: input.agent.model ?? resolved.model.id,
+          responseModel: finalMessage.responseModel ?? finalMessage.model,
+          requestId: finalMessage.responseId,
+          latencyMs: Date.now() - startedAt,
+          ...(ttftMs !== undefined ? { ttftMs } : {}),
+          streamed: true,
+          usage: finalMessage.usage,
+        });
       }
       if (this.onContextUsage) {
         const compaction = await this.onContextUsage(input, finalMessage.usage);
