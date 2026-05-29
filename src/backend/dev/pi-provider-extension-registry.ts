@@ -54,7 +54,8 @@ export interface PiProviderOAuthDeviceCodeInfo {
   expiresInSeconds?: number;
 }
 
-export interface PiProviderOAuthLoginCallbacks extends OAuthLoginCallbacks {
+export interface PiProviderOAuthLoginCallbacks
+  extends Omit<OAuthLoginCallbacks, "onDeviceCode"> {
   onDeviceCode?: (info: PiProviderOAuthDeviceCodeInfo) => void;
 }
 
