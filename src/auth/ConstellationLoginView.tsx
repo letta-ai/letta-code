@@ -84,10 +84,7 @@ export function ConstellationLoginView({
 
         const now = Date.now();
         settingsManager.updateSettings({
-          env: {
-            ...settingsManager.getSettings().env,
-            LETTA_API_KEY: tokens.access_token,
-          },
+          env: { LETTA_API_KEY: tokens.access_token },
           refreshToken: tokens.refresh_token,
           tokenExpiresAt: now + tokens.expires_in * 1000,
           preferredBackendMode: "api",
