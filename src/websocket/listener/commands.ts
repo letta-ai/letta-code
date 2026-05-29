@@ -67,6 +67,7 @@ export async function handleExecuteCommand(
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
+    onLog?: StartListenerOptions["onLog"];
     connectionId?: string;
     connectionName?: string;
   },
@@ -191,30 +192,59 @@ export async function handleExecuteCommand(
 }
 
 async function handleUpgradeLettaCodeCommand(opts: {
+  onLog?: StartListenerOptions["onLog"];
   connectionName?: string;
 }): Promise<string> {
+  const log = (message: string) => {
+    const line = `[upgrade-letta-code] ${message}`;
+    if (opts.onLog) {
+      opts.onLog(line);
+    } else {
+      console.log(line);
+    }
+  };
+
+  log(
+    `command received (connectionName=${opts.connectionName ?? "unknown"}, execPath=${process.execPath}, entrypoint=${process.argv[1] ?? "unknown"})`,
+  );
   const { manualUpdate } = await import("@/updater/auto-update");
+  log("starting manualUpdate()");
   const result = await manualUpdate();
+  log(
+    `manualUpdate() completed: success=${result.success}; message=${result.message}`,
+  );
 
   if (!result.success) {
+    log(`upgrade failed: ${result.message}`);
     throw new Error(result.message);
   }
 
   if (!result.message.startsWith("Updated to ")) {
+    log("no restart scheduled because no update was installed");
     return result.message;
   }
 
-  scheduleRemoteRestart(opts.connectionName);
+  scheduleRemoteRestart(opts.connectionName, log);
   return `${result.message}\nRestarting remote listener...`;
 }
 
-function scheduleRemoteRestart(connectionName: string | undefined): void {
+function scheduleRemoteRestart(
+  connectionName: string | undefined,
+  log: (message: string) => void,
+): void {
   const entrypoint = process.argv[1];
   if (!entrypoint || !connectionName) {
+    log(
+      `restart skipped (entrypoint=${entrypoint ?? "missing"}, connectionName=${connectionName ?? "missing"})`,
+    );
     return;
   }
 
+  log(`scheduling remote listener restart for env ${connectionName}`);
   setTimeout(() => {
+    log(
+      `spawning replacement listener: ${process.execPath} ${entrypoint} remote --env-name ${connectionName}`,
+    );
     const child = spawn(
       process.execPath,
       [entrypoint, "remote", "--env-name", connectionName],
@@ -224,6 +254,9 @@ function scheduleRemoteRestart(connectionName: string | undefined): void {
         env: process.env,
         stdio: "ignore",
       },
+    );
+    log(
+      `spawned replacement listener pid=${child.pid ?? "unknown"}; exiting current listener`,
     );
     child.unref();
     process.exit(0);

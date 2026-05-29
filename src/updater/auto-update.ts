@@ -301,10 +301,14 @@ async function performUpdate(): Promise<{
 
   try {
     debugLog(`Running ${installCmd}...`);
+    console.log(`Running update command: ${installCmd}`);
     await execFileAsync(pm, installArgs, { timeout: 60000 });
     debugLog("Update completed successfully");
+    console.log("Update command completed successfully.");
     return { success: true };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Update command failed: ${message}`);
     trackBoundaryError({
       errorType: "auto_update_install_failed",
       error,
