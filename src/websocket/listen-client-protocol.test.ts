@@ -3379,11 +3379,7 @@ describe("listen-client v2 status builders", () => {
       socket.sentPayloads
         .map((payload) => JSON.parse(payload as string))
         .map((message) => message.type),
-    ).toEqual([
-      "update_loop_status",
-      "update_queue",
-      "update_subagent_state",
-    ]);
+    ).toEqual(["update_loop_status", "update_queue", "update_subagent_state"]);
 
     socket.sentPayloads = [];
     __listenClientTestUtils.emitStateSync(
