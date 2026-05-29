@@ -40,6 +40,17 @@ type DrainResult = {
   apiDurationMs: number;
 };
 
+type DrainHook = (ctx: {
+  chunk: Record<string, unknown>;
+  shouldOutput: boolean;
+  errorInfo?: unknown;
+  updatedApproval?: {
+    toolCallId: string;
+    toolName: string;
+    toolArgs: string;
+  };
+}) => Promise<{ shouldOutput?: boolean } | undefined>;
+
 const defaultDrainResult: DrainResult = {
   stopReason: "end_turn",
   approvals: [],
@@ -83,7 +94,10 @@ const sendMessageStreamMock = mock(
 const getStreamToolContextIdMock = mock(() => null);
 const drainHandlers = new Map<
   string,
-  (abortSignal?: AbortSignal) => Promise<DrainResult>
+  (
+    abortSignal?: AbortSignal,
+    onChunkProcessed?: DrainHook,
+  ) => Promise<DrainResult>
 >();
 const drainStreamWithResumeMock = mock(
   async (
@@ -91,10 +105,12 @@ const drainStreamWithResumeMock = mock(
     _buffers: unknown,
     _refresh: () => void,
     abortSignal?: AbortSignal,
+    _onFirstMessage?: unknown,
+    onChunkProcessed?: DrainHook,
   ) => {
     const handler = drainHandlers.get(stream.conversationId);
     if (handler) {
-      return handler(abortSignal);
+      return handler(abortSignal, onChunkProcessed);
     }
     return defaultDrainResult;
   },
@@ -2261,6 +2277,110 @@ describe("listen-client multi-worker concurrency", () => {
       type: "approval",
       otid: expect.any(String),
     });
+  });
+
+  test("unrestricted mode suppresses streamed approval request deltas for auto-approved tools", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-auto",
+    );
+    const socket = new MockSocket();
+    const approval = {
+      toolCallId: "tc-auto-bash",
+      toolName: "Bash",
+      toolArgs: '{"command":"gh pr status"}',
+    };
+    const approvalChunk = {
+      message_type: "approval_request_message",
+      run_id: "run-auto-bash",
+      tool_call: {
+        tool_call_id: approval.toolCallId,
+        name: approval.toolName,
+        arguments: approval.toolArgs,
+      },
+    };
+    let drainCount = 0;
+
+    await __listenClientTestUtils.handleChangeDeviceStateInput(listener, {
+      command: {
+        type: "change_device_state",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-auto" },
+        payload: { mode: "unrestricted" },
+      },
+      socket: socket as unknown as WebSocket,
+      opts: {},
+      processQueuedTurn: async () => {},
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: mock method access
+    (classifyApprovalsMock as any).mockImplementation(
+      async (approvals: Array<typeof approval>) => ({
+        autoAllowed: approvals.map((entry: typeof approval) => ({
+          approval: entry,
+          permission: {
+            decision: "allow",
+            reason: "Permission mode: unrestricted",
+            matchedRule: "unrestricted mode",
+          },
+          context: null,
+          parsedArgs: { command: "gh pr status" },
+        })),
+        autoDenied: [],
+        needsUserInput: [],
+      }),
+    );
+    // biome-ignore lint/suspicious/noExplicitAny: mock method access
+    (executeApprovalBatchMock as any).mockResolvedValueOnce([
+      {
+        type: "tool",
+        tool_call_id: approval.toolCallId,
+        status: "success",
+        tool_return: "ok",
+      },
+    ]);
+
+    drainHandlers.set("conv-auto", async (_abortSignal, onChunkProcessed) => {
+      if (drainCount === 0) {
+        drainCount += 1;
+        const hookResult = await onChunkProcessed?.({
+          chunk: approvalChunk,
+          shouldOutput: true,
+          updatedApproval: approval,
+        });
+        expect(hookResult?.shouldOutput).toBe(false);
+        return {
+          stopReason: "requires_approval",
+          approvals: [approval],
+          apiDurationMs: 0,
+        };
+      }
+      drainCount += 1;
+      return defaultDrainResult;
+    });
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage("agent-1", "conv-auto", "check the PR"),
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const sentPayloads = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload),
+    );
+    expect(
+      sentPayloads.some(
+        (payload) =>
+          payload.type === "stream_delta" &&
+          payload.delta?.message_type === "approval_request_message",
+      ),
+    ).toBe(false);
+    expect(
+      sentPayloads.some((payload) => payload.type === "control_request"),
+    ).toBe(false);
+    expect(executeApprovalBatchMock).toHaveBeenCalledTimes(1);
   });
 
   test("change_device_state does not prune default-state entry mid-turn", async () => {

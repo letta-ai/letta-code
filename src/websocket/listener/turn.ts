@@ -32,6 +32,7 @@ import {
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import { createBuffers, toLines } from "@/cli/helpers/accumulator";
+import { classifyApprovals } from "@/cli/helpers/approval-classification";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
@@ -63,6 +64,7 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
+import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
@@ -748,10 +750,11 @@ export async function handleIncomingMessage(
         () => {},
         turnAbortSignal,
         undefined,
-        ({ chunk, shouldOutput, errorInfo }) => {
+        async ({ chunk, shouldOutput, errorInfo, updatedApproval }) => {
           if (runtime.cancelRequested) {
             return undefined;
           }
+          let shouldForwardChunk = shouldOutput;
           const maybeRunId = (chunk as { run_id?: unknown }).run_id;
           if (typeof maybeRunId === "string") {
             runId = maybeRunId;
@@ -799,7 +802,32 @@ export async function handleIncomingMessage(
             }
           }
 
-          if (shouldOutput) {
+          if (updatedApproval && shouldForwardChunk) {
+            try {
+              const { autoAllowed } = await classifyApprovals(
+                [updatedApproval],
+                {
+                  alwaysRequiresUserInput: isInteractiveApprovalTool,
+                  requireArgsForAutoApprove: true,
+                  missingNameReason: "Tool call incomplete - missing name",
+                  workingDirectory: turnWorkingDirectory,
+                  permissionModeState: turnPermissionModeState,
+                  agentId,
+                },
+              );
+              if (autoAllowed.length > 0) {
+                shouldForwardChunk = false;
+              }
+            } catch (error) {
+              debugWarn(
+                "listener",
+                "Failed to pre-classify streamed approval chunk: %s",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+          }
+
+          if (shouldForwardChunk) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
             );
@@ -819,7 +847,7 @@ export async function handleIncomingMessage(
             }
           }
 
-          return undefined;
+          return { shouldOutput: shouldForwardChunk };
         },
         runtime.contextTracker,
       );
