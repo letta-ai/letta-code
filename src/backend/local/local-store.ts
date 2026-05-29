@@ -560,17 +560,22 @@ function readJsonlFileSuffix<T>(
   };
 }
 
-export const LOCAL_TRANSCRIPT_SCHEMA_VERSION = 1;
+export const LOCAL_TRANSCRIPT_LEGACY_SCHEMA_VERSION = 1;
+export const LOCAL_TRANSCRIPT_SCHEMA_VERSION = 2;
 export const LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT = "pi-ai-message-jsonl";
 export const LOCAL_TRANSCRIPT_MESSAGE_FORMAT = "pi-session-entry-jsonl";
 export const LOCAL_TRANSCRIPT_PROVIDER_STACK = "pi-ai";
+
+type LocalTranscriptSchemaVersion =
+  | typeof LOCAL_TRANSCRIPT_SCHEMA_VERSION
+  | typeof LOCAL_TRANSCRIPT_LEGACY_SCHEMA_VERSION;
 
 type LocalTranscriptMessageFormat =
   | typeof LOCAL_TRANSCRIPT_MESSAGE_FORMAT
   | typeof LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT;
 
 export interface LocalTranscriptManifest {
-  schema_version: typeof LOCAL_TRANSCRIPT_SCHEMA_VERSION;
+  schema_version: LocalTranscriptSchemaVersion;
   message_format: LocalTranscriptMessageFormat;
   provider_stack: typeof LOCAL_TRANSCRIPT_PROVIDER_STACK;
   created_at: string;
@@ -868,10 +873,14 @@ function validateLocalTranscriptManifest(
     }
     return undefined;
   }
+  const isCurrentFormat =
+    manifest.schema_version === LOCAL_TRANSCRIPT_SCHEMA_VERSION &&
+    manifest.message_format === LOCAL_TRANSCRIPT_MESSAGE_FORMAT;
+  const isLegacyFormat =
+    manifest.schema_version === LOCAL_TRANSCRIPT_LEGACY_SCHEMA_VERSION &&
+    manifest.message_format === LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT;
   if (
-    manifest.schema_version !== LOCAL_TRANSCRIPT_SCHEMA_VERSION ||
-    (manifest.message_format !== LOCAL_TRANSCRIPT_MESSAGE_FORMAT &&
-      manifest.message_format !== LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT) ||
+    (!isCurrentFormat && !isLegacyFormat) ||
     manifest.provider_stack !== LOCAL_TRANSCRIPT_PROVIDER_STACK
   ) {
     throw new Error(

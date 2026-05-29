@@ -950,7 +950,7 @@ describe("local backend pi transcript", () => {
       await readFile(join(dir, "manifest.json"), "utf8"),
     );
     expect(manifest).toMatchObject({
-      schema_version: 1,
+      schema_version: 2,
       message_format: "pi-session-entry-jsonl",
       provider_stack: "pi-ai",
     });
@@ -1272,6 +1272,8 @@ describe("local backend pi transcript", () => {
     expect(manifest.migrated_from).toBe(
       "versioned-pi-transcript-with-legacy-ui-message-rows",
     );
+    expect(manifest.schema_version).toBe(2);
+    expect(manifest.message_format).toBe("pi-session-entry-jsonl");
     const convertedEntries = (
       await readFile(join(conversationDir, "messages.jsonl"), "utf8")
     )
@@ -1333,6 +1335,8 @@ describe("local backend pi transcript", () => {
       await readFile(join(conversationDir, "manifest.json"), "utf8"),
     );
     expect(manifest.provider_stack).toBe("pi-ai");
+    expect(manifest.schema_version).toBe(2);
+    expect(manifest.message_format).toBe("pi-session-entry-jsonl");
     const convertedEntries = (
       await readFile(join(conversationDir, "messages.jsonl"), "utf8")
     )
