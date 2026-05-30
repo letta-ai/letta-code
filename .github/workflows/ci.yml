@@ -349,7 +349,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output text --parallel on
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output json --parallel on

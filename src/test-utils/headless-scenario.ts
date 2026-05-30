@@ -117,7 +117,7 @@ async function ensurePrereqs(args: Args): Promise<"ok" | "skip"> {
     provider === "anthropic"
       ? "ANTHROPIC_API_KEY"
       : provider === "google"
-        ? "GOOGLE_GENERATIVE_AI_API_KEY"
+        ? "GEMINI_API_KEY"
         : "OPENAI_API_KEY";
   if (!process.env[requiredKey]) {
     console.log(`SKIP: Missing env ${requiredKey}`);
