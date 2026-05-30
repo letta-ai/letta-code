@@ -17,6 +17,7 @@ import {
 import { executeAutoAllowedTools } from "@/agent/approval-execution";
 import {
   extractConflictDetail,
+  extractConversationBusyRunId,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
   getRetryDelayMs,
@@ -923,6 +924,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
 
             // Check for 409 "conversation busy" error - retry with exponential backoff
+            const blockingRunId = extractConversationBusyRunId(errorDetail);
             if (preStreamAction === "retry_conversation_busy") {
               conversationBusyRetriesRef.current += 1;
               const retryDelayMs = getRetryDelayMs({
@@ -947,7 +949,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               );
 
               // Attempt to resume the in-flight run via the conversation stream endpoint.
-              // Server resolves: (1) otid lookup, (2) active run fallback.
+              // Prefer the blocking run_id from 409s; otherwise use OTID recovery.
               try {
                 const backend = getBackend();
                 const messageOtid = currentInput
@@ -955,7 +957,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   .find((v): v is string => typeof v === "string");
                 debugLog(
                   "stream",
-                  "Conversation busy: resuming via stream endpoint (otid=%s)",
+                  "Conversation busy: resuming via stream endpoint (run_id=%s, otid=%s)",
+                  blockingRunId ?? "none",
                   messageOtid ?? "none",
                 );
 
@@ -977,7 +980,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       conversationId === "default"
                         ? (agentIdRef.current ?? undefined)
                         : undefined,
-                    otid: messageOtid ?? undefined,
+                    ...(blockingRunId
+                      ? { run_id: blockingRunId }
+                      : { otid: messageOtid ?? undefined }),
                     starting_after: 0,
                     batch_size: 1000,
                   } as unknown as ConversationMessageStreamBody,

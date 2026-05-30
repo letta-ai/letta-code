@@ -18,6 +18,7 @@ import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
+  extractConversationBusyRunId,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
   getRetryDelayMs,
@@ -2181,9 +2182,9 @@ ${SYSTEM_REMINDER_CLOSE}
         }
 
         // Check for 409 "conversation busy" - resume via conversation stream endpoint.
-        // Server resolves: (1) otid lookup, (2) active run fallback.
-        // OTID lookup provides server-side request ownership validation.
+        // Prefer the blocking run_id from 409s; otherwise use OTID recovery.
         // Falls back to exponential backoff retry if the endpoint fails.
+        const blockingRunId = extractConversationBusyRunId(errorDetail);
         if (preStreamAction === "retry_conversation_busy") {
           const messageOtid = currentInput
             .map((item) => (item as Record<string, unknown>).otid)
@@ -2198,7 +2199,9 @@ ${SYSTEM_REMINDER_CLOSE}
                   conversationId === "default"
                     ? (agent?.id ?? undefined)
                     : undefined,
-                otid: messageOtid ?? undefined,
+                ...(blockingRunId
+                  ? { run_id: blockingRunId }
+                  : { otid: messageOtid ?? undefined }),
                 starting_after: 0,
                 batch_size: 1000,
               } as unknown as ConversationMessageStreamBody,

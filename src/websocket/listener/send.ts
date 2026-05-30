@@ -213,11 +213,18 @@ async function tryResumeBusyConversationStream(params: {
   conversationId: string;
   messages: Parameters<typeof sendMessageStream>[1];
   runtime: ConversationRuntime;
+  blockingRunId?: string | null;
   abortSignal?: AbortSignal;
   debugMessage: string;
 }): Promise<MessageStreamResult | null> {
-  const { conversationId, messages, runtime, abortSignal, debugMessage } =
-    params;
+  const {
+    conversationId,
+    messages,
+    runtime,
+    blockingRunId,
+    abortSignal,
+    debugMessage,
+  } = params;
 
   try {
     const backend = getBackend();
@@ -238,7 +245,9 @@ async function tryResumeBusyConversationStream(params: {
             conversationId === "default"
               ? (runtime.agentId ?? undefined)
               : undefined,
-          otid: messageOtid ?? undefined,
+          ...(blockingRunId
+            ? { run_id: blockingRunId }
+            : { otid: messageOtid ?? undefined }),
           starting_after: 0,
           batch_size: 1000,
         } as unknown as ConversationMessageStreamBody,
@@ -592,6 +601,7 @@ export async function sendMessageStreamWithRetry(
           conversationId,
           messages,
           runtime,
+          blockingRunId,
           abortSignal,
           debugMessage:
             "[Listen] Pre-stream resume failed, falling back to wait/retry:",
@@ -831,6 +841,7 @@ export async function sendApprovalContinuationWithRetry(
           conversationId,
           messages,
           runtime,
+          blockingRunId,
           abortSignal,
           debugMessage:
             "[Listen] Approval continuation pre-stream resume failed, falling back to wait/retry:",

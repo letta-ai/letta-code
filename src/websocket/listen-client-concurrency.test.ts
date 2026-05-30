@@ -136,6 +136,7 @@ const conversationMessagesStreamMock = mock(
     _params?: {
       agent_id?: string;
       otid?: string;
+      run_id?: string;
       starting_after?: number;
       batch_size?: number;
     },
@@ -2335,6 +2336,60 @@ describe("listen-client multi-worker concurrency", () => {
       starting_after: 0,
       batch_size: 1000,
     });
+
+    await turnPromise;
+  });
+
+  test("pre-stream 409 resumes via reported blocking run id", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-409-run-id",
+      "conv-409-run-id",
+    );
+    const socket = new MockSocket();
+    const blockingRunId = "run-blocking-stream-123";
+
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        409,
+        {
+          error: {
+            detail: `Cannot send a new message: Another request (run_id=${blockingRunId}) is currently being processed for this conversation. Please wait for it to complete.`,
+          },
+        },
+        undefined,
+        new Headers(),
+      ),
+    );
+
+    const turnPromise = __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId: "agent-409-run-id",
+        conversationId: "conv-409-run-id",
+        messages: [
+          {
+            role: "user",
+            content: "hello",
+            otid: "new-message-otid",
+          } as unknown as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    await waitFor(() => conversationMessagesStreamMock.mock.calls.length === 1);
+
+    const [, resumeParams] = conversationMessagesStreamMock.mock.calls[0] ?? [];
+    expect(resumeParams).toMatchObject({
+      agent_id: undefined,
+      run_id: blockingRunId,
+      starting_after: 0,
+      batch_size: 1000,
+    });
+    expect(resumeParams).not.toHaveProperty("otid");
 
     await turnPromise;
   });

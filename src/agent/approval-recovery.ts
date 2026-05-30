@@ -27,6 +27,7 @@ export {
   buildFreshDenialApprovals,
   classifyPreStreamConflict,
   extractConflictDetail,
+  extractConversationBusyRunId,
   getPreStreamErrorAction,
   getRetryDelayMs,
   getTransientRetryDelayMs,
