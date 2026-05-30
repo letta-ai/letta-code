@@ -1093,6 +1093,60 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
+            {activeOverlay === "pin-conversations" && (
+              <ConversationSelector
+                agentId={agentId}
+                agentName={agentName ?? undefined}
+                currentConversationId={conversationId}
+                mode="pin"
+                onSelect={() => {}}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {activeOverlay === "pin-agents" && (
+              <AgentSelector
+                currentAgentId={agentId}
+                command="/pin agent"
+                title="Pin agents"
+                showNewTab={false}
+                allowDelete={false}
+                allowPinActions={true}
+                onSelect={(selectedAgentId, backendMode) => {
+                  if (backendMode === "local") {
+                    if (
+                      settingsManager
+                        .getLocalPinnedAgents()
+                        .includes(selectedAgentId)
+                    ) {
+                      settingsManager.unpinLocal(selectedAgentId);
+                    } else {
+                      settingsManager.pinLocal(selectedAgentId);
+                    }
+                  } else if (
+                    settingsManager
+                      .getGlobalPinnedAgents()
+                      .includes(selectedAgentId)
+                  ) {
+                    settingsManager.unpinGlobal(selectedAgentId);
+                  } else {
+                    settingsManager.pinGlobal(selectedAgentId);
+                  }
+                  refreshDerived();
+                }}
+                onLogin={() => {
+                  completeOverlay("pin-agents");
+                  openOverlay(
+                    "login",
+                    "/login",
+                    "Opening login...",
+                    "Login dismissed",
+                  );
+                }}
+                onCancel={closeOverlay}
+              />
+            )}
+
             {activeOverlay === "login" && (
               <ConstellationLoginOverlay
                 onComplete={() => {

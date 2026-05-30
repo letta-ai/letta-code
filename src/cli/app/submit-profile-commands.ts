@@ -151,28 +151,60 @@ export async function handleProfileCommand(
 
   if (trimmed === "/pin" || trimmed.startsWith("/pin ")) {
     const argsStr = trimmed.slice(4).trim();
+    const parts = argsStr.split(/\s+/).filter(Boolean);
+    const target = parts[0]?.toLowerCase();
 
-    if (argsStr === "help") {
+    if (target === "help") {
       const cmd = commandRunner.start(trimmed, "Showing pin help...");
       const output = [
         "/pin help",
         "",
-        "Pin the current agent.",
+        "Interactively manage pinned things.",
         "",
         "USAGE",
-        "  /pin        — pin globally (interactive)",
-        "  /pin -l     — pin locally to this directory",
-        "  /pin help   — show this help",
+        "  /pin             — manage pinned conversations",
+        "  /pin convo       — manage pinned conversations",
+        "  /pin agent       — manage pinned agents",
+        "  /pin current     — pin the current agent",
+        "  /pin current -l  — pin the current agent locally",
+        "  /pin help        — show this help",
       ].join("\n");
       cmd.finish(output, true);
       return { submitted: true };
     }
 
-    const parts = argsStr.split(/\s+/).filter(Boolean);
+    if (!target || target === "convo" || target === "conversation") {
+      openOverlay(
+        "pin-conversations",
+        "/pin convo",
+        "Opening conversation pin manager...",
+        "Conversation pin manager dismissed",
+      );
+      return { submitted: true };
+    }
+
+    if (target === "agent" || target === "agents") {
+      openOverlay(
+        "pin-agents",
+        "/pin agent",
+        "Opening agent pin manager...",
+        "Agent pin manager dismissed",
+      );
+      return { submitted: true };
+    }
+
+    if (target !== "current") {
+      const cmd = commandRunner.start(trimmed, "Showing pin help...");
+      cmd.finish('Unknown pin target. Use "/pin help".', false);
+      return { submitted: true };
+    }
+
+    const currentArgs = parts.slice(1).join(" ");
+    const currentParts = currentArgs.split(/\s+/).filter(Boolean);
     let hasNameArg = false;
     let isLocal = false;
 
-    for (const part of parts) {
+    for (const part of currentParts) {
       if (part === "-l" || part === "--local") {
         isLocal = true;
       } else {
@@ -184,7 +216,7 @@ export async function handleProfileCommand(
       setPinDialogLocal(isLocal);
       openOverlay(
         "pin",
-        "/pin",
+        "/pin current",
         "Opening pin dialog...",
         "Pin dialog dismissed",
       );
@@ -202,7 +234,7 @@ export async function handleProfileCommand(
     const cmd = commandRunner.start(trimmed, "Pinning agent...");
     setActiveProfileCommandId(cmd.id);
     try {
-      await handlePin(profileCtx, msg, argsStr);
+      await handlePin(profileCtx, msg, currentArgs);
     } finally {
       setActiveProfileCommandId(null);
     }
