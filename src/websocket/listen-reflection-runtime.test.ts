@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
@@ -55,5 +57,27 @@ describe("listen reflection runtime state", () => {
     expect(recreated.reminderState.turnCount).toBe(7);
     expect(recreated.contextTracker.currentTurnId).toBe(9);
     expect(recreated.contextTracker.pendingReflectionTrigger).toBe(true);
+  });
+
+  test("listener reflection delegates MemFS root resolution to launcher", () => {
+    const turnPath = fileURLToPath(
+      new URL("./listener/turn.ts", import.meta.url),
+    );
+    const source = readFileSync(turnPath, "utf-8");
+
+    expect(source).not.toContain("memoryDir: getMemoryFilesystemRoot");
+    expect(source).not.toContain("memoryDir: getScopedMemoryFilesystemRoot");
+  });
+
+  test("listener lifecycle reflection uses the shared launcher", () => {
+    const lifecyclePath = fileURLToPath(
+      new URL("./listener/lifecycle.ts", import.meta.url),
+    );
+    const source = readFileSync(lifecyclePath, "utf-8");
+
+    expect(source).toContain("launchReflectionSubagent({");
+    expect(source).not.toContain("buildReflectionSubagentPrompt({");
+    expect(source).not.toContain("memoryDir: getMemoryFilesystemRoot");
+    expect(source).not.toContain("memoryDir: getScopedMemoryFilesystemRoot");
   });
 });

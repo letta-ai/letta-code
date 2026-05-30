@@ -164,6 +164,7 @@ export function createHeadlessExtensionRuntime(options: {
   backend: Backend;
   cacheDirectory?: string;
   conversationId: string;
+  disabled?: boolean;
   globalExtensionsDirectory?: string;
   permissionMode?: string | null;
   reflectionSettings?: ReflectionSettings;
@@ -174,6 +175,7 @@ export function createHeadlessExtensionRuntime(options: {
       ? { cacheDirectory: options.cacheDirectory }
       : {}),
     capabilities: HEADLESS_EXTENSION_CAPABILITIES,
+    disabled: options.disabled,
     getBackendApi: () => createHeadlessExtensionBackendApi(options.backend),
     getClient,
     ...(options.globalExtensionsDirectory

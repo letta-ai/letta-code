@@ -16,6 +16,22 @@ export const DEFAULT_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   },
 };
 
+export const DISABLED_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
+  tools: false,
+  commands: false,
+  events: {
+    lifecycle: false,
+    tools: false,
+    turns: false,
+  },
+  providers: false,
+  ui: {
+    panels: false,
+    statusValues: false,
+    customStatuslineRenderer: false,
+  },
+};
+
 export function cloneExtensionCapabilities(
   capabilities: ExtensionCapabilities,
 ): ExtensionCapabilities {

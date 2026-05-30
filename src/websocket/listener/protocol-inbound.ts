@@ -288,12 +288,15 @@ function isSyncCommand(value: unknown): value is SyncCommand {
     type?: unknown;
     runtime?: unknown;
     recover_approvals?: unknown;
+    force_device_status?: unknown;
   };
   return (
     candidate.type === "sync" &&
     isRuntimeScope(candidate.runtime) &&
     (candidate.recover_approvals === undefined ||
-      typeof candidate.recover_approvals === "boolean")
+      typeof candidate.recover_approvals === "boolean") &&
+    (candidate.force_device_status === undefined ||
+      typeof candidate.force_device_status === "boolean")
   );
 }
 

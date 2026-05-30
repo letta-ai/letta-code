@@ -333,6 +333,7 @@ export function App({
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
+  extensionsDisabled = false,
   onReload,
 }: AppProps) {
   // Warm the model-access cache in the background so /model is fast on first open.
@@ -2310,7 +2311,9 @@ export function App({
       statusLinePayload,
     ],
   );
-  const extensionRuntime = useLocalExtensionRuntime(extensionContext);
+  const extensionRuntime = useLocalExtensionRuntime(extensionContext, {
+    disabled: extensionsDisabled,
+  });
 
   useEffect(() => {
     extensionRuntimeRef.current = extensionRuntime;

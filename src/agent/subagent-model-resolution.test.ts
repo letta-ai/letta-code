@@ -9,10 +9,26 @@ import {
   buildSubagentArgs,
   buildSubagentPrompt,
   getModelHandleFromAgent,
+  recallPromptForBackend,
   resolveSubagentLauncher,
   resolveSubagentModel,
   resolveSubagentWorkingDirectory,
 } from "@/agent/subagents/manager";
+
+describe("recallPromptForBackend", () => {
+  test("uses separate API and local recall prompts", () => {
+    const apiPrompt = recallPromptForBackend("api");
+    const localPrompt = recallPromptForBackend("local");
+
+    expect(apiPrompt).toContain("Semantic similarity search");
+    expect(apiPrompt).not.toContain("transcript-backed exact text search");
+    expect(localPrompt).toContain("transcript-backed full-text search");
+    expect(localPrompt).toContain("Accessing the Underlying Files");
+    expect(localPrompt).toContain("~/.letta/lc-local-backend");
+    expect(localPrompt).not.toContain("--mode <mode>");
+    expect(localPrompt).not.toContain("Semantic similarity search");
+  });
+});
 
 describe("resolveSubagentLauncher", () => {
   test("explicit launcher takes precedence over .ts script autodetection", () => {

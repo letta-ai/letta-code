@@ -237,6 +237,8 @@ export interface Backend {
     conversationId: string,
     options?: ForkConversationOptions,
   ): ReturnType<typeof forkConversationRequest>;
+
+  getLocalStorageDir?(): string | undefined;
 }
 
 interface APIBackendDeps {

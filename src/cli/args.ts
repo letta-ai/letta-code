@@ -266,6 +266,14 @@ export const CLI_FLAG_CATALOG = {
         "Disable first-turn environment reminder (device/git/cwd context)",
     },
   },
+  "no-extensions": {
+    parser: { type: "boolean" },
+    mode: "both",
+    help: {
+      description: "Disable local extensions for this session",
+      continuationLines: ["Recovery alias: LETTA_DISABLE_EXTENSIONS=1 letta"],
+    },
+  },
   "reflection-trigger": {
     parser: { type: "string" },
     mode: "both",
