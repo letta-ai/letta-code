@@ -295,9 +295,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Note: gpt-4.1 / gemini-3.1 / glm-4.7 are temporarily
+        # Note: gpt-4.1 / gemini-3.1 / gemini-3.5 / glm-4.7 are temporarily
         # excluded here due to intermittent provider-side scenario instability.
-        model: [gpt-5-mini-medium, sonnet-4.6-low, haiku, gemini-3.5-flash]
+        model: [gpt-5-mini-medium, sonnet-4.6-low, haiku]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -329,8 +329,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Keep this aligned with the API-backed headless model matrix above.
-        model: [gpt-5-mini-medium, sonnet-4.6-low, haiku, gemini-3.5-flash]
+        # Local runs use the provider catalog directly, so use provider-native IDs.
+        model: [gpt-5-mini, sonnet-4.6-low, haiku, gemini-3.5-flash]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
