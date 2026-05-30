@@ -52,7 +52,7 @@ const LOCAL_MODEL_HANDLE_PREFIXES = [
 const LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX = "openai-codex/";
 const CHATGPT_OAUTH_LLM_CONFIG_PROVIDER = "chatgpt_oauth";
 export const CHATGPT_FAST_SERVICE_TIER = "priority";
-const CHATGPT_FAST_CAPABLE_MODELS = new Set(["gpt-5.4", "gpt-5.5"]);
+const CHATGPT_FAST_CAPABLE_MODELS = new Set(["gpt-5.5"]);
 
 export function isLocalModelHandle(modelHandle: string): boolean {
   return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
@@ -81,12 +81,14 @@ export function normalizeModelHandleForRegistry(
 ): string | null {
   if (!modelHandle) return null;
   const [provider, ...modelParts] = modelHandle.split("/");
+  const model = modelParts.join("/");
   if (
     (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER ||
       provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1)) &&
-    modelParts.length > 0
+    model.length > 0 &&
+    !model.endsWith("-fast")
   ) {
-    return `${OPENAI_CODEX_PROVIDER_NAME}/${modelParts.join("/")}`;
+    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
   }
   return modelHandle;
 }

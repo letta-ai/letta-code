@@ -65,6 +65,13 @@ describe("getModelInfoForLlmConfig", () => {
     expect(info?.label).toBe("GPT-5.5 Fast (ChatGPT)");
   });
 
+  test("does not treat synthetic local ChatGPT Fast handles as registry models", () => {
+    const info = getModelInfoForLlmConfig("openai-codex/gpt-5.5-fast", {
+      reasoning_effort: "high",
+    });
+    expect(info).toBeNull();
+  });
+
   test("falls back to first handle match when effort missing", () => {
     const handle = "openai/gpt-5.4";
     const info = getModelInfoForLlmConfig(handle, null);
@@ -229,6 +236,18 @@ describe("getReasoningTierOptionsForHandle", () => {
     expect(
       getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.5"),
     ).toBe("chatgpt-plus-pro/gpt-5.5-fast");
+    expect(
+      getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.4"),
+    ).toBeNull();
+    expect(
+      getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.5-fast"),
+    ).toBeNull();
+  });
+
+  test("does not return reasoning options for synthetic local ChatGPT Fast handles", () => {
+    expect(
+      getReasoningTierOptionsForHandle("openai-codex/gpt-5.5-fast"),
+    ).toEqual([]);
   });
 
   test("returns reasoning options for anthropic sonnet 4.6", () => {
