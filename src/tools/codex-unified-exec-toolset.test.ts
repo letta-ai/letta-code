@@ -37,6 +37,8 @@ describe("Codex unified exec toolset", () => {
     const execCommandDescription = [
       "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
       "",
+      "For ordinary one-shot commands, omit `yield_time_ms` and let the default wait for completion; set `yield_time_ms` only when intentionally returning early from a long-running or interactive command.",
+      "",
       extractCommitGuidance(ShellDescription),
     ].join("\n");
 
