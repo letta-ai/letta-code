@@ -7,7 +7,6 @@
 import { getBalanceMetadata } from "@/backend/api/metadata";
 import {
   createProvider,
-  deleteProvider,
   getProviderByName,
   listProviders,
   type ProviderOperationOptions,
@@ -99,16 +98,6 @@ export async function updateOpenAICodexProvider(
 }
 
 /**
- * Delete the ChatGPT OAuth provider
- */
-export async function deleteOpenAICodexProvider(
-  providerId: string,
-  options: ProviderOperationOptions = {},
-): Promise<void> {
-  await deleteProvider(providerId, options);
-}
-
-/**
  * Create or update the ChatGPT OAuth provider
  * This is the main function called after successful /connect codex
  *
@@ -130,18 +119,6 @@ export async function createOrUpdateOpenAICodexProvider(
   }
 
   return createOpenAICodexProvider(config, options);
-}
-
-/**
- * Remove the ChatGPT OAuth provider (called on /disconnect)
- */
-export async function removeOpenAICodexProvider(
-  options: ProviderOperationOptions = {},
-): Promise<void> {
-  const existing = await getOpenAICodexProvider(options);
-  if (existing) {
-    await deleteOpenAICodexProvider(existing.id, options);
-  }
 }
 
 /**
