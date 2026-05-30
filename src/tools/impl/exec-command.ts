@@ -52,6 +52,7 @@ interface WriteStdinArgs {
   chars?: string;
   yield_time_ms?: number;
   max_output_tokens?: number;
+  signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }
 
@@ -129,8 +130,35 @@ type ExecOutputChunk = {
 
 const execSessions = new Map<string, ExecSession>();
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function createAbortError(): Error {
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      reject(createAbortError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function clampYieldTime(value: number | undefined, fallback: number): number {
@@ -568,12 +596,14 @@ async function waitForSessionOutput(params: {
   session: ExecSession;
   startOffset: number;
   yieldTimeMs: number;
+  signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }): Promise<{ output: string; wallTimeMs: number }> {
   const startTime = Date.now();
   const deadline = startTime + params.yieldTimeMs;
   let emittedOffset = params.startOffset;
 
+  throwIfAborted(params.signal);
   while (Date.now() < deadline && params.session.status === "running") {
     if (params.onOutput && params.session.output.length > emittedOffset) {
       for (const chunk of getSessionOutputChunks(
@@ -585,8 +615,9 @@ async function waitForSessionOutput(params: {
       }
       emittedOffset = params.session.output.length;
     }
-    await sleep(25);
+    await sleep(25, params.signal);
   }
+  throwIfAborted(params.signal);
 
   if (params.onOutput && params.session.output.length > emittedOffset) {
     for (const chunk of getSessionOutputChunks(
@@ -690,6 +721,7 @@ export async function exec_command(
     session,
     startOffset: 0,
     yieldTimeMs,
+    signal: args.signal,
     onOutput: args.onOutput,
   });
 
@@ -731,7 +763,7 @@ export async function write_stdin(
   }
   if (chars) {
     (backgroundProcess.process as ProcessLauncher).write(chars);
-    await sleep(100);
+    await sleep(100, args.signal);
   }
 
   const startOffset = session.readOffset;
@@ -740,6 +772,7 @@ export async function write_stdin(
     session,
     startOffset,
     yieldTimeMs,
+    signal: args.signal,
     onOutput: args.onOutput,
   });
 
