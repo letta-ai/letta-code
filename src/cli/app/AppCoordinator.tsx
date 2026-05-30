@@ -802,6 +802,13 @@ export function App({
     conversationOverrideModelSettings,
     setConversationOverrideModelSettings,
   ] = useState<AgentState["model_settings"] | null>(null);
+  const conversationOverrideModelSettingsRef = useRef(
+    conversationOverrideModelSettings,
+  );
+  useEffect(() => {
+    conversationOverrideModelSettingsRef.current =
+      conversationOverrideModelSettings;
+  }, [conversationOverrideModelSettings]);
   const [
     conversationOverrideContextWindowLimit,
     setConversationOverrideContextWindowLimit,
@@ -4482,6 +4489,7 @@ export function App({
       agentIdRef,
       agentStateRef,
       commandRunner,
+      conversationOverrideModelSettingsRef,
       conversationIdRef,
       hasConversationModelOverrideRef,
       isAgentBusy,
