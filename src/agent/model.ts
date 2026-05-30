@@ -52,7 +52,6 @@ const LOCAL_MODEL_HANDLE_PREFIXES = [
 const LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX = "openai-codex/";
 const CHATGPT_OAUTH_LLM_CONFIG_PROVIDER = "chatgpt_oauth";
 export const CHATGPT_FAST_SERVICE_TIER = "priority";
-const CHATGPT_FAST_CAPABLE_MODELS = new Set(["gpt-5.5"]);
 
 export function isLocalModelHandle(modelHandle: string): boolean {
   return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
@@ -116,7 +115,7 @@ export function getChatGptFastRegistryHandleForModelHandle(
   const normalized = normalizeModelHandleForRegistry(modelHandle);
   if (!normalized?.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`)) return null;
   const model = modelPortion(normalized);
-  if (!model || !CHATGPT_FAST_CAPABLE_MODELS.has(model)) return null;
+  if (!model || model.endsWith("-fast")) return null;
   const fastHandle = `${OPENAI_CODEX_PROVIDER_NAME}/${model}-fast`;
   return models.some((entry) => entry.handle === fastHandle)
     ? fastHandle

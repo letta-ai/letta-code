@@ -91,10 +91,10 @@ Selecting the non-Fast row must clear any previous priority service tier.
    - It needs to preserve actual handle, display label, updateArgs, and service-tier metadata.
    - Keep backwards compatibility if practical by allowing callers to handle strings or objects.
 
-3. Add local Fast selector rows only for supported ChatGPT/Codex models:
-   - Start with allowlist for `openai-codex/gpt-5.5` (and any exact future handles if deliberately added).
-   - Row label comes from `chatgpt-plus-pro/gpt-5.5-fast` metadata.
-   - Row handle remains `openai-codex/gpt-5.5`.
+3. Add local Fast selector rows only for ChatGPT/Codex models with matching Fast registry metadata:
+   - A model is Fast-capable when `models.json` contains a matching `chatgpt-plus-pro/<model>-fast` handle.
+   - Row label comes from the matching `chatgpt-plus-pro/<model>-fast` metadata.
+   - Row handle remains the actual local backend handle, e.g. `openai-codex/gpt-5.5`.
    - Row updateArgs includes `service_tier: "priority"`.
 
 4. Runtime support:

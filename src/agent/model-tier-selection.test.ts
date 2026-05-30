@@ -238,7 +238,7 @@ describe("getReasoningTierOptionsForHandle", () => {
     ).toBe("chatgpt-plus-pro/gpt-5.5-fast");
     expect(
       getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.4"),
-    ).toBeNull();
+    ).toBe("chatgpt-plus-pro/gpt-5.4-fast");
     expect(
       getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.5-fast"),
     ).toBeNull();
