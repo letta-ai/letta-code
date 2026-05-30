@@ -7,7 +7,7 @@
  *
  * Usage:
  *   bun tsx src/tests/headless-scenario.ts --model gpt-4.1 --output stream-json --parallel on
- *   bun tsx src/tests/headless-scenario.ts --backend local --model gpt-5-mini --output text --parallel on
+ *   bun tsx src/tests/headless-scenario.ts --backend local --model openai/gpt-5-mini --output text --parallel on
  */
 
 import { execFile as execFileCb, spawn } from "node:child_process";
