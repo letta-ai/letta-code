@@ -934,6 +934,7 @@ interface LocalConversationTranscriptMetadata {
   conversationDir: string;
   messagesPath: string;
   messageFormat: LocalTranscriptMessageFormat;
+  manifestValidated: boolean;
   timing: LocalTranscriptTiming;
   requiresFullTimestampRepair: boolean;
 }
@@ -2389,7 +2390,7 @@ export class LocalStore {
 
     const key = this.conversationKey(conversationId, agentId);
     if (this.loadedConversationKeys.has(key)) return undefined;
-    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    const metadata = this.validateTranscriptMetadata(key);
     if (!metadata || metadata.requiresFullTimestampRepair) return undefined;
 
     const before = getCursor(body, "before");
@@ -2514,7 +2515,7 @@ export class LocalStore {
     conversation: StoredConversation,
     messageId: string,
   ): boolean {
-    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    const metadata = this.validateTranscriptMetadata(key);
     if (!metadata || metadata.requiresFullTimestampRepair) return false;
 
     let maxBytes = 64 * 1024;
@@ -2567,7 +2568,7 @@ export class LocalStore {
     conversationId: string,
     agentId: string,
   ): void {
-    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    const metadata = this.validateTranscriptMetadata(key);
     if (!metadata) {
       this.localMessagesByConversationKey.set(
         key,
@@ -2723,6 +2724,54 @@ export class LocalStore {
     return currentIsoTimestamp();
   }
 
+  private setTranscriptMetadata(
+    key: string,
+    metadata: LocalConversationTranscriptMetadata,
+  ): LocalConversationTranscriptMetadata {
+    this.transcriptMetadataByConversationKey.set(key, metadata);
+    return metadata;
+  }
+
+  private transcriptMetadataRecord(
+    key: string,
+    conversationDir: string,
+    options: { requiresFullTimestampRepair?: boolean } = {},
+  ): LocalConversationTranscriptMetadata {
+    const existing = this.transcriptMetadataByConversationKey.get(key);
+    if (existing) return existing;
+    return this.setTranscriptMetadata(key, {
+      conversationDir,
+      messagesPath: transcriptMessagesPath(conversationDir),
+      messageFormat: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+      manifestValidated: false,
+      timing: transcriptTimingForConversationDir(conversationDir),
+      requiresFullTimestampRepair: options.requiresFullTimestampRepair === true,
+    });
+  }
+
+  private validateTranscriptMetadata(
+    key: string,
+  ): LocalConversationTranscriptMetadata | undefined {
+    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    if (!metadata) return undefined;
+    if (metadata.manifestValidated) return metadata;
+
+    const manifest = validateLocalTranscriptManifest(
+      metadata.conversationDir,
+      this.storageDir ?? "",
+    );
+    return this.setTranscriptMetadata(key, {
+      ...metadata,
+      messageFormat:
+        manifest?.message_format ?? LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+      manifestValidated: true,
+      timing: transcriptTimingForConversationDir(
+        metadata.conversationDir,
+        manifest,
+      ),
+    });
+  }
+
   private loadFromStorage(): void {
     if (!this.storageDir || !existsSync(this.storageDir)) return;
 
@@ -2749,27 +2798,22 @@ export class LocalStore {
         );
         if (!conversation?.id || !conversation.agent_id) continue;
 
-        const manifest = validateLocalTranscriptManifest(
-          conversationDir,
-          this.storageDir,
-        );
         const key = this.conversationKey(
           conversation.id,
           conversation.agent_id,
         );
-        const timing = transcriptTimingForConversationDir(
-          conversationDir,
-          manifest,
-        );
+        const timing = transcriptTimingForConversationDir(conversationDir);
         const requiresFullTimestampRepair =
           isSyntheticLocalTimestamp(conversation.created_at) ||
           isSyntheticLocalTimestamp(conversation.updated_at) ||
           isSyntheticLocalTimestamp(conversation.last_message_at);
-        conversation = repairSyntheticConversationTimestamps(
-          conversation,
-          [],
-          timing,
-        );
+        if (!requiresFullTimestampRepair) {
+          conversation = repairSyntheticConversationTimestamps(
+            conversation,
+            [],
+            timing,
+          );
+        }
         const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
           join(conversationDir, "system-prompt.json"),
         );
@@ -2778,8 +2822,8 @@ export class LocalStore {
         this.transcriptMetadataByConversationKey.set(key, {
           conversationDir,
           messagesPath: transcriptMessagesPath(conversationDir),
-          messageFormat:
-            manifest?.message_format ?? LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+          messageFormat: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+          manifestValidated: false,
           timing,
           requiresFullTimestampRepair,
         });
@@ -2854,13 +2898,22 @@ export class LocalStore {
       join(conversationDir, "conversation.json"),
       `${JSON.stringify(conversation, null, 2)}\n`,
     );
-    if (!existsSync(transcriptManifestPath(conversationDir))) {
-      writeLocalTranscriptManifest(conversationDir);
-    }
     const messagesPath = transcriptMessagesPath(conversationDir);
-    const metadata = this.transcriptMetadataByConversationKey.get(key);
-    const messageFormat =
-      metadata?.messageFormat ?? LOCAL_TRANSCRIPT_MESSAGE_FORMAT;
+    let metadata = this.transcriptMetadataRecord(key, conversationDir);
+    const manifestPath = transcriptManifestPath(conversationDir);
+    if (!existsSync(manifestPath) && !hasNonEmptyJsonl(messagesPath)) {
+      const manifest = createLocalTranscriptManifest();
+      writeLocalTranscriptManifest(conversationDir, manifest);
+      metadata = this.setTranscriptMetadata(key, {
+        ...metadata,
+        messageFormat: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+        manifestValidated: true,
+        timing: transcriptTimingForConversationDir(conversationDir, manifest),
+      });
+    } else {
+      metadata = this.validateTranscriptMetadata(key) ?? metadata;
+    }
+    const messageFormat = metadata.messageFormat;
     this.persistConversationTranscript(
       key,
       conversation,
@@ -2892,17 +2945,17 @@ export class LocalStore {
         messagesPath,
         upgradeMessages,
       );
-      writeLocalTranscriptManifest(
-        conversationDir,
-        createLocalTranscriptManifest({
-          migratedFrom: "versioned-pi-ai-message-jsonl",
-        }),
-      );
+      const manifest = createLocalTranscriptManifest({
+        migratedFrom: "versioned-pi-ai-message-jsonl",
+      });
+      writeLocalTranscriptManifest(conversationDir, manifest);
       const metadata = this.transcriptMetadataByConversationKey.get(key);
       if (metadata) {
         this.transcriptMetadataByConversationKey.set(key, {
           ...metadata,
           messageFormat: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+          manifestValidated: true,
+          timing: transcriptTimingForConversationDir(conversationDir, manifest),
         });
       }
       activeMessageFormat = LOCAL_TRANSCRIPT_MESSAGE_FORMAT;
