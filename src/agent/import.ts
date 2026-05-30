@@ -2,7 +2,7 @@
  * Import an agent from an AgentFile (.af) template
  */
 import { createReadStream } from "node:fs";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getBackend } from "@/backend";
@@ -35,8 +35,14 @@ export async function importAgentFromFile(
   if (!getBackend().capabilities.agentFileImportExport) {
     throw new Error("Agent file import is not supported by this backend yet");
   }
-  const client = await getClient();
   const resolvedPath = resolve(options.filePath);
+  try {
+    await access(resolvedPath);
+  } catch {
+    throw new Error(`AgentFile not found: ${resolvedPath}`);
+  }
+
+  const client = await getClient();
 
   // Create a file stream for the API (compatible with Node.js and Bun)
   const file = createReadStream(resolvedPath);
