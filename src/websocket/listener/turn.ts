@@ -252,11 +252,19 @@ function buildMaybeLaunchReflectionSubagent(params: {
         silentCompletion: true,
         transcriptPath: autoPayload.payloadPath,
         parentScope: { agentId, conversationId },
-        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
+        onComplete: async ({
+          success,
+          error,
+          agentId: reflectionAgentId,
+          stepCount,
+          durationMs,
+        }) => {
           telemetry.trackReflectionEnd(triggerSource, success, {
             subagentId: reflectionAgentId ?? undefined,
             conversationId,
             error,
+            stepCount,
+            durationMs,
           });
           await finalizeAutoReflectionPayload(
             agentId,

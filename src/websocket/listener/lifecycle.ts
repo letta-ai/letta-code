@@ -650,11 +650,19 @@ export async function wireChannelIngress(
         silentCompletion: true,
         transcriptPath: autoPayload.payloadPath,
         parentScope: { agentId, conversationId },
-        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
+        onComplete: async ({
+          success,
+          error,
+          agentId: reflectionAgentId,
+          stepCount,
+          durationMs,
+        }) => {
           telemetry.trackReflectionEnd("manual", success, {
             subagentId: reflectionAgentId ?? undefined,
             conversationId,
             error,
+            stepCount,
+            durationMs,
           });
           await finalizeAutoReflectionPayload(
             agentId,

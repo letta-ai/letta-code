@@ -2811,11 +2811,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 success,
                 error,
                 agentId: reflectionAgentId,
+                stepCount,
+                durationMs,
               }) => {
                 telemetry.trackReflectionEnd("manual", success, {
                   subagentId: reflectionAgentId ?? undefined,
                   conversationId: reflectionConversationId,
                   error,
+                  stepCount,
+                  durationMs,
                 });
                 await finalizeAutoReflectionPayload(
                   agentId,
@@ -3481,11 +3485,15 @@ ${SYSTEM_REMINDER_CLOSE}
               success,
               error,
               agentId: reflectionAgentId,
+              stepCount,
+              durationMs,
             }) => {
               telemetry.trackReflectionEnd(triggerSource, success, {
                 subagentId: reflectionAgentId ?? undefined,
                 conversationId: reflectionConversationId,
                 error,
+                stepCount,
+                durationMs,
               });
               await finalizeAutoReflectionPayload(
                 agentId,

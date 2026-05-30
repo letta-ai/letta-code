@@ -1,7 +1,12 @@
+import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getServerUrl } from "@/backend/api/client";
 import { getServerHealth } from "@/backend/api/health";
-import { submitTelemetryMetadata } from "@/backend/api/metadata";
+import {
+  submitFeedbackMetadata,
+  submitTelemetryMetadata,
+} from "@/backend/api/metadata";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
@@ -100,6 +105,8 @@ export interface ReflectionEndData {
   subagent_id?: string;
   conversation_id?: string;
   error?: string;
+  step_count?: number;
+  duration_ms?: number;
 }
 
 export function isLettaCodeDesktopRuntime(
@@ -243,6 +250,102 @@ class TelemetryManager {
     } catch {
       return undefined;
     }
+  }
+
+  private getTelemetryDeviceId(): string {
+    const existing = this.deviceId?.trim();
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      const generated = settingsManager.getOrCreateDeviceId().trim();
+      if (generated) {
+        this.deviceId = generated;
+        return generated;
+      }
+    } catch {
+      // Settings may not be initialized in some early/exit flush paths. Fall
+      // back to a process-local UUID so cloud pass-through telemetry never
+      // sends an empty organization/device id.
+    }
+
+    const fallback = randomUUID();
+    this.deviceId = fallback;
+    return fallback;
+  }
+
+  private appendTelemetryDebugLog(message: string): void {
+    try {
+      appendFileSync(
+        "/tmp/letta-telemetry.log",
+        `${new Date().toISOString()} ${message}\n`,
+      );
+    } catch {
+      // Debug logging must never affect telemetry or the user session.
+    }
+  }
+
+  private maybeSendReflectionThresholdFeedback(data: ReflectionEndData): void {
+    const alertReasons: string[] = [];
+    if (
+      typeof data.duration_ms === "number" &&
+      // data.duration_ms > 60
+      data.duration_ms > 15 * 60 * 1000
+    ) {
+      alertReasons.push("duration_gt_15m");
+    }
+    if (typeof data.step_count === "number" && data.step_count > 100) {
+      alertReasons.push("step_count_gt_100");
+    }
+    if (alertReasons.length === 0) {
+      return;
+    }
+
+    void (async () => {
+      const apiKey = await this.resolveTelemetryApiKey();
+      const deviceId = this.getTelemetryDeviceId();
+      const parentAgentId = this.currentAgentId || undefined;
+      const reflectionSubagentId = data.subagent_id;
+      await submitFeedbackMetadata(apiKey, deviceId, {
+        message: `[amy reflection alert testing] Reflection exceeded thresholds: ${alertReasons.join(
+          ", ",
+        )} (parent agent id: ${parentAgentId ?? "unset"}, reflection subagent id: ${
+          reflectionSubagentId ?? "unset"
+        })`,
+        feature: "letta-code",
+        agent_id: reflectionSubagentId ?? parentAgentId,
+        session_id: this.sessionId,
+        total_wall_ms: data.duration_ms,
+        step_count: data.step_count,
+        settings: JSON.stringify({
+          source: "reflection_threshold_alert",
+          alert_reasons: alertReasons,
+          trigger_source: data.trigger_source,
+          success: data.success,
+          parent_agent_id: parentAgentId,
+          reflection_subagent_id: reflectionSubagentId,
+          subagent_id: data.subagent_id,
+          conversation_id: data.conversation_id,
+          error: data.error,
+          surface: this.surface,
+        }),
+        server_version: this.serverVersion || undefined,
+      });
+      this.appendTelemetryDebugLog(
+        `[TELEM-FEEDBACK] sent reflection threshold alert reasons=${alertReasons.join(
+          ",",
+        )} stepCount=${String(data.step_count ?? "unset")} durationMs=${String(
+          data.duration_ms ?? "unset",
+        )}`,
+      );
+    })().catch((error) => {
+      this.appendTelemetryDebugLog(
+        `[TELEM-FEEDBACK] FAIL reflection threshold alert ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
   }
   private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_BATCH_SIZE = 100;
@@ -423,6 +526,33 @@ class TelemetryManager {
     };
 
     this.events.push(event);
+
+    const queuedReflectionBits =
+      type === "reflection_start" || type === "reflection_end"
+        ? ` conversationId=${String(
+            (event.data as Record<string, unknown>).conversation_id ?? "unset",
+          )} subagentId=${String(
+            (event.data as Record<string, unknown>).subagent_id ?? "unset",
+          )}${
+            type === "reflection_end"
+              ? ` stepCount=${String(
+                  (event.data as Record<string, unknown>).step_count ?? "unset",
+                )} durationMs=${String(
+                  (event.data as Record<string, unknown>).duration_ms ??
+                    "unset",
+                )}`
+              : ""
+          }`
+        : "";
+    this.appendTelemetryDebugLog(
+      `[TELEM-QUEUE] queued ${type} queued=${this.events.length} pid=${
+        process.pid
+      } sessionId=${this.sessionId} agentId=${
+        this.currentAgentId ?? "unset"
+      } surface=${this.surface} role=${
+        process.env.LETTA_CODE_AGENT_ROLE ?? "parent"
+      }${queuedReflectionBits}`,
+    );
 
     // Flush if batch size is reached
     if (this.events.length >= this.MAX_BATCH_SIZE) {
@@ -709,6 +839,8 @@ class TelemetryManager {
       subagentId?: string;
       conversationId?: string;
       error?: string;
+      stepCount?: number;
+      durationMs?: number;
     },
   ) {
     const data: ReflectionEndData = {
@@ -717,8 +849,11 @@ class TelemetryManager {
       subagent_id: options?.subagentId,
       conversation_id: options?.conversationId,
       error: options?.error,
+      step_count: options?.stepCount,
+      duration_ms: options?.durationMs,
     };
     this.track("reflection_end", data);
+    this.maybeSendReflectionThresholdFeedback(data);
   }
 
   /**
@@ -734,10 +869,34 @@ class TelemetryManager {
 
     const apiKey = await this.resolveTelemetryApiKey();
 
+    const deviceId = this.getTelemetryDeviceId();
+    const eventTypes = eventsToSend
+      .map((event) => {
+        if (event.type !== "reflection_end") {
+          return event.type;
+        }
+        const data = event.data as Record<string, unknown>;
+        return `reflection_end(stepCount=${String(
+          data.step_count ?? "unset",
+        )},durationMs=${String(data.duration_ms ?? "unset")})`;
+      })
+      .join(",");
+    this.appendTelemetryDebugLog(
+      `[TELEM-SEND] attempting to send ${eventsToSend.length} events: ${eventTypes} pid=${
+        process.pid
+      } sessionId=${this.sessionId} agentId=${
+        this.currentAgentId ?? "unset"
+      } surface=${this.surface} role=${
+        process.env.LETTA_CODE_AGENT_ROLE ?? "parent"
+      } deviceId=${deviceId ? "set" : "EMPTY"} apiKey=${
+        apiKey ? "set" : "EMPTY"
+      }`,
+    );
+
     try {
       await submitTelemetryMetadata(
         apiKey,
-        this.deviceId || "",
+        deviceId,
         {
           service: "letta-code",
           server_version: this.serverVersion || undefined,
@@ -745,7 +904,13 @@ class TelemetryManager {
         },
         { signal: AbortSignal.timeout(5000) },
       );
-    } catch {
+      this.appendTelemetryDebugLog("[TELEM-SEND] OK");
+    } catch (error) {
+      this.appendTelemetryDebugLog(
+        `[TELEM-SEND] FAIL ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);
     }
