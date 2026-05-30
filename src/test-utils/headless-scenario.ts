@@ -114,7 +114,9 @@ async function ensurePrereqs(args: Args): Promise<"ok" | "skip"> {
 
   const provider = args.provider ?? inferLocalProvider(args.model);
   const requiredKey =
-    provider === "anthropic"
+      : provider === "google"
+        ? "GOOGLE_GENERATIVE_AI_API_KEY"
+        : "OPENAI_API_KEY";
       ? "ANTHROPIC_API_KEY"
       : provider === "google"
         ? "GEMINI_API_KEY"
