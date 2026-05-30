@@ -38,7 +38,13 @@ export interface CronTask {
   // Identity
   id: string;
   agent_id: string;
-  conversation_id: string; // defaults to "default"
+  /**
+   * Conversation target for scheduled fires.
+   * - "default" (default): enqueue into the agent's default conversation
+   * - "new": create a fresh conversation for every fire
+   * - any other string: enqueue into that existing conversation id
+   */
+  conversation_id: string;
 
   // Metadata
   name: string;
@@ -413,6 +419,12 @@ export function computeJitter(
 
 export interface AddTaskInput {
   agent_id: string;
+  /**
+   * Conversation target for scheduled fires.
+   * - omitted/"default": agent default conversation
+   * - "new": fresh conversation per fire
+   * - any other string: existing conversation id
+   */
   conversation_id?: string;
   name: string;
   description: string;

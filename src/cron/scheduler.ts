@@ -12,6 +12,8 @@
  * On stop: clears interval, releases lease.
  */
 
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
+import { getBackend } from "@/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
@@ -69,6 +71,7 @@ const TICK_INTERVAL_MS = 60_000;
 const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
 const LEASE_RETRY_MS = 30_000; // 30 seconds between lease claim retries
 const MAX_LEASE_RETRIES = 3;
+const NEW_CONVERSATION_TARGET = "new";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -78,17 +81,34 @@ export function minuteKey(date: Date): string {
 
 export function wrapCronPrompt(task: CronTask): string {
   const lines = [
-    "<system-reminder>",
     `Scheduled task "${task.name}" is firing.`,
     `Description: ${task.description}`,
     task.recurring
       ? `This is fire #${task.fire_count + 1} (cron: ${task.cron}).`
       : `This is a one-off scheduled task.`,
     "",
-    task.prompt,
-    "</system-reminder>",
+    `Prompt: ${task.prompt}`,
   ];
   return lines.join("\n");
+}
+
+function getCronConversationSummary(task: CronTask): string {
+  return `[Schedule] ${task.name}`;
+}
+
+async function resolveCronFireConversationId(
+  task: CronTask,
+): Promise<string | undefined> {
+  if (task.conversation_id === NEW_CONVERSATION_TARGET) {
+    const conversation = await getBackend().createConversation({
+      agent_id: task.agent_id,
+      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+      summary: getCronConversationSummary(task),
+    });
+    return conversation.id;
+  }
+
+  return task.conversation_id === "default" ? undefined : task.conversation_id;
 }
 
 // ── Core tick logic ─────────────────────────────────────────────────
@@ -114,20 +134,34 @@ export function shouldFireTask(task: CronTask, now: Date): boolean {
   return cronMatchesTime(task.cron, now, task.timezone);
 }
 
-function fireCronTask(
+async function fireCronTask(
   task: CronTask,
   now: Date,
   socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
-): void {
+): Promise<void> {
   const listener = getActiveRuntime();
   if (!listener) return;
+
+  let targetConversationId: string | undefined;
+  try {
+    targetConversationId = await resolveCronFireConversationId(task);
+  } catch (err) {
+    safeAppendCronRunLogForTask(task, {
+      status: "error",
+      error:
+        err instanceof Error ? err.message : "failed to resolve conversation",
+      runAtMs: now.getTime(),
+      scheduledFor: task.scheduled_for,
+    });
+    return;
+  }
 
   const rawRuntime = getOrCreateConversationRuntime(
     listener,
     task.agent_id,
-    task.conversation_id === "default" ? undefined : task.conversation_id,
+    targetConversationId,
   );
 
   if (!rawRuntime) return;
@@ -147,7 +181,7 @@ function fireCronTask(
     text,
     cronTaskId: task.id,
     agentId: task.agent_id,
-    conversationId: task.conversation_id,
+    conversationId: targetConversationId ?? "default",
   } as Omit<CronPromptQueueItem, "id" | "enqueuedAt">);
 
   if (!queuedItem) {
@@ -185,6 +219,7 @@ function fireCronTask(
     queueItemId: queuedItem.id,
     scheduledFor: task.scheduled_for,
     firedAt: nowIso,
+    conversationId: targetConversationId ?? "default",
   });
 }
 
@@ -258,9 +293,13 @@ function tick(
         const freshTask = getTask(taskId);
         if (!freshTask || freshTask.status !== "active") return;
 
-        try {
-          fireCronTask(freshTask, now, socket, opts, processQueuedTurn);
-        } catch (err) {
+        void fireCronTask(
+          freshTask,
+          now,
+          socket,
+          opts,
+          processQueuedTurn,
+        ).catch((err) => {
           console.error(`[Cron] Error firing task ${taskId}:`, err);
           safeAppendCronRunLogForTask(freshTask, {
             status: "error",
@@ -268,7 +307,7 @@ function tick(
             runAtMs: now.getTime(),
             scheduledFor: freshTask.scheduled_for,
           });
-        }
+        });
       };
 
       if (jitterMs > 0) {
