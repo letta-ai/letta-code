@@ -219,9 +219,12 @@ export async function handleConversationPinCommand(
         parsed.conversation_id,
         workingDirectory,
       );
-    }
-  } else if (scope === "both") {
-    if (shouldPin) {
+      settingsManager.pinConversationGlobal(agentId, parsed.conversation_id);
+      settingsManager.pinConversationLocal(
+        agentId,
+        parsed.conversation_id,
+        workingDirectory,
+      );
       settingsManager.pinConversationGlobal(agentId, parsed.conversation_id);
     } else {
       settingsManager.unpinConversationBoth(
