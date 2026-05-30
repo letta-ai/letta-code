@@ -21,6 +21,8 @@ import { setCurrentAgentId } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
+  CHATGPT_FAST_SERVICE_TIER,
+  getChatGptFastRegistryHandleForModelHandle,
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
@@ -51,6 +53,7 @@ import {
   createCommandRunner,
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
+import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
 import {
@@ -739,7 +742,11 @@ export function App({
     modelLabel: string;
     initialModelId: string;
     initialEffort?: ModelReasoningEffort;
-    options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+    options: Array<{
+      effort: ModelReasoningEffort;
+      modelId: string;
+      selection?: ModelSelectorSelection;
+    }>;
   } | null>(null);
   const closeOverlay = useCallback(() => {
     const pending = pendingOverlayCommandRef.current;
@@ -796,6 +803,13 @@ export function App({
     conversationOverrideModelSettings,
     setConversationOverrideModelSettings,
   ] = useState<AgentState["model_settings"] | null>(null);
+  const conversationOverrideModelSettingsRef = useRef(
+    conversationOverrideModelSettings,
+  );
+  useEffect(() => {
+    conversationOverrideModelSettingsRef.current =
+      conversationOverrideModelSettings;
+  }, [conversationOverrideModelSettings]);
   const [
     conversationOverrideContextWindowLimit,
     setConversationOverrideContextWindowLimit,
@@ -858,6 +872,13 @@ export function App({
     : agentState?.model_settings;
   const derivedReasoningEffort: ModelReasoningEffort | null =
     deriveReasoningEffort(effectiveModelSettings, llmConfig);
+  const currentModelServiceTier =
+    (effectiveModelSettings as { service_tier?: unknown } | null | undefined)
+      ?.service_tier === CHATGPT_FAST_SERVICE_TIER &&
+    currentModelLabel &&
+    getChatGptFastRegistryHandleForModelHandle(currentModelLabel)
+      ? CHATGPT_FAST_SERVICE_TIER
+      : null;
   const startupModelDisplayOverride = getStartupModelDisplayOverride({
     isLocalBackend: isLocalBackendEnabled(),
     startupHasAvailableLocalModels: hasAvailableLocalModels,
@@ -874,6 +895,7 @@ export function App({
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
       context_window: llmConfig?.context_window ?? null,
+      service_tier: currentModelServiceTier,
     });
     if (info) {
       return (info as { shortLabel?: string }).shortLabel ?? info.label;
@@ -886,6 +908,7 @@ export function App({
   }, [
     currentModelLabel,
     derivedReasoningEffort,
+    currentModelServiceTier,
     llmConfig,
     startupModelDisplayOverride,
   ]);
@@ -3241,6 +3264,16 @@ export function App({
           resolvedConversationModelSettings,
           agentState.llm_config,
         );
+        const conversationServiceTier =
+          (
+            resolvedConversationModelSettings as
+              | { service_tier?: unknown }
+              | null
+              | undefined
+          )?.service_tier === CHATGPT_FAST_SERVICE_TIER &&
+          getChatGptFastRegistryHandleForModelHandle(effectiveModelHandle)
+            ? CHATGPT_FAST_SERVICE_TIER
+            : null;
 
         const modelInfo = getModelInfoForLlmConfig(effectiveModelHandle, {
           reasoning_effort: reasoningEffort,
@@ -3251,6 +3284,7 @@ export function App({
               }
             ).enable_reasoner ?? null,
           context_window: conversationContextWindowLimit ?? null,
+          service_tier: conversationServiceTier,
         });
         const modelPresetContextWindow = (
           modelInfo?.updateArgs as { context_window?: unknown } | undefined
@@ -4257,7 +4291,10 @@ export function App({
         });
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
-        handleModelSelect(action.modelId, action.commandId);
+        handleModelSelect(
+          action.modelSelection ?? action.modelId,
+          action.commandId,
+        );
       } else if (action.type === "set_sleeptime") {
         handleSleeptimeModeSelect(action.settings, action.commandId);
       } else if (action.type === "set_compaction") {
@@ -4455,6 +4492,7 @@ export function App({
       agentIdRef,
       agentStateRef,
       commandRunner,
+      conversationOverrideModelSettingsRef,
       conversationIdRef,
       hasConversationModelOverrideRef,
       isAgentBusy,
@@ -4757,6 +4795,7 @@ export function App({
       currentModelDisplay={currentModelDisplay}
       currentModelHandle={currentModelHandle}
       currentModelId={currentModelId}
+      currentModelServiceTier={currentModelServiceTier}
       currentModelProvider={currentModelProvider}
       isLocalBackend={isLocalBackend}
       currentPersonalityId={currentPersonalityId}

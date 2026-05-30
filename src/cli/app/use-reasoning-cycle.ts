@@ -8,7 +8,12 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import { isLocalModelHandle, type ModelReasoningEffort } from "@/agent/model";
+import {
+  CHATGPT_FAST_SERVICE_TIER,
+  getChatGptFastRegistryHandleForModelHandle,
+  isLocalModelHandle,
+  type ModelReasoningEffort,
+} from "@/agent/model";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 
@@ -22,6 +27,7 @@ type ReasoningCycleDesired = {
   modelHandle: string;
   effort: string;
   modelId: string;
+  serviceTier?: string | null;
 };
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
@@ -31,11 +37,27 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   );
 }
 
+export function serviceTierForReasoningCycle(
+  modelHandle: string,
+  modelSettings: AgentState["model_settings"] | null | undefined,
+): string | null | undefined {
+  if (!getChatGptFastRegistryHandleForModelHandle(modelHandle)) {
+    return undefined;
+  }
+  return (modelSettings as { service_tier?: unknown } | null | undefined)
+    ?.service_tier === CHATGPT_FAST_SERVICE_TIER
+    ? CHATGPT_FAST_SERVICE_TIER
+    : null;
+}
+
 type ReasoningCycleContext = {
   agentId: string;
   agentIdRef: MutableRefObject<string>;
   agentStateRef: MutableRefObject<AgentState | null | undefined>;
   commandRunner: CommandStarter;
+  conversationOverrideModelSettingsRef: MutableRefObject<
+    AgentState["model_settings"] | null
+  >;
   conversationIdRef: MutableRefObject<string>;
   hasConversationModelOverrideRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
@@ -95,6 +117,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
     agentIdRef,
     agentStateRef,
     commandRunner,
+    conversationOverrideModelSettingsRef,
     conversationIdRef,
     hasConversationModelOverrideRef,
     isAgentBusy,
@@ -171,6 +194,9 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               desired.modelHandle,
               {
                 reasoning_effort: desired.effort,
+                ...(desired.serviceTier !== undefined
+                  ? { service_tier: desired.serviceTier }
+                  : {}),
               },
               { preserveContextWindow: true },
             );
@@ -183,6 +209,9 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               desired.modelHandle,
               {
                 reasoning_effort: desired.effort,
+                ...(desired.serviceTier !== undefined
+                  ? { service_tier: desired.serviceTier }
+                  : {}),
               },
               { preserveContextWindow: true },
             );
@@ -330,7 +359,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
 
       // Derive current effort from effective model settings (conversation override aware)
       const modelSettingsForEffort = hasConversationModelOverrideRef.current
-        ? undefined
+        ? conversationOverrideModelSettingsRef.current
         : agentStateRef.current?.model_settings;
       const currentEffort =
         deriveReasoningEffort(modelSettingsForEffort, current) ?? "none";
@@ -373,6 +402,10 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       const nextIndex = (curIndex + 1) % sorted.length;
       const next = sorted[nextIndex];
       if (!next) return;
+      const serviceTier = serviceTierForReasoningCycle(
+        modelHandle,
+        modelSettingsForEffort,
+      );
 
       // Snapshot the last confirmed config once per burst so we can revert on failure.
       if (!reasoningCycleLastConfirmedRef.current) {
@@ -394,7 +427,10 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           if (!prev) return prev ?? null;
           const ms = prev.model_settings;
           if (!ms || !("provider_type" in ms)) return prev;
-          if (ms.provider_type === "openai") {
+          if (
+            ms.provider_type === "openai" ||
+            ms.provider_type === "chatgpt_oauth"
+          ) {
             return {
               ...prev,
               model_settings: {
@@ -439,6 +475,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         modelHandle,
         effort: next.effort,
         modelId: next.id,
+        serviceTier,
       };
       if (reasoningCycleTimerRef.current) {
         clearTimeout(reasoningCycleTimerRef.current);

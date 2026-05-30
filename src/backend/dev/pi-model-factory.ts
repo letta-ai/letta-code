@@ -43,6 +43,7 @@ export interface PiModelSettings {
   provider_type?: unknown;
   context_window_limit?: unknown;
   max_tokens?: unknown;
+  service_tier?: unknown;
 }
 
 export interface PiModelFactoryOptions {
