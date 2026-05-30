@@ -12,6 +12,7 @@ import { getAvailableModelHandles } from "@/agent/available-models";
 import { getCurrentAgentId } from "@/agent/context";
 import { getDefaultModelForTier, resolveModel } from "@/agent/model";
 import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
+import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import {
   addToolCall,
   emitStreamEvent,
@@ -1329,8 +1330,18 @@ ${SYSTEM_REMINDER_CLOSE}
 `;
 }
 
-function buildForkSystemReminder(subagentType?: string): string {
+export function recallPromptForBackend(backendMode?: BackendMode): string {
+  return backendMode === "local"
+    ? recallSubagentLocalPrompt
+    : recallSubagentPrompt;
+}
+
+function buildForkSystemReminder(
+  subagentType?: string,
+  backendMode?: BackendMode,
+): string {
   if (subagentType === "recall") {
+    const recallPrompt = recallPromptForBackend(backendMode);
     return `${SYSTEM_REMINDER_OPEN}
 You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent and do not share its tools.
 
@@ -1341,7 +1352,7 @@ Your toolset is limited to Bash, Read, and TaskOutput. You cannot edit files, ru
 You CANNOT ask questions mid-execution — all instructions are provided upfront.
 Your final message will be returned to the caller.
 
-${recallSubagentPrompt}
+${recallPrompt}
 ${SYSTEM_REMINDER_CLOSE}
 
 `;
@@ -1446,7 +1457,7 @@ export async function spawnSubagent(
         parentAgent ??
         (await getBackend().retrieveAgent(resolvedParentAgentId));
       if (forkedContext) {
-        const systemReminder = buildForkSystemReminder(type);
+        const systemReminder = buildForkSystemReminder(type, backendMode);
         finalPrompt = systemReminder + prompt;
       } else {
         const systemReminder = buildDeploySystemReminder(

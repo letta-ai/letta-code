@@ -61,6 +61,7 @@ type StoredConversation = Conversation & {
   id: string;
   agent_id: string;
   in_context_message_ids: string[];
+  hidden?: boolean;
 };
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
@@ -207,6 +208,9 @@ function createLocalConversationRecord(
     ...(typeof bodyRecord.context_window_limit === "number"
       ? { context_window_limit: bodyRecord.context_window_limit }
       : {}),
+    ...(typeof bodyRecord.hidden === "boolean"
+      ? { hidden: bodyRecord.hidden }
+      : {}),
   } as StoredConversation;
 }
 
@@ -246,6 +250,9 @@ function updateLocalConversationRecord(
   if (typeof bodyRecord.context_window_limit === "number") {
     (next as unknown as Record<string, unknown>).context_window_limit =
       bodyRecord.context_window_limit;
+  }
+  if (typeof bodyRecord.hidden === "boolean") {
+    next.hidden = bodyRecord.hidden;
   }
   if (typeof bodyRecord.summary === "string" || bodyRecord.summary === null) {
     next.summary = bodyRecord.summary;
@@ -1396,6 +1403,7 @@ export class LocalStore {
     let conversations = [...this.conversations.values()].filter(
       (conversation) =>
         conversation.id !== "default" &&
+        (bodyRecord.include_hidden === true || !conversation.hidden) &&
         (!agentId || conversation.agent_id === agentId),
     );
     conversations.sort((a, b) => {
@@ -1474,7 +1482,7 @@ export class LocalStore {
 
   forkConversation(
     conversationId: string,
-    options: { agentId?: string } = {},
+    options: { agentId?: string; hidden?: boolean } = {},
   ): { id: string } {
     const source = this.findConversation(
       conversationId,
@@ -1498,6 +1506,9 @@ export class LocalStore {
         ...(source.model !== undefined ? { model: source.model } : {}),
         ...(source.model_settings !== undefined
           ? { model_settings: source.model_settings }
+          : {}),
+        ...(typeof options.hidden === "boolean"
+          ? { hidden: options.hidden }
           : {}),
       } as Partial<ConversationCreateBody>,
     );
