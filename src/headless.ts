@@ -106,6 +106,10 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import {
+  disableExtensionsForProcess,
+  shouldDisableExtensions,
+} from "./extensions/disable";
 import type { ExtensionRuntime } from "./extensions/extension-runtime";
 import type { ExtensionConversationOpenReason } from "./extensions/types";
 import {
@@ -549,6 +553,12 @@ export async function handleHeadlessCommand(
 ) {
   const { values, positionals } = parsedArgs;
   telemetry.setSurface(getTerminalTelemetrySurface(true));
+  const extensionsDisabled = shouldDisableExtensions({
+    cliFlag: values["no-extensions"],
+  });
+  if (extensionsDisabled) {
+    disableExtensionsForProcess();
+  }
 
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
@@ -1675,6 +1685,7 @@ export async function handleHeadlessCommand(
     permissionMode: headlessPermissionMode,
     reflectionSettings: effectiveReflectionSettings,
     sessionStats,
+    disabled: extensionsDisabled,
   });
   await headlessExtensionRuntime.reload();
   try {

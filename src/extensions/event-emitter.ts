@@ -17,7 +17,7 @@ export type ExtensionEventEmitter = {
   getSnapshot: () => ExtensionRuntimeEventSnapshot;
 };
 
-function emptyEventEmissionResult<TName extends ExtensionEventName>(
+export function emptyEventEmissionResult<TName extends ExtensionEventName>(
   name: TName,
 ): ExtensionEventEmissionResult<TName> {
   return { diagnostics: [], handlerCount: 0, name, results: [] };

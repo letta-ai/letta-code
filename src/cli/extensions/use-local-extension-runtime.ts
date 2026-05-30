@@ -64,11 +64,13 @@ function createExtensionBackendApi(
 
 export function useLocalExtensionRuntime(
   initialContext: ExtensionContext,
+  options: { disabled?: boolean } = {},
 ): LocalExtensionRuntime {
   // biome-ignore lint/correctness/useExhaustiveDependencies: the runtime is process-local; context updates are pushed through updateContext below.
   const runtime = useMemo(
     () =>
       createExtensionRuntime({
+        disabled: options.disabled,
         getBackendApi: () => createExtensionBackendApi(getBackend()),
         getClient,
         initialContext,
