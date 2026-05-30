@@ -110,10 +110,6 @@ export function providerSelectionFlow(
   return "input";
 }
 
-function targetLabel(target: ProviderStorageTarget): string {
-  return target === "local" ? "Local" : "Constellation";
-}
-
 export function ProviderSelector({
   onCancel,
   onStartOAuth,
@@ -1252,16 +1248,13 @@ export function ProviderSelector({
   const renderOptionsView = () => {
     if (viewState.type !== "options") return null;
     const { provider } = viewState;
-    const options = [`Disconnect from ${targetLabel(selectedTarget)}`, "Back"];
+    const options = ["Disconnect provider", "Back"];
 
     return (
       <>
         <Box flexDirection="column" marginBottom={1}>
           <Text bold color={colors.selector.title}>
             Disconnect {provider.displayName}
-          </Text>
-          <Text dimColor>
-            This removes only the {targetLabel(selectedTarget)} connection.
           </Text>
           <Box height={1} />
           <Box flexDirection="row">
