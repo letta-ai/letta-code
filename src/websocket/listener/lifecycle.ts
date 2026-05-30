@@ -207,6 +207,7 @@ export async function replaySyncStateForRuntime(
       runtime: ListenerRuntime,
       scope: { agent_id: string; conversation_id: string },
     ) => void;
+    forceDeviceStatus?: boolean;
   },
 ): Promise<void> {
   const syncScopedRuntime = getOrCreateScopedRuntime(
@@ -232,7 +233,9 @@ export async function replaySyncStateForRuntime(
     }
   }
 
-  emitStateSync(socket, listenerRuntime, scope);
+  emitStateSync(socket, listenerRuntime, scope, {
+    forceDeviceStatus: opts?.forceDeviceStatus,
+  });
   (opts?.scheduleWarmupsAfterSync ?? scheduleListenerWarmupsAfterSync)(
     listenerRuntime,
     scope,

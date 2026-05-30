@@ -635,6 +635,11 @@ export interface SyncCommand {
    * set this false and only replay in-memory listener state.
    */
   recover_approvals?: boolean;
+  /**
+   * Force the sync replay to include update_device_status even when the
+   * listener's last device-status snapshot for this socket/scope is unchanged.
+   */
+  force_device_status?: boolean;
 }
 
 export interface TerminalSpawnCommand {
