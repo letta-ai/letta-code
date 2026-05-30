@@ -1816,3 +1816,46 @@ describe("Settings Manager - Conversation Goals", () => {
     ).toBe(false);
   });
 });
+
+describe("Settings Manager - Conversation Pins", () => {
+  async function initPinTest() {
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+  }
+
+  test("pins conversations globally and locally per agent", async () => {
+    await initPinTest();
+
+    settingsManager.pinConversationGlobal("agent-1", "conv-1");
+    settingsManager.pinConversationLocal("agent-1", "conv-2", testProjectDir);
+
+    expect(settingsManager.getGlobalPinnedConversations("agent-1")).toEqual([
+      "conv-1",
+    ]);
+    expect(
+      settingsManager.getLocalPinnedConversations("agent-1", testProjectDir),
+    ).toEqual(["conv-2"]);
+    expect(
+      settingsManager.getMergedPinnedConversations("agent-1", testProjectDir),
+    ).toEqual([
+      { conversationId: "conv-2", isLocal: true },
+      { conversationId: "conv-1", isLocal: false },
+    ]);
+  });
+
+  test("conversation pins are scoped by local backend storage dir", async () => {
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = join(testHomeDir, "local-store-a");
+    await initPinTest();
+
+    settingsManager.pinConversationGlobal("local-agent-1", "conv-a");
+    expect(
+      settingsManager.getGlobalPinnedConversations("local-agent-1"),
+    ).toEqual(["conv-a"]);
+
+    process.env.LETTA_LOCAL_BACKEND_DIR = join(testHomeDir, "local-store-b");
+    expect(
+      settingsManager.getGlobalPinnedConversations("local-agent-1"),
+    ).toEqual([]);
+  });
+});

@@ -43,6 +43,7 @@ import type {
   GetTreeCommand,
   GrepInFilesCommand,
   InputCommand,
+  ListConversationPinsCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
   ListModelsCommand,
@@ -57,6 +58,7 @@ import type {
   SearchFilesCommand,
   SecretApplyCommand,
   SecretListCommand,
+  SetConversationPinCommand,
   SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -868,6 +870,47 @@ export function isCreateAgentCommand(
   );
 }
 
+export function isListConversationPinsCommand(
+  value: unknown,
+): value is ListConversationPinsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+  };
+  return (
+    c.type === "list_conversation_pins" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime)
+  );
+}
+
+export function isSetConversationPinCommand(
+  value: unknown,
+): value is SetConversationPinCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+    conversation_id?: unknown;
+    action?: unknown;
+    scope?: unknown;
+  };
+  return (
+    c.type === "set_conversation_pin" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime) &&
+    typeof c.conversation_id === "string" &&
+    (c.action === "pin" || c.action === "unpin" || c.action === "toggle") &&
+    (c.scope === undefined ||
+      c.scope === "global" ||
+      c.scope === "local_project" ||
+      c.scope === "both")
+  );
+}
+
 export function isGetReflectionSettingsCommand(
   value: unknown,
 ): value is GetReflectionSettingsCommand {
@@ -1615,6 +1658,8 @@ export function parseServerMessage(
       isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||
+      isListConversationPinsCommand(parsed) ||
+      isSetConversationPinCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||

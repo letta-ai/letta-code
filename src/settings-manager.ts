@@ -104,6 +104,7 @@ export interface Settings {
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
   pinnedAgentsByServer?: Record<string, string[]>; // DEPRECATED: use agents array
+  pinnedConversationsByServer?: Record<string, Record<string, string[]>>; // server -> agentId -> conversation IDs
   // Unified agent settings array (replaces pinnedAgentsByServer)
   agents?: AgentSettings[];
   // Letta Cloud OAuth token management (stored separately in secrets)
@@ -148,6 +149,7 @@ export interface LocalProjectSettings {
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
+  pinnedConversationsByServer?: Record<string, Record<string, string[]>>; // server -> agentId -> conversation IDs
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
   conversationGoalsByServer?: Record<string, Record<string, ConversationGoal>>;
   conversationGoalToolsByServer?: Record<string, Record<string, boolean>>;
@@ -1686,6 +1688,152 @@ class SettingsManager {
     }
 
     return result;
+  }
+
+  /**
+   * Get globally pinned conversation IDs for an agent on the current server.
+   */
+  getGlobalPinnedConversations(agentId: string): string[] {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+    return settings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
+  }
+
+  /**
+   * Get locally pinned conversation IDs for an agent on the current server.
+   */
+  getLocalPinnedConversations(
+    agentId: string,
+    workingDirectory: string = process.cwd(),
+  ): string[] {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    return (
+      localSettings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? []
+    );
+  }
+
+  /**
+   * Get merged pinned conversation IDs for an agent (local first, then global).
+   */
+  getMergedPinnedConversations(
+    agentId: string,
+    workingDirectory: string = process.cwd(),
+  ): Array<{ conversationId: string; isLocal: boolean }> {
+    const localConversations = this.getLocalPinnedConversations(
+      agentId,
+      workingDirectory,
+    );
+    const globalConversations = this.getGlobalPinnedConversations(agentId);
+
+    const result: Array<{ conversationId: string; isLocal: boolean }> = [];
+    const seenConversationIds = new Set<string>();
+
+    for (const conversationId of localConversations) {
+      result.push({ conversationId, isLocal: true });
+      seenConversationIds.add(conversationId);
+    }
+
+    for (const conversationId of globalConversations) {
+      if (!seenConversationIds.has(conversationId)) {
+        result.push({ conversationId, isLocal: false });
+        seenConversationIds.add(conversationId);
+      }
+    }
+
+    return result;
+  }
+
+  pinConversationGlobal(agentId: string, conversationId: string): void {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+    const current = this.getGlobalPinnedConversations(agentId);
+    if (current.includes(conversationId)) return;
+
+    this.updateSettings({
+      pinnedConversationsByServer: {
+        ...settings.pinnedConversationsByServer,
+        [serverKey]: {
+          ...(settings.pinnedConversationsByServer?.[serverKey] ?? {}),
+          [agentId]: [...current, conversationId],
+        },
+      },
+    });
+  }
+
+  unpinConversationGlobal(agentId: string, conversationId: string): void {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+    const current = this.getGlobalPinnedConversations(agentId);
+
+    this.updateSettings({
+      pinnedConversationsByServer: {
+        ...settings.pinnedConversationsByServer,
+        [serverKey]: {
+          ...(settings.pinnedConversationsByServer?.[serverKey] ?? {}),
+          [agentId]: current.filter((id) => id !== conversationId),
+        },
+      },
+    });
+  }
+
+  pinConversationLocal(
+    agentId: string,
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const current = this.getLocalPinnedConversations(agentId, workingDirectory);
+    if (current.includes(conversationId)) return;
+
+    this.updateLocalProjectSettings(
+      {
+        pinnedConversationsByServer: {
+          ...localSettings.pinnedConversationsByServer,
+          [serverKey]: {
+            ...(localSettings.pinnedConversationsByServer?.[serverKey] ?? {}),
+            [agentId]: [...current, conversationId],
+          },
+        },
+      },
+      workingDirectory,
+    );
+  }
+
+  unpinConversationLocal(
+    agentId: string,
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const current = this.getLocalPinnedConversations(agentId, workingDirectory);
+
+    this.updateLocalProjectSettings(
+      {
+        pinnedConversationsByServer: {
+          ...localSettings.pinnedConversationsByServer,
+          [serverKey]: {
+            ...(localSettings.pinnedConversationsByServer?.[serverKey] ?? {}),
+            [agentId]: current.filter((id) => id !== conversationId),
+          },
+        },
+      },
+      workingDirectory,
+    );
+  }
+
+  unpinConversationBoth(
+    agentId: string,
+    conversationId: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    this.unpinConversationLocal(agentId, conversationId, workingDirectory);
+    this.unpinConversationGlobal(agentId, conversationId);
   }
 
   // DEPRECATED: Keep for backwards compatibility
