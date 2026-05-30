@@ -90,7 +90,7 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("queuedOverlayAction !== null");
     expect(segment).toContain("setQueuedOverlayAction(null)");
     expect(segment).toContain('action.type === "switch_model"');
-    expect(segment).toContain("handleModelSelect(action.modelId");
+    expect(segment).toContain("action.modelSelection ?? action.modelId");
     expect(segment).toContain('action.type === "switch_toolset"');
     expect(segment).toContain("handleToolsetSelect(action.toolsetId");
     expect(segment).toContain('action.type === "set_experiment"');

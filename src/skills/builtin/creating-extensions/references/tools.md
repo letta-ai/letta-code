@@ -2,6 +2,8 @@
 
 Use tools when the agent/model should call a local capability autonomously.
 
+For tools that are part of a larger extension with commands, UI, local state, or events, also read `architecture.md`.
+
 ## Defaults
 
 - Name: lowercase/underscore tool name, e.g. `branch_summary`.
@@ -10,7 +12,9 @@ Use tools when the agent/model should call a local capability autonomously.
 - `requiresApproval: false` only for read-only, low-risk local introspection.
 - `parallelSafe: true` only for read-only tools with no shared mutation or long-lived exclusive resource.
 - Use `ctx.cwd` / `ctx.workingDirectory` as the workspace.
+- Use `await ctx.conversation.getHistory()` when a tool needs recent conversation context. It returns the most recent messages in chronological order by default.
 - Respect `ctx.signal` for long-running work when practical.
+- Tools should return information for the model to use; they should not start hidden model runs.
 
 ## Read-only shell tool
 

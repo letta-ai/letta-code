@@ -2,13 +2,14 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { sendMessageStreamWithBackend } from "@/agent/message";
 import { type Backend, getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
+import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
+import type { ExtensionRuntimeBackendApi } from "@/extensions/types";
 import {
   createExtensionRuntime,
   type ExtensionRuntime,
   type ExtensionRuntimeSnapshot,
 } from "./local-extension-loader";
 import type {
-  ExtensionBackendApi,
   ExtensionContext,
   ExtensionEventEmissionResult,
   ExtensionEventMap,
@@ -19,8 +20,9 @@ export interface LocalExtensionRuntime {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-  ) => Promise<ExtensionEventEmissionResult>;
-  getBackendApi: () => ExtensionBackendApi | undefined;
+  ) => Promise<ExtensionEventEmissionResult<TName>>;
+  eventEmitter: ExtensionRuntime["eventEmitter"];
+  getBackendApi: () => ExtensionRuntimeBackendApi | undefined;
   getContext: () => ExtensionContext;
   hadStatuslineRenderer: boolean;
   hasExtensionSources: boolean;
@@ -31,10 +33,22 @@ export interface LocalExtensionRuntime {
   updateContext: (context: ExtensionContext) => void;
 }
 
-function createExtensionBackendApi(backend: Backend): ExtensionBackendApi {
+function createExtensionBackendApi(
+  backend: Backend,
+): ExtensionRuntimeBackendApi {
   return {
     forkConversation(conversationId, options) {
       return backend.forkConversation(conversationId, options);
+    },
+    getConversationHistory(conversationId, options) {
+      return loadExtensionConversationHistoryFromBackend(
+        backend,
+        {
+          agentId: options?.agentId,
+          conversationId,
+        },
+        options,
+      );
     },
     sendMessageStream(conversationId, messages, options, requestOptions) {
       return sendMessageStreamWithBackend(
@@ -50,11 +64,13 @@ function createExtensionBackendApi(backend: Backend): ExtensionBackendApi {
 
 export function useLocalExtensionRuntime(
   initialContext: ExtensionContext,
+  options: { disabled?: boolean } = {},
 ): LocalExtensionRuntime {
   // biome-ignore lint/correctness/useExhaustiveDependencies: the runtime is process-local; context updates are pushed through updateContext below.
   const runtime = useMemo(
     () =>
       createExtensionRuntime({
+        disabled: options.disabled,
         getBackendApi: () => createExtensionBackendApi(getBackend()),
         getClient,
         initialContext,
@@ -83,6 +99,7 @@ export function useLocalExtensionRuntime(
   return useMemo(
     () => ({
       emitEvent: runtime.emitEvent,
+      eventEmitter: runtime.eventEmitter,
       getBackendApi: runtime.getBackendApi,
       getContext: runtime.getContext,
       hadStatuslineRenderer: snapshot.hadStatuslineRenderer,

@@ -8,14 +8,14 @@ import { pollForToken, requestDeviceCode } from "./oauth";
 
 interface ConstellationLoginViewProps {
   onComplete?: () => void;
-  onAlreadyLoggedIn?: () => void;
   onCancel?: () => void;
+  successMessage?: string;
 }
 
 export function ConstellationLoginView({
   onComplete,
-  onAlreadyLoggedIn,
   onCancel,
+  successMessage = "Signed in to Constellation. Switch to a Constellation agent with /agents.",
 }: ConstellationLoginViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
@@ -25,10 +25,8 @@ export function ConstellationLoginView({
   const cancelledRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const onCompleteRef = useRef(onComplete);
-  const onAlreadyLoggedInRef = useRef(onAlreadyLoggedIn);
 
   onCompleteRef.current = onComplete;
-  onAlreadyLoggedInRef.current = onAlreadyLoggedIn;
 
   useInput((input, key) => {
     if (key.escape || (key.ctrl && input === "c")) {
@@ -45,13 +43,10 @@ export function ConstellationLoginView({
 
     const run = async () => {
       try {
-        const currentSettings =
-          await settingsManager.getSettingsWithSecureTokens();
-        const hasApiKey =
-          process.env.LETTA_API_KEY || currentSettings.env?.LETTA_API_KEY;
-
-        if (hasApiKey) {
-          onAlreadyLoggedInRef.current?.();
+        if (process.env.LETTA_API_KEY) {
+          setError(
+            "LETTA_API_KEY is set in your environment, so OAuth login cannot replace the credential Letta Code is using. Unset LETTA_API_KEY and try again.",
+          );
           return;
         }
 
@@ -89,10 +84,7 @@ export function ConstellationLoginView({
 
         const now = Date.now();
         settingsManager.updateSettings({
-          env: {
-            ...settingsManager.getSettings().env,
-            LETTA_API_KEY: tokens.access_token,
-          },
+          env: { LETTA_API_KEY: tokens.access_token },
           refreshToken: tokens.refresh_token,
           tokenExpiresAt: now + tokens.expires_in * 1000,
           preferredBackendMode: "api",
@@ -100,9 +92,7 @@ export function ConstellationLoginView({
         await settingsManager.flush();
         configureBackendMode("api");
 
-        setDoneMessage(
-          "Signed in to Constellation. Switch to a Constellation agent with /agents.",
-        );
+        setDoneMessage(successMessage);
         setTimeout(() => onCompleteRef.current?.(), 500);
       } catch (err) {
         if (
@@ -120,7 +110,7 @@ export function ConstellationLoginView({
       cancelledRef.current = true;
       abortControllerRef.current?.abort();
     };
-  }, []);
+  }, [successMessage]);
 
   if (doneMessage) {
     return (
@@ -135,6 +125,15 @@ export function ConstellationLoginView({
     return (
       <Box flexDirection="column">
         <Text color="red">✗ Error: {error}</Text>
+      </Box>
+    );
+  }
+
+  if (!userCode || !verificationUri) {
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>Requesting authorization code...</Text>
+        <Text dimColor>Press Esc to cancel</Text>
       </Box>
     );
   }

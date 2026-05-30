@@ -18,7 +18,7 @@ import {
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
@@ -178,10 +178,7 @@ async function refreshListenerAccessToken(
   );
 
   settingsManager.updateSettings({
-    env: {
-      ...settings.env,
-      LETTA_API_KEY: tokens.access_token,
-    },
+    env: { LETTA_API_KEY: tokens.access_token },
     tokenExpiresAt: now + tokens.expires_in * 1000,
     ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
   });
@@ -193,7 +190,6 @@ async function refreshListenerAccessToken(
 }
 
 async function runListenerOAuthLogin(
-  currentEnv: Record<string, string> | undefined,
   deviceId: string,
   connectionName: string,
 ): Promise<string> {
@@ -218,10 +214,7 @@ async function runListenerOAuthLogin(
   const now = Date.now();
 
   settingsManager.updateSettings({
-    env: {
-      ...currentEnv,
-      LETTA_API_KEY: tokens.access_token,
-    },
+    env: { LETTA_API_KEY: tokens.access_token },
     tokenExpiresAt: now + tokens.expires_in * 1000,
     ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
   });
@@ -275,11 +268,7 @@ async function resolveListenerRegistrationOptions(
     }
 
     if (!apiKey) {
-      apiKey = await runListenerOAuthLogin(
-        settings.env,
-        deviceId,
-        connectionName,
-      );
+      apiKey = await runListenerOAuthLogin(deviceId, connectionName);
     }
   }
 
@@ -381,7 +370,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   }
 
   await settingsManager.initialize();
-  telemetry.setSurface("websocket");
+  telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
   const exitWithTelemetry = async (

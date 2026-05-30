@@ -18,8 +18,11 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import { prefetchAvailableModelHandles } from "@/agent/available-models";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
+import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
+  CHATGPT_FAST_SERVICE_TIER,
+  getChatGptFastRegistryHandleForModelHandle,
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
@@ -39,6 +42,7 @@ import {
 import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
+import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-extension-registry";
 import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
@@ -49,6 +53,7 @@ import {
   createCommandRunner,
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
+import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
 import {
@@ -118,6 +123,7 @@ import {
   handleMissedOneShot,
   isProcessAlive,
   readCronFile,
+  safeAppendCronRunLogForTask,
   shouldFireTask,
   updateTask,
 } from "@/cron";
@@ -327,6 +333,7 @@ export function App({
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
+  extensionsDisabled = false,
   onReload,
 }: AppProps) {
   // Warm the model-access cache in the background so /model is fast on first open.
@@ -735,7 +742,11 @@ export function App({
     modelLabel: string;
     initialModelId: string;
     initialEffort?: ModelReasoningEffort;
-    options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+    options: Array<{
+      effort: ModelReasoningEffort;
+      modelId: string;
+      selection?: ModelSelectorSelection;
+    }>;
   } | null>(null);
   const closeOverlay = useCallback(() => {
     const pending = pendingOverlayCommandRef.current;
@@ -792,6 +803,13 @@ export function App({
     conversationOverrideModelSettings,
     setConversationOverrideModelSettings,
   ] = useState<AgentState["model_settings"] | null>(null);
+  const conversationOverrideModelSettingsRef = useRef(
+    conversationOverrideModelSettings,
+  );
+  useEffect(() => {
+    conversationOverrideModelSettingsRef.current =
+      conversationOverrideModelSettings;
+  }, [conversationOverrideModelSettings]);
   const [
     conversationOverrideContextWindowLimit,
     setConversationOverrideContextWindowLimit,
@@ -854,6 +872,13 @@ export function App({
     : agentState?.model_settings;
   const derivedReasoningEffort: ModelReasoningEffort | null =
     deriveReasoningEffort(effectiveModelSettings, llmConfig);
+  const currentModelServiceTier =
+    (effectiveModelSettings as { service_tier?: unknown } | null | undefined)
+      ?.service_tier === CHATGPT_FAST_SERVICE_TIER &&
+    currentModelLabel &&
+    getChatGptFastRegistryHandleForModelHandle(currentModelLabel)
+      ? CHATGPT_FAST_SERVICE_TIER
+      : null;
   const startupModelDisplayOverride = getStartupModelDisplayOverride({
     isLocalBackend: isLocalBackendEnabled(),
     startupHasAvailableLocalModels: hasAvailableLocalModels,
@@ -870,6 +895,7 @@ export function App({
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
       context_window: llmConfig?.context_window ?? null,
+      service_tier: currentModelServiceTier,
     });
     if (info) {
       return (info as { shortLabel?: string }).shortLabel ?? info.label;
@@ -882,6 +908,7 @@ export function App({
   }, [
     currentModelLabel,
     derivedReasoningEffort,
+    currentModelServiceTier,
     llmConfig,
     startupModelDisplayOverride,
   ]);
@@ -1159,11 +1186,17 @@ export function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
+  const shouldAutoGenerateConversationDescriptionRef = useRef(
+    !resumedExistingConversation,
+  );
+  const isAutoConversationDescriptionInFlightRef = useRef(false);
   const firstUserQueryRef = useRef<string | null>(null);
   const setConversationAutoTitleEligibility = useCallback(
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
+      shouldAutoGenerateConversationDescriptionRef.current = enabled;
+      isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
     },
     [],
@@ -1217,6 +1250,43 @@ export function App({
       return fallback;
     }
   }, [deriveAutoConversationTitle]);
+  const generateConversationDescription = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {
+        return;
+      }
+      if (
+        (!options?.force &&
+          !shouldAutoGenerateConversationDescriptionRef.current) ||
+        isAutoConversationDescriptionInFlightRef.current
+      ) {
+        return;
+      }
+      if (getBackend().capabilities.localModelCatalog) {
+        return;
+      }
+
+      const conversationId = conversationIdRef.current;
+      if (!conversationId || conversationId === "default") {
+        return;
+      }
+
+      isAutoConversationDescriptionInFlightRef.current = true;
+      try {
+        const updated = await regenerateConversationDescription(conversationId);
+        if (updated) {
+          shouldAutoGenerateConversationDescriptionRef.current = false;
+        }
+      } catch (err) {
+        if (isDebugEnabled()) {
+          console.error("[DEBUG] generateConversationDescription failed:", err);
+        }
+      } finally {
+        isAutoConversationDescriptionInFlightRef.current = false;
+      }
+    },
+    [],
+  );
   const resetBootstrapReminderState = useCallback(
     (pendingConversationBootstrap = false) => {
       resetSharedReminderState(sharedReminderStateRef.current);
@@ -1458,6 +1528,13 @@ export function App({
               });
             }
 
+            safeAppendCronRunLogForTask(freshTask, {
+              status: "ok",
+              runAtMs: now.getTime(),
+              scheduledFor: freshTask.scheduled_for,
+              firedAt: nowIso,
+            });
+
             debugLog("cron", `TUI shadow scheduler fired task ${taskId}`);
           };
 
@@ -1512,6 +1589,7 @@ export function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
+          extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
         });
       }
 
@@ -1519,6 +1597,7 @@ export function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
+          extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -1527,6 +1606,7 @@ export function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
+        extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });
@@ -2231,7 +2311,9 @@ export function App({
       statusLinePayload,
     ],
   );
-  const extensionRuntime = useLocalExtensionRuntime(extensionContext);
+  const extensionRuntime = useLocalExtensionRuntime(extensionContext, {
+    disabled: extensionsDisabled,
+  });
 
   useEffect(() => {
     extensionRuntimeRef.current = extensionRuntime;
@@ -2978,6 +3060,98 @@ export function App({
     return undefined;
   }, [loadingState, agentId, initialAgentState]);
 
+  // Extension provider metadata can arrive after the first local AgentState
+  // projection on cold boot. Re-project the active local agent when the provider
+  // registry changes so statusline context windows reflect registered models.
+  useEffect(() => {
+    if (
+      !isLocalBackend ||
+      loadingState !== "ready" ||
+      !agentId ||
+      agentId === "loading"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let refreshQueued = false;
+
+    const refreshAgentFromRegisteredProviderMetadata = () => {
+      if (refreshQueued) return;
+      refreshQueued = true;
+
+      queueMicrotask(() => {
+        refreshQueued = false;
+        const currentAgentId = agentIdRef.current;
+        if (cancelled || !currentAgentId || currentAgentId === "loading") {
+          return;
+        }
+
+        void getBackend()
+          .retrieveAgent(currentAgentId)
+          .then((agent) => {
+            if (cancelled || agentIdRef.current !== agent.id) return;
+            setAgentState(agent);
+            setAgentDescription(agent.description ?? null);
+            setAgentLastRunAt(
+              (agent as { last_run_completion?: string | null })
+                .last_run_completion ?? null,
+            );
+
+            if (
+              conversationIdRef.current === "default" &&
+              !hasConversationModelOverrideRef.current
+            ) {
+              const agentModelHandle = getPreferredAgentModelHandle(agent);
+              setLlmConfig(agent.llm_config);
+              setCurrentModelHandle(agentModelHandle ?? null);
+              const modelInfo = getModelInfoForLlmConfig(
+                agentModelHandle || "",
+                {
+                  ...(agent.llm_config as unknown as {
+                    reasoning_effort?: string | null;
+                    enable_reasoner?: boolean | null;
+                  }),
+                  context_window:
+                    (
+                      agent as unknown as {
+                        context_window_limit?: number | null;
+                      }
+                    ).context_window_limit ?? null,
+                },
+              );
+              setCurrentModelId(modelInfo?.id ?? (agentModelHandle || null));
+            }
+          })
+          .catch((error) => {
+            debugLog(
+              "agent-config",
+              "Failed to refresh local agent after provider registry change: %O",
+              error,
+            );
+          });
+      });
+    };
+
+    if (!extensionRuntime.isLoading) {
+      refreshAgentFromRegisteredProviderMetadata();
+    }
+
+    const unsubscribe = subscribePiProviderRegistry(
+      refreshAgentFromRegisteredProviderMetadata,
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [
+    agentId,
+    extensionRuntime.isLoading,
+    hasConversationModelOverrideRef,
+    isLocalBackend,
+    loadingState,
+  ]);
+
   // Keep effective model state in sync with the active conversation override.
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref.current is intentionally read dynamically
   useEffect(() => {
@@ -3090,6 +3264,16 @@ export function App({
           resolvedConversationModelSettings,
           agentState.llm_config,
         );
+        const conversationServiceTier =
+          (
+            resolvedConversationModelSettings as
+              | { service_tier?: unknown }
+              | null
+              | undefined
+          )?.service_tier === CHATGPT_FAST_SERVICE_TIER &&
+          getChatGptFastRegistryHandleForModelHandle(effectiveModelHandle)
+            ? CHATGPT_FAST_SERVICE_TIER
+            : null;
 
         const modelInfo = getModelInfoForLlmConfig(effectiveModelHandle, {
           reasoning_effort: reasoningEffort,
@@ -3100,6 +3284,7 @@ export function App({
               }
             ).enable_reasoner ?? null,
           context_window: conversationContextWindowLimit ?? null,
+          service_tier: conversationServiceTier,
         });
         const modelPresetContextWindow = (
           modelInfo?.updateArgs as { context_window?: unknown } | undefined
@@ -3437,6 +3622,8 @@ export function App({
     currentModelId,
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
+    generateConversationDescription,
+    extensionRuntime,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -3847,6 +4034,7 @@ export function App({
     extensionRuntime,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
+    generateConversationDescription,
     generateConversationTitle,
     handleAgentSelect,
     handleBtwCommand,
@@ -4103,7 +4291,10 @@ export function App({
         });
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
-        handleModelSelect(action.modelId, action.commandId);
+        handleModelSelect(
+          action.modelSelection ?? action.modelId,
+          action.commandId,
+        );
       } else if (action.type === "set_sleeptime") {
         handleSleeptimeModeSelect(action.settings, action.commandId);
       } else if (action.type === "set_compaction") {
@@ -4301,6 +4492,7 @@ export function App({
       agentIdRef,
       agentStateRef,
       commandRunner,
+      conversationOverrideModelSettingsRef,
       conversationIdRef,
       hasConversationModelOverrideRef,
       isAgentBusy,
@@ -4603,6 +4795,7 @@ export function App({
       currentModelDisplay={currentModelDisplay}
       currentModelHandle={currentModelHandle}
       currentModelId={currentModelId}
+      currentModelServiceTier={currentModelServiceTier}
       currentModelProvider={currentModelProvider}
       isLocalBackend={isLocalBackend}
       currentPersonalityId={currentPersonalityId}

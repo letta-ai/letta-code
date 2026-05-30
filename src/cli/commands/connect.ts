@@ -14,15 +14,11 @@ import {
   getProviderByName,
   type ProviderStorageTarget,
   providerStorageTargetLabel,
-  removeProviderByName,
 } from "@/providers/byok-providers";
 import {
   createOrUpdateOpenAICodexProvider,
-  deleteOpenAICodexProvider,
   getOpenAICodexProvider,
-  listProviders,
   OPENAI_CODEX_PROVIDER_NAME,
-  removeOpenAICodexProvider,
 } from "@/providers/openai-codex-provider";
 import { getErrorMessage } from "@/utils/error";
 import { runLocalOAuthConnectFlow } from "./connect-local-oauth";
@@ -359,7 +355,7 @@ async function handleConnectChatGPT(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Already connected to ChatGPT via OAuth.\n\nUse /disconnect chatgpt (or /disconnect codex) to remove the current connection first.",
+      "Already connected to ChatGPT via OAuth.\n\nOpen /connect and select ChatGPT / Codex plan in the current tab to disconnect or re-authenticate.",
       false,
     );
     return;
@@ -447,7 +443,7 @@ async function handleConnectLocalOAuthProvider(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Already connected to ${provider.byokProvider.displayName}. Disconnect first if you want to re-authenticate.`,
+      `Already connected to ${provider.byokProvider.displayName}.\n\nOpen /connect and select it in the Local tab to disconnect or re-authenticate.`,
       false,
     );
     return;
@@ -805,270 +801,4 @@ export async function handleConnect(
       timeout: parsed.timeout,
     });
   }
-}
-
-function formatDisconnectHelp(): string {
-  return [
-    "/disconnect help",
-    "",
-    "Disconnect an existing account.",
-    "",
-    "USAGE",
-    "  /disconnect <provider>   — disconnect a provider",
-    "  /disconnect help         — show this help",
-    "",
-    "PROVIDERS",
-    `  ${listConnectProvidersForHelp().join(", ")}, claude (legacy)`,
-  ].join("\n");
-}
-
-async function handleDisconnectChatGPT(
-  ctx: ConnectCommandContext,
-  msg: string,
-): Promise<void> {
-  const existingProvider = await getOpenAICodexProvider({
-    target: ctx.target,
-  });
-  if (!existingProvider) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "Not currently connected to ChatGPT via OAuth.\n\nUse /connect chatgpt (or /connect codex) to authenticate.",
-      false,
-    );
-    return;
-  }
-
-  const cmdId = addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    "Disconnecting from ChatGPT OAuth...",
-    true,
-    "running",
-  );
-
-  ctx.setCommandRunning(true);
-  try {
-    await removeOpenAICodexProvider({ target: ctx.target });
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `✓ Disconnected from ChatGPT OAuth.\n\n` +
-        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' removed from ${providerStorageTargetLabel(ctx.target)}.`,
-      true,
-      "finished",
-    );
-  } catch (error) {
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `✗ Failed to disconnect from ChatGPT: ${getErrorMessage(error)}`,
-      false,
-      "finished",
-    );
-  } finally {
-    ctx.setCommandRunning(false);
-  }
-}
-
-async function handleDisconnectByokProvider(
-  ctx: ConnectCommandContext,
-  msg: string,
-  provider: ResolvedConnectProvider,
-): Promise<void> {
-  const existing = await getProviderByName(provider.byokProvider.providerName, {
-    target: provider.target,
-  });
-  const authMatches =
-    provider.target !== "local" || !existing?.auth_type
-      ? true
-      : provider.byokProvider.isOAuth
-        ? existing.auth_type === "oauth"
-        : existing.auth_type !== "oauth";
-  if (!existing || !authMatches) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      `Not currently connected to ${provider.byokProvider.displayName}.\n\nUse /connect ${provider.canonical} to connect.`,
-      false,
-    );
-    return;
-  }
-
-  const cmdId = addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    `Disconnecting from ${provider.byokProvider.displayName}...`,
-    true,
-    "running",
-  );
-
-  ctx.setCommandRunning(true);
-  try {
-    await removeProviderByName(provider.byokProvider.providerName, {
-      target: provider.target,
-    });
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `✓ Disconnected from ${provider.byokProvider.displayName}.\n\n` +
-        `Provider '${provider.byokProvider.providerName}' removed from ${providerStorageTargetLabel(provider.target)}.`,
-      true,
-      "finished",
-    );
-  } catch (error) {
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `✗ Failed to disconnect from ${provider.byokProvider.displayName}: ${getErrorMessage(error)}`,
-      false,
-      "finished",
-    );
-  } finally {
-    ctx.setCommandRunning(false);
-  }
-}
-
-async function handleDisconnectClaude(
-  ctx: ConnectCommandContext,
-  msg: string,
-): Promise<void> {
-  const CLAUDE_PROVIDER_NAME = "claude-pro-max";
-
-  const cmdId = addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    "Checking for Claude provider...",
-    true,
-    "running",
-  );
-
-  ctx.setCommandRunning(true);
-
-  try {
-    const providers = await listProviders({ target: ctx.target });
-    const claudeProvider = providers.find(
-      (provider) => provider.name === CLAUDE_PROVIDER_NAME,
-    );
-
-    if (!claudeProvider) {
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        `No Claude provider found.\n\nThe '${CLAUDE_PROVIDER_NAME}' provider does not exist in your Letta account.`,
-        false,
-        "finished",
-      );
-      return;
-    }
-
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      "Removing Claude provider...",
-      true,
-      "running",
-    );
-
-    await deleteOpenAICodexProvider(claudeProvider.id, { target: ctx.target });
-
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      "✓ Disconnected from Claude.\n\n" +
-        `Provider '${CLAUDE_PROVIDER_NAME}' has been removed from Letta.\n\n` +
-        "Note: /connect claude has been replaced by /connect chatgpt (alias: /connect codex).",
-      true,
-      "finished",
-    );
-  } catch (error) {
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      `✗ Failed to disconnect from Claude: ${getErrorMessage(error)}`,
-      false,
-      "finished",
-    );
-  } finally {
-    ctx.setCommandRunning(false);
-  }
-}
-
-export async function handleDisconnect(
-  ctx: ConnectCommandContext,
-  msg: string,
-): Promise<void> {
-  const parts = parseArgs(msg);
-  const providerToken = parts[1]?.toLowerCase();
-
-  if (providerToken === "help") {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      formatDisconnectHelp(),
-      true,
-    );
-    return;
-  }
-
-  if (!providerToken) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "Usage: /disconnect <provider>",
-      false,
-    );
-    return;
-  }
-
-  if (providerToken === "claude") {
-    await handleDisconnectClaude(ctx, msg);
-    return;
-  }
-
-  const provider = resolveConnectProvider(providerToken, ctx.target);
-  if (!provider) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      `Unknown provider: "${providerToken}". Run /disconnect help for usage.`,
-      false,
-    );
-    return;
-  }
-
-  if (isConnectOAuthProvider(provider)) {
-    if (provider.target === "local") {
-      await handleDisconnectByokProvider(ctx, msg, provider);
-    } else {
-      await handleDisconnectChatGPT(ctx, msg);
-    }
-    return;
-  }
-
-  await handleDisconnectByokProvider(ctx, msg, provider);
 }

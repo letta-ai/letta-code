@@ -320,7 +320,14 @@ describe("local extension loader", () => {
             args: "123",
             argv: ["123"],
             command: "review-pr",
-            conversation: { id: "conversation-1" },
+            conversation: {
+              id: "conversation-1",
+              fork: async () => {
+                throw new Error("not implemented");
+              },
+              getHistory: async () => [],
+              sendMessageStream: async () => (async function* () {})(),
+            },
             cwd: "/tmp/project",
             getContext: createStatuslineContext,
             model: { id: "model-1", displayName: "Sonnet" },
@@ -366,7 +373,14 @@ describe("local extension loader", () => {
             args: "",
             argv: [],
             command: "client-check",
-            conversation: { id: "conversation-1" },
+            conversation: {
+              id: "conversation-1",
+              fork: async () => {
+                throw new Error("not implemented");
+              },
+              getHistory: async () => [],
+              sendMessageStream: async () => (async function* () {})(),
+            },
             cwd: "/tmp/project",
             getContext: createStatuslineContext,
             model: { id: "model-1", displayName: "Sonnet" },

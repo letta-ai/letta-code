@@ -209,7 +209,7 @@ export async function getClient() {
 
         // Update settings with new token (secrets handles secure storage automatically)
         settingsManager.updateSettings({
-          env: { ...settings.env, LETTA_API_KEY: tokens.access_token },
+          env: { LETTA_API_KEY: tokens.access_token },
           refreshToken: tokens.refresh_token || settings.refreshToken,
           tokenExpiresAt: now + tokens.expires_in * 1000,
         });

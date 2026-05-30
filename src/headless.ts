@@ -6,6 +6,9 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { extractTelemetryInputText } from "@/telemetry/input";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
@@ -83,6 +86,11 @@ import {
   type ReflectionTrigger,
 } from "./cli/helpers/memory-reminder";
 import {
+  AUTO_REFLECTION_DESCRIPTION,
+  launchReflectionSubagent,
+} from "./cli/helpers/reflection-launcher";
+import { appendTranscriptDeltaJsonl } from "./cli/helpers/reflection-transcript";
+import {
   type DrainStreamHook,
   drainStreamWithResume,
 } from "./cli/helpers/stream";
@@ -92,6 +100,10 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import {
+  disableExtensionsForProcess,
+  shouldDisableExtensions,
+} from "./extensions/disable";
 import type { ExtensionRuntime } from "./extensions/extension-runtime";
 import type { ExtensionConversationOpenReason } from "./extensions/types";
 import {
@@ -118,9 +130,6 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import { telemetry } from "./telemetry";
-import { trackBoundaryError } from "./telemetry/error-reporting";
-import { extractTelemetryInputText } from "./telemetry/input";
 import { isInteractiveApprovalTool } from "./tools/interactive-policy";
 import {
   type ExternalToolDefinition,
@@ -170,8 +179,8 @@ const EMPTY_RESPONSE_MAX_RETRIES = 2;
 // After 1 failed retry against Anthropic, automatically retry via Bedrock.
 const PROVIDER_FALLBACK_MAP: Record<string, string> = {
   // Opus 4.7 variants → Bedrock Opus 4.7
-  opus: "bedrock-opus-4.7",
   "opus-4.7-low": "bedrock-opus-4.7",
+  "opus-4.7-medium": "bedrock-opus-4.7",
   "opus-4.7-high": "bedrock-opus-4.7",
   "opus-4.7-xhigh": "bedrock-opus-4.7",
   "opus-4.7-max": "bedrock-opus-4.7",
@@ -192,7 +201,6 @@ const PROVIDER_FALLBACK_MAP: Record<string, string> = {
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
-
 function trackHeadlessBoundaryError(
   errorType: string,
   error: unknown,
@@ -418,6 +426,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   conversationId: string;
   overrideModel?: string | null;
   cachedAgent?: AgentState | null;
+  extensionEventEmitter?: ExtensionRuntime["eventEmitter"];
 }): Promise<{
   preparedToolContext: Awaited<
     ReturnType<typeof prepareToolExecutionContextForScope>
@@ -431,6 +440,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
     cachedAgent: params.cachedAgent,
+    extensionEventEmitter: params.extensionEventEmitter,
   });
 
   return {
@@ -441,14 +451,47 @@ async function prepareHeadlessToolExecutionContext(params: {
   };
 }
 
+function isTurnInputArray(
+  value: unknown,
+): value is Array<MessageCreate | ApprovalCreate> {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
+async function emitHeadlessTurnStart(options: {
+  agent: AgentState;
+  conversationId: string;
+  input: Array<MessageCreate | ApprovalCreate>;
+  runtime: ExtensionRuntime;
+}): Promise<Array<MessageCreate | ApprovalCreate>> {
+  if (!options.runtime.getSnapshot().hasExtensionSources) return options.input;
+
+  try {
+    const event = {
+      agentId: options.agent.id,
+      conversationId: options.conversationId,
+      input: options.input,
+    };
+    await options.runtime.emitEvent("turn_start", event);
+    return isTurnInputArray(event.input) ? event.input : options.input;
+  } catch {
+    // Extension turn_start handlers should not block sending the turn.
+    return options.input;
+  }
+}
+
 async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
   approvalMessages: Array<MessageCreate | ApprovalCreate>;
+  extensionEventEmitter?: ExtensionRuntime["eventEmitter"];
 }): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   const approvalToolContext = await prepareHeadlessToolExecutionContext({
     agentId: params.agentId,
     conversationId: params.conversationId,
+    extensionEventEmitter: params.extensionEventEmitter,
   });
 
   return await sendMessageStream(
@@ -501,7 +544,13 @@ export async function handleHeadlessCommand(
   startupOptions: { requestedBackendMode?: BackendMode } = {},
 ) {
   const { values, positionals } = parsedArgs;
-  telemetry.setSurface("headless");
+  telemetry.setSurface(getTerminalTelemetrySurface(true));
+  const extensionsDisabled = shouldDisableExtensions({
+    cliFlag: values["no-extensions"],
+  });
+  if (extensionsDisabled) {
+    disableExtensionsForProcess();
+  }
 
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
@@ -1628,6 +1677,7 @@ export async function handleHeadlessCommand(
     permissionMode: headlessPermissionMode,
     reflectionSettings: effectiveReflectionSettings,
     sessionStats,
+    disabled: extensionsDisabled,
   });
   await headlessExtensionRuntime.reload();
   try {
@@ -1656,6 +1706,7 @@ export async function handleHeadlessCommand(
       agentId: agent.id,
       conversationId,
       cachedAgent: agent as AgentState,
+      extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
     });
     availableTools = initialToolContext.availableTools;
     cachedAgent = initialToolContext.preparedToolContext.agent;
@@ -1827,6 +1878,7 @@ export async function handleHeadlessCommand(
         agentId: agent.id,
         conversationId,
         approvalMessages,
+        extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -1986,6 +2038,21 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
+  headlessExtensionRuntime.updateContext(
+    createHeadlessExtensionContext({
+      agent,
+      conversationId,
+      permissionMode: headlessPermissionMode,
+      reflectionSettings: effectiveReflectionSettings,
+      sessionStats,
+    }),
+  );
+  currentInput = await emitHeadlessTurnStart({
+    agent,
+    conversationId,
+    input: currentInput,
+    runtime: headlessExtensionRuntime,
+  });
 
   // Track lastRunId outside the while loop so it's available in catch block
   let llmApiErrorRetries = 0;
@@ -2061,6 +2128,7 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId,
           overrideModel: overrideModelHandle ?? preparedEffectiveModel,
           cachedAgent,
+          extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
         });
         availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
@@ -3073,6 +3141,8 @@ async function runBidirectionalMode(
   const backend = getBackend();
   const telemetryModelId = agent.llm_config?.model ?? "unknown";
   const readline = await import("node:readline");
+  const systemPromptRecompileByConversation = new Map<string, Promise<void>>();
+  const queuedSystemPromptRecompileByConversation = new Set<string>();
   let headlessConversationClosed = false;
   const exitBidirectional = async (
     code: number,
@@ -3133,6 +3203,21 @@ async function runBidirectionalMode(
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const maybeLaunchReflectionSubagent = async (
+    triggerSource: Exclude<ReflectionTrigger, "off">,
+  ): Promise<boolean> => {
+    const result = await launchReflectionSubagent({
+      agentId: agent.id,
+      conversationId,
+      memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+      triggerSource,
+      description: AUTO_REFLECTION_DESCRIPTION,
+      systemPrompt: agent.system ?? undefined,
+      recompileByConversation: systemPromptRecompileByConversation,
+      recompileQueuedByConversation: queuedSystemPromptRecompileByConversation,
+    });
+    return result.launched;
+  };
 
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
@@ -3198,6 +3283,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId,
         approvalMessages,
+        extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -3617,6 +3703,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId: targetConversationId,
         approvalMessages: [approvalInput],
+        extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
       });
 
       const drainResult = await drainStreamWithResume(
@@ -3982,6 +4069,19 @@ async function runBidirectionalMode(
       try {
         const buffers = createBuffers(agent.id);
         const startTime = performance.now();
+        const userOtid = randomUUID();
+        const userTranscriptText = extractTelemetryInputText(userContent);
+        if (userTranscriptText.length > 0) {
+          const userLineId = `user-${userOtid}`;
+          buffers.byId.set(userLineId, {
+            kind: "user",
+            id: userLineId,
+            text: userTranscriptText,
+            otid: userOtid,
+          });
+          buffers.userLineIdByOtid.set(userOtid, userLineId);
+          buffers.order.push(userLineId);
+        }
         let numTurns = 0;
         let lastStopReason: StopReasonType | null = null; // Track for result subtype
         let sawStreamError = false; // Track if we emitted an error during streaming
@@ -4007,16 +4107,29 @@ async function runBidirectionalMode(
           workingDirectory: getCurrentWorkingDirectory(),
           reflectionSettings,
           skillSources,
+          maybeLaunchReflectionSubagent,
         });
-        const enrichedContent = prependReminderPartsToContent(
-          userContent,
-          sharedReminderParts,
+        headlessExtensionRuntime.updateContext(
+          createHeadlessExtensionContext({
+            agent,
+            conversationId,
+            reflectionSettings,
+          }),
         );
+        const enrichedContent = prependReminderPartsToContent(userContent, [
+          ...sharedReminderParts,
+        ]);
 
         // Initial input is the user message
-        let currentInput: MessageCreate[] = [
-          { role: "user", content: enrichedContent },
+        let currentInput: Array<MessageCreate | ApprovalCreate> = [
+          { role: "user", content: enrichedContent, otid: userOtid },
         ];
+        currentInput = await emitHeadlessTurnStart({
+          agent,
+          conversationId,
+          input: currentInput,
+          runtime: headlessExtensionRuntime,
+        });
 
         // Approval handling loop - continue until end_turn or error
         while (true) {
@@ -4055,6 +4168,7 @@ async function runBidirectionalMode(
             const turnToolContext = await prepareHeadlessToolExecutionContext({
               agentId: agent.id,
               conversationId,
+              extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
             });
             availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {
@@ -4427,6 +4541,21 @@ async function runBidirectionalMode(
           : isError
             ? "error"
             : "success";
+
+        if (subtype === "success" && lastStopReason === "end_turn") {
+          try {
+            await appendTranscriptDeltaJsonl(agent.id, conversationId, lines);
+          } catch (transcriptError) {
+            debugWarn(
+              "memory",
+              `Failed to append transcript delta: ${
+                transcriptError instanceof Error
+                  ? transcriptError.message
+                  : String(transcriptError)
+              }`,
+            );
+          }
+        }
 
         const resultMsg: ResultMessage = {
           type: "result",

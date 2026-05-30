@@ -2,15 +2,38 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ConversationMessageCreateBody } from "@/backend";
+import type {
+  AgentCreateBody,
+  ConversationCreateBody,
+  ConversationMessageCreateBody,
+  ConversationUpdateBody,
+} from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { DeterministicToolCallExecutor } from "@/backend/dev/headless-turn-executor";
+import {
+  type ProviderStreamAdapter,
+  ProviderTurnExecutor,
+  type ProviderTurnInput,
+  providerLettaChunk,
+} from "@/backend/dev/provider-turn-executor";
 import { TURN_DID_NOT_COMPLETE } from "@/constants";
 
 async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
   const chunks: unknown[] = [];
   for await (const chunk of stream) chunks.push(chunk);
   return chunks;
+}
+
+class RecordingProviderAdapter implements ProviderStreamAdapter {
+  input: ProviderTurnInput | undefined;
+
+  async *stream(input: ProviderTurnInput) {
+    this.input = input;
+    yield providerLettaChunk({
+      message_type: "stop_reason",
+      stop_reason: "end_turn",
+    } as never);
+  }
 }
 
 describe("FakeHeadlessBackend", () => {
@@ -50,11 +73,21 @@ describe("FakeHeadlessBackend", () => {
       } as ConversationMessageCreateBody),
     );
 
-    const dirs = await readdir(join(storageDir, "conversations"));
-    const firstDir = dirs[0];
-    if (!firstDir)
-      throw new Error("Expected a persisted conversation directory");
-    const conversationDir = join(storageDir, "conversations", firstDir);
+    const conversationsDir = join(storageDir, "conversations");
+    const dirs = await readdir(conversationsDir);
+    let conversationDir: string | undefined;
+    for (const dir of dirs) {
+      const candidateDir = join(conversationsDir, dir);
+      const candidate = JSON.parse(
+        await readFile(join(candidateDir, "conversation.json"), "utf8"),
+      ) as { id?: unknown };
+      if (candidate.id === conversation.id) {
+        conversationDir = candidateDir;
+        break;
+      }
+    }
+    if (!conversationDir)
+      throw new Error("Expected the persisted test conversation directory");
     const manifest = JSON.parse(
       await readFile(join(conversationDir, "manifest.json"), "utf8"),
     );
@@ -65,6 +98,59 @@ describe("FakeHeadlessBackend", () => {
     );
     expect(jsonl).toContain('"content"');
     expect(jsonl).not.toContain('"parts"');
+  });
+
+  test("passes conversation model settings to local provider turns", async () => {
+    const adapter = new RecordingProviderAdapter();
+    const backend = new FakeHeadlessBackend(
+      "agent-fake-headless",
+      new ProviderTurnExecutor(adapter),
+      {
+        strictAgentAccess: false,
+        strictConversationAccess: false,
+      },
+    );
+    const agent = await backend.createAgent({
+      name: "Conversation Override Agent",
+      model: "openai/gpt-5",
+      model_settings: {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "minimal" },
+        parallel_tool_calls: true,
+      },
+    } as AgentCreateBody);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as ConversationCreateBody);
+    await backend.updateConversation(conversation.id, {
+      model: "openai/gpt-5.5",
+      model_settings: {
+        provider_type: "openai",
+        reasoning: { reasoning_effort: "medium" },
+      },
+      context_window_limit: 500000,
+    } as ConversationUpdateBody);
+
+    await collect(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "use the override" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    expect(adapter.input?.agent.model).toBe("openai/gpt-5.5");
+    expect(adapter.input?.agent.model_settings).toMatchObject({
+      provider_type: "openai",
+      reasoning: { reasoning_effort: "medium" },
+      parallel_tool_calls: true,
+      context_window_limit: 500000,
+    });
+
+    const storedAgent = await backend.retrieveAgent(agent.id);
+    expect(storedAgent.model).toBe("openai/gpt-5");
+    expect(storedAgent.model_settings).toMatchObject({
+      reasoning: { reasoning_effort: "minimal" },
+    });
   });
 
   test("settles orphaned tool calls from an interrupted turn before the next turn", async () => {

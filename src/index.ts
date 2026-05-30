@@ -3,6 +3,8 @@ import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { ensureFileIndex } from "@/utils/file-index";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import {
@@ -72,6 +74,10 @@ import {
 } from "./cli/startup-flag-validation";
 import { runSubcommand } from "./cli/subcommands/router";
 import {
+  disableExtensionsForProcess,
+  shouldDisableExtensions,
+} from "./extensions/disable";
+import {
   migratePermissionMode,
   permissionMode,
   VALID_PERMISSION_MODES,
@@ -82,8 +88,6 @@ import {
   shouldPersistSessionState,
 } from "./settings-manager";
 import { startStartupAutoUpdateCheck } from "./startup-auto-update";
-import { telemetry } from "./telemetry";
-import { trackBoundaryError } from "./telemetry/error-reporting";
 import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
@@ -139,7 +143,7 @@ async function refreshStartupOAuthToken(
     );
 
     settingsManager.updateSettings({
-      env: { ...settings.env, LETTA_API_KEY: tokens.access_token },
+      env: { LETTA_API_KEY: tokens.access_token },
       refreshToken: tokens.refresh_token || settings.refreshToken,
       tokenExpiresAt: now + tokens.expires_in * 1000,
     });
@@ -186,6 +190,8 @@ USAGE
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
+  letta install ...     Install a skill into an agent memfs repository
+  letta skills ...      List or delete installed agent skills
 
 OPTIONS
 ${renderCliOptionsHelp()}
@@ -205,6 +211,9 @@ SUBCOMMANDS
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
   letta connect <provider> [options]
+  letta install <skill> [--agent <id> | -n <name>]
+  letta skills list [--agent <id> | -n <name>]
+  letta skills delete <skill_name> --agent <id>
   letta backend [api|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
@@ -226,6 +235,7 @@ EXAMPLES
   letta                    # Show profile selector or create new
   letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
+  letta install official/finance/stocks --agent agent-123
 
   # inside the interactive session
   /profile save MyAgent    # Save current agent as profile
@@ -690,14 +700,6 @@ async function main(): Promise<void> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 
-  // Bootstrap base tools for subcommands that have LETTA_API_KEY set (e.g., remote via code-desktop)
-  if (process.env.LETTA_API_KEY) {
-    const { bootstrapBaseToolsIfNeeded } = await import(
-      "@/agent/bootstrap-tools"
-    );
-    await bootstrapBaseToolsIfNeeded();
-  }
-
   // Initialize LSP infrastructure for type checking
   if (process.env.LETTA_ENABLE_LSP) {
     try {
@@ -849,6 +851,12 @@ async function main(): Promise<void> {
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const noSystemInfoReminderFlag = values["no-system-info-reminder"];
+  const extensionsDisabled = shouldDisableExtensions({
+    cliFlag: values["no-extensions"],
+  });
+  if (extensionsDisabled) {
+    disableExtensionsForProcess();
+  }
   const resolvedSkillSources = (() => {
     try {
       return resolveSkillSourcesSelection({
@@ -930,7 +938,7 @@ async function main(): Promise<void> {
 
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   // Surface is set here so session_start captures the correct mode.
-  telemetry.setSurface(isHeadless ? "headless" : "tui");
+  telemetry.setSurface(getTerminalTelemetrySurface(isHeadless));
   telemetry.init();
 
   if (!isHeadless) {
@@ -1220,7 +1228,10 @@ async function main(): Promise<void> {
     ) {
       // For interactive mode, show setup flow
       const { runSetup } = await import("@/auth/setup");
-      await runSetup();
+      const setupResult = await runSetup();
+      if (setupResult.kind === "cancelled") {
+        process.exit(0);
+      }
       // After setup, restart main flow
       return main().catch((err: unknown) => {
         // Handle top-level errors gracefully without raw stack traces
@@ -1239,7 +1250,10 @@ async function main(): Promise<void> {
       // For interactive mode, show setup flow
       console.log("No credentials found. Let's get you set up!\n");
       const { runSetup } = await import("@/auth/setup");
-      await runSetup();
+      const setupResult = await runSetup();
+      if (setupResult.kind === "cancelled") {
+        process.exit(0);
+      }
       // After setup, restart main flow
       return main();
     }
@@ -1254,58 +1268,114 @@ async function main(): Promise<void> {
       apiKey = (await refreshStartupOAuthToken(settings)) ?? apiKey;
     }
 
-    // Validate credentials by checking health endpoint
-    const { validateCredentials } = await import("@/auth/oauth");
-    let isValid = await validateCredentials(baseURL, apiKey ?? "");
+    // Cloud always requires credentials. Self-hosted/local API servers may be
+    // intentionally unauthenticated, so only validate them when a key is present.
+    const shouldValidateCredentials =
+      baseURL === LETTA_CLOUD_API_URL || Boolean(apiKey);
 
-    if (
-      !isValid &&
-      !process.env.LETTA_API_KEY &&
-      baseURL === LETTA_CLOUD_API_URL &&
-      settings.refreshToken
-    ) {
-      const refreshedApiKey = await refreshStartupOAuthToken(settings);
-      if (refreshedApiKey) {
-        apiKey = refreshedApiKey;
-        isValid = await validateCredentials(baseURL, apiKey);
-      }
-    }
-    markMilestone("CREDENTIALS_VALIDATED");
-
-    // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
-    // Must run after credentials are validated so OAuth tokens are available.
-    if (isValid) {
-      const { bootstrapBaseToolsIfNeeded } = await import(
-        "@/agent/bootstrap-tools"
+    if (shouldValidateCredentials) {
+      // Validate credentials by checking an authenticated endpoint.
+      const { validateCredentialsWithResult } = await import("@/auth/oauth");
+      let credentialValidation = await validateCredentialsWithResult(
+        baseURL,
+        apiKey ?? "",
       );
-      await bootstrapBaseToolsIfNeeded();
-    }
+      let isValid = credentialValidation.ok;
 
-    if (!isValid) {
-      // For headless mode, error out with helpful message
-      if (isHeadless) {
-        console.error("Failed to connect to Letta server");
-        console.error(`Base URL: ${baseURL}`);
-        console.error(
+      if (
+        !isValid &&
+        !process.env.LETTA_API_KEY &&
+        baseURL === LETTA_CLOUD_API_URL &&
+        settings.refreshToken
+      ) {
+        const refreshedApiKey = await refreshStartupOAuthToken(settings);
+        if (refreshedApiKey) {
+          apiKey = refreshedApiKey;
+          credentialValidation = await validateCredentialsWithResult(
+            baseURL,
+            apiKey,
+          );
+          isValid = credentialValidation.ok;
+        }
+      }
+      markMilestone("CREDENTIALS_VALIDATED");
+
+      // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
+      // Must run after credentials are validated so OAuth tokens are available.
+      if (isValid) {
+        const { bootstrapBaseToolsIfNeeded } = await import(
+          "@/agent/bootstrap-tools"
+        );
+        await bootstrapBaseToolsIfNeeded();
+      }
+
+      if (!isValid) {
+        const validationFailure = credentialValidation.ok
+          ? null
+          : credentialValidation;
+
+        // For headless mode, error out with helpful message
+        if (isHeadless) {
+          console.error("Failed to connect to Letta server");
+          console.error(`Base URL: ${baseURL}`);
+          console.error(
+            "Your credentials may be invalid or the server may be unreachable.",
+          );
+          if (validationFailure?.message) {
+            console.error(`Details: ${validationFailure.message}`);
+          }
+          if (process.env.LETTA_API_KEY) {
+            console.error(
+              "LETTA_API_KEY is set in your environment. Unset or update LETTA_API_KEY, then run `letta` again.",
+            );
+          } else {
+            console.error("Run `letta setup` to re-authenticate.");
+          }
+          process.exit(1);
+        }
+
+        // For interactive mode, show setup flow
+        console.log("Failed to connect to Letta server.");
+        console.log(`Base URL: ${baseURL}\n`);
+        console.log(
           "Your credentials may be invalid or the server may be unreachable.",
         );
-        console.error(
-          "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
-        );
-        process.exit(1);
-      }
+        if (process.env.LETTA_API_KEY) {
+          console.log(
+            "LETTA_API_KEY is set in your environment, so setup cannot replace the credential Letta Code is using.",
+          );
+          console.log(
+            "Unset LETTA_API_KEY or update it with a valid API key, then run `letta` again.",
+          );
+          process.exit(1);
+        }
 
-      // For interactive mode, show setup flow
-      console.log("Failed to connect to Letta server.");
-      console.log(`Base URL: ${baseURL}\n`);
-      console.log(
-        "Your credentials may be invalid or the server may be unreachable.",
-      );
-      console.log("Let's reconfigure your setup.\n");
-      const { runSetup } = await import("@/auth/setup");
-      await runSetup();
-      // After setup, restart main flow
-      return main();
+        if (
+          validationFailure?.reason === "network_error" ||
+          validationFailure?.reason === "server_unreachable"
+        ) {
+          if (validationFailure.message) {
+            console.log(`Details: ${validationFailure.message}`);
+          }
+          console.log(
+            "Setup cannot fix a server reachability problem. Check your network or try again later.",
+          );
+          process.exit(1);
+        }
+
+        console.log("Let's reauthenticate your setup.\n");
+        const { runSetup } = await import("@/auth/setup");
+        const setupResult = await runSetup({
+          initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu",
+        });
+        if (setupResult.kind === "cancelled") {
+          process.exit(0);
+        }
+        // After setup, restart main flow
+        return main();
+      }
+    } else {
+      markMilestone("CREDENTIALS_VALIDATED");
     }
   } else {
     markMilestone("CREDENTIALS_VALIDATED");
@@ -1656,20 +1726,13 @@ async function main(): Promise<void> {
           !settings.refreshToken &&
           !apiKey;
         setStartupHasCloudCredentials(Boolean(settings.refreshToken || apiKey));
+        const startupModelsPromise =
+          startupBackendMode === "local" || isSelfHosted
+            ? backend.listModels()
+            : Promise.resolve([]);
         if (startupBackendMode === "local") {
           try {
-            const models = await backend.listModels();
-            setStartupHasAvailableLocalModels(models.length > 0);
-          } catch {
-            setStartupHasAvailableLocalModels(false);
-          }
-        } else {
-          setStartupHasAvailableLocalModels(true);
-        }
-
-        if (startupBackendMode === "local") {
-          try {
-            const models = await backend.listModels();
+            const models = await startupModelsPromise;
             setStartupHasAvailableLocalModels(models.length > 0);
           } catch {
             setStartupHasAvailableLocalModels(false);
@@ -1687,7 +1750,7 @@ async function main(): Promise<void> {
             const { getDefaultModel } = await import("@/agent/model");
             const defaultModel = getDefaultModel();
             setSelfHostedDefaultModel(defaultModel);
-            const modelsList = await backend.listModels();
+            const modelsList = await startupModelsPromise;
             const handles = modelsList
               .map((m) => m.handle)
               .filter((h): h is string => typeof h === "string");
@@ -2745,6 +2808,7 @@ async function main(): Promise<void> {
         startupHasAvailableLocalModels,
         releaseNotes,
         systemInfoReminderEnabled: !noSystemInfoReminderFlag,
+        extensionsDisabled,
       });
     }
 
@@ -2768,6 +2832,7 @@ async function main(): Promise<void> {
       releaseNotes,
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
+      extensionsDisabled,
       onReload: handleReload,
     });
   }

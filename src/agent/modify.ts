@@ -21,7 +21,10 @@ type ModelSettings =
   | Record<string, unknown>;
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
-  return modelHandle.includes("claude-opus-4-7");
+  return (
+    modelHandle.includes("claude-opus-4-7") ||
+    modelHandle.includes("claude-opus-4-8")
+  );
 }
 
 /**
@@ -33,8 +36,10 @@ function buildModelSettings(
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
   // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
+  const isOpenAICodex = modelHandle.startsWith("openai-codex/");
   const isOpenAI =
     modelHandle.startsWith("openai/") ||
+    isOpenAICodex ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
   // Include legacy custom Anthropic OAuth provider (claude-pro-max) and minimax
   const isAnthropic =
@@ -54,6 +59,10 @@ function buildModelSettings(
       provider_type: "openai",
       parallel_tool_calls: true,
     };
+    if (isOpenAICodex) {
+      (openaiSettings as Record<string, unknown>).provider_type =
+        "chatgpt_oauth";
+    }
     if (updateArgs?.reasoning_effort) {
       openaiSettings.reasoning = {
         reasoning_effort: updateArgs.reasoning_effort as
@@ -74,6 +83,10 @@ function buildModelSettings(
     if (typeof updateArgs?.strict === "boolean") {
       openaiSettings.strict = updateArgs.strict;
     }
+    if (updateArgs && "service_tier" in updateArgs) {
+      (openaiSettings as Record<string, unknown>).service_tier =
+        updateArgs.service_tier === "priority" ? "priority" : null;
+    }
     settings = openaiSettings;
   } else if (isAnthropic) {
     const anthropicSettings: AnthropicModelSettings = {
@@ -86,7 +99,7 @@ function buildModelSettings(
     if (effort === "low" || effort === "medium" || effort === "high") {
       anthropicSettings.effort = effort;
     } else if (effort === "xhigh") {
-      // "xhigh" is only distinct on Opus 4.7; older Anthropic models map it to backend "max".
+      // "xhigh" is distinct on Opus 4.7+; older Anthropic models map it to backend "max".
       (anthropicSettings as Record<string, unknown>).effort = hasDistinctXHigh
         ? "xhigh"
         : "max";

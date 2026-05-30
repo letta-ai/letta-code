@@ -1,16 +1,31 @@
 import type Letta from "@letta-ai/letta-client";
+import { clearRegisteredPiProviders } from "@/backend/dev/pi-provider-extension-registry";
+import {
+  cloneExtensionCapabilities,
+  DISABLED_EXTENSION_CAPABILITIES,
+} from "@/extensions/capabilities";
+import {
+  areExtensionsDisabled,
+  disableExtensionsForProcess,
+} from "@/extensions/disable";
+import {
+  type ExtensionEventEmitter,
+  emptyEventEmissionResult,
+} from "@/extensions/event-emitter";
 import {
   type CreateExtensionHostOptions,
   createExtensionHost,
   type ExtensionHost,
+  type LocalExtensionRegistry,
   resolveLocalExtensionSources,
 } from "@/extensions/extension-host";
+import { clearExtensionTools } from "@/extensions/tool-registry";
 import type {
-  ExtensionBackendApi,
   ExtensionContext,
   ExtensionEventEmissionResult,
   ExtensionEventMap,
   ExtensionEventName,
+  ExtensionRuntimeBackendApi,
 } from "@/extensions/types";
 import { debugLog } from "@/utils/debug";
 
@@ -26,9 +41,105 @@ export interface ExtensionRuntimeSnapshot extends ExtensionRuntimeLoadState {
 
 export interface CreateExtensionRuntimeOptions
   extends Omit<CreateExtensionHostOptions, "backend" | "getContext"> {
-  getBackendApi?: () => ExtensionBackendApi | undefined;
+  disabled?: boolean;
+  getBackendApi?: () => ExtensionRuntimeBackendApi | undefined;
   getClient: () => Promise<Letta>;
   initialContext: ExtensionContext;
+}
+
+function createDisabledExtensionRegistry(): LocalExtensionRegistry {
+  return {
+    capabilities: cloneExtensionCapabilities(DISABLED_EXTENSION_CAPABILITIES),
+    commands: {},
+    diagnostics: [],
+    disposers: [],
+    errors: [],
+    events: {},
+    generation: 0,
+    loadedPaths: [],
+    ownerAbortControllers: {},
+    owners: {},
+    sources: [],
+    tools: {},
+    ui: {
+      panels: {},
+      statuslineRenderer: null,
+      statusOwners: {},
+      statusValues: {},
+    },
+  };
+}
+
+function createDisabledExtensionHost(
+  registry: LocalExtensionRegistry,
+): ExtensionHost {
+  return {
+    dispose() {},
+    emitEvent(name) {
+      return Promise.resolve(emptyEventEmissionResult(name));
+    },
+    getSnapshot() {
+      return registry;
+    },
+    reload() {
+      return Promise.resolve();
+    },
+    subscribe() {
+      return () => undefined;
+    },
+  };
+}
+
+function createDisabledExtensionRuntime(
+  options: CreateExtensionRuntimeOptions,
+): ExtensionRuntime {
+  clearExtensionTools();
+  clearRegisteredPiProviders();
+
+  let context = options.initialContext;
+  const registry = createDisabledExtensionRegistry();
+  const host = createDisabledExtensionHost(registry);
+  const snapshot: ExtensionRuntimeSnapshot = {
+    hadStatuslineRenderer: false,
+    hasExtensionSources: false,
+    isLoading: false,
+    registry,
+  };
+  const eventEmitter: ExtensionEventEmitter = {
+    emitEvent(name) {
+      return Promise.resolve(emptyEventEmissionResult(name));
+    },
+    getSnapshot() {
+      return snapshot;
+    },
+  };
+
+  return {
+    dispose() {},
+    emitEvent(name) {
+      return Promise.resolve(emptyEventEmissionResult(name));
+    },
+    eventEmitter,
+    getBackendApi() {
+      return undefined;
+    },
+    getContext() {
+      return context;
+    },
+    getSnapshot() {
+      return snapshot;
+    },
+    host,
+    reload() {
+      return Promise.resolve();
+    },
+    subscribe() {
+      return () => undefined;
+    },
+    updateContext(nextContext) {
+      context = nextContext;
+    },
+  };
 }
 
 export interface ExtensionRuntime {
@@ -36,8 +147,9 @@ export interface ExtensionRuntime {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-  ) => Promise<ExtensionEventEmissionResult>;
-  getBackendApi: () => ExtensionBackendApi | undefined;
+  ) => Promise<ExtensionEventEmissionResult<TName>>;
+  eventEmitter: ExtensionEventEmitter;
+  getBackendApi: () => ExtensionRuntimeBackendApi | undefined;
   getContext: () => ExtensionContext;
   getSnapshot: () => ExtensionRuntimeSnapshot;
   host: ExtensionHost;
@@ -57,9 +169,9 @@ function hasExtensionSources(
   );
 }
 
-function createActivationBackendApi(
-  getBackendApi: () => ExtensionBackendApi | undefined,
-): ExtensionBackendApi {
+function createLazyRuntimeBackendApi(
+  getBackendApi: () => ExtensionRuntimeBackendApi | undefined,
+): ExtensionRuntimeBackendApi {
   const requireBackend = () => {
     const backend = getBackendApi();
     if (!backend) {
@@ -71,6 +183,9 @@ function createActivationBackendApi(
   return {
     forkConversation(conversationId, options) {
       return requireBackend().forkConversation(conversationId, options);
+    },
+    getConversationHistory(conversationId, options) {
+      return requireBackend().getConversationHistory(conversationId, options);
     },
     sendMessageStream(conversationId, messages, options, requestOptions) {
       return requireBackend().sendMessageStream(
@@ -86,6 +201,14 @@ function createActivationBackendApi(
 export function createExtensionRuntime(
   options: CreateExtensionRuntimeOptions,
 ): ExtensionRuntime {
+  if (options.disabled) {
+    disableExtensionsForProcess();
+  }
+
+  if (options.disabled || areExtensionsDisabled()) {
+    return createDisabledExtensionRuntime(options);
+  }
+
   const {
     getBackendApi: resolveBackendApi,
     initialContext,
@@ -104,7 +227,7 @@ export function createExtensionRuntime(
   const getBackendApi = () => resolveBackendApi?.();
   const getContext = () => context;
   const backend = resolveBackendApi
-    ? createActivationBackendApi(getBackendApi)
+    ? createLazyRuntimeBackendApi(getBackendApi)
     : undefined;
 
   const host = createExtensionHost({
@@ -112,6 +235,15 @@ export function createExtensionRuntime(
     ...(backend ? { backend } : {}),
     getContext,
   });
+
+  const eventEmitter: ExtensionEventEmitter = {
+    emitEvent(name, event) {
+      return host.emitEvent(name, event, getBackendApi());
+    },
+    getSnapshot() {
+      return loadState;
+    },
+  };
 
   const buildSnapshot = (): ExtensionRuntimeSnapshot => ({
     registry: host.getSnapshot(),
@@ -185,6 +317,7 @@ export function createExtensionRuntime(
     emitEvent(name, event) {
       return host.emitEvent(name, event, getBackendApi());
     },
+    eventEmitter,
     getBackendApi,
     getContext,
     getSnapshot,

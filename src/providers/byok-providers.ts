@@ -17,6 +17,7 @@ import {
   updateProvider as updateProviderRequest,
 } from "@/backend/api/providers";
 import { getBackend } from "@/backend/backend";
+import { listRegisteredPiProviders } from "@/backend/dev/pi-provider-extension-registry";
 import {
   getPiProviderSpec,
   LMSTUDIO_OPENAI_PROVIDER_TYPE,
@@ -322,28 +323,33 @@ function localOAuthConfigId(providerId: string): string {
 }
 
 function localOAuthProviderConfigs(): ByokProvider[] {
-  return getOAuthProviders().map((provider) => {
-    const spec = PI_PROVIDER_SPECS.find(
-      (candidate) => candidate.piProvider === provider.id,
-    );
-    const providerName =
-      provider.id === "openai-codex"
-        ? "chatgpt-plus-pro"
-        : (spec?.localProviderNames[0] ?? provider.id);
-    return {
-      id: localOAuthConfigId(provider.id),
-      displayName: provider.name,
-      description: "Connect a subscription account",
-      providerType: spec?.providerTypes[0] ?? provider.id,
-      providerName,
-      providerNames:
+  const registeredProviderIds = new Set(
+    listRegisteredPiProviders().map((provider) => provider.providerName),
+  );
+  return getOAuthProviders()
+    .filter((provider) => !registeredProviderIds.has(provider.id))
+    .map((provider) => {
+      const spec = PI_PROVIDER_SPECS.find(
+        (candidate) => candidate.piProvider === provider.id,
+      );
+      const providerName =
         provider.id === "openai-codex"
-          ? [providerName, "openai-codex"]
-          : spec?.localProviderNames,
-      isOAuth: true,
-      oauthProviderId: provider.id,
-    };
-  });
+          ? "chatgpt-plus-pro"
+          : (spec?.localProviderNames[0] ?? provider.id);
+      return {
+        id: localOAuthConfigId(provider.id),
+        displayName: provider.name,
+        description: "Connect a subscription account",
+        providerType: spec?.providerTypes[0] ?? provider.id,
+        providerName,
+        providerNames:
+          provider.id === "openai-codex"
+            ? [providerName, "openai-codex"]
+            : spec?.localProviderNames,
+        isOAuth: true,
+        oauthProviderId: provider.id,
+      };
+    });
 }
 
 function localApiKeyProviderIds(): string[] {
@@ -355,6 +361,56 @@ function localApiKeyProviderIds(): string[] {
       !oauthProviderIds.has(provider) ||
       PI_TUI_API_KEY_OAUTH_PROVIDER_IDS.has(provider),
   );
+}
+
+function defaultExtensionProviderFields(providerName: string): ProviderField[] {
+  return [
+    { key: "apiKey", label: `${providerName} API Key`, secret: true },
+    { key: "baseUrl", label: "Base URL" },
+  ];
+}
+
+function extensionProviderEnvApiKey(
+  apiKey: string | undefined,
+): string | undefined {
+  if (!apiKey) return undefined;
+  const value = process.env[apiKey];
+  return value && value.length > 0 ? value : undefined;
+}
+
+function byokProviderFromRegisteredProvider(
+  provider: ReturnType<typeof listRegisteredPiProviders>[number],
+): ByokProvider | undefined {
+  if (provider.config.connect === false) return undefined;
+  const connect =
+    provider.config.connect && typeof provider.config.connect === "object"
+      ? provider.config.connect
+      : undefined;
+  const defaultApiKey = extensionProviderEnvApiKey(provider.config.apiKey);
+  const displayName =
+    provider.config.name ?? displayNameForLocalProvider(provider.providerName);
+  const baseConfig: ByokProvider = {
+    id: provider.providerName,
+    displayName,
+    description: provider.config.description ?? `Connect ${displayName}`,
+    providerType: provider.providerName,
+    providerName: provider.providerName,
+    providerNames: [provider.providerName],
+  };
+  if (provider.config.oauth) {
+    return {
+      ...baseConfig,
+      isOAuth: true,
+      oauthProviderId: provider.providerName,
+      requiresApiKey: false,
+    };
+  }
+  return {
+    ...baseConfig,
+    requiresApiKey: defaultApiKey === undefined,
+    ...(defaultApiKey ? { defaultApiKey } : {}),
+    fields: connect?.fields ?? defaultExtensionProviderFields(displayName),
+  };
 }
 
 export function getProviderConfigs(
@@ -372,6 +428,10 @@ export function getProviderConfigs(
   }
   for (const provider of LOCAL_EXTRA_PROVIDER_CONFIGS) {
     byId.set(provider.id, provider);
+  }
+  for (const provider of listRegisteredPiProviders()) {
+    const config = byokProviderFromRegisteredProvider(provider);
+    if (config) byId.set(config.id, config);
   }
   return [...byId.values()].sort((left, right) =>
     left.displayName.localeCompare(right.displayName),

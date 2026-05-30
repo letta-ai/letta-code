@@ -1,5 +1,6 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clearAvailableModelsCache } from "@/agent/available-models";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
@@ -30,9 +31,20 @@ type ViewState =
   | { type: "multiInput"; provider: ByokProvider; authMethod?: AuthMethod }
   | { type: "methodSelect"; provider: ByokProvider }
   | { type: "profileSelect"; provider: ByokProvider }
-  | { type: "options"; provider: ByokProvider; providerId: string };
+  | { type: "options"; provider: ByokProvider };
 
 type ValidationState = "idle" | "validating" | "valid" | "invalid" | "saving";
+
+type ProviderSelectionFlow =
+  | "options"
+  | "oauth"
+  | "methodSelect"
+  | "multiInput"
+  | "input";
+
+type ConnectedProvidersByTarget = Partial<
+  Record<ProviderStorageTarget, Map<string, ProviderResponse>>
+>;
 
 interface ProviderSelectorProps {
   onCancel: () => void;
@@ -91,6 +103,28 @@ export function filterProviderConfigs(
   });
 }
 
+export function providerSelectionFlow(
+  provider: ByokProvider,
+  connectedProviderId?: string,
+): ProviderSelectionFlow {
+  if (connectedProviderId) return "options";
+  if (provider.isOAuth) return "oauth";
+  if ("authMethods" in provider && provider.authMethods) return "methodSelect";
+  if ("fields" in provider && provider.fields) return "multiInput";
+  return "input";
+}
+
+export function isProviderTargetLoading(input: {
+  selectedTarget: ProviderStorageTarget;
+  connectedProvidersByTarget: ConnectedProvidersByTarget;
+  showProviderStoreTabs: boolean;
+}): boolean {
+  return (
+    input.connectedProvidersByTarget[input.selectedTarget] === undefined &&
+    (input.selectedTarget === "local" || input.showProviderStoreTabs)
+  );
+}
+
 export function ProviderSelector({
   onCancel,
   onStartOAuth,
@@ -105,10 +139,11 @@ export function ProviderSelector({
   const [hasConstellationCredentials, setHasConstellationCredentials] =
     useState<boolean | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [connectedProviders, setConnectedProviders] = useState<
-    Map<string, ProviderResponse>
-  >(new Map());
-  const [isLoading, setIsLoading] = useState(true);
+  const [connectedProvidersByTarget, setConnectedProvidersByTarget] =
+    useState<ConnectedProvidersByTarget>({});
+  const [loadingTargets, setLoadingTargets] = useState<
+    Set<ProviderStorageTarget>
+  >(new Set());
   const [viewState, setViewState] = useState<ViewState>({ type: "list" });
   const [searchQuery, setSearchQuery] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
@@ -136,6 +171,15 @@ export function ProviderSelector({
   const showProviderStoreTabs = shouldShowProviderStoreTabs(
     hasConstellationCredentials,
   );
+  const connectedProviders = useMemo(
+    () => connectedProvidersByTarget[selectedTarget] ?? new Map(),
+    [connectedProvidersByTarget, selectedTarget],
+  );
+  const isLoading = isProviderTargetLoading({
+    selectedTarget,
+    connectedProvidersByTarget,
+    showProviderStoreTabs,
+  });
   const selectableProviders = filteredProviders;
   const providerStartIndex = useMemo(() => {
     if (selectedIndex < VISIBLE_PROVIDERS) return 0;
@@ -185,30 +229,75 @@ export function ProviderSelector({
     };
   }, []);
 
-  // Load connected providers on mount and when switching targets.
-  useEffect(() => {
-    if (selectedTarget === "api" && !showProviderStoreTabs) {
-      setIsLoading(false);
-      return;
-    }
+  const setConnectedProvidersForTarget = useCallback(
+    (
+      target: ProviderStorageTarget,
+      providers: Map<string, ProviderResponse>,
+    ) => {
+      setConnectedProvidersByTarget((previous) => ({
+        ...previous,
+        [target]: providers,
+      }));
+    },
+    [],
+  );
 
-    setIsLoading(true);
-    (async () => {
+  const refreshConnectedProviders = useCallback(
+    async (target: ProviderStorageTarget) => {
+      setLoadingTargets((previous) => new Set(previous).add(target));
       try {
-        const providers = await getConnectedProviders({
-          target: selectedTarget,
-        });
+        const providers = await getConnectedProviders({ target });
         if (mountedRef.current) {
-          setConnectedProviders(providers);
-          setIsLoading(false);
+          setConnectedProvidersForTarget(target, providers);
         }
       } catch {
         if (mountedRef.current) {
-          setIsLoading(false);
+          setConnectedProvidersForTarget(target, new Map());
+        }
+      } finally {
+        if (mountedRef.current) {
+          setLoadingTargets((previous) => {
+            const next = new Set(previous);
+            next.delete(target);
+            return next;
+          });
         }
       }
-    })();
-  }, [selectedTarget, showProviderStoreTabs]);
+    },
+    [setConnectedProvidersForTarget],
+  );
+
+  // Load connected providers once per target while the overlay is mounted.
+  useEffect(() => {
+    if (selectedTarget === "api" && !showProviderStoreTabs) return;
+    if (connectedProvidersByTarget[selectedTarget]) return;
+    if (loadingTargets.has(selectedTarget)) return;
+    void refreshConnectedProviders(selectedTarget);
+  }, [
+    connectedProvidersByTarget,
+    loadingTargets,
+    refreshConnectedProviders,
+    selectedTarget,
+    showProviderStoreTabs,
+  ]);
+
+  // When both tabs are available, prefetch the inactive tab so switching tabs
+  // can render from overlay-local cache instead of flashing a loading state.
+  useEffect(() => {
+    if (!showProviderStoreTabs) return;
+    for (const target of ["local", "api"] as const) {
+      if (target === selectedTarget) continue;
+      if (connectedProvidersByTarget[target]) continue;
+      if (loadingTargets.has(target)) continue;
+      void refreshConnectedProviders(target);
+    }
+  }, [
+    connectedProvidersByTarget,
+    loadingTargets,
+    refreshConnectedProviders,
+    selectedTarget,
+    showProviderStoreTabs,
+  ]);
 
   useEffect(() => {
     if (!showProviderStoreTabs && selectedTarget !== "local") {
@@ -288,7 +377,16 @@ export function ProviderSelector({
   // Handle selecting a provider from the list
   const handleSelectProvider = useCallback(
     (provider: ByokProvider) => {
-      if ("isOAuth" in provider && provider.isOAuth) {
+      const providerId = getProviderId(provider);
+      const flow = providerSelectionFlow(provider, providerId);
+
+      if (flow === "options") {
+        setViewState({ type: "options", provider });
+        setOptionIndex(0);
+        return;
+      }
+
+      if (flow === "oauth") {
         // OAuth provider - trigger OAuth flow
         if (onStartOAuth) {
           onStartOAuth(provider, selectedTarget);
@@ -296,19 +394,11 @@ export function ProviderSelector({
         return;
       }
 
-      const connected = isConnected(provider);
-      if (connected) {
-        // Show options for connected provider
-        const providerId = getProviderId(provider);
-        if (providerId) {
-          setViewState({ type: "options", provider, providerId });
-          setOptionIndex(0);
-        }
-      } else if ("authMethods" in provider && provider.authMethods) {
+      if (flow === "methodSelect") {
         // Provider with multiple auth methods - show method selection
         setViewState({ type: "methodSelect", provider });
         setMethodIndex(0);
-      } else if ("fields" in provider && provider.fields) {
+      } else if (flow === "multiInput") {
         // Multi-field provider - show multi-input view
         setViewState({ type: "multiInput", provider });
         setFieldValues({});
@@ -323,7 +413,7 @@ export function ProviderSelector({
         setValidationError(null);
       }
     },
-    [isConnected, getProviderId, onStartOAuth, selectedTarget],
+    [getProviderId, onStartOAuth, selectedTarget],
   );
 
   // Handle selecting an auth method
@@ -410,12 +500,13 @@ export function ProviderSelector({
           {},
           { target: selectedTarget },
         );
+        clearAvailableModelsCache();
         // Refresh connected providers
         const providers = await getConnectedProviders({
           target: selectedTarget,
         });
         if (mountedRef.current) {
-          setConnectedProviders(providers);
+          setConnectedProvidersForTarget(selectedTarget, providers);
           setViewState({ type: "list" });
           setApiKeyInput("");
           setValidationState("idle");
@@ -455,7 +546,13 @@ export function ProviderSelector({
         );
       }
     }
-  }, [viewState, apiKeyInput, validationState, selectedTarget]);
+  }, [
+    viewState,
+    apiKeyInput,
+    validationState,
+    selectedTarget,
+    setConnectedProvidersForTarget,
+  ]);
 
   // Handle multi-field validation and saving (for providers like Bedrock)
   const handleMultiFieldValidateAndSave = useCallback(async () => {
@@ -476,6 +573,7 @@ export function ProviderSelector({
     const accessKey = fieldValues.accessKey?.trim();
     const region = fieldValues.region?.trim();
     const profile = fieldValues.profile?.trim();
+    const baseURL = fieldValues.baseUrl?.trim();
 
     // If already validated, save
     if (validationState === "valid") {
@@ -488,15 +586,16 @@ export function ProviderSelector({
           accessKey,
           region,
           profile,
-          {},
+          baseURL ? { baseURL } : {},
           { target: selectedTarget },
         );
+        clearAvailableModelsCache();
         // Refresh connected providers
         const providers = await getConnectedProviders({
           target: selectedTarget,
         });
         if (mountedRef.current) {
-          setConnectedProviders(providers);
+          setConnectedProvidersForTarget(selectedTarget, providers);
           setViewState({ type: "list" });
           setFieldValues({});
           setValidationState("idle");
@@ -536,7 +635,13 @@ export function ProviderSelector({
         );
       }
     }
-  }, [viewState, fieldValues, validationState, selectedTarget]);
+  }, [
+    viewState,
+    fieldValues,
+    validationState,
+    selectedTarget,
+    setConnectedProvidersForTarget,
+  ]);
 
   // Handle disconnect
   const handleDisconnect = useCallback(async () => {
@@ -550,16 +655,22 @@ export function ProviderSelector({
           target: selectedTarget,
         },
       );
+      clearAvailableModelsCache();
       // Refresh connected providers
       const providers = await getConnectedProviders({ target: selectedTarget });
       if (mountedRef.current) {
-        setConnectedProviders(providers);
+        setConnectedProvidersForTarget(selectedTarget, providers);
         setViewState({ type: "list" });
       }
     } catch {
       // Silently fail, stay on options view
     }
-  }, [viewState, selectedTarget, getConnectedProviderName]);
+  }, [
+    viewState,
+    selectedTarget,
+    getConnectedProviderName,
+    setConnectedProvidersForTarget,
+  ]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -1224,11 +1335,15 @@ export function ProviderSelector({
   const renderOptionsView = () => {
     if (viewState.type !== "options") return null;
     const { provider } = viewState;
-    const options = ["Disconnect", "Back"];
+    const options = ["Disconnect provider", "Back"];
 
     return (
       <>
         <Box flexDirection="column" marginBottom={1}>
+          <Text bold color={colors.selector.title}>
+            Disconnect {provider.displayName}
+          </Text>
+          <Box height={1} />
           <Box flexDirection="row">
             <Text>{"  "}</Text>
             <Text color="green">[✓]</Text>
@@ -1265,7 +1380,7 @@ export function ProviderSelector({
         </Box>
 
         <Box marginTop={1}>
-          <Text dimColor>{"  "}Enter select · ↑↓ navigate · Esc back</Text>
+          <Text dimColor>{"  "}Enter confirm · ↑↓ navigate · Esc back</Text>
         </Box>
       </>
     );

@@ -3,6 +3,7 @@ import {
   pollForToken,
   refreshAccessToken,
   requestDeviceCode,
+  validateCredentialsWithResult,
 } from "@/auth/oauth";
 
 const originalFetch = globalThis.fetch;
@@ -71,6 +72,28 @@ describe("OAuth network errors", () => {
     ).rejects.toThrow(
       "Failed to refresh access token from app.letta.com: certificate has expired (CERT_HAS_EXPIRED).",
     );
+  });
+
+  test("validateCredentialsWithResult classifies authentication failures", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ message: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    const result = await validateCredentialsWithResult(
+      "https://api.letta.com",
+      "bad-key",
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "invalid_credentials",
+      status: 401,
+    });
   });
 
   test("pollForToken preserves non-network OAuth errors", async () => {

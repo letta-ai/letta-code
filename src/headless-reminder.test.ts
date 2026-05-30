@@ -66,4 +66,38 @@ describe("headless shared reminder wiring", () => {
     expect(source).toContain("await drainStreamWithResume(");
     expect(source).not.toContain("for await (const _ of approvalStream)");
   });
+
+  test("bidirectional mode wires reflection launcher into shared reminders", () => {
+    const headlessPath = fileURLToPath(
+      new URL("./headless.ts", import.meta.url),
+    );
+    const source = readFileSync(headlessPath, "utf-8");
+
+    expect(source).toContain("const maybeLaunchReflectionSubagent = async (");
+    expect(source).toContain("launchReflectionSubagent({");
+    expect(source).toContain("description: AUTO_REFLECTION_DESCRIPTION");
+    expect(source).toContain("maybeLaunchReflectionSubagent,");
+  });
+
+  test("bidirectional reflection delegates MemFS root resolution to launcher", () => {
+    const headlessPath = fileURLToPath(
+      new URL("./headless.ts", import.meta.url),
+    );
+    const source = readFileSync(headlessPath, "utf-8");
+
+    expect(source).not.toContain("memoryDir: getMemoryFilesystemRoot");
+    expect(source).not.toContain("memoryDir: getScopedMemoryFilesystemRoot");
+  });
+
+  test("bidirectional mode records successful turns for reflection", () => {
+    const headlessPath = fileURLToPath(
+      new URL("./headless.ts", import.meta.url),
+    );
+    const source = readFileSync(headlessPath, "utf-8");
+
+    expect(source).toContain("const userOtid = randomUUID();");
+    expect(source).toContain("buffers.userLineIdByOtid.set(userOtid");
+    expect(source).toContain("content: enrichedContent, otid: userOtid");
+    expect(source).toContain("appendTranscriptDeltaJsonl(");
+  });
 });

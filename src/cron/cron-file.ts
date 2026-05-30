@@ -95,7 +95,7 @@ function getLettaDir(): string {
   return join(process.env.HOME ?? process.env.USERPROFILE ?? "~", ".letta");
 }
 
-function getCronFilePath(): string {
+export function getCronFilePath(): string {
   return join(getLettaDir(), CRON_FILE_NAME);
 }
 

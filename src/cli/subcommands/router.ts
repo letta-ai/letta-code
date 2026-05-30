@@ -8,6 +8,7 @@ import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 import { runSetupSubcommand } from "./setup";
+import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
 
 async function runUpdateSubcommand(): Promise<number> {
   const { manualUpdate } = await import("@/updater/auto-update");
@@ -43,6 +44,10 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runBackendSubcommand(rest);
     case "setup":
       return runSetupSubcommand(rest);
+    case "install":
+      return runInstallSubcommand(rest);
+    case "skills":
+      return runSkillsSubcommand(rest);
     case "cron":
       return runCronSubcommand(rest);
     case "channels":

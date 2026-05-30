@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
   readdir,
   readFile,
+  rm,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -21,6 +22,10 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
+import {
+  clearRegisteredPiProviders,
+  registerPiProvider,
+} from "@/backend/dev/pi-provider-extension-registry";
 import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -37,8 +42,23 @@ async function firstConversationDir(storageDir: string): Promise<string> {
   expect(entries.length).toBeGreaterThan(0);
   for (const entry of entries) {
     const dir = join(storageDir, "conversations", entry);
-    const raw = await readFile(join(dir, "messages.jsonl"), "utf8");
-    if (raw.trim().length > 0) return dir;
+    let raw: string;
+    try {
+      raw = await readFile(join(dir, "messages.jsonl"), "utf8");
+    } catch {
+      continue;
+    }
+    const rows = raw
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    if (
+      rows.some(
+        (row) => row.type === "message" || Object.hasOwn(row, "content"),
+      )
+    ) {
+      return dir;
+    }
   }
   const firstEntry = entries[0];
   if (!firstEntry)
@@ -132,6 +152,10 @@ function lettaStreamFromChunks(
 }
 
 describe("local backend pi transcript", () => {
+  afterEach(() => {
+    clearRegisteredPiProviders();
+  });
+
   test("uses wall-clock timestamps for new local conversations and messages", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-time-"));
     const before = Date.now() - 1_000;
@@ -186,6 +210,23 @@ describe("local backend pi transcript", () => {
       const parsed = Date.parse(timestamp ?? "");
       expect(parsed).toBeGreaterThanOrEqual(before);
       expect(parsed).toBeLessThanOrEqual(after);
+    }
+  });
+
+  test("rejects updates to the virtual default conversation", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-default-conversation-update-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+
+      expect(() =>
+        backend.updateConversation("default", {
+          summary: "Default rename",
+        } as never),
+      ).toThrow("Default conversation cannot be updated");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
     }
   });
 
@@ -289,6 +330,109 @@ describe("local backend pi transcript", () => {
     expect(conversations[0]?.last_message_at).toBe(activeAt);
     expect(messages[0]?.date).toBe(createdAt);
     expect(messages.at(-1)?.date).toBe(activeAt);
+  });
+
+  test("loads bounded transcript tails without parsing the full jsonl", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-tail-"));
+    const agentId = "agent-local-default";
+    const conversationId = "local-conv-tail";
+    const conversationDir = join(storageDir, "conversations", "tail");
+    const messageIds = Array.from({ length: 120 }, (_, i) =>
+      i === 119 ? "ui-msg-latest" : `ui-msg-${i}`,
+    );
+    await mkdir(join(storageDir, "agents"), { recursive: true });
+    await writeFile(
+      join(storageDir, "agents", `${agentId}.json`),
+      `${JSON.stringify({
+        id: agentId,
+        name: "Local",
+        description: null,
+        system: "",
+        tags: [],
+        model: "openai/gpt-5-mini",
+        model_settings: { model: "openai/gpt-5-mini" },
+      })}\n`,
+    );
+    await mkdir(conversationDir, { recursive: true });
+    await writeFile(
+      join(conversationDir, "conversation.json"),
+      `${JSON.stringify({
+        id: conversationId,
+        agent_id: agentId,
+        created_at: "2026-05-22T12:00:00.000Z",
+        updated_at: "2026-05-22T13:00:00.000Z",
+        last_message_at: "2026-05-22T13:00:00.000Z",
+        in_context_message_ids: messageIds,
+      })}\n`,
+    );
+    await writeFile(
+      join(conversationDir, "manifest.json"),
+      `${JSON.stringify({
+        schema_version: 1,
+        message_format: "pi-ai-message-jsonl",
+        provider_stack: "pi-ai",
+        created_at: "2026-05-22T12:00:00.000Z",
+      })}\n`,
+    );
+
+    const rows = ["{ definitely not json }"];
+    for (let i = 0; i < 120; i += 1) {
+      const id = messageIds[i];
+      rows.push(
+        JSON.stringify({
+          id,
+          role: i % 2 === 0 ? "user" : "assistant",
+          content: [
+            {
+              type: "text",
+              text: `${i === 119 ? "latest" : "older"} ${"x".repeat(2048)}`,
+            },
+          ],
+          ...(i === 119
+            ? {}
+            : {
+                metadata: {
+                  created_at: new Date(
+                    Date.UTC(2026, 4, 22, 12, i),
+                  ).toISOString(),
+                  updated_at: new Date(
+                    Date.UTC(2026, 4, 22, 12, i),
+                  ).toISOString(),
+                  agent_id: agentId,
+                  conversation_id: conversationId,
+                },
+              }),
+        }),
+      );
+    }
+    await writeFile(
+      join(conversationDir, "messages.jsonl"),
+      `${rows.join("\n")}\n`,
+    );
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const conversation = await backend.retrieveConversation(conversationId);
+    expect(conversation.in_context_message_ids).toEqual(messageIds);
+    const messages = pageItems(
+      await backend.listConversationMessages(conversationId, {
+        agent_id: agentId,
+        order: "desc",
+        limit: 1,
+      } as never),
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe("ui-msg-latest");
+    expect(messages[0]?.date).toBe("2026-01-01T00:02:00.000Z");
+
+    const backendForDirectLookup = new LocalBackend({
+      storageDir,
+      memfsEnabled: false,
+    });
+    const latestVariants =
+      await backendForDirectLookup.retrieveMessage("ui-msg-latest");
+    expect(latestVariants[0]?.id).toBe("ui-msg-latest");
+    expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
   });
 
   test("reuses cached compiled system prompt across turns until explicit recompile", async () => {
@@ -414,6 +558,62 @@ describe("local backend pi transcript", () => {
     await backend.compactConversationMessages(conversation.id, {
       agent_id: agent.id,
     } as never);
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const entriesAfterCompaction = (
+      await readFile(join(conversationDir, "messages.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entriesAfterCompaction.map((entry) => entry.type)).toEqual([
+      "session",
+      "message",
+      "message",
+      "compaction",
+    ]);
+    const messageEntries = entriesAfterCompaction.filter(
+      (entry) => entry.type === "message",
+    );
+    expect(
+      messageEntries.map(
+        (entry) => (entry.message as Record<string, unknown> | undefined)?.id,
+      ),
+    ).toEqual(["ui-msg-1", "ui-msg-2"]);
+    expect(
+      messageEntries.every(
+        (entry) => entry.id !== (entry.message as Record<string, unknown>).id,
+      ),
+    ).toBe(true);
+    const compactionEntry = entriesAfterCompaction.at(-1) as Record<
+      string,
+      unknown
+    >;
+    expect(compactionEntry).toMatchObject({
+      type: "compaction",
+      parentId: messageEntries.at(-1)?.id,
+      summary: "Compacted summary.",
+    });
+    expect(
+      (compactionEntry.message as Record<string, unknown> | undefined)?.id,
+    ).toBe("ui-msg-3");
+
+    const reloadedAfterCompaction = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    const activeAfterCompaction = pageItems(
+      await reloadedAfterCompaction.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(activeAfterCompaction.map((message) => message.id)).toEqual([
+      "ui-msg-3",
+    ]);
+
     await drain(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: agent.id,
@@ -486,6 +686,155 @@ describe("local backend pi transcript", () => {
     expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
     expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
+  });
+
+  test("lists extension-registered local provider models with context windows", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-registered-provider-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      calls.push(typeof input === "string" ? input : String(input));
+      return new Response(
+        JSON.stringify({ data: [{ id: "heuristic-only-model" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const models = await listLocalModels(storageDir, { fetch: fetchImpl });
+
+    expect(calls).toEqual([]);
+    expect(models).toContainEqual({
+      handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+      max_context_window: 256000,
+      model: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+      model_endpoint_type: "lmstudio",
+    });
+    expect(models.map((model) => model.handle)).not.toContain(
+      "lmstudio/heuristic-only-model",
+    );
+  });
+
+  test("uses extension-registered context windows for local agent state", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-registered-context-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+
+    expect(agent.model).toBe("lmstudio/gemma-4-26B-A4B-it-oQ6");
+    expect(
+      (agent as { llm_config?: { context_window?: number } }).llm_config
+        ?.context_window,
+    ).toBe(256000);
+    expect(
+      (agent as { llm_config?: { max_tokens?: number } }).llm_config
+        ?.max_tokens,
+    ).toBe(8192);
+  });
+
+  test("projects legacy local 128k defaults through registered model metadata", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-legacy-context-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "lmstudio",
+      providerName: "lc-lmstudio",
+      apiKey: "not-needed",
+      baseURL: "http://127.0.0.1:1234/v1",
+      storageDir,
+    });
+    await mkdir(join(storageDir, "agents"), { recursive: true });
+    await writeFile(
+      join(storageDir, "agents", "agent-local-default.json"),
+      JSON.stringify(
+        {
+          id: "agent-local-default",
+          name: "Letta Code",
+          description: null,
+          system: "",
+          tags: [],
+          model: "lmstudio/gemma-4-26B-A4B-it-oQ6",
+          model_settings: {
+            provider_type: "lmstudio",
+            context_window_limit: 128000,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.retrieveAgent("agent-local-default");
+
+    expect(
+      (agent as { llm_config?: { context_window?: number } }).llm_config
+        ?.context_window,
+    ).toBe(256000);
   });
 
   test("discovers configured Ollama Cloud models from OpenAI-compatible catalog", async () => {
@@ -601,14 +950,18 @@ describe("local backend pi transcript", () => {
       await readFile(join(dir, "manifest.json"), "utf8"),
     );
     expect(manifest).toMatchObject({
-      schema_version: 1,
-      message_format: "pi-ai-message-jsonl",
+      schema_version: 2,
+      message_format: "pi-session-entry-jsonl",
       provider_stack: "pi-ai",
     });
-    const messages = (await readFile(join(dir, "messages.jsonl"), "utf8"))
+    const entries = (await readFile(join(dir, "messages.jsonl"), "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entries[0]).toMatchObject({ type: "session", version: 3 });
+    const messages = entries
+      .filter((entry) => entry.type === "message")
+      .map((entry) => entry.message as Record<string, unknown>);
     expect(messages.every((message) => "content" in message)).toBe(true);
     expect(JSON.stringify(messages)).not.toContain('"parts"');
 
@@ -785,12 +1138,16 @@ describe("local backend pi transcript", () => {
     });
 
     const conversationDir = await firstConversationDir(storageDir);
-    const messages = (
+    const entries = (
       await readFile(join(conversationDir, "messages.jsonl"), "utf8")
     )
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entries[0]).toMatchObject({ type: "session", version: 3 });
+    const messages = entries
+      .filter((entry) => entry.type === "message")
+      .map((entry) => entry.message as Record<string, unknown>);
     expect(messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
@@ -800,6 +1157,26 @@ describe("local backend pi transcript", () => {
     const finalAssistant = messages.at(-1) as { content?: unknown[] };
     expect(finalAssistant.content).toEqual([
       { type: "text", text: "Tool result received." },
+    ]);
+
+    const reloadedBackend = new LocalBackend({
+      storageDir,
+      stream,
+      memfsEnabled: false,
+    });
+    const reloadedMessages = pageItems(
+      await reloadedBackend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(reloadedMessages.map((message) => message.message_type)).toEqual([
+      "user_message",
+      "assistant_message",
+      "reasoning_message",
+      "approval_request_message",
+      "tool_return_message",
+      "assistant_message",
     ]);
   });
 
@@ -830,11 +1207,24 @@ describe("local backend pi transcript", () => {
     );
   });
 
-  test("refuses to load versioned transcripts with legacy UI rows and repairs them with migrate-transcripts", async () => {
+  test("refuses to read versioned transcripts with legacy UI rows and repairs them with migrate-transcripts", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-repair-"),
     );
     const conversationDir = join(storageDir, "conversations", "mismatched");
+    await mkdir(join(storageDir, "agents"), { recursive: true });
+    await writeFile(
+      join(storageDir, "agents", "agent-local-default.json"),
+      `${JSON.stringify({
+        id: "agent-local-default",
+        name: "Local",
+        description: null,
+        system: "",
+        tags: [],
+        model: "openai/gpt-5-mini",
+        model_settings: { model: "openai/gpt-5-mini" },
+      })}\n`,
+    );
     await mkdir(conversationDir, { recursive: true });
     await writeFile(
       join(conversationDir, "conversation.json"),
@@ -858,10 +1248,19 @@ describe("local backend pi transcript", () => {
       `${JSON.stringify({ id: "ui-msg-1", role: "user", parts: [{ type: "text", text: "legacy after manifest" }] })}\n`,
     );
 
-    expect(() => new LocalBackend({ storageDir, memfsEnabled: false })).toThrow(
-      LocalTranscriptRepairRequiredError,
-    );
-    expect(() => new LocalBackend({ storageDir, memfsEnabled: false })).toThrow(
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    await expect(
+      backend.listConversationMessages("local-conv-1", {
+        agent_id: "agent-local-default",
+        order: "asc",
+      } as never),
+    ).rejects.toThrow(LocalTranscriptRepairRequiredError);
+    await expect(
+      backend.listConversationMessages("local-conv-1", {
+        agent_id: "agent-local-default",
+        order: "asc",
+      } as never),
+    ).rejects.toThrow(
       `letta local-backend migrate-transcripts --storage-dir "${storageDir}"`,
     );
 
@@ -873,9 +1272,17 @@ describe("local backend pi transcript", () => {
     expect(manifest.migrated_from).toBe(
       "versioned-pi-transcript-with-legacy-ui-message-rows",
     );
-    const converted = JSON.parse(
-      (await readFile(join(conversationDir, "messages.jsonl"), "utf8")).trim(),
-    );
+    expect(manifest.schema_version).toBe(2);
+    expect(manifest.message_format).toBe("pi-session-entry-jsonl");
+    const convertedEntries = (
+      await readFile(join(conversationDir, "messages.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(convertedEntries[0]).toMatchObject({ type: "session" });
+    const converted = convertedEntries.find((entry) => entry.type === "message")
+      ?.message as Record<string, unknown>;
     expect(converted).toMatchObject({
       id: "ui-msg-1",
       role: "user",
@@ -928,12 +1335,18 @@ describe("local backend pi transcript", () => {
       await readFile(join(conversationDir, "manifest.json"), "utf8"),
     );
     expect(manifest.provider_stack).toBe("pi-ai");
-    const converted = (
+    expect(manifest.schema_version).toBe(2);
+    expect(manifest.message_format).toBe("pi-session-entry-jsonl");
+    const convertedEntries = (
       await readFile(join(conversationDir, "messages.jsonl"), "utf8")
     )
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { role: string });
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(convertedEntries[0]).toMatchObject({ type: "session" });
+    const converted = convertedEntries
+      .filter((entry) => entry.type === "message")
+      .map((entry) => entry.message as { role: string });
     expect(converted.map((message) => message.role)).toEqual([
       "user",
       "assistant",

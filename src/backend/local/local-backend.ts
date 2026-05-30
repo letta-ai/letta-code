@@ -45,7 +45,11 @@ import {
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
 import type { LocalMessage } from "./local-message";
-import { listLocalModels, resolveLocalModelConfig } from "./local-model-config";
+import {
+  listLocalModels,
+  localModelSettingsForHandle,
+  resolveLocalModelConfig,
+} from "./local-model-config";
 import type {
   LocalAgentRecord,
   LocalStoreOptions,
@@ -254,6 +258,7 @@ export class LocalBackend extends HeadlessBackend {
       defaultAgentName: "Letta Code",
       defaultAgentModel: modelConfig.handle,
       defaultAgentModelSettings: modelConfig.modelSettings,
+      modelSettingsForModel: localModelSettingsForHandle,
       conversationIdPrefix: "local-conv-",
       storedMessageIdPrefix: "letta-msg-",
       localMessageIdPrefix: "ui-msg-",
@@ -281,6 +286,10 @@ export class LocalBackend extends HeadlessBackend {
     this.memoryDir = options.memoryDir;
     this.complete = options.complete;
     this.memfsEnabledOverride = options.memfsEnabled;
+  }
+
+  getLocalStorageDir(): string {
+    return this.storageDir;
   }
 
   override async listModels() {

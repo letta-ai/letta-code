@@ -5,7 +5,10 @@ export const TUI_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   commands: true,
   events: {
     lifecycle: true,
+    tools: true,
+    turns: true,
   },
+  providers: true,
   ui: {
     panels: true,
     statusValues: true,

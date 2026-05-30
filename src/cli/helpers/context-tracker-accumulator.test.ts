@@ -122,6 +122,7 @@ describe("accumulator usage statistics", () => {
     );
 
     expect(tracker.pendingReflectionTrigger).toBe(false);
+    expect(tracker.pendingConversationDescriptionRegeneration).toBe(false);
     expect(buffers.byId.get("evt-compaction-1")).toMatchObject({
       kind: "event",
       eventType: "compaction",
@@ -140,6 +141,7 @@ describe("accumulator usage statistics", () => {
 
     expect(tracker.pendingCompaction).toBe(true);
     expect(tracker.pendingReflectionTrigger).toBe(true);
+    expect(tracker.pendingConversationDescriptionRegeneration).toBe(true);
     expect(buffers.byId.get("evt-compaction-1")).toMatchObject({
       kind: "event",
       eventType: "compaction",
@@ -227,6 +229,7 @@ describe("accumulator usage statistics", () => {
 
     expect(tracker.pendingCompaction).toBe(true);
     expect(tracker.pendingReflectionTrigger).toBe(true);
+    expect(tracker.pendingConversationDescriptionRegeneration).toBe(true);
   });
 
   test("accumulates assistant messages when otid is missing but id is present", () => {

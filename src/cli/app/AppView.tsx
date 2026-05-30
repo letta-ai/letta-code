@@ -35,7 +35,10 @@ import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
 import { MemoryTabViewer } from "@/cli/components/MemoryTabViewer";
 import { MessageSearch } from "@/cli/components/MessageSearch";
 import { ModelReasoningSelector } from "@/cli/components/ModelReasoningSelector";
-import { ModelSelector } from "@/cli/components/ModelSelector";
+import {
+  ModelSelector,
+  type ModelSelectorSelection,
+} from "@/cli/components/ModelSelector";
 import { PendingApprovalStub } from "@/cli/components/PendingApprovalStub";
 import { PersonalitySelector } from "@/cli/components/PersonalitySelector";
 import { PinDialog } from "@/cli/components/PinDialog";
@@ -104,7 +107,11 @@ type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
   initialEffort?: ModelReasoningEffort;
-  options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+  options: Array<{
+    effort: ModelReasoningEffort;
+    modelId: string;
+    selection?: ModelSelectorSelection;
+  }>;
 };
 
 type QueuedApprovalDecision = {
@@ -140,6 +147,7 @@ type AppViewProps = {
   currentModelDisplay: string | null;
   currentModelHandle: string | null;
   currentModelId: string | null;
+  currentModelServiceTier: string | null;
   currentModelProvider: string | null;
   isLocalBackend: boolean;
   currentPersonalityId: PersonalityId | null;
@@ -200,7 +208,7 @@ type AppViewProps = {
   handleFeedbackSubmit: (message: string) => Promise<void>;
   handleInterrupt: () => Promise<void>;
   handleModelSelect: (
-    modelId: string,
+    model: string | ModelSelectorSelection,
     commandId?: string | null,
     opts?: {
       promptReasoning?: boolean;
@@ -350,6 +358,7 @@ export function AppView(props: AppViewProps) {
     currentModelDisplay,
     currentModelHandle,
     currentModelId,
+    currentModelServiceTier,
     currentModelProvider,
     isLocalBackend,
     currentPersonalityId,
@@ -751,10 +760,14 @@ export function AppView(props: AppViewProps) {
                   initialEffort={modelReasoningPrompt.initialEffort}
                   onSelect={(selectedOption) => {
                     setModelReasoningPrompt(null);
-                    void handleModelSelect(selectedOption.modelId, null, {
-                      skipReasoningPrompt: true,
-                      reasoningEffort: selectedOption.effort,
-                    });
+                    void handleModelSelect(
+                      selectedOption.selection ?? selectedOption.modelId,
+                      null,
+                      {
+                        skipReasoningPrompt: true,
+                        reasoningEffort: selectedOption.effort,
+                      },
+                    );
                   }}
                   onCancel={() => setModelReasoningPrompt(null)}
                 />
@@ -762,8 +775,9 @@ export function AppView(props: AppViewProps) {
                 <ModelSelector
                   currentModelId={currentModelId ?? undefined}
                   currentModelHandle={currentModelHandle}
-                  onSelect={(modelId) => {
-                    void handleModelSelect(modelId, null, {
+                  currentModelServiceTier={currentModelServiceTier}
+                  onSelect={(selection) => {
+                    void handleModelSelect(selection, null, {
                       promptReasoning: true,
                     });
                   }}

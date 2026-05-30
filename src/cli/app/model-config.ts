@@ -14,9 +14,12 @@ export function deriveReasoningEffort(
   llmConfig: LlmConfig | null | undefined,
 ): ModelReasoningEffort | null {
   if (modelSettings && "provider_type" in modelSettings) {
+    const providerType = modelSettings.provider_type as string | undefined;
     // OpenAI/OpenRouter: reasoning.reasoning_effort
     if (
-      modelSettings.provider_type === "openai" &&
+      (providerType === "openai" ||
+        providerType === "openai-codex" ||
+        providerType === "chatgpt_oauth") &&
       "reasoning" in modelSettings &&
       modelSettings.reasoning
     ) {
@@ -34,10 +37,7 @@ export function deriveReasoningEffort(
     }
 
     // Anthropic/Bedrock: effort field
-    if (
-      modelSettings.provider_type === "anthropic" ||
-      modelSettings.provider_type === "bedrock"
-    ) {
+    if (providerType === "anthropic" || providerType === "bedrock") {
       const effort = (modelSettings as { effort?: string | null }).effort;
       if (effort === "low" || effort === "medium" || effort === "high")
         return effort;
@@ -122,7 +122,9 @@ export function mapHandleToLlmConfigPatch(
     };
   }
   const endpointType =
-    provider === OPENAI_CODEX_PROVIDER_NAME ? "chatgpt_oauth" : provider;
+    provider === OPENAI_CODEX_PROVIDER_NAME || provider === "openai-codex"
+      ? "chatgpt_oauth"
+      : provider;
   return {
     model: modelName,
     model_endpoint_type: endpointType as LlmConfig["model_endpoint_type"],
@@ -152,7 +154,7 @@ export function getErrorHintForStopReason(
   // Build the /model swap suggestion -- mention Bedrock Opus if applicable.
   const bedrockOpusSuggestion =
     modelEndpointType === "anthropic" &&
-    (currentModelId === "opus" || currentModelId?.startsWith("opus-4.7")) &&
+    currentModelId?.startsWith("opus-4.7") &&
     getModelInfo("bedrock-opus-4.7")
       ? "Opus 4.7 via Amazon Bedrock"
       : modelEndpointType === "anthropic" &&

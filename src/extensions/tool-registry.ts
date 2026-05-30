@@ -4,6 +4,7 @@ import type {
   ExtensionToolRunContext,
   ExtensionToolRunResult,
 } from "@/extensions/types";
+import { areExtensionsDisabled } from "./disable";
 
 const EXTENSION_TOOLS_KEY = Symbol.for("@letta/extensionTools");
 
@@ -32,6 +33,8 @@ export function getAvailableExtensionToolsRegistry(): Map<
   string,
   ExtensionToolDefinition
 > {
+  if (areExtensionsDisabled()) return new Map();
+
   return new Map(
     Array.from(getMutableExtensionToolsRegistry().entries()).filter(
       ([, tool]) => {
@@ -47,6 +50,7 @@ export function getAvailableExtensionToolsRegistry(): Map<
 }
 
 export function registerExtensionTool(tool: ExtensionToolDefinition): void {
+  if (areExtensionsDisabled()) return;
   getMutableExtensionToolsRegistry().set(tool.name, tool);
 }
 
@@ -81,6 +85,7 @@ export function getExtensionToolDefinition(
     ExtensionToolDefinition
   > = getMutableExtensionToolsRegistry(),
 ): ExtensionToolDefinition | undefined {
+  if (areExtensionsDisabled()) return undefined;
   return registry.get(name);
 }
 
@@ -91,6 +96,7 @@ export function extensionToolRequiresApproval(
     ExtensionToolDefinition
   > = getMutableExtensionToolsRegistry(),
 ): boolean | undefined {
+  if (areExtensionsDisabled()) return undefined;
   return registry.get(name)?.requiresApproval;
 }
 
@@ -101,6 +107,7 @@ export function isExtensionToolParallelSafe(
     ExtensionToolDefinition
   > = getMutableExtensionToolsRegistry(),
 ): boolean {
+  if (areExtensionsDisabled()) return false;
   return registry.get(name)?.parallelSafe === true;
 }
 

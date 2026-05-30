@@ -127,6 +127,18 @@ letta server --env-name "work-laptop"
 
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
 
+## Installing external skills
+
+Install skills into a specific agent's memory with `letta skills install <skill>`: 
+
+| Source | Example |
+|---|---|
+| GitHub | `letta skills install https://github.com/owner/repo`<br>`letta skills install https://github.com/owner/repo/tree/main/path/to/skill`<br>`letta skills install https://github.com/owner/repo/blob/main/path/to/skill/SKILL.md` |
+| [ClawHub](https://clawhub.ai/) | `openclaw skills install <skill-slug>` → `letta skills install <skill-slug>` |
+| [Hermes Skills Hub](https://hermes-agent.nousresearch.com/docs/skills/) | `hermes skills install <skill-path>` → `letta skills install <skill-path>` |
+
+To view skills run `letta skills list --agent <agent-id>`, and delete skills with `letta skills delete <skill-name> --agent <agent-id>`.
+
 ## Research
 
 Letta Code is developed by the creators of [MemGPT](https://arxiv.org/abs/2310.08560) and [sleep-time compute](https://arxiv.org/abs/2504.13171) (now called "dreaming"), and driven by our [research](https://www.letta.com/research) in AI memory and continual learning.

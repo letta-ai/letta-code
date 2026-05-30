@@ -21,6 +21,7 @@ type ModelConfigSnapshot = {
   reasoning_effort?: string | null;
   enable_reasoner?: boolean | null;
   context_window?: number | null;
+  service_tier?: string | null;
 };
 
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
@@ -48,6 +49,10 @@ const LOCAL_MODEL_HANDLE_PREFIXES = [
   "llama-cpp/",
 ];
 
+const LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX = "openai-codex/";
+const CHATGPT_OAUTH_LLM_CONFIG_PROVIDER = "chatgpt_oauth";
+export const CHATGPT_FAST_SERVICE_TIER = "priority";
+
 export function isLocalModelHandle(modelHandle: string): boolean {
   return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
     modelHandle.startsWith(prefix),
@@ -70,6 +75,65 @@ function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
   );
 }
 
+export function normalizeModelHandleForRegistry(
+  modelHandle: string | null | undefined,
+): string | null {
+  if (!modelHandle) return null;
+  const [provider, ...modelParts] = modelHandle.split("/");
+  const model = modelParts.join("/");
+  if (
+    (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER ||
+      provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1)) &&
+    model.length > 0 &&
+    !model.endsWith("-fast")
+  ) {
+    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
+  }
+  return modelHandle;
+}
+
+function modelPortion(modelHandle: string): string | null {
+  const slashIndex = modelHandle.indexOf("/");
+  if (slashIndex === -1) return null;
+  return modelHandle.slice(slashIndex + 1);
+}
+
+export function isLocalChatGptOAuthModelHandle(modelHandle: string): boolean {
+  return modelHandle.startsWith(LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX);
+}
+
+export function getChatGptFastRegistryHandleForModelHandle(
+  modelHandle: string,
+): string | null {
+  const [provider] = modelHandle.split("/");
+  if (
+    provider !== LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
+    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER
+  ) {
+    return null;
+  }
+  const normalized = normalizeModelHandleForRegistry(modelHandle);
+  if (!normalized?.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`)) return null;
+  const model = modelPortion(normalized);
+  if (!model || model.endsWith("-fast")) return null;
+  const fastHandle = `${OPENAI_CODEX_PROVIDER_NAME}/${model}-fast`;
+  return models.some((entry) => entry.handle === fastHandle)
+    ? fastHandle
+    : null;
+}
+
+function displayRegistryHandleForServiceTier(
+  modelHandle: string,
+  serviceTier?: string | null,
+): string {
+  if (serviceTier === CHATGPT_FAST_SERVICE_TIER) {
+    return (
+      getChatGptFastRegistryHandleForModelHandle(modelHandle) ?? modelHandle
+    );
+  }
+  return normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+}
+
 export function getReasoningTierOptionsForHandle(
   modelHandle: string,
   contextWindow?: number,
@@ -78,9 +142,11 @@ export function getReasoningTierOptionsForHandle(
   modelId: string;
 }> {
   const byEffort = new Map<ModelReasoningEffort, string>();
+  const registryHandle =
+    normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
 
   for (const model of models) {
-    if (model.handle !== modelHandle) continue;
+    if (model.handle !== registryHandle) continue;
     if (contextWindow !== undefined) {
       const mCtx = (model.updateArgs as { context_window?: number } | null)
         ?.context_window;
@@ -94,10 +160,10 @@ export function getReasoningTierOptionsForHandle(
     }
   }
 
-  if (byEffort.size === 0 && isLocalModelHandle(modelHandle)) {
+  if (byEffort.size === 0 && isLocalModelHandle(registryHandle)) {
     return LOCAL_REASONING_EFFORT_ORDER.map((effort) => ({
       effort,
-      modelId: modelHandle,
+      modelId: registryHandle,
     }));
   }
 
@@ -173,7 +239,8 @@ export function getModelInfo(modelIdentifier: string) {
   const byId = models.find((m) => m.id === modelIdentifier);
   if (byId) return byId;
 
-  const byHandle = models.find((m) => m.handle === modelIdentifier);
+  const normalizedHandle = normalizeModelHandleForRegistry(modelIdentifier);
+  const byHandle = models.find((m) => m.handle === normalizedHandle);
   if (byHandle) return byHandle;
 
   return null;
@@ -194,13 +261,18 @@ export function getModelInfoForLlmConfig(
     reasoning_effort?: string | null;
     enable_reasoner?: boolean | null;
     context_window?: number | null;
+    service_tier?: string | null;
   } | null,
 ) {
+  const registryHandle = displayRegistryHandleForServiceTier(
+    modelHandle,
+    llmConfig?.service_tier ?? null,
+  );
   // Try ID/handle direct resolution first.
-  const direct = getModelInfo(modelHandle);
+  const direct = getModelInfo(registryHandle);
 
   // Collect all candidates that share this handle.
-  let candidates = models.filter((m) => m.handle === modelHandle);
+  let candidates = models.filter((m) => m.handle === registryHandle);
   if (candidates.length === 0) {
     return direct;
   }
@@ -267,17 +339,6 @@ function buildModelHandleFromConfig(
     return `${config.model_endpoint_type}/${config.model}`;
   }
   return config.model ?? null;
-}
-
-export function normalizeModelHandleForRegistry(
-  modelHandle: string | null | undefined,
-): string | null {
-  if (!modelHandle) return null;
-  const [provider, ...modelParts] = modelHandle.split("/");
-  if (provider === "chatgpt_oauth" && modelParts.length > 0) {
-    return `${OPENAI_CODEX_PROVIDER_NAME}/${modelParts.join("/")}`;
-  }
-  return modelHandle;
 }
 
 export function shouldPreserveContextWindowForModelSelection(input: {
@@ -484,14 +545,16 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
     candidates[0] ??
     null;
 
+  const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+
   // Try exact match first
-  const exactMatch = models.find((m) => m.handle === handle);
+  const exactMatch = models.find((m) => m.handle === registryHandle);
   if (exactMatch) return exactMatch;
 
   // For handles like "bedrock/claude-opus-4-5-20251101" where the API returns without
   // vendor prefix or version suffix, but models.json has
   // "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0", try fuzzy matching
-  const [provider, ...rest] = handle.split("/");
+  const [provider, ...rest] = registryHandle.split("/");
   if (provider && rest.length > 0) {
     const modelPortion = rest.join("/");
     // Find models with the same provider where the model portion is contained

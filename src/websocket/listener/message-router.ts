@@ -107,7 +107,7 @@ type MessageRouterParams = {
     listenerRuntime: ListenerRuntime,
     socket: WebSocket,
     scope: RuntimeScope,
-    opts?: { recoverApprovals?: boolean },
+    opts?: { recoverApprovals?: boolean; forceDeviceStatus?: boolean },
   ) => Promise<void>;
   getOrCreateScopedRuntime: (
     listener: ListenerRuntime,
@@ -236,6 +236,7 @@ export function createListenerMessageHandler(
         }
         await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
           recoverApprovals: parsed.recover_approvals !== false,
+          forceDeviceStatus: parsed.force_device_status === true,
         });
         return;
       }

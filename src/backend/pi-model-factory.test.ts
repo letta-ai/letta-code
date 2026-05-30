@@ -1,12 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModels } from "@earendil-works/pi-ai";
+import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
+import {
+  clearRegisteredPiProviders,
+  registerPiProvider,
+  subscribePiProviderRegistry,
+  unregisterPiProvider,
+  unregisterPiProvidersForOwner,
+} from "@/backend/dev/pi-provider-extension-registry";
 import {
   createOrUpdateLocalProvider,
   localOAuthAuthFromCredentials,
@@ -30,6 +38,65 @@ async function withEnv<T>(
 }
 
 describe("pi model factory", () => {
+  afterEach(() => {
+    clearRegisteredPiProviders();
+  });
+
+  test("notifies subscribers when extension provider registry changes", () => {
+    const changes: string[] = [];
+    const unsubscribe = subscribePiProviderRegistry(() => {
+      changes.push("changed");
+    });
+    const config = {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions" as const,
+      models: [
+        {
+          id: "gemma-4",
+          name: "Gemma 4",
+          reasoning: false,
+          input: ["text" as const],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    };
+
+    try {
+      clearRegisteredPiProviders();
+      expect(changes).toEqual([]);
+
+      registerPiProvider("lmstudio", config, { id: "owner-1" });
+      expect(changes).toHaveLength(1);
+
+      unregisterPiProvider("lmstudio", "other-owner");
+      expect(changes).toHaveLength(1);
+
+      unregisterPiProvider("lmstudio", "owner-1");
+      expect(changes).toHaveLength(2);
+
+      registerPiProvider("lmstudio", config, { id: "owner-1" });
+      registerPiProvider("ollama", config, { id: "owner-2" });
+      expect(changes).toHaveLength(4);
+
+      unregisterPiProvidersForOwner("owner-1");
+      expect(changes).toHaveLength(5);
+
+      unregisterPiProvidersForOwner("missing-owner");
+      expect(changes).toHaveLength(5);
+
+      clearRegisteredPiProviders();
+      expect(changes).toHaveLength(6);
+
+      clearRegisteredPiProviders();
+      expect(changes).toHaveLength(6);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   test("uses KIMI_API_KEY for Kimi For Coding", async () => {
     await withEnv(
       { KIMI_API_KEY: "kimi-key", MOONSHOT_API_KEY: undefined },
@@ -190,6 +257,16 @@ describe("pi model factory", () => {
     expect(resolved.model.reasoning).toBe(true);
   });
 
+  test("resolves dated OpenAI registry handles to local Pi catalog aliases", async () => {
+    const resolved = await resolvePiModelForAgent(
+      "openai/gpt-5-mini-2025-08-07",
+      { provider_type: "openai" },
+    );
+
+    expect(resolved.provider).toBe("openai");
+    expect(resolved.model.id).toBe("gpt-5-mini");
+  });
+
   test("maps local Bedrock profile records to pi provider options", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-bedrock-profile-"));
     try {
@@ -230,6 +307,227 @@ describe("pi model factory", () => {
     expect(resolved.provider).toBe("lmstudio");
     expect(resolved.model.provider).toBe("lmstudio");
     expect(resolved.model.baseUrl).toBe("http://127.0.0.1:1234/v1");
+  });
+
+  test("uses extension-registered provider capabilities for local OpenAI-compatible models", async () => {
+    registerPiProvider("lmstudio", {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "not-needed",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gemma-4-26B-A4B-it-oQ6",
+          name: "Gemma 4 VLM",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 256000,
+          maxTokens: 8192,
+        },
+      ],
+    });
+
+    const resolved = await resolvePiModelForAgent(
+      "lmstudio/gemma-4-26B-A4B-it-oQ6",
+      { provider_type: "lmstudio_openai" },
+    );
+
+    expect(resolved.provider).toBe("lmstudio");
+    expect(resolved.model).toMatchObject({
+      id: "gemma-4-26B-A4B-it-oQ6",
+      provider: "lmstudio",
+      baseUrl: "http://localhost:8000/v1",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 256000,
+      maxTokens: 8192,
+    });
+  });
+
+  test("uses dynamic extension provider models at turn time", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-kilo-dynamic-"));
+    try {
+      const connections: unknown[] = [];
+      registerPiProvider("kilo", {
+        baseUrl: "http://localhost:8000/v1",
+        apiKey: "KILO_API_KEY",
+        api: "openai-completions",
+        headers: { "X-Kilo": "KILO_HEADER" },
+        listModels(connection) {
+          connections.push(connection);
+          return [
+            {
+              id: "dynamic-kilo-code",
+              name: "Dynamic Kilo Code",
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 64000,
+              maxTokens: 4096,
+            },
+          ];
+        },
+      });
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "kilo",
+        providerName: "kilo",
+        apiKey: "stored-kilo-key",
+        baseURL: "http://stored-kilo/v1",
+      });
+
+      await withEnv(
+        { KILO_API_KEY: "env-kilo-key", KILO_HEADER: "header" },
+        async () => {
+          const resolved = await resolvePiModelForAgent(
+            "kilo/dynamic-kilo-code",
+            {},
+            { localProviderAuthStorageDir: storageDir },
+          );
+
+          expect(resolved.apiKey).toBe("stored-kilo-key");
+          expect(resolved.model).toMatchObject({
+            id: "dynamic-kilo-code",
+            provider: "kilo",
+            baseUrl: "http://stored-kilo/v1",
+            contextWindow: 64000,
+            maxTokens: 4096,
+            headers: { "X-Kilo": "header" },
+          });
+        },
+      );
+      expect(connections).toEqual([
+        {
+          id: "kilo",
+          providerName: "kilo",
+          baseUrl: "http://stored-kilo/v1",
+          apiKey: "stored-kilo-key",
+          headers: { "X-Kilo": "header" },
+        },
+      ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses extension OAuth credentials at turn time", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-kilo-oauth-"));
+    try {
+      const refreshes: unknown[] = [];
+      registerPiProvider("kilo", {
+        baseUrl: "https://api.kilo.dev/v1",
+        api: "openai-completions",
+        authHeader: true,
+        oauth: {
+          name: "Kilo",
+          login: async () => ({
+            access: "login-token",
+            refresh: "refresh-token",
+            expires: Date.now() + 60_000,
+          }),
+          refreshToken: async (credentials) => {
+            refreshes.push(credentials);
+            return {
+              ...credentials,
+              access: "refreshed-token",
+              expires: Date.now() + 60_000,
+            };
+          },
+          getApiKey: (credentials) => `oauth:${credentials.access}`,
+          modifyModels: (models, credentials) =>
+            models.map((model) => ({
+              ...model,
+              baseUrl: `https://${credentials.access}.kilo.dev/v1`,
+            })),
+        },
+        models: [
+          {
+            id: "kilo-code",
+            name: "Kilo Code",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 8192,
+          },
+        ],
+      });
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "kilo",
+        providerType: "kilo",
+        auth: localOAuthAuthFromCredentials({
+          access: "expired-token",
+          refresh: "refresh-token",
+          expires: Date.now() - 1,
+        }),
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "kilo/kilo-code",
+        {},
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(getOAuthProvider("kilo")?.name).toBe("Kilo");
+      expect(refreshes).toHaveLength(1);
+      expect(resolved.apiKey).toBe("oauth:refreshed-token");
+      expect(resolved.model).toMatchObject({
+        id: "kilo-code",
+        provider: "kilo",
+        baseUrl: "https://refreshed-token.kilo.dev/v1",
+        headers: { Authorization: "Bearer oauth:refreshed-token" },
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports unresolved prefixed model providers clearly", async () => {
+    await expect(resolvePiModelForAgent("kilo/kilo-code")).rejects.toThrow(
+      'Model provider "kilo" is not registered',
+    );
+  });
+
+  test("local provider connection base URL overrides extension default", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-lmstudio-extension-url-"),
+    );
+    try {
+      registerPiProvider("lmstudio", {
+        baseUrl: "http://localhost:8000/v1",
+        apiKey: "not-needed",
+        api: "openai-completions",
+        models: [
+          {
+            id: "gemma-4-26B-A4B-it-oQ6",
+            name: "Gemma 4 VLM",
+            reasoning: true,
+            input: ["text", "image"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 256000,
+            maxTokens: 8192,
+          },
+        ],
+      });
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "lmstudio",
+        providerName: "lc-lmstudio",
+        apiKey: "not-needed",
+        baseURL: "http://127.0.0.1:1234/v1",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "lmstudio/gemma-4-26B-A4B-it-oQ6",
+        { provider_type: "lmstudio_openai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.model.baseUrl).toBe("http://127.0.0.1:1234/v1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("normalizes local OpenAI-compatible provider base URLs for runtime", async () => {

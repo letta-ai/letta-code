@@ -28,6 +28,14 @@ interface AgentSelectorProps {
   onCreateNewAgent?: (name: string, backendMode: AgentBackendMode) => void;
   /** The command that triggered this selector (e.g., "/agents" or "/resume") */
   command?: string;
+  /** Override the overlay title. */
+  title?: string;
+  /** Whether to show the New tab and N shortcut. */
+  showNewTab?: boolean;
+  /** Whether Shift+D can delete agents from the selector. */
+  allowDelete?: boolean;
+  /** Whether Shift+P can unpin agents from the selector. */
+  allowPinActions?: boolean;
 }
 
 type TabId = "pinned" | "local" | "constellation" | "new";
@@ -154,6 +162,10 @@ export function AgentSelector({
   onLogin,
   onCreateNewAgent,
   command = "/agents",
+  title = "Swap to a different agent",
+  showNewTab = true,
+  allowDelete = true,
+  allowPinActions = true,
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
 
@@ -169,8 +181,13 @@ export function AgentSelector({
 
   // Compute visible tabs — Local tab only shown when there are local agents
   const visibleTabs = useMemo(
-    () => ALL_TABS.filter((t) => t.id !== "local" || hasLocalAgents),
-    [hasLocalAgents],
+    () =>
+      ALL_TABS.filter(
+        (t) =>
+          (showNewTab || t.id !== "new") &&
+          (t.id !== "local" || hasLocalAgents),
+      ),
+    [hasLocalAgents, showNewTab],
   );
 
   const [activeTab, setActiveTab] = useState<TabId>("pinned");
@@ -179,8 +196,10 @@ export function AgentSelector({
   useEffect(() => {
     if (activeTab === "local" && !hasLocalAgents) {
       setActiveTab("constellation");
+    } else if (activeTab === "new" && !showNewTab) {
+      setActiveTab("pinned");
     }
-  }, [activeTab, hasLocalAgents]);
+  }, [activeTab, hasLocalAgents, showNewTab]);
 
   // Pinned tab state
   const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
@@ -706,7 +725,11 @@ export function AgentSelector({
           setConstellationSelectedIndex(0);
         }
       }
-    } else if (activeTab === "pinned" && (input === "p" || input === "P")) {
+    } else if (
+      allowPinActions &&
+      activeTab === "pinned" &&
+      (input === "p" || input === "P")
+    ) {
       // Unpin from current scope (pinned tab only)
       const selected = pinnedPageAgents[pinnedSelectedIndex];
       if (selected) {
@@ -717,7 +740,7 @@ export function AgentSelector({
         }
         loadPinnedAgents();
       }
-    } else if (input === "D") {
+    } else if (allowDelete && input === "D") {
       // Delete agent - open confirmation
       let selectedAgent: AgentState | null = null;
       let selectedAgentId: string | null = null;
@@ -750,7 +773,7 @@ export function AgentSelector({
         });
         setDeleteConfirmInput("");
       }
-    } else if (input === "n" || input === "N") {
+    } else if (showNewTab && (input === "n" || input === "N")) {
       // Switch to New tab
       setActiveTab("new");
     } else if (activeTab !== "pinned" && input && !key.ctrl && !key.meta) {
@@ -931,7 +954,7 @@ export function AgentSelector({
   return (
     <OverlayShell
       command={command}
-      title="Swap to a different agent"
+      title={title}
       footer={
         activeTab !== "new" &&
         !currentLoading &&
@@ -962,8 +985,12 @@ export function AgentSelector({
                   : activeTab === "local"
                     ? `Page ${localPage + 1}/${localTotalPages || 1}`
                     : `Page ${constellationPage + 1}${constellationHasMore ? "+" : `/${constellationTotalPages || 1}`}${constellationLoadingMore ? " (loading...)" : ""}`;
-              const pinnedHint = " · Shift+P unpin";
-              const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch · Shift+D delete${activeTab === "pinned" ? pinnedHint : ""} · Esc cancel`;
+              const deleteHint = allowDelete ? " · Shift+D delete" : "";
+              const pinnedHint =
+                allowPinActions && activeTab === "pinned"
+                  ? " · Shift+P unpin"
+                  : "";
+              const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch${deleteHint}${pinnedHint} · Esc cancel`;
 
               return (
                 <Box flexDirection="column">

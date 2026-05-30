@@ -18,6 +18,11 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
+import {
+  type ExtensionEventEmitter,
+  emitExtensionEvent,
+} from "@/extensions/event-emitter";
 import {
   type ExtensionToolDefinition,
   extensionToolRequiresApproval,
@@ -48,6 +53,12 @@ import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
 import { refreshFileIndex } from "@/utils/file-index";
 import { isRecord } from "@/utils/type-guards";
+import {
+  functionToolForm,
+  type JsonSchema,
+  type ModelFacingToolForm,
+  serializeFunctionOnlyToolPayload,
+} from "./model-facing-tool";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
@@ -136,6 +147,28 @@ async function resolveBackendSpecificToolDescription(
   return description;
 }
 
+function resolvedModelForm(
+  base: ModelFacingToolForm,
+  description: string,
+  inputSchema: JsonSchema,
+): ModelFacingToolForm {
+  if (base.type === "custom") {
+    return {
+      ...base,
+      functionFallback: {
+        ...base.functionFallback,
+        description,
+        parameters: inputSchema,
+      },
+    };
+  }
+
+  return functionToolForm({
+    description,
+    parameters: inputSchema,
+  });
+}
+
 function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
   const nextRegistry = new Map(registry);
   const existing = nextRegistry.get("MessageChannel");
@@ -168,9 +201,11 @@ function withDynamicMessageChannelCache(registry: ToolRegistry): ToolRegistry {
       description: cachedMessageChannel.description,
       input_schema: cachedMessageChannel.schema as JsonSchema,
     },
-    fn:
-      existing?.fn ??
-      (TOOL_DEFINITIONS.MessageChannel.impl as ToolDefinition["fn"]),
+    modelForm: functionToolForm({
+      description: cachedMessageChannel.description,
+      parameters: cachedMessageChannel.schema as JsonSchema,
+    }),
+    fn: existing?.fn ?? TOOL_DEFINITIONS.MessageChannel.impl,
   });
   return nextRegistry;
 }
@@ -467,12 +502,6 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   ReadManyFiles: { requiresApproval: false },
 };
 
-interface JsonSchema {
-  properties?: Record<string, JsonSchema>;
-  required?: string[];
-  [key: string]: unknown;
-}
-
 type ToolArgs = Record<string, unknown>;
 
 interface ToolSchema {
@@ -483,6 +512,7 @@ interface ToolSchema {
 
 interface ToolDefinition {
   schema: ToolSchema;
+  modelForm: ModelFacingToolForm;
   fn: (args: ToolArgs) => Promise<unknown>;
 }
 
@@ -553,6 +583,7 @@ type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
+  extensionEventEmitter?: ExtensionEventEmitter;
   extensionTools: Map<string, ExtensionToolDefinition>;
   workingDirectory: string;
   runtimeContext: RuntimeContextSnapshot;
@@ -923,11 +954,9 @@ function buildClientToolsFromSnapshot(
   externalTools: Map<string, ExternalToolDefinition>,
   extensionTools: Map<string, ExtensionToolDefinition>,
 ): ClientTool[] {
-  const builtInTools = Array.from(registry.entries()).map(([name, tool]) => ({
-    name: getServerToolName(name),
-    description: tool.schema.description,
-    parameters: tool.schema.input_schema,
-  }));
+  const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
+    serializeFunctionOnlyToolPayload(getServerToolName(name), tool.modelForm),
+  );
   for (const name of externalTools.keys()) {
     if (extensionTools.has(name)) {
       debugLog(
@@ -977,12 +1006,14 @@ function capturePreparedToolExecutionContext(
     toolRegistry: ToolRegistry;
     externalTools: Map<string, ExternalToolDefinition>;
     externalExecutor?: ExternalToolExecutor;
+    extensionEventEmitter?: ExtensionEventEmitter;
     extensionTools: Map<string, ExtensionToolDefinition>;
   },
   options?: {
     clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
+    extensionEventEmitter?: ExtensionEventEmitter;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
@@ -1002,6 +1033,8 @@ function capturePreparedToolExecutionContext(
       options?.clientToolAllowlist,
     ),
     externalExecutor: snapshot.externalExecutor,
+    extensionEventEmitter:
+      options?.extensionEventEmitter ?? snapshot.extensionEventEmitter,
     extensionTools: filterExtensionToolsByClientAllowlist(
       snapshot.extensionTools,
       options?.clientToolAllowlist,
@@ -1056,6 +1089,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: ChannelTurnSource[];
+  extensionEventEmitter?: ExtensionEventEmitter;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -1068,6 +1102,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      extensionEventEmitter: options?.extensionEventEmitter,
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
@@ -1082,6 +1117,7 @@ export async function prepareToolExecutionContextForSpecificTools(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
+    extensionEventEmitter?: ExtensionEventEmitter;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1094,6 +1130,7 @@ export async function prepareToolExecutionContextForSpecificTools(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      extensionEventEmitter: options?.extensionEventEmitter,
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
@@ -1110,6 +1147,7 @@ export async function prepareToolExecutionContextForModel(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
+    extensionEventEmitter?: ExtensionEventEmitter;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1122,6 +1160,7 @@ export async function prepareToolExecutionContextForModel(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      extensionEventEmitter: options?.extensionEventEmitter,
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
@@ -1263,6 +1302,7 @@ function maybeApplyLspReadOverride(registry: ToolRegistry): void {
       description: lspDefinition.description,
       input_schema: lspDefinition.schema,
     },
+    modelForm: lspDefinition.modelForm,
     fn: lspDefinition.impl,
   });
 }
@@ -1318,6 +1358,11 @@ async function buildSpecificToolRegistry(
 
     newRegistry.set(internalName, {
       schema: toolSchema,
+      modelForm: resolvedModelForm(
+        definition.modelForm,
+        resolvedTool.description,
+        resolvedTool.input_schema as JsonSchema,
+      ),
       fn: definition.impl,
     });
   }
@@ -1447,6 +1492,11 @@ async function buildRegistryForModel(
 
       newRegistry.set(name, {
         schema: toolSchema,
+        modelForm: resolvedModelForm(
+          definition.modelForm,
+          resolvedTool.description,
+          resolvedTool.input_schema as JsonSchema,
+        ),
         fn: definition.impl,
       });
     } catch (error) {
@@ -1518,6 +1568,7 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
   if (info?.handle && typeof info.handle === "string") {
     return (
       info.handle.startsWith("openai/") ||
+      info.handle.startsWith("openai-codex/") ||
       info.handle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`) ||
       info.handle.startsWith("chatgpt_oauth/")
     );
@@ -1526,6 +1577,7 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
   // and ChatGPT OAuth Codex provider handles.
   return (
     modelIdentifier.startsWith("openai/") ||
+    modelIdentifier.startsWith("openai-codex/") ||
     modelIdentifier.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`) ||
     modelIdentifier.startsWith("chatgpt_oauth/")
   );
@@ -1854,6 +1906,43 @@ function appendHookFeedbackToToolReturn(
   return [...toolReturn, { type: "text" as const, text: feedbackMessage }];
 }
 
+function cloneToolArgsForExtensionEvent(args: ToolArgs): ToolArgs {
+  try {
+    return structuredClone(args);
+  } catch {
+    return { ...args };
+  }
+}
+
+function isToolStartArgs(value: unknown): value is ToolArgs {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function emitToolStartEvent(options: {
+  args: ToolArgs;
+  eventEmitter?: ExtensionEventEmitter;
+  executionScope: RuntimeContextSnapshot;
+  toolCallId?: string;
+  toolName: string;
+}): Promise<ToolArgs> {
+  const event = {
+    agentId: options.executionScope.agentId ?? null,
+    conversationId: options.executionScope.conversationId ?? null,
+    toolCallId: options.toolCallId ?? null,
+    toolName: options.toolName,
+    args: cloneToolArgsForExtensionEvent(options.args),
+  };
+
+  try {
+    await emitExtensionEvent(options.eventEmitter, "tool_start", event);
+  } catch (error) {
+    debugLog("extensions", "tool_start event failed", error);
+    return options.args;
+  }
+
+  return isToolStartArgs(event.args) ? event.args : options.args;
+}
+
 async function executeExtensionTool(
   toolName: string,
   tool: ExtensionToolDefinition,
@@ -1911,7 +2000,20 @@ async function executeExtensionTool(
           : {}),
         permissionMode: executionScope.permissionMode ?? null,
         agent: { id: executionScope.agentId ?? null },
-        conversation: { id: executionScope.conversationId ?? null },
+        conversation: {
+          id: executionScope.conversationId ?? null,
+          getHistory: async (historyOptions) => {
+            const { getBackend } = await import("@/backend");
+            return loadExtensionConversationHistoryFromBackend(
+              getBackend(),
+              {
+                agentId: executionScope.agentId,
+                conversationId: executionScope.conversationId,
+              },
+              historyOptions,
+            );
+          },
+        },
         getContext: tool.getContext,
       };
       const result = await runExtensionTool(tool, context);
@@ -2071,6 +2173,7 @@ export async function executeTool(
     context?.externalExecutor ?? getExternalToolExecutor();
   const activeExtensionTools =
     context?.extensionTools ?? getAvailableExtensionToolsRegistry();
+  const extensionEventEmitter = context?.extensionEventEmitter;
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
         workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
@@ -2093,21 +2196,41 @@ export async function executeTool(
         status: "error",
       };
     }
-    return executeExtensionTool(name, extensionTool, args, executionScope, {
-      signal: options?.signal,
+    const eventArgs = await emitToolStartEvent({
+      args,
+      eventEmitter: extensionEventEmitter,
+      executionScope,
       toolCallId: options?.toolCallId,
-      onOutput: options?.onOutput,
-      workingDirectory,
-      scopedAgentId,
+      toolName: name,
     });
+    return executeExtensionTool(
+      name,
+      extensionTool,
+      eventArgs,
+      executionScope,
+      {
+        signal: options?.signal,
+        toolCallId: options?.toolCallId,
+        onOutput: options?.onOutput,
+        workingDirectory,
+        scopedAgentId,
+      },
+    );
   }
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
+    const eventArgs = await emitToolStartEvent({
+      args,
+      eventEmitter: extensionEventEmitter,
+      executionScope,
+      toolCallId: options?.toolCallId,
+      toolName: name,
+    });
     return executeExternalTool(
       options?.toolCallId ?? `ext-${Date.now()}`,
       name,
-      args as Record<string, unknown>,
+      eventArgs as Record<string, unknown>,
       activeExternalExecutor,
     );
   }
@@ -2138,6 +2261,13 @@ export async function executeTool(
     };
   }
 
+  args = await emitToolStartEvent({
+    args,
+    eventEmitter: extensionEventEmitter,
+    executionScope,
+    toolCallId: options?.toolCallId,
+    toolName: internalName,
+  });
   const startTime = Date.now();
 
   const run = async (): Promise<ToolExecutionResult> => {
@@ -2154,6 +2284,14 @@ export async function executeTool(
       return {
         toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
         status: "error",
+      };
+    }
+
+    // Apply rewritten tool input from PreToolUse hooks (e.g. rtk command rewrite)
+    if (preHookResult.updatedInput) {
+      args = {
+        ...(args as Record<string, unknown>),
+        ...preHookResult.updatedInput,
       };
     }
 
@@ -2510,6 +2648,10 @@ export async function refreshDynamicChannelToolsInLoadedRegistry(): Promise<void
       description: resolvedTool.description,
       input_schema: resolvedTool.input_schema as JsonSchema,
     },
+    modelForm: functionToolForm({
+      description: resolvedTool.description,
+      parameters: resolvedTool.input_schema as JsonSchema,
+    }),
     fn: definition.impl,
   });
 }

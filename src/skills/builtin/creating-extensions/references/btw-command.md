@@ -1,6 +1,6 @@
 # `/btw` side-question extension example
 
-This example runs while the main agent is busy because it forks the conversation through the harness backend, streams a response in the fork, renders progress in a panel when panels are available, and returns `{ type: "handled" }` immediately.
+This example runs while the main agent is busy because it forks the scoped conversation, streams a response in the fork, renders progress in a panel when panels are available, and returns `{ type: "handled" }` immediately.
 
 ```ts
 export default function activate(letta) {
@@ -56,16 +56,8 @@ export default function activate(letta) {
 
       void (async () => {
         try {
-          if (!ctx.backend) {
-            throw new Error("/btw requires backend support");
-          }
-
-          const forked = await ctx.backend.forkConversation(
-            ctx.conversation.id || "default",
-            { agentId: ctx.agent.id, hidden: true },
-          );
-          const stream = await ctx.backend.sendMessageStream(
-            forked.id,
+          const forked = await ctx.conversation.fork({ hidden: true });
+          const stream = await forked.sendMessageStream(
             [
               {
                 role: "user",
@@ -74,7 +66,6 @@ export default function activate(letta) {
               },
             ],
             {
-              agentId: ctx.agent.id,
               overrideModel: ctx.model.id ?? undefined,
               workingDirectory: ctx.cwd,
             },
