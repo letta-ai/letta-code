@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  getChatGptFastRegistryHandleForModelHandle,
   getModelInfo,
   getModelInfoForLlmConfig,
   getReasoningTierOptionsForHandle,
@@ -45,6 +46,23 @@ describe("getModelInfoForLlmConfig", () => {
       reasoning_effort: "xhigh",
     });
     expect(xhigh?.id).toBe("gpt-5.4-xhigh");
+  });
+
+  test("uses ChatGPT metadata for local ChatGPT OAuth handles", () => {
+    const info = getModelInfoForLlmConfig("openai-codex/gpt-5.5", {
+      reasoning_effort: "high",
+    });
+    expect(info?.id).toBe("gpt-5.5-plus-pro-high");
+    expect(info?.label).toBe("GPT-5.5 (ChatGPT)");
+  });
+
+  test("uses Fast ChatGPT metadata when local ChatGPT service tier is priority", () => {
+    const info = getModelInfoForLlmConfig("openai-codex/gpt-5.5", {
+      reasoning_effort: "high",
+      service_tier: "priority",
+    });
+    expect(info?.id).toBe("gpt-5.5-fast-plus-pro-high");
+    expect(info?.label).toBe("GPT-5.5 Fast (ChatGPT)");
   });
 
   test("falls back to first handle match when effort missing", () => {
@@ -169,6 +187,24 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
+  test("returns ChatGPT reasoning options for local ChatGPT OAuth gpt-5.5", () => {
+    const options = getReasoningTierOptionsForHandle("openai-codex/gpt-5.5");
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "gpt-5.5-plus-pro-none",
+      "gpt-5.5-plus-pro-low",
+      "gpt-5.5-plus-pro-medium",
+      "gpt-5.5-plus-pro-high",
+      "gpt-5.5-plus-pro-xhigh",
+    ]);
+  });
+
   test("returns byok reasoning options for chatgpt-plus-pro gpt-5.5-fast", () => {
     const options = getReasoningTierOptionsForHandle(
       "chatgpt-plus-pro/gpt-5.5-fast",
@@ -187,6 +223,12 @@ describe("getReasoningTierOptionsForHandle", () => {
       "gpt-5.5-fast-plus-pro-high",
       "gpt-5.5-fast-plus-pro-xhigh",
     ]);
+  });
+
+  test("resolves Fast registry handles for supported local ChatGPT OAuth models", () => {
+    expect(
+      getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.5"),
+    ).toBe("chatgpt-plus-pro/gpt-5.5-fast");
   });
 
   test("returns reasoning options for anthropic sonnet 4.6", () => {

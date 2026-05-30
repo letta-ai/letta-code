@@ -7,7 +7,14 @@ import {
   getAvailableModelsCacheInfo,
   getCachedModelHandles,
 } from "@/agent/available-models";
-import { getLocalModelLabel, models } from "@/agent/model";
+import {
+  CHATGPT_FAST_SERVICE_TIER,
+  getChatGptFastRegistryHandleForModelHandle,
+  getLocalModelLabel,
+  getModelInfo,
+  models,
+  normalizeModelHandleForRegistry,
+} from "@/agent/model";
 
 import {
   buildByokProviderAliases,
@@ -92,18 +99,36 @@ export function getModelCategories(
   return base;
 }
 
-type UiModel = {
+export type UiModel = {
   id: string;
   handle: string;
   label: string;
   description: string;
+  registryHandle?: string;
   isDefault?: boolean;
   isFeatured?: boolean;
   free?: boolean;
   updateArgs?: Record<string, unknown>;
 };
 
+export type ModelSelectorSelection = Pick<
+  UiModel,
+  "id" | "handle" | "label" | "description" | "registryHandle" | "updateArgs"
+>;
+
 export function toSelectorModelForHandle(handle: string): UiModel {
+  const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+  const modelInfo = getModelInfo(registryHandle);
+  if (modelInfo) {
+    return {
+      id: handle,
+      handle,
+      registryHandle,
+      label: modelInfo.label,
+      description: modelInfo.description ?? "",
+      updateArgs: modelInfo.updateArgs as Record<string, unknown> | undefined,
+    };
+  }
   return {
     id: handle,
     handle,
@@ -137,7 +162,8 @@ interface ModelSelectorProps {
   currentModelId?: string;
   /** The current model's handle (e.g., "anthropic/claude-sonnet-4.6") for accurate current model highlighting */
   currentModelHandle?: string | null;
-  onSelect: (modelId: string) => void;
+  currentModelServiceTier?: string | null;
+  onSelect: (selection: ModelSelectorSelection) => void;
   onOpenConnect?: () => void;
   onOpenLogin?: () => void;
   onCancel: () => void;
@@ -156,6 +182,7 @@ interface ModelSelectorProps {
 export function ModelSelector({
   currentModelId,
   currentModelHandle,
+  currentModelServiceTier,
   onSelect,
   onOpenConnect,
   onOpenLogin,
@@ -289,9 +316,10 @@ export function ModelSelector({
 
   const pickPreferredStaticModel = useCallback(
     (handle: string, contextWindow?: number): UiModel | undefined => {
+      const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
       const staticCandidates = typedModels.filter(
         (m) =>
-          m.handle === handle &&
+          m.handle === registryHandle &&
           (contextWindow === undefined ||
             (m.updateArgs?.context_window as number | undefined) ===
               contextWindow),
@@ -313,6 +341,77 @@ export function ModelSelector({
       );
     },
     [typedModels],
+  );
+
+  const serviceTierForModel = useCallback((model: UiModel): string | null => {
+    const value = model.updateArgs?.service_tier;
+    return value === CHATGPT_FAST_SERVICE_TIER
+      ? CHATGPT_FAST_SERVICE_TIER
+      : null;
+  }, []);
+
+  const withActualHandle = useCallback(
+    (
+      model: UiModel,
+      handle: string,
+      registryHandle?: string,
+      updateArgs?: Record<string, unknown>,
+    ): UiModel => ({
+      ...model,
+      id:
+        updateArgs?.service_tier === CHATGPT_FAST_SERVICE_TIER
+          ? `${handle}::service_tier=${CHATGPT_FAST_SERVICE_TIER}`
+          : handle,
+      handle,
+      registryHandle: registryHandle ?? model.registryHandle ?? model.handle,
+      updateArgs: updateArgs ?? model.updateArgs,
+    }),
+    [],
+  );
+
+  const modelsForBackendHandle = useCallback(
+    (handle: string, includeUnknown: boolean): UiModel[] => {
+      const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+      const baseStaticModel = pickPreferredStaticModel(registryHandle);
+      const fastRegistryHandle =
+        getChatGptFastRegistryHandleForModelHandle(handle);
+
+      const baseUpdateArgs = {
+        ...((baseStaticModel?.updateArgs as
+          | Record<string, unknown>
+          | undefined) ?? {}),
+        ...(fastRegistryHandle ? { service_tier: null } : {}),
+      };
+      const baseModel = baseStaticModel
+        ? withActualHandle(
+            baseStaticModel,
+            handle,
+            registryHandle,
+            Object.keys(baseUpdateArgs).length > 0 ? baseUpdateArgs : undefined,
+          )
+        : includeUnknown
+          ? toSelectorModelForHandle(handle)
+          : null;
+
+      const result = baseModel ? [baseModel] : [];
+
+      if (fastRegistryHandle) {
+        const fastStaticModel = pickPreferredStaticModel(fastRegistryHandle);
+        if (fastStaticModel) {
+          result.push(
+            withActualHandle(fastStaticModel, handle, fastRegistryHandle, {
+              ...((fastStaticModel.updateArgs as
+                | Record<string, unknown>
+                | undefined) ?? {}),
+              service_tier: CHATGPT_FAST_SERVICE_TIER,
+            }),
+          );
+        }
+      }
+
+      return result;
+    },
+    [pickPreferredStaticModel, withActualHandle],
   );
 
   // Supported models: models.json entries that are available
@@ -350,7 +449,7 @@ export function ModelSelector({
     const deduped: UiModel[] = [];
     for (const m of available) {
       const contextWindow = m.updateArgs?.context_window as number | undefined;
-      const key = `${m.handle}:${contextWindow ?? 0}`;
+      const key = `${m.handle}:${contextWindow ?? 0}:${serviceTierForModel(m) ?? "default"}`;
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(pickPreferredStaticModel(m.handle, contextWindow) ?? m);
@@ -366,6 +465,7 @@ export function ModelSelector({
     filterProvider,
     searchQuery,
     pickPreferredStaticModel,
+    serviceTierForModel,
   ]);
 
   // BYOK models: models from ChatGPT OAuth, standard lc-* providers, or any connected custom BYOK provider
@@ -501,15 +601,16 @@ export function ModelSelector({
   // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
     if (!backendModelCatalog || availableHandles === undefined) return [];
-    let available = typedModels.filter(
-      (m) => availableHandles?.has(m.handle) && m.handle !== "letta/letta-free",
-    );
+    let available = allApiHandles
+      .filter((handle) => handle !== "letta/letta-free")
+      .flatMap((handle) => modelsForBackendHandle(handle, false));
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       available = available.filter(
         (m) =>
           m.label.toLowerCase().includes(query) ||
           m.description.toLowerCase().includes(query) ||
+          m.registryHandle?.toLowerCase().includes(query) ||
           m.handle.toLowerCase().includes(query),
       );
     }
@@ -518,31 +619,51 @@ export function ModelSelector({
     const deduped: UiModel[] = [];
     for (const m of available) {
       const contextWindow = m.updateArgs?.context_window as number | undefined;
-      const key = `${m.handle}:${contextWindow ?? 0}`;
+      const key = `${m.handle}:${contextWindow ?? 0}:${serviceTierForModel(m) ?? "default"}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      deduped.push(pickPreferredStaticModel(m.handle, contextWindow) ?? m);
+      deduped.push(m);
     }
     return deduped;
   }, [
     backendModelCatalog,
-    typedModels,
     availableHandles,
+    allApiHandles,
     searchQuery,
-    pickPreferredStaticModel,
+    modelsForBackendHandle,
+    serviceTierForModel,
   ]);
 
   // Server-all models: ALL handles from the server (for self-hosted)
   // Filter out letta/letta-free legacy model
   const serverAllModels = useMemo(() => {
     if (!backendModelCatalog) return [];
-    let handles = allApiHandles.filter((h) => h !== "letta/letta-free");
+    const handles = allApiHandles.filter((h) => h !== "letta/letta-free");
+    return handles;
+  }, [backendModelCatalog, allApiHandles]);
+
+  const serverAllModelRows = useMemo(() => {
+    if (!backendModelCatalog) return [];
+    let rows = serverAllModels.flatMap((handle) =>
+      modelsForBackendHandle(handle, true),
+    );
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      handles = handles.filter((h) => h.toLowerCase().includes(query));
+      rows = rows.filter(
+        (model) =>
+          model.label.toLowerCase().includes(query) ||
+          model.description.toLowerCase().includes(query) ||
+          model.registryHandle?.toLowerCase().includes(query) ||
+          model.handle.toLowerCase().includes(query),
+      );
     }
-    return handles;
-  }, [backendModelCatalog, allApiHandles, searchQuery]);
+    return rows;
+  }, [
+    backendModelCatalog,
+    serverAllModels,
+    modelsForBackendHandle,
+    searchQuery,
+  ]);
 
   // Recent models: models the user has recently selected (max 5)
   // Only includes models that are currently available
@@ -584,7 +705,7 @@ export function ModelSelector({
         description: "",
       })),
       "server-recommended": serverRecommendedModels,
-      "server-all": serverAllModels.map(toSelectorModelForHandle),
+      "server-all": serverAllModelRows,
       all: allLettaModels,
     }),
     [
@@ -594,7 +715,7 @@ export function ModelSelector({
       byokAllModels,
       allLettaModels,
       serverRecommendedModels,
-      serverAllModels,
+      serverAllModelRows,
     ],
   );
 
@@ -805,7 +926,14 @@ export function ModelSelector({
       } else if (key.return) {
         const selectedModel = currentList[selectedIndex];
         if (selectedModel) {
-          onSelect(selectedModel.id);
+          onSelect({
+            id: selectedModel.id,
+            handle: selectedModel.handle,
+            label: selectedModel.label,
+            description: selectedModel.description,
+            registryHandle: selectedModel.registryHandle,
+            updateArgs: selectedModel.updateArgs,
+          });
         }
       }
     },
@@ -820,7 +948,8 @@ export function ModelSelector({
     if (cat === "byok-all") return `BYOK (all) [${byokAllModels.length}]`;
     if (cat === "server-recommended")
       return `Recommended [${serverRecommendedModels.length}]`;
-    if (cat === "server-all") return `All models [${serverAllModels.length}]`;
+    if (cat === "server-all")
+      return `All models [${serverAllModelRows.length}]`;
     return `Letta API (all) [${allLettaModels.length}]`;
   };
 
@@ -961,8 +1090,15 @@ export function ModelSelector({
         {visibleModels.map((model, index) => {
           const actualIndex = startIndex + index;
           const isSelected = actualIndex === selectedIndex;
+          const modelServiceTier = serviceTierForModel(model);
+          const currentServiceTier =
+            currentModelServiceTier === CHATGPT_FAST_SERVICE_TIER
+              ? CHATGPT_FAST_SERVICE_TIER
+              : null;
           const isCurrent =
-            model.id === currentModelId || model.handle === currentModelHandle;
+            (model.id === currentModelId ||
+              model.handle === currentModelHandle) &&
+            modelServiceTier === currentServiceTier;
           // Show lock for non-free models when on free tier (only for Letta API tabs)
           const showLock =
             isFreeTier &&
