@@ -2,14 +2,29 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { commands } from "@/cli/commands/registry";
 import { truncateText } from "@/cli/helpers/truncate-text";
 import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
-import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/use-terminal-width";
 import { settingsManager } from "@/settings-manager";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
-const VISIBLE_COMMANDS = 5; // Number of commands visible at once
+const MAX_VISIBLE_COMMANDS = 12; // Maximum commands visible at once
 const CMD_COL_WIDTH = 14;
+
+const BUILTIN_SKILL_ALIASES = new Set([
+  "acquiring-skills",
+  "context_doctor",
+  "converting-mcps-to-skills",
+  "creating-skills",
+  "customizing-statusline",
+  "initializing-memory",
+  "letta-help",
+  "migrating-memory",
+  "syncing-memory-filesystem",
+]);
 
 // Compute filtered command list (excluding hidden commands), sorted by order
 const _allCommands: CommandMatch[] = Object.entries(commands)
@@ -55,6 +70,7 @@ export function SlashCommandAutocomplete({
   extensionCommands = {},
 }: AutocompleteProps) {
   const columns = useTerminalWidth();
+  const terminalRows = useTerminalRows();
   const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
   const [skillCommands, setSkillCommands] = useState<CommandMatch[]>([]);
 
@@ -89,7 +105,14 @@ export function SlashCommandAutocomplete({
         });
         if (cancelled) return;
         const matches: CommandMatch[] = discovery.skills
-          .filter(isUserInvocableSkill)
+          .filter(
+            (skill) =>
+              isUserInvocableSkill(skill) &&
+              !(
+                skill.source === "bundled" &&
+                BUILTIN_SKILL_ALIASES.has(skill.id)
+              ),
+          )
           .map((skill) => ({
             cmd: `/${skill.id}`,
             desc: `${skill.description}${skill.argumentHint ? ` ${skill.argumentHint}` : ""} (${skill.source} skill)`,
@@ -252,23 +275,27 @@ export function SlashCommandAutocomplete({
     return null;
   }
 
-  // Calculate visible window based on selected index
+  // Calculate visible window based on selected index, bounded by viewport.
+  const visibleCommandCount = Math.max(
+    3,
+    Math.min(MAX_VISIBLE_COMMANDS, terminalRows - 8),
+  );
   const totalMatches = matches.length;
-  const needsScrolling = totalMatches > VISIBLE_COMMANDS;
+  const needsScrolling = totalMatches > visibleCommandCount;
 
   let startIndex = 0;
   if (needsScrolling) {
     // Keep selected item visible, preferring to show it in the middle
-    const halfWindow = Math.floor(VISIBLE_COMMANDS / 2);
+    const halfWindow = Math.floor(visibleCommandCount / 2);
     startIndex = Math.max(0, selectedIndex - halfWindow);
-    startIndex = Math.min(startIndex, totalMatches - VISIBLE_COMMANDS);
+    startIndex = Math.min(startIndex, totalMatches - visibleCommandCount);
   }
 
   const visibleMatches = matches.slice(
     startIndex,
-    startIndex + VISIBLE_COMMANDS,
+    startIndex + visibleCommandCount,
   );
-  const showScrollDown = startIndex + VISIBLE_COMMANDS < totalMatches;
+  const showScrollDown = startIndex + visibleCommandCount < totalMatches;
 
   return (
     <AutocompleteBox>
@@ -296,7 +323,7 @@ export function SlashCommandAutocomplete({
       })}
       {showScrollDown ? (
         <Text dimColor>
-          {"  "}↓ {totalMatches - startIndex - VISIBLE_COMMANDS} more below
+          {"  "}↓ {totalMatches - startIndex - visibleCommandCount} more below
         </Text>
       ) : needsScrolling ? (
         <Text> </Text>
