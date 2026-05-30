@@ -3,6 +3,7 @@ import { commands } from "@/cli/commands/registry";
 import {
   filterProviderConfigs,
   hasConstellationProviderStoreCredentials,
+  isProviderTargetLoading,
   providerApiKeyFromInput,
   providerSelectionFlow,
   shouldShowProviderStoreTabs,
@@ -196,5 +197,23 @@ describe("ProviderSelector connected provider actions", () => {
 
   test("removes the legacy slash disconnect command from discovery", () => {
     expect(commands["/disconnect"]).toBeUndefined();
+  });
+
+  test("does not show loading when switching to a cached provider tab", () => {
+    expect(
+      isProviderTargetLoading({
+        selectedTarget: "api",
+        connectedProvidersByTarget: { api: new Map() },
+        showProviderStoreTabs: true,
+      }),
+    ).toBe(false);
+
+    expect(
+      isProviderTargetLoading({
+        selectedTarget: "api",
+        connectedProvidersByTarget: {},
+        showProviderStoreTabs: true,
+      }),
+    ).toBe(true);
   });
 });
