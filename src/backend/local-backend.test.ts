@@ -1276,6 +1276,27 @@ describe("local backend pi transcript", () => {
     ).rejects.toThrow("Unsupported local transcript format");
   });
 
+  test("skips malformed conversation metadata during explicit listing", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-bad-conversation-"),
+    );
+    const conversationDir = join(storageDir, "conversations", "bad");
+    await mkdir(conversationDir, { recursive: true });
+    await writeFile(join(conversationDir, "conversation.json"), "{bad json");
+    await writeFile(
+      join(conversationDir, "manifest.json"),
+      `${JSON.stringify({
+        schema_version: 999,
+        message_format: "future-jsonl",
+        provider_stack: "pi-ai",
+        created_at: new Date().toISOString(),
+      })}\n`,
+    );
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    expect(((await backend.listConversations()) as unknown[]).length).toBe(0);
+  });
+
   test("refuses to read versioned transcripts with legacy UI rows and repairs them with migrate-transcripts", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-repair-"),
