@@ -300,15 +300,28 @@ function getCatalogModel(
   oauthCredentials?: OAuthCredentials,
 ): Model<Api> | undefined {
   const spec = getPiProviderSpec(provider);
-  if (!spec.piProvider) return undefined;
-  const model = getModels(spec.piProvider).find(
-    (model) => model.id === modelId,
-  ) as Model<Api> | undefined;
+  const piProvider = spec.piProvider;
+  if (!piProvider) return undefined;
+  const catalog = getModels(piProvider);
+  const fallbackModelId = fallbackCatalogModelId(piProvider, modelId);
+  const model = (catalog.find((model) => model.id === modelId) ??
+    catalog.find((model) => model.id === fallbackModelId)) as
+    | Model<Api>
+    | undefined;
   if (!model || !oauthCredentials) return model;
 
-  const oauthProvider = getOAuthProvider(spec.piProvider);
+  const oauthProvider = getOAuthProvider(piProvider);
   return (oauthProvider?.modifyModels?.([model], oauthCredentials)[0] ??
     model) as Model<Api>;
+}
+
+function fallbackCatalogModelId(
+  provider: string,
+  modelId: string,
+): string | undefined {
+  if (provider !== "openai") return undefined;
+  const withoutReleaseDate = modelId.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+  return withoutReleaseDate === modelId ? undefined : withoutReleaseDate;
 }
 
 function customOpenAICompatibleModel(input: {
