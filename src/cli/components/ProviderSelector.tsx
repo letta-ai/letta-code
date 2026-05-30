@@ -31,9 +31,16 @@ type ViewState =
   | { type: "multiInput"; provider: ByokProvider; authMethod?: AuthMethod }
   | { type: "methodSelect"; provider: ByokProvider }
   | { type: "profileSelect"; provider: ByokProvider }
-  | { type: "options"; provider: ByokProvider; providerId: string };
+  | { type: "options"; provider: ByokProvider };
 
 type ValidationState = "idle" | "validating" | "valid" | "invalid" | "saving";
+
+type ProviderSelectionFlow =
+  | "options"
+  | "oauth"
+  | "methodSelect"
+  | "multiInput"
+  | "input";
 
 interface ProviderSelectorProps {
   onCancel: () => void;
@@ -90,6 +97,21 @@ export function filterProviderConfigs(
       .toLowerCase();
     return searchable.includes(normalized);
   });
+}
+
+export function providerSelectionFlow(
+  provider: ByokProvider,
+  connectedProviderId?: string,
+): ProviderSelectionFlow {
+  if (connectedProviderId) return "options";
+  if (provider.isOAuth) return "oauth";
+  if ("authMethods" in provider && provider.authMethods) return "methodSelect";
+  if ("fields" in provider && provider.fields) return "multiInput";
+  return "input";
+}
+
+function targetLabel(target: ProviderStorageTarget): string {
+  return target === "local" ? "Local" : "Constellation";
 }
 
 export function ProviderSelector({
@@ -289,7 +311,16 @@ export function ProviderSelector({
   // Handle selecting a provider from the list
   const handleSelectProvider = useCallback(
     (provider: ByokProvider) => {
-      if ("isOAuth" in provider && provider.isOAuth) {
+      const providerId = getProviderId(provider);
+      const flow = providerSelectionFlow(provider, providerId);
+
+      if (flow === "options") {
+        setViewState({ type: "options", provider });
+        setOptionIndex(0);
+        return;
+      }
+
+      if (flow === "oauth") {
         // OAuth provider - trigger OAuth flow
         if (onStartOAuth) {
           onStartOAuth(provider, selectedTarget);
@@ -297,19 +328,11 @@ export function ProviderSelector({
         return;
       }
 
-      const connected = isConnected(provider);
-      if (connected) {
-        // Show options for connected provider
-        const providerId = getProviderId(provider);
-        if (providerId) {
-          setViewState({ type: "options", provider, providerId });
-          setOptionIndex(0);
-        }
-      } else if ("authMethods" in provider && provider.authMethods) {
+      if (flow === "methodSelect") {
         // Provider with multiple auth methods - show method selection
         setViewState({ type: "methodSelect", provider });
         setMethodIndex(0);
-      } else if ("fields" in provider && provider.fields) {
+      } else if (flow === "multiInput") {
         // Multi-field provider - show multi-input view
         setViewState({ type: "multiInput", provider });
         setFieldValues({});
@@ -324,7 +347,7 @@ export function ProviderSelector({
         setValidationError(null);
       }
     },
-    [isConnected, getProviderId, onStartOAuth, selectedTarget],
+    [getProviderId, onStartOAuth, selectedTarget],
   );
 
   // Handle selecting an auth method
@@ -554,6 +577,7 @@ export function ProviderSelector({
           target: selectedTarget,
         },
       );
+      clearAvailableModelsCache();
       // Refresh connected providers
       const providers = await getConnectedProviders({ target: selectedTarget });
       if (mountedRef.current) {
@@ -1228,11 +1252,18 @@ export function ProviderSelector({
   const renderOptionsView = () => {
     if (viewState.type !== "options") return null;
     const { provider } = viewState;
-    const options = ["Disconnect", "Back"];
+    const options = [`Disconnect from ${targetLabel(selectedTarget)}`, "Back"];
 
     return (
       <>
         <Box flexDirection="column" marginBottom={1}>
+          <Text bold color={colors.selector.title}>
+            Disconnect {provider.displayName}
+          </Text>
+          <Text dimColor>
+            This removes only the {targetLabel(selectedTarget)} connection.
+          </Text>
+          <Box height={1} />
           <Box flexDirection="row">
             <Text>{"  "}</Text>
             <Text color="green">[✓]</Text>
@@ -1269,7 +1300,7 @@ export function ProviderSelector({
         </Box>
 
         <Box marginTop={1}>
-          <Text dimColor>{"  "}Enter select · ↑↓ navigate · Esc back</Text>
+          <Text dimColor>{"  "}Enter confirm · ↑↓ navigate · Esc back</Text>
         </Box>
       </>
     );
