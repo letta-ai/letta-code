@@ -32,12 +32,7 @@ import {
 } from "@/tools/impl/process_manager";
 import { LIMITS } from "@/tools/impl/truncation";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
-import {
-  ensureFileIndex,
-  getIndexRoot,
-  searchFileIndex,
-  setIndexRoot,
-} from "@/utils/file-index";
+import { getIndexRoot } from "@/utils/file-index";
 import {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,
@@ -3905,7 +3900,7 @@ describe("listen-client cwd change handling", () => {
     }
   });
 
-  test("proactively warms the file index after cwd change so @ search is instant", async () => {
+  test("does not warm the file index after cwd change", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const projectRoot = await mkdtemp(
@@ -3913,31 +3908,20 @@ describe("listen-client cwd change handling", () => {
     );
     const projectDir = join(projectRoot, "my-project");
     await mkdir(join(projectDir, "src"), { recursive: true });
-    await writeFile(join(projectDir, "README.md"), "# Hello");
-    await writeFile(join(projectDir, "src/index.ts"), "export {}");
-
-    // Create a separate unrelated temp dir as the initial index root so the
-    // project dir is definitely *outside* it, which triggers setIndexRoot().
-    // (If the new CWD is a child of the current root, handleCwdChange skips
-    // re-rooting — that's correct behavior but defeats the test.)
-    const unrelatedRoot = await mkdtemp(
-      join(os.tmpdir(), "letta-listen-old-root-"),
-    );
     const originalRoot = getIndexRoot();
 
     try {
       const normalizedProjectDir = await realpath(projectDir);
-      setIndexRoot(unrelatedRoot);
 
       __listenClientTestUtils.setConversationWorkingDirectory(
         runtime,
         "agent-1",
         "conv-1",
-        unrelatedRoot,
+        projectRoot,
       );
       runtime.activeAgentId = "agent-1";
       runtime.activeConversationId = "conv-1";
-      runtime.activeWorkingDirectory = unrelatedRoot;
+      runtime.activeWorkingDirectory = projectRoot;
 
       await __listenClientTestUtils.handleCwdChange(
         {
@@ -3949,28 +3933,18 @@ describe("listen-client cwd change handling", () => {
         runtime,
       );
 
-      // The index root should now point at the new cwd.
-      expect(getIndexRoot()).toBe(normalizedProjectDir);
+      expect(
+        __listenClientTestUtils.getConversationWorkingDirectory(
+          runtime,
+          "agent-1",
+          "conv-1",
+        ),
+      ).toBe(normalizedProjectDir);
 
-      // handleCwdChange fires `void ensureFileIndex()` — await it so the
-      // in-flight build completes before we query.
-      await ensureFileIndex();
-
-      // Verify the index is warm and contains files from the new cwd.
-      const results = searchFileIndex({
-        searchDir: "",
-        pattern: "",
-        deep: true,
-        maxResults: 50,
-      });
-
-      const paths = results.map((r) => r.path);
-      expect(paths).toContain("README.md");
-      expect(paths).toContain(join("src", "index.ts"));
+      // CWD changes should no longer re-root or warm the recursive file index.
+      expect(getIndexRoot()).toBe(originalRoot);
     } finally {
-      setIndexRoot(originalRoot);
       await rm(projectRoot, { recursive: true, force: true });
-      await rm(unrelatedRoot, { recursive: true, force: true });
     }
   });
 });

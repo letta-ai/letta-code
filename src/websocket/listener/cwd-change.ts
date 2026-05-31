@@ -1,44 +1,14 @@
-import path from "node:path";
 import type WebSocket from "ws";
 import { updateRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
-  ensureFileIndex,
-  getIndexRoot,
-  setIndexRoot,
-} from "@/utils/file-index";
-import {
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
 } from "./cwd";
-import { isGitWorktreeRoot } from "./file-commands";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import { getConversationRuntime } from "./runtime";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
-
-function isWithinOrEqual(parent: string, candidate: string): boolean {
-  const relative = path.relative(parent, candidate);
-  return (
-    relative === "" ||
-    (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative))
-  );
-}
-
-async function refreshIndexForWorkingDirectory(
-  workingDirectory: string,
-): Promise<void> {
-  const currentRoot = getIndexRoot();
-  const needsReroot =
-    !isWithinOrEqual(currentRoot, workingDirectory) ||
-    (workingDirectory !== currentRoot &&
-      (await isGitWorktreeRoot(workingDirectory)));
-
-  if (needsReroot) {
-    setIndexRoot(workingDirectory);
-  }
-  void ensureFileIndex();
-}
 
 async function loadSettingsForWorkingDirectory(
   workingDirectory: string,
@@ -56,7 +26,6 @@ export async function switchCurrentRuntimeWorkingDirectory(
   process.chdir(workingDirectory);
   process.env.USER_CWD = workingDirectory;
   updateRuntimeContext({ workingDirectory });
-  await refreshIndexForWorkingDirectory(workingDirectory);
 }
 
 export async function switchConversationWorkingDirectory(params: {
@@ -100,8 +69,6 @@ export async function switchConversationWorkingDirectory(params: {
     reminderState.hasSentSessionContext = false;
     reminderState.pendingSessionContextReason = "cwd_changed";
   }
-
-  await refreshIndexForWorkingDirectory(workingDirectory);
 
   const statusSocket = params.statusSocket ?? runtime.socket;
   if (params.emitStatus !== false && statusSocket) {
