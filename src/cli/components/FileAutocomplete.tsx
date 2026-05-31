@@ -1,146 +1,105 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  type FileAutocompleteMatch,
-  searchFileAutocomplete,
-} from "@/cli/helpers/file-autocomplete-search";
+  applyPiFileCompletion,
+  type PiAutocompleteItem,
+  type PiAutocompleteSuggestions,
+  PiFileAutocompleteProvider,
+  resolveFdPath,
+} from "@/cli/helpers/pi-file-autocomplete";
 import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { colors } from "./colors";
 import { Text } from "./Text";
-import type { AutocompleteProps } from "./types/autocomplete";
 
-function extractSearchQuery(
-  input: string,
-  cursor: number,
-): { query: string; hasSpaceAfter: boolean; atIndex: number } | null {
-  const atPositions: number[] = [];
-  for (let i = 0; i < input.length; i++) {
-    if (input[i] !== "@") continue;
-    if (i === 0 || input[i - 1] === " ") {
-      atPositions.push(i);
-    }
-  }
-
-  for (const atIndex of atPositions) {
-    const afterAt = input.slice(atIndex + 1);
-    const spaceIndex = afterAt.indexOf(" ");
-    const endPos = spaceIndex === -1 ? input.length : atIndex + 1 + spaceIndex;
-
-    if (cursor >= atIndex && cursor <= endPos) {
-      return {
-        query: spaceIndex === -1 ? afterAt : afterAt.slice(0, spaceIndex),
-        hasSpaceAfter: spaceIndex !== -1,
-        atIndex,
-      };
-    }
-  }
-
-  return null;
+interface FileAutocompleteProps {
+  currentInput: string;
+  cursorPosition: number;
+  workingDirectory?: string;
+  onApplyCompletion: (value: string, cursorPosition: number) => void;
+  onActiveChange?: (isActive: boolean) => void;
 }
 
-function isUrlQuery(query: string): boolean {
-  return query.startsWith("http://") || query.startsWith("https://");
+const fdPath = resolveFdPath();
+
+function isDirectoryItem(item: PiAutocompleteItem): boolean {
+  return item.label.endsWith("/");
 }
 
 export function FileAutocomplete({
   currentInput,
-  cursorPosition = currentInput.length,
-  onSelect,
-  onAutocomplete,
-  onActiveChange,
+  cursorPosition,
   workingDirectory,
-}: AutocompleteProps) {
-  const [matches, setMatches] = useState<FileAutocompleteMatch[]>([]);
+  onApplyCompletion,
+  onActiveChange,
+}: FileAutocompleteProps) {
+  const [suggestions, setSuggestions] =
+    useState<PiAutocompleteSuggestions | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const searchGenRef = useRef(0);
-  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  const provider = useMemo(
+    () =>
+      new PiFileAutocompleteProvider(workingDirectory ?? process.cwd(), fdPath),
+    [workingDirectory],
+  );
+  const matches = suggestions?.items ?? [];
+
+  const applyItem = (item: PiAutocompleteItem) => {
+    if (!suggestions) return;
+    const result = applyPiFileCompletion(
+      currentInput,
+      cursorPosition,
+      item,
+      suggestions.prefix,
+    );
+    onApplyCompletion(result.value, result.cursorPosition);
+  };
 
   const { selectedIndex } = useAutocompleteNavigation({
     matches,
     maxVisible: 10,
-    onSelect: onSelect ? (item) => onSelect(item.path) : undefined,
-    onAutocomplete: onAutocomplete
-      ? (item) => onAutocomplete(item.path)
-      : onSelect
-        ? (item) => onSelect(item.path)
-        : undefined,
+    onSelect: applyItem,
+    onAutocomplete: applyItem,
     manageActiveState: false,
   });
 
   useEffect(() => {
-    if (debounceTimeoutRef.current) {
-      clearTimeout(debounceTimeoutRef.current);
-      debounceTimeoutRef.current = null;
-    }
     abortControllerRef.current?.abort();
-
-    const result = extractSearchQuery(currentInput, cursorPosition);
-    if (!result || (result.hasSpaceAfter && result.query.length > 0)) {
-      searchGenRef.current++;
-      setMatches([]);
-      setIsLoading(false);
-      onActiveChange?.(false);
-      return;
-    }
-
-    const { query } = result;
     const gen = ++searchGenRef.current;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setIsLoading(true);
+    onActiveChange?.(true);
 
-    if (isUrlQuery(query)) {
-      setMatches([{ path: query, type: "url" }]);
-      setIsLoading(false);
-      onActiveChange?.(true);
-      return;
-    }
-
-    const runSearch = () => {
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
-      setIsLoading(true);
-      onActiveChange?.(true);
-
-      searchFileAutocomplete(query, {
-        cwd: workingDirectory,
+    provider
+      .getSuggestions(currentInput, cursorPosition, {
         signal: controller.signal,
       })
-        .then((results) => {
-          if (searchGenRef.current !== gen) return;
-          setMatches(results);
-          setIsLoading(false);
-          onActiveChange?.(results.length > 0);
-        })
-        .catch(() => {
-          if (searchGenRef.current !== gen) return;
-          setMatches([]);
-          setIsLoading(false);
-          onActiveChange?.(false);
-        });
-    };
-
-    if (query.length === 0) {
-      runSearch();
-    } else {
-      setIsLoading(true);
-      onActiveChange?.(true);
-      debounceTimeoutRef.current = setTimeout(runSearch, 150);
-    }
+      .then((nextSuggestions) => {
+        if (searchGenRef.current !== gen) return;
+        setSuggestions(nextSuggestions);
+        setIsLoading(false);
+        onActiveChange?.((nextSuggestions?.items.length ?? 0) > 0);
+      })
+      .catch(() => {
+        if (searchGenRef.current !== gen) return;
+        setSuggestions(null);
+        setIsLoading(false);
+        onActiveChange?.(false);
+      });
 
     return () => {
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
-        debounceTimeoutRef.current = null;
-      }
-      abortControllerRef.current?.abort();
+      controller.abort();
     };
-  }, [currentInput, cursorPosition, onActiveChange, workingDirectory]);
+  }, [currentInput, cursorPosition, onActiveChange, provider]);
 
   if (!currentInput.includes("@")) return null;
   if (matches.length === 0 && !isLoading) return null;
 
   const header = (
     <>
-      File/URL autocomplete (↑↓ navigate, Tab/Enter select):
+      File autocomplete (↑↓ navigate, Tab/Enter select):
       {isLoading && " Searching..."}
     </>
   );
@@ -151,19 +110,22 @@ export function FileAutocomplete({
         <>
           {matches.slice(0, 10).map((item, idx) => (
             <AutocompleteItem
-              key={`${item.type}:${item.path}`}
+              key={`${item.value}:${item.description ?? ""}`}
               selected={idx === selectedIndex}
             >
               <Text
                 color={
-                  idx !== selectedIndex && item.type === "dir"
+                  idx !== selectedIndex && isDirectoryItem(item)
                     ? colors.status.processing
                     : undefined
                 }
               >
-                {item.type === "dir" ? "📁" : item.type === "url" ? "🔗" : "📄"}
+                {isDirectoryItem(item) ? "📁" : "📄"}
               </Text>{" "}
-              {item.path}
+              {item.label}
+              {item.description && item.description !== item.label && (
+                <Text dimColor> {item.description}</Text>
+              )}
             </AutocompleteItem>
           ))}
           {matches.length > 10 && (

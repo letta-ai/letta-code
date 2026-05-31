@@ -9,8 +9,7 @@ import type { ExtensionCommandAutocompleteItem } from "./types/autocomplete";
 interface InputAssistProps {
   currentInput: string;
   cursorPosition: number;
-  onFileSelect: (path: string) => void;
-  onFileAutocomplete: (path: string) => void;
+  onFileAutocompleteApply: (value: string, cursorPosition: number) => void;
   onCommandSelect: (command: string) => void;
   onCommandAutocomplete: (command: string) => void;
   onAutocompleteActiveChange: (isActive: boolean) => void;
@@ -33,8 +32,7 @@ interface InputAssistProps {
 export function InputAssist({
   currentInput,
   cursorPosition,
-  onFileSelect,
-  onFileAutocomplete,
+  onFileAutocompleteApply,
   onCommandSelect,
   onCommandAutocomplete,
   onAutocompleteActiveChange,
@@ -67,8 +65,7 @@ export function InputAssist({
       <FileAutocomplete
         currentInput={currentInput}
         cursorPosition={cursorPosition}
-        onSelect={onFileSelect}
-        onAutocomplete={onFileAutocomplete}
+        onApplyCompletion={onFileAutocompleteApply}
         onActiveChange={onAutocompleteActiveChange}
         workingDirectory={workingDirectory}
       />
