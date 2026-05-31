@@ -16,11 +16,7 @@ import {
   prepareCurrentToolExecutionContext,
   releaseToolExecutionContext,
 } from "@/tools/manager";
-import {
-  ensureFileIndex,
-  getIndexRoot,
-  setIndexRoot,
-} from "@/utils/file-index";
+import { getIndexRoot } from "@/utils/file-index";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 import { setActiveRuntime } from "@/websocket/listener/runtime";
@@ -76,14 +72,12 @@ function toolReturnText(value: unknown): string {
 
 describe("CreateWorktree tool", () => {
   let tempDirs: string[] = [];
-  let originalIndexRoot: string;
   const originalCwd = process.cwd();
   const originalHome = process.env.HOME;
   const originalUserCwd = process.env.USER_CWD;
 
   beforeEach(async () => {
     tempDirs = [];
-    originalIndexRoot = getIndexRoot();
     clearToolsWithLock();
     resetRemoteSettingsCache();
     setActiveRuntime(null);
@@ -101,8 +95,6 @@ describe("CreateWorktree tool", () => {
     clearToolsWithLock();
     resetRemoteSettingsCache();
     await settingsManager.reset();
-    await ensureFileIndex().catch(() => undefined);
-    setIndexRoot(originalIndexRoot);
     process.chdir(originalCwd);
     if (originalUserCwd === undefined) {
       delete process.env.USER_CWD;
@@ -290,7 +282,7 @@ describe("CreateWorktree tool", () => {
     }
   });
 
-  test("re-roots the file index when switching into a nested worktree", async () => {
+  test("does not re-root the file index when switching into a nested worktree", async () => {
     const repo = await trackRepo();
     const fakeHome = await mkdtemp(
       path.join(tmpdir(), "letta-create-worktree-index-home-"),
@@ -308,31 +300,27 @@ describe("CreateWorktree tool", () => {
     );
     setActiveRuntime(listener);
 
-    try {
-      setIndexRoot(repo);
+    const originalIndexRoot = getIndexRoot();
 
-      const result = await runWithRuntimeContext(
-        {
-          agentId: "agent-1",
-          conversationId: "conv-a",
-          workingDirectory: repo,
-        },
-        () =>
-          create_worktree({
-            name: "Index Root Feature",
-            refresh_base: false,
-          }),
-      );
+    const result = await runWithRuntimeContext(
+      {
+        agentId: "agent-1",
+        conversationId: "conv-a",
+        workingDirectory: repo,
+      },
+      () =>
+        create_worktree({
+          name: "Index Root Feature",
+          refresh_base: false,
+        }),
+    );
 
-      expect(result.status).toBe("success");
-      if (!result.worktree_path) {
-        throw new Error("Expected CreateWorktree to return a worktree path");
-      }
-      expect(result.switched_cwd).toBe(true);
-      expect(getIndexRoot()).toBe(result.worktree_path);
-    } finally {
-      setIndexRoot(originalIndexRoot);
+    expect(result.status).toBe("success");
+    if (!result.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
     }
+    expect(result.switched_cwd).toBe(true);
+    expect(getIndexRoot()).toBe(originalIndexRoot);
   });
 
   test("fetches the remote default branch before creating the worktree", async () => {
