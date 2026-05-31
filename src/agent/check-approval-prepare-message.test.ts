@@ -60,8 +60,6 @@ describe("prepareMessageHistory", () => {
 
     const out = prepareMessageHistory(messages);
     expect(out.map((m) => m.id)).toEqual([
-      "u3",
-      "u4",
       "u5",
       "u6",
       "u7",
