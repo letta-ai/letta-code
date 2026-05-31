@@ -162,4 +162,72 @@ describe("listener file commands without file index", () => {
       success: true,
     });
   });
+
+  test("explicit projects inside protected home directories are allowed", async () => {
+    const home = await mkdtemp(join(tmpdir(), "letta-file-protected-home-"));
+    tempDirs.push(home);
+    process.env.HOME = home;
+
+    const project = join(home, "Documents", "my-project");
+    await mkdir(join(project, "src"), { recursive: true });
+    await writeFile(join(project, "README.md"), "hello");
+    await writeFile(join(project, "src", "target.ts"), "ok");
+
+    const listHarness = createHarness();
+    expect(
+      listHarness.session.handle({
+        type: "list_in_directory",
+        path: project,
+        include_files: true,
+        request_id: "req-protected-list",
+      }),
+    ).toBe(true);
+    await listHarness.flush();
+    expect(listHarness.sent[0]).toMatchObject({
+      type: "list_in_directory_response",
+      request_id: "req-protected-list",
+      folders: ["src"],
+      files: ["README.md"],
+      success: true,
+    });
+
+    const treeHarness = createHarness();
+    expect(
+      treeHarness.session.handle({
+        type: "get_tree",
+        path: project,
+        depth: 2,
+        request_id: "req-protected-tree",
+      }),
+    ).toBe(true);
+    await treeHarness.flush();
+    expect(treeHarness.sent[0]).toMatchObject({
+      type: "get_tree_response",
+      request_id: "req-protected-tree",
+      entries: [
+        { path: "src", type: "dir" },
+        { path: "README.md", type: "file" },
+        { path: "src/target.ts", type: "file" },
+      ],
+      success: true,
+    });
+
+    const searchHarness = createHarness();
+    expect(
+      searchHarness.session.handle({
+        type: "search_files",
+        cwd: project,
+        query: "target",
+        max_results: 10,
+        request_id: "req-protected-search",
+      }),
+    ).toBe(true);
+    await searchHarness.flush();
+    expect(searchHarness.sent[0]).toMatchObject({
+      type: "search_files_response",
+      request_id: "req-protected-search",
+      files: [{ path: "src/target.ts", type: "file" }],
+      success: true,
+    });
+  });
 });

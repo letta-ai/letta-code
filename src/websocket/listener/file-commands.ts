@@ -139,8 +139,15 @@ function getProtectedHomeSegment(absPath: string): string | null {
   return normalized && PROTECTED_HOME_NAMES.has(normalized) ? normalized : null;
 }
 
-function isProtectedHomePath(absPath: string): boolean {
-  return getProtectedHomeSegment(absPath) !== null;
+function shouldSkipProtectedHomePath(root: string, absPath: string): boolean {
+  const protectedSegment = getProtectedHomeSegment(absPath);
+  if (!protectedSegment) return false;
+
+  // If the user explicitly scoped the operation inside a protected home
+  // directory (for example ~/Documents/my-project), allow that workspace.
+  // The guard is intended to stop broad traversal from $HOME into protected
+  // directories, not to make explicitly selected projects disappear.
+  return getProtectedHomeSegment(root) !== protectedSegment;
 }
 
 function parseLettaIgnore(content: string): string[] {
@@ -209,7 +216,7 @@ async function shouldSkipEntry(options: {
   if (isAlwaysExcludedRelativePath(relativePath)) return true;
   if (recursive && isDirectory && RECURSIVE_IGNORED_NAMES.has(name))
     return true;
-  if (isProtectedHomePath(absPath)) return true;
+  if (shouldSkipProtectedHomePath(root, absPath)) return true;
 
   const { nameMatchers, pathMatchers } = await getIgnoreConfig(root);
   if (nameMatchers.some((matcher) => matcher(name))) return true;
@@ -231,7 +238,7 @@ async function listDirectoryDirect(
   includeFiles: boolean,
   options: { recursive?: boolean } = {},
 ): Promise<DirListing> {
-  if (isProtectedHomePath(absDir)) {
+  if (shouldSkipProtectedHomePath(root, absDir)) {
     return { folders: [], files: [] };
   }
 
@@ -278,8 +285,6 @@ async function searchFilesDirect(options: {
     1,
     Math.min(options.maxResults, MAX_SEARCH_RESULTS),
   );
-
-  if (isProtectedHomePath(root)) return [];
 
   const addIfMatch = (results: TreeEntry[], entry: TreeEntry): boolean => {
     if (!query || entry.path.toLowerCase().includes(query)) {
@@ -349,7 +354,7 @@ async function getTreeDirect(options: {
   const entries: TreeEntry[] = [];
   let hasMoreDepth = false;
 
-  if (maxDepth === 0 || isProtectedHomePath(root)) {
+  if (maxDepth === 0 || shouldSkipProtectedHomePath(root, root)) {
     return { entries, hasMoreDepth };
   }
 
@@ -490,7 +495,7 @@ export function createFileCommandSession(params: {
       runDetachedListenerTask("grep_in_files", async () => {
         try {
           const searchRoot = parsed.cwd ?? process.cwd();
-          if (isProtectedHomePath(searchRoot)) {
+          if (isHomeDirectory(searchRoot)) {
             safeSocketSend(
               socket,
               {
