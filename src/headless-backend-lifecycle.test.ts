@@ -37,8 +37,7 @@ describe("headless backend lifecycle wiring", () => {
     const source = readSource("./agent/check-approval.ts");
 
     expect(source).toContain("getBackend().retrieveConversation");
-    expect(source).toContain("getBackend().listConversationMessages");
-    expect(source).toContain("getBackend().listAgentMessages");
+    expect(source).toContain("getBackend().getConversationResumeTail");
     expect(source).toContain("getBackend().retrieveMessage");
 
     expect(source).not.toContain("client.conversations.");
