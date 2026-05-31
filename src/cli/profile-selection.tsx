@@ -6,11 +6,12 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
+import { isLocalAgentId } from "@/agent/agent-id";
 import {
   getReasoningTierOptionsForHandle,
   type ModelReasoningEffort,
 } from "@/agent/model";
-import { getBackend } from "@/backend";
+import { getBackendForMode } from "@/backend";
 import { getRecentAgentOptions } from "@/cli/helpers/recent-agent-options";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./components/colors";
@@ -97,7 +98,7 @@ function ProfileSelectionUI({
   const loading = externalLoading || internalLoading;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showAll, setShowAll] = useState(false);
-  // Model selection mode for self-hosted servers
+  // Model selection mode for custom API backends
   // Start in model selection mode if serverModelsForNewAgent is provided and no agents to show
   const [selectingModel, setSelectingModel] = useState(
     !!(serverModelsForNewAgent && serverModelsForNewAgent.length > 0),
@@ -115,8 +116,6 @@ function ProfileSelectionUI({
     setInternalLoading(true);
     try {
       const mergedPinned = settingsManager.getMergedPinnedAgents();
-      const backend = getBackend();
-
       const optionsToFetch: ProfileOption[] = [];
       const seenAgentIds = new Set<string>();
 
@@ -156,6 +155,9 @@ function ProfileSelectionUI({
             return opt;
           }
           try {
+            const backend = getBackendForMode(
+              isLocalAgentId(opt.agentId) ? "local" : "api",
+            );
             const agent = await backend.retrieveAgent(opt.agentId, {
               include: ["agent.blocks"],
             });
@@ -194,8 +196,9 @@ function ProfileSelectionUI({
   }, [lruAgentId]);
 
   useEffect(() => {
+    if (externalLoading) return;
     loadOptions();
-  }, [loadOptions]);
+  }, [externalLoading, loadOptions]);
 
   const displayOptions = showAll ? options : options.slice(0, MAX_DISPLAY);
   const hasMore = options.length > MAX_DISPLAY;
