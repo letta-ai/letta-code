@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   applyPiFileCompletion,
-  PiFileAutocompleteProvider,
-} from "@/cli/helpers/pi-file-autocomplete";
+  FileAutocompleteProvider,
+} from "@/cli/helpers/file-autocomplete";
 
 async function setupFolder(
   baseDir: string,
@@ -82,7 +82,7 @@ process.stdout.write(out.slice(0, maxResults).join("\\n"));
 
 const describeFd = process.platform === "win32" ? describe.skip : describe;
 
-describe("Pi @ file completion application", () => {
+describe("file completion application", () => {
   test("adds a trailing space for files", () => {
     const result = applyPiFileCompletion(
       "read @REA",
@@ -120,7 +120,7 @@ describe("Pi @ file completion application", () => {
   });
 });
 
-describeFd("PiFileAutocompleteProvider fd @ suggestions", () => {
+describeFd("FileAutocompleteProvider fd @ suggestions", () => {
   let rootDir = "";
   let baseDir = "";
   let fdPath = "";
@@ -142,7 +142,7 @@ describeFd("PiFileAutocompleteProvider fd @ suggestions", () => {
       files: { "README.md": "readme" },
     });
 
-    const provider = new PiFileAutocompleteProvider(baseDir, fdPath);
+    const provider = new FileAutocompleteProvider(baseDir, fdPath);
     const result = await provider.getSuggestions("@", 1, {
       signal: new AbortController().signal,
     });
@@ -156,7 +156,7 @@ describeFd("PiFileAutocompleteProvider fd @ suggestions", () => {
       files: { "file.txt": "content" },
     });
 
-    const provider = new PiFileAutocompleteProvider(baseDir, fdPath);
+    const provider = new FileAutocompleteProvider(baseDir, fdPath);
     const result = await provider.getSuggestions("@file.txt", 9, {
       signal: new AbortController().signal,
     });
@@ -174,7 +174,7 @@ describeFd("PiFileAutocompleteProvider fd @ suggestions", () => {
       },
     });
 
-    const provider = new PiFileAutocompleteProvider(baseDir, fdPath);
+    const provider = new FileAutocompleteProvider(baseDir, fdPath);
     const result = await provider.getSuggestions("@src/But", 8, {
       signal: new AbortController().signal,
     });
@@ -189,7 +189,7 @@ describeFd("PiFileAutocompleteProvider fd @ suggestions", () => {
       files: { "file with spaces.txt": "content" },
     });
 
-    const provider = new PiFileAutocompleteProvider(baseDir, fdPath);
+    const provider = new FileAutocompleteProvider(baseDir, fdPath);
     const result = await provider.getSuggestions("@file", 5, {
       signal: new AbortController().signal,
     });

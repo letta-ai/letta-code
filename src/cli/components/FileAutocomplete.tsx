@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   applyPiFileCompletion,
-  type PiAutocompleteItem,
-  type PiAutocompleteSuggestions,
-  PiFileAutocompleteProvider,
+  type FileAutocompleteItem,
+  FileAutocompleteProvider,
+  type FileAutocompleteSuggestions,
   resolveFdPath,
-} from "@/cli/helpers/pi-file-autocomplete";
+} from "@/cli/helpers/file-autocomplete";
 import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { colors } from "./colors";
@@ -21,7 +21,7 @@ interface FileAutocompleteProps {
 
 const fdPath = resolveFdPath();
 
-function isDirectoryItem(item: PiAutocompleteItem): boolean {
+function isDirectoryItem(item: FileAutocompleteItem): boolean {
   return item.label.endsWith("/");
 }
 
@@ -33,19 +33,19 @@ export function FileAutocomplete({
   onActiveChange,
 }: FileAutocompleteProps) {
   const [suggestions, setSuggestions] =
-    useState<PiAutocompleteSuggestions | null>(null);
+    useState<FileAutocompleteSuggestions | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const searchGenRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const provider = useMemo(
     () =>
-      new PiFileAutocompleteProvider(workingDirectory ?? process.cwd(), fdPath),
+      new FileAutocompleteProvider(workingDirectory ?? process.cwd(), fdPath),
     [workingDirectory],
   );
   const matches = suggestions?.items ?? [];
 
-  const applyItem = (item: PiAutocompleteItem) => {
+  const applyItem = (item: FileAutocompleteItem) => {
     if (!suggestions) return;
     const result = applyPiFileCompletion(
       currentInput,

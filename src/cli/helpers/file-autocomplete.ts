@@ -3,8 +3,8 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
-// Ported from local pi-mono/packages/tui/src/autocomplete.ts.
-// Keep this behavior aligned with Pi TUI's @ file autocomplete.
+// Ported from local Pi TUI: /Users/loaner/dev/pi-mono/packages/tui/src/autocomplete.ts.
+// Keep behavior aligned with Pi's fd-backed @ file autocomplete.
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
 
 function toDisplayPath(value: string): string {
@@ -246,18 +246,18 @@ async function walkDirectoryWithFd(
   });
 }
 
-export interface PiAutocompleteItem {
+export interface FileAutocompleteItem {
   value: string;
   label: string;
   description?: string;
 }
 
-export interface PiAutocompleteSuggestions {
-  items: PiAutocompleteItem[];
+export interface FileAutocompleteSuggestions {
+  items: FileAutocompleteItem[];
   prefix: string;
 }
 
-export interface PiAppliedCompletion {
+export interface AppliedFileCompletion {
   value: string;
   cursorPosition: number;
 }
@@ -280,9 +280,9 @@ export function resolveFdPath(): string | null {
 export function applyPiFileCompletion(
   currentInput: string,
   cursorPosition: number,
-  item: PiAutocompleteItem,
+  item: FileAutocompleteItem,
   prefix: string,
-): PiAppliedCompletion {
+): AppliedFileCompletion {
   const beforePrefix = currentInput.slice(0, cursorPosition - prefix.length);
   const afterCursor = currentInput.slice(cursorPosition);
   const isQuotedPrefix = prefix.startsWith('"') || prefix.startsWith('@"');
@@ -306,7 +306,7 @@ export function applyPiFileCompletion(
   };
 }
 
-export class PiFileAutocompleteProvider {
+export class FileAutocompleteProvider {
   private basePath: string;
   private fdPath: string | null;
 
@@ -319,7 +319,7 @@ export class PiFileAutocompleteProvider {
     currentInput: string,
     cursorPosition: number,
     options: { signal: AbortSignal },
-  ): Promise<PiAutocompleteSuggestions | null> {
+  ): Promise<FileAutocompleteSuggestions | null> {
     const textBeforeCursor = currentInput.slice(0, cursorPosition);
     const atPrefix = this.extractAtPrefix(textBeforeCursor);
     if (atPrefix) {
@@ -436,7 +436,7 @@ export class PiFileAutocompleteProvider {
   private async getFuzzyFileSuggestions(
     query: string,
     options: { isQuotedPrefix: boolean; signal: AbortSignal },
-  ): Promise<PiAutocompleteItem[]> {
+  ): Promise<FileAutocompleteItem[]> {
     if (!this.fdPath || options.signal.aborted) {
       return [];
     }
@@ -468,7 +468,7 @@ export class PiFileAutocompleteProvider {
       scoredEntries.sort((a, b) => b.score - a.score);
       const topEntries = scoredEntries.slice(0, 20);
 
-      const suggestions: PiAutocompleteItem[] = [];
+      const suggestions: FileAutocompleteItem[] = [];
       for (const { path: entryPath, isDirectory } of topEntries) {
         const pathWithoutSlash = isDirectory
           ? entryPath.slice(0, -1)
