@@ -1706,6 +1706,44 @@ export function Input({
     onSubmit,
   ]);
 
+  // Handle file selection from autocomplete
+  const insertFileReference = useCallback(
+    (selectedPath: string, appendSpace: boolean) => {
+      const atIndex = value.lastIndexOf("@");
+      if (atIndex === -1) return;
+
+      const beforeAt = value.slice(0, atIndex);
+      const afterAt = value.slice(atIndex + 1);
+      const spaceIndex = afterAt.indexOf(" ");
+      const suffix = appendSpace ? " " : "";
+
+      if (spaceIndex === -1) {
+        const newValue = `${beforeAt}@${selectedPath}${suffix}`;
+        setValue(newValue);
+        setCursorPos(newValue.length);
+        return;
+      }
+
+      const afterQuery = afterAt.slice(spaceIndex);
+      const newValue = `${beforeAt}@${selectedPath}${suffix}${afterQuery}`;
+      const newCursorPos =
+        beforeAt.length + selectedPath.length + 1 + suffix.length;
+      setValue(newValue);
+      setCursorPos(newCursorPos);
+    },
+    [value],
+  );
+
+  const handleFileSelect = useCallback(
+    (selectedPath: string) => insertFileReference(selectedPath, true),
+    [insertFileReference],
+  );
+
+  const handleFileAutocomplete = useCallback(
+    (selectedPath: string) => insertFileReference(selectedPath, false),
+    [insertFileReference],
+  );
+
   // Handle slash command selection from autocomplete (Enter key - execute)
   const handleCommandSelect = useCallback(
     async (selectedCommand: string) => {
@@ -1990,6 +2028,8 @@ export function Input({
               <InputAssist
                 currentInput={value}
                 cursorPosition={currentCursorPosition}
+                onFileSelect={handleFileSelect}
+                onFileAutocomplete={handleFileAutocomplete}
                 onCommandSelect={handleCommandSelect}
                 onCommandAutocomplete={handleCommandAutocomplete}
                 onAutocompleteActiveChange={setIsAutocompleteActive}
@@ -2051,6 +2091,8 @@ export function Input({
     handleBackspaceAtEmpty,
     onPasteError,
     currentCursorPosition,
+    handleFileSelect,
+    handleFileAutocomplete,
     handleCommandSelect,
     handleCommandAutocomplete,
     agentId,
