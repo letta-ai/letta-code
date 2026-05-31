@@ -60,8 +60,6 @@ describe("prepareMessageHistory", () => {
 
     const out = prepareMessageHistory(messages);
     expect(out.map((m) => m.id)).toEqual([
-      "u3",
-      "u4",
       "u5",
       "u6",
       "u7",
@@ -81,6 +79,7 @@ describe("prepareMessageHistory", () => {
     const base = 1_700_000_000_000;
     const messages: Message[] = [
       msg("tool_return_message", "tr1", base + 1),
+      msg("tool_return_message", "tr2", base + 2),
       msg("assistant_message", "a1", base + 2),
     ];
 

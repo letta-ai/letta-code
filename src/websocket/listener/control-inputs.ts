@@ -12,11 +12,6 @@ import type {
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
 import {
-  ensureFileIndex,
-  getIndexRoot,
-  setIndexRoot,
-} from "@/utils/file-index";
-import {
   rejectPendingApprovalResolvers,
   resolvePendingApprovalResolver,
 } from "./approval";
@@ -25,7 +20,6 @@ import {
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
 } from "./cwd";
-import { isGitWorktreeRoot } from "./file-commands";
 import { stashRecoveredApprovalInterrupts } from "./interrupts";
 import {
   getOrCreateConversationPermissionModeStateRef,
@@ -613,25 +607,6 @@ export async function handleCwdChange(
     // updated CWD/git info on the next turn.
     runtime.reminderState.hasSentSessionContext = false;
     runtime.reminderState.pendingSessionContextReason = "cwd_changed";
-
-    // If the new cwd is outside the current file-index root, or is a git
-    // worktree nested under it, re-root the index so file search covers
-    // the new workspace.  setIndexRoot() triggers a non-blocking rebuild
-    // and does NOT mutate process.cwd(), keeping concurrent conversations safe.
-    const currentRoot = getIndexRoot();
-    const needsReroot =
-      !normalizedPath.startsWith(currentRoot) ||
-      (normalizedPath !== currentRoot &&
-        (await isGitWorktreeRoot(normalizedPath)));
-    if (needsReroot) {
-      setIndexRoot(normalizedPath);
-    }
-
-    // Proactively warm the file index so @ file search is instant when
-    // the user first types "@".  ensureFileIndex() is idempotent — if the
-    // index was already built (or a rebuild is in-flight from setIndexRoot
-    // above), this returns immediately / joins the existing promise.
-    void ensureFileIndex();
 
     emitDeviceStatusUpdate(socket, runtime, {
       agent_id: agentId,

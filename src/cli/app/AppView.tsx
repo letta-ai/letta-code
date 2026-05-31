@@ -320,6 +320,7 @@ type AppViewProps = {
   statusLinePayload: StatusLinePayload;
   statusLinePrompt: string;
   extensionRuntime: LocalExtensionRuntime;
+  fileAutocompleteFdPath?: string | null;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
   thinkingMessage: string;
@@ -419,6 +420,7 @@ export function AppView(props: AppViewProps) {
     modelSelectorOptions,
     networkPhase,
     executionPhase,
+    fileAutocompleteFdPath,
     onSubmit,
     pendingApprovals,
     pendingConversationSwitchRef,
@@ -725,6 +727,7 @@ export function AppView(props: AppViewProps) {
                 isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
+                fileAutocompleteFdPath={fileAutocompleteFdPath}
                 messageQueue={queueDisplay}
                 onQueueEdit={handleQueueEdit}
                 onEscapeCancel={

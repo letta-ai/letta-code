@@ -11,6 +11,8 @@ import type {
   ConversationMessageCreateBody,
   ConversationMessageListBody,
   ConversationMessageStreamBody,
+  ConversationResumeTail,
+  ConversationResumeTailOptions,
   RunMessageStreamBody,
 } from "@/backend/backend";
 import {
@@ -302,6 +304,39 @@ export class HeadlessBackend implements Backend {
   ): ReturnType<Backend["retrieveMessage"]> {
     const [messageId] = args;
     return this.store.retrieveMessage(messageId) as never;
+  }
+
+  async getConversationResumeTail(
+    agentId: string,
+    conversationId: string,
+    options: ConversationResumeTailOptions,
+  ): Promise<ConversationResumeTail> {
+    const body = {
+      limit: options.limit,
+      order: "desc",
+      include_return_message_types: options.includeReturnMessageTypes,
+    } as ConversationMessageListBody;
+
+    if (conversationId && conversationId !== "default") {
+      const conversation = this.store.retrieveConversation(
+        conversationId,
+        agentId,
+      );
+      return {
+        conversation,
+        messages: this.store.listConversationMessages(conversation.id, {
+          ...body,
+          agent_id: agentId,
+        } as ConversationMessageListBody) as never,
+      };
+    }
+
+    return {
+      messages: this.store.listAgentMessages(agentId, {
+        ...body,
+        conversation_id: "default",
+      } as never) as never,
+    };
   }
 
   async listModels(): ReturnType<Backend["listModels"]> {
