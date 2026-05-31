@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   applyPiFileCompletion,
   type FileAutocompleteItem,
   FileAutocompleteProvider,
   type FileAutocompleteSuggestions,
-  resolveFdPath,
 } from "@/cli/helpers/file-autocomplete";
 import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
@@ -14,12 +13,11 @@ import { Text } from "./Text";
 interface FileAutocompleteProps {
   currentInput: string;
   cursorPosition: number;
+  fdPath?: string | null;
   workingDirectory?: string;
   onApplyCompletion: (value: string, cursorPosition: number) => void;
   onActiveChange?: (isActive: boolean) => void;
 }
-
-const fdPath = resolveFdPath();
 
 function isDirectoryItem(item: FileAutocompleteItem): boolean {
   return item.label.endsWith("/");
@@ -28,6 +26,7 @@ function isDirectoryItem(item: FileAutocompleteItem): boolean {
 export function FileAutocomplete({
   currentInput,
   cursorPosition,
+  fdPath,
   workingDirectory,
   onApplyCompletion,
   onActiveChange,
@@ -37,12 +36,6 @@ export function FileAutocomplete({
   const [isLoading, setIsLoading] = useState(false);
   const searchGenRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
-
-  const provider = useMemo(
-    () =>
-      new FileAutocompleteProvider(workingDirectory ?? process.cwd(), fdPath),
-    [workingDirectory],
-  );
   const matches = suggestions?.items ?? [];
 
   const applyItem = (item: FileAutocompleteItem) => {
@@ -65,6 +58,13 @@ export function FileAutocomplete({
   });
 
   useEffect(() => {
+    if (!currentInput.includes("@")) {
+      abortControllerRef.current?.abort();
+      setSuggestions(null);
+      setIsLoading(false);
+      return;
+    }
+
     abortControllerRef.current?.abort();
     const gen = ++searchGenRef.current;
     const controller = new AbortController();
@@ -72,27 +72,44 @@ export function FileAutocomplete({
     setIsLoading(true);
     onActiveChange?.(true);
 
-    provider
-      .getSuggestions(currentInput, cursorPosition, {
-        signal: controller.signal,
-      })
-      .then((nextSuggestions) => {
-        if (searchGenRef.current !== gen) return;
-        setSuggestions(nextSuggestions);
-        setIsLoading(false);
-        onActiveChange?.((nextSuggestions?.items.length ?? 0) > 0);
-      })
-      .catch(() => {
-        if (searchGenRef.current !== gen) return;
+    async function search() {
+      if (!fdPath) {
         setSuggestions(null);
         setIsLoading(false);
         onActiveChange?.(false);
-      });
+        return;
+      }
+
+      const provider = new FileAutocompleteProvider(
+        workingDirectory ?? process.cwd(),
+        fdPath,
+      );
+      const nextSuggestions = await provider.getSuggestions(
+        currentInput,
+        cursorPosition,
+        {
+          signal: controller.signal,
+        },
+      );
+
+      if (searchGenRef.current !== gen || controller.signal.aborted) return;
+
+      setSuggestions(nextSuggestions);
+      setIsLoading(false);
+      onActiveChange?.((nextSuggestions?.items.length ?? 0) > 0);
+    }
+
+    search().catch(() => {
+      if (searchGenRef.current !== gen) return;
+      setSuggestions(null);
+      setIsLoading(false);
+      onActiveChange?.(false);
+    });
 
     return () => {
       controller.abort();
     };
-  }, [currentInput, cursorPosition, onActiveChange, provider]);
+  }, [currentInput, cursorPosition, fdPath, onActiveChange, workingDirectory]);
 
   if (!currentInput.includes("@")) return null;
   if (matches.length === 0 && !isLoading) return null;
