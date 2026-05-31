@@ -330,6 +330,7 @@ export function App({
   agentProvenance = null,
   startupHasCloudCredentials = false,
   startupHasAvailableLocalModels = true,
+  fileAutocompleteFdPath = null,
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
@@ -4858,6 +4859,7 @@ export function App({
       modelSelectorOptions={modelSelectorOptions}
       networkPhase={networkPhase}
       executionPhase={executionPhase}
+      fileAutocompleteFdPath={fileAutocompleteFdPath}
       onSubmit={onSubmit}
       pendingApprovals={pendingApprovals}
       pendingConversationSwitchRef={pendingConversationSwitchRef}

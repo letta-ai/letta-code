@@ -1,7 +1,18 @@
 import { spawn, spawnSync } from "node:child_process";
-import { statSync } from "node:fs";
-import { homedir } from "node:os";
+import {
+  chmodSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { arch, homedir, platform } from "node:os";
 import { basename, join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 // Ported from Pi TUI packages/tui/src/autocomplete.ts.
 // Keep behavior aligned with Pi's fd-backed @ file autocomplete.
@@ -262,19 +273,293 @@ export interface AppliedFileCompletion {
   cursorPosition: number;
 }
 
-export function resolveFdPath(): string | null {
-  for (const binaryName of ["fd", "fdfind"]) {
-    try {
-      const result = spawnSync(binaryName, ["--version"], { stdio: "pipe" });
-      if (!result.error) {
-        return binaryName;
+const FD_TOOLS_DIR = join(homedir(), ".letta", "bin");
+const FD_BINARY_NAME = platform() === "win32" ? "fd.exe" : "fd";
+const FD_LOCAL_PATH = join(FD_TOOLS_DIR, FD_BINARY_NAME);
+const FD_DOWNLOAD_REPO = "sharkdp/fd";
+const FD_DOWNLOAD_TIMEOUT_MS = 120_000;
+const FD_NETWORK_TIMEOUT_MS = 10_000;
+
+let cachedFdPath: string | null | undefined;
+let pendingFdPath: Promise<string | null> | null = null;
+
+function commandExists(command: string): boolean {
+  try {
+    const result = spawnSync(command, ["--version"], { stdio: "pipe" });
+    return result.error === undefined || result.error === null;
+  } catch {
+    return false;
+  }
+}
+
+function getFdAssetName(version: string): string | null {
+  const plat = platform();
+  const architecture = arch();
+  const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
+
+  if (plat === "darwin") {
+    return `fd-v${version}-${archStr}-apple-darwin.tar.gz`;
+  }
+  if (plat === "linux") {
+    return `fd-v${version}-${archStr}-unknown-linux-gnu.tar.gz`;
+  }
+  if (plat === "win32") {
+    return `fd-v${version}-${archStr}-pc-windows-msvc.zip`;
+  }
+  return null;
+}
+
+async function getLatestFdVersion(): Promise<string> {
+  const response = await fetch(
+    `https://api.github.com/repos/${FD_DOWNLOAD_REPO}/releases/latest`,
+    {
+      headers: { "User-Agent": "letta-code" },
+      signal: AbortSignal.timeout(FD_NETWORK_TIMEOUT_MS),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`GitHub API error: ${response.status}`);
+  }
+
+  const data = (await response.json()) as { tag_name: string };
+  return data.tag_name.replace(/^v/, "");
+}
+
+async function downloadFile(url: string, destination: string): Promise<void> {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(FD_DOWNLOAD_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to download fd: ${response.status}`);
+  }
+  if (!response.body) {
+    throw new Error("Failed to download fd: empty response body");
+  }
+
+  await pipeline(
+    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+    createWriteStream(destination),
+  );
+}
+
+function formatSpawnFailure(result: ReturnType<typeof spawnSync>): string {
+  if (result.error?.message) {
+    return result.error.message;
+  }
+  const stderr = result.stderr?.toString().trim();
+  if (stderr) {
+    return stderr;
+  }
+  const stdout = result.stdout?.toString().trim();
+  if (stdout) {
+    return stdout;
+  }
+  return `exit status ${result.status ?? "unknown"}`;
+}
+
+function runExtractionCommand(command: string, args: string[]): string | null {
+  const result = spawnSync(command, args, { stdio: "pipe" });
+  if (!result.error && result.status === 0) {
+    return null;
+  }
+  return `${command}: ${formatSpawnFailure(result)}`;
+}
+
+function extractTarGzArchive(archivePath: string, extractDir: string): void {
+  const failure = runExtractionCommand("tar", [
+    "xzf",
+    archivePath,
+    "-C",
+    extractDir,
+  ]);
+  if (failure) {
+    throw new Error(`Failed to extract fd: ${failure}`);
+  }
+}
+
+function getWindowsTarCommand(): string {
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+  if (systemRoot) {
+    const systemTar = join(systemRoot, "System32", "tar.exe");
+    if (existsSync(systemTar)) {
+      return systemTar;
+    }
+  }
+  return "tar.exe";
+}
+
+function extractZipArchive(archivePath: string, extractDir: string): void {
+  const failures: string[] = [];
+
+  if (platform() === "win32") {
+    const tarFailure = runExtractionCommand(getWindowsTarCommand(), [
+      "xf",
+      archivePath,
+      "-C",
+      extractDir,
+    ]);
+    if (!tarFailure) return;
+    failures.push(tarFailure);
+
+    const script =
+      "& { param($archive, $destination) $ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force }";
+    const powershellFailure = runExtractionCommand("powershell.exe", [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      script,
+      archivePath,
+      extractDir,
+    ]);
+    if (!powershellFailure) return;
+    failures.push(powershellFailure);
+  } else {
+    const unzipFailure = runExtractionCommand("unzip", [
+      "-q",
+      archivePath,
+      "-d",
+      extractDir,
+    ]);
+    if (!unzipFailure) return;
+    failures.push(unzipFailure);
+
+    const tarFailure = runExtractionCommand("tar", [
+      "xf",
+      archivePath,
+      "-C",
+      extractDir,
+    ]);
+    if (!tarFailure) return;
+    failures.push(tarFailure);
+  }
+
+  throw new Error(`Failed to extract fd: ${failures.join("; ")}`);
+}
+
+function findBinaryRecursively(
+  rootDir: string,
+  binaryName: string,
+): string | null {
+  const stack: string[] = [rootDir];
+
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    if (!currentDir) continue;
+
+    for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = join(currentDir, entry.name);
+      if (entry.isFile() && entry.name === binaryName) {
+        return fullPath;
       }
-    } catch {
-      // Try the next binary name.
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      }
     }
   }
 
   return null;
+}
+
+async function downloadFd(): Promise<string> {
+  let version = await getLatestFdVersion();
+  if (platform() === "darwin" && arch() === "x64") {
+    version = "10.3.0";
+  }
+
+  const assetName = getFdAssetName(version);
+  if (!assetName) {
+    throw new Error(`Unsupported platform: ${platform()}/${arch()}`);
+  }
+
+  mkdirSync(FD_TOOLS_DIR, { recursive: true });
+  const archivePath = join(FD_TOOLS_DIR, assetName);
+  const extractDir = join(
+    FD_TOOLS_DIR,
+    `extract_tmp_fd_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+  );
+  mkdirSync(extractDir, { recursive: true });
+
+  try {
+    await downloadFile(
+      `https://github.com/${FD_DOWNLOAD_REPO}/releases/download/v${version}/${assetName}`,
+      archivePath,
+    );
+
+    if (assetName.endsWith(".tar.gz")) {
+      extractTarGzArchive(archivePath, extractDir);
+    } else if (assetName.endsWith(".zip")) {
+      extractZipArchive(archivePath, extractDir);
+    } else {
+      throw new Error(`Unsupported fd archive format: ${assetName}`);
+    }
+
+    const extractedBinary = findBinaryRecursively(extractDir, FD_BINARY_NAME);
+    if (!extractedBinary) {
+      throw new Error(`fd binary not found in archive: ${assetName}`);
+    }
+
+    renameSync(extractedBinary, FD_LOCAL_PATH);
+    if (platform() !== "win32") {
+      chmodSync(FD_LOCAL_PATH, 0o755);
+    }
+  } finally {
+    rmSync(archivePath, { force: true });
+    rmSync(extractDir, { recursive: true, force: true });
+  }
+
+  return FD_LOCAL_PATH;
+}
+
+export function resolveFdPath(): string | null {
+  if (cachedFdPath !== undefined) {
+    return cachedFdPath;
+  }
+
+  if (existsSync(FD_LOCAL_PATH)) {
+    cachedFdPath = FD_LOCAL_PATH;
+    return cachedFdPath;
+  }
+
+  for (const binaryName of ["fd", "fdfind"]) {
+    if (commandExists(binaryName)) {
+      cachedFdPath = binaryName;
+      return cachedFdPath;
+    }
+  }
+
+  cachedFdPath = null;
+  return null;
+}
+
+export async function ensureFdPath(): Promise<string | null> {
+  const existingPath = resolveFdPath();
+  if (existingPath) {
+    return existingPath;
+  }
+
+  if (pendingFdPath) {
+    return pendingFdPath;
+  }
+
+  pendingFdPath = downloadFd()
+    .then((downloadedPath) => {
+      cachedFdPath = downloadedPath;
+      return downloadedPath;
+    })
+    .catch(() => {
+      cachedFdPath = null;
+      return null;
+    })
+    .finally(() => {
+      pendingFdPath = null;
+    });
+
+  return pendingFdPath;
 }
 
 export function applyPiFileCompletion(

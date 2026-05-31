@@ -912,6 +912,7 @@ export function Input({
   isLocalBackend = false,
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
+  fileAutocompleteFdPath,
   messageQueue,
   onQueueEdit,
   onEscapeCancel,
@@ -964,6 +965,7 @@ export function Input({
   isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
+  fileAutocompleteFdPath?: string | null;
   messageQueue?: QueuedMessage[];
   onQueueEdit?: () => string;
   onEscapeCancel?: () => void;
@@ -1998,6 +2000,7 @@ export function Input({
               <InputAssist
                 currentInput={value}
                 cursorPosition={currentCursorPosition}
+                fdPath={fileAutocompleteFdPath}
                 onFileAutocompleteApply={handleFileAutocompleteApply}
                 onCommandSelect={handleCommandSelect}
                 onCommandAutocomplete={handleCommandAutocomplete}
@@ -2076,6 +2079,7 @@ export function Input({
     goalLoopActive,
     currentModel,
     currentReasoningEffort,
+    fileAutocompleteFdPath,
     currentModelProvider,
     hasTemporaryModelOverride,
     hideFooter,

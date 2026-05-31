@@ -59,6 +59,7 @@ import {
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
+import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
@@ -1563,6 +1564,9 @@ async function main(): Promise<void> {
     const startupCreatedAgentRef = useRef<AgentState | null>(null);
     const [startupHasCloudCredentials, setStartupHasCloudCredentials] =
       useState(Boolean(settings.refreshToken || apiKey));
+    const [fileAutocompleteFdPath, setFileAutocompleteFdPath] = useState<
+      string | null
+    >(() => resolveFdPath());
     const [startupHasAvailableLocalModels, setStartupHasAvailableLocalModels] =
       useState(true);
     // Cache agent object from Phase 1 validation to avoid redundant re-fetch in Phase 2
@@ -2618,6 +2622,9 @@ async function main(): Promise<void> {
           }
         }
 
+        const fdPath = await ensureFdPath();
+        setFileAutocompleteFdPath(fdPath);
+
         // Ensure secrets cache is populated (non-fatal).
         try {
           await secretsInitPromise;
@@ -2806,6 +2813,7 @@ async function main(): Promise<void> {
         releaseNotes,
         systemInfoReminderEnabled: !noSystemInfoReminderFlag,
         extensionsDisabled,
+        fileAutocompleteFdPath,
       });
     }
 
@@ -2830,6 +2838,7 @@ async function main(): Promise<void> {
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
       extensionsDisabled,
+      fileAutocompleteFdPath,
       onReload: handleReload,
     });
   }
