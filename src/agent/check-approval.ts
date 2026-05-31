@@ -248,6 +248,14 @@ function pendingApprovalsFromTail(
   return pendingApprovalsFromMessageVariants(latestVariants);
 }
 
+function tailStartsInsideSourceMessage(
+  messages: Message[],
+  sourceId: string,
+): boolean {
+  const firstMessage = messages[0];
+  return firstMessage ? messageMatchesSourceId(firstMessage, sourceId) : false;
+}
+
 /**
  * Prepare message history for backfill, trimming orphaned tool returns.
  * Messages should already be in chronological order (oldest first).
@@ -308,8 +316,8 @@ export function prepareMessageHistory(messages: Message[]): Message[] {
     messageHistory = messageHistory.slice(-BACKFILL_MAX_RENDERABLE_MESSAGES);
   }
 
-  // Skip if starts with orphaned tool_return (incomplete turn)
-  if (messageHistory[0]?.message_type === "tool_return_message") {
+  // Skip any leading orphaned tool returns (incomplete turn after tail clipping).
+  while (messageHistory[0]?.message_type === "tool_return_message") {
     messageHistory = messageHistory.slice(1);
   }
 
@@ -391,6 +399,7 @@ function collectResumeTailMessages(tailMessages: Message[]): Message[] {
 async function fetchResumeTail(
   agentId: string,
   conversationId: string,
+  limit = BACKFILL_PAGE_LIMIT,
 ): Promise<{
   conversation?: { in_context_message_ids?: string[] | null };
   messages: Message[];
@@ -399,7 +408,7 @@ async function fetchResumeTail(
     agentId,
     conversationId,
     {
-      limit: BACKFILL_PAGE_LIMIT,
+      limit,
       includeReturnMessageTypes: RESUME_BACKFILL_MESSAGE_TYPES,
     },
   );
@@ -414,6 +423,15 @@ async function pendingApprovalsFromTailOrRetrieve(
   lastInContextId?: string | null,
 ): Promise<ReturnType<typeof pendingApprovalsFromMessageVariants>> {
   const tailCheck = pendingApprovalsFromTail(messages, lastInContextId);
+  if (
+    lastInContextId &&
+    tailCheck.pendingApprovals.length > 0 &&
+    tailStartsInsideSourceMessage(messages, lastInContextId)
+  ) {
+    const retrievedMessages =
+      await getBackend().retrieveMessage(lastInContextId);
+    return pendingApprovalsFromMessageVariants(retrievedMessages);
+  }
   if (tailCheck.messageToCheck || !lastInContextId) return tailCheck;
 
   const retrievedMessages = await getBackend().retrieveMessage(lastInContextId);
@@ -497,7 +515,9 @@ export async function getResumeDataFromBackend(
 
     if (shouldFetchTail || !lastInContextId) {
       try {
-        messages = (await fetchResumeTail(agent.id, "default")).messages;
+        const tailLimit = shouldFetchTail ? BACKFILL_PAGE_LIMIT : 1;
+        messages = (await fetchResumeTail(agent.id, "default", tailLimit))
+          .messages;
         if (isDebugEnabled()) {
           debugLog(
             "check-approval",

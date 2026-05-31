@@ -265,6 +265,12 @@ describe("getResumeData", () => {
 
     expect(messagesRetrieve).toHaveBeenCalledTimes(0);
     expect(agentsList).toHaveBeenCalledTimes(1);
+    expect(agentsList).toHaveBeenCalledWith("agent-test", {
+      conversation_id: "default",
+      limit: 1,
+      order: "desc",
+      include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
+    });
     expect(resume.pendingApprovals).toHaveLength(1);
     expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
   });
@@ -304,7 +310,7 @@ describe("getResumeData", () => {
     expect(resume.messageHistory.length).toBeGreaterThan(0);
   });
 
-  test("uses resume tail for pending approval without retrieving last message", async () => {
+  test("uses resume tail for pending approval without retrieving last message when source variants are complete", async () => {
     const getConversationResumeTail = mock(async () => ({
       messages: [
         makeUserMessage("msg-user"),
@@ -329,6 +335,40 @@ describe("getResumeData", () => {
     expect(messagesRetrieve).toHaveBeenCalledTimes(0);
     expect(resume.pendingApprovals).toHaveLength(1);
     expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
+  });
+
+  test("verifies pending approval when bounded tail may contain partial source variants", async () => {
+    const getConversationResumeTail = mock(async () => ({
+      messages: [makeApprovalMessage("msg-live:tool:tool-1:request")],
+    }));
+    const messagesRetrieve = mock(async () => [
+      makeApprovalMessage("msg-live:tool:tool-1:request"),
+      datedMessage(
+        "msg-live:tool:tool-1:return",
+        "tool_return_message",
+        "2026-01-01T00:00:02.000Z",
+        {
+          tool_call_id: "tool-1",
+          status: "success",
+          tool_return: "ok",
+        },
+      ),
+    ]);
+
+    installBackend({
+      getConversationResumeTail,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({ in_context_message_ids: ["msg-live"] }),
+      "default",
+    );
+
+    expect(getConversationResumeTail).toHaveBeenCalledTimes(1);
+    expect(messagesRetrieve).toHaveBeenCalledWith("msg-live");
+    expect(messagesRetrieve).toHaveBeenCalledTimes(1);
+    expect(resume.pendingApprovals).toEqual([]);
   });
 
   test("explicit conversation backfill requests and preserves tool messages", async () => {
