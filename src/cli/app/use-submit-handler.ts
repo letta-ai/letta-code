@@ -2891,7 +2891,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     agentId,
                     conversationId: reflectionConversationId,
                   },
-                  onComplete: async ({ success, error }) => {
+                  onComplete: async ({ success, error, report }) => {
                     if (!success) {
                       appendTaskNotificationEvents([
                         `Reflection discovery failed: ${error ?? "selector failed"}`,
@@ -2902,8 +2902,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     try {
                       const selectedConversations =
                         await readReflectionDiscoverySelection({
-                          selectionOutputPath:
-                            discoveryPayload.selectionOutputPath,
+                          selectionReport: report,
                           catalog: discoveryPayload.catalog,
                         });
                       if (selectedConversations.length === 0) {

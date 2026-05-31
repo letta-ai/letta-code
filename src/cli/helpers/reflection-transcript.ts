@@ -162,7 +162,6 @@ export interface ReflectionDiscoveryCatalog {
   current_conversation_id?: string;
   created_at: string;
   max_selected: number;
-  selection_output_path: string;
   instructions: string;
   candidates: ReflectionDiscoveryCandidate[];
 }
@@ -173,7 +172,6 @@ export interface ReflectionDiscoverySelection {
 
 export interface ReflectionDiscoveryPayload {
   catalogPath: string;
-  selectionOutputPath: string;
   catalog: ReflectionDiscoveryCatalog;
 }
 
@@ -215,7 +213,7 @@ export function buildReflectionSelectorPrompt(): string {
     "Avoid one-off debugging, transient task status, duplicated/redundant candidates, and conversations already fully reflected unless they are useful for deduplication or contradiction resolution.",
     "Treat summaries/descriptions as weak internal metadata, not confirmed facts. The final reflection pass will verify against the actual transcript before writing memory.",
     "",
-    "Write strict JSON to the catalog's `selection_output_path` with this shape:",
+    "Return strict JSON as your final response with this shape:",
     '{"selected_conversations":[{"conversation_id":"conv-...","reason":"durable reason for selecting this transcript","priority":"high"}]}',
     'Use priority values `high`, `medium`, or `low`. If nothing looks memory-worthy, write `{"selected_conversations":[]}`.',
   ].join("\n");
@@ -951,7 +949,7 @@ async function writeState(
 
 function buildPayloadPath(
   rootDir: string,
-  kind: "auto" | "discover" | "multi" | "remember" | "selected" | "slice",
+  kind: "auto" | "discover" | "multi" | "remember" | "slice",
 ): string {
   const nonce = Math.random().toString(36).slice(2, 8);
   return join(rootDir, `payload-${kind}-${nonce}.json`);
@@ -1434,7 +1432,6 @@ export async function buildReflectionDiscoveryPayload(options: {
   }
 
   const payloadRoot = await ensureAgentPayloadRoot(agentId);
-  const selectionOutputPath = buildPayloadPath(payloadRoot, "selected");
   const catalog: ReflectionDiscoveryCatalog = {
     schema_version: 1,
     type: "reflection_discovery_catalog",
@@ -1442,7 +1439,6 @@ export async function buildReflectionDiscoveryPayload(options: {
     current_conversation_id: currentConversationId,
     created_at: new Date().toISOString(),
     max_selected: maxSelected,
-    selection_output_path: selectionOutputPath,
     instructions:
       "Choose conversations likely to contain durable memory updates. Prefer explicit corrections, repeated preferences, project conventions, and contradictions; avoid one-off debugging and transient task state.",
     candidates: sortedCandidates,
@@ -1454,7 +1450,7 @@ export async function buildReflectionDiscoveryPayload(options: {
     "utf-8",
   );
 
-  return { catalogPath, selectionOutputPath, catalog };
+  return { catalogPath, catalog };
 }
 
 function isReflectionDiscoveryPriority(
@@ -1464,13 +1460,18 @@ function isReflectionDiscoveryPriority(
 }
 
 export async function readReflectionDiscoverySelection(options: {
-  selectionOutputPath: string;
+  selectionOutputPath?: string;
+  selectionReport?: string;
   catalog: ReflectionDiscoveryCatalog;
 }): Promise<ReflectionDiscoverySelectedConversation[]> {
-  const raw = await readFile(options.selectionOutputPath, "utf-8");
-  const parsed = safeJsonParseOr<unknown>(raw, null);
+  const raw =
+    options.selectionReport ??
+    (options.selectionOutputPath
+      ? await readFile(options.selectionOutputPath, "utf-8")
+      : "");
+  const parsed = parseReflectionDiscoverySelectionJson(raw);
   if (!parsed || typeof parsed !== "object") {
-    throw new Error("Reflection selector did not write valid JSON.");
+    throw new Error("Reflection selector did not return valid JSON.");
   }
   const selected = (parsed as { selected_conversations?: unknown })
     .selected_conversations;
@@ -1516,6 +1517,28 @@ export async function readReflectionDiscoverySelection(options: {
   }
 
   return validated;
+}
+
+function parseReflectionDiscoverySelectionJson(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const direct = safeJsonParseOr<unknown>(trimmed, null);
+  if (direct) return direct;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  if (fenced) {
+    const parsed = safeJsonParseOr<unknown>(fenced, null);
+    if (parsed) return parsed;
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return safeJsonParseOr<unknown>(trimmed.slice(start, end + 1), null);
+  }
+
+  return null;
 }
 
 export async function listReflectionTranscriptCandidates(
