@@ -53,7 +53,8 @@ interface PinnedAgentData {
   agentId: string;
   agent: AgentState | null;
   error: string | null;
-  isLocal: boolean;
+  backendMode: AgentBackendMode;
+  isLocalPin: boolean;
 }
 
 const ALL_TABS: { id: TabId; label: string }[] = [
@@ -80,6 +81,10 @@ const TAB_EMPTY_STATES: Record<TabId, string> = {
 const DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
 const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
+
+export function getPinnedAgentBackendMode(agentId: string): AgentBackendMode {
+  return isLocalAgentId(agentId) ? "local" : "api";
+}
 
 /**
  * Check if the user has cloud credentials (API key or refresh token).
@@ -260,30 +265,31 @@ export function AgentSelector({
 
       if (mergedPinned.length > 0) {
         pinnedData = await Promise.all(
-          mergedPinned.map(async ({ agentId, isLocal }) => {
+          mergedPinned.map(async ({ agentId, isLocal: isLocalPin }) => {
+            const backendMode = getPinnedAgentBackendMode(agentId);
             try {
               // Use the correct backend for this agent's mode
-              if (!isLocal && !hasCloudCredentials()) {
+              if (backendMode === "api" && !hasCloudCredentials()) {
                 return {
                   agentId,
                   agent: null,
                   error: "Not signed in",
-                  isLocal,
+                  backendMode,
+                  isLocalPin,
                 };
               }
-              const agentBackend = isLocal
-                ? getBackendForMode("local")
-                : getBackendForMode("api");
+              const agentBackend = getBackendForMode(backendMode);
               const agent = await agentBackend.retrieveAgent(agentId, {
                 include: ["agent.blocks"],
               });
-              return { agentId, agent, error: null, isLocal };
+              return { agentId, agent, error: null, backendMode, isLocalPin };
             } catch {
               return {
                 agentId,
                 agent: null,
                 error: "Agent not found",
-                isLocal,
+                backendMode,
+                isLocalPin,
               };
             }
           }),
@@ -652,8 +658,7 @@ export function AgentSelector({
       if (activeTab === "pinned") {
         const selected = pinnedPageAgents[pinnedSelectedIndex];
         if (selected?.agent) {
-          const mode: AgentBackendMode = selected.isLocal ? "local" : "api";
-          onSelect(selected.agentId, mode);
+          onSelect(selected.agentId, selected.backendMode);
         }
       } else if (activeTab === "local") {
         const selected = localPageAgents[localSelectedIndex];
@@ -733,7 +738,7 @@ export function AgentSelector({
       // Unpin from current scope (pinned tab only)
       const selected = pinnedPageAgents[pinnedSelectedIndex];
       if (selected) {
-        if (selected.isLocal) {
+        if (selected.isLocalPin) {
           settingsManager.unpinLocal(selected.agentId);
         } else {
           settingsManager.unpinGlobal(selected.agentId);
@@ -751,7 +756,7 @@ export function AgentSelector({
         if (selected?.agent) {
           selectedAgent = selected.agent;
           selectedAgentId = selected.agentId;
-          selectedIsLocal = selected.isLocal;
+          selectedIsLocal = selected.backendMode === "local";
         }
       } else if (activeTab === "local") {
         selectedAgent = localPageAgents[localSelectedIndex] ?? null;
@@ -787,7 +792,7 @@ export function AgentSelector({
     agent: AgentState,
     _index: number,
     isSelected: boolean,
-    extra?: { isLocal?: boolean; backend?: "local" | "constellation" },
+    extra?: { isLocalPin?: boolean; backend?: "local" | "constellation" },
   ) => {
     const isCurrent = agent.id === currentAgentId;
     const isLocalAgent = isLocalAgentId(agent.id);
@@ -828,8 +833,8 @@ export function AgentSelector({
           </Text>
           <Text dimColor>
             {" · "}
-            {extra?.isLocal !== undefined
-              ? `${extra.isLocal ? "project" : "global"} · `
+            {extra?.isLocalPin !== undefined
+              ? `${extra.isLocalPin ? "project" : "global"} · `
               : backendLabel}
             {displayId}
           </Text>
@@ -857,7 +862,7 @@ export function AgentSelector({
   ) => {
     if (data.agent) {
       return renderAgentItem(data.agent, index, isSelected, {
-        isLocal: data.isLocal,
+        isLocalPin: data.isLocalPin,
       });
     }
 
@@ -877,7 +882,7 @@ export function AgentSelector({
           >
             {data.agentId.slice(0, 12)}
           </Text>
-          <Text dimColor> · {data.isLocal ? "project" : "global"}</Text>
+          <Text dimColor> · {data.isLocalPin ? "project" : "global"}</Text>
         </Box>
         <Box flexDirection="row" marginLeft={2}>
           <Text color="red" italic>
@@ -1012,7 +1017,7 @@ export function AgentSelector({
           : undefined
       }
     >
-      <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
+      <Box flexDirection="column" paddingLeft={1}>
         <TabBar
           tabs={visibleTabs.map((t) => t.id)}
           activeTab={activeTab}
@@ -1021,7 +1026,7 @@ export function AgentSelector({
           }
         />
         <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
-        <Box height={2} />
+        <Box height={1} />
       </Box>
 
       {/* Search input - list tabs only */}
@@ -1122,7 +1127,6 @@ export function AgentSelector({
       {/* New tab content */}
       {activeTab === "new" && (
         <Box flexDirection="column">
-          <Box height={1} />
           <Box paddingLeft={2}>
             <Text>
               Enter a name for your new agent, or press Enter for default.
