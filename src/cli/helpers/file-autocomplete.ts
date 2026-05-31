@@ -3,7 +3,7 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
-// Ported from local Pi TUI: /Users/loaner/dev/pi-mono/packages/tui/src/autocomplete.ts.
+// Ported from Pi TUI packages/tui/src/autocomplete.ts.
 // Keep behavior aligned with Pi's fd-backed @ file autocomplete.
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
 
