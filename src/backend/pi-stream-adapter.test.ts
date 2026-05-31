@@ -12,6 +12,7 @@ import type {
 import {
   PiStreamAdapter,
   type PiStreamFunction,
+  toPiTools,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
   ProviderStreamEvent,
@@ -92,6 +93,52 @@ function emptyTextBlocks(messages: Context["messages"]) {
 }
 
 describe("PiStreamAdapter", () => {
+  test("preserves custom-type tool metadata when building pi context", async () => {
+    const fallbackParameters = {
+      type: "object",
+      properties: { input: { type: "string" } },
+      required: ["input"],
+      additionalProperties: false,
+    };
+
+    const tools = toPiTools([
+      {
+        type: "custom",
+        name: "apply_patch",
+        description: "Use apply_patch as a freeform tool",
+        format: {
+          type: "grammar",
+          syntax: "lark",
+          definition: "start: begin_patch",
+        },
+        fallback: {
+          description: "Use apply_patch as a function tool",
+          parameters: fallbackParameters,
+        },
+      },
+    ]);
+
+    expect(tools as unknown).toEqual([
+      {
+        type: "custom",
+        name: "apply_patch",
+        description: "Use apply_patch as a freeform tool",
+        format: {
+          type: "grammar",
+          syntax: "lark",
+          definition: "start: begin_patch",
+        },
+        fallback: {
+          description: "Use apply_patch as a function tool",
+          parameters: fallbackParameters,
+        },
+      },
+    ]);
+    expect(
+      (tools?.[0] as Record<string, unknown> | undefined)?.parameters,
+    ).toBe(undefined);
+  });
+
   test("removes OpenAI Responses replay item IDs before provider submission", async () => {
     let sanitizedPayload: unknown;
     const stream: PiStreamFunction = (

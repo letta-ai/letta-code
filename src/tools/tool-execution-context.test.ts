@@ -41,6 +41,7 @@ import {
   clearExternalTools,
   clearTools,
   executeTool,
+  getClientToolsForExecutionContext,
   getExecutionContextById,
   getToolNames,
   getToolSchema,
@@ -262,6 +263,70 @@ describe("tool execution context snapshot", () => {
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Agent"]);
   });
 
+  test("serializes apply_patch as custom-type without changing function-only payloads", async () => {
+    const prepared = await prepareToolExecutionContextForSpecificTools([
+      "apply_patch",
+    ]);
+
+    expect(prepared.clientTools).toEqual([
+      expect.objectContaining({
+        name: "apply_patch",
+        description: expect.stringContaining("Use the `apply_patch` tool"),
+        parameters: expect.objectContaining({
+          properties: expect.objectContaining({ input: expect.any(Object) }),
+        }),
+      }),
+    ]);
+    expect(prepared.clientTools[0]).not.toHaveProperty("type", "custom");
+
+    const customTypeTools = getClientToolsForExecutionContext(
+      prepared.contextId,
+      "custom-type",
+    );
+    expect(customTypeTools).toEqual([
+      expect.objectContaining({
+        type: "custom",
+        name: "apply_patch",
+        description: expect.stringContaining("FREEFORM"),
+        format: expect.objectContaining({
+          type: "grammar",
+          syntax: "lark",
+          definition: expect.stringContaining("start: begin_patch"),
+        }),
+        fallback: expect.objectContaining({
+          description: expect.stringContaining("Use the `apply_patch` tool"),
+          parameters: expect.objectContaining({
+            properties: expect.objectContaining({ input: expect.any(Object) }),
+          }),
+        }),
+      }),
+    ]);
+    expect(customTypeTools?.[0]).not.toHaveProperty("parameters");
+  });
+
+  test("serializes Pascal ApplyPatch custom description with matching tool name", async () => {
+    const prepared = await prepareToolExecutionContextForSpecificTools([
+      "ApplyPatch",
+    ]);
+
+    const customTypeTools = getClientToolsForExecutionContext(
+      prepared.contextId,
+      "custom-type",
+    );
+    expect(customTypeTools).toEqual([
+      expect.objectContaining({
+        type: "custom",
+        name: "ApplyPatch",
+        description: expect.stringContaining("`ApplyPatch`"),
+        format: expect.objectContaining({
+          type: "grammar",
+          syntax: "lark",
+        }),
+      }),
+    ]);
+    expect(customTypeTools?.[0]?.description).not.toContain("`apply_patch`");
+  });
+
   test("request-scoped allowlist filters external tools by name", async () => {
     registerExternalTools([
       {
@@ -477,7 +542,7 @@ describe("tool execution context snapshot", () => {
       throw new Error("MessageChannel tool was not prepared");
     }
 
-    if (!messageChannel.parameters) {
+    if (!("parameters" in messageChannel) || !messageChannel.parameters) {
       throw new Error("MessageChannel tool is missing parameters");
     }
 
@@ -603,11 +668,14 @@ describe("tool execution context snapshot", () => {
     );
     expect(messageChannel?.description).not.toContain("Telegram");
     expect(
-      (
-        messageChannel?.parameters?.properties as Record<
-          string,
-          { enum?: string[] }
-        >
+      (messageChannel &&
+      "parameters" in messageChannel &&
+      messageChannel.parameters
+        ? (messageChannel.parameters.properties as Record<
+            string,
+            { enum?: string[] }
+          >)
+        : {}
       ).channel?.enum,
     ).toEqual(["slack"]);
   });

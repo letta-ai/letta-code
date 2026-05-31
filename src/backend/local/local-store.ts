@@ -1992,7 +1992,12 @@ export class LocalStore {
   private appendAssistantToolCall(
     conversationId: string,
     agentId: string,
-    toolCall: { toolCallId: string; toolName: string; input: unknown },
+    toolCall: {
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      customInput?: string;
+    },
     storedChunk: StoredMessage,
   ): void {
     const message = this.assistantLocalMessageForAppend(
@@ -2004,9 +2009,15 @@ export class LocalStore {
       type: "toolCall",
       id: toolCall.toolCallId,
       name: toolCall.toolName,
-      arguments: isRecord(toolCall.input)
-        ? toolCall.input
-        : { input: toolCall.input },
+      arguments:
+        toolCall.customInput !== undefined
+          ? { input: toolCall.customInput }
+          : isRecord(toolCall.input)
+            ? toolCall.input
+            : { input: toolCall.input },
+      ...(toolCall.customInput !== undefined
+        ? { kind: "custom" as const, input: toolCall.customInput }
+        : {}),
     };
     const existing = this.findToolCall(
       conversationId,
@@ -2265,9 +2276,14 @@ export class LocalStore {
     );
   }
 
-  private toolCallFromChunk(
-    chunk: LettaStreamingResponse,
-  ): { toolCallId: string; toolName: string; input: unknown } | undefined {
+  private toolCallFromChunk(chunk: LettaStreamingResponse):
+    | {
+        toolCallId: string;
+        toolName: string;
+        input: unknown;
+        customInput?: string;
+      }
+    | undefined {
     const chunkWithTools = chunk as unknown as {
       tool_call?: unknown;
       tool_calls?: unknown;
@@ -2284,10 +2300,13 @@ export class LocalStore {
     if (typeof toolCallId !== "string" || typeof toolName !== "string") {
       return undefined;
     }
+    const customInput =
+      typeof toolCall.input === "string" ? toolCall.input : undefined;
     return {
       toolCallId,
       toolName,
       input: parseToolInput(toolCall.arguments),
+      ...(customInput !== undefined ? { customInput } : {}),
     };
   }
 

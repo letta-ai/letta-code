@@ -43,6 +43,7 @@ import WriteDescription from "./descriptions/Write.md";
 import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteStdinDescription from "./descriptions/WriteStdin.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
+import ApplyPatchLarkGrammar from "./grammars/apply-patch.lark.txt";
 import { apply_patch } from "./impl/apply-patch";
 import { ask_user_question } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
@@ -86,7 +87,7 @@ import { view_image } from "./impl/view-image";
 import { write } from "./impl/write";
 import { write_file_gemini } from "./impl/write-file-gemini";
 import { write_todos } from "./impl/write-todos-gemini";
-
+import { customToolForm, functionToolForm } from "./model-facing-tool";
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
@@ -143,6 +144,36 @@ function execCommandDescription(): string {
     ? `${baseDescription}\n\n${WINDOWS_UNIFIED_EXEC_GUIDANCE}`
     : baseDescription;
 }
+
+const APPLY_PATCH_FREEFORM_DESCRIPTION =
+  "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.";
+const APPLY_PATCH_PASCAL_FREEFORM_DESCRIPTION =
+  "Use the `ApplyPatch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.";
+
+const applyPatchFunctionForm = functionToolForm({
+  description: ApplyPatchDescription.trim(),
+  parameters: ApplyPatchSchema,
+});
+
+const applyPatchModelForm = customToolForm({
+  description: APPLY_PATCH_FREEFORM_DESCRIPTION,
+  format: {
+    type: "grammar",
+    syntax: "lark",
+    definition: ApplyPatchLarkGrammar,
+  },
+  functionFallback: applyPatchFunctionForm,
+});
+
+const applyPatchPascalModelForm = customToolForm({
+  description: APPLY_PATCH_PASCAL_FREEFORM_DESCRIPTION,
+  format: {
+    type: "grammar",
+    syntax: "lark",
+    definition: ApplyPatchLarkGrammar,
+  },
+  functionFallback: applyPatchFunctionForm,
+});
 
 const toolDefinitions = {
   AskUserQuestion: defineTool({
@@ -299,6 +330,7 @@ const toolDefinitions = {
   apply_patch: defineTool({
     schema: ApplyPatchSchema,
     description: ApplyPatchDescription.trim(),
+    modelForm: applyPatchModelForm,
     impl: apply_patch,
   }),
   update_plan: defineTool({
@@ -396,6 +428,7 @@ const toolDefinitions = {
   ApplyPatch: defineTool({
     schema: ApplyPatchSchema,
     description: ApplyPatchDescription.trim(),
+    modelForm: applyPatchPascalModelForm,
     impl: apply_patch,
   }),
   UpdatePlan: defineTool({

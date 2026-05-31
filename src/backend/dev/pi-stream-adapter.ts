@@ -2,6 +2,7 @@ import {
   type AssistantMessage,
   type AssistantMessageEvent,
   type Context,
+  type CustomToolInputFormat,
   isContextOverflow,
   type Message,
   type Model,
@@ -9,7 +10,7 @@ import {
   stream,
   streamSimple,
   type ThinkingLevel,
-  type Tool,
+  type ToolDefinition,
   type TSchema,
   Type,
   type Usage,
@@ -20,7 +21,6 @@ import {
   type LocalAssistantMessage,
   type LocalMessage,
 } from "@/backend/local/local-message";
-import type { ClientTool } from "@/tools/manager";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
@@ -139,22 +139,75 @@ async function sleepWithAbort(
   });
 }
 
-function isClientTool(value: unknown): value is ClientTool {
-  return isRecord(value) && typeof value.name === "string";
+function stringField(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
-function toPiTools(clientTools: unknown[]): Tool[] | undefined {
-  const tools: Tool[] = [];
+function jsonSchemaField(value: unknown): TSchema | undefined {
+  return isRecord(value) ? (value as unknown as TSchema) : undefined;
+}
+
+function customToolInputFormat(
+  value: unknown,
+): CustomToolInputFormat | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.type === "text") return { type: "text" };
+  if (
+    value.type === "grammar" &&
+    (value.syntax === "lark" || value.syntax === "regex") &&
+    typeof value.definition === "string"
+  ) {
+    return {
+      type: "grammar",
+      syntax: value.syntax,
+      definition: value.definition,
+    };
+  }
+  return undefined;
+}
+
+function toPiTool(value: unknown): ToolDefinition | undefined {
+  if (!isRecord(value)) return undefined;
+  const name = stringField(value.name);
+  if (!name) return undefined;
+
+  const description = stringField(value.description) ?? "";
+  if (value.type === "custom") {
+    const fallback = isRecord(value.fallback) ? value.fallback : undefined;
+    const fallbackParameters = jsonSchemaField(fallback?.parameters);
+    const format = customToolInputFormat(value.format);
+    return {
+      type: "custom",
+      name,
+      description,
+      ...(format ? { format } : {}),
+      ...(fallback && fallbackParameters
+        ? {
+            fallback: {
+              ...(typeof fallback.description === "string"
+                ? { description: fallback.description }
+                : {}),
+              parameters: fallbackParameters,
+            },
+          }
+        : {}),
+    };
+  }
+
+  return {
+    name,
+    description,
+    parameters: jsonSchemaField(value.parameters) ?? Type.Object({}),
+  };
+}
+
+export function toPiTools(
+  clientTools: unknown[],
+): ToolDefinition[] | undefined {
+  const tools: ToolDefinition[] = [];
   for (const value of clientTools) {
-    if (!isClientTool(value)) continue;
-    const schema = isRecord(value.parameters)
-      ? (value.parameters as unknown as TSchema)
-      : Type.Object({});
-    tools.push({
-      name: value.name,
-      description: value.description ?? "",
-      parameters: schema,
-    });
+    const tool = toPiTool(value);
+    if (tool) tools.push(tool);
   }
   return tools.length > 0 ? tools : undefined;
 }

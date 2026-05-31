@@ -117,6 +117,53 @@ describe("ProviderTurnExecutor", () => {
     ).toBe("requires_approval");
   });
 
+  test("maps custom tool calls to executable fallback args while preserving raw input", async () => {
+    const patch = "*** Begin Patch\n*** Add File: note.txt\n+hi\n*** End Patch";
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        const message = assistantMessage();
+        yield providerStreamPart(
+          part({
+            type: "toolcall_end",
+            contentIndex: 0,
+            toolCall: {
+              type: "toolCall",
+              id: "call-patch",
+              name: "apply_patch",
+              input: patch,
+              arguments: { input: patch },
+            },
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({ type: "done", reason: "toolUse", message }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    const approval = chunks.find(
+      (chunk) => chunk.message_type === "approval_request_message",
+    ) as
+      | {
+          tool_call?: {
+            type?: string;
+            input?: string;
+            arguments?: string;
+          };
+        }
+      | undefined;
+
+    expect(approval?.tool_call).toMatchObject({
+      type: "custom",
+      input: patch,
+      arguments: JSON.stringify({ input: patch }),
+    });
+  });
+
   test("uses pi contentIndex to keep interleaved live blocks separate", async () => {
     const adapter: ProviderStreamAdapter = {
       async *stream() {

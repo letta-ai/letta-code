@@ -6,6 +6,7 @@ import type {
 import type {
   LocalAssistantMessage,
   LocalMessage,
+  LocalToolCall,
   LocalToolResultMessage,
   LocalUserMessage,
 } from "./local-message";
@@ -15,7 +16,7 @@ type AssistantContent = LocalAssistantMessage["content"][number];
 
 export function isLocalToolCallContent(
   content: AssistantContent,
-): content is ToolCall {
+): content is LocalToolCall {
   return content.type === "toolCall" && typeof content.id === "string";
 }
 
@@ -27,6 +28,15 @@ function isThinkingContent(
   content: AssistantContent,
 ): content is ThinkingContent {
   return content.type === "thinking" && typeof content.thinking === "string";
+}
+
+function customToolCallInput(content: ToolCall): string | undefined {
+  const customContent = content as { input?: unknown; customInput?: unknown };
+  if (typeof customContent.input === "string") return customContent.input;
+  if (typeof customContent.customInput === "string") {
+    return customContent.customInput;
+  }
+  return undefined;
 }
 
 function localMessageAgentId(
@@ -132,6 +142,11 @@ function projectToolCallContent(
   agentId: string,
   conversationId: string,
 ): StoredMessage {
+  const customInput = customToolCallInput(content);
+  const argumentsPayload =
+    customInput !== undefined
+      ? { input: customInput }
+      : (content.arguments ?? {});
   return {
     id: `${message.id}:tool:${content.id}:request`,
     date,
@@ -141,7 +156,10 @@ function projectToolCallContent(
     tool_call: {
       tool_call_id: content.id,
       name: content.name,
-      arguments: JSON.stringify(content.arguments ?? {}),
+      arguments: JSON.stringify(argumentsPayload),
+      ...(customInput !== undefined
+        ? { type: "custom", input: customInput }
+        : {}),
     },
   } as StoredMessage;
 }

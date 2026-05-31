@@ -188,6 +188,7 @@ export class HeadlessBackend implements Backend {
     byokProviderRefresh: false,
     localModelCatalog: true,
     localMemfs: false,
+    customTypeToolPayloads: false,
   };
 
   protected readonly store: LocalStore;

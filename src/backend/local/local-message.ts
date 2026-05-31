@@ -48,7 +48,11 @@ export interface LocalMessageBase {
 export type LocalTextContent = TextContent;
 export type LocalThinkingContent = ThinkingContent;
 export type LocalImageContent = ImageContent;
-export type LocalToolCall = ToolCall;
+export type LocalToolCall = ToolCall & {
+  input?: string;
+  customInput?: string;
+  kind?: "function" | "custom";
+};
 
 export interface LocalUserMessage
   extends Omit<UserMessage, "timestamp">,

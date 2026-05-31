@@ -1180,6 +1180,128 @@ describe("local backend pi transcript", () => {
     ]);
   });
 
+  test("persists custom tool input while executing through fallback arguments", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-custom-tool-"),
+    );
+    const patch = "*** Begin Patch\n*** Add File: note.txt\n+hi\n*** End Patch";
+    const contexts: Context[] = [];
+    const stream: PiStreamFunction = (
+      _model: Model<string>,
+      context: Context,
+      _options?: SimpleStreamOptions,
+    ) => {
+      contexts.push(context);
+      if (contexts.length === 1) {
+        const toolCall = {
+          type: "toolCall",
+          id: "call-patch",
+          name: "apply_patch",
+          kind: "custom",
+          input: patch,
+          arguments: { input: patch },
+        } as AssistantMessage["content"][number];
+        const finalMessage = assistantMessage({
+          responseId: "response-custom-tool",
+          stopReason: "toolUse",
+          content: [toolCall],
+        });
+        return streamFromEvents(
+          [
+            {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall: toolCall as Extract<
+                AssistantMessage["content"][number],
+                { type: "toolCall" }
+              >,
+              partial: finalMessage,
+            },
+            { type: "done", reason: "toolUse", message: finalMessage },
+          ],
+          finalMessage,
+        );
+      }
+
+      const finalMessage = assistantMessage({
+        responseId: "response-after-custom-tool",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Patch result received." }],
+      });
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const backend = new LocalBackend({
+      storageDir,
+      stream,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "apply this patch" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const page = await backend.listConversationMessages(conversation.id, {
+      agent_id: agent.id,
+      order: "asc",
+    } as never);
+    const approval = page
+      .getPaginatedItems()
+      .find((message) => message.message_type === "approval_request_message") as
+      | { tool_call?: { type?: string; input?: string; arguments?: string } }
+      | undefined;
+    expect(approval?.tool_call).toMatchObject({
+      type: "custom",
+      input: patch,
+      arguments: JSON.stringify({ input: patch }),
+    });
+
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [
+          {
+            type: "approval",
+            approvals: [
+              {
+                type: "tool",
+                tool_call_id: "call-patch",
+                status: "success",
+                tool_return: "patch applied",
+              },
+            ],
+          },
+        ],
+      } as never),
+    );
+
+    const secondContextMessages = contexts[1]?.messages ?? [];
+    expect(secondContextMessages).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: [
+          expect.objectContaining({
+            type: "toolCall",
+            id: "call-patch",
+            name: "apply_patch",
+            input: patch,
+            arguments: { input: patch },
+          }),
+        ],
+      }),
+    );
+  });
+
   test("refuses to load unversioned non-empty transcripts with exact migration command", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-legacy-"),
