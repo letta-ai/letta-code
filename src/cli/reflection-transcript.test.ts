@@ -13,6 +13,7 @@ import {
   buildAutoReflectionPayload,
   buildMultiReflectionPayload,
   buildParentMemorySnapshot,
+  buildReflectionSelectorPrompt,
   buildReflectionSubagentPrompt,
   filterSystemPromptForReflection,
   finalizeAutoReflectionPayload,
@@ -21,6 +22,7 @@ import {
   getReflectionTranscriptState,
   listReflectionTranscriptCandidates,
   REFLECTION_STATE_SCHEMA_VERSION,
+  readReflectionDiscoverySelection,
 } from "@/cli/helpers/reflection-transcript";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
@@ -1013,5 +1015,72 @@ describe("reflectionTranscript helper", () => {
     expect(filtered).not.toContain("pinned into your prompt");
     expect(filtered).not.toContain("Syncing");
     expect(filtered).not.toContain("git push");
+  });
+
+  test("reflection selector prompt describes discovery-only mode", () => {
+    const prompt = buildReflectionSelectorPrompt();
+    expect(prompt).toContain("reflection_discovery_catalog");
+    expect(prompt).toContain("Do not edit memory files");
+    expect(prompt).toContain("selection_output_path");
+  });
+
+  test("readReflectionDiscoverySelection validates and caps selector output", async () => {
+    const selectionOutputPath = join(testRoot, "selected.json");
+    await writeFile(
+      selectionOutputPath,
+      JSON.stringify({
+        selected_conversations: [
+          { conversation_id: "conv-a", reason: "correction", priority: "high" },
+          { conversation_id: "conv-a", reason: "duplicate", priority: "low" },
+          {
+            conversation_id: "conv-b",
+            reason: "repo gotcha",
+            priority: "medium",
+          },
+        ],
+      }),
+      "utf-8",
+    );
+
+    const selected = await readReflectionDiscoverySelection({
+      selectionOutputPath,
+      catalog: {
+        schema_version: 1,
+        type: "reflection_discovery_catalog",
+        agent_id: agentId,
+        created_at: new Date().toISOString(),
+        max_selected: 1,
+        selection_output_path: selectionOutputPath,
+        instructions: "select",
+        candidates: [
+          {
+            conversation_id: "conv-a",
+            total_completed_turns: 3,
+            reflected_completed_turns: 0,
+            turns_since_last_successful_reflection: 3,
+            has_unreflected_content: true,
+            is_current_conversation: false,
+            sources: ["unreflected"],
+            search_scores: [],
+            heuristic_score: 10,
+          },
+          {
+            conversation_id: "conv-b",
+            total_completed_turns: 3,
+            reflected_completed_turns: 3,
+            turns_since_last_successful_reflection: 0,
+            has_unreflected_content: false,
+            is_current_conversation: false,
+            sources: ["search:coding-style"],
+            search_scores: [],
+            heuristic_score: 8,
+          },
+        ],
+      },
+    });
+
+    expect(selected).toEqual([
+      { conversation_id: "conv-a", reason: "correction", priority: "high" },
+    ]);
   });
 });
