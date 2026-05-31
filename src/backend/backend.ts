@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { getClient } from "./api/client";
 import type {
   ForkConversationOptions,
@@ -107,6 +108,16 @@ export type MessageRetrieveOptions = MessageRetrieveParams[1];
 export type ModelsListParams = Parameters<APIClient["models"]["list"]>;
 export type ModelsListOptions = ModelsListParams[0];
 
+export interface ConversationResumeTailOptions {
+  limit: number;
+  includeReturnMessageTypes?: string[];
+}
+
+export interface ConversationResumeTail {
+  conversation?: Awaited<ReturnType<APIClient["conversations"]["retrieve"]>>;
+  messages: Message[];
+}
+
 export interface BackendCapabilities {
   remoteMemfs: boolean;
   serverSideToolManagement: boolean;
@@ -198,6 +209,12 @@ export interface Backend {
     messageId: string,
     options?: MessageRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["messages"]["retrieve"]>>>;
+
+  getConversationResumeTail(
+    agentId: string,
+    conversationId: string,
+    options: ConversationResumeTailOptions,
+  ): Promise<ConversationResumeTail>;
 
   listModels(
     options?: ModelsListOptions,
@@ -374,6 +391,35 @@ export class APIBackend implements Backend {
   async retrieveMessage(messageId: string, options?: MessageRetrieveOptions) {
     const client = await this.getClient();
     return client.messages.retrieve(messageId, options);
+  }
+
+  async getConversationResumeTail(
+    agentId: string,
+    conversationId: string,
+    options: ConversationResumeTailOptions,
+  ): Promise<ConversationResumeTail> {
+    const body = {
+      limit: options.limit,
+      order: "desc",
+      include_return_message_types: options.includeReturnMessageTypes,
+    };
+
+    if (conversationId && conversationId !== "default") {
+      const [conversation, page] = await Promise.all([
+        this.retrieveConversation(conversationId),
+        this.listConversationMessages(
+          conversationId,
+          body as ConversationMessageListBody,
+        ),
+      ]);
+      return { conversation, messages: page.getPaginatedItems() };
+    }
+
+    const page = await this.listAgentMessages(agentId, {
+      ...body,
+      conversation_id: "default",
+    } as AgentMessageListBody);
+    return { messages: page.getPaginatedItems() };
   }
 
   async listModels(options?: ModelsListOptions) {

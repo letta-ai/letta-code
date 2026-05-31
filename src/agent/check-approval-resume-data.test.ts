@@ -12,7 +12,50 @@ type ResumeAgentState = AgentState & {
 };
 
 function installBackend(overrides: Record<string, unknown>): void {
-  __testSetBackend(overrides as unknown as Backend);
+  const getConversationResumeTail = mock(
+    async (
+      agentId: string,
+      conversationId: string,
+      options: { limit: number; includeReturnMessageTypes?: string[] },
+    ) => {
+      if (conversationId && conversationId !== "default") {
+        const conversation = await (
+          overrides.retrieveConversation as (
+            conversationId: string,
+          ) => Promise<unknown>
+        )?.(conversationId);
+        const page = await (
+          overrides.listConversationMessages as (
+            conversationId: string,
+            body: Record<string, unknown>,
+          ) => Promise<{ getPaginatedItems: () => Message[] }>
+        )?.(conversationId, {
+          limit: options.limit,
+          order: "desc",
+          include_return_message_types: options.includeReturnMessageTypes,
+        });
+        return { conversation, messages: page?.getPaginatedItems() ?? [] };
+      }
+
+      const page = await (
+        overrides.listAgentMessages as (
+          agentId: string,
+          body: Record<string, unknown>,
+        ) => Promise<{ getPaginatedItems: () => Message[] }>
+      )?.(agentId, {
+        conversation_id: "default",
+        limit: options.limit,
+        order: "desc",
+        include_return_message_types: options.includeReturnMessageTypes,
+      });
+      return { messages: page?.getPaginatedItems() ?? [] };
+    },
+  );
+
+  __testSetBackend({
+    getConversationResumeTail,
+    ...overrides,
+  } as unknown as Backend);
 }
 
 const DEFAULT_RESUME_MESSAGE_TYPES: MessageType[] = [
@@ -253,12 +296,39 @@ describe("getResumeData", () => {
     expect(agentsList).toHaveBeenCalledTimes(1);
     expect(agentsList).toHaveBeenCalledWith("agent-test", {
       conversation_id: "default",
-      limit: 200,
+      limit: 50,
       order: "desc",
       include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
     });
     expect(resume.pendingApprovals).toHaveLength(0);
     expect(resume.messageHistory.length).toBeGreaterThan(0);
+  });
+
+  test("uses resume tail for pending approval without retrieving last message", async () => {
+    const getConversationResumeTail = mock(async () => ({
+      messages: [
+        makeUserMessage("msg-user"),
+        makeApprovalMessage("msg-live:tool:tool-1:request"),
+      ],
+    }));
+    const messagesRetrieve = mock(async () => [
+      makeApprovalMessage("msg-live:tool:tool-1:request"),
+    ]);
+
+    installBackend({
+      getConversationResumeTail,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(
+      makeAgent({ in_context_message_ids: ["msg-live"] }),
+      "default",
+    );
+
+    expect(getConversationResumeTail).toHaveBeenCalledTimes(1);
+    expect(messagesRetrieve).toHaveBeenCalledTimes(0);
+    expect(resume.pendingApprovals).toHaveLength(1);
+    expect(resume.pendingApprovals[0]?.toolCallId).toBe("tool-1");
   });
 
   test("explicit conversation backfill requests and preserves tool messages", async () => {
@@ -309,7 +379,7 @@ describe("getResumeData", () => {
     const resume = await getResumeDataFromBackend(makeAgent(), "conv-abc");
 
     expect(conversationsList).toHaveBeenCalledWith("conv-abc", {
-      limit: 200,
+      limit: 50,
       order: "desc",
       include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
     });

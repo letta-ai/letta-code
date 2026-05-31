@@ -9,6 +9,7 @@ import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -2789,8 +2790,9 @@ export function App({
     eagerCommittedPreviewsRef.current.add(toolCallId);
   }, [currentApproval, currentApprovalShouldCommitPreview]);
 
-  // Backfill message history when resuming (only once)
-  useEffect(() => {
+  // Backfill message history when resuming (only once). Use layout timing so
+  // the ready input is not painted before the resumed transcript.
+  useLayoutEffect(() => {
     if (
       loadingState === "ready" &&
       messageHistory.length > 0 &&
