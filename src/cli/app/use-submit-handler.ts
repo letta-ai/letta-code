@@ -91,9 +91,12 @@ import {
   buildAutoReflectionPayload,
   buildMultiReflectionPayload,
   buildParentMemorySnapshot,
+  buildReflectionDiscoveryPayload,
+  buildReflectionSelectorPrompt,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
   finalizeMultiReflectionPayload,
+  readReflectionDiscoverySelection,
 } from "@/cli/helpers/reflection-transcript";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
@@ -332,7 +335,8 @@ type SubmitHandlerContext = {
 type ReflectCommandArgs =
   | { kind: "single" }
   | { kind: "recent"; limit: number }
-  | { kind: "conversations"; conversationIds: string[] };
+  | { kind: "conversations"; conversationIds: string[] }
+  | { kind: "discover" };
 
 function parseReflectCommandArgs(input: string): ReflectCommandArgs {
   const parts = input.trim().split(/\s+/).slice(1);
@@ -342,8 +346,13 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
 
   let recentLimit: number | null = null;
   const conversationIds: string[] = [];
+  let discover = false;
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
+    if (part === "--discover") {
+      discover = true;
+      continue;
+    }
     if (part === "--recent") {
       const raw = parts[index + 1];
       const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
@@ -363,11 +372,21 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
       index += 1;
       continue;
     }
-    throw new Error("Usage: /reflect [--recent N | --conversation <id> ...]");
+    throw new Error(
+      "Usage: /reflect [--recent N | --conversation <id> ... | --discover]",
+    );
   }
 
-  if (recentLimit !== null && conversationIds.length > 0) {
-    throw new Error("Use either --recent or --conversation, not both.");
+  const modes = [
+    recentLimit !== null,
+    conversationIds.length > 0,
+    discover,
+  ].filter(Boolean).length;
+  if (modes > 1) {
+    throw new Error("Use only one of --recent, --conversation, or --discover.");
+  }
+  if (discover) {
+    return { kind: "discover" };
   }
   if (recentLimit !== null) {
     return { kind: "recent", limit: recentLimit };
@@ -2834,17 +2853,172 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     reflectionConversationId,
                     systemPrompt,
                   )
-                : await buildMultiReflectionPayload({
+                : reflectArgs.kind === "discover"
+                  ? null
+                  : await buildMultiReflectionPayload({
+                      agentId,
+                      selectionPolicy:
+                        reflectArgs.kind === "recent"
+                          ? { mode: "recent", limit: reflectArgs.limit }
+                          : {
+                              mode: "explicit-conversations",
+                              conversationIds: reflectArgs.conversationIds,
+                            },
+                      systemPrompt,
+                    });
+
+            if (reflectArgs.kind === "discover") {
+              const discoveryPayload = await buildReflectionDiscoveryPayload({
+                agentId,
+                currentConversationId: reflectionConversationId,
+              });
+              if (!discoveryPayload) {
+                cmd.fail("No transcript candidates found for discovery.");
+                return { submitted: true };
+              }
+
+              const { spawnBackgroundSubagentTask } = await import(
+                "@/tools/impl/task"
+              );
+              const { subagentId: selectorSubagentId } =
+                spawnBackgroundSubagentTask({
+                  subagentType: "reflection",
+                  prompt: buildReflectionSelectorPrompt(),
+                  description: "Selecting reflection transcripts",
+                  silentCompletion: true,
+                  transcriptPath: discoveryPayload.catalogPath,
+                  parentScope: {
                     agentId,
-                    selectionPolicy:
-                      reflectArgs.kind === "recent"
-                        ? { mode: "recent", limit: reflectArgs.limit }
-                        : {
-                            mode: "explicit-conversations",
-                            conversationIds: reflectArgs.conversationIds,
+                    conversationId: reflectionConversationId,
+                  },
+                  onComplete: async ({ success, error }) => {
+                    if (!success) {
+                      appendTaskNotificationEvents([
+                        `Reflection discovery failed: ${error ?? "selector failed"}`,
+                      ]);
+                      return;
+                    }
+
+                    try {
+                      const selectedConversations =
+                        await readReflectionDiscoverySelection({
+                          selectionOutputPath:
+                            discoveryPayload.selectionOutputPath,
+                          catalog: discoveryPayload.catalog,
+                        });
+                      if (selectedConversations.length === 0) {
+                        appendTaskNotificationEvents([
+                          "Reflection discovery selected no memory-worthy transcripts.",
+                        ]);
+                        return;
+                      }
+
+                      const discoveredReflectionPayload =
+                        await buildMultiReflectionPayload({
+                          agentId,
+                          selectionPolicy: {
+                            mode: "discovered",
+                            selectedConversations,
+                            catalogPath: discoveryPayload.catalogPath,
                           },
-                    systemPrompt,
-                  });
+                          systemPrompt,
+                        });
+                      if (!discoveredReflectionPayload) {
+                        appendTaskNotificationEvents([
+                          "Reflection discovery selected transcripts, but no transcript content was available.",
+                        ]);
+                        return;
+                      }
+
+                      const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+                      const parentMemory =
+                        await buildParentMemorySnapshot(memoryDir);
+                      const reflectionPrompt = buildReflectionSubagentPrompt({
+                        memoryDir,
+                        parentMemory,
+                      });
+
+                      spawnBackgroundSubagentTask({
+                        subagentType: "reflection",
+                        prompt: reflectionPrompt,
+                        description: "Reflecting on discovered transcripts",
+                        silentCompletion: true,
+                        transcriptPath: discoveredReflectionPayload.payloadPath,
+                        parentScope: {
+                          agentId,
+                          conversationId: reflectionConversationId,
+                        },
+                        onComplete: async ({
+                          success: reflectionSuccess,
+                          error: reflectionError,
+                          agentId: reflectionAgentId,
+                        }) => {
+                          telemetry.trackReflectionEnd(
+                            "manual",
+                            reflectionSuccess,
+                            {
+                              subagentId: reflectionAgentId ?? undefined,
+                              conversationId: reflectionConversationId,
+                              error: reflectionError,
+                            },
+                          );
+                          await finalizeMultiReflectionPayload(
+                            agentId,
+                            discoveredReflectionPayload.manifest,
+                            reflectionSuccess,
+                          );
+                          const msg = await handleMemorySubagentCompletion(
+                            {
+                              agentId,
+                              conversationId: conversationIdRef.current,
+                              subagentType: "reflection",
+                              success: reflectionSuccess,
+                              error: reflectionError,
+                            },
+                            {
+                              recompileByConversation:
+                                systemPromptRecompileByConversationRef.current,
+                              recompileQueuedByConversation:
+                                queuedSystemPromptRecompileByConversationRef.current,
+                              logRecompileFailure: (message) =>
+                                debugWarn("memory", message),
+                            },
+                          );
+                          appendTaskNotificationEvents([msg]);
+                        },
+                      });
+
+                      telemetry.trackReflectionStart("manual", {
+                        conversationId: reflectionConversationId,
+                        startMessageId:
+                          discoveredReflectionPayload.startMessageId,
+                        endMessageId: discoveredReflectionPayload.endMessageId,
+                      });
+                      appendTaskNotificationEvents([
+                        `Reflection discovery selected ${selectedConversations.length} transcript(s); launched reflection. Payload: ${discoveredReflectionPayload.payloadPath}`,
+                      ]);
+                    } catch (selectionError) {
+                      const errorDetails = formatErrorDetails(
+                        selectionError,
+                        agentId,
+                      );
+                      appendTaskNotificationEvents([
+                        `Reflection discovery failed after selection: ${errorDetails}`,
+                      ]);
+                    }
+                  },
+                });
+
+              telemetry.trackReflectionStart("manual", {
+                subagentId: selectorSubagentId,
+                conversationId: reflectionConversationId,
+              });
+              cmd.finish(
+                `Discovering memory-worthy transcripts from ${discoveryPayload.catalog.candidates.length} candidate(s). View the catalog here: ${discoveryPayload.catalogPath}`,
+                true,
+              );
+              return { submitted: true };
+            }
 
             if (!reflectionPayload) {
               cmd.fail(

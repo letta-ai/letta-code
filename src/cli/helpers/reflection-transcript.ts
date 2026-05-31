@@ -11,6 +11,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { MEMORY_SYSTEM_DIR } from "@/agent/memory-filesystem";
 import { REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT } from "@/agent/subagents/context-budget";
+import { getBackend } from "@/backend";
+import {
+  type ConversationSearchResult,
+  searchConversationsForBackend,
+} from "@/backend/conversation-search";
 import { getDirectoryLimits } from "@/utils/directory-limits";
 import { withFileLock } from "@/utils/file-lock";
 import { parseFrontmatter } from "@/utils/frontmatter";
@@ -76,6 +81,8 @@ export interface MultiReflectionTranscriptSlice {
   conversation_id: string;
   mode: ReflectionSliceMode;
   payload_path: string;
+  selection_reason?: string;
+  selection_priority?: ReflectionDiscoveryPriority;
   start_message_id: string;
   end_message_id: string;
   start_line: number;
@@ -93,7 +100,12 @@ export interface MultiReflectionManifest {
   created_at: string;
   selection_policy:
     | { mode: "recent"; limit: number }
-    | { mode: "explicit-conversations"; conversation_ids: string[] };
+    | { mode: "explicit-conversations"; conversation_ids: string[] }
+    | {
+        mode: "discovered";
+        selected_conversations: ReflectionDiscoverySelectedConversation[];
+        catalog_path?: string;
+      };
   transcripts: MultiReflectionTranscriptSlice[];
 }
 
@@ -112,6 +124,57 @@ export interface ReflectionTranscriptCandidate {
   totalCompletedTurns: number;
   reflectedCompletedTurns: number;
   turnsSinceLastSuccessfulReflection: number;
+}
+
+export type ReflectionDiscoveryPriority = "high" | "medium" | "low";
+
+export interface ReflectionDiscoverySelectedConversation {
+  conversation_id: string;
+  reason: string;
+  priority?: ReflectionDiscoveryPriority;
+}
+
+export interface ReflectionDiscoverySearchScore {
+  query: string;
+  rrf_score: number;
+  normalized_score: number;
+}
+
+export interface ReflectionDiscoveryCandidate {
+  conversation_id: string;
+  summary?: string;
+  description?: string;
+  last_updated_at?: string;
+  total_completed_turns: number;
+  reflected_completed_turns: number;
+  turns_since_last_successful_reflection: number;
+  has_unreflected_content: boolean;
+  is_current_conversation: boolean;
+  sources: string[];
+  search_scores: ReflectionDiscoverySearchScore[];
+  heuristic_score: number;
+}
+
+export interface ReflectionDiscoveryCatalog {
+  schema_version: 1;
+  type: "reflection_discovery_catalog";
+  agent_id: string;
+  current_conversation_id?: string;
+  created_at: string;
+  max_selected: number;
+  selection_output_path: string;
+  instructions: string;
+  candidates: ReflectionDiscoveryCandidate[];
+}
+
+export interface ReflectionDiscoverySelection {
+  selected_conversations: ReflectionDiscoverySelectedConversation[];
+}
+
+export interface ReflectionDiscoveryPayload {
+  catalogPath: string;
+  selectionOutputPath: string;
+  catalog: ReflectionDiscoveryCatalog;
 }
 
 export interface ReflectionPromptInput {
@@ -140,6 +203,22 @@ export function buildReflectionSubagentPrompt(
     lines.push(input.parentMemory);
   }
   return lines.join("\n");
+}
+
+export function buildReflectionSelectorPrompt(): string {
+  return [
+    "You are selecting conversation transcripts for memory reflection. The discovery catalog path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Read/Edit file_path is literal and does NOT expand env vars.",
+    "",
+    "The payload is a `reflection_discovery_catalog` with compact metadata about candidate conversations. Your job is only to choose which conversations should be opened for a full reflection pass. Do not edit memory files. Do not commit anything.",
+    "",
+    "Select up to `max_selected` conversations. Prefer candidates likely to contain durable memory updates: explicit user corrections, repeated preferences, coding/review/commit style preferences, repo or workflow gotchas, durable facts about people/projects, contradictions with current memory, or repeated agent failures.",
+    "Avoid one-off debugging, transient task status, duplicated/redundant candidates, and conversations already fully reflected unless they are useful for deduplication or contradiction resolution.",
+    "Treat summaries/descriptions as weak internal metadata, not confirmed facts. The final reflection pass will verify against the actual transcript before writing memory.",
+    "",
+    "Write strict JSON to the catalog's `selection_output_path` with this shape:",
+    '{"selected_conversations":[{"conversation_id":"conv-...","reason":"durable reason for selecting this transcript","priority":"high"}]}',
+    'Use priority values `high`, `medium`, or `low`. If nothing looks memory-worthy, write `{"selected_conversations":[]}`.',
+  ].join("\n");
 }
 
 interface ParentMemoryFile {
@@ -872,7 +951,7 @@ async function writeState(
 
 function buildPayloadPath(
   rootDir: string,
-  kind: "auto" | "remember" | "multi" | "slice",
+  kind: "auto" | "discover" | "multi" | "remember" | "selected" | "slice",
 ): string {
   const nonce = Math.random().toString(36).slice(2, 8);
   return join(rootDir, `payload-${kind}-${nonce}.json`);
@@ -1088,6 +1167,357 @@ async function ensureAgentPayloadRoot(agentId: string): Promise<string> {
   return root;
 }
 
+const REFLECTION_DISCOVERY_QUERIES = [
+  {
+    id: "user-corrections",
+    query:
+      "user corrections and preferences repeated mistakes durable feedback",
+  },
+  {
+    id: "coding-style",
+    query: "coding style preferences review commit testing branch conventions",
+  },
+  {
+    id: "collaboration",
+    query:
+      "collaboration communication style team preferences durable workflow",
+  },
+  {
+    id: "repo-gotchas",
+    query: "repo conventions project gotchas durable implementation details",
+  },
+  {
+    id: "long-term-facts",
+    query:
+      "long term facts about people projects workflows memory worthy context",
+  },
+] as const;
+
+const REFLECTION_DISCOVERY_RECENT_LIMIT = 20;
+const REFLECTION_DISCOVERY_UNREFLECTED_LIMIT = 20;
+const REFLECTION_DISCOVERY_SEARCH_LIMIT_PER_QUERY = 10;
+const REFLECTION_DISCOVERY_MAX_CATALOG_CANDIDATES = 30;
+export const REFLECTION_DISCOVERY_MAX_SELECTED_TRANSCRIPTS = 5;
+
+function pageItems<T>(page: unknown): T[] {
+  if (Array.isArray(page)) return page as T[];
+  if (page && typeof page === "object") {
+    const maybePage = page as {
+      getPaginatedItems?: () => T[];
+      items?: T[];
+    };
+    if (typeof maybePage.getPaginatedItems === "function") {
+      return maybePage.getPaginatedItems();
+    }
+    if (Array.isArray(maybePage.items)) {
+      return maybePage.items;
+    }
+  }
+  return [];
+}
+
+function addSource(
+  candidate: ReflectionDiscoveryCandidate,
+  source: string,
+): void {
+  if (!candidate.sources.includes(source)) {
+    candidate.sources.push(source);
+  }
+}
+
+function recencyScore(lastUpdatedAt?: string): number {
+  if (!lastUpdatedAt) return 0;
+  const parsed = Date.parse(lastUpdatedAt);
+  if (!Number.isFinite(parsed)) return 0;
+  const ageMs = Date.now() - parsed;
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (ageMs <= dayMs) return 8;
+  if (ageMs <= 7 * dayMs) return 5;
+  if (ageMs <= 30 * dayMs) return 2;
+  return 0;
+}
+
+function scoreDiscoveryCandidate(
+  candidate: ReflectionDiscoveryCandidate,
+): number {
+  const bestNormalizedSearch = Math.max(
+    0,
+    ...candidate.search_scores.map((score) => score.normalized_score),
+  );
+  const searchScore = 50 * bestNormalizedSearch;
+  const turns = candidate.turns_since_last_successful_reflection;
+  const unreflectedScore = turns > 0 ? 15 + Math.min(turns, 10) : 0;
+  const sourceScore = Math.min(candidate.sources.length, 4);
+  const sizeScore =
+    candidate.total_completed_turns >= 3
+      ? 4
+      : candidate.total_completed_turns >= 1
+        ? 1
+        : 0;
+  const currentConversationScore =
+    candidate.is_current_conversation && turns > 0 ? 8 : 0;
+  const alreadyReflectedPenalty =
+    turns === 0 && candidate.search_scores.length === 0 ? 8 : 0;
+
+  return (
+    searchScore +
+    unreflectedScore +
+    recencyScore(candidate.last_updated_at) +
+    sourceScore +
+    sizeScore +
+    currentConversationScore -
+    alreadyReflectedPenalty
+  );
+}
+
+export async function buildReflectionDiscoveryPayload(options: {
+  agentId: string;
+  currentConversationId?: string;
+  maxSelected?: number;
+  maxCatalogCandidates?: number;
+}): Promise<ReflectionDiscoveryPayload | null> {
+  const {
+    agentId,
+    currentConversationId,
+    maxSelected = REFLECTION_DISCOVERY_MAX_SELECTED_TRANSCRIPTS,
+    maxCatalogCandidates = REFLECTION_DISCOVERY_MAX_CATALOG_CANDIDATES,
+  } = options;
+  const transcriptCandidates =
+    await listReflectionTranscriptCandidates(agentId);
+  if (transcriptCandidates.length === 0) {
+    return null;
+  }
+
+  const candidates = new Map<string, ReflectionDiscoveryCandidate>();
+  const ensureCandidate = (conversationId: string) => {
+    const existing = candidates.get(conversationId);
+    if (existing) return existing;
+    const transcriptCandidate = transcriptCandidates.find(
+      (candidate) => candidate.conversationId === conversationId,
+    );
+    if (!transcriptCandidate) return null;
+    const candidate: ReflectionDiscoveryCandidate = {
+      conversation_id: conversationId,
+      last_updated_at: transcriptCandidate.lastUpdatedAt,
+      total_completed_turns: transcriptCandidate.totalCompletedTurns,
+      reflected_completed_turns: transcriptCandidate.reflectedCompletedTurns,
+      turns_since_last_successful_reflection:
+        transcriptCandidate.turnsSinceLastSuccessfulReflection,
+      has_unreflected_content:
+        transcriptCandidate.turnsSinceLastSuccessfulReflection > 0,
+      is_current_conversation: conversationId === currentConversationId,
+      sources: [],
+      search_scores: [],
+      heuristic_score: 0,
+    };
+    candidates.set(conversationId, candidate);
+    return candidate;
+  };
+
+  for (const candidate of transcriptCandidates.slice(
+    0,
+    REFLECTION_DISCOVERY_RECENT_LIMIT,
+  )) {
+    const discoveryCandidate = ensureCandidate(candidate.conversationId);
+    if (discoveryCandidate) addSource(discoveryCandidate, "recent");
+  }
+
+  for (const candidate of transcriptCandidates
+    .filter((item) => item.turnsSinceLastSuccessfulReflection > 0)
+    .sort(
+      (a, b) =>
+        b.turnsSinceLastSuccessfulReflection -
+          a.turnsSinceLastSuccessfulReflection ||
+        Date.parse(b.lastUpdatedAt ?? "") - Date.parse(a.lastUpdatedAt ?? ""),
+    )
+    .slice(0, REFLECTION_DISCOVERY_UNREFLECTED_LIMIT)) {
+    const discoveryCandidate = ensureCandidate(candidate.conversationId);
+    if (discoveryCandidate) addSource(discoveryCandidate, "unreflected");
+  }
+
+  if (currentConversationId) {
+    const discoveryCandidate = ensureCandidate(currentConversationId);
+    if (discoveryCandidate) addSource(discoveryCandidate, "current");
+  }
+
+  const transcriptConversationIds = new Set(
+    transcriptCandidates.map((candidate) => candidate.conversationId),
+  );
+  const conversationSummaries = new Map<string, string>();
+  try {
+    for (const conversation of pageItems<{
+      id: string;
+      summary?: string | null;
+    }>(
+      await getBackend().listConversations({
+        agent_id: agentId,
+        limit: 100,
+        order: "desc",
+        order_by: "last_message_at",
+      } as never),
+    )) {
+      if (conversation.summary?.trim()) {
+        conversationSummaries.set(conversation.id, conversation.summary.trim());
+      }
+    }
+  } catch {
+    // Summaries are helpful metadata but not required for discovery.
+  }
+
+  const searchResultsByQuery = await Promise.allSettled(
+    REFLECTION_DISCOVERY_QUERIES.map(async ({ id, query }) => {
+      const results = await searchConversationsForBackend({
+        agent_id: agentId,
+        query,
+        search_mode: "hybrid",
+        search_target: "description",
+        limit: REFLECTION_DISCOVERY_SEARCH_LIMIT_PER_QUERY,
+      });
+      return { id, query, results };
+    }),
+  );
+
+  for (const queryResult of searchResultsByQuery) {
+    if (queryResult.status !== "fulfilled") continue;
+    const { id, query, results } = queryResult.value;
+    const eligibleResults = results.filter((result: ConversationSearchResult) =>
+      transcriptConversationIds.has(result.conversation.id),
+    );
+    const bestRrfScore = Math.max(
+      0,
+      ...eligibleResults.map((result) => result.rrf_score),
+    );
+    for (const result of eligibleResults) {
+      const discoveryCandidate = ensureCandidate(result.conversation.id);
+      if (!discoveryCandidate) continue;
+      addSource(discoveryCandidate, `search:${id}`);
+      const summary = result.conversation.summary?.trim();
+      if (summary) discoveryCandidate.summary = summary;
+      const description = result.embedded_text.trim();
+      if (description) discoveryCandidate.description = description;
+      discoveryCandidate.search_scores.push({
+        query,
+        rrf_score: result.rrf_score,
+        normalized_score:
+          bestRrfScore > 0 ? result.rrf_score / bestRrfScore : 0,
+      });
+    }
+  }
+
+  for (const [conversationId, summary] of conversationSummaries) {
+    const candidate = candidates.get(conversationId);
+    if (candidate && !candidate.summary) {
+      candidate.summary = summary;
+    }
+  }
+
+  const sortedCandidates = Array.from(candidates.values())
+    .map((candidate) => ({
+      ...candidate,
+      sources: [...candidate.sources].sort(),
+      search_scores: [...candidate.search_scores].sort(
+        (a, b) => b.normalized_score - a.normalized_score,
+      ),
+      heuristic_score: scoreDiscoveryCandidate(candidate),
+    }))
+    .sort(
+      (a, b) =>
+        b.heuristic_score - a.heuristic_score ||
+        (b.last_updated_at ? Date.parse(b.last_updated_at) : 0) -
+          (a.last_updated_at ? Date.parse(a.last_updated_at) : 0) ||
+        a.conversation_id.localeCompare(b.conversation_id),
+    )
+    .slice(0, Math.max(1, maxCatalogCandidates));
+
+  if (sortedCandidates.length === 0) {
+    return null;
+  }
+
+  const payloadRoot = await ensureAgentPayloadRoot(agentId);
+  const selectionOutputPath = buildPayloadPath(payloadRoot, "selected");
+  const catalog: ReflectionDiscoveryCatalog = {
+    schema_version: 1,
+    type: "reflection_discovery_catalog",
+    agent_id: agentId,
+    current_conversation_id: currentConversationId,
+    created_at: new Date().toISOString(),
+    max_selected: maxSelected,
+    selection_output_path: selectionOutputPath,
+    instructions:
+      "Choose conversations likely to contain durable memory updates. Prefer explicit corrections, repeated preferences, project conventions, and contradictions; avoid one-off debugging and transient task state.",
+    candidates: sortedCandidates,
+  };
+  const catalogPath = buildPayloadPath(payloadRoot, "discover");
+  await writeFile(
+    catalogPath,
+    `${JSON.stringify(catalog, null, 2)}\n`,
+    "utf-8",
+  );
+
+  return { catalogPath, selectionOutputPath, catalog };
+}
+
+function isReflectionDiscoveryPriority(
+  value: unknown,
+): value is ReflectionDiscoveryPriority {
+  return value === "high" || value === "medium" || value === "low";
+}
+
+export async function readReflectionDiscoverySelection(options: {
+  selectionOutputPath: string;
+  catalog: ReflectionDiscoveryCatalog;
+}): Promise<ReflectionDiscoverySelectedConversation[]> {
+  const raw = await readFile(options.selectionOutputPath, "utf-8");
+  const parsed = safeJsonParseOr<unknown>(raw, null);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Reflection selector did not write valid JSON.");
+  }
+  const selected = (parsed as { selected_conversations?: unknown })
+    .selected_conversations;
+  if (!Array.isArray(selected)) {
+    throw new Error(
+      'Reflection selector JSON must include a "selected_conversations" array.',
+    );
+  }
+
+  const allowedIds = new Set(
+    options.catalog.candidates.map((candidate) => candidate.conversation_id),
+  );
+  const seenIds = new Set<string>();
+  const validated: ReflectionDiscoverySelectedConversation[] = [];
+  for (const item of selected) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const conversationId =
+      typeof record.conversation_id === "string"
+        ? record.conversation_id.trim()
+        : "";
+    if (!conversationId || seenIds.has(conversationId)) continue;
+    if (!allowedIds.has(conversationId)) {
+      throw new Error(
+        `Reflection selector chose unknown conversation: ${conversationId}`,
+      );
+    }
+    const reason =
+      typeof record.reason === "string" && record.reason.trim()
+        ? record.reason.trim()
+        : "Selected by reflection discovery.";
+    validated.push({
+      conversation_id: conversationId,
+      reason,
+      ...(isReflectionDiscoveryPriority(record.priority)
+        ? { priority: record.priority }
+        : {}),
+    });
+    seenIds.add(conversationId);
+    if (validated.length >= options.catalog.max_selected) {
+      break;
+    }
+  }
+
+  return validated;
+}
+
 export async function listReflectionTranscriptCandidates(
   agentId: string,
 ): Promise<ReflectionTranscriptCandidate[]> {
@@ -1191,7 +1621,12 @@ export async function buildAutoReflectionPayload(
 
 type MultiReflectionSelectionPolicy =
   | { mode: "recent"; limit: number }
-  | { mode: "explicit-conversations"; conversationIds: string[] };
+  | { mode: "explicit-conversations"; conversationIds: string[] }
+  | {
+      mode: "discovered";
+      selectedConversations: ReflectionDiscoverySelectedConversation[];
+      catalogPath?: string;
+    };
 
 export interface BuildMultiReflectionPayloadOptions {
   agentId: string;
@@ -1205,6 +1640,16 @@ async function resolveMultiReflectionConversationIds(
   agentId: string,
   selectionPolicy: MultiReflectionSelectionPolicy,
 ): Promise<string[]> {
+  if (selectionPolicy.mode === "discovered") {
+    return Array.from(
+      new Set(
+        selectionPolicy.selectedConversations.map(
+          (selection) => selection.conversation_id,
+        ),
+      ),
+    );
+  }
+
   if (selectionPolicy.mode === "explicit-conversations") {
     return Array.from(new Set(selectionPolicy.conversationIds));
   }
@@ -1221,10 +1666,32 @@ function manifestSelectionPolicy(
   if (selectionPolicy.mode === "recent") {
     return { mode: "recent", limit: selectionPolicy.limit };
   }
+  if (selectionPolicy.mode === "discovered") {
+    return {
+      mode: "discovered",
+      selected_conversations: selectionPolicy.selectedConversations,
+      catalog_path: selectionPolicy.catalogPath,
+    };
+  }
   return {
     mode: "explicit-conversations",
     conversation_ids: selectionPolicy.conversationIds,
   };
+}
+
+function discoverySelectionByConversationId(
+  selectionPolicy: MultiReflectionSelectionPolicy,
+): Map<string, ReflectionDiscoverySelectedConversation> {
+  if (selectionPolicy.mode !== "discovered") {
+    return new Map();
+  }
+
+  return new Map(
+    selectionPolicy.selectedConversations.map((selection) => [
+      selection.conversation_id,
+      selection,
+    ]),
+  );
 }
 
 export async function buildMultiReflectionPayload(
@@ -1253,6 +1720,8 @@ export async function buildMultiReflectionPayload(
   let totalChars = 0;
   let firstMessageId: string | undefined;
   let lastMessageId: string | undefined;
+  const discoverySelections =
+    discoverySelectionByConversationId(selectionPolicy);
 
   for (const conversationId of conversationIds) {
     const slice = await withStateLock(agentId, conversationId, async () => {
@@ -1294,6 +1763,8 @@ export async function buildMultiReflectionPayload(
         conversation_id: conversationId,
         mode,
         payload_path: payloadPath,
+        selection_reason: discoverySelections.get(conversationId)?.reason,
+        selection_priority: discoverySelections.get(conversationId)?.priority,
         start_message_id: selection.startMessageId,
         end_message_id: selection.endMessageId,
         start_line: selection.startLineIndex,
