@@ -82,7 +82,7 @@ export interface MultiReflectionTranscriptSlice {
   mode: ReflectionSliceMode;
   payload_path: string;
   selection_reason?: string;
-  selection_priority?: ReflectionDiscoveryPriority;
+  selection_priority?: ReflectionWanderPriority;
   start_message_id: string;
   end_message_id: string;
   start_line: number;
@@ -102,8 +102,8 @@ export interface MultiReflectionManifest {
     | { mode: "recent"; limit: number }
     | { mode: "explicit-conversations"; conversation_ids: string[] }
     | {
-        mode: "discovered";
-        selected_conversations: ReflectionDiscoverySelectedConversation[];
+        mode: "wandered";
+        selected_conversations: ReflectionWanderSelectedConversation[];
         catalog_path?: string;
       };
   transcripts: MultiReflectionTranscriptSlice[];
@@ -126,21 +126,21 @@ export interface ReflectionTranscriptCandidate {
   turnsSinceLastSuccessfulReflection: number;
 }
 
-export type ReflectionDiscoveryPriority = "high" | "medium" | "low";
+export type ReflectionWanderPriority = "high" | "medium" | "low";
 
-export interface ReflectionDiscoverySelectedConversation {
+export interface ReflectionWanderSelectedConversation {
   conversation_id: string;
   reason: string;
-  priority?: ReflectionDiscoveryPriority;
+  priority?: ReflectionWanderPriority;
 }
 
-export interface ReflectionDiscoverySearchScore {
+export interface ReflectionWanderSearchScore {
   query: string;
   rrf_score: number;
   normalized_score: number;
 }
 
-export interface ReflectionDiscoveryCandidate {
+export interface ReflectionWanderCandidate {
   conversation_id: string;
   summary?: string;
   description?: string;
@@ -151,28 +151,28 @@ export interface ReflectionDiscoveryCandidate {
   has_unreflected_content: boolean;
   is_current_conversation: boolean;
   sources: string[];
-  search_scores: ReflectionDiscoverySearchScore[];
+  search_scores: ReflectionWanderSearchScore[];
   heuristic_score: number;
 }
 
-export interface ReflectionDiscoveryCatalog {
+export interface ReflectionWanderCatalog {
   schema_version: 1;
-  type: "reflection_discovery_catalog";
+  type: "reflection_wander_catalog";
   agent_id: string;
   current_conversation_id?: string;
   created_at: string;
   max_selected: number;
   instructions: string;
-  candidates: ReflectionDiscoveryCandidate[];
+  candidates: ReflectionWanderCandidate[];
 }
 
-export interface ReflectionDiscoverySelection {
-  selected_conversations: ReflectionDiscoverySelectedConversation[];
+export interface ReflectionWanderSelection {
+  selected_conversations: ReflectionWanderSelectedConversation[];
 }
 
-export interface ReflectionDiscoveryPayload {
+export interface ReflectionWanderPayload {
   catalogPath: string;
-  catalog: ReflectionDiscoveryCatalog;
+  catalog: ReflectionWanderCatalog;
 }
 
 export interface ReflectionPromptInput {
@@ -205,9 +205,9 @@ export function buildReflectionSubagentPrompt(
 
 export function buildReflectionSelectorPrompt(): string {
   return [
-    "You are selecting conversation transcripts for memory reflection. The discovery catalog path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Read/Edit file_path is literal and does NOT expand env vars.",
+    "You are selecting conversation transcripts for memory reflection. The wander catalog path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Read/Edit file_path is literal and does NOT expand env vars.",
     "",
-    "The payload is a `reflection_discovery_catalog` with compact metadata about candidate conversations. Your job is only to choose which conversations should be opened for a full reflection pass. Do not edit memory files. Do not commit anything.",
+    "The payload is a `reflection_wander_catalog` with compact metadata about candidate conversations. Your job is only to choose which conversations should be opened for a full reflection pass. Do not edit memory files. Do not commit anything.",
     "",
     "Select up to `max_selected` conversations. Prefer candidates likely to contain durable memory updates: explicit user corrections, repeated preferences, coding/review/commit style preferences, repo or workflow gotchas, durable facts about people/projects, contradictions with current memory, or repeated agent failures.",
     "Avoid one-off debugging, transient task status, duplicated/redundant candidates, and conversations already fully reflected unless they are useful for deduplication or contradiction resolution.",
@@ -949,7 +949,7 @@ async function writeState(
 
 function buildPayloadPath(
   rootDir: string,
-  kind: "auto" | "discover" | "multi" | "remember" | "slice",
+  kind: "auto" | "wander" | "multi" | "remember" | "slice",
 ): string {
   const nonce = Math.random().toString(36).slice(2, 8);
   return join(rootDir, `payload-${kind}-${nonce}.json`);
@@ -1165,7 +1165,7 @@ async function ensureAgentPayloadRoot(agentId: string): Promise<string> {
   return root;
 }
 
-const REFLECTION_DISCOVERY_QUERIES = [
+const REFLECTION_WANDER_QUERIES = [
   {
     id: "user-corrections",
     query:
@@ -1191,11 +1191,11 @@ const REFLECTION_DISCOVERY_QUERIES = [
   },
 ] as const;
 
-const REFLECTION_DISCOVERY_RECENT_LIMIT = 20;
-const REFLECTION_DISCOVERY_UNREFLECTED_LIMIT = 20;
-const REFLECTION_DISCOVERY_SEARCH_LIMIT_PER_QUERY = 10;
-const REFLECTION_DISCOVERY_MAX_CATALOG_CANDIDATES = 30;
-export const REFLECTION_DISCOVERY_MAX_SELECTED_TRANSCRIPTS = 5;
+const REFLECTION_WANDER_RECENT_LIMIT = 20;
+const REFLECTION_WANDER_UNREFLECTED_LIMIT = 20;
+const REFLECTION_WANDER_SEARCH_LIMIT_PER_QUERY = 10;
+const REFLECTION_WANDER_MAX_CATALOG_CANDIDATES = 30;
+export const REFLECTION_WANDER_MAX_SELECTED_TRANSCRIPTS = 5;
 
 function pageItems<T>(page: unknown): T[] {
   if (Array.isArray(page)) return page as T[];
@@ -1214,10 +1214,7 @@ function pageItems<T>(page: unknown): T[] {
   return [];
 }
 
-function addSource(
-  candidate: ReflectionDiscoveryCandidate,
-  source: string,
-): void {
+function addSource(candidate: ReflectionWanderCandidate, source: string): void {
   if (!candidate.sources.includes(source)) {
     candidate.sources.push(source);
   }
@@ -1235,9 +1232,7 @@ function recencyScore(lastUpdatedAt?: string): number {
   return 0;
 }
 
-function scoreDiscoveryCandidate(
-  candidate: ReflectionDiscoveryCandidate,
-): number {
+function scoreWanderCandidate(candidate: ReflectionWanderCandidate): number {
   const bestNormalizedSearch = Math.max(
     0,
     ...candidate.search_scores.map((score) => score.normalized_score),
@@ -1268,17 +1263,17 @@ function scoreDiscoveryCandidate(
   );
 }
 
-export async function buildReflectionDiscoveryPayload(options: {
+export async function buildReflectionWanderPayload(options: {
   agentId: string;
   currentConversationId?: string;
   maxSelected?: number;
   maxCatalogCandidates?: number;
-}): Promise<ReflectionDiscoveryPayload | null> {
+}): Promise<ReflectionWanderPayload | null> {
   const {
     agentId,
     currentConversationId,
-    maxSelected = REFLECTION_DISCOVERY_MAX_SELECTED_TRANSCRIPTS,
-    maxCatalogCandidates = REFLECTION_DISCOVERY_MAX_CATALOG_CANDIDATES,
+    maxSelected = REFLECTION_WANDER_MAX_SELECTED_TRANSCRIPTS,
+    maxCatalogCandidates = REFLECTION_WANDER_MAX_CATALOG_CANDIDATES,
   } = options;
   const transcriptCandidates =
     await listReflectionTranscriptCandidates(agentId);
@@ -1286,7 +1281,7 @@ export async function buildReflectionDiscoveryPayload(options: {
     return null;
   }
 
-  const candidates = new Map<string, ReflectionDiscoveryCandidate>();
+  const candidates = new Map<string, ReflectionWanderCandidate>();
   const ensureCandidate = (conversationId: string) => {
     const existing = candidates.get(conversationId);
     if (existing) return existing;
@@ -1294,7 +1289,7 @@ export async function buildReflectionDiscoveryPayload(options: {
       (candidate) => candidate.conversationId === conversationId,
     );
     if (!transcriptCandidate) return null;
-    const candidate: ReflectionDiscoveryCandidate = {
+    const candidate: ReflectionWanderCandidate = {
       conversation_id: conversationId,
       last_updated_at: transcriptCandidate.lastUpdatedAt,
       total_completed_turns: transcriptCandidate.totalCompletedTurns,
@@ -1314,10 +1309,10 @@ export async function buildReflectionDiscoveryPayload(options: {
 
   for (const candidate of transcriptCandidates.slice(
     0,
-    REFLECTION_DISCOVERY_RECENT_LIMIT,
+    REFLECTION_WANDER_RECENT_LIMIT,
   )) {
-    const discoveryCandidate = ensureCandidate(candidate.conversationId);
-    if (discoveryCandidate) addSource(discoveryCandidate, "recent");
+    const wanderCandidate = ensureCandidate(candidate.conversationId);
+    if (wanderCandidate) addSource(wanderCandidate, "recent");
   }
 
   for (const candidate of transcriptCandidates
@@ -1328,14 +1323,14 @@ export async function buildReflectionDiscoveryPayload(options: {
           a.turnsSinceLastSuccessfulReflection ||
         Date.parse(b.lastUpdatedAt ?? "") - Date.parse(a.lastUpdatedAt ?? ""),
     )
-    .slice(0, REFLECTION_DISCOVERY_UNREFLECTED_LIMIT)) {
-    const discoveryCandidate = ensureCandidate(candidate.conversationId);
-    if (discoveryCandidate) addSource(discoveryCandidate, "unreflected");
+    .slice(0, REFLECTION_WANDER_UNREFLECTED_LIMIT)) {
+    const wanderCandidate = ensureCandidate(candidate.conversationId);
+    if (wanderCandidate) addSource(wanderCandidate, "unreflected");
   }
 
   if (currentConversationId) {
-    const discoveryCandidate = ensureCandidate(currentConversationId);
-    if (discoveryCandidate) addSource(discoveryCandidate, "current");
+    const wanderCandidate = ensureCandidate(currentConversationId);
+    if (wanderCandidate) addSource(wanderCandidate, "current");
   }
 
   const transcriptConversationIds = new Set(
@@ -1359,17 +1354,17 @@ export async function buildReflectionDiscoveryPayload(options: {
       }
     }
   } catch {
-    // Summaries are helpful metadata but not required for discovery.
+    // Summaries are helpful metadata but not required for wandering.
   }
 
   const searchResultsByQuery = await Promise.allSettled(
-    REFLECTION_DISCOVERY_QUERIES.map(async ({ id, query }) => {
+    REFLECTION_WANDER_QUERIES.map(async ({ id, query }) => {
       const results = await searchConversationsForBackend({
         agent_id: agentId,
         query,
         search_mode: "hybrid",
         search_target: "description",
-        limit: REFLECTION_DISCOVERY_SEARCH_LIMIT_PER_QUERY,
+        limit: REFLECTION_WANDER_SEARCH_LIMIT_PER_QUERY,
       });
       return { id, query, results };
     }),
@@ -1386,14 +1381,14 @@ export async function buildReflectionDiscoveryPayload(options: {
       ...eligibleResults.map((result) => result.rrf_score),
     );
     for (const result of eligibleResults) {
-      const discoveryCandidate = ensureCandidate(result.conversation.id);
-      if (!discoveryCandidate) continue;
-      addSource(discoveryCandidate, `search:${id}`);
+      const wanderCandidate = ensureCandidate(result.conversation.id);
+      if (!wanderCandidate) continue;
+      addSource(wanderCandidate, `search:${id}`);
       const summary = result.conversation.summary?.trim();
-      if (summary) discoveryCandidate.summary = summary;
+      if (summary) wanderCandidate.summary = summary;
       const description = result.embedded_text.trim();
-      if (description) discoveryCandidate.description = description;
-      discoveryCandidate.search_scores.push({
+      if (description) wanderCandidate.description = description;
+      wanderCandidate.search_scores.push({
         query,
         rrf_score: result.rrf_score,
         normalized_score:
@@ -1416,7 +1411,7 @@ export async function buildReflectionDiscoveryPayload(options: {
       search_scores: [...candidate.search_scores].sort(
         (a, b) => b.normalized_score - a.normalized_score,
       ),
-      heuristic_score: scoreDiscoveryCandidate(candidate),
+      heuristic_score: scoreWanderCandidate(candidate),
     }))
     .sort(
       (a, b) =>
@@ -1432,9 +1427,9 @@ export async function buildReflectionDiscoveryPayload(options: {
   }
 
   const payloadRoot = await ensureAgentPayloadRoot(agentId);
-  const catalog: ReflectionDiscoveryCatalog = {
+  const catalog: ReflectionWanderCatalog = {
     schema_version: 1,
-    type: "reflection_discovery_catalog",
+    type: "reflection_wander_catalog",
     agent_id: agentId,
     current_conversation_id: currentConversationId,
     created_at: new Date().toISOString(),
@@ -1443,7 +1438,7 @@ export async function buildReflectionDiscoveryPayload(options: {
       "Choose conversations likely to contain durable memory updates. Prefer explicit corrections, repeated preferences, project conventions, and contradictions; avoid one-off debugging and transient task state.",
     candidates: sortedCandidates,
   };
-  const catalogPath = buildPayloadPath(payloadRoot, "discover");
+  const catalogPath = buildPayloadPath(payloadRoot, "wander");
   await writeFile(
     catalogPath,
     `${JSON.stringify(catalog, null, 2)}\n`,
@@ -1453,23 +1448,23 @@ export async function buildReflectionDiscoveryPayload(options: {
   return { catalogPath, catalog };
 }
 
-function isReflectionDiscoveryPriority(
+function isReflectionWanderPriority(
   value: unknown,
-): value is ReflectionDiscoveryPriority {
+): value is ReflectionWanderPriority {
   return value === "high" || value === "medium" || value === "low";
 }
 
-export async function readReflectionDiscoverySelection(options: {
+export async function readReflectionWanderSelection(options: {
   selectionOutputPath?: string;
   selectionReport?: string;
-  catalog: ReflectionDiscoveryCatalog;
-}): Promise<ReflectionDiscoverySelectedConversation[]> {
+  catalog: ReflectionWanderCatalog;
+}): Promise<ReflectionWanderSelectedConversation[]> {
   const raw =
     options.selectionReport ??
     (options.selectionOutputPath
       ? await readFile(options.selectionOutputPath, "utf-8")
       : "");
-  const parsed = parseReflectionDiscoverySelectionJson(raw);
+  const parsed = parseReflectionWanderSelectionJson(raw);
   if (!parsed || typeof parsed !== "object") {
     throw new Error("Reflection selector did not return valid JSON.");
   }
@@ -1485,7 +1480,7 @@ export async function readReflectionDiscoverySelection(options: {
     options.catalog.candidates.map((candidate) => candidate.conversation_id),
   );
   const seenIds = new Set<string>();
-  const validated: ReflectionDiscoverySelectedConversation[] = [];
+  const validated: ReflectionWanderSelectedConversation[] = [];
   for (const item of selected) {
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
@@ -1502,11 +1497,11 @@ export async function readReflectionDiscoverySelection(options: {
     const reason =
       typeof record.reason === "string" && record.reason.trim()
         ? record.reason.trim()
-        : "Selected by reflection discovery.";
+        : "Selected by reflection wandering.";
     validated.push({
       conversation_id: conversationId,
       reason,
-      ...(isReflectionDiscoveryPriority(record.priority)
+      ...(isReflectionWanderPriority(record.priority)
         ? { priority: record.priority }
         : {}),
     });
@@ -1519,7 +1514,7 @@ export async function readReflectionDiscoverySelection(options: {
   return validated;
 }
 
-function parseReflectionDiscoverySelectionJson(raw: string): unknown {
+function parseReflectionWanderSelectionJson(raw: string): unknown {
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
@@ -1646,8 +1641,8 @@ type MultiReflectionSelectionPolicy =
   | { mode: "recent"; limit: number }
   | { mode: "explicit-conversations"; conversationIds: string[] }
   | {
-      mode: "discovered";
-      selectedConversations: ReflectionDiscoverySelectedConversation[];
+      mode: "wandered";
+      selectedConversations: ReflectionWanderSelectedConversation[];
       catalogPath?: string;
     };
 
@@ -1663,7 +1658,7 @@ async function resolveMultiReflectionConversationIds(
   agentId: string,
   selectionPolicy: MultiReflectionSelectionPolicy,
 ): Promise<string[]> {
-  if (selectionPolicy.mode === "discovered") {
+  if (selectionPolicy.mode === "wandered") {
     return Array.from(
       new Set(
         selectionPolicy.selectedConversations.map(
@@ -1689,9 +1684,9 @@ function manifestSelectionPolicy(
   if (selectionPolicy.mode === "recent") {
     return { mode: "recent", limit: selectionPolicy.limit };
   }
-  if (selectionPolicy.mode === "discovered") {
+  if (selectionPolicy.mode === "wandered") {
     return {
-      mode: "discovered",
+      mode: "wandered",
       selected_conversations: selectionPolicy.selectedConversations,
       catalog_path: selectionPolicy.catalogPath,
     };
@@ -1702,10 +1697,10 @@ function manifestSelectionPolicy(
   };
 }
 
-function discoverySelectionByConversationId(
+function wanderSelectionByConversationId(
   selectionPolicy: MultiReflectionSelectionPolicy,
-): Map<string, ReflectionDiscoverySelectedConversation> {
-  if (selectionPolicy.mode !== "discovered") {
+): Map<string, ReflectionWanderSelectedConversation> {
+  if (selectionPolicy.mode !== "wandered") {
     return new Map();
   }
 
@@ -1743,8 +1738,7 @@ export async function buildMultiReflectionPayload(
   let totalChars = 0;
   let firstMessageId: string | undefined;
   let lastMessageId: string | undefined;
-  const discoverySelections =
-    discoverySelectionByConversationId(selectionPolicy);
+  const wanderSelections = wanderSelectionByConversationId(selectionPolicy);
 
   for (const conversationId of conversationIds) {
     const slice = await withStateLock(agentId, conversationId, async () => {
@@ -1786,8 +1780,8 @@ export async function buildMultiReflectionPayload(
         conversation_id: conversationId,
         mode,
         payload_path: payloadPath,
-        selection_reason: discoverySelections.get(conversationId)?.reason,
-        selection_priority: discoverySelections.get(conversationId)?.priority,
+        selection_reason: wanderSelections.get(conversationId)?.reason,
+        selection_priority: wanderSelections.get(conversationId)?.priority,
         start_message_id: selection.startMessageId,
         end_message_id: selection.endMessageId,
         start_line: selection.startLineIndex,

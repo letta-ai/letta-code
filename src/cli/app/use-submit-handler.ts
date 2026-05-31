@@ -91,12 +91,12 @@ import {
   buildAutoReflectionPayload,
   buildMultiReflectionPayload,
   buildParentMemorySnapshot,
-  buildReflectionDiscoveryPayload,
   buildReflectionSelectorPrompt,
   buildReflectionSubagentPrompt,
+  buildReflectionWanderPayload,
   finalizeAutoReflectionPayload,
   finalizeMultiReflectionPayload,
-  readReflectionDiscoverySelection,
+  readReflectionWanderSelection,
 } from "@/cli/helpers/reflection-transcript";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
@@ -336,7 +336,7 @@ type ReflectCommandArgs =
   | { kind: "single" }
   | { kind: "recent"; limit: number }
   | { kind: "conversations"; conversationIds: string[] }
-  | { kind: "discover" };
+  | { kind: "wander" };
 
 function parseReflectCommandArgs(input: string): ReflectCommandArgs {
   const parts = input.trim().split(/\s+/).slice(1);
@@ -346,11 +346,11 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
 
   let recentLimit: number | null = null;
   const conversationIds: string[] = [];
-  let discover = false;
+  let wander = false;
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
-    if (part === "--discover") {
-      discover = true;
+    if (part === "--wander") {
+      wander = true;
       continue;
     }
     if (part === "--recent") {
@@ -373,20 +373,20 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
       continue;
     }
     throw new Error(
-      "Usage: /reflect [--recent N | --conversation <id> ... | --discover]",
+      "Usage: /reflect [--recent N | --conversation <id> ... | --wander]",
     );
   }
 
   const modes = [
     recentLimit !== null,
     conversationIds.length > 0,
-    discover,
+    wander,
   ].filter(Boolean).length;
   if (modes > 1) {
-    throw new Error("Use only one of --recent, --conversation, or --discover.");
+    throw new Error("Use only one of --recent, --conversation, or --wander.");
   }
-  if (discover) {
-    return { kind: "discover" };
+  if (wander) {
+    return { kind: "wander" };
   }
   if (recentLimit !== null) {
     return { kind: "recent", limit: recentLimit };
@@ -2853,7 +2853,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     reflectionConversationId,
                     systemPrompt,
                   )
-                : reflectArgs.kind === "discover"
+                : reflectArgs.kind === "wander"
                   ? null
                   : await buildMultiReflectionPayload({
                       agentId,
@@ -2867,13 +2867,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       systemPrompt,
                     });
 
-            if (reflectArgs.kind === "discover") {
-              const discoveryPayload = await buildReflectionDiscoveryPayload({
+            if (reflectArgs.kind === "wander") {
+              const wanderPayload = await buildReflectionWanderPayload({
                 agentId,
                 currentConversationId: reflectionConversationId,
               });
-              if (!discoveryPayload) {
-                cmd.fail("No transcript candidates found for discovery.");
+              if (!wanderPayload) {
+                cmd.fail("No transcript candidates found for wandering.");
                 return { submitted: true };
               }
 
@@ -2886,7 +2886,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   prompt: buildReflectionSelectorPrompt(),
                   description: "Selecting reflection transcripts",
                   silentCompletion: true,
-                  transcriptPath: discoveryPayload.catalogPath,
+                  transcriptPath: wanderPayload.catalogPath,
                   parentScope: {
                     agentId,
                     conversationId: reflectionConversationId,
@@ -2894,37 +2894,37 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   onComplete: async ({ success, error, report }) => {
                     if (!success) {
                       appendTaskNotificationEvents([
-                        `Reflection discovery failed: ${error ?? "selector failed"}`,
+                        `Reflection wandering failed: ${error ?? "selector failed"}`,
                       ]);
                       return;
                     }
 
                     try {
                       const selectedConversations =
-                        await readReflectionDiscoverySelection({
+                        await readReflectionWanderSelection({
                           selectionReport: report,
-                          catalog: discoveryPayload.catalog,
+                          catalog: wanderPayload.catalog,
                         });
                       if (selectedConversations.length === 0) {
                         appendTaskNotificationEvents([
-                          "Reflection discovery selected no memory-worthy transcripts.",
+                          "Reflection wandering selected no memory-worthy transcripts.",
                         ]);
                         return;
                       }
 
-                      const discoveredReflectionPayload =
+                      const wanderReflectionPayload =
                         await buildMultiReflectionPayload({
                           agentId,
                           selectionPolicy: {
-                            mode: "discovered",
+                            mode: "wandered",
                             selectedConversations,
-                            catalogPath: discoveryPayload.catalogPath,
+                            catalogPath: wanderPayload.catalogPath,
                           },
                           systemPrompt,
                         });
-                      if (!discoveredReflectionPayload) {
+                      if (!wanderReflectionPayload) {
                         appendTaskNotificationEvents([
-                          "Reflection discovery selected transcripts, but no transcript content was available.",
+                          "Reflection wandering selected transcripts, but no transcript content was available.",
                         ]);
                         return;
                       }
@@ -2940,9 +2940,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       spawnBackgroundSubagentTask({
                         subagentType: "reflection",
                         prompt: reflectionPrompt,
-                        description: "Reflecting on discovered transcripts",
+                        description: "Reflecting on wandered transcripts",
                         silentCompletion: true,
-                        transcriptPath: discoveredReflectionPayload.payloadPath,
+                        transcriptPath: wanderReflectionPayload.payloadPath,
                         parentScope: {
                           agentId,
                           conversationId: reflectionConversationId,
@@ -2963,7 +2963,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                           );
                           await finalizeMultiReflectionPayload(
                             agentId,
-                            discoveredReflectionPayload.manifest,
+                            wanderReflectionPayload.manifest,
                             reflectionSuccess,
                           );
                           const msg = await handleMemorySubagentCompletion(
@@ -2989,12 +2989,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
                       telemetry.trackReflectionStart("manual", {
                         conversationId: reflectionConversationId,
-                        startMessageId:
-                          discoveredReflectionPayload.startMessageId,
-                        endMessageId: discoveredReflectionPayload.endMessageId,
+                        startMessageId: wanderReflectionPayload.startMessageId,
+                        endMessageId: wanderReflectionPayload.endMessageId,
                       });
                       appendTaskNotificationEvents([
-                        `Reflection discovery selected ${selectedConversations.length} transcript(s); launched reflection. Payload: ${discoveredReflectionPayload.payloadPath}`,
+                        `Reflection wandering selected ${selectedConversations.length} transcript(s); launched reflection. Payload: ${wanderReflectionPayload.payloadPath}`,
                       ]);
                     } catch (selectionError) {
                       const errorDetails = formatErrorDetails(
@@ -3002,7 +3001,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                         agentId,
                       );
                       appendTaskNotificationEvents([
-                        `Reflection discovery failed after selection: ${errorDetails}`,
+                        `Reflection wandering failed after selection: ${errorDetails}`,
                       ]);
                     }
                   },
@@ -3013,7 +3012,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 conversationId: reflectionConversationId,
               });
               cmd.finish(
-                `Discovering memory-worthy transcripts from ${discoveryPayload.catalog.candidates.length} candidate(s). View the catalog here: ${discoveryPayload.catalogPath}`,
+                `Wandering through memory-worthy transcripts from ${wanderPayload.catalog.candidates.length} candidate(s). View the catalog here: ${wanderPayload.catalogPath}`,
                 true,
               );
               return { submitted: true };
