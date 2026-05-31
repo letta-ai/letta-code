@@ -1706,6 +1706,14 @@ export function Input({
     onSubmit,
   ]);
 
+  const handleFileAutocompleteApply = useCallback(
+    (nextValue: string, nextCursorPosition: number) => {
+      setValue(nextValue);
+      setCursorPos(nextCursorPosition);
+    },
+    [],
+  );
+
   // Handle slash command selection from autocomplete (Enter key - execute)
   const handleCommandSelect = useCallback(
     async (selectedCommand: string) => {
@@ -1990,6 +1998,7 @@ export function Input({
               <InputAssist
                 currentInput={value}
                 cursorPosition={currentCursorPosition}
+                onFileAutocompleteApply={handleFileAutocompleteApply}
                 onCommandSelect={handleCommandSelect}
                 onCommandAutocomplete={handleCommandAutocomplete}
                 onAutocompleteActiveChange={setIsAutocompleteActive}
@@ -2051,6 +2060,7 @@ export function Input({
     handleBackspaceAtEmpty,
     onPasteError,
     currentCursorPosition,
+    handleFileAutocompleteApply,
     handleCommandSelect,
     handleCommandAutocomplete,
     agentId,
