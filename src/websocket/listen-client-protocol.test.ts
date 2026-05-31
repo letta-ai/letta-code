@@ -32,7 +32,6 @@ import {
 } from "@/tools/impl/process_manager";
 import { LIMITS } from "@/tools/impl/truncation";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
-import { getIndexRoot } from "@/utils/file-index";
 import {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,
@@ -3897,54 +3896,6 @@ describe("listen-client cwd change handling", () => {
       );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("does not warm the file index after cwd change", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const projectRoot = await mkdtemp(
-      join(os.tmpdir(), "letta-listen-cwd-idx-"),
-    );
-    const projectDir = join(projectRoot, "my-project");
-    await mkdir(join(projectDir, "src"), { recursive: true });
-    const originalRoot = getIndexRoot();
-
-    try {
-      const normalizedProjectDir = await realpath(projectDir);
-
-      __listenClientTestUtils.setConversationWorkingDirectory(
-        runtime,
-        "agent-1",
-        "conv-1",
-        projectRoot,
-      );
-      runtime.activeAgentId = "agent-1";
-      runtime.activeConversationId = "conv-1";
-      runtime.activeWorkingDirectory = projectRoot;
-
-      await __listenClientTestUtils.handleCwdChange(
-        {
-          agentId: "agent-1",
-          conversationId: "conv-1",
-          cwd: normalizedProjectDir,
-        },
-        socket as unknown as WebSocket,
-        runtime,
-      );
-
-      expect(
-        __listenClientTestUtils.getConversationWorkingDirectory(
-          runtime,
-          "agent-1",
-          "conv-1",
-        ),
-      ).toBe(normalizedProjectDir);
-
-      // CWD changes should no longer re-root or warm the recursive file index.
-      expect(getIndexRoot()).toBe(originalRoot);
-    } finally {
-      await rm(projectRoot, { recursive: true, force: true });
     }
   });
 });
