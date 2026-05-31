@@ -2,14 +2,12 @@ import { Box } from "ink";
 import { useEffect } from "react";
 import type { ModelReasoningEffort } from "@/agent/model";
 import { AgentInfoBar } from "./AgentInfoBar";
-import { FileAutocomplete } from "./FileAutocomplete";
 import { SlashCommandAutocomplete } from "./SlashCommandAutocomplete";
 import type { ExtensionCommandAutocompleteItem } from "./types/autocomplete";
 
 interface InputAssistProps {
   currentInput: string;
   cursorPosition: number;
-  onFileSelect: (path: string) => void;
   onCommandSelect: (command: string) => void;
   onCommandAutocomplete: (command: string) => void;
   onAutocompleteActiveChange: (isActive: boolean) => void;
@@ -25,14 +23,15 @@ interface InputAssistProps {
 
 /**
  * Shows contextual assistance below the input:
- * - File autocomplete when "@" is detected
  * - Slash command autocomplete when "/" is detected
  * - Nothing otherwise
+ *
+ * File autocomplete is intentionally disabled while we replace the old
+ * eager file indexer with an on-demand path search implementation.
  */
 export function InputAssist({
   currentInput,
   cursorPosition,
-  onFileSelect,
   onCommandSelect,
   onCommandAutocomplete,
   onAutocompleteActiveChange,
@@ -45,32 +44,14 @@ export function InputAssist({
   conversationId,
   extensionCommands,
 }: InputAssistProps) {
-  const showFileAutocomplete = currentInput.includes("@");
-  const showCommandAutocomplete =
-    !showFileAutocomplete && currentInput.startsWith("/");
+  const showCommandAutocomplete = currentInput.startsWith("/");
 
   // Reset active state when no autocomplete is being shown
   useEffect(() => {
-    if (!showFileAutocomplete && !showCommandAutocomplete) {
+    if (!showCommandAutocomplete) {
       onAutocompleteActiveChange(false);
     }
-  }, [
-    showFileAutocomplete,
-    showCommandAutocomplete,
-    onAutocompleteActiveChange,
-  ]);
-
-  // Show file autocomplete when @ is present
-  if (showFileAutocomplete) {
-    return (
-      <FileAutocomplete
-        currentInput={currentInput}
-        cursorPosition={cursorPosition}
-        onSelect={onFileSelect}
-        onActiveChange={onAutocompleteActiveChange}
-      />
-    );
-  }
+  }, [showCommandAutocomplete, onAutocompleteActiveChange]);
 
   // Show slash command autocomplete when input starts with /
   if (showCommandAutocomplete) {

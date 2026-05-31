@@ -5,7 +5,6 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { ensureFileIndex } from "@/utils/file-index";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import {
   getResumeDataFromBackend,
@@ -160,8 +159,6 @@ async function refreshStartupOAuthToken(
     return null;
   }
 }
-
-void ensureFileIndex();
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly

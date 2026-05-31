@@ -32,14 +32,6 @@ export interface AutocompleteProps {
 }
 
 /**
- * File autocomplete match item
- */
-export interface FileMatch {
-  path: string;
-  type: "file" | "dir" | "url";
-}
-
-/**
  * Slash command autocomplete match item
  */
 export interface CommandMatch {

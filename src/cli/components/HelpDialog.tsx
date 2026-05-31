@@ -64,12 +64,11 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   const shortcuts = useMemo<ShortcutItem[]>(() => {
     return [
       { keys: "/", description: "Open command autocomplete" },
-      { keys: "@", description: "Open file autocomplete" },
       {
         keys: "Esc",
         description: "Cancel dialog / clear input (double press)",
       },
-      { keys: "Tab", description: "Autocomplete command or file path" },
+      { keys: "Tab", description: "Autocomplete command" },
       { keys: "↓", description: "Navigate down / next command in history" },
       { keys: "↑", description: "Navigate up / previous command in history" },
       { keys: "Shift+Enter", description: "Insert newline (multi-line input)" },

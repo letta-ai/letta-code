@@ -51,7 +51,6 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
-import { refreshFileIndex } from "@/utils/file-index";
 import { isRecord } from "@/utils/type-guards";
 import {
   functionToolForm,
@@ -2380,12 +2379,6 @@ export async function executeTool(
 
       const result = await tool.fn(enhancedArgs);
       const duration = Date.now() - startTime;
-
-      // Refresh the file index in the background after every tool execution
-      // so subsequent @ searches reflect externally created or deleted files.
-      // The incremental rebuild is cheap (metadata-based skip for unchanged
-      // subtrees), so running on every tool adds negligible overhead.
-      void refreshFileIndex();
 
       // Broadcast file content after file-mutating tools so web clients update
       // in real time without waiting for fs.watch → file_changed → re-read.
