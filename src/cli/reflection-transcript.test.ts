@@ -1021,14 +1021,12 @@ describe("reflectionTranscript helper", () => {
     const prompt = buildReflectionSelectorPrompt();
     expect(prompt).toContain("reflection_discovery_catalog");
     expect(prompt).toContain("Do not edit memory files");
-    expect(prompt).toContain("selection_output_path");
+    expect(prompt).toContain("Return strict JSON");
   });
 
-  test("readReflectionDiscoverySelection validates and caps selector output", async () => {
-    const selectionOutputPath = join(testRoot, "selected.json");
-    await writeFile(
-      selectionOutputPath,
-      JSON.stringify({
+  test("readReflectionDiscoverySelection validates and caps selector report", async () => {
+    const selected = await readReflectionDiscoverySelection({
+      selectionReport: JSON.stringify({
         selected_conversations: [
           { conversation_id: "conv-a", reason: "correction", priority: "high" },
           { conversation_id: "conv-a", reason: "duplicate", priority: "low" },
@@ -1039,18 +1037,12 @@ describe("reflectionTranscript helper", () => {
           },
         ],
       }),
-      "utf-8",
-    );
-
-    const selected = await readReflectionDiscoverySelection({
-      selectionOutputPath,
       catalog: {
         schema_version: 1,
         type: "reflection_discovery_catalog",
         agent_id: agentId,
         created_at: new Date().toISOString(),
         max_selected: 1,
-        selection_output_path: selectionOutputPath,
         instructions: "select",
         candidates: [
           {
@@ -1081,6 +1073,38 @@ describe("reflectionTranscript helper", () => {
 
     expect(selected).toEqual([
       { conversation_id: "conv-a", reason: "correction", priority: "high" },
+    ]);
+  });
+
+  test("readReflectionDiscoverySelection accepts fenced selector JSON", async () => {
+    const selected = await readReflectionDiscoverySelection({
+      selectionReport:
+        '```json\n{"selected_conversations":[{"conversation_id":"conv-a","reason":"correction"}]}\n```',
+      catalog: {
+        schema_version: 1,
+        type: "reflection_discovery_catalog",
+        agent_id: agentId,
+        created_at: new Date().toISOString(),
+        max_selected: 5,
+        instructions: "select",
+        candidates: [
+          {
+            conversation_id: "conv-a",
+            total_completed_turns: 3,
+            reflected_completed_turns: 0,
+            turns_since_last_successful_reflection: 3,
+            has_unreflected_content: true,
+            is_current_conversation: false,
+            sources: ["unreflected"],
+            search_scores: [],
+            heuristic_score: 10,
+          },
+        ],
+      },
+    });
+
+    expect(selected).toEqual([
+      { conversation_id: "conv-a", reason: "correction" },
     ]);
   });
 });
