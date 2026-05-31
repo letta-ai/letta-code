@@ -691,9 +691,8 @@ async function main(): Promise<void> {
     process.exit(subcommandResult);
   }
 
-  // Everything below only runs for interactive TUI mode
+  // Everything below only runs for interactive/headless agent mode
   await settingsManager.initialize();
-  await initTerminalTheme();
 
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
@@ -874,6 +873,9 @@ async function main(): Promise<void> {
     fromAfFlagValue: values["from-af"],
   });
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+  const terminalThemePromise = !isHeadless
+    ? initTerminalTheme().catch(() => undefined)
+    : Promise.resolve(undefined);
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   const baseURL =
@@ -1490,23 +1492,31 @@ async function main(): Promise<void> {
 
   markMilestone("TUI_MODE_START");
 
-  // Enable enhanced key reporting (Shift+Enter, etc.) BEFORE Ink initializes.
-  // In VS Code/xterm.js this typically requires a short handshake (query + enable).
-  try {
-    const { detectAndEnableKittyProtocol } = await import(
-      "@/cli/utils/kitty-protocol-detector"
-    );
-    await detectAndEnableKittyProtocol();
-  } catch {
-    // Best-effort: if this fails, the app still runs (Option+Enter remains supported).
-  }
+  // Terminal preflight must happen before Ink takes over stdin, but it should
+  // not sit on the critical path while React/Ink/App modules are loading. This
+  // mirrors other TUIs: issue terminal queries early, then rendezvous before
+  // render so stdin ownership is clean.
+  const terminalPreflightPromise = (async () => {
+    await terminalThemePromise;
+    try {
+      const { detectAndEnableKittyProtocol } = await import(
+        "@/cli/utils/kitty-protocol-detector"
+      );
+      await detectAndEnableKittyProtocol();
+    } catch {
+      // Best-effort: if this fails, the app still runs (Option+Enter remains supported).
+    }
+  })();
 
   // Interactive: lazy-load React/Ink + App
   markMilestone("REACT_IMPORT_START");
-  const React = await import("react");
-  const { render } = await import("ink");
+  const [React, { render }, AppModule] = await Promise.all([
+    import("react"),
+    import("ink"),
+    import("@/cli/App"),
+  ]);
+  await terminalPreflightPromise;
   const { useState, useEffect, useCallback, useRef } = React;
-  const AppModule = await import("@/cli/App");
   const App = AppModule.App;
 
   function LoadingApp({
@@ -1732,12 +1742,16 @@ async function main(): Promise<void> {
             ? backend.listModels()
             : Promise.resolve([]);
         if (startupBackendMode === "local") {
-          try {
-            const models = await startupModelsPromise;
-            setStartupHasAvailableLocalModels(models.length > 0);
-          } catch {
-            setStartupHasAvailableLocalModels(false);
-          }
+          // Local model discovery can hit slow/unreachable provider endpoints
+          // (bounded by the discovery timeout). It is only needed for the UI
+          // availability hint, so never block disk-backed agent resume on it.
+          void startupModelsPromise
+            .then((models) => {
+              setStartupHasAvailableLocalModels(models.length > 0);
+            })
+            .catch(() => {
+              setStartupHasAvailableLocalModels(false);
+            });
         } else {
           setStartupHasAvailableLocalModels(true);
         }
@@ -2349,13 +2363,6 @@ async function main(): Promise<void> {
           settingsManager.getLocalProjectSettings();
         } catch {
           await settingsManager.loadLocalProjectSettings();
-        }
-
-        // Save agent ID to project settings.
-        // Only mirror into global legacy lastAgent for cloud/self-hosted agents.
-        settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
-        if (isAgentIdCompatibleWithBackend(agent.id, "api")) {
-          settingsManager.updateSettings({ lastAgent: agent.id });
         }
 
         // Set agent context for tools that need it (e.g., Skill tool)
