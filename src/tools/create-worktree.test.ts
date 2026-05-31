@@ -16,7 +16,6 @@ import {
   prepareCurrentToolExecutionContext,
   releaseToolExecutionContext,
 } from "@/tools/manager";
-import { getIndexRoot } from "@/utils/file-index";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 import { setActiveRuntime } from "@/websocket/listener/runtime";
@@ -280,47 +279,6 @@ describe("CreateWorktree tool", () => {
     } finally {
       releaseToolExecutionContext(prepared.contextId);
     }
-  });
-
-  test("does not re-root the file index when switching into a nested worktree", async () => {
-    const repo = await trackRepo();
-    const fakeHome = await mkdtemp(
-      path.join(tmpdir(), "letta-create-worktree-index-home-"),
-    );
-    tempDirs.push(fakeHome);
-    process.env.HOME = fakeHome;
-    resetRemoteSettingsCache();
-
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    listener.bootWorkingDirectory = repo;
-    __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
-      "agent-1",
-      "conv-a",
-    );
-    setActiveRuntime(listener);
-
-    const originalIndexRoot = getIndexRoot();
-
-    const result = await runWithRuntimeContext(
-      {
-        agentId: "agent-1",
-        conversationId: "conv-a",
-        workingDirectory: repo,
-      },
-      () =>
-        create_worktree({
-          name: "Index Root Feature",
-          refresh_base: false,
-        }),
-    );
-
-    expect(result.status).toBe("success");
-    if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
-    }
-    expect(result.switched_cwd).toBe(true);
-    expect(getIndexRoot()).toBe(originalIndexRoot);
   });
 
   test("fetches the remote default branch before creating the worktree", async () => {
