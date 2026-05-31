@@ -22,7 +22,7 @@ import {
   getReflectionTranscriptState,
   listReflectionTranscriptCandidates,
   REFLECTION_STATE_SCHEMA_VERSION,
-  readReflectionDiscoverySelection,
+  readReflectionWanderSelection,
 } from "@/cli/helpers/reflection-transcript";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
@@ -1017,15 +1017,15 @@ describe("reflectionTranscript helper", () => {
     expect(filtered).not.toContain("git push");
   });
 
-  test("reflection selector prompt describes discovery-only mode", () => {
+  test("reflection selector prompt describes wander-only mode", () => {
     const prompt = buildReflectionSelectorPrompt();
-    expect(prompt).toContain("reflection_discovery_catalog");
+    expect(prompt).toContain("reflection_wander_catalog");
     expect(prompt).toContain("Do not edit memory files");
     expect(prompt).toContain("Return strict JSON");
   });
 
-  test("readReflectionDiscoverySelection validates and caps selector report", async () => {
-    const selected = await readReflectionDiscoverySelection({
+  test("readReflectionWanderSelection validates and caps selector report", async () => {
+    const selected = await readReflectionWanderSelection({
       selectionReport: JSON.stringify({
         selected_conversations: [
           { conversation_id: "conv-a", reason: "correction", priority: "high" },
@@ -1039,7 +1039,7 @@ describe("reflectionTranscript helper", () => {
       }),
       catalog: {
         schema_version: 1,
-        type: "reflection_discovery_catalog",
+        type: "reflection_wander_catalog",
         agent_id: agentId,
         created_at: new Date().toISOString(),
         max_selected: 1,
@@ -1076,13 +1076,13 @@ describe("reflectionTranscript helper", () => {
     ]);
   });
 
-  test("readReflectionDiscoverySelection accepts fenced selector JSON", async () => {
-    const selected = await readReflectionDiscoverySelection({
+  test("readReflectionWanderSelection accepts fenced selector JSON", async () => {
+    const selected = await readReflectionWanderSelection({
       selectionReport:
         '```json\n{"selected_conversations":[{"conversation_id":"conv-a","reason":"correction"}]}\n```',
       catalog: {
         schema_version: 1,
-        type: "reflection_discovery_catalog",
+        type: "reflection_wander_catalog",
         agent_id: agentId,
         created_at: new Date().toISOString(),
         max_selected: 5,
