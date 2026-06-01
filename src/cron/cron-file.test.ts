@@ -84,6 +84,11 @@ describe("addTask", () => {
     expect(result.task.cron).toBe("*/5 * * * *");
   });
 
+  test("preserves new conversation target", () => {
+    const result = addTask(makeInput({ conversation_id: "new" }));
+    expect(result.task.conversation_id).toBe("new");
+  });
+
   test("creates a one-shot task", () => {
     const scheduledFor = new Date(Date.now() + 60000);
     const result = addTask(

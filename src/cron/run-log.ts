@@ -243,10 +243,7 @@ export function readCronRunLogEntriesPage(
 
 export function appendCronRunLogForTask(
   task: CronTask,
-  entry: Omit<
-    CronRunLogEntry,
-    "action" | "agentId" | "conversationId" | "jobId" | "ts"
-  > & {
+  entry: Omit<CronRunLogEntry, "action" | "agentId" | "jobId" | "ts"> & {
     ts?: number;
   },
 ): void {

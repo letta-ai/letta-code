@@ -1019,6 +1019,12 @@ export interface CronAddCommand {
   /** Echoed back in the response for request correlation. */
   request_id: string;
   agent_id: string;
+  /**
+   * Conversation target for scheduled fires.
+   * - omitted/"default": agent default conversation
+   * - "new": create a fresh conversation for every fire
+   * - any other string: existing conversation id
+   */
   conversation_id?: string;
   name: string;
   description: string;
