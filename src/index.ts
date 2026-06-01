@@ -876,6 +876,23 @@ async function main(): Promise<void> {
   const terminalThemePromise = !isHeadless
     ? initTerminalTheme().catch(() => undefined)
     : Promise.resolve(undefined);
+  // Terminal preflight must happen before Ink takes over stdin. Start it as
+  // early as possible so OSC/Kitty handshakes are hidden behind auth checks,
+  // argument validation, and module loading instead of sitting in front of
+  // first render.
+  const terminalPreflightPromise = !isHeadless
+    ? (async () => {
+        await terminalThemePromise;
+        try {
+          const { detectAndEnableKittyProtocol } = await import(
+            "@/cli/utils/kitty-protocol-detector"
+          );
+          await detectAndEnableKittyProtocol();
+        } catch {
+          // Best-effort: if this fails, the app still runs (Option+Enter remains supported).
+        }
+      })()
+    : Promise.resolve(undefined);
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   const baseURL =
@@ -1274,55 +1291,76 @@ async function main(): Promise<void> {
       baseURL === LETTA_CLOUD_API_URL || Boolean(apiKey);
 
     if (shouldValidateCredentials) {
-      // Validate credentials by checking an authenticated endpoint.
-      const { validateCredentialsWithResult } = await import("@/auth/oauth");
-      let credentialValidation = await validateCredentialsWithResult(
-        baseURL,
-        apiKey ?? "",
-      );
-      let isValid = credentialValidation.ok;
-
-      if (
-        !isValid &&
-        !process.env.LETTA_API_KEY &&
-        baseURL === LETTA_CLOUD_API_URL &&
-        settings.refreshToken
-      ) {
-        const refreshedApiKey = await refreshStartupOAuthToken(settings);
-        if (refreshedApiKey) {
-          apiKey = refreshedApiKey;
-          credentialValidation = await validateCredentialsWithResult(
-            baseURL,
-            apiKey,
-          );
-          isValid = credentialValidation.ok;
-        }
-      }
-      markMilestone("CREDENTIALS_VALIDATED");
-
-      // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
-      // Must run after credentials are validated so OAuth tokens are available.
-      if (isValid) {
-        const { bootstrapBaseToolsIfNeeded } = await import(
-          "@/agent/bootstrap-tools"
+      const validateCredentialsAndMaybeRefresh = async () => {
+        const { validateCredentialsWithResult } = await import("@/auth/oauth");
+        let credentialValidation = await validateCredentialsWithResult(
+          baseURL,
+          apiKey ?? "",
         );
-        await bootstrapBaseToolsIfNeeded();
-      }
 
-      if (!isValid) {
-        const validationFailure = credentialValidation.ok
-          ? null
-          : credentialValidation;
+        if (
+          !credentialValidation.ok &&
+          !process.env.LETTA_API_KEY &&
+          baseURL === LETTA_CLOUD_API_URL &&
+          settings.refreshToken
+        ) {
+          const refreshedApiKey = await refreshStartupOAuthToken(settings);
+          if (refreshedApiKey) {
+            apiKey = refreshedApiKey;
+            credentialValidation = await validateCredentialsWithResult(
+              baseURL,
+              apiKey,
+            );
+          }
+        }
 
-        // For headless mode, error out with helpful message
-        if (isHeadless) {
+        return credentialValidation;
+      };
+
+      if (!isHeadless) {
+        // Interactive startup should not wait on an extra validation request.
+        // The real API calls below will naturally surface auth/network issues;
+        // this background check only preserves the old diagnostics/bootstrap path.
+        markMilestone("CREDENTIALS_VALIDATION_DEFERRED");
+        void validateCredentialsAndMaybeRefresh()
+          .then(async (credentialValidation) => {
+            markMilestone("CREDENTIALS_VALIDATED");
+            if (!credentialValidation.ok) {
+              debugWarn(
+                "startup",
+                `Deferred credential validation failed for ${baseURL}: ${credentialValidation.message}`,
+              );
+              return;
+            }
+
+            const { bootstrapBaseToolsIfNeeded } = await import(
+              "@/agent/bootstrap-tools"
+            );
+            await bootstrapBaseToolsIfNeeded();
+          })
+          .catch((error) => {
+            debugWarn(
+              "startup",
+              `Deferred credential validation failed for ${baseURL}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+      } else {
+        const credentialValidation = await validateCredentialsAndMaybeRefresh();
+        markMilestone("CREDENTIALS_VALIDATED");
+
+        if (credentialValidation.ok) {
+          const { bootstrapBaseToolsIfNeeded } = await import(
+            "@/agent/bootstrap-tools"
+          );
+          await bootstrapBaseToolsIfNeeded();
+        } else {
           console.error("Failed to connect to Letta server");
           console.error(`Base URL: ${baseURL}`);
           console.error(
             "Your credentials may be invalid or the server may be unreachable.",
           );
-          if (validationFailure?.message) {
-            console.error(`Details: ${validationFailure.message}`);
+          if (credentialValidation.message) {
+            console.error(`Details: ${credentialValidation.message}`);
           }
           if (process.env.LETTA_API_KEY) {
             console.error(
@@ -1333,46 +1371,6 @@ async function main(): Promise<void> {
           }
           process.exit(1);
         }
-
-        // For interactive mode, show setup flow
-        console.log("Failed to connect to Letta server.");
-        console.log(`Base URL: ${baseURL}\n`);
-        console.log(
-          "Your credentials may be invalid or the server may be unreachable.",
-        );
-        if (process.env.LETTA_API_KEY) {
-          console.log(
-            "LETTA_API_KEY is set in your environment, so setup cannot replace the credential Letta Code is using.",
-          );
-          console.log(
-            "Unset LETTA_API_KEY or update it with a valid API key, then run `letta` again.",
-          );
-          process.exit(1);
-        }
-
-        if (
-          validationFailure?.reason === "network_error" ||
-          validationFailure?.reason === "server_unreachable"
-        ) {
-          if (validationFailure.message) {
-            console.log(`Details: ${validationFailure.message}`);
-          }
-          console.log(
-            "Setup cannot fix a server reachability problem. Check your network or try again later.",
-          );
-          process.exit(1);
-        }
-
-        console.log("Let's reauthenticate your setup.\n");
-        const { runSetup } = await import("@/auth/setup");
-        const setupResult = await runSetup({
-          initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu",
-        });
-        if (setupResult.kind === "cancelled") {
-          process.exit(0);
-        }
-        // After setup, restart main flow
-        return main();
       }
     } else {
       markMilestone("CREDENTIALS_VALIDATED");
@@ -1491,22 +1489,6 @@ async function main(): Promise<void> {
   }
 
   markMilestone("TUI_MODE_START");
-
-  // Terminal preflight must happen before Ink takes over stdin, but it should
-  // not sit on the critical path while React/Ink/App modules are loading. This
-  // mirrors other TUIs: issue terminal queries early, then rendezvous before
-  // render so stdin ownership is clean.
-  const terminalPreflightPromise = (async () => {
-    await terminalThemePromise;
-    try {
-      const { detectAndEnableKittyProtocol } = await import(
-        "@/cli/utils/kitty-protocol-detector"
-      );
-      await detectAndEnableKittyProtocol();
-    } catch {
-      // Best-effort: if this fails, the app still runs (Option+Enter remains supported).
-    }
-  })();
 
   // Interactive: lazy-load React/Ink + App
   markMilestone("REACT_IMPORT_START");

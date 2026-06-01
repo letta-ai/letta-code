@@ -39,7 +39,7 @@ describe("local-first setup wiring", () => {
     expect(source.slice(start, end)).toContain('preferredBackendMode: "api"');
   });
 
-  test("reauthentication starts a fresh device-code login instead of trusting stale stored credentials", () => {
+  test("reauthentication paths do not trust stale stored credentials", () => {
     const loginSource = readSource("../auth/ConstellationLoginView.tsx");
     const setupSource = readSource("../auth/setup-ui.tsx");
     const setupRunnerSource = readSource("../auth/setup.ts");
@@ -67,12 +67,8 @@ describe("local-first setup wiring", () => {
     );
     expect(overlaySource).toContain("onAlreadyLoggedInRef.current()");
     expect(overlaySource).toContain("Could not verify current credentials");
-    expect(indexSource).toContain(
-      "LETTA_API_KEY is set in your environment, so setup cannot replace the credential Letta Code is using.",
-    );
-    expect(indexSource).toContain(
-      'initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu"',
-    );
+    expect(indexSource).toContain("CREDENTIALS_VALIDATION_DEFERRED");
+    expect(indexSource).toContain("Deferred credential validation failed");
     expect(indexSource).toContain('setupResult.kind === "cancelled"');
     expect(indexSource).toContain("const shouldValidateCredentials =");
     expect(indexSource).toContain(
