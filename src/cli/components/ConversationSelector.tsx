@@ -282,6 +282,21 @@ export function buildDefaultConversationEntry(
   };
 }
 
+export function mergePinnedConversationRecords(
+  listedConversations: Conversation[],
+  pinnedConversations: Conversation[],
+): Conversation[] {
+  const listedIds = new Set(
+    listedConversations.map((conversation) => conversation.id),
+  );
+  return [
+    ...pinnedConversations.filter(
+      (conversation) => !listedIds.has(conversation.id),
+    ),
+    ...listedConversations,
+  ];
+}
+
 export function ConversationSelector({
   agentId,
   agentName,
@@ -445,16 +460,54 @@ export function ConversationSelector({
           defaultPromise,
         ]);
 
+        const pinnedConversations = !afterCursor
+          ? (
+              await Promise.all(
+                pinnedRefs
+                  .filter(
+                    (pin) =>
+                      pin.conversationId !== "default" &&
+                      !result.some(
+                        (conversation) =>
+                          conversation.id === pin.conversationId,
+                      ),
+                  )
+                  .map(async (pin) => {
+                    try {
+                      const conversation = await backend.retrieveConversation(
+                        pin.conversationId,
+                      );
+                      return conversation.agent_id === agentId
+                        ? conversation
+                        : null;
+                    } catch {
+                      return null;
+                    }
+                  }),
+              )
+            ).filter(
+              (conversation): conversation is Conversation =>
+                conversation !== null,
+            )
+          : [];
+
+        const conversationRecords = mergePinnedConversationRecords(
+          result,
+          pinnedConversations,
+        );
+
         // Build unenriched conversation list using data already on the object
-        const unenrichedList: EnrichedConversation[] = result.map((conv) => ({
-          conversation: conv,
-          previewLines: null, // Not loaded yet
-          lastActiveAt: conv.updated_at ?? conv.created_at ?? null,
-          messageCount: -1, // Unknown until enriched
-          enriched: false,
-          isPinned: pinnedIdSet.has(conv.id),
-          isPinnedLocal: localPinnedIdSet.has(conv.id),
-        }));
+        const unenrichedList: EnrichedConversation[] = conversationRecords.map(
+          (conv) => ({
+            conversation: conv,
+            previewLines: null, // Not loaded yet
+            lastActiveAt: conv.updated_at ?? conv.created_at ?? null,
+            messageCount: -1, // Unknown until enriched
+            enriched: false,
+            isPinned: pinnedIdSet.has(conv.id),
+            isPinnedLocal: localPinnedIdSet.has(conv.id),
+          }),
+        );
 
         // Don't filter yet — we'll remove empties after enrichment confirms messageCount
         const nonEmptyList = unenrichedList;
@@ -707,23 +760,26 @@ export function ConversationSelector({
       } else {
         settingsManager.pinConversationGlobal(agentId, conversationId);
       }
+      const updatePinState = (item: EnrichedConversation) =>
+        item.conversation.id === conversationId
+          ? {
+              ...item,
+              isPinned: !selected.isPinned,
+              isPinnedLocal: false,
+            }
+          : item;
+      const sortPinnedFirst = (
+        a: EnrichedConversation,
+        b: EnrichedConversation,
+      ) => {
+        if (a.conversation.id === "default") return -1;
+        if (b.conversation.id === "default") return 1;
+        return Number(b.isPinned) - Number(a.isPinned);
+      };
       setConversations((prev) =>
-        prev
-          .map((item) =>
-            item.conversation.id === conversationId
-              ? {
-                  ...item,
-                  isPinned: !selected.isPinned,
-                  isPinnedLocal: false,
-                }
-              : item,
-          )
-          .sort((a, b) => {
-            if (a.conversation.id === "default") return -1;
-            if (b.conversation.id === "default") return 1;
-            return Number(b.isPinned) - Number(a.isPinned);
-          }),
+        prev.map(updatePinState).sort(sortPinnedFirst),
       );
+      setSearchResults((prev) => prev?.map(updatePinState) ?? null);
     },
     [agentId],
   );
@@ -972,7 +1028,7 @@ export function ConversationSelector({
           <Text dimColor>
             {mode === "pin"
               ? "Press Esc to clear/close"
-              : "Press N to start a new conversation"}
+              : "Press Esc to cancel"}
           </Text>
         </Box>
       )}
