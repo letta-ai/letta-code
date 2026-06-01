@@ -22,7 +22,7 @@ import {
   getReflectionTranscriptState,
   listReflectionTranscriptCandidates,
   REFLECTION_STATE_SCHEMA_VERSION,
-  readReflectionWanderSelection,
+  readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
@@ -967,15 +967,15 @@ describe("reflectionTranscript helper", () => {
     expect(filtered).not.toContain("git push");
   });
 
-  test("reflection selector prompt describes wander-only mode", () => {
+  test("reflection selector prompt describes auto-only mode", () => {
     const prompt = buildReflectionSelectorPrompt();
-    expect(prompt).toContain("reflection_wander_catalog");
+    expect(prompt).toContain("auto_transcript_reflection_candidates");
     expect(prompt).toContain("Do not edit memory files");
     expect(prompt).toContain("Return strict JSON");
   });
 
-  test("readReflectionWanderSelection validates and caps selector report", async () => {
-    const selected = await readReflectionWanderSelection({
+  test("readReflectionAutoSelection validates and caps selector report", async () => {
+    const selected = await readReflectionAutoSelection({
       selectionReport: JSON.stringify({
         selected_conversations: [
           { conversation_id: "conv-a", reason: "correction", priority: "high" },
@@ -987,9 +987,9 @@ describe("reflectionTranscript helper", () => {
           },
         ],
       }),
-      catalog: {
+      candidates: {
         schema_version: 1,
-        type: "reflection_wander_catalog",
+        type: "auto_transcript_reflection_candidates",
         agent_id: agentId,
         created_at: new Date().toISOString(),
         max_selected: 1,
@@ -1026,13 +1026,13 @@ describe("reflectionTranscript helper", () => {
     ]);
   });
 
-  test("readReflectionWanderSelection accepts fenced selector JSON", async () => {
-    const selected = await readReflectionWanderSelection({
+  test("readReflectionAutoSelection accepts fenced selector JSON", async () => {
+    const selected = await readReflectionAutoSelection({
       selectionReport:
         '```json\n{"selected_conversations":[{"conversation_id":"conv-a","reason":"correction"}]}\n```',
-      catalog: {
+      candidates: {
         schema_version: 1,
-        type: "reflection_wander_catalog",
+        type: "auto_transcript_reflection_candidates",
         agent_id: agentId,
         created_at: new Date().toISOString(),
         max_selected: 5,
