@@ -23,7 +23,7 @@ function stripSlash(command: string): string {
   return command.startsWith("/") ? command.slice(1) : command;
 }
 
-function getDefaultReservedCommandIds(): Set<string> {
+function getDefaultBuiltinCommandIds(): Set<string> {
   return new Set(Object.keys(builtinCommands).map(stripSlash));
 }
 
@@ -38,18 +38,18 @@ function getDefaultReservedToolNames(): Set<string> {
 
 function withDefaultReservations<
   T extends {
+    builtinCommandIds?: Iterable<string>;
     capabilities?: ExtensionCapabilities;
-    reservedCommandIds?: Iterable<string>;
     reservedToolNames?: Iterable<string>;
   },
 >(options: T): T {
   return {
     ...options,
-    capabilities: options.capabilities ?? TUI_EXTENSION_CAPABILITIES,
-    reservedCommandIds: [
-      ...getDefaultReservedCommandIds(),
-      ...(options.reservedCommandIds ?? []),
+    builtinCommandIds: [
+      ...getDefaultBuiltinCommandIds(),
+      ...(options.builtinCommandIds ?? []),
     ],
+    capabilities: options.capabilities ?? TUI_EXTENSION_CAPABILITIES,
     reservedToolNames: [
       ...getDefaultReservedToolNames(),
       ...(options.reservedToolNames ?? []),

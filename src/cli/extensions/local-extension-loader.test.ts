@@ -457,7 +457,7 @@ describe("local extension loader", () => {
     }
   });
 
-  test("rejects extension command id collisions", async () => {
+  test("rejects extension command id collisions and diagnoses built-in overrides", async () => {
     const root = createTempDir();
     try {
       const options = createLoadOptions(root);
@@ -506,17 +506,28 @@ describe("local extension loader", () => {
 
       const registry = await loadLocalExtensions(options);
 
-      expect(Object.keys(registry.commands)).toEqual(["dupe"]);
+      expect(Object.keys(registry.commands)).toEqual(["dupe", "reload"]);
+      expect(registry.commands.reload?.description).toBe("Built-in conflict");
       expect(registry.errors.map((entry) => entry.path).sort()).toEqual([
         path.join(extensionDir, "b.ts"),
-        path.join(extensionDir, "c.ts"),
         path.join(extensionDir, "d.ts"),
       ]);
       expect(registry.errors.map((entry) => entry.error.message)).toEqual([
         expect.stringContaining("already registered"),
-        expect.stringContaining("built-in command"),
         expect.stringContaining("must not start"),
       ]);
+      expect(registry.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            capability: { id: "reload", kind: "command" },
+            error: expect.objectContaining({
+              message: expect.stringContaining("overrides a built-in command"),
+            }),
+            path: path.join(extensionDir, "c.ts"),
+            phase: "command.override",
+          }),
+        ]),
+      );
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

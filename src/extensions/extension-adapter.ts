@@ -296,6 +296,11 @@ export function createExtensionAdapter(
       );
     }
 
+    for (const diagnostic of nextRegistry.diagnostics) {
+      if (diagnostic.phase !== "command.override") continue;
+      debugLog("extensions", "%s", diagnostic.error.message);
+    }
+
     loadState = {
       hadStatuslineRenderer: Boolean(nextRegistry.ui.statuslineRenderer),
       hasExtensionSources: nextRegistry.sources.some(
