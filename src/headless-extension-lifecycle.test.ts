@@ -18,10 +18,10 @@ import {
 } from "@/extensions/tool-registry";
 import { __headlessTestUtils } from "@/headless";
 import {
+  createHeadlessExtensionAdapter,
   createHeadlessExtensionContext,
-  createHeadlessExtensionRuntime,
   HEADLESS_EXTENSION_CAPABILITIES,
-} from "@/headless-extension-runtime";
+} from "@/headless-extension-adapter";
 import { executeTool } from "@/tools/manager";
 
 function readHeadlessSource(): string {
@@ -31,7 +31,7 @@ function readHeadlessSource(): string {
   );
 }
 
-describe("headless extension runtime", () => {
+describe("headless extension adapter", () => {
   afterEach(() => {
     clearExtensionTools();
   });
@@ -79,24 +79,24 @@ describe("headless extension runtime", () => {
     expect(context.contextWindow.size).toBe(200000);
   });
 
-  test("loads the runtime before headless modes and emits lifecycle events on exit", () => {
+  test("loads the adapter before headless modes and emits lifecycle events on exit", () => {
     const source = readHeadlessSource();
 
-    const runtimeIndex = source.indexOf(
-      "const headlessExtensionRuntime = createHeadlessExtensionRuntime",
+    const adapterIndex = source.indexOf(
+      "const headlessExtensionAdapter = createHeadlessExtensionAdapter",
     );
     const initialToolContextIndex = source.indexOf("const initialToolContext");
     const bidirectionalIndex = source.indexOf(
       "// If input-format is stream-json, use bidirectional mode",
     );
-    expect(runtimeIndex).toBeGreaterThan(-1);
-    expect(initialToolContextIndex).toBeGreaterThan(runtimeIndex);
-    expect(bidirectionalIndex).toBeGreaterThan(runtimeIndex);
+    expect(adapterIndex).toBeGreaterThan(-1);
+    expect(initialToolContextIndex).toBeGreaterThan(adapterIndex);
+    expect(bidirectionalIndex).toBeGreaterThan(adapterIndex);
 
-    expect(source).toContain("await headlessExtensionRuntime.reload()");
+    expect(source).toContain("await headlessExtensionAdapter.reload()");
     expect(source).toContain("await emitHeadlessConversationOpen({");
     expect(source).toContain("await emitHeadlessConversationClose({");
-    expect(source).toContain("headlessExtensionRuntime.dispose()");
+    expect(source).toContain("headlessExtensionAdapter.dispose()");
   });
 
   test("registers extension tools for headless tool snapshots and disables commands/UI", async () => {
@@ -151,7 +151,7 @@ describe("headless extension runtime", () => {
         }`,
       );
 
-      const runtime = createHeadlessExtensionRuntime({
+      const adapter = createHeadlessExtensionAdapter({
         agent,
         backend,
         cacheDirectory: path.join(root, "extension-cache"),
@@ -159,8 +159,8 @@ describe("headless extension runtime", () => {
         globalExtensionsDirectory: extensionDir,
       });
 
-      await runtime.reload();
-      const snapshot = runtime.getSnapshot().registry;
+      await adapter.reload();
+      const snapshot = adapter.getSnapshot().registry;
 
       expect(snapshot.tools[toolName]).toBeDefined();
       expect(snapshot.commands).toEqual({});
@@ -173,7 +173,7 @@ describe("headless extension runtime", () => {
           agentId: agent.id,
           cachedAgent: agent,
           conversationId: "default",
-          extensionEventEmitter: runtime.eventEmitter,
+          extensionEventEmitter: adapter.eventEmitter,
         });
       const clientToolNames =
         prepared.preparedToolContext.preparedToolContext.clientTools.map(
@@ -195,14 +195,14 @@ describe("headless extension runtime", () => {
       expect(result.status).toBe("success");
       expect(result.toolReturn).toBe("headless:ok:tool_start:agent-1:default");
 
-      runtime.dispose();
+      adapter.dispose();
       expect(getExtensionToolDefinition(toolName)).toBeUndefined();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });
 
-  test("disabled headless runtime skips extension loading", async () => {
+  test("disabled headless adapter skips extension loading", async () => {
     const root = mkdtempSync(
       path.join(tmpdir(), "letta-headless-ext-disabled-"),
     );
@@ -239,7 +239,7 @@ describe("headless extension runtime", () => {
         }`,
       );
 
-      const runtime = createHeadlessExtensionRuntime({
+      const adapter = createHeadlessExtensionAdapter({
         agent,
         backend,
         cacheDirectory: path.join(root, "extension-cache"),
@@ -248,8 +248,8 @@ describe("headless extension runtime", () => {
         globalExtensionsDirectory: extensionDir,
       });
 
-      await runtime.reload();
-      const snapshot = runtime.getSnapshot();
+      await adapter.reload();
+      const snapshot = adapter.getSnapshot();
 
       expect(snapshot.hasExtensionSources).toBe(false);
       expect(snapshot.registry.loadedPaths).toEqual([]);
@@ -259,7 +259,7 @@ describe("headless extension runtime", () => {
       expect(getExtensionToolDefinition(toolName)).toBeUndefined();
       expect(process.env[LETTA_DISABLE_EXTENSIONS_ENV]).toBe("1");
 
-      runtime.dispose();
+      adapter.dispose();
     } finally {
       if (originalDisableEnv === undefined) {
         delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
@@ -299,7 +299,7 @@ describe("headless extension runtime", () => {
         }`,
       );
 
-      const runtime = createHeadlessExtensionRuntime({
+      const adapter = createHeadlessExtensionAdapter({
         agent,
         backend,
         cacheDirectory: path.join(root, "extension-cache"),
@@ -307,13 +307,13 @@ describe("headless extension runtime", () => {
         globalExtensionsDirectory: extensionDir,
       });
 
-      await runtime.reload();
+      await adapter.reload();
       const prepared =
         await __headlessTestUtils.prepareHeadlessToolExecutionContext({
           agentId: agent.id,
           cachedAgent: agent,
           conversationId: "default",
-          extensionEventEmitter: runtime.eventEmitter,
+          extensionEventEmitter: adapter.eventEmitter,
         });
 
       const result = await executeTool(
@@ -329,13 +329,13 @@ describe("headless extension runtime", () => {
       expect(result.toolReturn).toContain("replacement content");
       expect(result.toolReturn).not.toContain("original content");
 
-      runtime.dispose();
+      adapter.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });
 
-  test("uses the captured runtime emitter for tool_start", async () => {
+  test("uses the captured adapter emitter for tool_start", async () => {
     const root = mkdtempSync(
       path.join(tmpdir(), "letta-headless-tool-start-captured-"),
     );
@@ -353,18 +353,18 @@ describe("headless extension runtime", () => {
       forkConversation: async () => ({ id: "forked" }),
       sendMessageStream: async () => (async function* () {})(),
     } as unknown as Backend;
-    let firstRuntime: ReturnType<typeof createHeadlessExtensionRuntime> | null =
+    let firstAdapter: ReturnType<typeof createHeadlessExtensionAdapter> | null =
       null;
-    let secondRuntime: ReturnType<
-      typeof createHeadlessExtensionRuntime
+    let secondAdapter: ReturnType<
+      typeof createHeadlessExtensionAdapter
     > | null = null;
 
     try {
       mkdirSync(firstExtensionDir, { recursive: true });
       mkdirSync(secondExtensionDir, { recursive: true });
       writeFileSync(originalPath, "original content");
-      writeFileSync(firstPath, "first runtime content");
-      writeFileSync(secondPath, "second runtime content");
+      writeFileSync(firstPath, "first adapter content");
+      writeFileSync(secondPath, "second adapter content");
       writeFileSync(
         path.join(firstExtensionDir, "tool-start.ts"),
         `export default function activate(letta) {
@@ -384,30 +384,30 @@ describe("headless extension runtime", () => {
         }`,
       );
 
-      firstRuntime = createHeadlessExtensionRuntime({
+      firstAdapter = createHeadlessExtensionAdapter({
         agent,
         backend,
         cacheDirectory: path.join(root, "first-cache"),
         conversationId: "default",
         globalExtensionsDirectory: firstExtensionDir,
       });
-      await firstRuntime.reload();
+      await firstAdapter.reload();
       const prepared =
         await __headlessTestUtils.prepareHeadlessToolExecutionContext({
           agentId: agent.id,
           cachedAgent: agent,
           conversationId: "default",
-          extensionEventEmitter: firstRuntime.eventEmitter,
+          extensionEventEmitter: firstAdapter.eventEmitter,
         });
 
-      secondRuntime = createHeadlessExtensionRuntime({
+      secondAdapter = createHeadlessExtensionAdapter({
         agent,
         backend,
         cacheDirectory: path.join(root, "second-cache"),
         conversationId: "default",
         globalExtensionsDirectory: secondExtensionDir,
       });
-      await secondRuntime.reload();
+      await secondAdapter.reload();
 
       const result = await executeTool(
         "Read",
@@ -419,12 +419,12 @@ describe("headless extension runtime", () => {
       );
 
       expect(result.status).toBe("success");
-      expect(result.toolReturn).toContain("first runtime content");
-      expect(result.toolReturn).not.toContain("second runtime content");
+      expect(result.toolReturn).toContain("first adapter content");
+      expect(result.toolReturn).not.toContain("second adapter content");
       expect(result.toolReturn).not.toContain("original content");
     } finally {
-      firstRuntime?.dispose();
-      secondRuntime?.dispose();
+      firstAdapter?.dispose();
+      secondAdapter?.dispose();
       rmSync(root, { force: true, recursive: true });
     }
   });

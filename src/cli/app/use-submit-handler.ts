@@ -53,7 +53,7 @@ import type {
   ExtensionCommandContext,
   ExtensionConversationCloseReason,
 } from "@/cli/extensions/types";
-import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
@@ -204,7 +204,7 @@ type SubmitHandlerContext = {
   currentModelProvider: string | null;
   effectiveContextWindowSize: number | undefined;
   emittedIdsRef: MutableRefObject<Set<string>>;
-  extensionRuntime: LocalExtensionRuntime;
+  extensionAdapter: LocalExtensionAdapter;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
   generateConversationDescription: (options?: {
@@ -349,7 +349,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
-    extensionRuntime,
+    extensionAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort,
     generateConversationDescription,
@@ -579,7 +579,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         ? parseExtensionSlashCommand(userTextForInput.trim())
         : null;
       const queueBypassExtensionCommand = parsedExtensionCommand
-        ? extensionRuntime.registry?.commands[parsedExtensionCommand.command]
+        ? extensionAdapter.registry?.commands[parsedExtensionCommand.command]
         : undefined;
       const isExtensionCommandShadowedByCustom =
         isAgentBusy() && queueBypassExtensionCommand?.runWhenBusy === true
@@ -1465,7 +1465,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("conversation_open", {
+            void extensionAdapter.emitEvent("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -1563,7 +1563,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("conversation_open", {
+            void extensionAdapter.emitEvent("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: forked.id,
@@ -1679,7 +1679,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("conversation_open", {
+            void extensionAdapter.emitEvent("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -3053,7 +3053,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         const matchedExtensionCommand: ExtensionCommand | undefined =
           parsedExtensionCommand
-            ? extensionRuntime.registry?.commands[
+            ? extensionAdapter.registry?.commands[
                 parsedExtensionCommand.command
               ]
             : undefined;
@@ -3078,11 +3078,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           try {
-            const extensionContext = extensionRuntime.getContext();
+            const extensionContext = extensionAdapter.getContext();
             const cwd = getCurrentWorkingDirectory();
             const conversation = createExtensionConversationHandle({
               agentId,
-              backend: extensionRuntime.getBackendApi(),
+              backend: extensionAdapter.getBackendApi(),
               conversationId: conversationIdRef.current,
               workingDirectory: cwd,
             });
@@ -3093,7 +3093,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               command: parsedExtensionCommand.command,
               conversation: { ...conversation, id: conversationIdRef.current },
               cwd,
-              getContext: extensionRuntime.getContext,
+              getContext: extensionAdapter.getContext,
               model: {
                 id:
                   currentModelId ??
@@ -3522,7 +3522,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversationId,
       currentModelHandle,
       currentModelId,
-      extensionRuntime,
+      extensionAdapter,
       effectiveContextWindowSize,
       commandRunner,
       handleExit,

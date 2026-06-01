@@ -3,11 +3,11 @@ import { sendMessageStreamWithBackend } from "@/agent/message";
 import { type Backend, getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
-import type { ExtensionRuntimeBackendApi } from "@/extensions/types";
+import type { ExtensionAdapterBackendApi } from "@/extensions/types";
 import {
-  createExtensionRuntime,
-  type ExtensionRuntime,
-  type ExtensionRuntimeSnapshot,
+  createExtensionAdapter,
+  type ExtensionAdapter,
+  type ExtensionAdapterSnapshot,
 } from "./local-extension-loader";
 import type {
   ExtensionContext,
@@ -16,26 +16,26 @@ import type {
   ExtensionEventName,
 } from "./types";
 
-export interface LocalExtensionRuntime {
+export interface LocalExtensionAdapter {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
   ) => Promise<ExtensionEventEmissionResult<TName>>;
-  eventEmitter: ExtensionRuntime["eventEmitter"];
-  getBackendApi: () => ExtensionRuntimeBackendApi | undefined;
+  eventEmitter: ExtensionAdapter["eventEmitter"];
+  getBackendApi: () => ExtensionAdapterBackendApi | undefined;
   getContext: () => ExtensionContext;
-  hadStatuslineRenderer: boolean;
+  hadStatuslineRenderer: boolean; // Used to prevent flicker on reload
   hasExtensionSources: boolean;
-  host: ExtensionRuntime["host"];
+  host: ExtensionAdapter["host"];
   isLoading: boolean;
-  registry: ExtensionRuntimeSnapshot["registry"];
+  registry: ExtensionAdapterSnapshot["registry"];
   reload: () => Promise<void>;
   updateContext: (context: ExtensionContext) => void;
 }
 
 function createExtensionBackendApi(
   backend: Backend,
-): ExtensionRuntimeBackendApi {
+): ExtensionAdapterBackendApi {
   return {
     forkConversation(conversationId, options) {
       return backend.forkConversation(conversationId, options);
@@ -62,14 +62,14 @@ function createExtensionBackendApi(
   };
 }
 
-export function useLocalExtensionRuntime(
+export function useLocalExtensionAdapter(
   initialContext: ExtensionContext,
   options: { disabled?: boolean } = {},
-): LocalExtensionRuntime {
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the runtime is process-local; context updates are pushed through updateContext below.
-  const runtime = useMemo(
+): LocalExtensionAdapter {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the adapter is process-local; context updates are pushed through updateContext below.
+  const adapter = useMemo(
     () =>
-      createExtensionRuntime({
+      createExtensionAdapter({
         disabled: options.disabled,
         getBackendApi: () => createExtensionBackendApi(getBackend()),
         getClient,
@@ -79,37 +79,37 @@ export function useLocalExtensionRuntime(
   );
 
   const snapshot = useSyncExternalStore(
-    runtime.subscribe,
-    runtime.getSnapshot,
-    runtime.getSnapshot,
+    adapter.subscribe,
+    adapter.getSnapshot,
+    adapter.getSnapshot,
   );
 
   useEffect(() => {
-    runtime.updateContext(initialContext);
-  }, [initialContext, runtime]);
+    adapter.updateContext(initialContext);
+  }, [initialContext, adapter]);
 
   useEffect(() => {
-    void runtime.reload();
+    void adapter.reload();
 
     return () => {
-      runtime.dispose();
+      adapter.dispose();
     };
-  }, [runtime]);
+  }, [adapter]);
 
   return useMemo(
     () => ({
-      emitEvent: runtime.emitEvent,
-      eventEmitter: runtime.eventEmitter,
-      getBackendApi: runtime.getBackendApi,
-      getContext: runtime.getContext,
+      emitEvent: adapter.emitEvent,
+      eventEmitter: adapter.eventEmitter,
+      getBackendApi: adapter.getBackendApi,
+      getContext: adapter.getContext,
       hadStatuslineRenderer: snapshot.hadStatuslineRenderer,
       hasExtensionSources: snapshot.hasExtensionSources,
-      host: runtime.host,
+      host: adapter.host,
       isLoading: snapshot.isLoading,
       registry: snapshot.registry,
-      reload: runtime.reload,
-      updateContext: runtime.updateContext,
+      reload: adapter.reload,
+      updateContext: adapter.updateContext,
     }),
-    [runtime, snapshot],
+    [adapter, snapshot],
   );
 }

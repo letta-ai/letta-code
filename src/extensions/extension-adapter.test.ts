@@ -10,24 +10,24 @@ import {
 } from "@/backend/dev/pi-provider-extension-registry";
 import { DISABLED_EXTENSION_CAPABILITIES } from "@/extensions/capabilities";
 import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
-import { createExtensionRuntime } from "@/extensions/extension-runtime";
+import { createExtensionAdapter } from "@/extensions/extension-adapter";
 import {
   clearExtensionTools,
   getExtensionToolDefinition,
   registerExtensionTool,
 } from "@/extensions/tool-registry";
 import type {
+  ExtensionAdapterBackendApi,
   ExtensionContext,
-  ExtensionRuntimeBackendApi,
 } from "@/extensions/types";
 
-type ExtensionRuntimeTestGlobal = typeof globalThis & {
-  __lettaRuntimeEvents?: string[];
+type ExtensionAdapterTestGlobal = typeof globalThis & {
+  __lettaAdapterEvents?: string[];
   __lettaDisabledExtensionLoaded?: boolean;
 };
 
 function createTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "letta-extension-runtime-"));
+  return mkdtempSync(path.join(tmpdir(), "letta-extension-adapter-"));
 }
 
 function createExtensionContext(agentName = "Amelia"): ExtensionContext {
@@ -74,21 +74,21 @@ function createExtensionContext(agentName = "Amelia"): ExtensionContext {
   };
 }
 
-describe("extension runtime", () => {
-  test("LETTA_DISABLE_EXTENSIONS disables the runtime", () => {
+describe("extension adapter", () => {
+  test("LETTA_DISABLE_EXTENSIONS disables the adapter", () => {
     const original = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
     try {
       process.env[LETTA_DISABLE_EXTENSIONS_ENV] = "1";
-      const runtime = createExtensionRuntime({
+      const adapter = createExtensionAdapter({
         getClient: async () => ({}) as unknown as Letta,
         initialContext: createExtensionContext(),
       });
 
-      expect(runtime.getSnapshot()).toMatchObject({
+      expect(adapter.getSnapshot()).toMatchObject({
         hasExtensionSources: false,
         isLoading: false,
       });
-      expect(runtime.getSnapshot().registry.capabilities).toEqual(
+      expect(adapter.getSnapshot().registry.capabilities).toEqual(
         DISABLED_EXTENSION_CAPABILITIES,
       );
     } finally {
@@ -100,9 +100,9 @@ describe("extension runtime", () => {
     }
   });
 
-  test("disabled runtime does not load extensions or expose extension capabilities", async () => {
+  test("disabled adapter does not load extensions or expose extension capabilities", async () => {
     const root = createTempDir();
-    const testGlobal = globalThis as ExtensionRuntimeTestGlobal;
+    const testGlobal = globalThis as ExtensionAdapterTestGlobal;
     const originalDisableEnv = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
 
     try {
@@ -169,7 +169,7 @@ describe("extension runtime", () => {
         ],
       });
 
-      const runtime = createExtensionRuntime({
+      const adapter = createExtensionAdapter({
         cacheDirectory: path.join(root, "extension-cache"),
         disabled: true,
         getClient: async () => {
@@ -199,18 +199,18 @@ describe("extension runtime", () => {
         run: () => "post-disabled",
       });
 
-      expect(runtime.getSnapshot()).toMatchObject({
+      expect(adapter.getSnapshot()).toMatchObject({
         hadStatuslineRenderer: false,
         hasExtensionSources: false,
         isLoading: false,
       });
-      expect(runtime.getSnapshot().registry.capabilities).toEqual(
+      expect(adapter.getSnapshot().registry.capabilities).toEqual(
         DISABLED_EXTENSION_CAPABILITIES,
       );
-      expect(runtime.getSnapshot().registry.sources).toEqual([]);
+      expect(adapter.getSnapshot().registry.sources).toEqual([]);
 
-      await runtime.reload();
-      const result = await runtime.emitEvent("conversation_open", {
+      await adapter.reload();
+      const result = await adapter.emitEvent("conversation_open", {
         agentId: "agent-1",
         agentName: "Amelia",
         conversationId: "conversation-1",
@@ -219,11 +219,11 @@ describe("extension runtime", () => {
 
       expect(result.handlerCount).toBe(0);
       expect(testGlobal.__lettaDisabledExtensionLoaded).toBeUndefined();
-      expect(runtime.getSnapshot().registry.loadedPaths).toEqual([]);
-      expect(runtime.getSnapshot().registry.commands).toEqual({});
-      expect(runtime.getSnapshot().registry.tools).toEqual({});
-      expect(runtime.getSnapshot().registry.ui.panels).toEqual({});
-      expect(runtime.getSnapshot().registry.ui.statuslineRenderer).toBeNull();
+      expect(adapter.getSnapshot().registry.loadedPaths).toEqual([]);
+      expect(adapter.getSnapshot().registry.commands).toEqual({});
+      expect(adapter.getSnapshot().registry.tools).toEqual({});
+      expect(adapter.getSnapshot().registry.ui.panels).toEqual({});
+      expect(adapter.getSnapshot().registry.ui.statuslineRenderer).toBeNull();
       expect(
         getExtensionToolDefinition("stale_extension_tool"),
       ).toBeUndefined();
@@ -247,8 +247,8 @@ describe("extension runtime", () => {
 
   test("loads extensions and dispatches events with fresh context and backend", async () => {
     const root = createTempDir();
-    const testGlobal = globalThis as ExtensionRuntimeTestGlobal;
-    testGlobal.__lettaRuntimeEvents = [];
+    const testGlobal = globalThis as ExtensionAdapterTestGlobal;
+    testGlobal.__lettaAdapterEvents = [];
 
     try {
       const extensionDir = path.join(root, "global-extensions");
@@ -258,19 +258,19 @@ describe("extension runtime", () => {
         `export default function(letta) {
           letta.events.on("conversation_open", async (event, ctx) => {
             const fork = await ctx.conversation.fork({ hidden: true });
-            globalThis.__lettaRuntimeEvents.push(
+            globalThis.__lettaAdapterEvents.push(
               event.reason + ":" + ctx.context.agent.name + ":" + fork.id,
             );
           });
         }`,
       );
 
-      const backend: ExtensionRuntimeBackendApi = {
+      const backend: ExtensionAdapterBackendApi = {
         forkConversation: async () => ({ id: "forked-conversation" }),
         getConversationHistory: async () => [],
         sendMessageStream: async () => (async function* () {})(),
       };
-      const runtime = createExtensionRuntime({
+      const adapter = createExtensionAdapter({
         cacheDirectory: path.join(root, "extension-cache"),
         getBackendApi: () => backend,
         getClient: async () => ({}) as unknown as Letta,
@@ -278,35 +278,35 @@ describe("extension runtime", () => {
         initialContext: createExtensionContext(),
       });
 
-      expect(runtime.getSnapshot()).toMatchObject({
+      expect(adapter.getSnapshot()).toMatchObject({
         hasExtensionSources: true,
         isLoading: true,
       });
-      expect(runtime.getSnapshot()).toBe(runtime.getSnapshot());
+      expect(adapter.getSnapshot()).toBe(adapter.getSnapshot());
 
-      await runtime.reload();
-      runtime.updateContext(createExtensionContext("Updated Agent"));
+      await adapter.reload();
+      adapter.updateContext(createExtensionContext("Updated Agent"));
 
-      expect(runtime.getSnapshot()).toMatchObject({
+      expect(adapter.getSnapshot()).toMatchObject({
         hasExtensionSources: true,
         isLoading: false,
       });
-      expect(runtime.getSnapshot().registry.loadedPaths).toHaveLength(1);
+      expect(adapter.getSnapshot().registry.loadedPaths).toHaveLength(1);
 
-      await runtime.emitEvent("conversation_open", {
+      await adapter.emitEvent("conversation_open", {
         agentId: "agent-1",
         agentName: "Updated Agent",
         conversationId: "conversation-1",
         reason: "startup",
       });
 
-      expect(testGlobal.__lettaRuntimeEvents).toEqual([
+      expect(testGlobal.__lettaAdapterEvents).toEqual([
         "startup:Updated Agent:forked-conversation",
       ]);
 
-      runtime.dispose();
+      adapter.dispose();
     } finally {
-      delete testGlobal.__lettaRuntimeEvents;
+      delete testGlobal.__lettaAdapterEvents;
       rmSync(root, { force: true, recursive: true });
     }
   });

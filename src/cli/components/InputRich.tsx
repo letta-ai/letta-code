@@ -24,7 +24,7 @@ import {
 } from "@/cli/display/statusline/registry";
 import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
 import { evaluateLocalExtensionStatuses } from "@/cli/extensions/local-extension-loader";
-import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
@@ -458,7 +458,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hideFooter,
   rightColumnWidth,
   statusLinePayload,
-  extensionRuntime,
+  extensionAdapter,
   transientHint,
 }: {
   ctrlCPressed: boolean;
@@ -476,7 +476,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hideFooter: boolean;
   rightColumnWidth: number;
   statusLinePayload: StatusLinePayload;
-  extensionRuntime: LocalExtensionRuntime;
+  extensionAdapter: LocalExtensionAdapter;
   transientHint?: StatuslineTransientHint | null;
 }) {
   const hideFooterContent = hideFooter;
@@ -501,21 +501,21 @@ const StatuslineSlot = memo(function StatuslineSlot({
   const statuslineContext = {
     ...baseStatuslineContext,
     statuses: evaluateLocalExtensionStatuses(
-      extensionRuntime.registry,
+      extensionAdapter.registry,
       baseStatuslineContext,
     ),
   };
-  extensionRuntime.updateContext(statuslineContext);
+  extensionAdapter.updateContext(statuslineContext);
 
   const builtInStatuslineRenderer = getBuiltinStatuslineRenderer(
     DEFAULT_STATUSLINE_RENDERER_ID,
   );
   const localStatuslineRenderer =
-    extensionRuntime.registry?.ui.statuslineRenderer ?? null;
+    extensionAdapter.registry?.ui.statuslineRenderer ?? null;
   const extensionStatuslineLoading =
-    extensionRuntime.isLoading &&
-    (extensionRuntime.hasExtensionSources ||
-      extensionRuntime.hadStatuslineRenderer);
+    extensionAdapter.isLoading &&
+    (extensionAdapter.hasExtensionSources ||
+      extensionAdapter.hadStatuslineRenderer);
   const customStatuslineActive = Boolean(
     localStatuslineRenderer || extensionStatuslineLoading,
   );
@@ -929,7 +929,7 @@ export function Input({
   terminalWidth,
   shouldAnimate = true,
   statusLinePayload,
-  extensionRuntime,
+  extensionAdapter,
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
@@ -982,7 +982,7 @@ export function Input({
   terminalWidth: number;
   shouldAnimate?: boolean;
   statusLinePayload: StatusLinePayload;
-  extensionRuntime: LocalExtensionRuntime;
+  extensionAdapter: LocalExtensionAdapter;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
@@ -1929,7 +1929,7 @@ export function Input({
           <Box flexDirection="column">
             {!suppressDividers && (
               <ExtensionPanelRow
-                panels={extensionRuntime.registry?.ui.panels}
+                panels={extensionAdapter.registry?.ui.panels}
                 terminalWidth={terminalWidth}
               />
             )}
@@ -2012,7 +2012,7 @@ export function Input({
                 serverUrl={serverUrl}
                 workingDirectory={process.cwd()}
                 conversationId={conversationId}
-                extensionCommands={extensionRuntime.registry?.commands}
+                extensionCommands={extensionAdapter.registry?.commands}
               />
             )}
 
@@ -2038,7 +2038,7 @@ export function Input({
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
                 statusLinePayload={statusLinePayload}
-                extensionRuntime={extensionRuntime}
+                extensionAdapter={extensionAdapter}
                 transientHint={statuslineTransientHint}
               />
             )}
@@ -2087,7 +2087,7 @@ export function Input({
     reserveInputSpace,
     inputChromeHeight,
     statusLinePayload,
-    extensionRuntime,
+    extensionAdapter,
 
     goalStatusText,
     promptChar,

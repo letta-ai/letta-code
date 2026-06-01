@@ -21,28 +21,28 @@ import {
 } from "@/extensions/extension-host";
 import { clearExtensionTools } from "@/extensions/tool-registry";
 import type {
+  ExtensionAdapterBackendApi,
   ExtensionContext,
   ExtensionEventEmissionResult,
   ExtensionEventMap,
   ExtensionEventName,
-  ExtensionRuntimeBackendApi,
 } from "@/extensions/types";
 import { debugLog } from "@/utils/debug";
 
-export interface ExtensionRuntimeLoadState {
+export interface ExtensionAdapterLoadState {
   hadStatuslineRenderer: boolean;
   hasExtensionSources: boolean;
   isLoading: boolean;
 }
 
-export interface ExtensionRuntimeSnapshot extends ExtensionRuntimeLoadState {
+export interface ExtensionAdapterSnapshot extends ExtensionAdapterLoadState {
   registry: ReturnType<ExtensionHost["getSnapshot"]>;
 }
 
-export interface CreateExtensionRuntimeOptions
+export interface CreateExtensionAdapterOptions
   extends Omit<CreateExtensionHostOptions, "backend" | "getContext"> {
   disabled?: boolean;
-  getBackendApi?: () => ExtensionRuntimeBackendApi | undefined;
+  getBackendApi?: () => ExtensionAdapterBackendApi | undefined;
   getClient: () => Promise<Letta>;
   initialContext: ExtensionContext;
 }
@@ -90,16 +90,16 @@ function createDisabledExtensionHost(
   };
 }
 
-function createDisabledExtensionRuntime(
-  options: CreateExtensionRuntimeOptions,
-): ExtensionRuntime {
+function createDisabledExtensionAdapter(
+  options: CreateExtensionAdapterOptions,
+): ExtensionAdapter {
   clearExtensionTools();
   clearRegisteredPiProviders();
 
   let context = options.initialContext;
   const registry = createDisabledExtensionRegistry();
   const host = createDisabledExtensionHost(registry);
-  const snapshot: ExtensionRuntimeSnapshot = {
+  const snapshot: ExtensionAdapterSnapshot = {
     hadStatuslineRenderer: false,
     hasExtensionSources: false,
     isLoading: false,
@@ -142,16 +142,16 @@ function createDisabledExtensionRuntime(
   };
 }
 
-export interface ExtensionRuntime {
+export interface ExtensionAdapter {
   dispose: () => void;
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
   ) => Promise<ExtensionEventEmissionResult<TName>>;
   eventEmitter: ExtensionEventEmitter;
-  getBackendApi: () => ExtensionRuntimeBackendApi | undefined;
+  getBackendApi: () => ExtensionAdapterBackendApi | undefined;
   getContext: () => ExtensionContext;
-  getSnapshot: () => ExtensionRuntimeSnapshot;
+  getSnapshot: () => ExtensionAdapterSnapshot;
   host: ExtensionHost;
   reload: () => Promise<void>;
   subscribe: (listener: () => void) => () => void;
@@ -160,7 +160,7 @@ export interface ExtensionRuntime {
 
 function hasExtensionSources(
   options: Pick<
-    CreateExtensionRuntimeOptions,
+    CreateExtensionAdapterOptions,
     "cacheDirectory" | "globalExtensionsDirectory"
   >,
 ): boolean {
@@ -169,9 +169,9 @@ function hasExtensionSources(
   );
 }
 
-function createLazyRuntimeBackendApi(
-  getBackendApi: () => ExtensionRuntimeBackendApi | undefined,
-): ExtensionRuntimeBackendApi {
+function createLazyAdapterBackendApi(
+  getBackendApi: () => ExtensionAdapterBackendApi | undefined,
+): ExtensionAdapterBackendApi {
   const requireBackend = () => {
     const backend = getBackendApi();
     if (!backend) {
@@ -198,15 +198,15 @@ function createLazyRuntimeBackendApi(
   };
 }
 
-export function createExtensionRuntime(
-  options: CreateExtensionRuntimeOptions,
-): ExtensionRuntime {
+export function createExtensionAdapter(
+  options: CreateExtensionAdapterOptions,
+): ExtensionAdapter {
   if (options.disabled) {
     disableExtensionsForProcess();
   }
 
   if (options.disabled || areExtensionsDisabled()) {
-    return createDisabledExtensionRuntime(options);
+    return createDisabledExtensionAdapter(options);
   }
 
   const {
@@ -217,7 +217,7 @@ export function createExtensionRuntime(
   let context = initialContext;
   let disposed = false;
   const initialHasExtensionSources = hasExtensionSources(hostOptions);
-  let loadState: ExtensionRuntimeLoadState = {
+  let loadState: ExtensionAdapterLoadState = {
     hadStatuslineRenderer: false,
     hasExtensionSources: initialHasExtensionSources,
     isLoading: initialHasExtensionSources,
@@ -227,7 +227,7 @@ export function createExtensionRuntime(
   const getBackendApi = () => resolveBackendApi?.();
   const getContext = () => context;
   const backend = resolveBackendApi
-    ? createLazyRuntimeBackendApi(getBackendApi)
+    ? createLazyAdapterBackendApi(getBackendApi)
     : undefined;
 
   const host = createExtensionHost({
@@ -245,7 +245,7 @@ export function createExtensionRuntime(
     },
   };
 
-  const buildSnapshot = (): ExtensionRuntimeSnapshot => ({
+  const buildSnapshot = (): ExtensionAdapterSnapshot => ({
     registry: host.getSnapshot(),
     ...loadState,
   });

@@ -127,34 +127,34 @@ export interface ExtensionConversationHandle {
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
-export interface ExtensionRuntimeBackendForkConversationOptions
+export interface ExtensionAdapterBackendForkConversationOptions
   extends ExtensionConversationForkOptions {
   agentId?: string;
 }
 
-export interface ExtensionRuntimeBackendSendMessageOptions
+export interface ExtensionAdapterBackendSendMessageOptions
   extends ExtensionConversationSendMessageOptions {
   agentId?: string;
 }
 
-export interface ExtensionRuntimeBackendHistoryOptions
+export interface ExtensionAdapterBackendHistoryOptions
   extends ExtensionConversationHistoryOptions {
   agentId?: string | null;
 }
 
-export interface ExtensionRuntimeBackendApi {
+export interface ExtensionAdapterBackendApi {
   forkConversation: (
     conversationId: string,
-    options?: ExtensionRuntimeBackendForkConversationOptions,
+    options?: ExtensionAdapterBackendForkConversationOptions,
   ) => Promise<{ id: string }>;
   getConversationHistory: (
     conversationId: string,
-    options?: ExtensionRuntimeBackendHistoryOptions,
+    options?: ExtensionAdapterBackendHistoryOptions,
   ) => Promise<Message[]>;
   sendMessageStream: (
     conversationId: string,
     messages: ExtensionConversationMessage[],
-    options?: ExtensionRuntimeBackendSendMessageOptions,
+    options?: ExtensionAdapterBackendSendMessageOptions,
     requestOptions?: ExtensionConversationSendMessageRequestOptions,
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }

@@ -58,9 +58,9 @@ import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
 import {
-  type LocalExtensionRuntime,
-  useLocalExtensionRuntime,
-} from "@/cli/extensions/use-local-extension-runtime";
+  type LocalExtensionAdapter,
+  useLocalExtensionAdapter,
+} from "@/cli/extensions/use-local-extension-adapter";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -1027,7 +1027,7 @@ export function App({
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
   const sessionExtensionStartAttemptedRef = useRef(false);
-  const extensionRuntimeRef = useRef<LocalExtensionRuntime | null>(null);
+  const extensionAdapterRef = useRef<LocalExtensionAdapter | null>(null);
 
   // Initialize chunk log for this agent + session (clears buffer, GCs old files).
   // Re-runs when agentId changes (e.g. agent switch via /agents).
@@ -1143,14 +1143,14 @@ export function App({
         // Silently ignore hook errors
       }
 
-      const extensionRuntime = extensionRuntimeRef.current;
+      const extensionAdapter = extensionAdapterRef.current;
       if (
-        extensionRuntime &&
-        !extensionRuntime.isLoading &&
-        extensionRuntime.hasExtensionSources
+        extensionAdapter &&
+        !extensionAdapter.isLoading &&
+        extensionAdapter.hasExtensionSources
       ) {
         try {
-          await extensionRuntime.emitEvent("conversation_close", {
+          await extensionAdapter.emitEvent("conversation_close", {
             agentId: agentIdRef.current ?? null,
             conversationId: conversationIdRef.current ?? null,
             durationMs,
@@ -1591,7 +1591,7 @@ export function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
-          extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
+          extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
         });
       }
 
@@ -1599,7 +1599,7 @@ export function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
-          extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
+          extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -1608,7 +1608,7 @@ export function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
-        extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
+        extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });
@@ -2313,28 +2313,28 @@ export function App({
       statusLinePayload,
     ],
   );
-  const extensionRuntime = useLocalExtensionRuntime(extensionContext, {
+  const extensionAdapter = useLocalExtensionAdapter(extensionContext, {
     disabled: extensionsDisabled,
   });
 
   useEffect(() => {
-    extensionRuntimeRef.current = extensionRuntime;
-  }, [extensionRuntime]);
+    extensionAdapterRef.current = extensionAdapter;
+  }, [extensionAdapter]);
 
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
     if (sessionExtensionStartAttemptedRef.current) return;
-    if (extensionRuntime.isLoading) return;
-    if (!extensionRuntime.hasExtensionSources) return;
+    if (extensionAdapter.isLoading) return;
+    if (!extensionAdapter.hasExtensionSources) return;
 
     sessionExtensionStartAttemptedRef.current = true;
-    void extensionRuntime.emitEvent("conversation_open", {
+    void extensionAdapter.emitEvent("conversation_open", {
       agentId,
       agentName: agentName ?? null,
       conversationId: conversationIdRef.current ?? null,
       reason: "startup",
     });
-  }, [agentId, agentName, extensionRuntime]);
+  }, [agentId, agentName, extensionAdapter]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
@@ -3136,7 +3136,7 @@ export function App({
       });
     };
 
-    if (!extensionRuntime.isLoading) {
+    if (!extensionAdapter.isLoading) {
       refreshAgentFromRegisteredProviderMetadata();
     }
 
@@ -3149,7 +3149,7 @@ export function App({
     };
   }, [
     agentId,
-    extensionRuntime.isLoading,
+    extensionAdapter.isLoading,
     hasConversationModelOverrideRef,
     isLocalBackend,
     loadingState,
@@ -3626,7 +3626,7 @@ export function App({
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
     generateConversationDescription,
-    extensionRuntime,
+    extensionAdapter,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -3945,7 +3945,7 @@ export function App({
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
-    extensionRuntime,
+    extensionAdapter,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
@@ -4034,7 +4034,7 @@ export function App({
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
-    extensionRuntime,
+    extensionAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
     generateConversationDescription,
@@ -4906,7 +4906,7 @@ export function App({
       staticRenderEpoch={staticRenderEpoch}
       statusLinePayload={statusLinePayload}
       statusLinePrompt={CLI_GLYPHS.prompt}
-      extensionRuntime={extensionRuntime}
+      extensionAdapter={extensionAdapter}
       streaming={streaming}
       stubDescriptions={stubDescriptions}
       thinkingMessage={thinkingMessage}

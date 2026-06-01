@@ -4,7 +4,7 @@ import type {
   ExtensionEventName,
 } from "@/extensions/types";
 
-export type ExtensionRuntimeEventSnapshot = {
+export type ExtensionAdapterEventSnapshot = {
   hasExtensionSources: boolean;
   isLoading: boolean;
 };
@@ -14,7 +14,7 @@ export type ExtensionEventEmitter = {
     name: TName,
     event: ExtensionEventMap[TName],
   ) => Promise<ExtensionEventEmissionResult<TName>>;
-  getSnapshot: () => ExtensionRuntimeEventSnapshot;
+  getSnapshot: () => ExtensionAdapterEventSnapshot;
 };
 
 export function emptyEventEmissionResult<TName extends ExtensionEventName>(
