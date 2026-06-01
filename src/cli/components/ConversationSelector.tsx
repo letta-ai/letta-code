@@ -995,7 +995,9 @@ export function ConversationSelector({
               ? "No matching conversations"
               : `No conversations for ${agentName || agentId.slice(0, 12)}`}
           </Text>
-          <Text dimColor>
+            {mode === "pin"
+              ? "Press Esc to clear/close"
+              : "Press Esc to cancel"}
             {mode === "pin"
               ? "Press Esc to clear/close"
               : "Press N to start a new conversation"}
