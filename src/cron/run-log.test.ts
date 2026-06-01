@@ -107,6 +107,8 @@ describe("cron run log", () => {
       jobId: "job-1",
       action: "finished",
       status: "error",
+      outcome: "failed",
+      reason: "queue_full",
       error: "boom",
       runId: "run-2",
     });
@@ -126,6 +128,8 @@ describe("cron run log", () => {
     expect(entries.map((entry) => entry.ts)).toEqual([1000, 2000]);
     expect(entries[0]?.queueItemId).toBe("q-1");
     expect(entries[1]?.error).toBe("boom");
+    expect(entries[1]?.outcome).toBe("failed");
+    expect(entries[1]?.reason).toBe("queue_full");
   });
 
   test("reads newest page first and filters by run id", () => {

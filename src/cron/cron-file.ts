@@ -25,6 +25,16 @@ import { estimatePeriodMs } from "./parse-interval";
 
 export type CronTaskStatus = "active" | "fired" | "missed" | "cancelled";
 export type CancelReason = "conversation_not_found" | "expired";
+export type CronRunOutcome = "queued" | "missed" | "failed" | "skipped";
+export type CronRunReason =
+  | "scheduled_time_matched"
+  | "one_off_due"
+  | "scheduler_inactive"
+  | "started_too_late"
+  | "queue_full"
+  | "runtime_unavailable"
+  | "task_cancelled"
+  | "scheduler_error";
 
 export interface SchedulerOwner {
   pid: number;
@@ -60,6 +70,15 @@ export interface CronTask {
   fire_count: number;
   cancel_reason: CancelReason | null;
   jitter_offset_ms: number;
+
+  // Last run outcome summary (for table/status display without reading logs)
+  last_run_at: string | null;
+  last_run_outcome: CronRunOutcome | null;
+  last_run_reason: CronRunReason | null;
+  last_run_error: string | null;
+  last_missed_at: string | null;
+  missed_count: number;
+  failed_count: number;
 
   // One-shot specific
   scheduled_for: string | null; // ISO UTC
@@ -106,7 +125,32 @@ function getLockDirPath(): string {
 // ── File I/O ────────────────────────────────────────────────────────
 
 function emptyFile(): CronFileData {
-  return { version: 1, scheduler_owner: null, tasks: [] };
+  return {
+    version: 1,
+    scheduler_owner: null,
+    tasks: [],
+  };
+}
+
+function normalizeTask(task: CronTask): CronTask {
+  return {
+    ...task,
+    last_run_at: task.last_run_at ?? null,
+    last_run_outcome: task.last_run_outcome ?? null,
+    last_run_reason: task.last_run_reason ?? null,
+    last_run_error: task.last_run_error ?? null,
+    last_missed_at: task.last_missed_at ?? null,
+    missed_count: task.missed_count ?? 0,
+    failed_count: task.failed_count ?? 0,
+  };
+}
+
+function normalizeCronFileData(data: CronFileData): CronFileData {
+  return {
+    version: 1,
+    scheduler_owner: data.scheduler_owner ?? null,
+    tasks: Array.isArray(data.tasks) ? data.tasks.map(normalizeTask) : [],
+  };
 }
 
 export function readCronFile(): CronFileData {
@@ -116,7 +160,7 @@ export function readCronFile(): CronFileData {
     const raw = readFileSync(path, "utf-8");
     const data = JSON.parse(raw) as CronFileData;
     if (data.version !== 1) return emptyFile();
-    return data;
+    return normalizeCronFileData(data);
   } catch {
     return emptyFile();
   }
@@ -477,6 +521,13 @@ export function addTask(input: AddTaskInput): AddTaskResult {
         input.scheduled_for ?? null,
         now,
       ),
+      last_run_at: null,
+      last_run_outcome: null,
+      last_run_reason: null,
+      last_run_error: null,
+      last_missed_at: null,
+      missed_count: 0,
+      failed_count: 0,
       scheduled_for: input.scheduled_for?.toISOString() ?? null,
       fired_at: null,
       missed_at: null,
