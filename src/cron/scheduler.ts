@@ -25,12 +25,16 @@ import type {
   StartListenerOptions,
 } from "@/websocket/listener/types";
 import {
+  type CronRunOutcome,
+  type CronRunReason,
   type CronTask,
   claimSchedulerLease,
   garbageCollect,
   getActiveTasks,
   getCronFileMtime,
+  getSchedulerActivity,
   getTask,
+  recordSchedulerHeartbeat,
   releaseSchedulerLease,
   updateTask,
   verifySchedulerLease,
@@ -69,6 +73,7 @@ const TICK_INTERVAL_MS = 60_000;
 const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
 const LEASE_RETRY_MS = 30_000; // 30 seconds between lease claim retries
 const MAX_LEASE_RETRIES = 3;
+const MAX_MISSED_RECURRING_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -101,6 +106,129 @@ function refreshTaskCache(state: SchedulerState): void {
   }
 }
 
+function setLastRunOutcome(
+  taskId: string,
+  input: {
+    outcome: CronRunOutcome;
+    reason: CronRunReason;
+    runAt: Date;
+    error?: string | null;
+    missedAt?: Date;
+    missedCount?: number;
+  },
+): void {
+  const runAtIso = input.runAt.toISOString();
+  updateTask(taskId, (t) => {
+    t.last_run_at = runAtIso;
+    t.last_run_outcome = input.outcome;
+    t.last_run_reason = input.reason;
+    t.last_run_error = input.error ?? null;
+
+    if (input.outcome === "missed") {
+      const missedCount = Math.max(1, input.missedCount ?? 1);
+      t.last_missed_at = input.missedAt?.toISOString() ?? runAtIso;
+      t.missed_count = (t.missed_count ?? 0) + missedCount;
+    }
+
+    if (input.outcome === "failed") {
+      t.failed_count = (t.failed_count ?? 0) + 1;
+    }
+  });
+}
+
+function latestTimestampMs(values: Array<string | null | undefined>): number {
+  let latest = 0;
+  for (const value of values) {
+    if (!value) continue;
+    const ms = new Date(value).getTime();
+    if (Number.isFinite(ms) && ms > latest) latest = ms;
+  }
+  return latest;
+}
+
+function floorToMinute(date: Date): Date {
+  const copy = new Date(date);
+  copy.setSeconds(0, 0);
+  return copy;
+}
+
+function countMissedRecurringFires(
+  task: CronTask,
+  windowStart: Date,
+  windowEnd: Date,
+): { count: number; lastScheduledAt: Date | null } {
+  const cappedStartMs = Math.max(
+    windowStart.getTime(),
+    windowEnd.getTime() - MAX_MISSED_RECURRING_LOOKBACK_MS,
+  );
+  let cursor = floorToMinute(new Date(cappedStartMs));
+  cursor = new Date(cursor.getTime() + TICK_INTERVAL_MS);
+  const end = floorToMinute(windowEnd);
+  let count = 0;
+  let lastScheduledAt: Date | null = null;
+
+  while (cursor.getTime() < end.getTime()) {
+    if (cronMatchesTime(task.cron, cursor, task.timezone)) {
+      count += 1;
+      lastScheduledAt = new Date(cursor);
+    }
+    cursor = new Date(cursor.getTime() + TICK_INTERVAL_MS);
+  }
+
+  return { count, lastScheduledAt };
+}
+
+export function recordMissedRecurringRuns(
+  previousSchedulerSeenAt: string | null,
+  now: Date,
+): void {
+  if (!previousSchedulerSeenAt) return;
+
+  const previousSeenMs = new Date(previousSchedulerSeenAt).getTime();
+  if (!Number.isFinite(previousSeenMs)) return;
+
+  const activeTasks = getActiveTasks();
+  for (const task of activeTasks) {
+    if (!task.recurring || task.status !== "active") continue;
+
+    const startMs = latestTimestampMs([
+      previousSchedulerSeenAt,
+      task.created_at,
+      task.last_fired_at,
+      task.last_missed_at,
+      task.last_run_at,
+    ]);
+    if (startMs <= 0 || startMs >= now.getTime()) continue;
+
+    const windowStart = new Date(startMs);
+    const { count, lastScheduledAt } = countMissedRecurringFires(
+      task,
+      windowStart,
+      now,
+    );
+    if (count === 0 || !lastScheduledAt) continue;
+
+    setLastRunOutcome(task.id, {
+      outcome: "missed",
+      reason: "scheduler_inactive",
+      runAt: now,
+      missedAt: lastScheduledAt,
+      missedCount: count,
+    });
+
+    safeAppendCronRunLogForTask(task, {
+      status: "skipped",
+      outcome: "missed",
+      reason: "scheduler_inactive",
+      summary: `missed ${count} scheduled run${count === 1 ? "" : "s"} while scheduler was inactive`,
+      runAtMs: now.getTime(),
+      missedCount: count,
+      windowStart: windowStart.toISOString(),
+      windowEnd: now.toISOString(),
+    });
+  }
+}
+
 export function shouldFireTask(task: CronTask, now: Date): boolean {
   // One-shot: check if scheduled_for is now or past (jitter applied to scheduled time)
   if (!task.recurring && task.scheduled_for) {
@@ -122,7 +250,23 @@ function fireCronTask(
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
   const listener = getActiveRuntime();
-  if (!listener) return;
+  if (!listener) {
+    setLastRunOutcome(task.id, {
+      outcome: "failed",
+      reason: "runtime_unavailable",
+      runAt: now,
+      error: "No active runtime",
+    });
+    safeAppendCronRunLogForTask(task, {
+      status: "error",
+      outcome: "failed",
+      reason: "runtime_unavailable",
+      error: "No active runtime",
+      runAtMs: now.getTime(),
+      scheduledFor: task.scheduled_for,
+    });
+    return;
+  }
 
   const rawRuntime = getOrCreateConversationRuntime(
     listener,
@@ -130,7 +274,23 @@ function fireCronTask(
     task.conversation_id === "default" ? undefined : task.conversation_id,
   );
 
-  if (!rawRuntime) return;
+  if (!rawRuntime) {
+    setLastRunOutcome(task.id, {
+      outcome: "failed",
+      reason: "runtime_unavailable",
+      runAt: now,
+      error: "Conversation runtime unavailable",
+    });
+    safeAppendCronRunLogForTask(task, {
+      status: "error",
+      outcome: "failed",
+      reason: "runtime_unavailable",
+      error: "Conversation runtime unavailable",
+      runAtMs: now.getTime(),
+      scheduledFor: task.scheduled_for,
+    });
+    return;
+  }
 
   // Ensure the queue runtime is initialized (getOrCreateConversationRuntime
   // leaves queueRuntime as null — the listener's scoped helper initializes it).
@@ -151,8 +311,16 @@ function fireCronTask(
   } as Omit<CronPromptQueueItem, "id" | "enqueuedAt">);
 
   if (!queuedItem) {
+    setLastRunOutcome(task.id, {
+      outcome: "failed",
+      reason: "queue_full",
+      runAt: now,
+      error: "queue buffer limit",
+    });
     safeAppendCronRunLogForTask(task, {
       status: "error",
+      outcome: "failed",
+      reason: "queue_full",
       error: "queue buffer limit",
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
@@ -168,6 +336,10 @@ function fireCronTask(
     updateTask(task.id, (t) => {
       t.last_fired_at = nowIso;
       t.fire_count += 1;
+      t.last_run_at = nowIso;
+      t.last_run_outcome = "queued";
+      t.last_run_reason = "scheduled_time_matched";
+      t.last_run_error = null;
     });
   } else {
     // One-shot: mark as fired
@@ -176,11 +348,17 @@ function fireCronTask(
       t.fired_at = nowIso;
       t.last_fired_at = nowIso;
       t.fire_count = 1;
+      t.last_run_at = nowIso;
+      t.last_run_outcome = "queued";
+      t.last_run_reason = "one_off_due";
+      t.last_run_error = null;
     });
   }
 
   safeAppendCronRunLogForTask(task, {
     status: "ok",
+    outcome: "queued",
+    reason: task.recurring ? "scheduled_time_matched" : "one_off_due",
     runAtMs: now.getTime(),
     queueItemId: queuedItem.id,
     scheduledFor: task.scheduled_for,
@@ -195,15 +373,31 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
   const scheduledMs = new Date(task.scheduled_for).getTime();
   const missThreshold = 5 * 60_000;
   if (now.getTime() > scheduledMs + missThreshold && task.status === "active") {
+    const reason: CronRunReason =
+      task.last_run_outcome === "failed"
+        ? (task.last_run_reason ?? "scheduler_error")
+        : "scheduler_inactive";
+    const error =
+      task.last_run_outcome === "failed" ? task.last_run_error : null;
     updateTask(task.id, (t) => {
       t.status = "missed";
       t.missed_at = now.toISOString();
+      t.last_run_at = now.toISOString();
+      t.last_run_outcome = "missed";
+      t.last_run_reason = reason;
+      t.last_run_error = error ?? null;
+      t.last_missed_at = task.scheduled_for;
+      t.missed_count = (t.missed_count ?? 0) + 1;
     });
     safeAppendCronRunLogForTask(task, {
       status: "skipped",
+      outcome: "missed",
+      reason,
       summary: "missed",
+      error: error ?? undefined,
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
+      missedCount: 1,
     });
     return true;
   }
@@ -224,6 +418,7 @@ function tick(
   }
 
   const now = new Date();
+  recordSchedulerHeartbeat(state.token, now);
   const currentMinuteKey = minuteKey(now);
 
   // Reset per-minute dedup when minute changes
@@ -262,8 +457,16 @@ function tick(
           fireCronTask(freshTask, now, socket, opts, processQueuedTurn);
         } catch (err) {
           console.error(`[Cron] Error firing task ${taskId}:`, err);
+          setLastRunOutcome(freshTask.id, {
+            outcome: "failed",
+            reason: "scheduler_error",
+            runAt: now,
+            error: err instanceof Error ? err.message : String(err),
+          });
           safeAppendCronRunLogForTask(freshTask, {
             status: "error",
+            outcome: "failed",
+            reason: "scheduler_error",
             error: err instanceof Error ? err.message : String(err),
             runAtMs: now.getTime(),
             scheduledFor: freshTask.scheduled_for,
@@ -304,6 +507,7 @@ export function startScheduler(
   if (schedulerState) return;
 
   let token: string;
+  const previousActivity = getSchedulerActivity();
   try {
     token = claimSchedulerLease();
   } catch (err) {
@@ -330,6 +534,7 @@ export function startScheduler(
   }
 
   const now = new Date();
+  recordMissedRecurringRuns(previousActivity.scheduler_last_seen_at, now);
   const state: SchedulerState = {
     token,
     tickInterval: null as unknown as NodeJS.Timeout,

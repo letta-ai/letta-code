@@ -15,7 +15,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { type CronTask, getCronFilePath } from "./cron-file";
+import {
+  type CronRunOutcome,
+  type CronRunReason,
+  type CronTask,
+  getCronFilePath,
+} from "./cron-file";
 
 export type CronRunLogStatus = "ok" | "error" | "skipped";
 
@@ -24,6 +29,8 @@ export interface CronRunLogEntry {
   jobId: string;
   action: "finished";
   status?: CronRunLogStatus;
+  outcome?: CronRunOutcome;
+  reason?: CronRunReason;
   error?: string;
   summary?: string;
   agentId?: string;
@@ -33,6 +40,9 @@ export interface CronRunLogEntry {
   queueItemId?: string;
   scheduledFor?: string | null;
   firedAt?: string;
+  missedCount?: number;
+  windowStart?: string;
+  windowEnd?: string;
 }
 
 export interface CronRunLogPage {
@@ -171,6 +181,8 @@ function parseAllRunLogEntries(raw: string, jobId?: string): CronRunLogEntry[] {
         jobId: obj.jobId,
         action: "finished",
         status: obj.status,
+        outcome: obj.outcome,
+        reason: obj.reason,
         error: obj.error,
         summary: obj.summary,
         agentId: obj.agentId,
@@ -180,6 +192,9 @@ function parseAllRunLogEntries(raw: string, jobId?: string): CronRunLogEntry[] {
         queueItemId: obj.queueItemId,
         scheduledFor: obj.scheduledFor,
         firedAt: obj.firedAt,
+        missedCount: obj.missedCount,
+        windowStart: obj.windowStart,
+        windowEnd: obj.windowEnd,
       });
     } catch {
       // Ignore invalid lines.

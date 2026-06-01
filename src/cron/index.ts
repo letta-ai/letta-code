@@ -3,6 +3,8 @@ export {
   type AddTaskResult,
   addTask,
   type CancelReason,
+  type CronRunOutcome,
+  type CronRunReason,
   type CronTask,
   type CronTaskStatus,
   claimSchedulerLease,
@@ -12,11 +14,14 @@ export {
   garbageCollect,
   getActiveTasks,
   getCronFileMtime,
+  getSchedulerActivity,
   getTask,
   isProcessAlive,
   listTasks,
   readCronFile,
+  recordSchedulerHeartbeat,
   releaseSchedulerLease,
+  type SchedulerActivity,
   type SchedulerOwner,
   updateTask,
   verifySchedulerLease,
@@ -48,6 +53,7 @@ export {
 } from "./run-log";
 export {
   handleMissedOneShot,
+  recordMissedRecurringRuns,
   shouldFireTask,
   wrapCronPrompt,
 } from "./scheduler";
