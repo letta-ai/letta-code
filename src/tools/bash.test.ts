@@ -50,6 +50,35 @@ describe("Bash tool", () => {
     expect(result.content[0]?.text).toContain("Exit code");
   });
 
+  test("strict mode fails fast on intermediate shell errors", async () => {
+    if (process.platform === "win32") return;
+
+    const previous = process.env.LETTA_BASH_STRICT;
+    process.env.LETTA_BASH_STRICT = "1";
+    try {
+      const result = await runBashInTemp(
+        [
+          "cat > missing-dir/SKILL.md <<'EOF'",
+          "contents",
+          "EOF",
+          "echo 'SKILL.md written successfully'",
+        ].join("\n"),
+      );
+
+      expect(result.status).toBe("error");
+      expect(result.content[0]?.text).toContain("missing-dir/SKILL.md");
+      expect(result.content[0]?.text).not.toContain(
+        "SKILL.md written successfully",
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.LETTA_BASH_STRICT;
+      } else {
+        process.env.LETTA_BASH_STRICT = previous;
+      }
+    }
+  });
+
   test("times out long-running command", async () => {
     const result = await bash({
       command: "sleep 10",
