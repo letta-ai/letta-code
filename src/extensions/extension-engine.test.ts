@@ -8,9 +8,9 @@ import {
   getRegisteredPiProvider,
 } from "@/backend/dev/pi-provider-extension-registry";
 import {
-  createExtensionHost,
-  type ExtensionHost,
-} from "@/extensions/extension-host";
+  createExtensionEngine,
+  type ExtensionEngine,
+} from "@/extensions/extension-engine";
 import {
   clearExtensionTools,
   getExtensionToolDefinition,
@@ -34,7 +34,7 @@ type ExtensionTestGlobal = typeof globalThis & {
 };
 
 function createTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "letta-extension-host-"));
+  return mkdtempSync(path.join(tmpdir(), "letta-extension-engine-"));
 }
 
 function createExtensionContext(): ExtensionContext {
@@ -81,12 +81,12 @@ function createExtensionContext(): ExtensionContext {
   };
 }
 
-function createHost(
+function createEngine(
   root: string,
   capabilities?: ExtensionCapabilities,
   backend?: ExtensionAdapterBackendApi,
-): ExtensionHost {
-  return createExtensionHost({
+): ExtensionEngine {
+  return createExtensionEngine({
     cacheDirectory: path.join(root, "extension-cache"),
     ...(backend ? { backend } : {}),
     ...(capabilities ? { capabilities } : {}),
@@ -108,7 +108,7 @@ const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   },
 };
 
-describe("extension host", () => {
+describe("extension engine", () => {
   afterEach(() => {
     clearExtensionTools();
     clearRegisteredPiProviders();
@@ -131,14 +131,14 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root);
+      const engine = createEngine(root);
       let changes = 0;
-      const unsubscribe = host.subscribe(() => {
+      const unsubscribe = engine.subscribe(() => {
         changes += 1;
       });
 
-      await host.reload();
-      const snapshot = host.getSnapshot();
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
 
       expect(changes).toBeGreaterThan(0);
       expect(snapshot.loadedPaths).toEqual([extensionPath]);
@@ -148,10 +148,10 @@ describe("extension host", () => {
         path: extensionPath,
         scope: "global",
       });
-      expect(host.getSnapshot()).toBe(snapshot);
+      expect(engine.getSnapshot()).toBe(snapshot);
 
       unsubscribe();
-      host.dispose();
+      engine.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -190,9 +190,9 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root, TOOL_ONLY_EXTENSION_CAPABILITIES);
-      await host.reload();
-      const snapshot = host.getSnapshot();
+      const engine = createEngine(root, TOOL_ONLY_EXTENSION_CAPABILITIES);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
 
       const observedCapabilities = testGlobal.__lettaExtensionCapabilities as
         | ExtensionCapabilities
@@ -221,7 +221,7 @@ describe("extension host", () => {
       getConversationHistory: async () => [],
       sendMessageStream: async () =>
         (async function* () {
-          // Empty stream for host plumbing tests.
+          // Empty stream for engine plumbing tests.
         })(),
     };
 
@@ -239,9 +239,9 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root, undefined, backend);
-      await host.reload();
-      await host.emitEvent("conversation_open", {
+      const engine = createEngine(root, undefined, backend);
+      await engine.reload();
+      await engine.emitEvent("conversation_open", {
         agentId: "agent-1",
         agentName: "Amelia",
         conversationId: "conv-1",
@@ -255,7 +255,7 @@ describe("extension host", () => {
       expect(forkResult).toMatchObject({
         id: "conv-1:agent-1:hidden",
       });
-      expect(host.getSnapshot().errors).toEqual([]);
+      expect(engine.getSnapshot().errors).toEqual([]);
     } finally {
       delete testGlobal.__lettaExtensionBackend;
       delete testGlobal.__lettaExtensionForkResult;
@@ -289,8 +289,8 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root);
-      await host.reload();
+      const engine = createEngine(root);
+      await engine.reload();
 
       expect(
         getRegisteredPiProvider("lmstudio")?.config.models?.[0],
@@ -301,7 +301,7 @@ describe("extension host", () => {
         reasoning: true,
       });
 
-      host.dispose();
+      engine.dispose();
       expect(getRegisteredPiProvider("lmstudio")).toBeUndefined();
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -334,9 +334,9 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root, TOOL_ONLY_EXTENSION_CAPABILITIES);
-      await host.reload();
-      const snapshot = host.getSnapshot();
+      const engine = createEngine(root, TOOL_ONLY_EXTENSION_CAPABILITIES);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
 
       expect(snapshot.errors).toEqual([]);
       expect(snapshot.commands).toEqual({});
@@ -378,18 +378,18 @@ describe("extension host", () => {
         getConversationHistory: async () => [],
         sendMessageStream: async () => (async function* () {})(),
       };
-      const host = createHost(root, undefined, backend);
-      await host.reload();
-      expect(host.getSnapshot().events.conversation_open).toHaveLength(2);
+      const engine = createEngine(root, undefined, backend);
+      await engine.reload();
+      expect(engine.getSnapshot().events.conversation_open).toHaveLength(2);
 
-      const result = await host.emitEvent("conversation_open", {
+      const result = await engine.emitEvent("conversation_open", {
         agentId: "agent-1",
         agentName: "Amelia",
         conversationId: "conversation-1",
         reason: "startup",
       });
 
-      const snapshot = host.getSnapshot();
+      const snapshot = engine.getSnapshot();
       expect(result).toMatchObject({
         handlerCount: 2,
         name: "conversation_open",
@@ -404,7 +404,7 @@ describe("extension host", () => {
         error: expect.objectContaining({ message: "event failed" }),
       });
 
-      host.dispose();
+      engine.dispose();
     } finally {
       delete testGlobal.__lettaExtensionEvents;
       rmSync(root, { force: true, recursive: true });
@@ -451,15 +451,15 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root);
-      await host.reload();
+      const engine = createEngine(root);
+      await engine.reload();
       const event = {
         agentId: "agent-1",
         conversationId: "conversation-1",
         input: [{ role: "user" as const, content: "hello ??" }],
       };
 
-      const result = await host.emitEvent("turn_start", event);
+      const result = await engine.emitEvent("turn_start", event);
 
       expect(result).toMatchObject({
         handlerCount: 4,
@@ -469,7 +469,7 @@ describe("extension host", () => {
       expect(result.results).toHaveLength(1);
       expect(event.input).toEqual([{ role: "user", content: "hello final" }]);
 
-      host.dispose();
+      engine.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -505,8 +505,8 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root);
-      await host.reload();
+      const engine = createEngine(root);
+      await engine.reload();
       const event = {
         agentId: "agent-1",
         conversationId: "conversation-1",
@@ -515,7 +515,7 @@ describe("extension host", () => {
         args: { command: "echo ??" },
       };
 
-      const result = await host.emitEvent("tool_start", event);
+      const result = await engine.emitEvent("tool_start", event);
 
       expect(result).toMatchObject({
         handlerCount: 4,
@@ -525,7 +525,7 @@ describe("extension host", () => {
       expect(result.results).toHaveLength(1);
       expect(event.args).toEqual({ command: "echo final" });
 
-      host.dispose();
+      engine.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -552,8 +552,8 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root);
-      await host.reload();
+      const engine = createEngine(root);
+      await engine.reload();
       const firstSignal = testGlobal.__lettaExtensionSignal as
         | AbortSignal
         | undefined;
@@ -561,7 +561,7 @@ describe("extension host", () => {
         | ExtensionPanelHandle
         | undefined;
       expect(firstSignal?.aborted).toBe(false);
-      expect(Object.values(host.getSnapshot().ui.panels)).toHaveLength(1);
+      expect(Object.values(engine.getSnapshot().ui.panels)).toHaveLength(1);
 
       writeFileSync(
         extensionPath,
@@ -569,20 +569,20 @@ describe("extension host", () => {
           globalThis.__lettaExtensionSignal = letta.signal;
         }`,
       );
-      await host.reload();
+      await engine.reload();
 
       expect(firstSignal?.aborted).toBe(true);
-      expect(Object.values(host.getSnapshot().ui.panels)).toEqual([]);
+      expect(Object.values(engine.getSnapshot().ui.panels)).toEqual([]);
 
       stalePanel?.update({ content: "stale update" });
-      const snapshot = host.getSnapshot();
+      const snapshot = engine.getSnapshot();
       expect(Object.values(snapshot.ui.panels)).toEqual([]);
       expect(snapshot.diagnostics.at(-1)).toMatchObject({
         capability: { id: "status", kind: "panel" },
         phase: "stale_handle",
       });
 
-      host.dispose();
+      engine.dispose();
       const secondSignal = testGlobal.__lettaExtensionSignal as
         | AbortSignal
         | undefined;
@@ -615,9 +615,11 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root);
-      await host.reload();
-      expect(Object.keys(host.getSnapshot().commands)).toEqual(["old-command"]);
+      const engine = createEngine(root);
+      await engine.reload();
+      expect(Object.keys(engine.getSnapshot().commands)).toEqual([
+        "old-command",
+      ]);
 
       let releaseReload!: () => void;
       const reloadStarted = new Promise<void>((resolve) => {
@@ -639,17 +641,19 @@ describe("extension host", () => {
         }`,
       );
 
-      const reloadPromise = host.reload();
+      const reloadPromise = engine.reload();
       await reloadStarted;
 
-      expect(host.getSnapshot().commands).toEqual({});
-      expect(host.getSnapshot().loadedPaths).toEqual([]);
+      expect(engine.getSnapshot().commands).toEqual({});
+      expect(engine.getSnapshot().loadedPaths).toEqual([]);
 
       releaseReload();
       await reloadPromise;
-      expect(Object.keys(host.getSnapshot().commands)).toEqual(["new-command"]);
+      expect(Object.keys(engine.getSnapshot().commands)).toEqual([
+        "new-command",
+      ]);
 
-      host.dispose();
+      engine.dispose();
     } finally {
       delete testGlobal.__lettaExtensionGate;
       delete testGlobal.__lettaExtensionStarted;
@@ -687,8 +691,8 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root);
-      const firstReload = host.reload();
+      const engine = createEngine(root);
+      const firstReload = engine.reload();
       await firstReloadStarted;
 
       delete testGlobal.__lettaExtensionGate;
@@ -704,19 +708,19 @@ describe("extension host", () => {
         }`,
       );
 
-      await host.reload();
-      expect(Object.keys(host.getSnapshot().commands)).toEqual([
+      await engine.reload();
+      expect(Object.keys(engine.getSnapshot().commands)).toEqual([
         "fresh-command",
       ]);
 
       releaseFirstReload();
       await firstReload;
 
-      const snapshot = host.getSnapshot();
+      const snapshot = engine.getSnapshot();
       expect(snapshot.generation).toBe(2);
       expect(Object.keys(snapshot.commands)).toEqual(["fresh-command"]);
 
-      host.dispose();
+      engine.dispose();
     } finally {
       delete testGlobal.__lettaExtensionGate;
       delete testGlobal.__lettaExtensionStarted;
@@ -743,12 +747,12 @@ describe("extension host", () => {
         `export default function() { const value = ; }`,
       );
 
-      const host = createHost(root);
-      await host.reload();
+      const engine = createEngine(root);
+      await engine.reload();
 
       expect(
         Object.fromEntries(
-          host
+          engine
             .getSnapshot()
             .errors.map((entry) => [path.basename(entry.path), entry.phase]),
         ),
@@ -758,7 +762,7 @@ describe("extension host", () => {
         "phase-transpile.ts": "transpile",
       });
 
-      host.dispose();
+      engine.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -788,9 +792,9 @@ describe("extension host", () => {
         }`,
       );
 
-      const host = createHost(root);
-      await host.reload();
-      const snapshot = host.getSnapshot();
+      const engine = createEngine(root);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
 
       expect(snapshot.errors).toEqual([]);
       expect(snapshot.tools.local_weather).toMatchObject({
@@ -805,7 +809,7 @@ describe("extension host", () => {
       });
       expect(getExtensionToolDefinition("local_weather")).toBeDefined();
 
-      host.dispose();
+      engine.dispose();
       expect(getExtensionToolDefinition("local_weather")).toBeUndefined();
     } finally {
       rmSync(root, { force: true, recursive: true });

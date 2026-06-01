@@ -216,7 +216,7 @@ export interface LoadLocalExtensionsOptions
   reservedToolNames?: Iterable<string>;
 }
 
-export interface ExtensionHost {
+export interface ExtensionEngine {
   dispose: () => void;
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
@@ -228,7 +228,7 @@ export interface ExtensionHost {
   subscribe: (listener: () => void) => () => void;
 }
 
-export interface CreateExtensionHostOptions
+export interface CreateExtensionEngineOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
@@ -1381,9 +1381,9 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   delete registry.ui.statuslineRendererOwner;
 }
 
-export function createExtensionHost(
-  options: CreateExtensionHostOptions,
-): ExtensionHost {
+export function createExtensionEngine(
+  options: CreateExtensionEngineOptions,
+): ExtensionEngine {
   let generation = 0;
   let disposed = false;
   const capabilities = resolveExtensionCapabilities(options.capabilities);
@@ -1439,7 +1439,7 @@ export function createExtensionHost(
           return;
         }
         // Stale handles from a prior generation report through their old
-        // activation callback. Preserve the diagnostic on the current host
+        // activation callback. Preserve the diagnostic on the current engine
         // snapshot without reviving the old registry.
         activeRegistry.diagnostics.push(diagnostic);
         if (diagnostic.phase !== "status.evaluate") {
