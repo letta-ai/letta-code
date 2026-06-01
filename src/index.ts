@@ -5,7 +5,6 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { ensureFileIndex } from "@/utils/file-index";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import {
   getResumeDataFromBackend,
@@ -60,6 +59,7 @@ import {
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
+import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
@@ -73,6 +73,10 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { runSubcommand } from "./cli/subcommands/router";
+import {
+  disableExtensionsForProcess,
+  shouldDisableExtensions,
+} from "./extensions/disable";
 import {
   migratePermissionMode,
   permissionMode,
@@ -156,8 +160,6 @@ async function refreshStartupOAuthToken(
     return null;
   }
 }
-
-void ensureFileIndex();
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -847,6 +849,12 @@ async function main(): Promise<void> {
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const noSystemInfoReminderFlag = values["no-system-info-reminder"];
+  const extensionsDisabled = shouldDisableExtensions({
+    cliFlag: values["no-extensions"],
+  });
+  if (extensionsDisabled) {
+    disableExtensionsForProcess();
+  }
   const resolvedSkillSources = (() => {
     try {
       return resolveSkillSourcesSelection({
@@ -1556,6 +1564,9 @@ async function main(): Promise<void> {
     const startupCreatedAgentRef = useRef<AgentState | null>(null);
     const [startupHasCloudCredentials, setStartupHasCloudCredentials] =
       useState(Boolean(settings.refreshToken || apiKey));
+    const [fileAutocompleteFdPath, setFileAutocompleteFdPath] = useState<
+      string | null
+    >(() => resolveFdPath());
     const [startupHasAvailableLocalModels, setStartupHasAvailableLocalModels] =
       useState(true);
     // Cache agent object from Phase 1 validation to avoid redundant re-fetch in Phase 2
@@ -2611,6 +2622,9 @@ async function main(): Promise<void> {
           }
         }
 
+        const fdPath = await ensureFdPath();
+        setFileAutocompleteFdPath(fdPath);
+
         // Ensure secrets cache is populated (non-fatal).
         try {
           await secretsInitPromise;
@@ -2798,6 +2812,8 @@ async function main(): Promise<void> {
         startupHasAvailableLocalModels,
         releaseNotes,
         systemInfoReminderEnabled: !noSystemInfoReminderFlag,
+        extensionsDisabled,
+        fileAutocompleteFdPath,
       });
     }
 
@@ -2821,6 +2837,8 @@ async function main(): Promise<void> {
       releaseNotes,
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
+      extensionsDisabled,
+      fileAutocompleteFdPath,
       onReload: handleReload,
     });
   }

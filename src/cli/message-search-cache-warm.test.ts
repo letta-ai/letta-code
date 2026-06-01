@@ -13,9 +13,12 @@ mock.module("../backend/api/search", () => ({
   warmSearchCache: warmSearchCacheMock,
 }));
 
-const { buildSearchTargetPlan, warmMessageSearchCache } = await import(
-  "@/cli/components/MessageSearch"
-);
+const {
+  buildMessageSearchRequestBody,
+  buildSearchTargetPlan,
+  getMessageText,
+  warmMessageSearchCache,
+} = await import("@/cli/components/MessageSearch");
 
 afterAll(() => {
   mock.restore();
@@ -70,5 +73,51 @@ describe("buildSearchTargetPlan", () => {
         { mode: "hybrid", range: "all" },
       ],
     });
+  });
+
+  test("skips equivalent mode prefetches when search modes are text-only", () => {
+    expect(
+      buildSearchTargetPlan("hybrid", "agent", {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        textOnlyModes: true,
+      }),
+    ).toEqual({
+      primary: { mode: "hybrid", range: "agent" },
+      prefetch: [
+        { mode: "hybrid", range: "all" },
+        { mode: "hybrid", range: "conv" },
+      ],
+    });
+  });
+});
+
+describe("buildMessageSearchRequestBody", () => {
+  test("includes agent id for current-conversation searches", () => {
+    expect(
+      buildMessageSearchRequestBody(" needle ", "fts", "conv", {
+        agentId: "agent-1",
+        conversationId: "default",
+        limit: 25,
+      }),
+    ).toEqual({
+      query: "needle",
+      search_mode: "fts",
+      limit: 25,
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
+  });
+});
+
+describe("message text formatting", () => {
+  test("does not assume tool returns are strings", () => {
+    expect(
+      getMessageText({
+        message_type: "tool_return_message",
+        name: "tool",
+        tool_return: { nested: ["value"] },
+      } as never),
+    ).toBe('tool: {"nested":["value"]}');
   });
 });

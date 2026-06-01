@@ -51,7 +51,6 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
-import { refreshFileIndex } from "@/utils/file-index";
 import { isRecord } from "@/utils/type-guards";
 import {
   functionToolForm,
@@ -1568,6 +1567,7 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
   if (info?.handle && typeof info.handle === "string") {
     return (
       info.handle.startsWith("openai/") ||
+      info.handle.startsWith("openai-codex/") ||
       info.handle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`) ||
       info.handle.startsWith("chatgpt_oauth/")
     );
@@ -1576,6 +1576,7 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
   // and ChatGPT OAuth Codex provider handles.
   return (
     modelIdentifier.startsWith("openai/") ||
+    modelIdentifier.startsWith("openai-codex/") ||
     modelIdentifier.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`) ||
     modelIdentifier.startsWith("chatgpt_oauth/")
   );
@@ -2378,12 +2379,6 @@ export async function executeTool(
 
       const result = await tool.fn(enhancedArgs);
       const duration = Date.now() - startTime;
-
-      // Refresh the file index in the background after every tool execution
-      // so subsequent @ searches reflect externally created or deleted files.
-      // The incremental rebuild is cheap (metadata-based skip for unchanged
-      // subtrees), so running on every tool adds negligible overhead.
-      void refreshFileIndex();
 
       // Broadcast file content after file-mutating tools so web clients update
       // in real time without waiting for fs.watch → file_changed → re-read.

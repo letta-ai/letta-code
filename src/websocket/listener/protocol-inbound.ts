@@ -32,6 +32,7 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  CronRunsCommand,
   DeleteMemoryFileCommand,
   EditFileCommand,
   EnableMemfsCommand,
@@ -288,12 +289,15 @@ function isSyncCommand(value: unknown): value is SyncCommand {
     type?: unknown;
     runtime?: unknown;
     recover_approvals?: unknown;
+    force_device_status?: unknown;
   };
   return (
     candidate.type === "sync" &&
     isRuntimeScope(candidate.runtime) &&
     (candidate.recover_approvals === undefined ||
-      typeof candidate.recover_approvals === "boolean")
+      typeof candidate.recover_approvals === "boolean") &&
+    (candidate.force_device_status === undefined ||
+      typeof candidate.force_device_status === "boolean")
   );
 }
 
@@ -777,6 +781,26 @@ export function isCronGetCommand(value: unknown): value is CronGetCommand {
     c.type === "cron_get" &&
     typeof c.request_id === "string" &&
     typeof c.task_id === "string"
+  );
+}
+
+export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    task_id?: unknown;
+    limit?: unknown;
+    offset?: unknown;
+    run_id?: unknown;
+  };
+  return (
+    c.type === "cron_runs" &&
+    typeof c.request_id === "string" &&
+    typeof c.task_id === "string" &&
+    (c.limit === undefined || typeof c.limit === "number") &&
+    (c.offset === undefined || typeof c.offset === "number") &&
+    (c.run_id === undefined || typeof c.run_id === "string")
   );
 }
 
@@ -1607,6 +1631,7 @@ export function parseServerMessage(
       isCronListCommand(parsed) ||
       isCronAddCommand(parsed) ||
       isCronGetCommand(parsed) ||
+      isCronRunsCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
