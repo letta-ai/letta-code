@@ -147,9 +147,21 @@ export function SlashCommandAutocomplete({
       order: command.order,
     }));
 
+    const customCommandNames = new Set(customCommands.map((cmd) => cmd.cmd));
+    const extensionCommandNames = new Set(
+      extensionCommandMatches.map((cmd) => cmd.cmd),
+    );
+    const visibleBuiltins = builtins.filter(
+      (cmd) =>
+        !customCommandNames.has(cmd.cmd) && !extensionCommandNames.has(cmd.cmd),
+    );
+    const visibleExtensionCommands = extensionCommandMatches.filter(
+      (cmd) => !customCommandNames.has(cmd.cmd),
+    );
+
     const reservedCommands = new Set([
-      ...builtins.map((cmd) => cmd.cmd),
-      ...extensionCommandMatches.map((cmd) => cmd.cmd),
+      ...visibleBuiltins.map((cmd) => cmd.cmd),
+      ...visibleExtensionCommands.map((cmd) => cmd.cmd),
       ...customCommands.map((cmd) => cmd.cmd),
     ]);
     const visibleSkillCommands = skillCommands.filter(
@@ -158,8 +170,8 @@ export function SlashCommandAutocomplete({
 
     // Merge command sources and sort by order.
     return [
-      ...builtins,
-      ...extensionCommandMatches,
+      ...visibleBuiltins,
+      ...visibleExtensionCommands,
       ...customCommands,
       ...visibleSkillCommands,
     ].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));

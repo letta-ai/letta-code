@@ -69,3 +69,15 @@ export function isNonStateCommand(msg: string): boolean {
   }
   return false;
 }
+
+export function shouldSlashCommandBypassQueue(
+  msg: string,
+  options: {
+    hasCustomCommand?: boolean;
+    extensionCommand?: { runWhenBusy: boolean };
+  } = {},
+): boolean {
+  if (options.hasCustomCommand) return false;
+  if (options.extensionCommand) return options.extensionCommand.runWhenBusy;
+  return isInteractiveCommand(msg) || isNonStateCommand(msg);
+}

@@ -209,10 +209,10 @@ export interface LoadLocalExtensionsOptions
   getClient: () => Promise<Letta>;
   backend?: ExtensionAdapterBackendApi;
   capabilities?: ExtensionCapabilities;
+  builtinCommandIds?: Iterable<string>;
   generation?: number;
   onChange?: () => void;
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void;
-  reservedCommandIds?: Iterable<string>;
   reservedToolNames?: Iterable<string>;
 }
 
@@ -233,8 +233,8 @@ export interface CreateExtensionEngineOptions
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
   backend?: ExtensionAdapterBackendApi;
+  builtinCommandIds?: Iterable<string>;
   capabilities?: ExtensionCapabilities;
-  reservedCommandIds?: Iterable<string>;
   reservedToolNames?: Iterable<string>;
 }
 
@@ -324,7 +324,10 @@ function recordExtensionDiagnostic(
     timestamp: Date.now(),
   };
   registry.diagnostics.push(completeDiagnostic);
-  if (completeDiagnostic.phase !== "status.evaluate") {
+  if (
+    completeDiagnostic.phase !== "status.evaluate" &&
+    completeDiagnostic.phase !== "command.override"
+  ) {
     registry.errors.push({
       error: completeDiagnostic.error,
       ...(completeDiagnostic.owner ? { owner: completeDiagnostic.owner } : {}),
@@ -831,7 +834,7 @@ function createLettaExtensionApi(
   getContext: () => ExtensionContext,
   onChange: () => void,
   onDiagnostic: ((diagnostic: ExtensionDiagnostic) => void) | undefined,
-  reservedCommandIds: Set<string>,
+  builtinCommandIds: Set<string>,
   reservedToolNames: Set<string>,
   signal: AbortSignal,
 ): LettaExtensionApi {
@@ -975,9 +978,19 @@ function createLettaExtensionApi(
         }
 
         const normalized = normalizeExtensionCommand(command, owner);
-        if (reservedCommandIds.has(normalized.id)) {
-          throw new Error(
-            `Extension command '${normalized.id}' conflicts with a built-in command`,
+        if (builtinCommandIds.has(normalized.id)) {
+          recordExtensionDiagnostic(
+            registry,
+            {
+              capability: { id: normalized.id, kind: "command" },
+              error: new Error(
+                `Extension command '${normalized.id}' overrides a built-in command`,
+              ),
+              owner,
+              path: owner.path,
+              phase: "command.override",
+            },
+            onDiagnostic,
           );
         }
 
@@ -1132,7 +1145,7 @@ export async function loadLocalExtensions(
   const sources = resolveLocalExtensionSources(options);
   const capabilities = resolveExtensionCapabilities(options.capabilities);
   const generation = options.generation ?? 1;
-  const reservedCommandIds = new Set([...(options.reservedCommandIds ?? [])]);
+  const builtinCommandIds = new Set([...(options.builtinCommandIds ?? [])]);
   const reservedToolNames = new Set([...(options.reservedToolNames ?? [])]);
   const registry = createEmptyExtensionRegistry(
     sources,
@@ -1181,7 +1194,7 @@ export async function loadLocalExtensions(
             getContext,
             onChange,
             options.onDiagnostic,
-            reservedCommandIds,
+            builtinCommandIds,
             reservedToolNames,
             abortController.signal,
           ),
@@ -1442,7 +1455,10 @@ export function createExtensionEngine(
         // activation callback. Preserve the diagnostic on the current engine
         // snapshot without reviving the old registry.
         activeRegistry.diagnostics.push(diagnostic);
-        if (diagnostic.phase !== "status.evaluate") {
+        if (
+          diagnostic.phase !== "status.evaluate" &&
+          diagnostic.phase !== "command.override"
+        ) {
           activeRegistry.errors.push({
             error: diagnostic.error,
             ...(diagnostic.owner ? { owner: diagnostic.owner } : {}),

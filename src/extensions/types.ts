@@ -292,6 +292,7 @@ export type ExtensionDiagnosticPhase =
   | "transpile"
   | "import"
   | "activate"
+  | "command.override"
   | "dispose"
   | "event"
   | "stale_handle"
