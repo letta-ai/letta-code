@@ -28,7 +28,10 @@ function isTruthyEnvValue(value: string | undefined): boolean {
   return value === "1" || value?.toLowerCase() === "true";
 }
 
-function withStrictBashPrelude(command: string, env: NodeJS.ProcessEnv): string {
+function withStrictBashPrelude(
+  command: string,
+  env: NodeJS.ProcessEnv,
+): string {
   if (process.platform === "win32") return command;
   if (!isTruthyEnvValue(env[STRICT_BASH_ENV_VAR])) return command;
   return `${STRICT_BASH_PRELUDE}\n${command}`;
@@ -236,7 +239,9 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       };
     }
 
-    const bgEnv = secretEnv ? { ...getShellEnv(), ...secretEnv } : getShellEnv();
+    const bgEnv = secretEnv
+      ? { ...getShellEnv(), ...secretEnv }
+      : getShellEnv();
     const bgCommand = withStrictBashPrelude(command, bgEnv);
     const bashId = getNextBashId();
     const outputFile = createBackgroundOutputFile(bashId);
