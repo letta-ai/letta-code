@@ -3,8 +3,10 @@ import {
   addTask as addCronTask,
   deleteAllTasks as deleteAllCronTasks,
   deleteTask as deleteCronTask,
+  getCronRunLogPath,
   getTask as getCronTask,
   listTasks as listCronTasks,
+  readCronRunLogEntriesPage,
 } from "@/cron";
 import type {
   CronAddCommand,
@@ -12,6 +14,7 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  CronRunsCommand,
 } from "@/types/protocol_v2";
 import {
   isCronAddCommand,
@@ -19,6 +22,7 @@ import {
   isCronDeleteCommand,
   isCronGetCommand,
   isCronListCommand,
+  isCronRunsCommand,
 } from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
@@ -26,6 +30,7 @@ export type CronCommand =
   | CronListCommand
   | CronAddCommand
   | CronGetCommand
+  | CronRunsCommand
   | CronDeleteCommand
   | CronDeleteAllCommand;
 
@@ -178,6 +183,47 @@ export async function handleCronCommand(
     return true;
   }
 
+  if (parsed.type === "cron_runs") {
+    try {
+      const page = readCronRunLogEntriesPage(
+        getCronRunLogPath(parsed.task_id),
+        {
+          jobId: parsed.task_id,
+          limit: parsed.limit,
+          offset: parsed.offset,
+          runId: parsed.run_id,
+        },
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "cron_runs_response",
+          request_id: parsed.request_id,
+          success: true,
+          page,
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "cron_runs_response",
+          request_id: parsed.request_id,
+          success: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to list cron run history",
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+    }
+    return true;
+  }
+
   if (parsed.type === "cron_delete") {
     try {
       const existingTask = getCronTask(parsed.task_id);
@@ -263,6 +309,7 @@ export function handleCronProtocolCommand(
     isCronListCommand(parsed) ||
     isCronAddCommand(parsed) ||
     isCronGetCommand(parsed) ||
+    isCronRunsCommand(parsed) ||
     isCronDeleteCommand(parsed) ||
     isCronDeleteAllCommand(parsed)
   ) {
