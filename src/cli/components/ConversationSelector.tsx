@@ -695,7 +695,33 @@ export function ConversationSelector({
   // Fetch more when needed
   const fetchMore = useCallback(async () => {
     if (loadingMore || !hasMore || !cursor) return;
-    await loadConversations(cursor);
+  const togglePinnedConversation = useCallback(
+    (selected: EnrichedConversation | undefined) => {
+      if (!selected?.conversation.id) return;
+      const conversationId = selected.conversation.id;
+      if (selected.isPinned) {
+        settingsManager.unpinConversationBoth(agentId, conversationId);
+      } else {
+        settingsManager.pinConversationGlobal(agentId, conversationId);
+      }
+      const update = (item: EnrichedConversation) =>
+        item.conversation.id === conversationId
+          ? {
+              ...item,
+              isPinned: !selected.isPinned,
+              isPinnedLocal: false,
+            }
+          : item;
+      const sortPinnedFirst = (a: EnrichedConversation, b: EnrichedConversation) => {
+        if (a.conversation.id === "default") return -1;
+        if (b.conversation.id === "default") return 1;
+        return Number(b.isPinned) - Number(a.isPinned);
+      };
+      setConversations((prev) => prev.map(update).sort(sortPinnedFirst));
+      setSearchResults((prev) => prev?.map(update) ?? null);
+    },
+    [agentId],
+  );```
   }, [loadingMore, hasMore, cursor, loadConversations]);
 
   const togglePinnedConversation = useCallback(
