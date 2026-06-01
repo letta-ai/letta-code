@@ -126,6 +126,7 @@ import {
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
@@ -2821,6 +2822,20 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   stepCount,
                   durationMs,
                 });
+                maybeSendReflectionThresholdFeedback({
+                  parentAgentId: agentId,
+                  parentAgentName: agentName,
+                  parentAgentDescription: agentDescription,
+                  reflectionSubagentId: reflectionAgentId ?? undefined,
+                  conversationId: reflectionConversationId,
+                  triggerSource: "manual",
+                  success,
+                  error,
+                  stepCount,
+                  durationMs,
+                  surface: "letta_code_tui",
+                  model: currentModelId,
+                });
                 await finalizeAutoReflectionPayload(
                   agentId,
                   reflectionConversationId,
@@ -3494,6 +3509,20 @@ ${SYSTEM_REMINDER_CLOSE}
                 error,
                 stepCount,
                 durationMs,
+              });
+              maybeSendReflectionThresholdFeedback({
+                parentAgentId: agentId,
+                parentAgentName: agentName,
+                parentAgentDescription: agentDescription,
+                reflectionSubagentId: reflectionAgentId ?? undefined,
+                conversationId: reflectionConversationId,
+                triggerSource,
+                success,
+                error,
+                stepCount,
+                durationMs,
+                surface: "letta_code_tui",
+                model: currentModelId,
               });
               await finalizeAutoReflectionPayload(
                 agentId,

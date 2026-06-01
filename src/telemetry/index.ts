@@ -3,10 +3,7 @@ import { appendFileSync } from "node:fs";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getServerUrl } from "@/backend/api/client";
 import { getServerHealth } from "@/backend/api/health";
-import {
-  submitFeedbackMetadata,
-  submitTelemetryMetadata,
-} from "@/backend/api/metadata";
+import { submitTelemetryMetadata } from "@/backend/api/metadata";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
@@ -91,8 +88,13 @@ export interface UserInputData {
   model_id: string;
 }
 
+export type ReflectionTriggerSource =
+  | "manual"
+  | "step-count"
+  | "compaction-event";
+
 export interface ReflectionStartData {
-  trigger_source: "manual" | "step-count" | "compaction-event";
+  trigger_source: ReflectionTriggerSource;
   subagent_id?: string;
   conversation_id?: string;
   start_message_id?: string;
@@ -100,7 +102,7 @@ export interface ReflectionStartData {
 }
 
 export interface ReflectionEndData {
-  trigger_source: "manual" | "step-count" | "compaction-event";
+  trigger_source: ReflectionTriggerSource;
   success: boolean;
   subagent_id?: string;
   conversation_id?: string;
@@ -225,6 +227,17 @@ function isNonActionableError(message: string): boolean {
   );
 }
 
+export function appendTelemetryDebugLog(message: string): void {
+  try {
+    appendFileSync(
+      "/tmp/letta-telemetry.log",
+      `${new Date().toISOString()} ${message}\n`,
+    );
+  } catch {
+    // Debug logging must never affect telemetry or the user session.
+  }
+}
+
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
   private sessionId: string;
@@ -276,77 +289,9 @@ class TelemetryManager {
   }
 
   private appendTelemetryDebugLog(message: string): void {
-    try {
-      appendFileSync(
-        "/tmp/letta-telemetry.log",
-        `${new Date().toISOString()} ${message}\n`,
-      );
-    } catch {
-      // Debug logging must never affect telemetry or the user session.
-    }
+    appendTelemetryDebugLog(message);
   }
 
-  private maybeSendReflectionThresholdFeedback(data: ReflectionEndData): void {
-    const alertReasons: string[] = [];
-    if (
-      typeof data.duration_ms === "number" &&
-      // data.duration_ms > 60
-      data.duration_ms > 15 * 60 * 1000
-    ) {
-      alertReasons.push("duration_gt_15m");
-    }
-    if (typeof data.step_count === "number" && data.step_count > 100) {
-      alertReasons.push("step_count_gt_100");
-    }
-    if (alertReasons.length === 0) {
-      return;
-    }
-
-    void (async () => {
-      const apiKey = await this.resolveTelemetryApiKey();
-      const deviceId = this.getTelemetryDeviceId();
-      const parentAgentId = this.currentAgentId || undefined;
-      const reflectionSubagentId = data.subagent_id;
-      await submitFeedbackMetadata(apiKey, deviceId, {
-        message: `[amy reflection alert testing] Reflection exceeded thresholds: ${alertReasons.join(
-          ", ",
-        )} (parent agent id: ${parentAgentId ?? "unset"}, reflection subagent id: ${
-          reflectionSubagentId ?? "unset"
-        })`,
-        feature: "letta-code",
-        agent_id: reflectionSubagentId ?? parentAgentId,
-        session_id: this.sessionId,
-        total_wall_ms: data.duration_ms,
-        step_count: data.step_count,
-        settings: JSON.stringify({
-          source: "reflection_threshold_alert",
-          alert_reasons: alertReasons,
-          trigger_source: data.trigger_source,
-          success: data.success,
-          parent_agent_id: parentAgentId,
-          reflection_subagent_id: reflectionSubagentId,
-          subagent_id: data.subagent_id,
-          conversation_id: data.conversation_id,
-          error: data.error,
-          surface: this.surface,
-        }),
-        server_version: this.serverVersion || undefined,
-      });
-      this.appendTelemetryDebugLog(
-        `[TELEM-FEEDBACK] sent reflection threshold alert reasons=${alertReasons.join(
-          ",",
-        )} stepCount=${String(data.step_count ?? "unset")} durationMs=${String(
-          data.duration_ms ?? "unset",
-        )}`,
-      );
-    })().catch((error) => {
-      this.appendTelemetryDebugLog(
-        `[TELEM-FEEDBACK] FAIL reflection threshold alert ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    });
-  }
   private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_BATCH_SIZE = 100;
   private sessionStatsGetter?: () => {
@@ -811,7 +756,7 @@ class TelemetryManager {
    * Track reflection start events (manual and auto-triggered).
    */
   trackReflectionStart(
-    triggerSource: "manual" | "step-count" | "compaction-event",
+    triggerSource: ReflectionTriggerSource,
     options?: {
       subagentId?: string;
       conversationId?: string;
@@ -833,7 +778,7 @@ class TelemetryManager {
    * Track reflection completion events.
    */
   trackReflectionEnd(
-    triggerSource: "manual" | "step-count" | "compaction-event",
+    triggerSource: ReflectionTriggerSource,
     success: boolean,
     options?: {
       subagentId?: string;
@@ -853,7 +798,6 @@ class TelemetryManager {
       duration_ms: options?.durationMs,
     };
     this.track("reflection_end", data);
-    this.maybeSendReflectionThresholdFeedback(data);
   }
 
   /**

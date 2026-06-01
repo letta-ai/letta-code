@@ -60,9 +60,10 @@ import {
   syncReminderStateFromContextTracker,
 } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
+import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
@@ -265,6 +266,17 @@ function buildMaybeLaunchReflectionSubagent(params: {
             error,
             stepCount,
             durationMs,
+          });
+          maybeSendReflectionThresholdFeedback({
+            parentAgentId: agentId,
+            reflectionSubagentId: reflectionAgentId ?? undefined,
+            conversationId,
+            triggerSource,
+            success,
+            error,
+            stepCount,
+            durationMs,
+            surface: getListenerTelemetrySurface(),
           });
           await finalizeAutoReflectionPayload(
             agentId,

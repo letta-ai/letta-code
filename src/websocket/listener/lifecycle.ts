@@ -37,6 +37,7 @@ import {
   telemetry,
 } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
@@ -663,6 +664,17 @@ export async function wireChannelIngress(
             error,
             stepCount,
             durationMs,
+          });
+          maybeSendReflectionThresholdFeedback({
+            parentAgentId: agentId,
+            reflectionSubagentId: reflectionAgentId ?? undefined,
+            conversationId,
+            triggerSource: "manual",
+            success,
+            error,
+            stepCount,
+            durationMs,
+            surface: getListenerTelemetrySurface(),
           });
           await finalizeAutoReflectionPayload(
             agentId,

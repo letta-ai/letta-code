@@ -524,10 +524,6 @@ function parseResultFromStdout(
         report: result.result || "",
         success: !result.is_error,
         error: result.is_error ? result.result || "Unknown error" : undefined,
-        totalTokens:
-          typeof result.usage?.total_tokens === "number"
-            ? result.usage.total_tokens
-            : undefined,
         stepCount:
           typeof result.usage?.step_count === "number"
             ? result.usage.step_count
