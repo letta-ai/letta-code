@@ -159,21 +159,21 @@ export async function handleProfileCommand(
       const output = [
         "/pin help",
         "",
-        "Interactively manage pinned things.",
+        "Pin agents and conversations.",
         "",
         "USAGE",
-        "  /pin             — manage pinned conversations",
-        "  /pin convo       — manage pinned conversations",
-        "  /pin agent       — manage pinned agents",
-        "  /pin current     — pin the current agent",
-        "  /pin current -l  — pin the current agent locally",
-        "  /pin help        — show this help",
+        "  /pin [name]        — pin the current agent globally",
+        "  /pin -l [name]     — pin the current agent to this project",
+        "  /pin agent [name]  — pin the current agent",
+        "  /pin convo         — manage pinned conversations",
+        "  /pin agents        — manage pinned agents",
+        "  /pin help          — show this help",
       ].join("\n");
       cmd.finish(output, true);
       return { submitted: true };
     }
 
-    if (!target || target === "convo" || target === "conversation") {
+    if (target === "convo" || target === "conversation") {
       openOverlay(
         "pin-conversations",
         "/pin convo",
@@ -183,23 +183,17 @@ export async function handleProfileCommand(
       return { submitted: true };
     }
 
-    if (target === "agent" || target === "agents") {
+    if (target === "agents") {
       openOverlay(
         "pin-agents",
-        "/pin agent",
+        "/pin agents",
         "Opening agent pin manager...",
         "Agent pin manager dismissed",
       );
       return { submitted: true };
     }
 
-    if (target !== "current") {
-      const cmd = commandRunner.start(trimmed, "Showing pin help...");
-      cmd.finish('Unknown pin target. Use "/pin help".', false);
-      return { submitted: true };
-    }
-
-    const currentArgs = parts.slice(1).join(" ");
+    const currentArgs = target === "agent" ? parts.slice(1).join(" ") : argsStr;
     const currentParts = currentArgs.split(/\s+/).filter(Boolean);
     let hasNameArg = false;
     let isLocal = false;
@@ -216,7 +210,7 @@ export async function handleProfileCommand(
       setPinDialogLocal(isLocal);
       openOverlay(
         "pin",
-        "/pin current",
+        target === "agent" ? "/pin agent" : "/pin",
         "Opening pin dialog...",
         "Pin dialog dismissed",
       );

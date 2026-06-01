@@ -1107,7 +1107,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "pin-agents" && (
               <AgentSelector
                 currentAgentId={agentId}
-                command="/pin agent"
+                command="/pin agents"
                 title="Pin agents"
                 showNewTab={false}
                 allowDelete={false}
