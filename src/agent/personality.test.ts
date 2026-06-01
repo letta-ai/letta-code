@@ -102,26 +102,31 @@ describe("personality helpers", () => {
     }
   });
 
-  test("tutorial, linus, and kawaii include onboarding memory by default", async () => {
-    expect(ONBOARDING_PERSONALITIES).toEqual(["tutorial", "linus", "kawaii"]);
+  test("tutorial includes onboarding memory by default", async () => {
+    expect(ONBOARDING_PERSONALITIES).toEqual(["tutorial"]);
 
-    for (const personality of ["tutorial", "linus", "kawaii"] as const) {
-      const options = await buildCreateAgentOptionsForPersonality({
-        personalityId: personality,
-      });
-      const onboardingBlock = options.memoryBlocks?.find(
-        (block): block is { label: string; value: string } =>
-          "label" in block && block.label === "onboarding",
-      );
+    const options = await buildCreateAgentOptionsForPersonality({
+      personalityId: "tutorial",
+    });
+    const onboardingBlock = options.memoryBlocks?.find(
+      (block): block is { label: string; value: string } =>
+        "label" in block && block.label === "onboarding",
+    );
 
-      expect(onboardingBlock?.value).toContain(
-        "The person you are working with is new to Letta Code.",
-      );
-    }
+    expect(onboardingBlock?.value).toContain(
+      "The person you are working with is new to Letta Code.",
+    );
   });
 
-  test("standard Letta Code and vanilla source personalities do not include onboarding", async () => {
-    for (const personality of ["memo", "claude", "codex"] as const) {
+  test("non-tutorial personalities do not include onboarding", async () => {
+    for (const personality of [
+      "memo",
+      "blank",
+      "linus",
+      "kawaii",
+      "claude",
+      "codex",
+    ] as const) {
       const options = await buildCreateAgentOptionsForPersonality({
         personalityId: personality,
       });
