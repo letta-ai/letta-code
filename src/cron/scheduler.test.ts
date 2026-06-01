@@ -10,10 +10,7 @@ import {
 } from "@/cron/cron-file";
 import { cronMatchesTime } from "@/cron/parse-interval";
 import { getCronRunLogPath, readCronRunLogEntries } from "@/cron/run-log";
-import {
-  handleMissedOneShot,
-  recordMissedRecurringRuns,
-} from "@/cron/scheduler";
+import { handleMissedOneShot } from "@/cron/scheduler";
 
 // ── Test setup ──────────────────────────────────────────────────────
 
@@ -186,42 +183,6 @@ describe("task lifecycle", () => {
         summary: "missed",
         scheduledFor: scheduledFor.toISOString(),
         missedCount: 1,
-      }),
-    ]);
-  });
-
-  test("missed recurring run records outcome when scheduler was inactive", () => {
-    const { task } = addTask(
-      makeInput({
-        cron: "0 * * * *",
-      }),
-    );
-    updateTask(task.id, (t) => {
-      t.created_at = "2026-03-26T09:00:00.000Z";
-    });
-
-    recordMissedRecurringRuns(
-      "2026-03-26T09:30:00.000Z",
-      new Date("2026-03-26T11:30:00.000Z"),
-    );
-
-    const fresh = getTask(task.id);
-    expect(fresh?.status).toBe("active");
-    expect(fresh?.last_run_outcome).toBe("missed");
-    expect(fresh?.last_run_reason).toBe("scheduler_inactive");
-    expect(fresh?.missed_count).toBe(2);
-
-    const entries = readCronRunLogEntries(getCronRunLogPath(task.id), {
-      jobId: task.id,
-      limit: 10,
-    });
-    expect(entries).toEqual([
-      expect.objectContaining({
-        jobId: task.id,
-        status: "skipped",
-        outcome: "missed",
-        reason: "scheduler_inactive",
-        missedCount: 2,
       }),
     ]);
   });

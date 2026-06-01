@@ -32,9 +32,7 @@ import {
   garbageCollect,
   getActiveTasks,
   getCronFileMtime,
-  getSchedulerActivity,
   getTask,
-  recordSchedulerHeartbeat,
   releaseSchedulerLease,
   updateTask,
   verifySchedulerLease,
@@ -73,7 +71,6 @@ const TICK_INTERVAL_MS = 60_000;
 const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
 const LEASE_RETRY_MS = 30_000; // 30 seconds between lease claim retries
 const MAX_LEASE_RETRIES = 3;
-const MAX_MISSED_RECURRING_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -134,99 +131,6 @@ function setLastRunOutcome(
       t.failed_count = (t.failed_count ?? 0) + 1;
     }
   });
-}
-
-function latestTimestampMs(values: Array<string | null | undefined>): number {
-  let latest = 0;
-  for (const value of values) {
-    if (!value) continue;
-    const ms = new Date(value).getTime();
-    if (Number.isFinite(ms) && ms > latest) latest = ms;
-  }
-  return latest;
-}
-
-function floorToMinute(date: Date): Date {
-  const copy = new Date(date);
-  copy.setSeconds(0, 0);
-  return copy;
-}
-
-function countMissedRecurringFires(
-  task: CronTask,
-  windowStart: Date,
-  windowEnd: Date,
-): { count: number; lastScheduledAt: Date | null } {
-  const cappedStartMs = Math.max(
-    windowStart.getTime(),
-    windowEnd.getTime() - MAX_MISSED_RECURRING_LOOKBACK_MS,
-  );
-  let cursor = floorToMinute(new Date(cappedStartMs));
-  cursor = new Date(cursor.getTime() + TICK_INTERVAL_MS);
-  const end = floorToMinute(windowEnd);
-  let count = 0;
-  let lastScheduledAt: Date | null = null;
-
-  while (cursor.getTime() < end.getTime()) {
-    if (cronMatchesTime(task.cron, cursor, task.timezone)) {
-      count += 1;
-      lastScheduledAt = new Date(cursor);
-    }
-    cursor = new Date(cursor.getTime() + TICK_INTERVAL_MS);
-  }
-
-  return { count, lastScheduledAt };
-}
-
-export function recordMissedRecurringRuns(
-  previousSchedulerSeenAt: string | null,
-  now: Date,
-): void {
-  if (!previousSchedulerSeenAt) return;
-
-  const previousSeenMs = new Date(previousSchedulerSeenAt).getTime();
-  if (!Number.isFinite(previousSeenMs)) return;
-
-  const activeTasks = getActiveTasks();
-  for (const task of activeTasks) {
-    if (!task.recurring || task.status !== "active") continue;
-
-    const startMs = latestTimestampMs([
-      previousSchedulerSeenAt,
-      task.created_at,
-      task.last_fired_at,
-      task.last_missed_at,
-      task.last_run_at,
-    ]);
-    if (startMs <= 0 || startMs >= now.getTime()) continue;
-
-    const windowStart = new Date(startMs);
-    const { count, lastScheduledAt } = countMissedRecurringFires(
-      task,
-      windowStart,
-      now,
-    );
-    if (count === 0 || !lastScheduledAt) continue;
-
-    setLastRunOutcome(task.id, {
-      outcome: "missed",
-      reason: "scheduler_inactive",
-      runAt: now,
-      missedAt: lastScheduledAt,
-      missedCount: count,
-    });
-
-    safeAppendCronRunLogForTask(task, {
-      status: "skipped",
-      outcome: "missed",
-      reason: "scheduler_inactive",
-      summary: `missed ${count} scheduled run${count === 1 ? "" : "s"} while scheduler was inactive`,
-      runAtMs: now.getTime(),
-      missedCount: count,
-      windowStart: windowStart.toISOString(),
-      windowEnd: now.toISOString(),
-    });
-  }
 }
 
 export function shouldFireTask(task: CronTask, now: Date): boolean {
@@ -418,7 +322,6 @@ function tick(
   }
 
   const now = new Date();
-  recordSchedulerHeartbeat(state.token, now);
   const currentMinuteKey = minuteKey(now);
 
   // Reset per-minute dedup when minute changes
@@ -507,7 +410,6 @@ export function startScheduler(
   if (schedulerState) return;
 
   let token: string;
-  const previousActivity = getSchedulerActivity();
   try {
     token = claimSchedulerLease();
   } catch (err) {
@@ -534,7 +436,6 @@ export function startScheduler(
   }
 
   const now = new Date();
-  recordMissedRecurringRuns(previousActivity.scheduler_last_seen_at, now);
   const state: SchedulerState = {
     token,
     tickInterval: null as unknown as NodeJS.Timeout,

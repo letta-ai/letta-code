@@ -89,8 +89,6 @@ export interface CronTask {
 interface CronFileData {
   version: 1;
   scheduler_owner: SchedulerOwner | null;
-  scheduler_last_seen_at: string | null;
-  scheduler_stopped_at: string | null;
   tasks: CronTask[];
 }
 
@@ -130,8 +128,6 @@ function emptyFile(): CronFileData {
   return {
     version: 1,
     scheduler_owner: null,
-    scheduler_last_seen_at: null,
-    scheduler_stopped_at: null,
     tasks: [],
   };
 }
@@ -153,8 +149,6 @@ function normalizeCronFileData(data: CronFileData): CronFileData {
   return {
     version: 1,
     scheduler_owner: data.scheduler_owner ?? null,
-    scheduler_last_seen_at: data.scheduler_last_seen_at ?? null,
-    scheduler_stopped_at: data.scheduler_stopped_at ?? null,
     tasks: Array.isArray(data.tasks) ? data.tasks.map(normalizeTask) : [],
   };
 }
@@ -642,39 +636,8 @@ export function claimSchedulerLease(): string {
       started_at: new Date().toISOString(),
       ...captureProcessIdentity(process.pid),
     };
-    data.scheduler_stopped_at = null;
     writeCronFile(data);
     return token;
-  });
-}
-
-export interface SchedulerActivity {
-  scheduler_last_seen_at: string | null;
-  scheduler_stopped_at: string | null;
-}
-
-export function getSchedulerActivity(): SchedulerActivity {
-  const data = readCronFile();
-  return {
-    scheduler_last_seen_at: data.scheduler_last_seen_at,
-    scheduler_stopped_at: data.scheduler_stopped_at,
-  };
-}
-
-export function recordSchedulerHeartbeat(
-  token: string,
-  now = new Date(),
-): void {
-  withLock(() => {
-    const data = readCronFile();
-    if (
-      data.scheduler_owner &&
-      data.scheduler_owner.pid === process.pid &&
-      data.scheduler_owner.token === token
-    ) {
-      data.scheduler_last_seen_at = now.toISOString();
-      writeCronFile(data);
-    }
   });
 }
 
@@ -702,7 +665,6 @@ export function releaseSchedulerLease(token: string): void {
       data.scheduler_owner.token === token
     ) {
       data.scheduler_owner = null;
-      data.scheduler_stopped_at = new Date().toISOString();
       writeCronFile(data);
     }
   });

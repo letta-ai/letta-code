@@ -14,14 +14,11 @@ export {
   garbageCollect,
   getActiveTasks,
   getCronFileMtime,
-  getSchedulerActivity,
   getTask,
   isProcessAlive,
   listTasks,
   readCronFile,
-  recordSchedulerHeartbeat,
   releaseSchedulerLease,
-  type SchedulerActivity,
   type SchedulerOwner,
   updateTask,
   verifySchedulerLease,
@@ -53,7 +50,6 @@ export {
 } from "./run-log";
 export {
   handleMissedOneShot,
-  recordMissedRecurringRuns,
   shouldFireTask,
   wrapCronPrompt,
 } from "./scheduler";
