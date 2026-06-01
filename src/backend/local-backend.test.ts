@@ -435,7 +435,7 @@ describe("local backend pi transcript", () => {
     expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
   });
 
-  test("reuses cached compiled system prompt across turns until explicit recompile", async () => {
+  test("recompiles cached system prompt when committed memory changes", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-cache-"));
     const systemPrompts: string[] = [];
     const executor: HeadlessTurnExecutor = {
@@ -481,6 +481,64 @@ describe("local backend pi transcript", () => {
         messages: [{ role: "user", content: "first" }],
       } as ConversationMessageCreateBody),
     );
+
+    expect(systemPrompts).toHaveLength(1);
+    expect(systemPrompts[0]).toContain(
+      "Changed but not explicitly recompiled.",
+    );
+  });
+
+  test("uses mid-conversation system prompt for Opus 4.8 memory changes", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-opus-"));
+    const systemPrompts: string[] = [];
+    const midConversationPrompts: Array<string | undefined> = [];
+    const executor: HeadlessTurnExecutor = {
+      async execute(input) {
+        systemPrompts.push(input.systemPrompt ?? "");
+        midConversationPrompts.push(input.midConversationSystemPrompt);
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const backend = new LocalBackend({ storageDir, executor });
+    const agent = await backend.createAgent({
+      name: "Local",
+      model: "anthropic/claude-opus-4-8",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    const initialSystemPrompt = await backend.recompileConversation(
+      conversation.id,
+      { agent_id: agent.id } as never,
+    );
+    const memoryDir = join(storageDir, "memfs", agent.id, "memory");
+    await mkdir(join(memoryDir, "system"), { recursive: true });
+    await writeFile(
+      join(memoryDir, "system", "persona.md"),
+      "---\ndescription: Persona\n---\nEdited Opus persona.\n",
+      "utf8",
+    );
+    execFileSync("git", ["add", "system/persona.md"], { cwd: memoryDir });
+    execFileSync("git", ["commit", "-m", "test opus memory change"], {
+      cwd: memoryDir,
+    });
+
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
     await drain(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: agent.id,
@@ -488,26 +546,10 @@ describe("local backend pi transcript", () => {
       } as ConversationMessageCreateBody),
     );
 
-    expect(systemPrompts).toHaveLength(2);
-    expect(systemPrompts[1]).toBe(systemPrompts[0]);
-    expect(systemPrompts[1]).not.toContain(
-      "Changed but not explicitly recompiled.",
-    );
-
-    await backend.recompileConversation(conversation.id, {
-      agent_id: agent.id,
-    } as never);
-    await drain(
-      await backend.createConversationMessageStream(conversation.id, {
-        agent_id: agent.id,
-        messages: [{ role: "user", content: "third" }],
-      } as ConversationMessageCreateBody),
-    );
-
-    expect(systemPrompts[2]).toContain(
-      "Changed but not explicitly recompiled.",
-    );
-    expect(systemPrompts[2]).not.toBe(systemPrompts[1]);
+    expect(systemPrompts).toEqual([initialSystemPrompt, initialSystemPrompt]);
+    expect(midConversationPrompts[0]).toContain("<memory_update>");
+    expect(midConversationPrompts[0]).toContain("Edited Opus persona.");
+    expect(midConversationPrompts[1]).toBeUndefined();
   });
 
   test("recompiles cached system prompt after local compaction", async () => {
