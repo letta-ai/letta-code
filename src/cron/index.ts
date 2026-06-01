@@ -3,6 +3,8 @@ export {
   type AddTaskResult,
   addTask,
   type CancelReason,
+  type CronRunOutcome,
+  type CronRunReason,
   type CronTask,
   type CronTaskStatus,
   claimSchedulerLease,

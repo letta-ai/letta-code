@@ -71,6 +71,7 @@ export interface ExtensionUiCapabilities {
 
 export interface ExtensionEventCapabilities {
   lifecycle: boolean;
+  tools: boolean;
   turns: boolean;
 }
 
@@ -126,34 +127,34 @@ export interface ExtensionConversationHandle {
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
-export interface ExtensionRuntimeBackendForkConversationOptions
+export interface ExtensionAdapterBackendForkConversationOptions
   extends ExtensionConversationForkOptions {
   agentId?: string;
 }
 
-export interface ExtensionRuntimeBackendSendMessageOptions
+export interface ExtensionAdapterBackendSendMessageOptions
   extends ExtensionConversationSendMessageOptions {
   agentId?: string;
 }
 
-export interface ExtensionRuntimeBackendHistoryOptions
+export interface ExtensionAdapterBackendHistoryOptions
   extends ExtensionConversationHistoryOptions {
   agentId?: string | null;
 }
 
-export interface ExtensionRuntimeBackendApi {
+export interface ExtensionAdapterBackendApi {
   forkConversation: (
     conversationId: string,
-    options?: ExtensionRuntimeBackendForkConversationOptions,
+    options?: ExtensionAdapterBackendForkConversationOptions,
   ) => Promise<{ id: string }>;
   getConversationHistory: (
     conversationId: string,
-    options?: ExtensionRuntimeBackendHistoryOptions,
+    options?: ExtensionAdapterBackendHistoryOptions,
   ) => Promise<Message[]>;
   sendMessageStream: (
     conversationId: string,
     messages: ExtensionConversationMessage[],
-    options?: ExtensionRuntimeBackendSendMessageOptions,
+    options?: ExtensionAdapterBackendSendMessageOptions,
     requestOptions?: ExtensionConversationSendMessageRequestOptions,
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
@@ -170,6 +171,7 @@ export interface ExtensionOwner {
 export type ExtensionEventName =
   | "conversation_open"
   | "conversation_close"
+  | "tool_start"
   | "turn_start";
 
 export type ExtensionConversationOpenReason =
@@ -211,15 +213,29 @@ export interface ExtensionTurnStartResult {
   input?: Array<MessageCreate | ApprovalCreate>;
 }
 
+export interface ExtensionToolStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  toolCallId: string | null;
+  toolName: string;
+  args: Record<string, unknown>;
+}
+
+export interface ExtensionToolStartResult {
+  args?: Record<string, unknown>;
+}
+
 export interface ExtensionEventMap {
   conversation_open: ExtensionConversationOpenEvent;
   conversation_close: ExtensionConversationCloseEvent;
+  tool_start: ExtensionToolStartEvent;
   turn_start: ExtensionTurnStartEvent;
 }
 
 export interface ExtensionEventResultMap {
   conversation_open: undefined;
   conversation_close: undefined;
+  tool_start: ExtensionToolStartResult | undefined;
   turn_start: ExtensionTurnStartResult | undefined;
 }
 

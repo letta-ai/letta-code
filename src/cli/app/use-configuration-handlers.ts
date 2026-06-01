@@ -20,6 +20,7 @@ import {
 } from "@/agent/personality";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
+import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import {
   type ContextTracker,
   resetContextHistory,
@@ -53,7 +54,11 @@ type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
   initialEffort?: ModelReasoningEffort;
-  options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+  options: Array<{
+    effort: ModelReasoningEffort;
+    modelId: string;
+    selection?: ModelSelectorSelection;
+  }>;
 };
 
 type ToolsetChangeReminderParams = {
@@ -148,7 +153,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: model switch refs are stable objects; .current is read dynamically during selection.
   const handleModelSelect = useCallback(
     async (
-      modelId: string,
+      model: string | ModelSelectorSelection,
       commandId?: string | null,
       opts?: {
         promptReasoning?: boolean;
@@ -156,6 +161,8 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         reasoningEffort?: ModelReasoningEffort;
       },
     ) => {
+      const inputSelection = typeof model === "string" ? null : model;
+      const modelId = typeof model === "string" ? model : model.id;
       let overlayCommand = commandId
         ? commandRunner.getHandle(commandId, "/model")
         : null;
@@ -172,14 +179,21 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         handle?: string;
         label: string;
         updateArgs?: Record<string, unknown>;
+        description?: string;
+        registryHandle?: string;
       } | null = null;
 
       try {
-        const { getReasoningTierOptionsForHandle, models } = await import(
-          "@/agent/model"
-        );
+        const {
+          getChatGptFastRegistryHandleForModelHandle,
+          getReasoningTierOptionsForHandle,
+          normalizeModelHandleForRegistry,
+          models,
+        } = await import("@/agent/model");
         const pickPreferredModelForHandle = (handle: string) => {
-          const candidates = models.filter((m) => m.handle === handle);
+          const registryHandle =
+            normalizeModelHandleForRegistry(handle) ?? handle;
+          const candidates = models.filter((m) => m.handle === registryHandle);
           return (
             candidates.find((m) => m.isDefault) ??
             candidates.find((m) => m.isFeatured) ??
@@ -197,15 +211,36 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             null
           );
         };
-        selectedModel = models.find((m) => m.id === modelId) ?? null;
+        selectedModel = inputSelection
+          ? {
+              id: inputSelection.id,
+              handle: inputSelection.handle,
+              label: inputSelection.label,
+              description: inputSelection.description,
+              updateArgs: inputSelection.updateArgs,
+              registryHandle: inputSelection.registryHandle,
+            }
+          : (models.find((m) => m.id === modelId) ?? null);
 
         if (!selectedModel && modelId.includes("/")) {
           const handleMatch = pickPreferredModelForHandle(modelId);
           if (handleMatch) {
+            const fastRegistryHandle =
+              getChatGptFastRegistryHandleForModelHandle(modelId);
+            const updateArgs = {
+              ...((handleMatch.updateArgs as
+                | Record<string, unknown>
+                | undefined) ?? {}),
+              ...(fastRegistryHandle ? { service_tier: null } : {}),
+            };
             selectedModel = {
               ...handleMatch,
               id: modelId,
               handle: modelId,
+              registryHandle:
+                normalizeModelHandleForRegistry(modelId) ?? modelId,
+              updateArgs:
+                Object.keys(updateArgs).length > 0 ? updateArgs : undefined,
             } as unknown as (typeof models)[number];
           }
         }
@@ -251,8 +286,16 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         }
         const model = selectedModel;
         const modelHandle = model.handle ?? model.id;
+        const registryHandle =
+          model.registryHandle ??
+          normalizeModelHandleForRegistry(modelHandle) ??
+          modelHandle;
         const modelUpdateArgs = model.updateArgs as
-          | { reasoning_effort?: unknown; enable_reasoner?: unknown }
+          | {
+              reasoning_effort?: unknown;
+              enable_reasoner?: unknown;
+              service_tier?: unknown;
+            }
           | undefined;
         const rawReasoningEffort = modelUpdateArgs?.reasoning_effort;
         const usesDistinctXHighLabel =
@@ -273,9 +316,31 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           model.updateArgs as { context_window?: number } | undefined
         )?.context_window;
         const reasoningTierOptions = getReasoningTierOptionsForHandle(
-          modelHandle,
+          registryHandle,
           selectedContextWindow,
-        );
+        ).map((option) => {
+          const optionModel = models.find(
+            (entry) => entry.id === option.modelId,
+          );
+          const serviceTier = modelUpdateArgs?.service_tier;
+          const optionUpdateArgs = {
+            ...((optionModel?.updateArgs as
+              | Record<string, unknown>
+              | undefined) ?? {}),
+            ...(serviceTier !== undefined ? { service_tier: serviceTier } : {}),
+          };
+          return {
+            ...option,
+            selection: {
+              id: option.modelId,
+              handle: modelHandle,
+              label: model.label,
+              description: model.description ?? "",
+              registryHandle,
+              updateArgs: optionUpdateArgs,
+            },
+          };
+        });
 
         if (
           !opts?.skipReasoningPrompt &&
@@ -322,6 +387,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           setQueuedOverlayAction({
             type: "switch_model",
             modelId,
+            modelSelection: inputSelection ?? undefined,
             commandId: cmd.id,
           });
           return;

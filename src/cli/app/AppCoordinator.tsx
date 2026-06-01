@@ -9,6 +9,7 @@ import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -21,6 +22,8 @@ import { setCurrentAgentId } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
+  CHATGPT_FAST_SERVICE_TIER,
+  getChatGptFastRegistryHandleForModelHandle,
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
@@ -51,12 +54,13 @@ import {
   createCommandRunner,
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
+import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
 import {
-  type LocalExtensionRuntime,
-  useLocalExtensionRuntime,
-} from "@/cli/extensions/use-local-extension-runtime";
+  type LocalExtensionAdapter,
+  useLocalExtensionAdapter,
+} from "@/cli/extensions/use-local-extension-adapter";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -327,9 +331,11 @@ export function App({
   agentProvenance = null,
   startupHasCloudCredentials = false,
   startupHasAvailableLocalModels = true,
+  fileAutocompleteFdPath = null,
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
+  extensionsDisabled = false,
   onReload,
 }: AppProps) {
   // Warm the model-access cache in the background so /model is fast on first open.
@@ -738,7 +744,11 @@ export function App({
     modelLabel: string;
     initialModelId: string;
     initialEffort?: ModelReasoningEffort;
-    options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+    options: Array<{
+      effort: ModelReasoningEffort;
+      modelId: string;
+      selection?: ModelSelectorSelection;
+    }>;
   } | null>(null);
   const closeOverlay = useCallback(() => {
     const pending = pendingOverlayCommandRef.current;
@@ -795,6 +805,13 @@ export function App({
     conversationOverrideModelSettings,
     setConversationOverrideModelSettings,
   ] = useState<AgentState["model_settings"] | null>(null);
+  const conversationOverrideModelSettingsRef = useRef(
+    conversationOverrideModelSettings,
+  );
+  useEffect(() => {
+    conversationOverrideModelSettingsRef.current =
+      conversationOverrideModelSettings;
+  }, [conversationOverrideModelSettings]);
   const [
     conversationOverrideContextWindowLimit,
     setConversationOverrideContextWindowLimit,
@@ -857,6 +874,13 @@ export function App({
     : agentState?.model_settings;
   const derivedReasoningEffort: ModelReasoningEffort | null =
     deriveReasoningEffort(effectiveModelSettings, llmConfig);
+  const currentModelServiceTier =
+    (effectiveModelSettings as { service_tier?: unknown } | null | undefined)
+      ?.service_tier === CHATGPT_FAST_SERVICE_TIER &&
+    currentModelLabel &&
+    getChatGptFastRegistryHandleForModelHandle(currentModelLabel)
+      ? CHATGPT_FAST_SERVICE_TIER
+      : null;
   const startupModelDisplayOverride = getStartupModelDisplayOverride({
     isLocalBackend: isLocalBackendEnabled(),
     startupHasAvailableLocalModels: hasAvailableLocalModels,
@@ -873,6 +897,7 @@ export function App({
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
       context_window: llmConfig?.context_window ?? null,
+      service_tier: currentModelServiceTier,
     });
     if (info) {
       return (info as { shortLabel?: string }).shortLabel ?? info.label;
@@ -885,6 +910,7 @@ export function App({
   }, [
     currentModelLabel,
     derivedReasoningEffort,
+    currentModelServiceTier,
     llmConfig,
     startupModelDisplayOverride,
   ]);
@@ -1001,7 +1027,7 @@ export function App({
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
   const sessionExtensionStartAttemptedRef = useRef(false);
-  const extensionRuntimeRef = useRef<LocalExtensionRuntime | null>(null);
+  const extensionAdapterRef = useRef<LocalExtensionAdapter | null>(null);
 
   // Initialize chunk log for this agent + session (clears buffer, GCs old files).
   // Re-runs when agentId changes (e.g. agent switch via /agents).
@@ -1117,14 +1143,14 @@ export function App({
         // Silently ignore hook errors
       }
 
-      const extensionRuntime = extensionRuntimeRef.current;
+      const extensionAdapter = extensionAdapterRef.current;
       if (
-        extensionRuntime &&
-        !extensionRuntime.isLoading &&
-        extensionRuntime.hasExtensionSources
+        extensionAdapter &&
+        !extensionAdapter.isLoading &&
+        extensionAdapter.hasExtensionSources
       ) {
         try {
-          await extensionRuntime.emitEvent("conversation_close", {
+          await extensionAdapter.emitEvent("conversation_close", {
             agentId: agentIdRef.current ?? null,
             conversationId: conversationIdRef.current ?? null,
             durationMs,
@@ -1565,6 +1591,7 @@ export function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
+          extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
         });
       }
 
@@ -1572,6 +1599,7 @@ export function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
+          extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -1580,6 +1608,7 @@ export function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
+        extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });
@@ -2284,26 +2313,28 @@ export function App({
       statusLinePayload,
     ],
   );
-  const extensionRuntime = useLocalExtensionRuntime(extensionContext);
+  const extensionAdapter = useLocalExtensionAdapter(extensionContext, {
+    disabled: extensionsDisabled,
+  });
 
   useEffect(() => {
-    extensionRuntimeRef.current = extensionRuntime;
-  }, [extensionRuntime]);
+    extensionAdapterRef.current = extensionAdapter;
+  }, [extensionAdapter]);
 
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
     if (sessionExtensionStartAttemptedRef.current) return;
-    if (extensionRuntime.isLoading) return;
-    if (!extensionRuntime.hasExtensionSources) return;
+    if (extensionAdapter.isLoading) return;
+    if (!extensionAdapter.hasExtensionSources) return;
 
     sessionExtensionStartAttemptedRef.current = true;
-    void extensionRuntime.emitEvent("conversation_open", {
+    void extensionAdapter.emitEvent("conversation_open", {
       agentId,
       agentName: agentName ?? null,
       conversationId: conversationIdRef.current ?? null,
       reason: "startup",
     });
-  }, [agentId, agentName, extensionRuntime]);
+  }, [agentId, agentName, extensionAdapter]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
@@ -2759,8 +2790,9 @@ export function App({
     eagerCommittedPreviewsRef.current.add(toolCallId);
   }, [currentApproval, currentApprovalShouldCommitPreview]);
 
-  // Backfill message history when resuming (only once)
-  useEffect(() => {
+  // Backfill message history when resuming (only once). Use layout timing so
+  // the ready input is not painted before the resumed transcript.
+  useLayoutEffect(() => {
     if (
       loadingState === "ready" &&
       messageHistory.length > 0 &&
@@ -3104,7 +3136,7 @@ export function App({
       });
     };
 
-    if (!extensionRuntime.isLoading) {
+    if (!extensionAdapter.isLoading) {
       refreshAgentFromRegisteredProviderMetadata();
     }
 
@@ -3117,7 +3149,7 @@ export function App({
     };
   }, [
     agentId,
-    extensionRuntime.isLoading,
+    extensionAdapter.isLoading,
     hasConversationModelOverrideRef,
     isLocalBackend,
     loadingState,
@@ -3235,6 +3267,16 @@ export function App({
           resolvedConversationModelSettings,
           agentState.llm_config,
         );
+        const conversationServiceTier =
+          (
+            resolvedConversationModelSettings as
+              | { service_tier?: unknown }
+              | null
+              | undefined
+          )?.service_tier === CHATGPT_FAST_SERVICE_TIER &&
+          getChatGptFastRegistryHandleForModelHandle(effectiveModelHandle)
+            ? CHATGPT_FAST_SERVICE_TIER
+            : null;
 
         const modelInfo = getModelInfoForLlmConfig(effectiveModelHandle, {
           reasoning_effort: reasoningEffort,
@@ -3245,6 +3287,7 @@ export function App({
               }
             ).enable_reasoner ?? null,
           context_window: conversationContextWindowLimit ?? null,
+          service_tier: conversationServiceTier,
         });
         const modelPresetContextWindow = (
           modelInfo?.updateArgs as { context_window?: unknown } | undefined
@@ -3583,7 +3626,7 @@ export function App({
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
     generateConversationDescription,
-    extensionRuntime,
+    extensionAdapter,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -3902,7 +3945,7 @@ export function App({
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
-    extensionRuntime,
+    extensionAdapter,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
@@ -3991,7 +4034,7 @@ export function App({
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
-    extensionRuntime,
+    extensionAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
     generateConversationDescription,
@@ -4251,7 +4294,10 @@ export function App({
         });
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
-        handleModelSelect(action.modelId, action.commandId);
+        handleModelSelect(
+          action.modelSelection ?? action.modelId,
+          action.commandId,
+        );
       } else if (action.type === "set_sleeptime") {
         handleSleeptimeModeSelect(action.settings, action.commandId);
       } else if (action.type === "set_compaction") {
@@ -4449,6 +4495,7 @@ export function App({
       agentIdRef,
       agentStateRef,
       commandRunner,
+      conversationOverrideModelSettingsRef,
       conversationIdRef,
       hasConversationModelOverrideRef,
       isAgentBusy,
@@ -4751,6 +4798,7 @@ export function App({
       currentModelDisplay={currentModelDisplay}
       currentModelHandle={currentModelHandle}
       currentModelId={currentModelId}
+      currentModelServiceTier={currentModelServiceTier}
       currentModelProvider={currentModelProvider}
       isLocalBackend={isLocalBackend}
       currentPersonalityId={currentPersonalityId}
@@ -4813,6 +4861,7 @@ export function App({
       modelSelectorOptions={modelSelectorOptions}
       networkPhase={networkPhase}
       executionPhase={executionPhase}
+      fileAutocompleteFdPath={fileAutocompleteFdPath}
       onSubmit={onSubmit}
       pendingApprovals={pendingApprovals}
       pendingConversationSwitchRef={pendingConversationSwitchRef}
@@ -4857,7 +4906,7 @@ export function App({
       staticRenderEpoch={staticRenderEpoch}
       statusLinePayload={statusLinePayload}
       statusLinePrompt={CLI_GLYPHS.prompt}
-      extensionRuntime={extensionRuntime}
+      extensionAdapter={extensionAdapter}
       streaming={streaming}
       stubDescriptions={stubDescriptions}
       thinkingMessage={thinkingMessage}

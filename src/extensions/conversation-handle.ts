@@ -1,11 +1,11 @@
 import type {
+  ExtensionAdapterBackendApi,
   ExtensionConversationHandle,
-  ExtensionRuntimeBackendApi,
 } from "@/extensions/types";
 
 export function createExtensionConversationHandle(options: {
   agentId?: string | null;
-  backend?: ExtensionRuntimeBackendApi;
+  backend?: ExtensionAdapterBackendApi;
   conversationId?: string | null;
   workingDirectory?: string | null;
 }): ExtensionConversationHandle {

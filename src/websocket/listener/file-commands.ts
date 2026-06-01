@@ -1,14 +1,9 @@
-import { lstat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
+import picomatch from "picomatch";
 import type WebSocket from "ws";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import {
-  ensureFileIndex,
-  getIndexRoot,
-  refreshFileIndex,
-  searchFileIndex,
-  setIndexRoot,
-} from "@/utils/file-index";
 import { runGrepInFiles } from "./grep-in-files";
 import {
   isEditFileCommand,
@@ -47,95 +42,369 @@ function trackListenerError(
   });
 }
 
-/**
- * Detect whether a directory is a git worktree root.
- * Worktrees have a `.git` **file** (not directory) that points to the main
- * repo's `.git/worktrees/<name>`. This distinguishes them from normal repos
- * where `.git` is a directory.
- */
-export async function isGitWorktreeRoot(dir: string): Promise<boolean> {
-  try {
-    const stats = await lstat(path.join(dir, ".git"));
-    return stats.isFile();
-  } catch {
-    return false;
-  }
-}
-
 /** File/directory names filtered from directory listings (OS/VCS noise). */
 const DIR_LISTING_IGNORED_NAMES = new Set([".DS_Store", ".git", "Thumbs.db"]);
+
+/** Directories skipped by recursive listener filesystem operations. */
+const RECURSIVE_IGNORED_NAMES = new Set([
+  ...DIR_LISTING_IGNORED_NAMES,
+  ".cache",
+  ".letta",
+  ".next",
+  ".nuxt",
+  ".tox",
+  ".venv",
+  "bower_components",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "out",
+  "target",
+  "vendor",
+  "venv",
+  "__pycache__",
+]);
+
+/**
+ * Home-directory children that commonly trigger macOS TCC prompts. When the
+ * listener is scoped to the user's home directory, recursive operations skip
+ * these before stat/readdir. This mirrors OpenCode's global-home guardrail.
+ */
+const PROTECTED_HOME_NAMES = new Set([
+  "applications",
+  "desktop",
+  "documents",
+  "downloads",
+  "library",
+  "movies",
+  "music",
+  "pictures",
+  "public",
+]);
+
+const MAX_SEARCH_VISITED_ENTRIES = 50_000;
+const MAX_TREE_ENTRIES = 5_000;
+const MAX_SEARCH_RESULTS = 200;
+
+interface IgnoreConfig {
+  nameMatchers: picomatch.Matcher[];
+  pathMatchers: picomatch.Matcher[];
+}
+
+const ignoreConfigCache = new Map<string, IgnoreConfig>();
 
 interface DirListing {
   folders: string[];
   files: string[];
 }
 
-/**
- * List a single directory by merging the file index (instant) with readdir
- * (to pick up `.lettaignore`'d entries). Shared by `list_in_directory` and
- * `get_tree` handlers.
- *
- * @param absDir Absolute path to the directory.
- * @param indexRoot Root of the file index (undefined if unavailable).
- * @param includeFiles Whether to include files (not just folders).
- */
-async function listDirectoryHybrid(
-  absDir: string,
-  indexRoot: string | undefined,
-  includeFiles: boolean,
-): Promise<DirListing> {
-  // 1. Query file index (instant, from memory)
-  let indexedNames: Set<string> | undefined;
-  const indexedFolders: string[] = [];
-  const indexedFiles: string[] = [];
+interface TreeEntry {
+  path: string;
+  type: "file" | "dir";
+}
 
-  if (indexRoot !== undefined) {
-    const relPath = path.relative(indexRoot, absDir);
-    if (!relPath.startsWith("..")) {
-      const indexed = searchFileIndex({
-        searchDir: relPath || ".",
-        pattern: "",
-        deep: false,
-        maxResults: 10000,
+function toPosixPath(value: string): string {
+  return value.split(path.sep).join("/");
+}
+
+function normalizeAbsPath(value: string): string {
+  return path.resolve(value);
+}
+
+function isWithinOrEqual(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return (
+    relative === "" ||
+    (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
+}
+
+function getHomeDirectory(): string {
+  return normalizeAbsPath(process.env.HOME || homedir());
+}
+
+function isHomeDirectory(absPath: string): boolean {
+  return normalizeAbsPath(absPath) === getHomeDirectory();
+}
+
+function getProtectedHomeSegment(absPath: string): string | null {
+  const home = getHomeDirectory();
+  const target = normalizeAbsPath(absPath);
+  if (!isWithinOrEqual(home, target)) return null;
+  const relative = path.relative(home, target);
+  if (!relative) return null;
+  const [firstSegment] = relative.split(path.sep);
+  const normalized = firstSegment?.toLowerCase();
+  return normalized && PROTECTED_HOME_NAMES.has(normalized) ? normalized : null;
+}
+
+function shouldSkipProtectedHomePath(root: string, absPath: string): boolean {
+  const protectedSegment = getProtectedHomeSegment(absPath);
+  if (!protectedSegment) return false;
+
+  // If the user explicitly scoped the operation inside a protected home
+  // directory (for example ~/Documents/my-project), allow that workspace.
+  // The guard is intended to stop broad traversal from $HOME into protected
+  // directories, not to make explicitly selected projects disappear.
+  return getProtectedHomeSegment(root) !== protectedSegment;
+}
+
+function parseLettaIgnore(content: string): string[] {
+  return content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line.length > 0 && !line.startsWith("#") && !line.startsWith("!"),
+    );
+}
+
+async function getIgnoreConfig(root: string): Promise<IgnoreConfig> {
+  const absRoot = normalizeAbsPath(root);
+  const cached = ignoreConfigCache.get(absRoot);
+  if (cached) return cached;
+
+  let patterns: string[] = [];
+  try {
+    const content = await readFile(
+      path.join(absRoot, ".letta", ".lettaignore"),
+      "utf-8",
+    );
+    patterns = parseLettaIgnore(content);
+  } catch {
+    patterns = [];
+  }
+
+  const config: IgnoreConfig = { nameMatchers: [], pathMatchers: [] };
+  for (const raw of patterns) {
+    const normalized = raw.replace(/\/$/, "");
+    if (!normalized) continue;
+    if (normalized.includes("/")) {
+      config.pathMatchers.push(picomatch(normalized, { dot: true }));
+    } else {
+      config.nameMatchers.push(
+        picomatch(normalized, { dot: true, nocase: true }),
+      );
+    }
+  }
+
+  ignoreConfigCache.set(absRoot, config);
+  return config;
+}
+
+function isAlwaysExcludedRelativePath(relativePath: string): boolean {
+  return (
+    relativePath === ".letta/worktrees" ||
+    relativePath.startsWith(".letta/worktrees/")
+  );
+}
+
+async function shouldSkipEntry(options: {
+  root: string;
+  absPath: string;
+  name: string;
+  isDirectory: boolean;
+  recursive: boolean;
+}): Promise<boolean> {
+  const { root, absPath, name, isDirectory, recursive } = options;
+  const relativePath = toPosixPath(
+    path.relative(normalizeAbsPath(root), absPath),
+  );
+
+  if (DIR_LISTING_IGNORED_NAMES.has(name)) return true;
+  if (isAlwaysExcludedRelativePath(relativePath)) return true;
+  if (recursive && isDirectory && RECURSIVE_IGNORED_NAMES.has(name))
+    return true;
+  if (shouldSkipProtectedHomePath(root, absPath)) return true;
+
+  const { nameMatchers, pathMatchers } = await getIgnoreConfig(root);
+  if (nameMatchers.some((matcher) => matcher(name))) return true;
+  if (relativePath && pathMatchers.some((matcher) => matcher(relativePath))) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * List a single directory directly via readdir. This intentionally does not
+ * warm or consult the old recursive file index; desktop file tree requests are
+ * already bounded/paginated by the caller and should stay path-only.
+ */
+async function listDirectoryDirect(
+  absDir: string,
+  root: string,
+  includeFiles: boolean,
+  options: { recursive?: boolean } = {},
+): Promise<DirListing> {
+  if (shouldSkipProtectedHomePath(root, absDir)) {
+    return { folders: [], files: [] };
+  }
+
+  const entries = await readdir(absDir, { withFileTypes: true });
+  const folders: string[] = [];
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() && !entry.isFile()) continue;
+    const absPath = path.join(absDir, entry.name);
+    if (
+      await shouldSkipEntry({
+        root,
+        absPath,
+        name: entry.name,
+        isDirectory: entry.isDirectory(),
+        recursive: options.recursive ?? false,
+      })
+    ) {
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      folders.push(entry.name);
+    } else if (includeFiles) {
+      files.push(entry.name);
+    }
+  }
+
+  return {
+    folders: folders.sort((a, b) => a.localeCompare(b)),
+    files: includeFiles ? files.sort((a, b) => a.localeCompare(b)) : [],
+  };
+}
+
+async function searchFilesDirect(options: {
+  root: string;
+  query: string;
+  maxResults: number;
+}): Promise<TreeEntry[]> {
+  const root = normalizeAbsPath(options.root);
+  const query = options.query.trim().toLowerCase();
+  const maxResults = Math.max(
+    1,
+    Math.min(options.maxResults, MAX_SEARCH_RESULTS),
+  );
+
+  const addIfMatch = (results: TreeEntry[], entry: TreeEntry): boolean => {
+    if (!query || entry.path.toLowerCase().includes(query)) {
+      results.push(entry);
+      return results.length >= maxResults;
+    }
+    return false;
+  };
+
+  const results: TreeEntry[] = [];
+
+  // Home/global mode is intentionally shallow to avoid recursively touching
+  // protected user directories. Users can scope cwd to a safe subdirectory
+  // (for example ~/dev/project) for deep quick-open/search.
+  if (isHomeDirectory(root)) {
+    const listing = await listDirectoryDirect(root, root, true, {
+      recursive: false,
+    });
+    for (const folder of listing.folders) {
+      if (addIfMatch(results, { path: folder, type: "dir" })) return results;
+    }
+    for (const file of listing.files) {
+      if (addIfMatch(results, { path: file, type: "file" })) return results;
+    }
+    return results;
+  }
+
+  const queue: string[] = [root];
+  let qi = 0;
+  let visited = 0;
+
+  while (qi < queue.length && visited < MAX_SEARCH_VISITED_ENTRIES) {
+    const dir = queue[qi++];
+    if (!dir) break;
+
+    let listing: DirListing;
+    try {
+      listing = await listDirectoryDirect(dir, root, true, { recursive: true });
+    } catch {
+      continue;
+    }
+
+    for (const folder of listing.folders) {
+      visited += 1;
+      const absPath = path.join(dir, folder);
+      const relPath = toPosixPath(path.relative(root, absPath));
+      if (addIfMatch(results, { path: relPath, type: "dir" })) return results;
+      queue.push(absPath);
+    }
+
+    for (const file of listing.files) {
+      visited += 1;
+      const relPath = toPosixPath(path.relative(root, path.join(dir, file)));
+      if (addIfMatch(results, { path: relPath, type: "file" })) return results;
+    }
+  }
+
+  return results;
+}
+
+async function getTreeDirect(options: {
+  root: string;
+  depth: number;
+}): Promise<{ entries: TreeEntry[]; hasMoreDepth: boolean }> {
+  const root = normalizeAbsPath(options.root);
+  const maxDepth = Math.max(0, options.depth);
+  const entries: TreeEntry[] = [];
+  let hasMoreDepth = false;
+
+  if (maxDepth === 0 || shouldSkipProtectedHomePath(root, root)) {
+    return { entries, hasMoreDepth };
+  }
+
+  const queue: Array<{ absDir: string; relDir: string; depth: number }> = [
+    { absDir: root, relDir: "", depth: 0 },
+  ];
+  let qi = 0;
+
+  while (qi < queue.length) {
+    const item = queue[qi++];
+    if (!item) break;
+    if (item.depth >= maxDepth) {
+      if (item.relDir !== "") hasMoreDepth = true;
+      continue;
+    }
+
+    let listing: DirListing;
+    try {
+      listing = await listDirectoryDirect(item.absDir, root, true, {
+        recursive: true,
       });
-      indexedNames = new Set<string>();
-      for (const entry of indexed) {
-        const name = entry.path.split(path.sep).pop() ?? entry.path;
-        indexedNames.add(name);
-        if (entry.type === "dir") {
-          indexedFolders.push(name);
-        } else {
-          indexedFiles.push(name);
-        }
+    } catch {
+      continue;
+    }
+
+    for (const folder of listing.folders) {
+      const entryRel = item.relDir === "" ? folder : `${item.relDir}/${folder}`;
+      entries.push({ path: entryRel, type: "dir" });
+      if (entries.length >= MAX_TREE_ENTRIES) {
+        hasMoreDepth = true;
+        return { entries, hasMoreDepth };
+      }
+      queue.push({
+        absDir: path.join(item.absDir, folder),
+        relDir: entryRel,
+        depth: item.depth + 1,
+      });
+    }
+
+    for (const file of listing.files) {
+      const entryRel = item.relDir === "" ? file : `${item.relDir}/${file}`;
+      entries.push({ path: entryRel, type: "file" });
+      if (entries.length >= MAX_TREE_ENTRIES) {
+        hasMoreDepth = true;
+        return { entries, hasMoreDepth };
       }
     }
   }
 
-  // 2. readdir to fill gaps (entries not in the index)
-  const { readdir } = await import("node:fs/promises");
-  const entries = await readdir(absDir, { withFileTypes: true });
-
-  const extraFolders: string[] = [];
-  const extraFiles: string[] = [];
-  for (const e of entries) {
-    if (DIR_LISTING_IGNORED_NAMES.has(e.name)) continue;
-    if (indexedNames?.has(e.name)) continue;
-    if (e.isDirectory()) {
-      extraFolders.push(e.name);
-    } else if (includeFiles) {
-      extraFiles.push(e.name);
-    }
-  }
-
-  // 3. Merge and sort
-  return {
-    folders: [...indexedFolders, ...extraFolders].sort((a, b) =>
-      a.localeCompare(b),
-    ),
-    files: includeFiles
-      ? [...indexedFiles, ...extraFiles].sort((a, b) => a.localeCompare(b))
-      : [],
-  };
+  return { entries, hasMoreDepth };
 }
 
 export function createFileCommandSession(params: {
@@ -179,39 +448,9 @@ export function createFileCommandSession(params: {
     if (isSearchFilesCommand(parsed)) {
       runDetachedListenerTask("search_files", async () => {
         try {
-          // When the requested cwd lives outside the current index root
-          // (e.g. a persisted CWD restored on startup that was never fed
-          // through handleCwdChange), re-root the file index first so
-          // the search covers the correct workspace.
-          if (parsed.cwd) {
-            const currentRoot = getIndexRoot();
-            const needsReroot =
-              (!parsed.cwd.startsWith(currentRoot + path.sep) &&
-                parsed.cwd !== currentRoot) ||
-              (parsed.cwd !== currentRoot &&
-                (await isGitWorktreeRoot(parsed.cwd)));
-            if (needsReroot) {
-              setIndexRoot(parsed.cwd);
-            }
-          }
-
-          await ensureFileIndex();
-
-          // Scope search to the conversation's cwd when provided.
-          // The file index stores paths relative to the index root.
-          let searchDir = ".";
-          if (parsed.cwd) {
-            const rel = path.relative(getIndexRoot(), parsed.cwd);
-            // Only scope if cwd is within the index root (not "../" etc.)
-            if (rel && !rel.startsWith("..") && rel !== "") {
-              searchDir = rel;
-            }
-          }
-
-          const files = searchFileIndex({
-            searchDir,
-            pattern: parsed.query,
-            deep: true,
+          const files = await searchFilesDirect({
+            root: parsed.cwd ?? process.cwd(),
+            query: parsed.query,
             maxResults: parsed.max_results ?? 5,
           });
           safeSocketSend(
@@ -255,19 +494,25 @@ export function createFileCommandSession(params: {
     if (isGrepInFilesCommand(parsed)) {
       runDetachedListenerTask("grep_in_files", async () => {
         try {
-          // Re-root the index if the requested cwd lives outside it, so
-          // "search root" matches what the user expects in the UI.
-          if (parsed.cwd) {
-            const currentRoot = getIndexRoot();
-            if (
-              !parsed.cwd.startsWith(currentRoot + path.sep) &&
-              parsed.cwd !== currentRoot
-            ) {
-              setIndexRoot(parsed.cwd);
-            }
+          const searchRoot = parsed.cwd ?? process.cwd();
+          if (isHomeDirectory(searchRoot)) {
+            safeSocketSend(
+              socket,
+              {
+                type: "grep_in_files_response",
+                request_id: parsed.request_id,
+                success: true,
+                matches: [],
+                total_matches: 0,
+                total_files: 0,
+                truncated: false,
+              },
+              "listener_grep_in_files_send_failed",
+              "listener_grep_in_files",
+            );
+            return;
           }
 
-          const searchRoot = parsed.cwd ?? getIndexRoot();
           const { matches, totalMatches, totalFiles, truncated } =
             await runGrepInFiles({
               searchRoot,
@@ -330,19 +575,11 @@ export function createFileCommandSession(params: {
       );
       runDetachedListenerTask("list_in_directory", async () => {
         try {
-          let indexRoot: string | undefined;
-          try {
-            await ensureFileIndex();
-            indexRoot = getIndexRoot();
-          } catch {
-            // Index not available -- readdir only
-          }
-
           console.log(`[Listen] Reading directory: ${parsed.path}`);
           const { folders: allFolders, files: allFiles } =
-            await listDirectoryHybrid(
+            await listDirectoryDirect(
               parsed.path,
-              indexRoot,
+              parsed.path,
               !!parsed.include_files,
             );
 
@@ -414,60 +651,10 @@ export function createFileCommandSession(params: {
       );
       runDetachedListenerTask("get_tree", async () => {
         try {
-          // Walk the directory tree up to the requested depth, combining file
-          // index results with readdir to include non-indexed entries.
-          interface TreeEntry {
-            path: string;
-            type: "file" | "dir";
-          }
-          const results: TreeEntry[] = [];
-          let hasMoreDepth = false;
-
-          // Warm the file index once before walking the tree.
-          let indexRoot: string | undefined;
-          try {
-            await ensureFileIndex();
-            indexRoot = getIndexRoot();
-          } catch {
-            // Index not available -- readdir only for all directories
-          }
-
-          // BFS queue: [absolutePath, relativePath, currentDepth]
-          // Uses an index pointer for O(1) dequeue instead of shift().
-          const queue: [string, string, number][] = [[parsed.path, "", 0]];
-          let qi = 0;
-
-          while (qi < queue.length) {
-            const item = queue[qi++];
-            if (!item) break;
-            const [absDir, relDir, depth] = item;
-
-            if (depth >= parsed.depth) {
-              if (depth === parsed.depth && relDir !== "") {
-                hasMoreDepth = true;
-              }
-              continue;
-            }
-
-            let listing: DirListing;
-            try {
-              listing = await listDirectoryHybrid(absDir, indexRoot, true);
-            } catch {
-              // Can't read directory -- skip
-              continue;
-            }
-
-            // Relative paths always use '/' (converted to OS separator on the frontend)
-            for (const name of listing.folders) {
-              const entryRel = relDir === "" ? name : `${relDir}/${name}`;
-              results.push({ path: entryRel, type: "dir" });
-              queue.push([path.join(absDir, name), entryRel, depth + 1]);
-            }
-            for (const name of listing.files) {
-              const entryRel = relDir === "" ? name : `${relDir}/${name}`;
-              results.push({ path: entryRel, type: "file" });
-            }
-          }
+          const { entries: results, hasMoreDepth } = await getTreeDirect({
+            root: parsed.path,
+            depth: parsed.depth,
+          });
 
           console.log(
             `[Listen] Sending get_tree_response: ${results.length} entries, has_more_depth=${hasMoreDepth}`,
@@ -609,8 +796,6 @@ export function createFileCommandSession(params: {
           console.log(
             `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,
           );
-          // Update the file index so the sidebar Merkle tree stays current
-          void refreshFileIndex();
           safeSocketSend(
             socket,
             {
@@ -754,11 +939,6 @@ export function createFileCommandSession(params: {
           console.log(
             `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
           );
-          // Update the file index so the sidebar Merkle tree stays current
-          if (result.replacements > 0) {
-            void refreshFileIndex();
-          }
-
           // Notify web clients of the new content so they can update live.
           if (result.replacements > 0) {
             try {

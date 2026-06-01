@@ -49,6 +49,8 @@ export type {
   ExtensionToolRegistration,
   ExtensionToolRunContext,
   ExtensionToolRunResult,
+  ExtensionToolStartEvent,
+  ExtensionToolStartResult,
   ExtensionTurnStartEvent,
   ExtensionTurnStartResult,
   ExtensionUiCapabilities,

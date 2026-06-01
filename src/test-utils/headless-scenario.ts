@@ -7,7 +7,7 @@
  *
  * Usage:
  *   bun tsx src/tests/headless-scenario.ts --model gpt-4.1 --output stream-json --parallel on
- *   bun tsx src/tests/headless-scenario.ts --backend local --model gpt-5-mini-medium --output text --parallel on
+ *   bun tsx src/tests/headless-scenario.ts --backend local --model openai/gpt-5-mini --output text --parallel on
  */
 
 import { execFile as execFileCb, spawn } from "node:child_process";
@@ -27,7 +27,7 @@ import {
 const execFile = promisify(execFileCb);
 
 type Backend = "api" | "local";
-type LocalProvider = "openai" | "anthropic";
+type LocalProvider = "openai" | "anthropic" | "google";
 
 type Args = {
   backend: Backend;
@@ -76,7 +76,7 @@ function parseArgs(argv: string[]): Args {
   }
   if (
     args.provider !== undefined &&
-    !["openai", "anthropic"].includes(args.provider)
+    !["openai", "anthropic", "google"].includes(args.provider)
   ) {
     throw new Error(`Invalid --provider ${args.provider}`);
   }
@@ -84,6 +84,13 @@ function parseArgs(argv: string[]): Args {
 }
 
 function inferLocalProvider(model: string): LocalProvider {
+  if (
+    model.startsWith("google/") ||
+    model.startsWith("google_ai/") ||
+    model.includes("gemini")
+  ) {
+    return "google";
+  }
   if (
     model.startsWith("anthropic/") ||
     model.startsWith("claude") ||
@@ -107,7 +114,11 @@ async function ensurePrereqs(args: Args): Promise<"ok" | "skip"> {
 
   const provider = args.provider ?? inferLocalProvider(args.model);
   const requiredKey =
-    provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+    provider === "anthropic"
+      ? "ANTHROPIC_API_KEY"
+      : provider === "google"
+        ? "GOOGLE_GENERATIVE_AI_API_KEY"
+        : "OPENAI_API_KEY";
   if (!process.env[requiredKey]) {
     console.log(`SKIP: Missing env ${requiredKey}`);
     return "skip";
@@ -144,7 +155,9 @@ function scenarioPrompt(backend: Backend): string {
 }
 
 function providerEnvValue(provider: LocalProvider): string {
-  return provider === "openai" ? "openai-responses" : "anthropic";
+  if (provider === "openai") return "openai-responses";
+  if (provider === "google") return "google";
+  return "anthropic";
 }
 
 async function runCLI(args: Args): Promise<RunResult> {

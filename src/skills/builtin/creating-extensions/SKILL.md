@@ -44,7 +44,7 @@ Default to a **tool** when the model should decide when to use the capability. D
 5. Write a single-file extension unless the user asks for something larger.
 6. Return disposers for registered commands/tools/events, timers, subscriptions, and panels that should close on reload.
 7. Do a basic review: valid names, descriptions present, schemas are object schemas, optional capabilities guarded, scoped APIs used, cleanup returned.
-8. Tell the user the absolute file path changed and to run `/reload`.
+8. Tell the user the absolute file path changed and to run `/reload`. If an extension breaks startup or command handling, recover with `letta --no-extensions` or `LETTA_DISABLE_EXTENSIONS=1 letta`.
 
 ## Core extension shape
 
@@ -72,6 +72,7 @@ Use `letta.capabilities` for optional behavior:
 letta.capabilities.tools
 letta.capabilities.commands
 letta.capabilities.events.lifecycle
+letta.capabilities.events.tools
 letta.capabilities.events.turns
 letta.capabilities.ui.panels
 letta.capabilities.ui.statusValues

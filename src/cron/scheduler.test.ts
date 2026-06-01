@@ -178,8 +178,11 @@ describe("task lifecycle", () => {
       expect.objectContaining({
         jobId: task.id,
         status: "skipped",
+        outcome: "missed",
+        reason: "scheduler_inactive",
         summary: "missed",
         scheduledFor: scheduledFor.toISOString(),
+        missedCount: 1,
       }),
     ]);
   });

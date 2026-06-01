@@ -53,7 +53,7 @@ import type {
   ExtensionCommandContext,
   ExtensionConversationCloseReason,
 } from "@/cli/extensions/types";
-import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
@@ -81,18 +81,15 @@ import {
 } from "@/cli/helpers/init-command";
 import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
-import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
 } from "@/cli/helpers/paste-registry";
 import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-toggle";
 import {
-  buildAutoReflectionPayload,
-  buildParentMemorySnapshot,
-  buildReflectionSubagentPrompt,
-  finalizeAutoReflectionPayload,
-} from "@/cli/helpers/reflection-transcript";
+  AUTO_REFLECTION_DESCRIPTION,
+  launchReflectionSubagent,
+} from "@/cli/helpers/reflection-launcher";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -126,17 +123,14 @@ import {
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
 import { isInteractiveCommand, isNonStateCommand } from "./command-routing";
-import { AUTO_REFLECTION_DESCRIPTION } from "./constants";
 import { buildTextParts } from "./content-parts";
 import { buildGoalPrompt } from "./goal-loop";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
-import { hasActiveReflectionSubagent } from "./reflection";
 import { saveLastSessionBeforeExit } from "./session";
 import { handleConnectionCommand } from "./submit-connection-commands";
 import { handleDiagnosticsCommand } from "./submit-diagnostics-commands";
@@ -210,7 +204,7 @@ type SubmitHandlerContext = {
   currentModelProvider: string | null;
   effectiveContextWindowSize: number | undefined;
   emittedIdsRef: MutableRefObject<Set<string>>;
-  extensionRuntime: LocalExtensionRuntime;
+  extensionAdapter: LocalExtensionAdapter;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
   generateConversationDescription: (options?: {
@@ -355,7 +349,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
-    extensionRuntime,
+    extensionAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort,
     generateConversationDescription,
@@ -585,7 +579,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         ? parseExtensionSlashCommand(userTextForInput.trim())
         : null;
       const queueBypassExtensionCommand = parsedExtensionCommand
-        ? extensionRuntime.registry?.commands[parsedExtensionCommand.command]
+        ? extensionAdapter.registry?.commands[parsedExtensionCommand.command]
         : undefined;
       const isExtensionCommandShadowedByCustom =
         isAgentBusy() && queueBypassExtensionCommand?.runWhenBusy === true
@@ -1471,7 +1465,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("conversation_open", {
+            void extensionAdapter.emitEvent("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -1569,7 +1563,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("conversation_open", {
+            void extensionAdapter.emitEvent("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: forked.id,
@@ -1685,7 +1679,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("conversation_open", {
+            void extensionAdapter.emitEvent("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -2755,128 +2749,54 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: true };
           }
 
-          const reflectConversationId = conversationIdRef.current ?? "default";
-          if (hasActiveReflectionSubagent(agentId, reflectConversationId)) {
-            cmd.fail(
-              "A reflection agent is already running in the background.",
-            );
-            return { submitted: true };
-          }
-
           try {
-            const reflectionConversationId = conversationIdRef.current;
-
-            // Fetch the agent's system prompt so the reflection payload includes
-            // the core behavioural instructions (filtered to strip dynamic content).
-            let systemPrompt: string | undefined;
-            try {
-              const agent = await getBackend().retrieveAgent(agentId);
-              systemPrompt = agent.system ?? undefined;
-            } catch {
-              // Non-fatal — the reflection payload will just omit the system prompt.
-            }
-
-            const autoPayload = await buildAutoReflectionPayload(
+            const reflectionConversationId =
+              conversationIdRef.current ?? "default";
+            const result = await launchReflectionSubagent({
               agentId,
-              reflectionConversationId,
-              systemPrompt,
-            );
+              conversationId: reflectionConversationId,
+              memfsEnabled: isActiveMemfsEnabled(agentId),
+              triggerSource: "manual",
+              description: "Reflecting on conversation",
+              completionConversationId: () => conversationIdRef.current,
+              recompileByConversation:
+                systemPromptRecompileByConversationRef.current,
+              recompileQueuedByConversation:
+                queuedSystemPromptRecompileByConversationRef.current,
+              onCompletionMessage: (completionMessage) => {
+                appendTaskNotificationEvents([completionMessage]);
+              },
+              feedbackContext: {
+                parentAgentName: agentName,
+                parentAgentDescription: agentDescription,
+                surface: "letta_code_tui",
+                model: currentModelId,
+              },
+            });
 
-            if (!autoPayload) {
-              cmd.fail("No new transcript content to reflect on.");
+            if (!result.launched) {
+              if (result.reason === "already_active") {
+                cmd.fail(
+                  "A reflection agent is already running in the background.",
+                );
+              } else if (result.reason === "no_payload") {
+                cmd.fail("No new transcript content to reflect on.");
+              } else if (result.reason === "memfs_disabled") {
+                cmd.fail(
+                  "Memory filesystem is not enabled. Use /remember instead.",
+                );
+              } else {
+                const errorDetails = formatErrorDetails(
+                  result.error ?? "Unknown error",
+                  agentId,
+                );
+                cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+              }
               return { submitted: true };
             }
 
-            const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-            const parentMemory = await buildParentMemorySnapshot(memoryDir);
-            const reflectionPrompt = buildReflectionSubagentPrompt({
-              memoryDir,
-              parentMemory,
-            });
-
-            const {
-              spawnBackgroundSubagentTask,
-              waitForBackgroundSubagentAgentId,
-            } = await import("@/tools/impl/task");
-            const { subagentId } = spawnBackgroundSubagentTask({
-              subagentType: "reflection",
-              prompt: reflectionPrompt,
-              description: "Reflecting on conversation",
-              silentCompletion: true,
-              transcriptPath: autoPayload.payloadPath,
-              parentScope: {
-                agentId,
-                conversationId: reflectionConversationId,
-              },
-              onComplete: async ({
-                success,
-                error,
-                agentId: reflectionAgentId,
-                stepCount,
-                durationMs,
-              }) => {
-                telemetry.trackReflectionEnd("manual", success, {
-                  subagentId: reflectionAgentId ?? undefined,
-                  conversationId: reflectionConversationId,
-                  error,
-                  stepCount,
-                  durationMs,
-                });
-                maybeSendReflectionThresholdFeedback({
-                  parentAgentId: agentId,
-                  parentAgentName: agentName,
-                  parentAgentDescription: agentDescription,
-                  reflectionSubagentId: reflectionAgentId ?? undefined,
-                  conversationId: reflectionConversationId,
-                  triggerSource: "manual",
-                  success,
-                  error,
-                  stepCount,
-                  durationMs,
-                  surface: "letta_code_tui",
-                  model: currentModelId,
-                });
-                await finalizeAutoReflectionPayload(
-                  agentId,
-                  reflectionConversationId,
-                  autoPayload.payloadPath,
-                  autoPayload.endSnapshotLine,
-                  success,
-                );
-
-                const msg = await handleMemorySubagentCompletion(
-                  {
-                    agentId,
-                    conversationId: conversationIdRef.current,
-                    subagentType: "reflection",
-                    success,
-                    error,
-                  },
-                  {
-                    recompileByConversation:
-                      systemPromptRecompileByConversationRef.current,
-                    recompileQueuedByConversation:
-                      queuedSystemPromptRecompileByConversationRef.current,
-                    logRecompileFailure: (message) =>
-                      debugWarn("memory", message),
-                  },
-                );
-                appendTaskNotificationEvents([msg]);
-              },
-            });
-            const reflectionAgentId = await waitForBackgroundSubagentAgentId(
-              subagentId,
-              1000,
-            );
-            telemetry.trackReflectionStart("manual", {
-              subagentId: reflectionAgentId ?? undefined,
-              conversationId: reflectionConversationId,
-              startMessageId: autoPayload.startMessageId,
-              endMessageId: autoPayload.endMessageId,
-            });
-
             cmd.finish(
-              `Reflecting on the recent conversation. View the transcript here: ${autoPayload.payloadPath}`,
+              `Reflecting on the recent conversation. View the transcript here: ${result.payloadPath}`,
               true,
             );
           } catch (error) {
@@ -3139,7 +3059,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
         const matchedExtensionCommand: ExtensionCommand | undefined =
           parsedExtensionCommand
-            ? extensionRuntime.registry?.commands[
+            ? extensionAdapter.registry?.commands[
                 parsedExtensionCommand.command
               ]
             : undefined;
@@ -3164,11 +3084,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           try {
-            const extensionContext = extensionRuntime.getContext();
+            const extensionContext = extensionAdapter.getContext();
             const cwd = getCurrentWorkingDirectory();
             const conversation = createExtensionConversationHandle({
               agentId,
-              backend: extensionRuntime.getBackendApi(),
+              backend: extensionAdapter.getBackendApi(),
               conversationId: conversationIdRef.current,
               workingDirectory: cwd,
             });
@@ -3179,7 +3099,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               command: parsedExtensionCommand.command,
               conversation: { ...conversation, id: conversationIdRef.current },
               cwd,
-              getContext: extensionRuntime.getContext,
+              getContext: extensionAdapter.getContext,
               model: {
                 id:
                   currentModelId ??
@@ -3437,145 +3357,29 @@ ${SYSTEM_REMINDER_CLOSE}
       const maybeLaunchReflectionSubagent = async (
         triggerSource: "step-count" | "compaction-event",
       ) => {
-        if (!memfsEnabledForAgent) {
-          return false;
-        }
-        const autoReflectConversationId =
-          conversationIdRef.current ?? "default";
-        if (hasActiveReflectionSubagent(agentId, autoReflectConversationId)) {
-          debugLog(
-            "memory",
-            `Skipping auto reflection launch (${triggerSource}) because one is already active`,
-          );
-          return false;
-        }
-        try {
-          const reflectionConversationId = conversationIdRef.current;
-
-          // Fetch the agent's system prompt so the reflection payload includes
-          // the core behavioural instructions (filtered to strip dynamic content).
-          let systemPrompt: string | undefined;
-          try {
-            const agent = await getBackend().retrieveAgent(agentId);
-            systemPrompt = agent.system ?? undefined;
-          } catch {
-            // Non-fatal — the reflection payload will just omit the system prompt.
-          }
-
-          const autoPayload = await buildAutoReflectionPayload(
-            agentId,
-            reflectionConversationId,
-            systemPrompt,
-          );
-          if (!autoPayload) {
-            debugLog(
-              "memory",
-              `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
-            );
-            return false;
-          }
-
-          const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-          const parentMemory = await buildParentMemorySnapshot(memoryDir);
-          const reflectionPrompt = buildReflectionSubagentPrompt({
-            memoryDir,
-            parentMemory,
-          });
-
-          const {
-            spawnBackgroundSubagentTask,
-            waitForBackgroundSubagentAgentId,
-          } = await import("@/tools/impl/task");
-          const { subagentId } = spawnBackgroundSubagentTask({
-            subagentType: "reflection",
-            prompt: reflectionPrompt,
-            description: AUTO_REFLECTION_DESCRIPTION,
-            silentCompletion: true,
-            transcriptPath: autoPayload.payloadPath,
-            parentScope: {
-              agentId,
-              conversationId: reflectionConversationId,
-            },
-            onComplete: async ({
-              success,
-              error,
-              agentId: reflectionAgentId,
-              stepCount,
-              durationMs,
-            }) => {
-              telemetry.trackReflectionEnd(triggerSource, success, {
-                subagentId: reflectionAgentId ?? undefined,
-                conversationId: reflectionConversationId,
-                error,
-                stepCount,
-                durationMs,
-              });
-              maybeSendReflectionThresholdFeedback({
-                parentAgentId: agentId,
-                parentAgentName: agentName,
-                parentAgentDescription: agentDescription,
-                reflectionSubagentId: reflectionAgentId ?? undefined,
-                conversationId: reflectionConversationId,
-                triggerSource,
-                success,
-                error,
-                stepCount,
-                durationMs,
-                surface: "letta_code_tui",
-                model: currentModelId,
-              });
-              await finalizeAutoReflectionPayload(
-                agentId,
-                reflectionConversationId,
-                autoPayload.payloadPath,
-                autoPayload.endSnapshotLine,
-                success,
-              );
-
-              const msg = await handleMemorySubagentCompletion(
-                {
-                  agentId,
-                  conversationId: conversationIdRef.current,
-                  subagentType: "reflection",
-                  success,
-                  error,
-                },
-                {
-                  recompileByConversation:
-                    systemPromptRecompileByConversationRef.current,
-                  recompileQueuedByConversation:
-                    queuedSystemPromptRecompileByConversationRef.current,
-                  logRecompileFailure: (message) =>
-                    debugWarn("memory", message),
-                },
-              );
-              appendTaskNotificationEvents([msg]);
-            },
-          });
-          const reflectionAgentId = await waitForBackgroundSubagentAgentId(
-            subagentId,
-            1000,
-          );
-          telemetry.trackReflectionStart(triggerSource, {
-            subagentId: reflectionAgentId ?? undefined,
-            conversationId: reflectionConversationId,
-            startMessageId: autoPayload.startMessageId,
-            endMessageId: autoPayload.endMessageId,
-          });
-          debugLog(
-            "memory",
-            `Auto-launched reflection subagent (${triggerSource})`,
-          );
-          return true;
-        } catch (error) {
-          debugWarn(
-            "memory",
-            `Failed to auto-launch reflection subagent (${triggerSource}): ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          return false;
-        }
+        const reflectionConversationId = conversationIdRef.current ?? "default";
+        const result = await launchReflectionSubagent({
+          agentId,
+          conversationId: reflectionConversationId,
+          memfsEnabled: memfsEnabledForAgent,
+          triggerSource,
+          description: AUTO_REFLECTION_DESCRIPTION,
+          completionConversationId: () => conversationIdRef.current,
+          recompileByConversation:
+            systemPromptRecompileByConversationRef.current,
+          recompileQueuedByConversation:
+            queuedSystemPromptRecompileByConversationRef.current,
+          onCompletionMessage: (completionMessage) => {
+            appendTaskNotificationEvents([completionMessage]);
+          },
+          feedbackContext: {
+            parentAgentName: agentName,
+            parentAgentDescription: agentDescription,
+            surface: "letta_code_tui",
+            model: currentModelId,
+          },
+        });
+        return result.launched;
       };
       syncReminderStateFromContextTracker(
         sharedReminderStateRef.current,
@@ -3730,7 +3534,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversationId,
       currentModelHandle,
       currentModelId,
-      extensionRuntime,
+      extensionAdapter,
       effectiveContextWindowSize,
       commandRunner,
       handleExit,

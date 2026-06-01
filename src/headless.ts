@@ -35,7 +35,6 @@ import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
-import { getMemoryFilesystemRoot } from "./agent/memory-filesystem";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
   getModelInfo,
@@ -53,7 +52,6 @@ import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
-import { getSubagents } from "./agent/subagent-state";
 import {
   type BackendMode,
   type ConversationCreateBody,
@@ -87,15 +85,11 @@ import {
   type ReflectionSettings,
   type ReflectionTrigger,
 } from "./cli/helpers/memory-reminder";
-import { handleMemorySubagentCompletion } from "./cli/helpers/memory-subagent-completion";
-import { isReflectionSubagentActive } from "./cli/helpers/reflection-gate";
 import {
-  appendTranscriptDeltaJsonl,
-  buildAutoReflectionPayload,
-  buildParentMemorySnapshot,
-  buildReflectionSubagentPrompt,
-  finalizeAutoReflectionPayload,
-} from "./cli/helpers/reflection-transcript";
+  AUTO_REFLECTION_DESCRIPTION,
+  launchReflectionSubagent,
+} from "./cli/helpers/reflection-launcher";
+import { appendTranscriptDeltaJsonl } from "./cli/helpers/reflection-transcript";
 import {
   type DrainStreamHook,
   drainStreamWithResume,
@@ -106,14 +100,18 @@ import {
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
-import type { ExtensionRuntime } from "./extensions/extension-runtime";
+import {
+  disableExtensionsForProcess,
+  shouldDisableExtensions,
+} from "./extensions/disable";
+import type { ExtensionAdapter } from "./extensions/extension-adapter";
 import type { ExtensionConversationOpenReason } from "./extensions/types";
 import {
+  createHeadlessExtensionAdapter,
   createHeadlessExtensionContext,
-  createHeadlessExtensionRuntime,
   emitHeadlessConversationClose,
   emitHeadlessConversationOpen,
-} from "./headless-extension-runtime";
+} from "./headless-extension-adapter";
 import { computeDiffPreviews } from "./helpers/diff-preview";
 import { formatPermissionDenial } from "./permissions/format-denial";
 import { QueueRuntime } from "./queue/queue-runtime";
@@ -203,8 +201,6 @@ const PROVIDER_FALLBACK_MAP: Record<string, string> = {
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
-const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
-
 function trackHeadlessBoundaryError(
   errorType: string,
   error: unknown,
@@ -430,6 +426,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   conversationId: string;
   overrideModel?: string | null;
   cachedAgent?: AgentState | null;
+  extensionEventEmitter?: ExtensionAdapter["eventEmitter"];
 }): Promise<{
   preparedToolContext: Awaited<
     ReturnType<typeof prepareToolExecutionContextForScope>
@@ -443,6 +440,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
     cachedAgent: params.cachedAgent,
+    extensionEventEmitter: params.extensionEventEmitter,
   });
 
   return {
@@ -466,9 +464,9 @@ async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
   input: Array<MessageCreate | ApprovalCreate>;
-  runtime: ExtensionRuntime;
+  adapter: ExtensionAdapter;
 }): Promise<Array<MessageCreate | ApprovalCreate>> {
-  if (!options.runtime.getSnapshot().hasExtensionSources) return options.input;
+  if (!options.adapter.getSnapshot().hasExtensionSources) return options.input;
 
   try {
     const event = {
@@ -476,7 +474,7 @@ async function emitHeadlessTurnStart(options: {
       conversationId: options.conversationId,
       input: options.input,
     };
-    await options.runtime.emitEvent("turn_start", event);
+    await options.adapter.emitEvent("turn_start", event);
     return isTurnInputArray(event.input) ? event.input : options.input;
   } catch {
     // Extension turn_start handlers should not block sending the turn.
@@ -488,10 +486,12 @@ async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
   approvalMessages: Array<MessageCreate | ApprovalCreate>;
+  extensionEventEmitter?: ExtensionAdapter["eventEmitter"];
 }): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   const approvalToolContext = await prepareHeadlessToolExecutionContext({
     agentId: params.agentId,
     conversationId: params.conversationId,
+    extensionEventEmitter: params.extensionEventEmitter,
   });
 
   return await sendMessageStream(
@@ -545,6 +545,12 @@ export async function handleHeadlessCommand(
 ) {
   const { values, positionals } = parsedArgs;
   telemetry.setSurface(getTerminalTelemetrySurface(true));
+  const extensionsDisabled = shouldDisableExtensions({
+    cliFlag: values["no-extensions"],
+  });
+  if (extensionsDisabled) {
+    disableExtensionsForProcess();
+  }
 
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
@@ -1664,21 +1670,22 @@ export async function handleHeadlessCommand(
     : typeof permissionModeValue === "string"
       ? permissionModeValue
       : null;
-  const headlessExtensionRuntime = createHeadlessExtensionRuntime({
+  const headlessExtensionAdapter = createHeadlessExtensionAdapter({
     agent,
     backend,
     conversationId,
     permissionMode: headlessPermissionMode,
     reflectionSettings: effectiveReflectionSettings,
     sessionStats,
+    disabled: extensionsDisabled,
   });
-  await headlessExtensionRuntime.reload();
+  await headlessExtensionAdapter.reload();
   try {
     await emitHeadlessConversationOpen({
       agent,
       conversationId,
       reason: conversationOpenReason,
-      runtime: headlessExtensionRuntime,
+      adapter: headlessExtensionAdapter,
     });
   } catch {
     // Extension lifecycle events should not block headless startup.
@@ -1699,6 +1706,7 @@ export async function handleHeadlessCommand(
       agentId: agent.id,
       conversationId,
       cachedAgent: agent as AgentState,
+      extensionEventEmitter: headlessExtensionAdapter.eventEmitter,
     });
     availableTools = initialToolContext.availableTools;
     cachedAgent = initialToolContext.preparedToolContext.agent;
@@ -1717,7 +1725,7 @@ export async function handleHeadlessCommand(
       resolvedSkillSources,
       systemInfoReminderEnabled,
       effectiveReflectionSettings,
-      headlessExtensionRuntime,
+      headlessExtensionAdapter,
     );
     return;
   }
@@ -1738,7 +1746,7 @@ export async function handleHeadlessCommand(
     try {
       if (!headlessConversationClosed) {
         headlessConversationClosed = true;
-        headlessExtensionRuntime.updateContext(
+        headlessExtensionAdapter.updateContext(
           createHeadlessExtensionContext({
             agent,
             conversationId,
@@ -1753,7 +1761,7 @@ export async function handleHeadlessCommand(
             agent,
             conversationId,
             durationMs: sessionStats.getSnapshot().totalWallMs,
-            runtime: headlessExtensionRuntime,
+            adapter: headlessExtensionAdapter,
           });
         } catch {
           // Extension lifecycle events should not block headless shutdown.
@@ -1762,7 +1770,7 @@ export async function handleHeadlessCommand(
       telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
       await telemetry.flush();
     } finally {
-      headlessExtensionRuntime.dispose();
+      headlessExtensionAdapter.dispose();
       telemetry.setSessionStatsGetter(undefined);
     }
     return await flushAndExit(code);
@@ -1870,6 +1878,7 @@ export async function handleHeadlessCommand(
         agentId: agent.id,
         conversationId,
         approvalMessages,
+        extensionEventEmitter: headlessExtensionAdapter.eventEmitter,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -2029,7 +2038,7 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
-  headlessExtensionRuntime.updateContext(
+  headlessExtensionAdapter.updateContext(
     createHeadlessExtensionContext({
       agent,
       conversationId,
@@ -2042,7 +2051,7 @@ ${SYSTEM_REMINDER_CLOSE}
     agent,
     conversationId,
     input: currentInput,
-    runtime: headlessExtensionRuntime,
+    adapter: headlessExtensionAdapter,
   });
 
   // Track lastRunId outside the while loop so it's available in catch block
@@ -2119,6 +2128,7 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId,
           overrideModel: overrideModelHandle ?? preparedEffectiveModel,
           cachedAgent,
+          extensionEventEmitter: headlessExtensionAdapter.eventEmitter,
         });
         availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
@@ -3102,7 +3112,7 @@ async function runBidirectionalMode(
   skillSources: SkillSource[],
   systemInfoReminderEnabled: boolean,
   reflectionSettings: ReflectionSettings,
-  headlessExtensionRuntime: ExtensionRuntime,
+  headlessExtensionAdapter: ExtensionAdapter,
 ): Promise<void> {
   const sessionId = agent.id;
   const backend = getBackend();
@@ -3123,7 +3133,7 @@ async function runBidirectionalMode(
             agent,
             conversationId,
             durationMs: null,
-            runtime: headlessExtensionRuntime,
+            adapter: headlessExtensionAdapter,
           });
         } catch {
           // Extension lifecycle events should not block headless shutdown.
@@ -3132,7 +3142,7 @@ async function runBidirectionalMode(
       telemetry.trackSessionEnd(undefined, exitReason);
       await telemetry.flush();
     } finally {
-      headlessExtensionRuntime.dispose();
+      headlessExtensionAdapter.dispose();
     }
     return await flushAndExit(code);
   };
@@ -3167,116 +3177,17 @@ async function runBidirectionalMode(
   const maybeLaunchReflectionSubagent = async (
     triggerSource: Exclude<ReflectionTrigger, "off">,
   ): Promise<boolean> => {
-    if (!settingsManager.isMemfsEnabled(agent.id)) {
-      return false;
-    }
-
-    if (isReflectionSubagentActive(getSubagents(), agent.id, conversationId)) {
-      debugLog(
-        "memory",
-        `Skipping auto reflection launch (${triggerSource}) because one is already active`,
-      );
-      return false;
-    }
-
-    try {
-      let systemPrompt: string | undefined = agent.system ?? undefined;
-      if (!systemPrompt) {
-        try {
-          const freshAgent = await backend.retrieveAgent(agent.id);
-          systemPrompt = freshAgent.system ?? undefined;
-        } catch {
-          debugLog(
-            "memory",
-            "Failed to fetch agent system prompt for reflection payload",
-          );
-        }
-      }
-
-      const autoPayload = await buildAutoReflectionPayload(
-        agent.id,
-        conversationId,
-        systemPrompt,
-      );
-      if (!autoPayload) {
-        debugLog(
-          "memory",
-          `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
-        );
-        return false;
-      }
-
-      const memoryDir = getMemoryFilesystemRoot(agent.id);
-      const parentMemory = await buildParentMemorySnapshot(memoryDir);
-      const reflectionPrompt = buildReflectionSubagentPrompt({
-        memoryDir,
-        parentMemory,
-      });
-
-      const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
-        await import("@/tools/impl/task");
-      const { subagentId } = spawnBackgroundSubagentTask({
-        subagentType: "reflection",
-        prompt: reflectionPrompt,
-        description: AUTO_REFLECTION_DESCRIPTION,
-        silentCompletion: true,
-        transcriptPath: autoPayload.payloadPath,
-        parentScope: { agentId: agent.id, conversationId },
-        onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
-          telemetry.trackReflectionEnd(triggerSource, success, {
-            subagentId: reflectionAgentId ?? undefined,
-            conversationId,
-            error,
-          });
-          await finalizeAutoReflectionPayload(
-            agent.id,
-            conversationId,
-            autoPayload.payloadPath,
-            autoPayload.endSnapshotLine,
-            success,
-          );
-          await handleMemorySubagentCompletion(
-            {
-              agentId: agent.id,
-              conversationId,
-              subagentType: "reflection",
-              success,
-              error,
-            },
-            {
-              recompileByConversation: systemPromptRecompileByConversation,
-              recompileQueuedByConversation:
-                queuedSystemPromptRecompileByConversation,
-              logRecompileFailure: (message) => debugWarn("memory", message),
-            },
-          );
-        },
-      });
-      const reflectionAgentId = await waitForBackgroundSubagentAgentId(
-        subagentId,
-        1000,
-      );
-      telemetry.trackReflectionStart(triggerSource, {
-        subagentId: reflectionAgentId ?? undefined,
-        conversationId,
-        startMessageId: autoPayload.startMessageId,
-        endMessageId: autoPayload.endMessageId,
-      });
-
-      debugLog(
-        "memory",
-        `Auto-launched reflection subagent (${triggerSource})`,
-      );
-      return true;
-    } catch (error) {
-      debugWarn(
-        "memory",
-        `Failed to auto-launch reflection subagent (${triggerSource}): ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return false;
-    }
+    const result = await launchReflectionSubagent({
+      agentId: agent.id,
+      conversationId,
+      memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+      triggerSource,
+      description: AUTO_REFLECTION_DESCRIPTION,
+      systemPrompt: agent.system ?? undefined,
+      recompileByConversation: systemPromptRecompileByConversation,
+      recompileQueuedByConversation: queuedSystemPromptRecompileByConversation,
+    });
+    return result.launched;
   };
 
   // Resolve pending approvals for this conversation before retrying user input.
@@ -3343,6 +3254,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId,
         approvalMessages,
+        extensionEventEmitter: headlessExtensionAdapter.eventEmitter,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -3722,6 +3634,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId: targetConversationId,
         approvalMessages: [approvalInput],
+        extensionEventEmitter: headlessExtensionAdapter.eventEmitter,
       });
 
       const drainResult = await drainStreamWithResume(
@@ -4117,7 +4030,7 @@ async function runBidirectionalMode(
           skillSources,
           maybeLaunchReflectionSubagent,
         });
-        headlessExtensionRuntime.updateContext(
+        headlessExtensionAdapter.updateContext(
           createHeadlessExtensionContext({
             agent,
             conversationId,
@@ -4136,7 +4049,7 @@ async function runBidirectionalMode(
           agent,
           conversationId,
           input: currentInput,
-          runtime: headlessExtensionRuntime,
+          adapter: headlessExtensionAdapter,
         });
 
         // Approval handling loop - continue until end_turn or error
@@ -4176,6 +4089,7 @@ async function runBidirectionalMode(
             const turnToolContext = await prepareHeadlessToolExecutionContext({
               agentId: agent.id,
               conversationId,
+              extensionEventEmitter: headlessExtensionAdapter.eventEmitter,
             });
             availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {

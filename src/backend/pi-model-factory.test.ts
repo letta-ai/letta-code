@@ -257,6 +257,16 @@ describe("pi model factory", () => {
     expect(resolved.model.reasoning).toBe(true);
   });
 
+  test("resolves dated OpenAI registry handles to local Pi catalog aliases", async () => {
+    const resolved = await resolvePiModelForAgent(
+      "openai/gpt-5-mini-2025-08-07",
+      { provider_type: "openai" },
+    );
+
+    expect(resolved.provider).toBe("openai");
+    expect(resolved.model.id).toBe("gpt-5-mini");
+  });
+
   test("maps local Bedrock profile records to pi provider options", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-bedrock-profile-"));
     try {

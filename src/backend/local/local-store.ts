@@ -61,6 +61,7 @@ type StoredConversation = Conversation & {
   id: string;
   agent_id: string;
   in_context_message_ids: string[];
+  hidden?: boolean;
 };
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
@@ -207,6 +208,9 @@ function createLocalConversationRecord(
     ...(typeof bodyRecord.context_window_limit === "number"
       ? { context_window_limit: bodyRecord.context_window_limit }
       : {}),
+    ...(typeof bodyRecord.hidden === "boolean"
+      ? { hidden: bodyRecord.hidden }
+      : {}),
   } as StoredConversation;
 }
 
@@ -246,6 +250,9 @@ function updateLocalConversationRecord(
   if (typeof bodyRecord.context_window_limit === "number") {
     (next as unknown as Record<string, unknown>).context_window_limit =
       bodyRecord.context_window_limit;
+  }
+  if (typeof bodyRecord.hidden === "boolean") {
+    next.hidden = bodyRecord.hidden;
   }
   if (typeof bodyRecord.summary === "string" || bodyRecord.summary === null) {
     next.summary = bodyRecord.summary;
@@ -927,6 +934,7 @@ interface LocalConversationTranscriptMetadata {
   conversationDir: string;
   messagesPath: string;
   messageFormat: LocalTranscriptMessageFormat;
+  manifestValidated: boolean;
   timing: LocalTranscriptTiming;
   requiresFullTimestampRepair: boolean;
 }
@@ -1092,6 +1100,7 @@ export class LocalStore {
     LocalCompiledSystemPrompt
   >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
+  private conversationRecordsScanned = false;
   private conversationSeq = 0;
   private messageSeq = 0;
   private localMessageSeq = 0;
@@ -1180,6 +1189,7 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", agentId);
     }
     this.agents.delete(agentId);
+    this.loadConversationRecordsFromStorage();
     for (const [key, conversation] of [...this.conversations.entries()]) {
       if (conversation.agent_id === agentId) {
         this.conversations.delete(key);
@@ -1389,6 +1399,7 @@ export class LocalStore {
   }
 
   listConversations(body?: ConversationListBody): Conversation[] {
+    this.loadConversationRecordsFromStorage();
     const bodyRecord = (body ?? {}) as Record<string, unknown>;
     const agentId = optionalString(bodyRecord.agent_id);
     const after = optionalString(bodyRecord.after);
@@ -1396,6 +1407,7 @@ export class LocalStore {
     let conversations = [...this.conversations.values()].filter(
       (conversation) =>
         conversation.id !== "default" &&
+        (bodyRecord.include_hidden === true || !conversation.hidden) &&
         (!agentId || conversation.agent_id === agentId),
     );
     conversations.sort((a, b) => {
@@ -1418,9 +1430,9 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", agentId);
     }
     this.ensureAgent(agentId);
-    this.conversationSeq += 1;
+    const conversationId = this.nextConversationId();
     const conversation = createLocalConversationRecord(
-      `${this.conversationIdPrefix}${this.conversationSeq}`,
+      conversationId,
       agentId,
       this.conversationSeq,
       body,
@@ -1474,7 +1486,7 @@ export class LocalStore {
 
   forkConversation(
     conversationId: string,
-    options: { agentId?: string } = {},
+    options: { agentId?: string; hidden?: boolean } = {},
   ): { id: string } {
     const source = this.findConversation(
       conversationId,
@@ -1498,6 +1510,9 @@ export class LocalStore {
         ...(source.model !== undefined ? { model: source.model } : {}),
         ...(source.model_settings !== undefined
           ? { model_settings: source.model_settings }
+          : {}),
+        ...(typeof options.hidden === "boolean"
+          ? { hidden: options.hidden }
           : {}),
       } as Partial<ConversationCreateBody>,
     );
@@ -1635,6 +1650,7 @@ export class LocalStore {
     conversationId: string,
     agentId: string,
   ): LocalCompiledSystemPrompt | undefined {
+    this.findConversation(conversationId, agentId);
     const key = this.conversationKey(conversationId, agentId);
     return this.compiledSystemPromptByConversationKey.get(key);
   }
@@ -1651,6 +1667,7 @@ export class LocalStore {
   }
 
   clearCompiledSystemPromptsForAgent(agentId: string): void {
+    this.loadConversationRecordsFromStorage();
     for (const [key, conversation] of this.conversations.entries()) {
       if (conversation.agent_id !== agentId) continue;
       this.compiledSystemPromptByConversationKey.delete(key);
@@ -2378,7 +2395,7 @@ export class LocalStore {
 
     const key = this.conversationKey(conversationId, agentId);
     if (this.loadedConversationKeys.has(key)) return undefined;
-    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    const metadata = this.validateTranscriptMetadata(key);
     if (!metadata || metadata.requiresFullTimestampRepair) return undefined;
 
     const before = getCursor(body, "before");
@@ -2438,6 +2455,7 @@ export class LocalStore {
   }
 
   private rebuildMessageIndex(): void {
+    this.loadConversationRecordsFromStorage();
     this.messagesById.clear();
     for (const conversation of this.conversations.values()) {
       const key = this.conversationKey(conversation.id, conversation.agent_id);
@@ -2450,6 +2468,7 @@ export class LocalStore {
   }
 
   private loadConversationContainingMessage(messageId: string): void {
+    this.loadConversationRecordsFromStorage();
     const sourceMessageId = sourceLocalMessageIdFromStoredMessageId(messageId);
     for (const conversation of this.conversations.values()) {
       const key = this.conversationKey(conversation.id, conversation.agent_id);
@@ -2481,6 +2500,7 @@ export class LocalStore {
   }
 
   private indexMessageFromTranscriptTail(messageId: string): boolean {
+    this.loadConversationRecordsFromStorage();
     const sourceMessageId = sourceLocalMessageIdFromStoredMessageId(messageId);
     for (const conversation of this.conversations.values()) {
       const key = this.conversationKey(conversation.id, conversation.agent_id);
@@ -2503,7 +2523,7 @@ export class LocalStore {
     conversation: StoredConversation,
     messageId: string,
   ): boolean {
-    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    const metadata = this.validateTranscriptMetadata(key);
     if (!metadata || metadata.requiresFullTimestampRepair) return false;
 
     let maxBytes = 64 * 1024;
@@ -2541,6 +2561,7 @@ export class LocalStore {
     conversationId: string,
     agentId: string,
   ): LocalMessage[] {
+    this.findConversation(conversationId, agentId);
     const key = this.conversationKey(conversationId, agentId);
     if (!this.loadedConversationKeys.has(key)) {
       this.loadConversationMessages(key, conversationId, agentId);
@@ -2556,7 +2577,7 @@ export class LocalStore {
     conversationId: string,
     agentId: string,
   ): void {
-    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    const metadata = this.validateTranscriptMetadata(key);
     if (!metadata) {
       this.localMessagesByConversationKey.set(
         key,
@@ -2712,6 +2733,163 @@ export class LocalStore {
     return currentIsoTimestamp();
   }
 
+  private setTranscriptMetadata(
+    key: string,
+    metadata: LocalConversationTranscriptMetadata,
+  ): LocalConversationTranscriptMetadata {
+    this.transcriptMetadataByConversationKey.set(key, metadata);
+    return metadata;
+  }
+
+  private transcriptMetadataRecord(
+    key: string,
+    conversationDir: string,
+    options: { requiresFullTimestampRepair?: boolean } = {},
+  ): LocalConversationTranscriptMetadata {
+    const existing = this.transcriptMetadataByConversationKey.get(key);
+    if (existing) return existing;
+    return this.setTranscriptMetadata(key, {
+      conversationDir,
+      messagesPath: transcriptMessagesPath(conversationDir),
+      messageFormat: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+      manifestValidated: false,
+      timing: transcriptTimingForConversationDir(conversationDir),
+      requiresFullTimestampRepair: options.requiresFullTimestampRepair === true,
+    });
+  }
+
+  private validateTranscriptMetadata(
+    key: string,
+  ): LocalConversationTranscriptMetadata | undefined {
+    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    if (!metadata) return undefined;
+    if (metadata.manifestValidated) return metadata;
+
+    const manifest = validateLocalTranscriptManifest(
+      metadata.conversationDir,
+      this.storageDir ?? "",
+    );
+    return this.setTranscriptMetadata(key, {
+      ...metadata,
+      messageFormat:
+        manifest?.message_format ?? LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+      manifestValidated: true,
+      timing: transcriptTimingForConversationDir(
+        metadata.conversationDir,
+        manifest,
+      ),
+    });
+  }
+
+  private conversationsDir(): string | undefined {
+    return this.storageDir ? join(this.storageDir, "conversations") : undefined;
+  }
+
+  private conversationDirForKey(key: string): string | undefined {
+    const conversationsDir = this.conversationsDir();
+    return conversationsDir
+      ? join(conversationsDir, encodePathSegment(key))
+      : undefined;
+  }
+
+  private updateConversationSequences(conversation: StoredConversation): void {
+    this.conversationSeq = Math.max(
+      this.conversationSeq,
+      numericSuffix(conversation.id, this.conversationIdPrefix),
+    );
+
+    for (const messageId of conversation.in_context_message_ids ?? []) {
+      this.localMessageSeq = Math.max(
+        this.localMessageSeq,
+        numericSuffix(messageId, this.localMessageIdPrefix),
+      );
+    }
+  }
+
+  private cacheConversationRecord(
+    conversationDir: string,
+    input: StoredConversation,
+  ): StoredConversation {
+    const key = this.conversationKey(input.id, input.agent_id);
+    const existing = this.conversations.get(key);
+    if (existing) return existing;
+
+    const timing = transcriptTimingForConversationDir(conversationDir);
+    const requiresFullTimestampRepair =
+      isSyntheticLocalTimestamp(input.created_at) ||
+      isSyntheticLocalTimestamp(input.updated_at) ||
+      isSyntheticLocalTimestamp(input.last_message_at);
+    const conversation = requiresFullTimestampRepair
+      ? input
+      : repairSyntheticConversationTimestamps(input, [], timing);
+    let compiledSystemPrompt: LocalCompiledSystemPrompt | undefined;
+    try {
+      compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
+        join(conversationDir, "system-prompt.json"),
+      );
+    } catch {
+      compiledSystemPrompt = undefined;
+    }
+
+    this.conversations.set(key, conversation);
+    this.transcriptMetadataRecord(key, conversationDir, {
+      requiresFullTimestampRepair,
+    });
+    if (compiledSystemPrompt?.content) {
+      this.compiledSystemPromptByConversationKey.set(key, compiledSystemPrompt);
+    }
+    this.updateConversationSequences(conversation);
+    return conversation;
+  }
+
+  private loadConversationRecordFromDir(
+    conversationDir: string,
+  ): StoredConversation | undefined {
+    try {
+      const conversation = readJsonFile<StoredConversation>(
+        join(conversationDir, "conversation.json"),
+      );
+      if (!conversation?.id || !conversation.agent_id) return undefined;
+      return this.cacheConversationRecord(conversationDir, conversation);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private loadConversationRecordForKey(
+    key: string,
+  ): StoredConversation | undefined {
+    const existing = this.conversations.get(key);
+    if (existing) return existing;
+    const conversationDir = this.conversationDirForKey(key);
+    if (!conversationDir || !existsSync(conversationDir)) return undefined;
+    return this.loadConversationRecordFromDir(conversationDir);
+  }
+
+  private loadConversationRecordsFromStorage(): void {
+    if (this.conversationRecordsScanned) return;
+    this.conversationRecordsScanned = true;
+    const conversationsDir = this.conversationsDir();
+    if (!conversationsDir || !existsSync(conversationsDir)) return;
+
+    let entries: string[];
+    try {
+      entries = readdirSync(conversationsDir);
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const conversationDir = join(conversationsDir, entry);
+      try {
+        if (!statSync(conversationDir).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      this.loadConversationRecordFromDir(conversationDir);
+    }
+  }
+
   private loadFromStorage(): void {
     if (!this.storageDir || !existsSync(this.storageDir)) return;
 
@@ -2725,69 +2903,6 @@ export class LocalStore {
         );
         if (agent?.id) {
           this.agents.set(agent.id, agent);
-        }
-      }
-    }
-
-    const conversationsDir = join(this.storageDir, "conversations");
-    if (existsSync(conversationsDir)) {
-      for (const conversationDirName of readdirSync(conversationsDir)) {
-        const conversationDir = join(conversationsDir, conversationDirName);
-        let conversation = readJsonFile<StoredConversation>(
-          join(conversationDir, "conversation.json"),
-        );
-        if (!conversation?.id || !conversation.agent_id) continue;
-
-        const manifest = validateLocalTranscriptManifest(
-          conversationDir,
-          this.storageDir,
-        );
-        const key = this.conversationKey(
-          conversation.id,
-          conversation.agent_id,
-        );
-        const timing = transcriptTimingForConversationDir(
-          conversationDir,
-          manifest,
-        );
-        const requiresFullTimestampRepair =
-          isSyntheticLocalTimestamp(conversation.created_at) ||
-          isSyntheticLocalTimestamp(conversation.updated_at) ||
-          isSyntheticLocalTimestamp(conversation.last_message_at);
-        conversation = repairSyntheticConversationTimestamps(
-          conversation,
-          [],
-          timing,
-        );
-        const compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
-          join(conversationDir, "system-prompt.json"),
-        );
-
-        this.conversations.set(key, conversation);
-        this.transcriptMetadataByConversationKey.set(key, {
-          conversationDir,
-          messagesPath: transcriptMessagesPath(conversationDir),
-          messageFormat:
-            manifest?.message_format ?? LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
-          timing,
-          requiresFullTimestampRepair,
-        });
-        if (compiledSystemPrompt?.content) {
-          this.compiledSystemPromptByConversationKey.set(
-            key,
-            compiledSystemPrompt,
-          );
-        }
-        this.conversationSeq = Math.max(
-          this.conversationSeq,
-          numericSuffix(conversation.id, this.conversationIdPrefix),
-        );
-
-        for (const messageId of conversation.in_context_message_ids ?? []) {
-          this.localMessageSeq = Math.max(
-            this.localMessageSeq,
-            numericSuffix(messageId, this.localMessageIdPrefix),
-          );
         }
       }
     }
@@ -2806,8 +2921,7 @@ export class LocalStore {
   }
 
   private projectAgent(record: LocalAgentRecord): AgentState {
-    const key = this.conversationKey("default", record.id);
-    const defaultConversation = this.conversations.get(key);
+    const defaultConversation = this.findConversation("default", record.id);
     const messageIds = defaultConversation?.in_context_message_ids ?? [];
     const inContextMessageIds =
       defaultConversation?.in_context_message_ids ?? messageIds;
@@ -2843,13 +2957,22 @@ export class LocalStore {
       join(conversationDir, "conversation.json"),
       `${JSON.stringify(conversation, null, 2)}\n`,
     );
-    if (!existsSync(transcriptManifestPath(conversationDir))) {
-      writeLocalTranscriptManifest(conversationDir);
-    }
     const messagesPath = transcriptMessagesPath(conversationDir);
-    const metadata = this.transcriptMetadataByConversationKey.get(key);
-    const messageFormat =
-      metadata?.messageFormat ?? LOCAL_TRANSCRIPT_MESSAGE_FORMAT;
+    let metadata = this.transcriptMetadataRecord(key, conversationDir);
+    const manifestPath = transcriptManifestPath(conversationDir);
+    if (!existsSync(manifestPath) && !hasNonEmptyJsonl(messagesPath)) {
+      const manifest = createLocalTranscriptManifest();
+      writeLocalTranscriptManifest(conversationDir, manifest);
+      metadata = this.setTranscriptMetadata(key, {
+        ...metadata,
+        messageFormat: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+        manifestValidated: true,
+        timing: transcriptTimingForConversationDir(conversationDir, manifest),
+      });
+    } else {
+      metadata = this.validateTranscriptMetadata(key) ?? metadata;
+    }
+    const messageFormat = metadata.messageFormat;
     this.persistConversationTranscript(
       key,
       conversation,
@@ -2881,17 +3004,17 @@ export class LocalStore {
         messagesPath,
         upgradeMessages,
       );
-      writeLocalTranscriptManifest(
-        conversationDir,
-        createLocalTranscriptManifest({
-          migratedFrom: "versioned-pi-ai-message-jsonl",
-        }),
-      );
+      const manifest = createLocalTranscriptManifest({
+        migratedFrom: "versioned-pi-ai-message-jsonl",
+      });
+      writeLocalTranscriptManifest(conversationDir, manifest);
       const metadata = this.transcriptMetadataByConversationKey.get(key);
       if (metadata) {
         this.transcriptMetadataByConversationKey.set(key, {
           ...metadata,
           messageFormat: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+          manifestValidated: true,
+          timing: transcriptTimingForConversationDir(conversationDir, manifest),
         });
       }
       activeMessageFormat = LOCAL_TRANSCRIPT_MESSAGE_FORMAT;
@@ -3096,9 +3219,10 @@ export class LocalStore {
     agentId?: string,
   ): StoredConversation {
     const resolvedAgentId = agentId ?? this.defaultAgentId;
-    const key = this.conversationKey(conversationId, resolvedAgentId);
-    const existing = this.conversations.get(key);
+    const existing = this.findConversation(conversationId, resolvedAgentId);
     if (existing) return existing;
+
+    const key = this.conversationKey(conversationId, resolvedAgentId);
 
     const shouldAdvanceSequence = conversationId !== "default";
     if (shouldAdvanceSequence) {
@@ -3116,24 +3240,42 @@ export class LocalStore {
     return conversation;
   }
 
+  private nextConversationId(): string {
+    for (;;) {
+      this.conversationSeq += 1;
+      const conversationId = `${this.conversationIdPrefix}${this.conversationSeq}`;
+      const key = this.conversationKey(conversationId, this.defaultAgentId);
+      if (this.conversations.has(key)) continue;
+      const conversationDir = this.conversationDirForKey(key);
+      if (conversationDir && existsSync(conversationDir)) continue;
+      return conversationId;
+    }
+  }
+
   private findConversation(
     conversationId: string,
     agentId?: string,
   ): StoredConversation | undefined {
     if (agentId) {
-      return this.conversations.get(
-        this.conversationKey(conversationId, agentId),
-      );
+      const key = this.conversationKey(conversationId, agentId);
+      const direct =
+        this.conversations.get(key) ?? this.loadConversationRecordForKey(key);
+      if (direct || conversationId === "default") return direct;
+      this.loadConversationRecordsFromStorage();
+      return this.conversations.get(key);
     }
     if (conversationId === "default") {
-      return this.conversations.get(
-        this.conversationKey(conversationId, this.defaultAgentId),
+      const key = this.conversationKey(conversationId, this.defaultAgentId);
+      return (
+        this.conversations.get(key) ?? this.loadConversationRecordForKey(key)
       );
     }
-    for (const conversation of this.conversations.values()) {
-      if (conversation.id === conversationId) return conversation;
-    }
-    return undefined;
+    const key = this.conversationKey(conversationId, this.defaultAgentId);
+    const direct =
+      this.conversations.get(key) ?? this.loadConversationRecordForKey(key);
+    if (direct) return direct;
+    this.loadConversationRecordsFromStorage();
+    return this.conversations.get(key);
   }
 
   private toolSettlementTargets(

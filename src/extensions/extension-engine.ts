@@ -39,6 +39,7 @@ import {
   unregisterExtensionToolsForOwner,
 } from "@/extensions/tool-registry";
 import type {
+  ExtensionAdapterBackendApi,
   ExtensionCapabilities,
   ExtensionCommand,
   ExtensionCommandRegistration,
@@ -57,9 +58,9 @@ import type {
   ExtensionPanelHandle,
   ExtensionPanelOptions,
   ExtensionPanelUpdate,
-  ExtensionRuntimeBackendApi,
   ExtensionTool,
   ExtensionToolRegistration,
+  ExtensionToolStartEvent,
   ExtensionTurnStartEvent,
 } from "@/extensions/types";
 
@@ -206,7 +207,7 @@ export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionRuntimeBackendApi;
+  backend?: ExtensionAdapterBackendApi;
   capabilities?: ExtensionCapabilities;
   generation?: number;
   onChange?: () => void;
@@ -215,23 +216,23 @@ export interface LoadLocalExtensionsOptions
   reservedToolNames?: Iterable<string>;
 }
 
-export interface ExtensionHost {
+export interface ExtensionEngine {
   dispose: () => void;
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-    backend?: ExtensionRuntimeBackendApi,
+    backend?: ExtensionAdapterBackendApi,
   ) => Promise<ExtensionEventEmissionResult<TName>>;
   getSnapshot: () => LocalExtensionRegistry;
   reload: () => Promise<void>;
   subscribe: (listener: () => void) => () => void;
 }
 
-export interface CreateExtensionHostOptions
+export interface CreateExtensionEngineOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionRuntimeBackendApi;
+  backend?: ExtensionAdapterBackendApi;
   capabilities?: ExtensionCapabilities;
   reservedCommandIds?: Iterable<string>;
   reservedToolNames?: Iterable<string>;
@@ -603,6 +604,7 @@ function createLazyClient(getClient: () => Promise<Letta>): Letta {
 const SUPPORTED_EXTENSION_EVENT_NAMES = new Set<ExtensionEventName>([
   "conversation_open",
   "conversation_close",
+  "tool_start",
   "turn_start",
 ]);
 
@@ -622,6 +624,8 @@ function isExtensionEventCapabilityEnabled(
     case "conversation_open":
     case "conversation_close":
       return capabilities.events.lifecycle;
+    case "tool_start":
+      return capabilities.events.tools;
     case "turn_start":
       return capabilities.events.turns;
   }
@@ -652,6 +656,34 @@ function cloneTurnStartInput(
   input: ExtensionTurnStartEvent["input"],
 ): ExtensionTurnStartEvent["input"] {
   return input.map((item) => structuredClone(item));
+}
+
+function isToolStartResultWithArgs(
+  name: ExtensionEventName,
+  result: unknown,
+): result is { args: ExtensionToolStartEvent["args"] } {
+  return (
+    name === "tool_start" &&
+    typeof result === "object" &&
+    result !== null &&
+    isToolStartArgs((result as { args?: unknown }).args)
+  );
+}
+
+function isToolStartArgs(
+  value: unknown,
+): value is ExtensionToolStartEvent["args"] {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cloneToolStartArgs(
+  args: ExtensionToolStartEvent["args"],
+): ExtensionToolStartEvent["args"] {
+  try {
+    return structuredClone(args);
+  } catch {
+    return { ...args };
+  }
 }
 
 function validateExtensionCommandId(id: string): void {
@@ -1211,7 +1243,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
   name: TName,
   event: ExtensionEventMap[TName],
   getContext: () => ExtensionContext,
-  backend?: ExtensionRuntimeBackendApi,
+  backend?: ExtensionAdapterBackendApi,
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
 ): Promise<ExtensionEventEmissionResult<TName>> {
   if (!registry) {
@@ -1233,6 +1265,12 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
     const turnStartInputBeforeHandler =
       turnStartEvent && isTurnStartInput(turnStartEvent.input)
         ? cloneTurnStartInput(turnStartEvent.input)
+        : null;
+    const toolStartEvent =
+      name === "tool_start" ? (event as ExtensionToolStartEvent) : null;
+    const toolStartArgsBeforeHandler =
+      toolStartEvent && isToolStartArgs(toolStartEvent.args)
+        ? cloneToolStartArgs(toolStartEvent.args)
         : null;
 
     try {
@@ -1258,6 +1296,9 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       if (isTurnStartResultWithInput(name, result)) {
         (event as ExtensionTurnStartEvent).input = result.input;
       }
+      if (isToolStartResultWithArgs(name, result)) {
+        (event as ExtensionToolStartEvent).args = result.args;
+      }
       if (result != null) {
         results.push(result as NonNullable<ExtensionEventResultMap[TName]>);
       }
@@ -1268,9 +1309,19 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       ) {
         turnStartEvent.input = turnStartInputBeforeHandler;
       }
+      if (
+        toolStartEvent &&
+        toolStartArgsBeforeHandler &&
+        !isToolStartArgs(toolStartEvent.args)
+      ) {
+        toolStartEvent.args = toolStartArgsBeforeHandler;
+      }
     } catch (error) {
       if (turnStartEvent && turnStartInputBeforeHandler) {
         turnStartEvent.input = turnStartInputBeforeHandler;
+      }
+      if (toolStartEvent && toolStartArgsBeforeHandler) {
+        toolStartEvent.args = toolStartArgsBeforeHandler;
       }
       recordExtensionDiagnostic(
         registry,
@@ -1330,9 +1381,9 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   delete registry.ui.statuslineRendererOwner;
 }
 
-export function createExtensionHost(
-  options: CreateExtensionHostOptions,
-): ExtensionHost {
+export function createExtensionEngine(
+  options: CreateExtensionEngineOptions,
+): ExtensionEngine {
   let generation = 0;
   let disposed = false;
   const capabilities = resolveExtensionCapabilities(options.capabilities);
@@ -1388,7 +1439,7 @@ export function createExtensionHost(
           return;
         }
         // Stale handles from a prior generation report through their old
-        // activation callback. Preserve the diagnostic on the current host
+        // activation callback. Preserve the diagnostic on the current engine
         // snapshot without reviving the old registry.
         activeRegistry.diagnostics.push(diagnostic);
         if (diagnostic.phase !== "status.evaluate") {

@@ -1550,6 +1550,17 @@
       }
     },
     {
+      "id": "gemini-3.1-flash-lite",
+      "handle": "google_ai/gemini-3.1-flash-lite",
+      "label": "Gemini 3.1 Flash-Lite",
+      "description": "Google's lightweight Gemini 3.1 Flash-Lite model",
+      "updateArgs": {
+        "context_window": 1048576,
+        "temperature": 1.0,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "gpt-4.1",
       "handle": "openai/gpt-4.1",
       "label": "GPT-4.1",

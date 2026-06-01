@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { commands } from "@/cli/commands/registry";
 import {
   filterProviderConfigs,
   hasConstellationProviderStoreCredentials,
+  isProviderTargetLoading,
   providerApiKeyFromInput,
+  providerSelectionFlow,
   shouldShowProviderStoreTabs,
 } from "@/cli/components/ProviderSelector";
 import {
@@ -168,5 +171,49 @@ describe("ProviderSelector provider filtering", () => {
     expect(filterProviderConfigs(providers, "   ").length).toBe(
       providers.length,
     );
+  });
+});
+
+describe("ProviderSelector connected provider actions", () => {
+  test("opens options for connected OAuth providers before starting OAuth", () => {
+    const codex = getProviderConfigs("api").find(
+      (provider) => provider.id === "codex",
+    );
+    if (!codex) throw new Error("Expected codex provider config");
+
+    expect(providerSelectionFlow(codex)).toBe("oauth");
+    expect(providerSelectionFlow(codex, "provider-1")).toBe("options");
+  });
+
+  test("opens options for connected API-key providers", () => {
+    const openai = getProviderConfigs("api").find(
+      (provider) => provider.id === "openai",
+    );
+    if (!openai) throw new Error("Expected openai provider config");
+
+    expect(providerSelectionFlow(openai)).toBe("input");
+    expect(providerSelectionFlow(openai, "provider-2")).toBe("options");
+  });
+
+  test("removes the legacy slash disconnect command from discovery", () => {
+    expect(commands["/disconnect"]).toBeUndefined();
+  });
+
+  test("does not show loading when switching to a cached provider tab", () => {
+    expect(
+      isProviderTargetLoading({
+        selectedTarget: "api",
+        connectedProvidersByTarget: { api: new Map() },
+        showProviderStoreTabs: true,
+      }),
+    ).toBe(false);
+
+    expect(
+      isProviderTargetLoading({
+        selectedTarget: "api",
+        connectedProvidersByTarget: {},
+        showProviderStoreTabs: true,
+      }),
+    ).toBe(true);
   });
 });
