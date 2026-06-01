@@ -96,7 +96,7 @@ Keep state separate from source code. Do not store secrets in plain JSON; use ex
 
 ## Timers and subscriptions
 
-Timers are okay for active-session behavior, but they only run while the extension host is alive. Always clear them:
+Timers are okay for active-session behavior, but they only run while the extension engine is alive. Always clear them:
 
 ```ts
 const timer = setInterval(update, 30_000);

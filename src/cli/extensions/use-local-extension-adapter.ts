@@ -26,7 +26,7 @@ export interface LocalExtensionAdapter {
   getContext: () => ExtensionContext;
   hadStatuslineRenderer: boolean; // Used to prevent flicker on reload
   hasExtensionSources: boolean;
-  host: ExtensionAdapter["host"];
+  engine: ExtensionAdapter["engine"];
   isLoading: boolean;
   registry: ExtensionAdapterSnapshot["registry"];
   reload: () => Promise<void>;
@@ -104,7 +104,7 @@ export function useLocalExtensionAdapter(
       getContext: adapter.getContext,
       hadStatuslineRenderer: snapshot.hadStatuslineRenderer,
       hasExtensionSources: snapshot.hasExtensionSources,
-      host: adapter.host,
+      engine: adapter.engine,
       isLoading: snapshot.isLoading,
       registry: snapshot.registry,
       reload: adapter.reload,

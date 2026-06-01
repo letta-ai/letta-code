@@ -2,11 +2,11 @@ import { commands as builtinCommands } from "@/cli/commands/registry";
 import type { CreateExtensionAdapterOptions } from "@/extensions/extension-adapter";
 import { createExtensionAdapter as createExtensionAdapterBase } from "@/extensions/extension-adapter";
 import type {
-  CreateExtensionHostOptions,
+  CreateExtensionEngineOptions,
   LoadLocalExtensionsOptions,
-} from "@/extensions/extension-host";
+} from "@/extensions/extension-engine";
 import {
-  createExtensionHost as createExtensionHostBase,
+  createExtensionEngine as createExtensionEngineBase,
   disposeLocalExtensions,
   EXTENSION_CACHE_DIRECTORY,
   emitLocalExtensionEvent,
@@ -14,7 +14,7 @@ import {
   GLOBAL_EXTENSIONS_DIRECTORY,
   loadLocalExtensions as loadLocalExtensionsBase,
   resolveLocalExtensionSources,
-} from "@/extensions/extension-host";
+} from "@/extensions/extension-engine";
 import type { ExtensionCapabilities } from "@/extensions/types";
 import { getAllLettaToolNames, getServerToolName } from "@/tools/manager";
 import { TUI_EXTENSION_CAPABILITIES } from "./capabilities";
@@ -57,8 +57,8 @@ function withDefaultReservations<
   };
 }
 
-export function createExtensionHost(options: CreateExtensionHostOptions) {
-  return createExtensionHostBase(withDefaultReservations(options));
+export function createExtensionEngine(options: CreateExtensionEngineOptions) {
+  return createExtensionEngineBase(withDefaultReservations(options));
 }
 
 export function createExtensionAdapter(options: CreateExtensionAdapterOptions) {
@@ -85,8 +85,8 @@ export type {
   ExtensionAdapterSnapshot,
 } from "@/extensions/extension-adapter";
 export type {
-  CreateExtensionHostOptions,
-  ExtensionHost,
+  CreateExtensionEngineOptions,
+  ExtensionEngine,
   ExtensionStatusValue,
   LettaExtensionApi,
   LettaExtensionDisposer,
@@ -99,5 +99,5 @@ export type {
   LocalExtensionUiRegistry,
   ResolveLocalExtensionSourcesOptions,
   StatuslineRenderFunction,
-} from "@/extensions/extension-host";
+} from "@/extensions/extension-engine";
 export { TUI_EXTENSION_CAPABILITIES } from "./capabilities";

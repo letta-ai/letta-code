@@ -13,12 +13,12 @@ import {
   emptyEventEmissionResult,
 } from "@/extensions/event-emitter";
 import {
-  type CreateExtensionHostOptions,
-  createExtensionHost,
-  type ExtensionHost,
+  type CreateExtensionEngineOptions,
+  createExtensionEngine,
+  type ExtensionEngine,
   type LocalExtensionRegistry,
   resolveLocalExtensionSources,
-} from "@/extensions/extension-host";
+} from "@/extensions/extension-engine";
 import { clearExtensionTools } from "@/extensions/tool-registry";
 import type {
   ExtensionAdapterBackendApi,
@@ -36,11 +36,11 @@ export interface ExtensionAdapterLoadState {
 }
 
 export interface ExtensionAdapterSnapshot extends ExtensionAdapterLoadState {
-  registry: ReturnType<ExtensionHost["getSnapshot"]>;
+  registry: ReturnType<ExtensionEngine["getSnapshot"]>;
 }
 
 export interface CreateExtensionAdapterOptions
-  extends Omit<CreateExtensionHostOptions, "backend" | "getContext"> {
+  extends Omit<CreateExtensionEngineOptions, "backend" | "getContext"> {
   disabled?: boolean;
   getBackendApi?: () => ExtensionAdapterBackendApi | undefined;
   getClient: () => Promise<Letta>;
@@ -70,9 +70,9 @@ function createDisabledExtensionRegistry(): LocalExtensionRegistry {
   };
 }
 
-function createDisabledExtensionHost(
+function createDisabledExtensionEngine(
   registry: LocalExtensionRegistry,
-): ExtensionHost {
+): ExtensionEngine {
   return {
     dispose() {},
     emitEvent(name) {
@@ -98,7 +98,7 @@ function createDisabledExtensionAdapter(
 
   let context = options.initialContext;
   const registry = createDisabledExtensionRegistry();
-  const host = createDisabledExtensionHost(registry);
+  const engine = createDisabledExtensionEngine(registry);
   const snapshot: ExtensionAdapterSnapshot = {
     hadStatuslineRenderer: false,
     hasExtensionSources: false,
@@ -129,7 +129,7 @@ function createDisabledExtensionAdapter(
     getSnapshot() {
       return snapshot;
     },
-    host,
+    engine,
     reload() {
       return Promise.resolve();
     },
@@ -152,7 +152,7 @@ export interface ExtensionAdapter {
   getBackendApi: () => ExtensionAdapterBackendApi | undefined;
   getContext: () => ExtensionContext;
   getSnapshot: () => ExtensionAdapterSnapshot;
-  host: ExtensionHost;
+  engine: ExtensionEngine;
   reload: () => Promise<void>;
   subscribe: (listener: () => void) => () => void;
   updateContext: (context: ExtensionContext) => void;
@@ -212,11 +212,11 @@ export function createExtensionAdapter(
   const {
     getBackendApi: resolveBackendApi,
     initialContext,
-    ...hostOptions
+    ...engineOptions
   } = options;
   let context = initialContext;
   let disposed = false;
-  const initialHasExtensionSources = hasExtensionSources(hostOptions);
+  const initialHasExtensionSources = hasExtensionSources(engineOptions);
   let loadState: ExtensionAdapterLoadState = {
     hadStatuslineRenderer: false,
     hasExtensionSources: initialHasExtensionSources,
@@ -230,15 +230,15 @@ export function createExtensionAdapter(
     ? createLazyAdapterBackendApi(getBackendApi)
     : undefined;
 
-  const host = createExtensionHost({
-    ...hostOptions,
+  const engine = createExtensionEngine({
+    ...engineOptions,
     ...(backend ? { backend } : {}),
     getContext,
   });
 
   const eventEmitter: ExtensionEventEmitter = {
     emitEvent(name, event) {
-      return host.emitEvent(name, event, getBackendApi());
+      return engine.emitEvent(name, event, getBackendApi());
     },
     getSnapshot() {
       return loadState;
@@ -246,7 +246,7 @@ export function createExtensionAdapter(
   };
 
   const buildSnapshot = (): ExtensionAdapterSnapshot => ({
-    registry: host.getSnapshot(),
+    registry: engine.getSnapshot(),
     ...loadState,
   });
   let snapshot = buildSnapshot();
@@ -257,28 +257,28 @@ export function createExtensionAdapter(
       listener();
     }
   };
-  const unsubscribeHost = host.subscribe(publish);
+  const unsubscribeEngine = engine.subscribe(publish);
 
   const getSnapshot = () => snapshot;
 
   const reload = async () => {
     if (disposed) return;
 
-    const previousSnapshot = host.getSnapshot();
+    const previousSnapshot = engine.getSnapshot();
     const previousHadStatuslineRenderer =
       Boolean(previousSnapshot.ui.statuslineRenderer) ||
       loadState.hadStatuslineRenderer;
     loadState = {
       hadStatuslineRenderer: previousHadStatuslineRenderer,
-      hasExtensionSources: hasExtensionSources(hostOptions),
+      hasExtensionSources: hasExtensionSources(engineOptions),
       isLoading: true,
     };
     publish();
 
-    await host.reload();
+    await engine.reload();
     if (disposed) return;
 
-    const nextRegistry = host.getSnapshot();
+    const nextRegistry = engine.getSnapshot();
     debugLog(
       "extensions",
       "loaded %s extension(s) from %s source(s); renderer=%s",
@@ -310,18 +310,18 @@ export function createExtensionAdapter(
     dispose() {
       if (disposed) return;
       disposed = true;
-      host.dispose();
-      unsubscribeHost();
+      engine.dispose();
+      unsubscribeEngine();
       listeners.clear();
     },
     emitEvent(name, event) {
-      return host.emitEvent(name, event, getBackendApi());
+      return engine.emitEvent(name, event, getBackendApi());
     },
     eventEmitter,
     getBackendApi,
     getContext,
     getSnapshot,
-    host,
+    engine,
     reload,
     subscribe(listener) {
       listeners.add(listener);
