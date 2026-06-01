@@ -1,8 +1,12 @@
 const SEP = "\u0000";
 type ShellLaunchOptions = {
   login?: boolean;
+  env?: NodeJS.ProcessEnv;
   powershellEnvAliases?: string[];
 };
+
+export const STRICT_SHELL_ENV_VAR = "LETTA_BASH_STRICT";
+export const STRICT_SHELL_PRELUDE = "set -euo pipefail";
 
 const POWERSHELL_ENV_ALIASES = [
   "MEMORY_DIR",
@@ -17,6 +21,19 @@ const POWERSHELL_ENV_ALIASES = [
 
 function isValidEnvAlias(name: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+export function withStrictShellPrelude(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (process.platform === "win32") return command;
+  if (!isTruthyEnvValue(env[STRICT_SHELL_ENV_VAR])) return command;
+  return `${STRICT_SHELL_PRELUDE}\n${command}`;
 }
 
 function pushUnique(
@@ -168,7 +185,8 @@ export function buildShellLaunchers(
   options?: ShellLaunchOptions,
 ): string[][] {
   const login = options?.login ?? false;
+  const commandToRun = withStrictShellPrelude(command, options?.env);
   return process.platform === "win32"
-    ? windowsLaunchers(command, options?.powershellEnvAliases)
-    : unixLaunchers(command, login);
+    ? windowsLaunchers(commandToRun, options?.powershellEnvAliases)
+    : unixLaunchers(commandToRun, login);
 }
