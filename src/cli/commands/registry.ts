@@ -518,14 +518,6 @@ export const commands: Record<string, Command> = {
   },
 
   // === Session management (order 40-49) ===
-  "/disconnect": {
-    desc: "Disconnect an existing account (/disconnect codex|claude|zai)",
-    order: 41,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Disconnecting...";
-    },
-  },
   "/bg": {
     desc: "Show background shell processes",
     order: 42,

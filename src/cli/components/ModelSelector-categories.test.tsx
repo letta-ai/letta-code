@@ -93,9 +93,18 @@ describe("toSelectorModelForHandle", () => {
     });
   });
 
-  test("keeps non-local handles unchanged", () => {
+  test("uses registry labels for known non-local handles", () => {
     expect(toSelectorModelForHandle("openai/gpt-5.5")).toMatchObject({
-      label: "openai/gpt-5.5",
+      label: "GPT-5.5",
+    });
+  });
+
+  test("uses ChatGPT labels for local ChatGPT OAuth handles", () => {
+    expect(toSelectorModelForHandle("openai-codex/gpt-5.5")).toMatchObject({
+      id: "openai-codex/gpt-5.5",
+      handle: "openai-codex/gpt-5.5",
+      registryHandle: "chatgpt-plus-pro/gpt-5.5",
+      label: "GPT-5.5 (ChatGPT)",
     });
   });
 });

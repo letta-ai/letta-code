@@ -18,7 +18,11 @@ import type {
   ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
 import { emptyLocalUsage } from "@/backend/local/local-message";
-import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
+import {
+  createOrUpdateLocalProvider,
+  LOCAL_CHATGPT_PROVIDER_NAME,
+  setLocalOAuthProvider,
+} from "@/backend/local/local-provider-auth-store";
 
 function assistantMessage(): AssistantMessage {
   return {
@@ -506,5 +510,68 @@ describe("PiStreamAdapter", () => {
     );
     expect(localMessages).toHaveLength(1);
     expect(JSON.stringify(localMessages[0])).toContain("ok");
+  });
+
+  test("maps local ChatGPT priority service tier to pi-ai serviceTier", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-stream-chatgpt-fast-"));
+    try {
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: LOCAL_CHATGPT_PROVIDER_NAME,
+        providerType: "chatgpt_oauth",
+        auth: {
+          type: "oauth",
+          access: "access-token",
+          refresh: "refresh-token",
+          idToken: "id-token",
+          expires: Date.now() + 60_000,
+          accountId: "account-id",
+        },
+      });
+
+      let capturedOptions:
+        | (SimpleStreamOptions & Record<string, unknown>)
+        | undefined;
+      const stream: PiStreamFunction = (
+        _model: Model<string>,
+        _context: Context,
+        options?: SimpleStreamOptions & Record<string, unknown>,
+      ) => {
+        capturedOptions = options;
+        const finalMessage = {
+          ...assistantMessage(),
+          api: "openai-codex-responses",
+          provider: "openai-codex",
+          model: "gpt-5.5",
+        } satisfies AssistantMessage;
+        return streamFromEvents(
+          [{ type: "done", reason: "stop", message: finalMessage }],
+          finalMessage,
+        );
+      };
+
+      const adapter = new PiStreamAdapter({
+        stream,
+        localProviderAuthStorageDir: storageDir,
+      });
+      const baseInput = input();
+      for await (const _event of adapter.stream({
+        ...baseInput,
+        agent: {
+          ...baseInput.agent,
+          model: "openai-codex/gpt-5.5",
+          model_settings: {
+            provider_type: "chatgpt_oauth",
+            service_tier: "priority",
+          },
+        },
+      })) {
+        // drain
+      }
+
+      expect(capturedOptions).toMatchObject({ serviceTier: "priority" });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 });

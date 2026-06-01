@@ -170,26 +170,6 @@ export async function handleConnectionCommand(
     return { submitted: true };
   }
 
-  if (trimmed.startsWith("/disconnect")) {
-    const cmd = commandRunner.start(msg, "Disconnecting...");
-    const { handleDisconnect, setActiveCommandId: setActiveConnectCommandId } =
-      await import("@/cli/commands/connect");
-    setActiveConnectCommandId(cmd.id);
-    try {
-      await handleDisconnect(
-        {
-          buffersRef,
-          refreshDerived,
-          setCommandRunning,
-        },
-        msg,
-      );
-    } finally {
-      setActiveConnectCommandId(null);
-    }
-    return { submitted: true };
-  }
-
   // Special handling for /server command (alias: /remote)
   if (
     trimmed === "/server" ||

@@ -356,6 +356,14 @@ function maxTokensForSettings(
     : undefined;
 }
 
+function serviceTierForSettings(
+  model: Model<string>,
+  modelSettings: Record<string, unknown>,
+): "priority" | undefined {
+  if (model.api !== "openai-codex-responses") return undefined;
+  return modelSettings.service_tier === "priority" ? "priority" : undefined;
+}
+
 function toLocalAssistantMessage(
   message: AssistantMessage,
   input: ProviderTurnInput,
@@ -477,6 +485,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         : {}),
       ...(maxTokensForSettings(input.agent.model_settings)
         ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
+        : {}),
+      ...(serviceTierForSettings(resolved.model, input.agent.model_settings)
+        ? {
+            serviceTier: serviceTierForSettings(
+              resolved.model,
+              input.agent.model_settings,
+            ),
+          }
         : {}),
       ...(boolValue(input.agent.model_settings.parallel_tool_calls) !==
       undefined

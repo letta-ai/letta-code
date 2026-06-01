@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ModelReasoningEffort } from "@/agent/model";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
+import type { ModelSelectorSelection } from "./ModelSelector";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
@@ -11,6 +12,7 @@ const EFFORT_BLOCK = "▌";
 interface ReasoningOption {
   effort: ModelReasoningEffort;
   modelId: string;
+  selection?: ModelSelectorSelection;
 }
 
 interface ModelReasoningSelectorProps {

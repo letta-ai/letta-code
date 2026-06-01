@@ -88,13 +88,15 @@ import {
 } from "@/cli/helpers/paste-registry";
 import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-toggle";
 import {
-  buildAutoReflectionPayload,
+  AUTO_REFLECTION_DESCRIPTION,
+  launchReflectionSubagent,
+} from "@/cli/helpers/reflection-launcher";
+import {
   buildMultiReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionAutoPayload,
   buildReflectionSelectorPrompt,
   buildReflectionSubagentPrompt,
-  finalizeAutoReflectionPayload,
   finalizeMultiReflectionPayload,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
@@ -136,11 +138,9 @@ import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
 import { isInteractiveCommand, isNonStateCommand } from "./command-routing";
-import { AUTO_REFLECTION_DESCRIPTION } from "./constants";
 import { buildTextParts } from "./content-parts";
 import { buildGoalPrompt } from "./goal-loop";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
-import { hasActiveReflectionSubagent } from "./reflection";
 import { saveLastSessionBeforeExit } from "./session";
 import { handleConnectionCommand } from "./submit-connection-commands";
 import { handleDiagnosticsCommand } from "./submit-diagnostics-commands";
@@ -2822,20 +2822,59 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: true };
           }
 
-          const reflectConversationId = conversationIdRef.current ?? "default";
-          if (hasActiveReflectionSubagent(agentId, reflectConversationId)) {
-            cmd.fail(
-              "A reflection agent is already running in the background.",
-            );
-            return { submitted: true };
-          }
-
           try {
             const reflectArgs = parseReflectCommandArgs(trimmed);
-            const reflectionConversationId = conversationIdRef.current;
+            const reflectionConversationId =
+              conversationIdRef.current ?? "default";
 
-            // Fetch the agent's system prompt so the reflection payload includes
-            // the core behavioural instructions (filtered to strip dynamic content).
+            if (reflectArgs.kind === "single") {
+              const result = await launchReflectionSubagent({
+                agentId,
+                conversationId: reflectionConversationId,
+                memfsEnabled: isActiveMemfsEnabled(agentId),
+                triggerSource: "manual",
+                description: AUTO_REFLECTION_DESCRIPTION,
+                completionConversationId: () => conversationIdRef.current,
+                recompileByConversation:
+                  systemPromptRecompileByConversationRef.current,
+                recompileQueuedByConversation:
+                  queuedSystemPromptRecompileByConversationRef.current,
+                onCompletionMessage: (completionMessage) => {
+                  appendTaskNotificationEvents([completionMessage]);
+                },
+              });
+
+              if (!result.launched) {
+                if (result.reason === "already_active") {
+                  cmd.fail(
+                    "A reflection agent is already running in the background.",
+                  );
+                } else if (result.reason === "no_payload") {
+                  cmd.fail("No new transcript content to reflect on.");
+                } else if (result.reason === "memfs_disabled") {
+                  cmd.fail(
+                    "Memory filesystem is not enabled. Use /remember instead.",
+                  );
+                } else {
+                  const errorDetails = formatErrorDetails(
+                    result.error ?? "Unknown error",
+                    agentId,
+                  );
+                  cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+                }
+                return { submitted: true };
+              }
+
+              cmd.finish(
+                `Reflecting on the recent conversation. View the transcript here: ${result.payloadPath}`,
+                true,
+              );
+              return { submitted: true };
+            }
+
+            // Fetch the agent's system prompt so multi-transcript reflection
+            // payloads include the core behavioural instructions (filtered to
+            // strip dynamic content).
             let systemPrompt: string | undefined;
             try {
               const agent = await getBackend().retrieveAgent(agentId);
@@ -2843,27 +2882,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             } catch {
               // Non-fatal — the reflection payload will just omit the system prompt.
             }
-
-            const reflectionPayload =
-              reflectArgs.kind === "single"
-                ? await buildAutoReflectionPayload(
-                    agentId,
-                    reflectionConversationId,
-                    systemPrompt,
-                  )
-                : reflectArgs.kind === "auto"
-                  ? null
-                  : await buildMultiReflectionPayload({
-                      agentId,
-                      selectionPolicy:
-                        reflectArgs.kind === "recent"
-                          ? { mode: "recent", limit: reflectArgs.limit }
-                          : {
-                              mode: "explicit-conversations",
-                              conversationIds: reflectArgs.conversationIds,
-                            },
-                      systemPrompt,
-                    });
 
             if (reflectArgs.kind === "auto") {
               const autoPayload = await buildReflectionAutoPayload({
@@ -3016,11 +3034,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: true };
             }
 
+            const reflectionPayload = await buildMultiReflectionPayload({
+              agentId,
+              selectionPolicy:
+                reflectArgs.kind === "recent"
+                  ? { mode: "recent", limit: reflectArgs.limit }
+                  : {
+                      mode: "explicit-conversations",
+                      conversationIds: reflectArgs.conversationIds,
+                    },
+              systemPrompt,
+            });
+
             if (!reflectionPayload) {
               cmd.fail(
-                reflectArgs.kind === "single"
-                  ? "No new transcript content to reflect on."
-                  : "No transcript content found for the selected conversations.",
+                "No transcript content found for the selected conversations.",
               );
               return { submitted: true };
             }
@@ -3056,21 +3084,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   conversationId: reflectionConversationId,
                   error,
                 });
-                if ("manifest" in reflectionPayload) {
-                  await finalizeMultiReflectionPayload(
-                    agentId,
-                    reflectionPayload.manifest,
-                    success,
-                  );
-                } else {
-                  await finalizeAutoReflectionPayload(
-                    agentId,
-                    reflectionConversationId,
-                    reflectionPayload.payloadPath,
-                    reflectionPayload.endSnapshotLine,
-                    success,
-                  );
-                }
+                await finalizeMultiReflectionPayload(
+                  agentId,
+                  reflectionPayload.manifest,
+                  success,
+                );
 
                 const msg = await handleMemorySubagentCompletion(
                   {
@@ -3103,12 +3121,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               endMessageId: reflectionPayload.endMessageId,
             });
 
-            const reflectedDescription =
-              "manifest" in reflectionPayload
-                ? `${reflectionPayload.manifest.transcripts.length} transcript(s)`
-                : "the recent conversation";
             cmd.finish(
-              `Reflecting on ${reflectedDescription}. View the payload here: ${reflectionPayload.payloadPath}`,
+              `Reflecting on ${reflectionPayload.manifest.transcripts.length} transcript(s). View the payload here: ${reflectionPayload.payloadPath}`,
               true,
             );
           } catch (error) {
@@ -3669,127 +3683,23 @@ ${SYSTEM_REMINDER_CLOSE}
       const maybeLaunchReflectionSubagent = async (
         triggerSource: "step-count" | "compaction-event",
       ) => {
-        if (!memfsEnabledForAgent) {
-          return false;
-        }
-        const autoReflectConversationId =
-          conversationIdRef.current ?? "default";
-        if (hasActiveReflectionSubagent(agentId, autoReflectConversationId)) {
-          debugLog(
-            "memory",
-            `Skipping auto reflection launch (${triggerSource}) because one is already active`,
-          );
-          return false;
-        }
-        try {
-          const reflectionConversationId = conversationIdRef.current;
-
-          // Fetch the agent's system prompt so the reflection payload includes
-          // the core behavioural instructions (filtered to strip dynamic content).
-          let systemPrompt: string | undefined;
-          try {
-            const agent = await getBackend().retrieveAgent(agentId);
-            systemPrompt = agent.system ?? undefined;
-          } catch {
-            // Non-fatal — the reflection payload will just omit the system prompt.
-          }
-
-          const autoPayload = await buildAutoReflectionPayload(
-            agentId,
-            reflectionConversationId,
-            systemPrompt,
-          );
-          if (!autoPayload) {
-            debugLog(
-              "memory",
-              `Skipping auto reflection launch (${triggerSource}) because transcript has no new content`,
-            );
-            return false;
-          }
-
-          const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-          const parentMemory = await buildParentMemorySnapshot(memoryDir);
-          const reflectionPrompt = buildReflectionSubagentPrompt({
-            memoryDir,
-            parentMemory,
-          });
-
-          const {
-            spawnBackgroundSubagentTask,
-            waitForBackgroundSubagentAgentId,
-          } = await import("@/tools/impl/task");
-          const { subagentId } = spawnBackgroundSubagentTask({
-            subagentType: "reflection",
-            prompt: reflectionPrompt,
-            description: AUTO_REFLECTION_DESCRIPTION,
-            silentCompletion: true,
-            transcriptPath: autoPayload.payloadPath,
-            parentScope: {
-              agentId,
-              conversationId: reflectionConversationId,
-            },
-            onComplete: async ({
-              success,
-              error,
-              agentId: reflectionAgentId,
-            }) => {
-              telemetry.trackReflectionEnd(triggerSource, success, {
-                subagentId: reflectionAgentId ?? undefined,
-                conversationId: reflectionConversationId,
-                error,
-              });
-              await finalizeAutoReflectionPayload(
-                agentId,
-                reflectionConversationId,
-                autoPayload.payloadPath,
-                autoPayload.endSnapshotLine,
-                success,
-              );
-
-              const msg = await handleMemorySubagentCompletion(
-                {
-                  agentId,
-                  conversationId: conversationIdRef.current,
-                  subagentType: "reflection",
-                  success,
-                  error,
-                },
-                {
-                  recompileByConversation:
-                    systemPromptRecompileByConversationRef.current,
-                  recompileQueuedByConversation:
-                    queuedSystemPromptRecompileByConversationRef.current,
-                  logRecompileFailure: (message) =>
-                    debugWarn("memory", message),
-                },
-              );
-              appendTaskNotificationEvents([msg]);
-            },
-          });
-          const reflectionAgentId = await waitForBackgroundSubagentAgentId(
-            subagentId,
-            1000,
-          );
-          telemetry.trackReflectionStart(triggerSource, {
-            subagentId: reflectionAgentId ?? undefined,
-            conversationId: reflectionConversationId,
-            startMessageId: autoPayload.startMessageId,
-            endMessageId: autoPayload.endMessageId,
-          });
-          debugLog(
-            "memory",
-            `Auto-launched reflection subagent (${triggerSource})`,
-          );
-          return true;
-        } catch (error) {
-          debugWarn(
-            "memory",
-            `Failed to auto-launch reflection subagent (${triggerSource}): ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          return false;
-        }
+        const reflectionConversationId = conversationIdRef.current ?? "default";
+        const result = await launchReflectionSubagent({
+          agentId,
+          conversationId: reflectionConversationId,
+          memfsEnabled: memfsEnabledForAgent,
+          triggerSource,
+          description: AUTO_REFLECTION_DESCRIPTION,
+          completionConversationId: () => conversationIdRef.current,
+          recompileByConversation:
+            systemPromptRecompileByConversationRef.current,
+          recompileQueuedByConversation:
+            queuedSystemPromptRecompileByConversationRef.current,
+          onCompletionMessage: (completionMessage) => {
+            appendTaskNotificationEvents([completionMessage]);
+          },
+        });
+        return result.launched;
       };
       syncReminderStateFromContextTracker(
         sharedReminderStateRef.current,

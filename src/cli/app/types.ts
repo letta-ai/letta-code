@@ -13,6 +13,7 @@ import type {
 import type { AgentProvenance } from "@/agent/create";
 import type { PersonalityId } from "@/agent/personality";
 import type { CommandHandle, createCommandRunner } from "@/cli/commands/runner";
+import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import type { Line } from "@/cli/helpers/accumulator";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -44,9 +45,11 @@ export type AppProps = {
   agentProvenance?: AgentProvenance | null;
   startupHasCloudCredentials?: boolean;
   startupHasAvailableLocalModels?: boolean;
+  fileAutocompleteFdPath?: string | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   systemInfoReminderEnabled?: boolean;
+  extensionsDisabled?: boolean;
   /** Callback to soft-restart the TUI (re-runs startup path, remounts App). */
   onReload?: (agentId: string, conversationId: string) => Promise<void>;
 };
@@ -87,7 +90,12 @@ export type QueuedOverlayAction =
       commandId?: string;
       backendMode?: "local" | "api";
     }
-  | { type: "switch_model"; modelId: string; commandId?: string }
+  | {
+      type: "switch_model";
+      modelId: string;
+      modelSelection?: ModelSelectorSelection;
+      commandId?: string;
+    }
   | {
       type: "set_experiment";
       experimentId: ExperimentId;

@@ -541,6 +541,7 @@ export const __listenClientTestUtils = {
         runtime: ListenerRuntime,
         scope: { agent_id: string; conversation_id: string },
       ) => void;
+      forceDeviceStatus?: boolean;
     },
   ) =>
     replaySyncStateForRuntime(runtime, socket, scope, {

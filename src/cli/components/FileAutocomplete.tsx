@@ -1,225 +1,122 @@
 import { useEffect, useRef, useState } from "react";
-import { searchFiles } from "@/cli/helpers/file-search";
+import {
+  applyPiFileCompletion,
+  type FileAutocompleteItem,
+  FileAutocompleteProvider,
+  type FileAutocompleteSuggestions,
+} from "@/cli/helpers/file-autocomplete";
 import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
-import { addEntriesToCache } from "@/utils/file-index";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { colors } from "./colors";
 import { Text } from "./Text";
-import type { AutocompleteProps, FileMatch } from "./types/autocomplete";
 
-// Extract the text after the "@" symbol where the cursor is positioned
-function extractSearchQuery(
-  input: string,
-  cursor: number,
-): { query: string; hasSpaceAfter: boolean; atIndex: number } | null {
-  // Find all @ positions
-  const atPositions: number[] = [];
-  for (let i = 0; i < input.length; i++) {
-    if (input[i] === "@") {
-      // Only count @ at start or after space
-      if (i === 0 || input[i - 1] === " ") {
-        atPositions.push(i);
-      }
-    }
-  }
+interface FileAutocompleteProps {
+  currentInput: string;
+  cursorPosition: number;
+  fdPath?: string | null;
+  workingDirectory?: string;
+  onApplyCompletion: (value: string, cursorPosition: number) => void;
+  onActiveChange?: (isActive: boolean) => void;
+}
 
-  if (atPositions.length === 0) return null;
-
-  // Find which @ the cursor is in
-  let atIndex = -1;
-  for (const pos of atPositions) {
-    // Find the end of this @reference (next space or end of string)
-    const afterAt = input.slice(pos + 1);
-    const spaceIndex = afterAt.indexOf(" ");
-    const endPos = spaceIndex === -1 ? input.length : pos + 1 + spaceIndex;
-
-    // Check if cursor is within this @reference
-    if (cursor >= pos && cursor <= endPos) {
-      atIndex = pos;
-      break;
-    }
-  }
-
-  // If cursor is not in any @reference, don't show autocomplete
-  if (atIndex === -1) return null;
-
-  // Get text after "@" until next space or end
-  const afterAt = input.slice(atIndex + 1);
-  const spaceIndex = afterAt.indexOf(" ");
-  const query = spaceIndex === -1 ? afterAt : afterAt.slice(0, spaceIndex);
-  const hasSpaceAfter = spaceIndex !== -1;
-
-  return { query, hasSpaceAfter, atIndex };
+function isDirectoryItem(item: FileAutocompleteItem): boolean {
+  return item.label.endsWith("/");
 }
 
 export function FileAutocomplete({
   currentInput,
-  cursorPosition = currentInput.length,
-  onSelect,
+  cursorPosition,
+  fdPath,
+  workingDirectory,
+  onApplyCompletion,
   onActiveChange,
-}: AutocompleteProps) {
-  const [matches, setMatches] = useState<FileMatch[]>([]);
+}: FileAutocompleteProps) {
+  const [suggestions, setSuggestions] =
+    useState<FileAutocompleteSuggestions | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [lastValidQuery, setLastValidQuery] = useState<string>("");
-  const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
-  // Incremented every time a new search is initiated. Async callbacks capture
-  // the generation at the time they were started and bail out if it has since
-  // changed, so stale in-flight results never clobber a newer search.
   const searchGenRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const matches = suggestions?.items ?? [];
 
-  const lastValidQueryRef = useRef(lastValidQuery);
-  lastValidQueryRef.current = lastValidQuery;
-  const matchesRef = useRef(matches);
-  matchesRef.current = matches;
+  const applyItem = (item: FileAutocompleteItem) => {
+    if (!suggestions) return;
+    const result = applyPiFileCompletion(
+      currentInput,
+      cursorPosition,
+      item,
+      suggestions.prefix,
+    );
+    onApplyCompletion(result.value, result.cursorPosition);
+  };
 
-  // Use shared navigation hook (with manual active state management due to async loading)
   const { selectedIndex } = useAutocompleteNavigation({
     matches,
     maxVisible: 10,
-    onSelect: onSelect
-      ? (item) => {
-          // Index only the selected item, not all search results
-          if (item.type === "file" || item.type === "dir") {
-            addEntriesToCache([{ path: item.path, type: item.type }]);
-          }
-          onSelect(item.path);
-        }
-      : undefined,
-    manageActiveState: false, // We manage active state manually due to async loading
+    onSelect: applyItem,
+    onAutocomplete: applyItem,
+    manageActiveState: false,
   });
 
   useEffect(() => {
-    // Clear any existing debounce timeout
-    if (debounceTimeout.current) {
-      clearTimeout(debounceTimeout.current);
-    }
-
-    const result = extractSearchQuery(currentInput, cursorPosition);
-
-    if (!result) {
-      setMatches([]);
+    if (!currentInput.includes("@")) {
+      abortControllerRef.current?.abort();
+      setSuggestions(null);
       setIsLoading(false);
-      onActiveChange?.(false);
       return;
     }
 
-    const { query, hasSpaceAfter } = result;
+    abortControllerRef.current?.abort();
+    const gen = ++searchGenRef.current;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setIsLoading(true);
+    onActiveChange?.(true);
 
-    // If there's text after the space, user has moved on - hide autocomplete
-    // But keep it open if there's just a trailing space (allows editing the path)
-    if (hasSpaceAfter && query.length > 0) {
-      const atIndex = currentInput.lastIndexOf("@");
-      const afterSpace = currentInput.slice(atIndex + 1 + query.length + 1);
-
-      // Always hide if there's more non-whitespace content after, or another @
-      if (afterSpace.trim().length > 0 || afterSpace.includes("@")) {
-        setMatches([]);
+    async function search() {
+      if (!fdPath) {
+        setSuggestions(null);
         setIsLoading(false);
         onActiveChange?.(false);
         return;
       }
 
-      // Just a trailing space - check if this query had valid matches when selected
-      // Use lastValidQueryRef to remember what was successfully selected
-      if (
-        query === lastValidQueryRef.current &&
-        lastValidQueryRef.current.length > 0
-      ) {
-        // Show the selected file (non-interactive)
-        if (matchesRef.current[0]?.path !== query) {
-          setMatches([{ path: query, type: "file" }]);
-        }
-        setIsLoading(false);
-        onActiveChange?.(false); // Don't block Enter key
-        return;
-      }
+      const provider = new FileAutocompleteProvider(
+        workingDirectory ?? process.cwd(),
+        fdPath,
+      );
+      const nextSuggestions = await provider.getSuggestions(
+        currentInput,
+        cursorPosition,
+        {
+          signal: controller.signal,
+        },
+      );
 
-      // No valid selection was made, hide
-      setMatches([]);
+      if (searchGenRef.current !== gen || controller.signal.aborted) return;
+
+      setSuggestions(nextSuggestions);
+      setIsLoading(false);
+      onActiveChange?.((nextSuggestions?.items.length ?? 0) > 0);
+    }
+
+    search().catch(() => {
+      if (searchGenRef.current !== gen) return;
+      setSuggestions(null);
       setIsLoading(false);
       onActiveChange?.(false);
-      return;
-    }
+    });
 
-    // Stamp a generation for every new search so stale async callbacks can
-    // detect they've been superseded and discard their results.
-    const gen = ++searchGenRef.current;
-
-    // If query is empty (just typed "@"), show current directory contents (no debounce)
-    if (query.length === 0) {
-      setIsLoading(true);
-      onActiveChange?.(true);
-      searchFiles("", false) // Don't do deep search for empty query
-        .then((results) => {
-          if (searchGenRef.current !== gen) return; // superseded by a newer search
-          setMatches(results);
-          setIsLoading(false);
-          onActiveChange?.(results.length > 0);
-        })
-        .catch(() => {
-          if (searchGenRef.current !== gen) return;
-          setMatches([]);
-          setIsLoading(false);
-          onActiveChange?.(false);
-        });
-      return;
-    }
-
-    // Check if it's a URL pattern (no debounce)
-    if (query.startsWith("http://") || query.startsWith("https://")) {
-      setMatches([{ path: query, type: "url" }]);
-      setIsLoading(false);
-      onActiveChange?.(true);
-      return;
-    }
-
-    // Debounce the file search (300ms delay)
-    // Keep existing matches visible while debouncing
-    setIsLoading(true);
-    onActiveChange?.(true);
-
-    debounceTimeout.current = setTimeout(() => {
-      // Search for matching files (deep search through subdirectories)
-      searchFiles(query, true) // Enable deep search
-        .then((results) => {
-          if (searchGenRef.current !== gen) return; // superseded by a newer search
-          setMatches(results);
-          setIsLoading(false);
-          onActiveChange?.(results.length > 0);
-          // Remember this query had valid matches
-          if (results.length > 0) {
-            setLastValidQuery(query);
-          }
-        })
-        .catch(() => {
-          if (searchGenRef.current !== gen) return;
-          setMatches([]);
-          setIsLoading(false);
-          onActiveChange?.(false);
-        });
-    }, 300);
-
-    // Cleanup function to clear timeout on unmount
     return () => {
-      if (debounceTimeout.current) {
-        clearTimeout(debounceTimeout.current);
-      }
+      controller.abort();
     };
-  }, [currentInput, cursorPosition, onActiveChange]);
+  }, [currentInput, cursorPosition, fdPath, onActiveChange, workingDirectory]);
 
-  // Don't show if no "@" in input
-  if (!currentInput.includes("@")) {
-    return null;
-  }
-
-  // Don't show if no matches and not loading
-  if (matches.length === 0 && !isLoading) {
-    return null;
-  }
+  if (!currentInput.includes("@")) return null;
+  if (matches.length === 0 && !isLoading) return null;
 
   const header = (
     <>
-      File/URL autocomplete (↑↓ navigate, Tab/Enter select):
+      File autocomplete (↑↓ navigate, Tab/Enter select):
       {isLoading && " Searching..."}
     </>
   );
@@ -229,17 +126,23 @@ export function FileAutocomplete({
       {matches.length > 0 ? (
         <>
           {matches.slice(0, 10).map((item, idx) => (
-            <AutocompleteItem key={item.path} selected={idx === selectedIndex}>
+            <AutocompleteItem
+              key={`${item.value}:${item.description ?? ""}`}
+              selected={idx === selectedIndex}
+            >
               <Text
                 color={
-                  idx !== selectedIndex && item.type === "dir"
+                  idx !== selectedIndex && isDirectoryItem(item)
                     ? colors.status.processing
                     : undefined
                 }
               >
-                {item.type === "dir" ? "📁" : item.type === "url" ? "🔗" : "📄"}
+                {isDirectoryItem(item) ? "📁" : "📄"}
               </Text>{" "}
-              {item.path}
+              {item.label}
+              {item.description && item.description !== item.label && (
+                <Text dimColor> {item.description}</Text>
+              )}
             </AutocompleteItem>
           ))}
           {matches.length > 10 && (

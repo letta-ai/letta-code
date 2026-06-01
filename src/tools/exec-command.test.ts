@@ -97,6 +97,34 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(second.output).toContain("Output:\ndone");
   });
 
+  test("empty write_stdin polls abort promptly", async () => {
+    const first = await exec_command({
+      cmd: "sleep 2",
+      yield_time_ms: 250,
+    });
+
+    const match = first.output.match(/Process running with session ID (\d+)/);
+    expect(match?.[1]).toBeDefined();
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 50);
+    const startedAt = Date.now();
+    try {
+      await expect(
+        write_stdin({
+          session_id: Number(match?.[1]),
+          chars: "",
+          yield_time_ms: 30_000,
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow("The operation was aborted");
+    } finally {
+      clearTimeout(timer);
+    }
+
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+  });
+
   test("write_stdin sends input to tty-enabled sessions", async () => {
     const first = await exec_command({
       cmd: "cat",

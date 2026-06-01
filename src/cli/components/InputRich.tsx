@@ -912,6 +912,7 @@ export function Input({
   isLocalBackend = false,
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
+  fileAutocompleteFdPath,
   messageQueue,
   onQueueEdit,
   onEscapeCancel,
@@ -964,6 +965,7 @@ export function Input({
   isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
+  fileAutocompleteFdPath?: string | null;
   messageQueue?: QueuedMessage[];
   onQueueEdit?: () => string;
   onEscapeCancel?: () => void;
@@ -1706,36 +1708,12 @@ export function Input({
     onSubmit,
   ]);
 
-  // Handle file selection from autocomplete
-  const handleFileSelect = useCallback(
-    (selectedPath: string) => {
-      // Find the last "@" and replace everything after it with the selected path
-      const atIndex = value.lastIndexOf("@");
-      if (atIndex === -1) return;
-
-      const beforeAt = value.slice(0, atIndex);
-      const afterAt = value.slice(atIndex + 1);
-      const spaceIndex = afterAt.indexOf(" ");
-
-      let newValue: string;
-      let newCursorPos: number;
-
-      // Replace the query part with the selected path
-      if (spaceIndex === -1) {
-        // No space after @query, replace to end
-        newValue = `${beforeAt}@${selectedPath} `;
-        newCursorPos = newValue.length;
-      } else {
-        // Space exists, replace only the query part
-        const afterQuery = afterAt.slice(spaceIndex);
-        newValue = `${beforeAt}@${selectedPath}${afterQuery}`;
-        newCursorPos = beforeAt.length + selectedPath.length + 1; // After the path
-      }
-
-      setValue(newValue);
-      setCursorPos(newCursorPos);
+  const handleFileAutocompleteApply = useCallback(
+    (nextValue: string, nextCursorPosition: number) => {
+      setValue(nextValue);
+      setCursorPos(nextCursorPosition);
     },
-    [value],
+    [],
   );
 
   // Handle slash command selection from autocomplete (Enter key - execute)
@@ -2022,7 +2000,8 @@ export function Input({
               <InputAssist
                 currentInput={value}
                 cursorPosition={currentCursorPosition}
-                onFileSelect={handleFileSelect}
+                fdPath={fileAutocompleteFdPath}
+                onFileAutocompleteApply={handleFileAutocompleteApply}
                 onCommandSelect={handleCommandSelect}
                 onCommandAutocomplete={handleCommandAutocomplete}
                 onAutocompleteActiveChange={setIsAutocompleteActive}
@@ -2084,7 +2063,7 @@ export function Input({
     handleBackspaceAtEmpty,
     onPasteError,
     currentCursorPosition,
-    handleFileSelect,
+    handleFileAutocompleteApply,
     handleCommandSelect,
     handleCommandAutocomplete,
     agentId,
@@ -2100,6 +2079,7 @@ export function Input({
     goalLoopActive,
     currentModel,
     currentReasoningEffort,
+    fileAutocompleteFdPath,
     currentModelProvider,
     hasTemporaryModelOverride,
     hideFooter,

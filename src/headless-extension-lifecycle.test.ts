@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Backend } from "@/backend";
+import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
 import {
   clearExtensionTools,
   getExtensionToolDefinition,
@@ -197,6 +198,74 @@ describe("headless extension runtime", () => {
       runtime.dispose();
       expect(getExtensionToolDefinition(toolName)).toBeUndefined();
     } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("disabled headless runtime skips extension loading", async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "letta-headless-ext-disabled-"),
+    );
+    const originalDisableEnv = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+    const extensionDir = path.join(root, "global-extensions");
+    const toolName = "disabled_headless_tool";
+    const agent = {
+      id: "agent-1",
+      name: "Amelia",
+      llm_config: { model: "anthropic/claude-sonnet-4" },
+    } as AgentState;
+    const backend = {
+      forkConversation: async () => ({ id: "forked" }),
+      sendMessageStream: async () => (async function* () {})(),
+    } as unknown as Backend;
+
+    try {
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "headless-tool.ts"),
+        `export default function activate(letta) {
+          letta.tools.register({
+            name: "${toolName}",
+            description: "Should not load",
+            parameters: { type: "object", properties: {} },
+            run() { return "loaded"; },
+          });
+          letta.commands.register({
+            id: "hidden_disabled_command",
+            description: "Should not load",
+            run() { return { type: "handled" }; },
+          });
+          letta.ui.setStatuslineRenderer(() => "hidden");
+        }`,
+      );
+
+      const runtime = createHeadlessExtensionRuntime({
+        agent,
+        backend,
+        cacheDirectory: path.join(root, "extension-cache"),
+        conversationId: "default",
+        disabled: true,
+        globalExtensionsDirectory: extensionDir,
+      });
+
+      await runtime.reload();
+      const snapshot = runtime.getSnapshot();
+
+      expect(snapshot.hasExtensionSources).toBe(false);
+      expect(snapshot.registry.loadedPaths).toEqual([]);
+      expect(snapshot.registry.commands).toEqual({});
+      expect(snapshot.registry.tools).toEqual({});
+      expect(snapshot.registry.ui.statuslineRenderer).toBeNull();
+      expect(getExtensionToolDefinition(toolName)).toBeUndefined();
+      expect(process.env[LETTA_DISABLE_EXTENSIONS_ENV]).toBe("1");
+
+      runtime.dispose();
+    } finally {
+      if (originalDisableEnv === undefined) {
+        delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+      } else {
+        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = originalDisableEnv;
+      }
       rmSync(root, { force: true, recursive: true });
     }
   });

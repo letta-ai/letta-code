@@ -33,12 +33,6 @@ import {
 import { LIMITS } from "@/tools/impl/truncation";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
-  ensureFileIndex,
-  getIndexRoot,
-  searchFileIndex,
-  setIndexRoot,
-} from "@/utils/file-index";
-import {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,
   parseServerMessage,
@@ -409,6 +403,7 @@ describe("listen-client parseServerMessage", () => {
           type: "sync",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
           recover_approvals: false,
+          force_device_status: true,
         }),
       ),
     );
@@ -417,6 +412,7 @@ describe("listen-client parseServerMessage", () => {
       throw new Error("expected sync command");
     }
     expect(sync.recover_approvals).toBe(false);
+    expect(sync.force_device_status).toBe(true);
   });
 
   test("parses cron CRUD commands", () => {
@@ -3351,6 +3347,54 @@ describe("listen-client v2 status builders", () => {
     ]);
   });
 
+  test("sync can force update_device_status even when cached", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+    const scope = { agent_id: "agent-1", conversation_id: "default" };
+
+    __listenClientTestUtils.emitStateSync(
+      socket as unknown as WebSocket,
+      runtime,
+      scope,
+    );
+    socket.sentPayloads = [];
+
+    __listenClientTestUtils.emitStateSync(
+      socket as unknown as WebSocket,
+      runtime,
+      scope,
+    );
+    expect(
+      socket.sentPayloads
+        .map((payload) => JSON.parse(payload as string))
+        .map((message) => message.type),
+    ).toEqual(["update_loop_status", "update_queue", "update_subagent_state"]);
+
+    socket.sentPayloads = [];
+    __listenClientTestUtils.emitStateSync(
+      socket as unknown as WebSocket,
+      runtime,
+      scope,
+      { forceDeviceStatus: true },
+    );
+
+    expect(
+      socket.sentPayloads
+        .map((payload) => JSON.parse(payload as string))
+        .map((message) => message.type),
+    ).toEqual([
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
+  });
+
   test("sync replay soft-fails approval recovery errors without emitting loop_error rows", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.getOrCreateScopedRuntime(
@@ -3852,75 +3896,6 @@ describe("listen-client cwd change handling", () => {
       );
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("proactively warms the file index after cwd change so @ search is instant", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const projectRoot = await mkdtemp(
-      join(os.tmpdir(), "letta-listen-cwd-idx-"),
-    );
-    const projectDir = join(projectRoot, "my-project");
-    await mkdir(join(projectDir, "src"), { recursive: true });
-    await writeFile(join(projectDir, "README.md"), "# Hello");
-    await writeFile(join(projectDir, "src/index.ts"), "export {}");
-
-    // Create a separate unrelated temp dir as the initial index root so the
-    // project dir is definitely *outside* it, which triggers setIndexRoot().
-    // (If the new CWD is a child of the current root, handleCwdChange skips
-    // re-rooting — that's correct behavior but defeats the test.)
-    const unrelatedRoot = await mkdtemp(
-      join(os.tmpdir(), "letta-listen-old-root-"),
-    );
-    const originalRoot = getIndexRoot();
-
-    try {
-      const normalizedProjectDir = await realpath(projectDir);
-      setIndexRoot(unrelatedRoot);
-
-      __listenClientTestUtils.setConversationWorkingDirectory(
-        runtime,
-        "agent-1",
-        "conv-1",
-        unrelatedRoot,
-      );
-      runtime.activeAgentId = "agent-1";
-      runtime.activeConversationId = "conv-1";
-      runtime.activeWorkingDirectory = unrelatedRoot;
-
-      await __listenClientTestUtils.handleCwdChange(
-        {
-          agentId: "agent-1",
-          conversationId: "conv-1",
-          cwd: normalizedProjectDir,
-        },
-        socket as unknown as WebSocket,
-        runtime,
-      );
-
-      // The index root should now point at the new cwd.
-      expect(getIndexRoot()).toBe(normalizedProjectDir);
-
-      // handleCwdChange fires `void ensureFileIndex()` — await it so the
-      // in-flight build completes before we query.
-      await ensureFileIndex();
-
-      // Verify the index is warm and contains files from the new cwd.
-      const results = searchFileIndex({
-        searchDir: "",
-        pattern: "",
-        deep: true,
-        maxResults: 50,
-      });
-
-      const paths = results.map((r) => r.path);
-      expect(paths).toContain("README.md");
-      expect(paths).toContain(join("src", "index.ts"));
-    } finally {
-      setIndexRoot(originalRoot);
-      await rm(projectRoot, { recursive: true, force: true });
-      await rm(unrelatedRoot, { recursive: true, force: true });
     }
   });
 });

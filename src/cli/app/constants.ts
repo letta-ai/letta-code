@@ -82,5 +82,3 @@ export const MIN_WRAP_WIDTH = 10;
 export const TEXT_WRAP_GUTTER = 6;
 export const DIFF_WRAP_GUTTER = 12;
 export const SHELL_PREVIEW_MAX_LINES = 3;
-
-export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
