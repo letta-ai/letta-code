@@ -1292,6 +1292,35 @@ function scoreAutoCandidate(candidate: ReflectionAutoCandidate): number {
   );
 }
 
+function hasSearchHit(candidate: ReflectionAutoCandidate): boolean {
+  return candidate.search_scores.length > 0;
+}
+
+function hasSummary(candidate: ReflectionAutoCandidate): boolean {
+  return Boolean(candidate.summary?.trim());
+}
+
+function shouldKeepAutoCandidate(candidate: ReflectionAutoCandidate): boolean {
+  if (candidate.is_current_conversation) {
+    return candidate.has_unreflected_content || hasSearchHit(candidate);
+  }
+
+  if (!candidate.has_unreflected_content && !hasSearchHit(candidate)) {
+    return false;
+  }
+
+  if (
+    candidate.turns_since_last_successful_reflection <= 1 &&
+    candidate.total_completed_turns < 3 &&
+    !hasSearchHit(candidate) &&
+    !hasSummary(candidate)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 export async function buildReflectionAutoPayload(options: {
   agentId: string;
   currentConversationId?: string;
@@ -1434,6 +1463,7 @@ export async function buildReflectionAutoPayload(options: {
   }
 
   const sortedCandidates = Array.from(candidates.values())
+    .filter(shouldKeepAutoCandidate)
     .map((candidate) => ({
       ...candidate,
       sources: [...candidate.sources].sort(),
