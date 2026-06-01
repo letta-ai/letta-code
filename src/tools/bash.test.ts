@@ -5,13 +5,17 @@ import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { bash } from "@/tools/impl/bash";
 
-async function runBashInTemp(command: string) {
+async function runBashInTemp(
+  command: string,
+  args: Partial<Parameters<typeof bash>[0]> = {},
+) {
   const dir = await mkdtemp(path.join(tmpdir(), "letta-bash-worktree-test-"));
   try {
     return await runWithRuntimeContext({ workingDirectory: dir }, () =>
       bash({
         command,
         description: "Test worktree path handling",
+        ...args,
       }),
     );
   } finally {
@@ -53,30 +57,24 @@ describe("Bash tool", () => {
   test("strict mode fails fast on intermediate shell errors", async () => {
     if (process.platform === "win32") return;
 
-    const previous = process.env.LETTA_BASH_STRICT;
-    process.env.LETTA_BASH_STRICT = "1";
-    try {
-      const result = await runBashInTemp(
-        [
-          "cat > missing-dir/SKILL.md <<'EOF'",
-          "contents",
-          "EOF",
-          "echo 'SKILL.md written successfully'",
-        ].join("\n"),
-      );
+    const result = await runBashInTemp(
+      [
+        "cat > missing-dir/SKILL.md <<'EOF'",
+        "contents",
+        "EOF",
+        "echo 'SKILL.md written successfully'",
+      ].join("\n"),
+      {
+        description: "Test strict mode",
+        secretEnv: { LETTA_BASH_STRICT: "1" },
+      },
+    );
 
-      expect(result.status).toBe("error");
-      expect(result.content[0]?.text).toContain("missing-dir/SKILL.md");
-      expect(result.content[0]?.text).not.toContain(
-        "SKILL.md written successfully",
-      );
-    } finally {
-      if (previous === undefined) {
-        delete process.env.LETTA_BASH_STRICT;
-      } else {
-        process.env.LETTA_BASH_STRICT = previous;
-      }
-    }
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("missing-dir/SKILL.md");
+    expect(result.content[0]?.text).not.toContain(
+      "SKILL.md written successfully",
+    );
   });
 
   test("times out long-running command", async () => {

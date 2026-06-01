@@ -13,29 +13,16 @@ import {
   unrefTimer,
 } from "./process_manager.js";
 import { getShellEnv } from "./shell-env.js";
-import { buildShellLaunchers } from "./shell-launchers.js";
+import {
+  buildShellLaunchers,
+  withStrictShellPrelude,
+} from "./shell-launchers.js";
 import { spawnWithLauncher } from "./shell-runner.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
-
-const STRICT_BASH_ENV_VAR = "LETTA_BASH_STRICT";
-const STRICT_BASH_PRELUDE = "set -euo pipefail";
-
-function isTruthyEnvValue(value: string | undefined): boolean {
-  return value === "1" || value?.toLowerCase() === "true";
-}
-
-function withStrictBashPrelude(
-  command: string,
-  env: NodeJS.ProcessEnv,
-): string {
-  if (process.platform === "win32") return command;
-  if (!isTruthyEnvValue(env[STRICT_BASH_ENV_VAR])) return command;
-  return `${STRICT_BASH_PRELUDE}\n${command}`;
-}
 
 function rebuildCachedLauncher(
   command: string,
@@ -94,7 +81,7 @@ export async function spawnCommand(
   const env = options.secretEnv
     ? { ...options.env, ...options.secretEnv }
     : options.env;
-  const commandToRun = withStrictBashPrelude(command, env);
+  const commandToRun = withStrictShellPrelude(command, env);
 
   // On Unix (Linux/macOS), use simple bash -c approach (original behavior)
   // This avoids the complexity of fallback logic which caused issues on ARM64 CI
@@ -242,7 +229,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     const bgEnv = secretEnv
       ? { ...getShellEnv(), ...secretEnv }
       : getShellEnv();
-    const bgCommand = withStrictBashPrelude(command, bgEnv);
+    const bgCommand = withStrictShellPrelude(command, bgEnv);
     const bashId = getNextBashId();
     const outputFile = createBackgroundOutputFile(bashId);
     const launcher = getBackgroundLauncher(bgCommand, secretEnv);
