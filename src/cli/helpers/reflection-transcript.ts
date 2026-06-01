@@ -91,7 +91,7 @@ export interface MultiReflectionTranscriptSlice {
   mode: ReflectionSliceMode;
   payload_path: string;
   selection_reason?: string;
-  selection_priority?: ReflectionWanderPriority;
+  selection_priority?: ReflectionAutoPriority;
   start_message_id: string;
   end_message_id: string;
   start_line: number;
@@ -111,9 +111,9 @@ export interface MultiReflectionManifest {
     | { mode: "recent"; limit: number }
     | { mode: "explicit-conversations"; conversation_ids: string[] }
     | {
-        mode: "wandered";
-        selected_conversations: ReflectionWanderSelectedConversation[];
-        catalog_path?: string;
+        mode: "auto-selected";
+        selected_conversations: ReflectionAutoSelectedConversation[];
+        candidates_path?: string;
       };
   transcripts: MultiReflectionTranscriptSlice[];
 }
@@ -135,21 +135,21 @@ export interface ReflectionTranscriptCandidate {
   turnsSinceLastSuccessfulReflection: number;
 }
 
-export type ReflectionWanderPriority = "high" | "medium" | "low";
+export type ReflectionAutoPriority = "high" | "medium" | "low";
 
-export interface ReflectionWanderSelectedConversation {
+export interface ReflectionAutoSelectedConversation {
   conversation_id: string;
   reason: string;
-  priority?: ReflectionWanderPriority;
+  priority?: ReflectionAutoPriority;
 }
 
-export interface ReflectionWanderSearchScore {
+export interface ReflectionAutoSearchScore {
   query: string;
   rrf_score: number;
   normalized_score: number;
 }
 
-export interface ReflectionWanderCandidate {
+export interface ReflectionAutoCandidate {
   conversation_id: string;
   summary?: string;
   description?: string;
@@ -160,28 +160,28 @@ export interface ReflectionWanderCandidate {
   has_unreflected_content: boolean;
   is_current_conversation: boolean;
   sources: string[];
-  search_scores: ReflectionWanderSearchScore[];
+  search_scores: ReflectionAutoSearchScore[];
   heuristic_score: number;
 }
 
-export interface ReflectionWanderCatalog {
+export interface ReflectionAutoCandidates {
   schema_version: 1;
-  type: "reflection_wander_catalog";
+  type: "auto_transcript_reflection_candidates";
   agent_id: string;
   current_conversation_id?: string;
   created_at: string;
   max_selected: number;
   instructions: string;
-  candidates: ReflectionWanderCandidate[];
+  candidates: ReflectionAutoCandidate[];
 }
 
-export interface ReflectionWanderSelection {
-  selected_conversations: ReflectionWanderSelectedConversation[];
+export interface ReflectionAutoSelection {
+  selected_conversations: ReflectionAutoSelectedConversation[];
 }
 
-export interface ReflectionWanderPayload {
-  catalogPath: string;
-  catalog: ReflectionWanderCatalog;
+export interface ReflectionAutoPayload {
+  candidatesPath: string;
+  candidates: ReflectionAutoCandidates;
 }
 
 export interface ReflectionPromptInput {
@@ -214,9 +214,9 @@ export function buildReflectionSubagentPrompt(
 
 export function buildReflectionSelectorPrompt(): string {
   return [
-    "You are selecting conversation transcripts for memory reflection. The wander catalog path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Read/Edit file_path is literal and does NOT expand env vars.",
+    "You are selecting conversation transcripts for memory reflection. The transcript candidates path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Read/Edit file_path is literal and does NOT expand env vars.",
     "",
-    "The payload is a `reflection_wander_catalog` with compact metadata about candidate conversations. Your job is only to choose which conversations should be opened for a full reflection pass. Do not edit memory files. Do not commit anything.",
+    "The payload is `auto_transcript_reflection_candidates` with compact metadata about candidate conversations. Your job is only to choose which conversations should be opened for a full reflection pass. Do not edit memory files. Do not commit anything.",
     "",
     "Select up to `max_selected` conversations. Prefer candidates likely to contain durable memory updates: explicit user corrections, repeated preferences, coding/review/commit style preferences, repo or workflow gotchas, durable facts about people/projects, contradictions with current memory, or repeated agent failures.",
     "Avoid one-off debugging, transient task status, duplicated/redundant candidates, and conversations already fully reflected unless they are useful for deduplication or contradiction resolution.",
@@ -978,7 +978,7 @@ async function writeState(
 
 function buildPayloadPath(
   rootDir: string,
-  kind: "auto" | "wander" | "multi" | "remember" | "slice",
+  kind: "auto" | "candidates" | "multi" | "remember" | "slice",
 ): string {
   const nonce = Math.random().toString(36).slice(2, 8);
   return join(rootDir, `payload-${kind}-${nonce}.json`);
@@ -1194,7 +1194,7 @@ async function ensureAgentPayloadRoot(agentId: string): Promise<string> {
   return root;
 }
 
-const REFLECTION_WANDER_QUERIES = [
+const REFLECTION_AUTO_QUERIES = [
   {
     id: "user-corrections",
     query:
@@ -1220,11 +1220,11 @@ const REFLECTION_WANDER_QUERIES = [
   },
 ] as const;
 
-const REFLECTION_WANDER_RECENT_LIMIT = 20;
-const REFLECTION_WANDER_UNREFLECTED_LIMIT = 20;
-const REFLECTION_WANDER_SEARCH_LIMIT_PER_QUERY = 10;
-const REFLECTION_WANDER_MAX_CATALOG_CANDIDATES = 30;
-export const REFLECTION_WANDER_MAX_SELECTED_TRANSCRIPTS = 5;
+const REFLECTION_AUTO_RECENT_LIMIT = 20;
+const REFLECTION_AUTO_UNREFLECTED_LIMIT = 20;
+const REFLECTION_AUTO_SEARCH_LIMIT_PER_QUERY = 10;
+const REFLECTION_AUTO_MAX_CATALOG_CANDIDATES = 30;
+export const REFLECTION_AUTO_MAX_SELECTED_TRANSCRIPTS = 5;
 
 function pageItems<T>(page: unknown): T[] {
   if (Array.isArray(page)) return page as T[];
@@ -1243,7 +1243,7 @@ function pageItems<T>(page: unknown): T[] {
   return [];
 }
 
-function addSource(candidate: ReflectionWanderCandidate, source: string): void {
+function addSource(candidate: ReflectionAutoCandidate, source: string): void {
   if (!candidate.sources.includes(source)) {
     candidate.sources.push(source);
   }
@@ -1261,7 +1261,7 @@ function recencyScore(lastUpdatedAt?: string): number {
   return 0;
 }
 
-function scoreWanderCandidate(candidate: ReflectionWanderCandidate): number {
+function scoreAutoCandidate(candidate: ReflectionAutoCandidate): number {
   const bestNormalizedSearch = Math.max(
     0,
     ...candidate.search_scores.map((score) => score.normalized_score),
@@ -1292,17 +1292,17 @@ function scoreWanderCandidate(candidate: ReflectionWanderCandidate): number {
   );
 }
 
-export async function buildReflectionWanderPayload(options: {
+export async function buildReflectionAutoPayload(options: {
   agentId: string;
   currentConversationId?: string;
   maxSelected?: number;
   maxCatalogCandidates?: number;
-}): Promise<ReflectionWanderPayload | null> {
+}): Promise<ReflectionAutoPayload | null> {
   const {
     agentId,
     currentConversationId,
-    maxSelected = REFLECTION_WANDER_MAX_SELECTED_TRANSCRIPTS,
-    maxCatalogCandidates = REFLECTION_WANDER_MAX_CATALOG_CANDIDATES,
+    maxSelected = REFLECTION_AUTO_MAX_SELECTED_TRANSCRIPTS,
+    maxCatalogCandidates = REFLECTION_AUTO_MAX_CATALOG_CANDIDATES,
   } = options;
   const transcriptCandidates =
     await listReflectionTranscriptCandidates(agentId);
@@ -1310,7 +1310,7 @@ export async function buildReflectionWanderPayload(options: {
     return null;
   }
 
-  const candidates = new Map<string, ReflectionWanderCandidate>();
+  const candidates = new Map<string, ReflectionAutoCandidate>();
   const ensureCandidate = (conversationId: string) => {
     const existing = candidates.get(conversationId);
     if (existing) return existing;
@@ -1318,7 +1318,7 @@ export async function buildReflectionWanderPayload(options: {
       (candidate) => candidate.conversationId === conversationId,
     );
     if (!transcriptCandidate) return null;
-    const candidate: ReflectionWanderCandidate = {
+    const candidate: ReflectionAutoCandidate = {
       conversation_id: conversationId,
       last_updated_at: transcriptCandidate.lastUpdatedAt,
       total_completed_turns: transcriptCandidate.totalCompletedTurns,
@@ -1338,10 +1338,10 @@ export async function buildReflectionWanderPayload(options: {
 
   for (const candidate of transcriptCandidates.slice(
     0,
-    REFLECTION_WANDER_RECENT_LIMIT,
+    REFLECTION_AUTO_RECENT_LIMIT,
   )) {
-    const wanderCandidate = ensureCandidate(candidate.conversationId);
-    if (wanderCandidate) addSource(wanderCandidate, "recent");
+    const autoCandidate = ensureCandidate(candidate.conversationId);
+    if (autoCandidate) addSource(autoCandidate, "recent");
   }
 
   for (const candidate of transcriptCandidates
@@ -1352,14 +1352,14 @@ export async function buildReflectionWanderPayload(options: {
           a.turnsSinceLastSuccessfulReflection ||
         Date.parse(b.lastUpdatedAt ?? "") - Date.parse(a.lastUpdatedAt ?? ""),
     )
-    .slice(0, REFLECTION_WANDER_UNREFLECTED_LIMIT)) {
-    const wanderCandidate = ensureCandidate(candidate.conversationId);
-    if (wanderCandidate) addSource(wanderCandidate, "unreflected");
+    .slice(0, REFLECTION_AUTO_UNREFLECTED_LIMIT)) {
+    const autoCandidate = ensureCandidate(candidate.conversationId);
+    if (autoCandidate) addSource(autoCandidate, "unreflected");
   }
 
   if (currentConversationId) {
-    const wanderCandidate = ensureCandidate(currentConversationId);
-    if (wanderCandidate) addSource(wanderCandidate, "current");
+    const autoCandidate = ensureCandidate(currentConversationId);
+    if (autoCandidate) addSource(autoCandidate, "current");
   }
 
   const transcriptConversationIds = new Set(
@@ -1383,17 +1383,17 @@ export async function buildReflectionWanderPayload(options: {
       }
     }
   } catch {
-    // Summaries are helpful metadata but not required for wandering.
+    // Summaries are helpful metadata but not required for auto selection.
   }
 
   const searchResultsByQuery = await Promise.allSettled(
-    REFLECTION_WANDER_QUERIES.map(async ({ id, query }) => {
+    REFLECTION_AUTO_QUERIES.map(async ({ id, query }) => {
       const results = await searchConversationsForBackend({
         agent_id: agentId,
         query,
         search_mode: "hybrid",
         search_target: "description",
-        limit: REFLECTION_WANDER_SEARCH_LIMIT_PER_QUERY,
+        limit: REFLECTION_AUTO_SEARCH_LIMIT_PER_QUERY,
       });
       return { id, query, results };
     }),
@@ -1410,14 +1410,14 @@ export async function buildReflectionWanderPayload(options: {
       ...eligibleResults.map((result) => result.rrf_score),
     );
     for (const result of eligibleResults) {
-      const wanderCandidate = ensureCandidate(result.conversation.id);
-      if (!wanderCandidate) continue;
-      addSource(wanderCandidate, `search:${id}`);
+      const autoCandidate = ensureCandidate(result.conversation.id);
+      if (!autoCandidate) continue;
+      addSource(autoCandidate, `search:${id}`);
       const summary = result.conversation.summary?.trim();
-      if (summary) wanderCandidate.summary = summary;
+      if (summary) autoCandidate.summary = summary;
       const description = result.embedded_text.trim();
-      if (description) wanderCandidate.description = description;
-      wanderCandidate.search_scores.push({
+      if (description) autoCandidate.description = description;
+      autoCandidate.search_scores.push({
         query,
         rrf_score: result.rrf_score,
         normalized_score:
@@ -1440,7 +1440,7 @@ export async function buildReflectionWanderPayload(options: {
       search_scores: [...candidate.search_scores].sort(
         (a, b) => b.normalized_score - a.normalized_score,
       ),
-      heuristic_score: scoreWanderCandidate(candidate),
+      heuristic_score: scoreAutoCandidate(candidate),
     }))
     .sort(
       (a, b) =>
@@ -1456,9 +1456,9 @@ export async function buildReflectionWanderPayload(options: {
   }
 
   const payloadRoot = await ensureAgentPayloadRoot(agentId);
-  const catalog: ReflectionWanderCatalog = {
+  const candidateSet: ReflectionAutoCandidates = {
     schema_version: 1,
-    type: "reflection_wander_catalog",
+    type: "auto_transcript_reflection_candidates",
     agent_id: agentId,
     current_conversation_id: currentConversationId,
     created_at: new Date().toISOString(),
@@ -1467,33 +1467,33 @@ export async function buildReflectionWanderPayload(options: {
       "Choose conversations likely to contain durable memory updates. Prefer explicit corrections, repeated preferences, project conventions, and contradictions; avoid one-off debugging and transient task state.",
     candidates: sortedCandidates,
   };
-  const catalogPath = buildPayloadPath(payloadRoot, "wander");
+  const candidatesPath = buildPayloadPath(payloadRoot, "candidates");
   await writeFile(
-    catalogPath,
-    `${JSON.stringify(catalog, null, 2)}\n`,
+    candidatesPath,
+    `${JSON.stringify(candidateSet, null, 2)}\n`,
     "utf-8",
   );
 
-  return { catalogPath, catalog };
+  return { candidatesPath, candidates: candidateSet };
 }
 
-function isReflectionWanderPriority(
+function isReflectionAutoPriority(
   value: unknown,
-): value is ReflectionWanderPriority {
+): value is ReflectionAutoPriority {
   return value === "high" || value === "medium" || value === "low";
 }
 
-export async function readReflectionWanderSelection(options: {
+export async function readReflectionAutoSelection(options: {
   selectionOutputPath?: string;
   selectionReport?: string;
-  catalog: ReflectionWanderCatalog;
-}): Promise<ReflectionWanderSelectedConversation[]> {
+  candidates: ReflectionAutoCandidates;
+}): Promise<ReflectionAutoSelectedConversation[]> {
   const raw =
     options.selectionReport ??
     (options.selectionOutputPath
       ? await readFile(options.selectionOutputPath, "utf-8")
       : "");
-  const parsed = parseReflectionWanderSelectionJson(raw);
+  const parsed = parseReflectionAutoSelectionJson(raw);
   if (!parsed || typeof parsed !== "object") {
     throw new Error("Reflection selector did not return valid JSON.");
   }
@@ -1506,10 +1506,10 @@ export async function readReflectionWanderSelection(options: {
   }
 
   const allowedIds = new Set(
-    options.catalog.candidates.map((candidate) => candidate.conversation_id),
+    options.candidates.candidates.map((candidate) => candidate.conversation_id),
   );
   const seenIds = new Set<string>();
-  const validated: ReflectionWanderSelectedConversation[] = [];
+  const validated: ReflectionAutoSelectedConversation[] = [];
   for (const item of selected) {
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
@@ -1526,16 +1526,16 @@ export async function readReflectionWanderSelection(options: {
     const reason =
       typeof record.reason === "string" && record.reason.trim()
         ? record.reason.trim()
-        : "Selected by reflection wandering.";
+        : "Selected by automatic reflection.";
     validated.push({
       conversation_id: conversationId,
       reason,
-      ...(isReflectionWanderPriority(record.priority)
+      ...(isReflectionAutoPriority(record.priority)
         ? { priority: record.priority }
         : {}),
     });
     seenIds.add(conversationId);
-    if (validated.length >= options.catalog.max_selected) {
+    if (validated.length >= options.candidates.max_selected) {
       break;
     }
   }
@@ -1543,7 +1543,7 @@ export async function readReflectionWanderSelection(options: {
   return validated;
 }
 
-function parseReflectionWanderSelectionJson(raw: string): unknown {
+function parseReflectionAutoSelectionJson(raw: string): unknown {
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
@@ -1670,9 +1670,9 @@ type MultiReflectionSelectionPolicy =
   | { mode: "recent"; limit: number }
   | { mode: "explicit-conversations"; conversationIds: string[] }
   | {
-      mode: "wandered";
-      selectedConversations: ReflectionWanderSelectedConversation[];
-      catalogPath?: string;
+      mode: "auto-selected";
+      selectedConversations: ReflectionAutoSelectedConversation[];
+      candidatesPath?: string;
     };
 
 export interface BuildMultiReflectionPayloadOptions {
@@ -1687,7 +1687,7 @@ async function resolveMultiReflectionConversationIds(
   agentId: string,
   selectionPolicy: MultiReflectionSelectionPolicy,
 ): Promise<string[]> {
-  if (selectionPolicy.mode === "wandered") {
+  if (selectionPolicy.mode === "auto-selected") {
     return Array.from(
       new Set(
         selectionPolicy.selectedConversations.map(
@@ -1713,11 +1713,11 @@ function manifestSelectionPolicy(
   if (selectionPolicy.mode === "recent") {
     return { mode: "recent", limit: selectionPolicy.limit };
   }
-  if (selectionPolicy.mode === "wandered") {
+  if (selectionPolicy.mode === "auto-selected") {
     return {
-      mode: "wandered",
+      mode: "auto-selected",
       selected_conversations: selectionPolicy.selectedConversations,
-      catalog_path: selectionPolicy.catalogPath,
+      candidates_path: selectionPolicy.candidatesPath,
     };
   }
   return {
@@ -1726,10 +1726,10 @@ function manifestSelectionPolicy(
   };
 }
 
-function wanderSelectionByConversationId(
+function autoSelectionByConversationId(
   selectionPolicy: MultiReflectionSelectionPolicy,
-): Map<string, ReflectionWanderSelectedConversation> {
-  if (selectionPolicy.mode !== "wandered") {
+): Map<string, ReflectionAutoSelectedConversation> {
+  if (selectionPolicy.mode !== "auto-selected") {
     return new Map();
   }
 
@@ -1767,7 +1767,7 @@ export async function buildMultiReflectionPayload(
   let totalChars = 0;
   let firstMessageId: string | undefined;
   let lastMessageId: string | undefined;
-  const wanderSelections = wanderSelectionByConversationId(selectionPolicy);
+  const autoSelections = autoSelectionByConversationId(selectionPolicy);
 
   for (const conversationId of conversationIds) {
     const slice = await withStateLock(agentId, conversationId, async () => {
@@ -1809,8 +1809,8 @@ export async function buildMultiReflectionPayload(
         conversation_id: conversationId,
         mode,
         payload_path: payloadPath,
-        selection_reason: wanderSelections.get(conversationId)?.reason,
-        selection_priority: wanderSelections.get(conversationId)?.priority,
+        selection_reason: autoSelections.get(conversationId)?.reason,
+        selection_priority: autoSelections.get(conversationId)?.priority,
         start_message_id: selection.startMessageId,
         end_message_id: selection.endMessageId,
         start_line: selection.startLineIndex,
