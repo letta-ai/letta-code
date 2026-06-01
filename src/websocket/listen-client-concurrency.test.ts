@@ -7,11 +7,18 @@ import {
   mock,
   test,
 } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
 import type { ResumeData } from "@/agent/check-approval";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter } from "@/channels/types";
+import {
+  getReflectionTranscriptPaths,
+  getReflectionTranscriptState,
+} from "@/cli/helpers/reflection-transcript";
 import { permissionMode } from "@/permissions/mode";
 import type {
   MessageQueueItem,
@@ -323,9 +330,16 @@ function makeIncomingMessage(
 // to avoid mock.module (which leaks into other test files in Bun).
 const origSessionContext = sharedReminderProviders["session-context"];
 const origAgentInfo = sharedReminderProviders["agent-info"];
+const originalTranscriptRoot = process.env.LETTA_TRANSCRIPT_ROOT;
+let testTranscriptRoot: string | null = null;
 
 describe("listen-client multi-worker concurrency", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    testTranscriptRoot = await mkdtemp(
+      join(tmpdir(), "letta-listen-transcript-"),
+    );
+    process.env.LETTA_TRANSCRIPT_ROOT = testTranscriptRoot;
+
     // No-op stubs for providers that need settingsManager / process.cwd
     sharedReminderProviders["session-context"] = async () => null;
     sharedReminderProviders["agent-info"] = async () => null;
@@ -361,6 +375,18 @@ describe("listen-client multi-worker concurrency", () => {
     sharedReminderProviders["session-context"] = origSessionContext;
     sharedReminderProviders["agent-info"] = origAgentInfo;
     clearTools();
+  });
+
+  afterEach(async () => {
+    if (originalTranscriptRoot === undefined) {
+      delete process.env.LETTA_TRANSCRIPT_ROOT;
+    } else {
+      process.env.LETTA_TRANSCRIPT_ROOT = originalTranscriptRoot;
+    }
+    if (testTranscriptRoot) {
+      await rm(testTranscriptRoot, { recursive: true, force: true });
+      testTranscriptRoot = null;
+    }
   });
 
   afterEach(() => {
@@ -2373,6 +2399,52 @@ describe("listen-client multi-worker concurrency", () => {
         otid: "cm-user-otid",
       }),
     ]);
+  });
+
+  test("handleIncomingMessage records direct websocket user turns in the reflection transcript", async () => {
+    const agentId = "agent-websocket-transcript";
+    const conversationId = "conv-websocket-transcript";
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      agentId,
+      conversationId,
+    );
+    const socket = new MockSocket();
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId,
+        conversationId,
+        messages: [
+          {
+            role: "user",
+            content: "hello from websocket",
+            client_message_id: "cm-transcript-user",
+          } as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_turns).toBe(1);
+    expect(state.turns_since_last_successful_reflection).toBe(1);
+
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    const transcriptRows = (await readFile(paths.transcriptPath, "utf-8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(transcriptRows).toContainEqual(
+      expect.objectContaining({
+        kind: "user",
+        text: "hello from websocket",
+        source_line_id: "user-cm-transcript-user",
+      }),
+    );
   });
 
   test("pre-stream 409 resume on default conversation includes agent_id", async () => {
