@@ -20,8 +20,12 @@ import { scheduleQueuePump } from "@/websocket/listener/queue";
 import {
   getActiveRuntime,
   getOrCreateConversationRuntime,
+  safeEmitWsEvent,
 } from "@/websocket/listener/runtime";
-import type { ListenerTransport } from "@/websocket/listener/transport";
+import {
+  isListenerTransportOpen,
+  type ListenerTransport,
+} from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
   StartListenerOptions,
@@ -109,6 +113,33 @@ async function resolveCronFireConversationId(
   }
 
   return task.conversation_id === "default" ? undefined : task.conversation_id;
+}
+
+function emitCronsUpdated(
+  socket: ListenerTransport,
+  task: CronTask,
+  conversationId?: string | null,
+): void {
+  if (!isListenerTransportOpen(socket)) {
+    return;
+  }
+
+  const payload = {
+    type: "crons_updated",
+    timestamp: Date.now(),
+    agent_id: task.agent_id,
+    conversation_id: conversationId ?? task.conversation_id,
+  };
+
+  try {
+    socket.send(JSON.stringify(payload));
+    safeEmitWsEvent("send", "protocol", payload);
+  } catch (err) {
+    console.error(
+      `[Cron] Error sending crons_updated for task ${task.id}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 // ── Core tick logic ─────────────────────────────────────────────────
@@ -221,6 +252,7 @@ async function fireCronTask(
     firedAt: nowIso,
     conversationId: targetConversationId ?? "default",
   });
+  emitCronsUpdated(socket, task, targetConversationId ?? "default");
 }
 
 /** Returns true if the task was marked as missed (caller should skip firing). */
