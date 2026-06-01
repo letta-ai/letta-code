@@ -23,6 +23,7 @@ import { LocalBackend } from "@/backend/local";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { setSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { appendCronRunLog, getCronRunLogPath } from "@/cron";
 import type { MessageQueueItem } from "@/queue/queue-runtime";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
@@ -449,6 +450,16 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
+    const cronRuns = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cron_runs",
+          request_id: "cron-runs-1",
+          task_id: "cron-1",
+          limit: 10,
+        }),
+      ),
+    );
     const cronDelete = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -471,6 +482,7 @@ describe("listen-client parseServerMessage", () => {
     expect(cronList?.type).toBe("cron_list");
     expect(cronAdd?.type).toBe("cron_add");
     expect(cronGet?.type).toBe("cron_get");
+    expect(cronRuns?.type).toBe("cron_runs");
     expect(cronDelete?.type).toBe("cron_delete");
     expect(cronDeleteAll?.type).toBe("cron_delete_all");
   });
@@ -1343,6 +1355,24 @@ describe("listen-client cron command handling", () => {
       });
 
       const taskId = addMessages[0].task.id as string;
+      appendCronRunLog(getCronRunLogPath(taskId), {
+        ts: 1000,
+        jobId: taskId,
+        action: "finished",
+        status: "ok",
+        summary: "Older run",
+        conversationId: "conv-1",
+        runId: "run-older",
+      });
+      appendCronRunLog(getCronRunLogPath(taskId), {
+        ts: 2000,
+        jobId: taskId,
+        action: "finished",
+        status: "error",
+        error: "Newer run failed",
+        conversationId: "conv-1",
+        runId: "run-newer",
+      });
       socket.sentPayloads.length = 0;
 
       await __listenClientTestUtils.handleCronCommand(
@@ -1377,6 +1407,40 @@ describe("listen-client cron command handling", () => {
         success: true,
         found: true,
         task: { id: taskId },
+      });
+
+      socket.sentPayloads.length = 0;
+      await __listenClientTestUtils.handleCronCommand(
+        {
+          type: "cron_runs",
+          request_id: "cron-runs-1",
+          task_id: taskId,
+          limit: 1,
+        },
+        socket as unknown as WebSocket,
+      );
+      expect(JSON.parse(socket.sentPayloads[0] as string)).toMatchObject({
+        type: "cron_runs_response",
+        request_id: "cron-runs-1",
+        success: true,
+        page: {
+          total: 2,
+          offset: 0,
+          limit: 1,
+          hasMore: true,
+          nextOffset: 1,
+          entries: [
+            {
+              ts: 2000,
+              jobId: taskId,
+              action: "finished",
+              status: "error",
+              error: "Newer run failed",
+              conversationId: "conv-1",
+              runId: "run-newer",
+            },
+          ],
+        },
       });
 
       socket.sentPayloads.length = 0;

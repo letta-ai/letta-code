@@ -10,7 +10,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { DmPolicy } from "@/channels/types";
-import type { CronTask } from "@/cron";
+import type { CronRunLogPage, CronTask } from "@/cron";
 import type { ExperimentId, ExperimentSnapshot } from "@/experiments/types";
 
 /**
@@ -1037,6 +1037,19 @@ export interface CronGetCommand {
   task_id: string;
 }
 
+export interface CronRunsCommand {
+  type: "cron_runs";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  task_id: string;
+  /** Maximum run-log entries to return. */
+  limit?: number;
+  /** Page offset for run-log entries. */
+  offset?: number;
+  /** Optional run id filter. */
+  run_id?: string;
+}
+
 export interface CronDeleteCommand {
   type: "cron_delete";
   /** Echoed back in the response for request correlation. */
@@ -1313,6 +1326,14 @@ export interface CronGetResponseMessage {
   success: boolean;
   found: boolean;
   task: CronTask | null;
+  error?: string;
+}
+
+export interface CronRunsResponseMessage {
+  type: "cron_runs_response";
+  request_id: string;
+  success: boolean;
+  page?: CronRunLogPage;
   error?: string;
 }
 
@@ -1784,6 +1805,7 @@ export type WsProtocolCommand =
   | CronListCommand
   | CronAddCommand
   | CronGetCommand
+  | CronRunsCommand
   | CronDeleteCommand
   | CronDeleteAllCommand
   | SkillEnableCommand
