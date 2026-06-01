@@ -40,7 +40,7 @@ import {
   hasActiveSubagents,
 } from "@/agent/subagent-state";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
-import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import {
   type Buffers,
   type Line,
@@ -201,7 +201,7 @@ type ConversationLoopContext = {
   generateConversationDescription: (options?: {
     force?: boolean;
   }) => Promise<void>;
-  extensionRuntime: LocalExtensionRuntime;
+  extensionAdapter: LocalExtensionAdapter;
   generateConversationTitle: () => Promise<string | null>;
   hasConversationModelOverrideRef: MutableRefObject<boolean>;
   interruptQueuedRef: MutableRefObject<boolean>;
@@ -299,7 +299,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
     generateConversationDescription,
-    extensionRuntime,
+    extensionAdapter,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -632,8 +632,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
       if (
         hasUserMessageInput(currentInput) &&
-        extensionRuntime.hasExtensionSources &&
-        !extensionRuntime.isLoading
+        extensionAdapter.hasExtensionSources &&
+        !extensionAdapter.isLoading
       ) {
         const originalInput = currentInput;
         try {
@@ -642,7 +642,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             conversationId: conversationIdRef.current ?? null,
             input: currentInput,
           };
-          await extensionRuntime.emitEvent("turn_start", turnStartEvent);
+          await extensionAdapter.emitEvent("turn_start", turnStartEvent);
           currentInput = isTurnInputArray(turnStartEvent.input)
             ? turnStartEvent.input
             : originalInput;
@@ -2985,7 +2985,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       setUiPermissionMode,
       prepareScopedToolExecutionContext,
       maybeStreamSyntheticNoModelResponse,
-      extensionRuntime,
+      extensionAdapter,
     ],
   );
 

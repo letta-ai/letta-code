@@ -33,7 +33,7 @@ import {
 import { getServerUrl } from "@/backend/api/client";
 import type { BtwState } from "@/cli/components/BtwPane";
 import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
-import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import {
   type Buffers,
   extractTextPart,
@@ -82,7 +82,7 @@ type ConversationSwitchingContext = {
   currentModelHandle: string | null;
   currentModelId: string | null;
   emittedIdsRef: MutableRefObject<Set<string>>;
-  extensionRuntime: LocalExtensionRuntime;
+  extensionAdapter: LocalExtensionAdapter;
   hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   maybeCarryOverActiveConversationModel: (
@@ -141,7 +141,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
-    extensionRuntime,
+    extensionAdapter,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
@@ -434,7 +434,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           })
           .catch(() => {});
         sessionHooksRanRef.current = true;
-        void extensionRuntime.emitEvent("conversation_open", {
+        void extensionAdapter.emitEvent("conversation_open", {
           agentId,
           agentName: agentName ?? null,
           conversationId,
@@ -468,7 +468,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       setCommandRunning,
       setStreaming,
       recoverRestoredPendingApprovals,
-      extensionRuntime,
+      extensionAdapter,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       abortControllerRef,

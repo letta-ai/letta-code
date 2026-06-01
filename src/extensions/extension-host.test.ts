@@ -16,10 +16,10 @@ import {
   getExtensionToolDefinition,
 } from "@/extensions/tool-registry";
 import type {
+  ExtensionAdapterBackendApi,
   ExtensionCapabilities,
   ExtensionContext,
   ExtensionPanelHandle,
-  ExtensionRuntimeBackendApi,
 } from "@/extensions/types";
 
 type ExtensionTestGlobal = typeof globalThis & {
@@ -84,7 +84,7 @@ function createExtensionContext(): ExtensionContext {
 function createHost(
   root: string,
   capabilities?: ExtensionCapabilities,
-  backend?: ExtensionRuntimeBackendApi,
+  backend?: ExtensionAdapterBackendApi,
 ): ExtensionHost {
   return createExtensionHost({
     cacheDirectory: path.join(root, "extension-cache"),
@@ -214,7 +214,7 @@ describe("extension host", () => {
     delete testGlobal.__lettaExtensionBackend;
     delete testGlobal.__lettaExtensionForkResult;
 
-    const backend: ExtensionRuntimeBackendApi = {
+    const backend: ExtensionAdapterBackendApi = {
       forkConversation: async (conversationId, options) => ({
         id: `${conversationId}:${options?.agentId}:${options?.hidden ? "hidden" : "visible"}`,
       }),
@@ -373,7 +373,7 @@ describe("extension host", () => {
         }`,
       );
 
-      const backend: ExtensionRuntimeBackendApi = {
+      const backend: ExtensionAdapterBackendApi = {
         forkConversation: async () => ({ id: "forked" }),
         getConversationHistory: async () => [],
         sendMessageStream: async () => (async function* () {})(),

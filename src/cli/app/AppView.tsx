@@ -57,7 +57,7 @@ import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
 import { WorktreeDiffSelector } from "@/cli/components/WorktreeDiffSelector";
 import { AnimationProvider } from "@/cli/contexts/AnimationContext";
-import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
@@ -319,7 +319,7 @@ type AppViewProps = {
   staticRenderEpoch: number;
   statusLinePayload: StatusLinePayload;
   statusLinePrompt: string;
-  extensionRuntime: LocalExtensionRuntime;
+  extensionAdapter: LocalExtensionAdapter;
   fileAutocompleteFdPath?: string | null;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
@@ -465,7 +465,7 @@ export function AppView(props: AppViewProps) {
     staticRenderEpoch,
     statusLinePayload,
     statusLinePrompt,
-    extensionRuntime,
+    extensionAdapter,
     streaming,
     stubDescriptions,
     thinkingMessage,
@@ -746,7 +746,7 @@ export function AppView(props: AppViewProps) {
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
                 statusLinePayload={statusLinePayload}
-                extensionRuntime={extensionRuntime}
+                extensionAdapter={extensionAdapter}
                 statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
                 showInspirationalPromptHints={showInspirationalPromptHints}
