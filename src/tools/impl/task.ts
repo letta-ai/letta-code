@@ -112,12 +112,15 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * Called after the subagent finishes (success or failure).
    * Runs regardless of `silentCompletion` and is awaited before
    * completion notifications/hooks continue.
+   * `report` is the raw final subagent report and may be large; callbacks
+   * should parse/summarize it rather than injecting it directly into context.
    */
   onComplete?: (result: {
     success: boolean;
     error?: string;
     agentId?: string;
     conversationId?: string;
+    report?: string;
   }) => void | Promise<void>;
   /**
    * Optional dependency overrides for tests.
@@ -426,6 +429,7 @@ export function spawnBackgroundSubagentTask(
           error: result.error,
           agentId: result.agentId,
           conversationId: result.conversationId,
+          report: result.report,
         });
       } catch (error) {
         const errorMessage =
