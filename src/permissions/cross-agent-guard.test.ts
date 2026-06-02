@@ -8,7 +8,6 @@ import {
   evaluateCrossAgentGuard,
   extractTargetAgentPaths,
   isMemoryGuardDisabled,
-  isMemoryGuardEnabled,
   resolveAllowedAgents,
 } from "@/permissions/cross-agent-guard";
 import { permissionMode } from "@/permissions/mode";
@@ -120,18 +119,18 @@ describe("resolveAllowedAgents", () => {
     expect(isMemoryGuardDisabled()).toBe(false);
   });
 
-  test("memory guard is disabled by default for parent processes", () => {
-    expect(isMemoryGuardEnabled()).toBe(false);
+  test("parent memory guard is disabled by default", () => {
+    expect(isMemoryGuardDisabled()).toBe(true);
   });
 
-  test("memory guard can be enabled by headless parent startup", () => {
+  test("headless parent startup clears the disabled bit", () => {
     cliPermissions.setMemoryGuardDisabled(false);
-    expect(isMemoryGuardEnabled()).toBe(true);
+    expect(isMemoryGuardDisabled()).toBe(false);
   });
 
-  test("memory guard is enabled by default for subagents", () => {
+  test("subagents ignore the parent disabled default", () => {
     process.env.LETTA_CODE_AGENT_ROLE = "subagent";
-    expect(isMemoryGuardEnabled()).toBe(true);
+    expect(isMemoryGuardDisabled()).toBe(false);
   });
 });
 

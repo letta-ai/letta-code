@@ -54,14 +54,6 @@ export function isMemoryGuardDisabled(
   return options.disableMemoryGuard ?? cliPermissions.isMemoryGuardDisabled();
 }
 
-export function isMemoryGuardEnabled(
-  options: CrossAgentGuardOptions = {},
-): boolean {
-  const env = options.env ?? process.env;
-  if (isSubagentProcess(env)) return true;
-  return !isMemoryGuardDisabled(options);
-}
-
 /**
  * Resolve the set of agent IDs a guarded process is allowed to operate
  * against without disabling the guard.
@@ -629,7 +621,7 @@ export function evaluateCrossAgentGuard(
   const env = options.env ?? process.env;
   const homeDir = env.HOME ?? homedir();
 
-  if (!isMemoryGuardEnabled(options)) {
+  if (isMemoryGuardDisabled(options)) {
     return null;
   }
 
