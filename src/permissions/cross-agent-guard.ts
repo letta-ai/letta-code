@@ -33,7 +33,6 @@ import { splitShellSegments, tokenizeShellWords } from "./shell-analysis";
 export interface CrossAgentGuardOptions {
   env?: NodeJS.ProcessEnv;
   currentAgentId?: string | null;
-  enableMemoryGuard?: boolean;
   disableMemoryGuard?: boolean;
 }
 
@@ -60,10 +59,7 @@ export function isMemoryGuardEnabled(
 ): boolean {
   const env = options.env ?? process.env;
   if (isSubagentProcess(env)) return true;
-  if (isMemoryGuardDisabled(options)) return false;
-  return (
-    options.enableMemoryGuard ?? cliPermissions.isMemoryGuardEnabledByDefault()
-  );
+  return !isMemoryGuardDisabled(options);
 }
 
 /**

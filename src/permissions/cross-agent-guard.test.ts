@@ -125,7 +125,7 @@ describe("resolveAllowedAgents", () => {
   });
 
   test("memory guard can be enabled by headless parent startup", () => {
-    cliPermissions.setMemoryGuardEnabledByDefault(true);
+    cliPermissions.setMemoryGuardDisabled(false);
     expect(isMemoryGuardEnabled()).toBe(true);
   });
 
@@ -304,11 +304,11 @@ describe("extractTargetAgentPaths", () => {
 
 describe("evaluateCrossAgentGuard", () => {
   beforeEach(() => {
-    cliPermissions.setMemoryGuardEnabledByDefault(true);
+    cliPermissions.setMemoryGuardDisabled(false);
   });
 
   test("parent processes skip the guard unless headless startup enables it", () => {
-    cliPermissions.setMemoryGuardEnabledByDefault(false);
+    cliPermissions.setMemoryGuardDisabled(true);
     const result = evaluateCrossAgentGuard(
       "Write",
       { file_path: otherMemory("system/a.md") },
@@ -414,11 +414,11 @@ describe("checkPermission integration", () => {
   const permissions = { allow: [], deny: [], ask: [] };
 
   beforeEach(() => {
-    cliPermissions.setMemoryGuardEnabledByDefault(true);
+    cliPermissions.setMemoryGuardDisabled(false);
   });
 
   test("parent processes use normal permissions when guard is not enabled", () => {
-    cliPermissions.setMemoryGuardEnabledByDefault(false);
+    cliPermissions.setMemoryGuardDisabled(true);
     permissionMode.setMode("acceptEdits");
     const result = checkPermission(
       "Write",
@@ -558,7 +558,7 @@ describe("checkPermission integration", () => {
 
 describe("shell bypass regression tests", () => {
   beforeEach(() => {
-    cliPermissions.setMemoryGuardEnabledByDefault(true);
+    cliPermissions.setMemoryGuardDisabled(false);
   });
 
   test("enumeration: ls ~/.letta/agents is denied", () => {
@@ -672,7 +672,7 @@ describe("Grep/Glob ancestor-path regression tests", () => {
   const agentsTreeRoot = join(HOME, ".letta", "agents");
 
   beforeEach(() => {
-    cliPermissions.setMemoryGuardEnabledByDefault(true);
+    cliPermissions.setMemoryGuardDisabled(false);
   });
 
   test("Glob with path='<home>/.letta/agents' is denied", () => {

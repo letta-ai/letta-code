@@ -561,7 +561,7 @@ export async function handleHeadlessCommand(
   const { cliPermissions } = await import(
     "@/permissions/cli-permissions-instance"
   );
-  cliPermissions.setMemoryGuardEnabledByDefault(true);
+  cliPermissions.setMemoryGuardDisabled(false);
 
   // Set permission mode if provided (or via --yolo alias)
   const permissionModeValue = values["permission-mode"];
