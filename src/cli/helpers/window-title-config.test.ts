@@ -13,6 +13,7 @@ import {
 } from "@/cli/helpers/window-title-config";
 
 const baseData: WindowTitleData = {
+  agentName: "Big Chungus",
   appName: "Letta Code",
   version: "0.0.0-test",
   conversationId: "thread-123",
@@ -34,17 +35,17 @@ function render(items: WindowTitleField[], data: WindowTitleData = baseData) {
 }
 
 describe("window title config", () => {
-  test("uses Codex default shape: activity then project name", () => {
+  test("uses Letta's agent-centric default shape: activity then agent name", () => {
     expect(
-      render(["activity", "project-name"], {
+      render(["activity", "agent-name"], {
         ...baseData,
         activityFrame: "⠋",
       }),
-    ).toBe("⠋ project");
+    ).toBe("⠋ Big Chungus");
   });
 
   test("omits inactive activity without leaving a separator", () => {
-    expect(render(["activity", "project-name"])).toBe("project");
+    expect(render(["activity", "agent-name"])).toBe("Big Chungus");
   });
 
   test("uses Codex activity separator rule", () => {

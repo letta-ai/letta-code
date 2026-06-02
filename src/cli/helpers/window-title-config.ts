@@ -38,7 +38,7 @@ export type WindowTitleField = (typeof WINDOW_TITLE_FIELDS)[number];
 /** Items shown in the terminal title when the user has not configured a custom selection. */
 export const DEFAULT_WINDOW_TITLE_ITEMS = [
   "activity",
-  "project-name",
+  "agent-name",
 ] as const satisfies readonly WindowTitleField[];
 
 /** Braille-pattern dot-spinner frames for the terminal title animation. */
