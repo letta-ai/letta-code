@@ -1,14 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { submitFeedbackMetadata } from "@/backend/api/metadata";
 import { settingsManager } from "@/settings-manager";
-import {
-  appendTelemetryDebugLog,
-  type ReflectionTriggerSource,
-  telemetry,
-} from "@/telemetry";
+import { type ReflectionTriggerSource, telemetry } from "@/telemetry";
 
-const REFLECTION_DURATION_THRESHOLD_MS = 1000;
-// const REFLECTION_DURATION_THRESHOLD_MS = 15 * 60 * 1000;
+const REFLECTION_DURATION_THRESHOLD_MS = 15 * 60 * 1000;
 const REFLECTION_STEP_COUNT_THRESHOLD = 100;
 
 export type ReflectionThresholdFeedbackOptions = {
@@ -117,18 +112,7 @@ export function maybeSendReflectionThresholdFeedback(
         surface: options.surface,
       }),
     });
-    appendTelemetryDebugLog(
-      `[TELEM-FEEDBACK] sent reflection threshold alert reasons=${alertReasons.join(
-        ",",
-      )} stepCount=${String(options.stepCount ?? "unset")} durationMs=${String(
-        options.durationMs ?? "unset",
-      )}`,
-    );
-  })().catch((error) => {
-    appendTelemetryDebugLog(
-      `[TELEM-FEEDBACK] FAIL reflection threshold alert ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+  })().catch(() => {
+    // Feedback alerts are best-effort and should never affect reflection flow.
   });
 }

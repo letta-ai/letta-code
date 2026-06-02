@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync } from "node:fs";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getServerUrl } from "@/backend/api/client";
 import { getServerHealth } from "@/backend/api/health";
@@ -227,17 +226,6 @@ function isNonActionableError(message: string): boolean {
   );
 }
 
-export function appendTelemetryDebugLog(message: string): void {
-  try {
-    appendFileSync(
-      "/tmp/letta-telemetry.log",
-      `${new Date().toISOString()} ${message}\n`,
-    );
-  } catch {
-    // Debug logging must never affect telemetry or the user session.
-  }
-}
-
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
   private sessionId: string;
@@ -286,10 +274,6 @@ class TelemetryManager {
     const fallback = randomUUID();
     this.deviceId = fallback;
     return fallback;
-  }
-
-  private appendTelemetryDebugLog(message: string): void {
-    appendTelemetryDebugLog(message);
   }
 
   private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -471,33 +455,6 @@ class TelemetryManager {
     };
 
     this.events.push(event);
-
-    const queuedReflectionBits =
-      type === "reflection_start" || type === "reflection_end"
-        ? ` conversationId=${String(
-            (event.data as Record<string, unknown>).conversation_id ?? "unset",
-          )} subagentId=${String(
-            (event.data as Record<string, unknown>).subagent_id ?? "unset",
-          )}${
-            type === "reflection_end"
-              ? ` stepCount=${String(
-                  (event.data as Record<string, unknown>).step_count ?? "unset",
-                )} durationMs=${String(
-                  (event.data as Record<string, unknown>).duration_ms ??
-                    "unset",
-                )}`
-              : ""
-          }`
-        : "";
-    this.appendTelemetryDebugLog(
-      `[TELEM-QUEUE] queued ${type} queued=${this.events.length} pid=${
-        process.pid
-      } sessionId=${this.sessionId} agentId=${
-        this.currentAgentId ?? "unset"
-      } surface=${this.surface} role=${
-        process.env.LETTA_CODE_AGENT_ROLE ?? "parent"
-      }${queuedReflectionBits}`,
-    );
 
     // Flush if batch size is reached
     if (this.events.length >= this.MAX_BATCH_SIZE) {
@@ -814,28 +771,6 @@ class TelemetryManager {
     const apiKey = await this.resolveTelemetryApiKey();
 
     const deviceId = this.getTelemetryDeviceId();
-    const eventTypes = eventsToSend
-      .map((event) => {
-        if (event.type !== "reflection_end") {
-          return event.type;
-        }
-        const data = event.data as Record<string, unknown>;
-        return `reflection_end(stepCount=${String(
-          data.step_count ?? "unset",
-        )},durationMs=${String(data.duration_ms ?? "unset")})`;
-      })
-      .join(",");
-    this.appendTelemetryDebugLog(
-      `[TELEM-SEND] attempting to send ${eventsToSend.length} events: ${eventTypes} pid=${
-        process.pid
-      } sessionId=${this.sessionId} agentId=${
-        this.currentAgentId ?? "unset"
-      } surface=${this.surface} role=${
-        process.env.LETTA_CODE_AGENT_ROLE ?? "parent"
-      } deviceId=${deviceId ? "set" : "EMPTY"} apiKey=${
-        apiKey ? "set" : "EMPTY"
-      }`,
-    );
 
     try {
       await submitTelemetryMetadata(
@@ -848,13 +783,7 @@ class TelemetryManager {
         },
         { signal: AbortSignal.timeout(5000) },
       );
-      this.appendTelemetryDebugLog("[TELEM-SEND] OK");
     } catch (error) {
-      this.appendTelemetryDebugLog(
-        `[TELEM-SEND] FAIL ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
       // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);
     }
