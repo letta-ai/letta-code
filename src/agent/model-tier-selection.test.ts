@@ -36,7 +36,7 @@ describe("getModelInfo", () => {
     expect(info?.handle).toBe("minimax/MiniMax-M3");
     expect(info?.label).toBe("MiniMax M3");
     expect(info?.updateArgs).toMatchObject({
-      context_window: 1000000,
+      context_window: 500000,
       parallel_tool_calls: true,
     });
   });
