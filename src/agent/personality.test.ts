@@ -120,15 +120,14 @@ describe("personality helpers", () => {
 
   test("tutorial persona body drives proactive onboarding progression", () => {
     const body = getPersonalityContent("tutorial");
-    expect(body).toContain("Tutor owns the tutorial flow directly");
     expect(body).not.toContain("The skill owns the tutorial flow");
     expect(body).not.toContain("letta-help");
-    expect(body).toContain("guided onboarding, not passive support");
+    expect(body).toContain("Never end on a generic offer");
+    expect(body).toContain("Every turn ends pointing at a concrete next thing");
     expect(body).toContain(
-      "I actively move the user through the onboarding checklist",
+      "Progress through the onboarding checklist naturally",
     );
-    // Skip handling must generalize beyond the literal word "skip".
-    expect(body).toMatch(/"skip", "pass", "next", "no thanks", "rather not"/);
+    expect(body).toContain("what should I call you");
   });
 
   test("onboarding block sets proactive, ordered checklist rules", async () => {
