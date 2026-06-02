@@ -332,6 +332,68 @@ export function cloneLocalMessage(message: LocalMessage): LocalMessage {
   }
 }
 
+function toolCallIdLookupKeys(id: string): string[] {
+  const [baseId] = id.split("|");
+  return baseId && baseId !== id ? [id, baseId] : [id];
+}
+
+function addToolCallIdLookupKeys(ids: Set<string>, id: string): void {
+  for (const key of toolCallIdLookupKeys(id)) ids.add(key);
+}
+
+function hasToolCallIdLookupKey(ids: Set<string>, id: string): boolean {
+  return toolCallIdLookupKeys(id).some((key) => ids.has(key));
+}
+
+function assistantMessageCanContributeToolCalls(
+  message: LocalAssistantMessage,
+): boolean {
+  return message.stopReason !== "error" && message.stopReason !== "aborted";
+}
+
+export interface LocalToolResultRepairResult {
+  messages: LocalMessage[];
+  removedMessageIds: string[];
+}
+
+export function removeOrphanLocalToolResults(
+  messages: readonly LocalMessage[],
+): LocalToolResultRepairResult {
+  const seenToolCallIds = new Set<string>();
+  const repaired: LocalMessage[] = [];
+  const removedMessageIds: string[] = [];
+
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      if (assistantMessageCanContributeToolCalls(message)) {
+        for (const content of message.content) {
+          if (isLocalToolCallContent(content)) {
+            addToolCallIdLookupKeys(seenToolCallIds, content.id);
+          }
+        }
+      }
+      repaired.push(message);
+      continue;
+    }
+
+    if (message.role === "toolResult") {
+      if (hasToolCallIdLookupKey(seenToolCallIds, message.toolCallId)) {
+        repaired.push(message);
+      } else {
+        removedMessageIds.push(message.id);
+      }
+      continue;
+    }
+
+    repaired.push(message);
+  }
+
+  return {
+    messages: removedMessageIds.length > 0 ? repaired : [...messages],
+    removedMessageIds,
+  };
+}
+
 export function mergeSnapshotContentWithExistingToolCalls(
   snapshotContent: LocalAssistantMessage["content"],
   existingContent: LocalAssistantMessage["content"],
