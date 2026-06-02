@@ -90,6 +90,8 @@ import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-to
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  releaseReflectionLaunch,
+  tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
 import {
   buildMultiReflectionPayload,
@@ -2881,6 +2883,14 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: true };
           }
 
+          let reflectionReserved = false;
+          let reflectionReservationDelegated = false;
+          const releaseReflectionReservation = () => {
+            if (!reflectionReserved) return;
+            releaseReflectionLaunch(agentId);
+            reflectionReserved = false;
+          };
+
           try {
             const reflectArgs = parseReflectCommandArgs(trimmed);
             const reflectionConversationId =
@@ -2932,6 +2942,14 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: true };
             }
 
+            if (!tryReserveReflectionLaunch(agentId)) {
+              cmd.fail(
+                "A reflection agent is already running in the background.",
+              );
+              return { submitted: true };
+            }
+            reflectionReserved = true;
+
             // Fetch the agent's system prompt so multi-transcript reflection
             // payloads include the core behavioural instructions (filtered to
             // strip dynamic content).
@@ -2950,6 +2968,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 instruction: reflectArgs.instruction,
               });
               if (!autoPayload) {
+                releaseReflectionReservation();
                 cmd.fail("No transcript candidates found for auto selection.");
                 return { submitted: true };
               }
@@ -2972,12 +2991,14 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   },
                   onComplete: async ({ success, error, report }) => {
                     if (!success) {
+                      releaseReflectionReservation();
                       appendTaskNotificationEvents([
                         `Automatic reflection selection failed: ${error ?? "selector failed"}`,
                       ]);
                       return;
                     }
 
+                    let finalReflectionSpawned = false;
                     try {
                       const selectedConversations =
                         await readReflectionAutoSelection({
@@ -2985,6 +3006,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                           candidates: autoPayload.candidates,
                         });
                       if (selectedConversations.length === 0) {
+                        releaseReflectionReservation();
                         appendTaskNotificationEvents([
                           "Automatic reflection selected no transcript candidates.",
                         ]);
@@ -3003,6 +3025,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                           systemPrompt,
                         });
                       if (!autoReflectionPayload) {
+                        releaseReflectionReservation();
                         appendTaskNotificationEvents([
                           "Automatic reflection selected transcript candidates, but no transcript content was available.",
                         ]);
@@ -3033,40 +3056,46 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                           error: reflectionError,
                           agentId: reflectionAgentId,
                         }) => {
-                          telemetry.trackReflectionEnd(
-                            "manual",
-                            reflectionSuccess,
-                            {
-                              subagentId: reflectionAgentId ?? undefined,
-                              conversationId: reflectionConversationId,
-                              error: reflectionError,
-                            },
-                          );
-                          await finalizeMultiReflectionPayload(
-                            agentId,
-                            autoReflectionPayload.manifest,
-                            reflectionSuccess,
-                          );
-                          const msg = await handleMemorySubagentCompletion(
-                            {
+                          try {
+                            telemetry.trackReflectionEnd(
+                              "manual",
+                              reflectionSuccess,
+                              {
+                                subagentId: reflectionAgentId ?? undefined,
+                                conversationId: reflectionConversationId,
+                                error: reflectionError,
+                              },
+                            );
+                            await finalizeMultiReflectionPayload(
                               agentId,
-                              conversationId: conversationIdRef.current,
-                              subagentType: "reflection",
-                              success: reflectionSuccess,
-                              error: reflectionError,
-                            },
-                            {
-                              recompileByConversation:
-                                systemPromptRecompileByConversationRef.current,
-                              recompileQueuedByConversation:
-                                queuedSystemPromptRecompileByConversationRef.current,
-                              logRecompileFailure: (message) =>
-                                debugWarn("memory", message),
-                            },
-                          );
-                          appendTaskNotificationEvents([msg]);
+                              autoReflectionPayload.manifest,
+                              reflectionSuccess,
+                            );
+                            const msg = await handleMemorySubagentCompletion(
+                              {
+                                agentId,
+                                conversationId: conversationIdRef.current,
+                                subagentType: "reflection",
+                                success: reflectionSuccess,
+                                error: reflectionError,
+                              },
+                              {
+                                recompileByConversation:
+                                  systemPromptRecompileByConversationRef.current,
+                                recompileQueuedByConversation:
+                                  queuedSystemPromptRecompileByConversationRef.current,
+                                logRecompileFailure: (message) =>
+                                  debugWarn("memory", message),
+                              },
+                            );
+                            appendTaskNotificationEvents([msg]);
+                          } finally {
+                            releaseReflectionReservation();
+                          }
                         },
                       });
+                      reflectionReservationDelegated = true;
+                      finalReflectionSpawned = true;
 
                       telemetry.trackReflectionStart("manual", {
                         conversationId: reflectionConversationId,
@@ -3077,6 +3106,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                         `Automatic reflection selected ${selectedConversations.length} transcript(s); launched reflection. Payload: ${autoReflectionPayload.payloadPath}`,
                       ]);
                     } catch (selectionError) {
+                      if (!finalReflectionSpawned) {
+                        releaseReflectionReservation();
+                      }
                       const errorDetails = formatErrorDetails(
                         selectionError,
                         agentId,
@@ -3087,6 +3119,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     }
                   },
                 });
+              reflectionReservationDelegated = true;
 
               telemetry.trackReflectionStart("manual", {
                 subagentId: selectorSubagentId,
@@ -3113,6 +3146,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             });
 
             if (!reflectionPayload) {
+              releaseReflectionReservation();
               cmd.fail(
                 "No transcript content found for the selected conversations.",
               );
@@ -3146,37 +3180,42 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 error,
                 agentId: reflectionAgentId,
               }) => {
-                telemetry.trackReflectionEnd("manual", success, {
-                  subagentId: reflectionAgentId ?? undefined,
-                  conversationId: reflectionConversationId,
-                  error,
-                });
-                await finalizeMultiReflectionPayload(
-                  agentId,
-                  reflectionPayload.manifest,
-                  success,
-                );
-
-                const msg = await handleMemorySubagentCompletion(
-                  {
-                    agentId,
-                    conversationId: conversationIdRef.current,
-                    subagentType: "reflection",
-                    success,
+                try {
+                  telemetry.trackReflectionEnd("manual", success, {
+                    subagentId: reflectionAgentId ?? undefined,
+                    conversationId: reflectionConversationId,
                     error,
-                  },
-                  {
-                    recompileByConversation:
-                      systemPromptRecompileByConversationRef.current,
-                    recompileQueuedByConversation:
-                      queuedSystemPromptRecompileByConversationRef.current,
-                    logRecompileFailure: (message) =>
-                      debugWarn("memory", message),
-                  },
-                );
-                appendTaskNotificationEvents([msg]);
+                  });
+                  await finalizeMultiReflectionPayload(
+                    agentId,
+                    reflectionPayload.manifest,
+                    success,
+                  );
+
+                  const msg = await handleMemorySubagentCompletion(
+                    {
+                      agentId,
+                      conversationId: conversationIdRef.current,
+                      subagentType: "reflection",
+                      success,
+                      error,
+                    },
+                    {
+                      recompileByConversation:
+                        systemPromptRecompileByConversationRef.current,
+                      recompileQueuedByConversation:
+                        queuedSystemPromptRecompileByConversationRef.current,
+                      logRecompileFailure: (message) =>
+                        debugWarn("memory", message),
+                    },
+                  );
+                  appendTaskNotificationEvents([msg]);
+                } finally {
+                  releaseReflectionReservation();
+                }
               },
             });
+            reflectionReservationDelegated = true;
             const reflectionAgentId = await waitForBackgroundSubagentAgentId(
               subagentId,
               1000,
@@ -3193,6 +3232,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               true,
             );
           } catch (error) {
+            if (!reflectionReservationDelegated) {
+              releaseReflectionReservation();
+            }
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
           }

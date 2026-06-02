@@ -3,7 +3,6 @@ import { getSubagents } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
 import type { ReflectionTrigger } from "@/cli/helpers/memory-reminder";
 import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
-import { isReflectionSubagentActive } from "@/cli/helpers/reflection-gate";
 import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
@@ -14,6 +13,8 @@ import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
 
 export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
+
+const reservedReflectionAgentIds = new Set<string>();
 
 export type ReflectionLaunchTriggerSource =
   | "manual"
@@ -91,6 +92,33 @@ function resolveCompletionConversationId(
   return completionConversationId ?? fallback;
 }
 
+function isReflectionSubagentActiveForAgent(agentId: string): boolean {
+  return getSubagents().some((agent) => {
+    if (agent.type.toLowerCase() !== "reflection") {
+      return false;
+    }
+    if (agent.status !== "pending" && agent.status !== "running") {
+      return false;
+    }
+    return agent.parentAgentId === agentId;
+  });
+}
+
+export function tryReserveReflectionLaunch(agentId: string): boolean {
+  if (reservedReflectionAgentIds.has(agentId)) {
+    return false;
+  }
+  if (isReflectionSubagentActiveForAgent(agentId)) {
+    return false;
+  }
+  reservedReflectionAgentIds.add(agentId);
+  return true;
+}
+
+export function releaseReflectionLaunch(agentId: string): void {
+  reservedReflectionAgentIds.delete(agentId);
+}
+
 export async function launchReflectionSubagent(
   options: ReflectionLaunchOptions,
 ): Promise<ReflectionLaunchResult> {
@@ -109,7 +137,7 @@ export async function launchReflectionSubagent(
     return { launched: false, reason: "memfs_disabled" };
   }
 
-  if (isReflectionSubagentActive(getSubagents(), agentId, conversationId)) {
+  if (!tryReserveReflectionLaunch(agentId)) {
     debugLog(
       "memory",
       `Skipping reflection launch (${triggerSource}) because one is already active`,
@@ -117,6 +145,7 @@ export async function launchReflectionSubagent(
     return { launched: false, reason: "already_active" };
   }
 
+  let releaseOnComplete = false;
   try {
     const systemPrompt = await resolveSystemPrompt(
       agentId,
@@ -132,6 +161,7 @@ export async function launchReflectionSubagent(
         "memory",
         `Skipping reflection launch (${triggerSource}) because transcript has no new content`,
       );
+      releaseReflectionLaunch(agentId);
       return { launched: false, reason: "no_payload" };
     }
 
@@ -153,43 +183,48 @@ export async function launchReflectionSubagent(
       transcriptPath: autoPayload.payloadPath,
       parentScope: { agentId, conversationId },
       onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
-        telemetry.trackReflectionEnd(triggerSource, success, {
-          subagentId: reflectionAgentId ?? undefined,
-          conversationId,
-          error,
-        });
-        await finalizeAutoReflectionPayload(
-          agentId,
-          conversationId,
-          autoPayload.payloadPath,
-          autoPayload.endSnapshotLine,
-          success,
-        );
-
-        const completionMessage = await handleMemorySubagentCompletion(
-          {
+        try {
+          telemetry.trackReflectionEnd(triggerSource, success, {
+            subagentId: reflectionAgentId ?? undefined,
+            conversationId,
+            error,
+          });
+          await finalizeAutoReflectionPayload(
             agentId,
-            conversationId: resolveCompletionConversationId(
-              options.completionConversationId,
-              conversationId,
-            ),
-            subagentType: "reflection",
+            conversationId,
+            autoPayload.payloadPath,
+            autoPayload.endSnapshotLine,
+            success,
+          );
+
+          const completionMessage = await handleMemorySubagentCompletion(
+            {
+              agentId,
+              conversationId: resolveCompletionConversationId(
+                options.completionConversationId,
+                conversationId,
+              ),
+              subagentType: "reflection",
+              success,
+              error,
+            },
+            {
+              recompileByConversation,
+              recompileQueuedByConversation,
+              logRecompileFailure: (message) => debugWarn("memory", message),
+            },
+          );
+          await onCompletionMessage?.(completionMessage, {
             success,
             error,
-          },
-          {
-            recompileByConversation,
-            recompileQueuedByConversation,
-            logRecompileFailure: (message) => debugWarn("memory", message),
-          },
-        );
-        await onCompletionMessage?.(completionMessage, {
-          success,
-          error,
-          reflectionAgentId: reflectionAgentId ?? undefined,
-        });
+            reflectionAgentId: reflectionAgentId ?? undefined,
+          });
+        } finally {
+          releaseReflectionLaunch(agentId);
+        }
       },
     });
+    releaseOnComplete = true;
     const reflectionAgentId = await waitForBackgroundSubagentAgentId(
       subagentId,
       1000,
@@ -211,6 +246,9 @@ export async function launchReflectionSubagent(
       endMessageId: autoPayload.endMessageId,
     };
   } catch (error) {
+    if (!releaseOnComplete) {
+      releaseReflectionLaunch(agentId);
+    }
     debugWarn(
       "memory",
       `Failed to launch reflection subagent (${triggerSource}): ${
