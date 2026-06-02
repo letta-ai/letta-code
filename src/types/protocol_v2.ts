@@ -1056,8 +1056,8 @@ export interface CronRunsCommand {
   run_id?: string;
 }
 
-export interface CronRunCommand {
-  type: "cron_run";
+export interface CronTriggerCommand {
+  type: "cron_trigger";
   /** Echoed back in the response for request correlation. */
   request_id: string;
   task_id: string;
@@ -1350,8 +1350,8 @@ export interface CronRunsResponseMessage {
   error?: string;
 }
 
-export interface CronRunResponseMessage {
-  type: "cron_run_response";
+export interface CronTriggerResponseMessage {
+  type: "cron_trigger_response";
   request_id: string;
   success: boolean;
   found: boolean;
@@ -1828,7 +1828,7 @@ export type WsProtocolCommand =
   | CronAddCommand
   | CronGetCommand
   | CronRunsCommand
-  | CronRunCommand
+  | CronTriggerCommand
   | CronDeleteCommand
   | CronDeleteAllCommand
   | SkillEnableCommand

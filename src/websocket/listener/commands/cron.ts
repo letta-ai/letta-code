@@ -15,7 +15,7 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
-  CronRunCommand,
+  CronTriggerCommand,
   CronRunsCommand,
 } from "@/types/protocol_v2";
 import {
@@ -24,7 +24,7 @@ import {
   isCronDeleteCommand,
   isCronGetCommand,
   isCronListCommand,
-  isCronRunCommand,
+  isCronTriggerCommand,
   isCronRunsCommand,
 } from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
@@ -34,7 +34,7 @@ export type CronCommand =
   | CronAddCommand
   | CronGetCommand
   | CronRunsCommand
-  | CronRunCommand
+  | CronTriggerCommand
   | CronDeleteCommand
   | CronDeleteAllCommand;
 
@@ -228,13 +228,13 @@ export async function handleCronCommand(
     return true;
   }
 
-  if (parsed.type === "cron_run") {
+  if (parsed.type === "cron_trigger") {
     try {
       const result = await runCronTaskNow(parsed.task_id);
       safeSocketSend(
         socket,
         {
-          type: "cron_run_response",
+          type: "cron_trigger_response",
           request_id: parsed.request_id,
           success: result.success,
           found: result.found,
@@ -248,11 +248,11 @@ export async function handleCronCommand(
       safeSocketSend(
         socket,
         {
-          type: "cron_run_response",
+          type: "cron_trigger_response",
           request_id: parsed.request_id,
           success: false,
           found: false,
-          error: err instanceof Error ? err.message : "Failed to run cron",
+          error: err instanceof Error ? err.message : "Failed to trigger cron",
         },
         "listener_cron_send_failed",
         "listener_cron_command",
@@ -347,7 +347,7 @@ export function handleCronProtocolCommand(
     isCronAddCommand(parsed) ||
     isCronGetCommand(parsed) ||
     isCronRunsCommand(parsed) ||
-    isCronRunCommand(parsed) ||
+    isCronTriggerCommand(parsed) ||
     isCronDeleteCommand(parsed) ||
     isCronDeleteAllCommand(parsed)
   ) {

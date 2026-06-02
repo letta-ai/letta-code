@@ -32,7 +32,7 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
-  CronRunCommand,
+  CronTriggerCommand,
   CronRunsCommand,
   DeleteMemoryFileCommand,
   EditFileCommand,
@@ -805,7 +805,7 @@ export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
   );
 }
 
-export function isCronRunCommand(value: unknown): value is CronRunCommand {
+export function isCronTriggerCommand(value: unknown): value is CronTriggerCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as {
     type?: unknown;
@@ -813,7 +813,7 @@ export function isCronRunCommand(value: unknown): value is CronRunCommand {
     task_id?: unknown;
   };
   return (
-    c.type === "cron_run" &&
+    c.type === "cron_trigger" &&
     typeof c.request_id === "string" &&
     typeof c.task_id === "string"
   );
@@ -1647,7 +1647,7 @@ export function parseServerMessage(
       isCronAddCommand(parsed) ||
       isCronGetCommand(parsed) ||
       isCronRunsCommand(parsed) ||
-      isCronRunCommand(parsed) ||
+      isCronTriggerCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
