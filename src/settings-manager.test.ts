@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CommandHookConfig, HookCommand } from "@/hooks/types";
@@ -645,6 +645,40 @@ describe("Settings Manager - Multiple Projects", () => {
 
     expect(settings1.windowTitle?.items).toEqual(["agent-name"]);
     expect(settings2.windowTitle?.items).toEqual(["model-name"]);
+  });
+});
+
+describe("Settings Manager - Session Persistence", () => {
+  test("persistSession skips unchanged session writes", async () => {
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    settingsManager.persistSession(
+      "agent-session",
+      "conv-session",
+      testProjectDir,
+    );
+    await settingsManager.flush();
+
+    const globalSettingsPath = join(testHomeDir, ".letta", "settings.json");
+    const localSettingsPath = join(
+      testProjectDir,
+      ".letta",
+      "settings.local.json",
+    );
+    const firstGlobalMtime = (await stat(globalSettingsPath)).mtimeMs;
+    const firstLocalMtime = (await stat(localSettingsPath)).mtimeMs;
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    settingsManager.persistSession(
+      "agent-session",
+      "conv-session",
+      testProjectDir,
+    );
+    await settingsManager.flush();
+
+    expect((await stat(globalSettingsPath)).mtimeMs).toBe(firstGlobalMtime);
+    expect((await stat(localSettingsPath)).mtimeMs).toBe(firstLocalMtime);
   });
 });
 

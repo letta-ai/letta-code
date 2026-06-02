@@ -39,7 +39,7 @@ describe("local-first setup wiring", () => {
     expect(source.slice(start, end)).toContain('preferredBackendMode: "api"');
   });
 
-  test("reauthentication starts a fresh device-code login instead of trusting stale stored credentials", () => {
+  test("reauthentication paths do not trust stale stored credentials", () => {
     const loginSource = readSource("../auth/ConstellationLoginView.tsx");
     const setupSource = readSource("../auth/setup-ui.tsx");
     const setupRunnerSource = readSource("../auth/setup.ts");

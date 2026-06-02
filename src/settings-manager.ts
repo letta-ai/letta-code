@@ -226,6 +226,13 @@ function isSessionCompatibleWithServerKey(
   return isAgentIdCompatibleWithServerKey(session.agentId, serverKey);
 }
 
+function sessionsEqual(
+  a: SessionRef | null | undefined,
+  b: SessionRef | null | undefined,
+): boolean {
+  return a?.agentId === b?.agentId && a?.conversationId === b?.conversationId;
+}
+
 function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
   return (
     isLocalBackendEnvEnabled() &&
@@ -1226,8 +1233,17 @@ class SettingsManager {
       [serverKey]: session,
     };
 
+    const existingServerSession = settings.sessionsByServer?.[serverKey];
+
     // Keep legacy global fields for cloud/self-hosted agents only.
     if (isCloudAgentId(session.agentId)) {
+      if (
+        sessionsEqual(existingServerSession, session) &&
+        sessionsEqual(settings.lastSession, session) &&
+        settings.lastAgent === session.agentId
+      ) {
+        return;
+      }
       this.updateSettings({
         sessionsByServer,
         lastSession: session,
@@ -1236,6 +1252,9 @@ class SettingsManager {
       return;
     }
 
+    if (sessionsEqual(existingServerSession, session)) {
+      return;
+    }
     this.updateSettings({ sessionsByServer });
   }
 
@@ -1351,6 +1370,14 @@ class SettingsManager {
       ...localSettings.sessionsByServer,
       [serverKey]: session,
     };
+
+    if (
+      sessionsEqual(localSettings.sessionsByServer?.[serverKey], session) &&
+      sessionsEqual(localSettings.lastSession, session) &&
+      localSettings.lastAgent === session.agentId
+    ) {
+      return;
+    }
 
     // Also update legacy fields for backwards compat with older CLI versions
     this.updateLocalProjectSettings(

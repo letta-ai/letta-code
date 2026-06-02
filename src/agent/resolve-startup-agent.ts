@@ -36,7 +36,7 @@ export interface StartupResolutionInput {
   /** --new-agent flag: skip all resume logic, create fresh */
   forceNew: boolean;
 
-  /** Self-hosted server with no available default model */
+  /** Custom API backend with no available default model */
   needsModelPicker: boolean;
 }
 
@@ -88,7 +88,7 @@ export function resolveStartupTarget(
     };
   }
 
-  // Step 5: Self-hosted model picker
+  // Step 5: Custom API model picker
   if (input.needsModelPicker) {
     return { action: "select" };
   }

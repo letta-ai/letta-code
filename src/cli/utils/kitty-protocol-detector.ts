@@ -11,6 +11,7 @@ let kittyEnabled = false;
 
 const DEBUG = process.env.LETTA_DEBUG_KITTY === "1";
 const DISABLED = process.env.LETTA_DISABLE_KITTY === "1";
+const DETECTION_TIMEOUT_MS = 150;
 
 /**
  * Detects Kitty keyboard protocol support.
@@ -126,8 +127,9 @@ export async function detectAndEnableKittyProtocol(): Promise<void> {
     }
     fs.writeSync(process.stdout.fd, "\x1b[?u\x1b[c");
 
-    // Timeout after 200ms
-    timeoutId = setTimeout(finish, 200);
+    // Keep startup responsive: terminals that support the query usually answer
+    // quickly, and unsupported terminals are enabled best-effort on timeout.
+    timeoutId = setTimeout(finish, DETECTION_TIMEOUT_MS);
   });
 }
 
