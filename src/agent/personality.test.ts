@@ -138,7 +138,7 @@ describe("personality helpers", () => {
     );
 
     expect(onboardingBlock?.value).toContain(
-      "Work the checklist proactively, in order.",
+      "Explain each of these concepts to the user",
     );
     // Declines are generalized, not hard-coded to "skip".
     expect(onboardingBlock?.value).toMatch(
@@ -146,6 +146,7 @@ describe("personality helpers", () => {
     );
     // Checklist completion syntax is unambiguous.
     expect(onboardingBlock?.value).toContain("Mark an item `[x]`");
+    expect(onboardingBlock?.value).toContain("Connect to a channel");
   });
 
   test("non-tutorial personalities do not include onboarding", async () => {
