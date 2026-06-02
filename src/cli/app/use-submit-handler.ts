@@ -27,7 +27,7 @@ import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
 } from "@/agent/memory-filesystem";
-import { syncPendingMemoryCommitsAfterTurn } from "@/agent/memory-git";
+import { runPostTurnMemorySync } from "@/agent/memory-git";
 import {
   getActiveMemoryDirectory,
   isActiveMemfsEnabled,
@@ -117,7 +117,6 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "@/reminders/engine";
-import { formatMemoryPostTurnSyncReminder } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
   type SharedReminderState,
@@ -3503,24 +3502,16 @@ ${SYSTEM_REMINDER_CLOSE}
         transcriptStartLineIndex,
       });
 
-      try {
-        if (isActiveMemfsEnabled(agentId)) {
-          const syncResult = await syncPendingMemoryCommitsAfterTurn(agentId);
-          const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
-          if (syncReminder) {
-            enqueueMemoryGitSyncReminder(sharedReminderStateRef.current, {
-              text: syncReminder,
-            });
-          }
-        }
-      } catch (error) {
-        debugWarn(
-          "memfs-git",
-          `Post-turn memory sync failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
+      await runPostTurnMemorySync({
+        agentId,
+        isEnabled: isActiveMemfsEnabled,
+        debugLabel: "Post-turn memory sync",
+        enqueueReminder: (text) => {
+          enqueueMemoryGitSyncReminder(sharedReminderStateRef.current, {
+            text,
+          });
+        },
+      });
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);

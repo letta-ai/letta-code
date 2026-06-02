@@ -17,6 +17,7 @@ import {
   setCurrentAgentId,
 } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
+import { runPostTurnMemorySync } from "@/agent/memory-git";
 import {
   getStreamToolContextId,
   type sendMessageStream,
@@ -52,7 +53,6 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
-import { formatMemoryPostTurnSyncReminder } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
   type SharedReminderState,
@@ -1228,40 +1228,15 @@ export async function handleIncomingMessage(
       conversation_id: conversationId,
     });
 
-    let shouldRunMemorySync = false;
     if (agentId) {
-      try {
-        shouldRunMemorySync = settingsManager.isMemfsEnabled(agentId);
-      } catch (error) {
-        debugWarn(
-          "memfs-git",
-          `Skipping post-turn listener memory sync because settings are unavailable: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-
-    if (agentId && shouldRunMemorySync) {
-      try {
-        const { syncPendingMemoryCommitsAfterTurn } = await import(
-          "@/agent/memory-git"
-        );
-        const syncResult = await syncPendingMemoryCommitsAfterTurn(agentId);
-        const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
-        if (syncReminder) {
-          enqueueMemoryGitSyncReminder(runtime.reminderState, {
-            text: syncReminder,
-          });
-        }
-      } catch (error) {
-        debugWarn(
-          "memfs-git",
-          `Post-turn listener memory sync failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
+      await runPostTurnMemorySync({
+        agentId,
+        isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+        debugLabel: "Post-turn listener memory sync",
+        enqueueReminder: (text) => {
+          enqueueMemoryGitSyncReminder(runtime.reminderState, { text });
+        },
+      });
     }
 
     try {

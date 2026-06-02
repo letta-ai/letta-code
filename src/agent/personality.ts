@@ -8,7 +8,7 @@ import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import {
-  commitAndSyncMemoryWrite,
+  commitMemoryWrite,
   GIT_MEMORY_ENABLED_TAG,
   getMemoryRepoDir,
   pullMemory,
@@ -677,7 +677,7 @@ export async function applyPersonalityToMemory(
     `chore(personality): switch to ${personality.label}`;
 
   const author = await getMemoryCommitAuthor(params.agentId);
-  const commitResult = await commitAndSyncMemoryWrite({
+  const commitResult = await commitMemoryWrite({
     memoryDir: repoDir,
     pathspecs: changedPaths,
     reason: commitMessage,

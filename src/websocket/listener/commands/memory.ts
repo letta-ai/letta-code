@@ -627,7 +627,7 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Write a file into MemFS (durable agent memory write + commit + push) ─
+  // ── Write a file into MemFS (durable agent memory write + commit) ───────
   if (isWriteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("write_memory_file", async () => {
       const encoding = parsed.encoding ?? "utf8";
@@ -653,7 +653,7 @@ export function handleMemoryProtocolCommand(
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
-        const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+        const { commitMemoryWrite } = await import("@/agent/memory-git");
         const { writeFile, mkdir } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { dirname, isAbsolute, join, normalize, relative, sep } =
@@ -731,7 +731,7 @@ export function handleMemoryProtocolCommand(
         const pathspec = rel.split(sep).join("/");
         const reason =
           parsed.commit_message?.trim() || `Update memory file ${pathspec}`;
-        const commitResult = await commitAndSyncMemoryWrite({
+        const commitResult = await commitMemoryWrite({
           memoryDir: memoryRoot,
           pathspecs: [pathspec],
           reason,
@@ -788,7 +788,7 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Delete a file from MemFS (durable agent memory delete + commit + push) ─
+  // ── Delete a file from MemFS (durable agent memory delete + commit) ──────
   if (isDeleteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("delete_memory_file", async () => {
       const sendFailure = (error: string): void => {
@@ -813,7 +813,7 @@ export function handleMemoryProtocolCommand(
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
-        const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+        const { commitMemoryWrite } = await import("@/agent/memory-git");
         const { unlink } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { isAbsolute, join, normalize, relative, sep } = await import(
@@ -907,7 +907,7 @@ export function handleMemoryProtocolCommand(
         // ── Commit locally; post-turn harness sync handles remote push ─
         const reason =
           parsed.commit_message?.trim() || `Delete memory file ${pathspec}`;
-        const commitResult = await commitAndSyncMemoryWrite({
+        const commitResult = await commitMemoryWrite({
           memoryDir: memoryRoot,
           pathspecs: [pathspec],
           reason,

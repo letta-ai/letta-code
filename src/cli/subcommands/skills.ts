@@ -685,7 +685,7 @@ async function commitSkillMemoryChange(params: {
   skillName: string;
   reason: string;
 }): Promise<{ committed: boolean; sha?: string }> {
-  const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+  const { commitMemoryWrite } = await import("@/agent/memory-git");
   const { getBackend } = await import("@/backend");
 
   let authorName = "Letta Code";
@@ -698,7 +698,7 @@ async function commitSkillMemoryChange(params: {
     // Best effort only; committing should not depend on fetching display name.
   }
 
-  const result = await commitAndSyncMemoryWrite({
+  const result = await commitMemoryWrite({
     memoryDir: params.memoryDir,
     pathspecs: [`skills/${params.skillName}`],
     reason: params.reason,

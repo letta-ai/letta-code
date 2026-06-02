@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  assertMemoryRepoReadyForWrite,
+  assertMemoryRepoCleanForWrite,
   buildGitAuthArgs,
   buildMemfsGitProxyArgs,
   buildNonInteractiveGitEnv,
@@ -571,7 +571,7 @@ describe("pullMemory recovery", () => {
   });
 });
 
-describe("assertMemoryRepoReadyForWrite", () => {
+describe("assertMemoryRepoCleanForWrite", () => {
   test("allows clean local commits to wait for post-turn sync", async () => {
     const { repo, remote } = makeSyncedRepo();
     const localSha = commitFile(repo, "local.md", "local");
@@ -580,7 +580,7 @@ describe("assertMemoryRepoReadyForWrite", () => {
       _options: { apiKey: "test-token" },
     }));
 
-    await assertMemoryRepoReadyForWrite(repo, "agent-123");
+    await assertMemoryRepoCleanForWrite(repo);
 
     expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
     expect(
@@ -601,7 +601,7 @@ describe("assertMemoryRepoReadyForWrite", () => {
       _options: { apiKey: "test-token" },
     }));
 
-    await assertMemoryRepoReadyForWrite(repo, "agent-123");
+    await assertMemoryRepoCleanForWrite(repo);
 
     expect(git(repo, "rev-parse HEAD").trim()).toBe(originalSha);
   });

@@ -12,8 +12,8 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
 import {
-  assertMemoryRepoReadyForWrite,
-  commitAndSyncMemoryWrite,
+  assertMemoryRepoCleanForWrite,
+  commitMemoryWrite,
   type MemoryWriteSyncMode,
 } from "@/agent/memory-git";
 import { validateRequiredParams } from "./validation";
@@ -125,7 +125,7 @@ export async function memory_apply_patch(
 
   const { agentId, agentName } = await getAgentIdentity();
   const syncMode = await getMemoryWriteSyncMode();
-  await assertMemoryRepoReadyForWrite(memoryDir, agentId, { syncMode });
+  await assertMemoryRepoCleanForWrite(memoryDir);
 
   const pathspecs = await applyMemoryPatch(memoryDir, input);
   if (pathspecs.length === 0) {
@@ -135,7 +135,7 @@ export async function memory_apply_patch(
     );
   }
 
-  const commitResult = await commitAndSyncMemoryWrite({
+  const commitResult = await commitMemoryWrite({
     memoryDir,
     pathspecs,
     reason,
