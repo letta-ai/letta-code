@@ -322,6 +322,7 @@ type AppViewProps = {
   statusLinePrompt: string;
   terminalTitleData: WindowTitleData;
   onTitlePreview: (title: string | null) => void;
+  onTitlePreviewEnd: () => void;
   extensionAdapter: LocalExtensionAdapter;
   fileAutocompleteFdPath?: string | null;
   streaming: boolean;
@@ -469,6 +470,7 @@ export function AppView(props: AppViewProps) {
     statusLinePrompt,
     terminalTitleData,
     onTitlePreview,
+    onTitlePreviewEnd,
     extensionAdapter,
     streaming,
     stubDescriptions,
@@ -849,6 +851,7 @@ export function AppView(props: AppViewProps) {
                 projectDirectory={projectDirectory}
                 titleData={terminalTitleData}
                 onTitlePreview={onTitlePreview}
+                onTitlePreviewEnd={onTitlePreviewEnd}
                 onClose={closeOverlay}
               />
             )}

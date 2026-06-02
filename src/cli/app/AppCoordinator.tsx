@@ -55,7 +55,7 @@ import {
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
-import { useFrameCycle } from "@/cli/components/spinners/use-frame-cycle";
+import { TerminalTitleWriter } from "@/cli/components/TerminalTitleWriter";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
 import {
@@ -100,10 +100,6 @@ import {
   hasInProgressTaskToolCalls,
 } from "@/cli/helpers/subagent-aggregation";
 import { buildStartupSystemPromptWarning } from "@/cli/helpers/system-prompt-warning.ts";
-import {
-  clearTerminalTitle,
-  setTerminalTitle,
-} from "@/cli/helpers/terminal-title";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import {
   isFileEditTool,
@@ -114,18 +110,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
-import {
-  renderActionRequiredWindowTitle,
-  renderWindowTitle,
-  resolveWindowTitleConfig,
-  TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL_MS,
-  TERMINAL_TITLE_ACTION_REQUIRED_PREFIX,
-  TERMINAL_TITLE_ACTION_REQUIRED_PREFIX_HIDDEN,
-  TERMINAL_TITLE_SPINNER_FRAMES,
-  TERMINAL_TITLE_SPINNER_INTERVAL_MS,
-  titleUsesActivity,
-  type WindowTitleData,
-} from "@/cli/helpers/window-title-config";
+import type { WindowTitleData } from "@/cli/helpers/window-title-config";
 import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
   useTerminalRows,
@@ -327,11 +312,6 @@ function hasConversationContent(lines: Line[]): boolean {
     }
   });
 }
-
-const TERMINAL_TITLE_ACTION_REQUIRED_FRAMES = [
-  TERMINAL_TITLE_ACTION_REQUIRED_PREFIX,
-  TERMINAL_TITLE_ACTION_REQUIRED_PREFIX_HIDDEN,
-] as const;
 
 export function App({
   agentId: initialAgentId,
@@ -1027,7 +1007,11 @@ export function App({
   const [thinkingMessage, setThinkingMessage] = useState(
     getRandomThinkingVerb(),
   );
-  const lastManagedTerminalTitleRef = useRef<string | null>(null);
+  const [terminalTitlePreviewOverride, setTerminalTitlePreviewOverride] =
+    useState<string | null | undefined>(undefined);
+  const clearTerminalTitlePreviewOverride = useCallback(() => {
+    setTerminalTitlePreviewOverride(undefined);
+  }, []);
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
@@ -4641,15 +4625,6 @@ export function App({
     });
   }, [estimatedLiveHeight, terminalRows]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: activeOverlay changes after /title persists settings; recompute the config on close.
-  const terminalTitleItems = useMemo(
-    () => resolveWindowTitleConfig(projectDirectory),
-    [projectDirectory, activeOverlay],
-  );
-  const terminalTitleUsesActivity = titleUsesActivity(terminalTitleItems);
-  const terminalTitleRequiresAction = pendingApprovals.length > 0;
-  const terminalTitleShowsActionRequired =
-    terminalTitleRequiresAction && terminalTitleUsesActivity;
   const terminalTitleTaskRunning =
     loadingState !== "ready" ||
     streaming ||
@@ -4657,8 +4632,6 @@ export function App({
     commandRunning ||
     bashRunning ||
     pendingApprovals.length > 0;
-  const terminalTitleHasActiveProgress =
-    !terminalTitleShowsActionRequired && terminalTitleTaskRunning;
   const terminalTitleRunState =
     loadingState !== "ready"
       ? "Starting"
@@ -4667,21 +4640,6 @@ export function App({
         : executionPhase === "thinking"
           ? "Thinking"
           : "Working";
-  const terminalTitleSpinnerFrameIndex = useFrameCycle(
-    TERMINAL_TITLE_SPINNER_FRAMES,
-    TERMINAL_TITLE_SPINNER_INTERVAL_MS,
-    shouldAnimate &&
-      terminalTitleUsesActivity &&
-      terminalTitleHasActiveProgress,
-  );
-  const terminalTitleActionFrameIndex = useFrameCycle(
-    TERMINAL_TITLE_ACTION_REQUIRED_FRAMES,
-    TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL_MS,
-    shouldAnimate && terminalTitleShowsActionRequired,
-  );
-  const terminalTitleActionPrefix =
-    TERMINAL_TITLE_ACTION_REQUIRED_FRAMES[terminalTitleActionFrameIndex] ??
-    TERMINAL_TITLE_ACTION_REQUIRED_PREFIX;
   const terminalTitleData = useMemo<WindowTitleData>(
     () => ({
       agentName,
@@ -4691,11 +4649,6 @@ export function App({
       conversationId,
       projectDirectory,
       currentDirectory: statusLinePayload.workspace.current_dir,
-      activityFrame:
-        shouldAnimate && terminalTitleHasActiveProgress
-          ? (TERMINAL_TITLE_SPINNER_FRAMES[terminalTitleSpinnerFrameIndex] ??
-            null)
-          : null,
       runState: terminalTitleRunState,
       modelDisplayName: currentModelDisplay,
       reasoningEffort: currentReasoningEffort,
@@ -4714,71 +4667,14 @@ export function App({
       currentModelServiceTier,
       currentReasoningEffort,
       projectDirectory,
-      shouldAnimate,
       statusLinePayload.context_window.remaining_percentage,
       statusLinePayload.context_window.total_input_tokens,
       statusLinePayload.context_window.total_output_tokens,
       statusLinePayload.context_window.used_percentage,
       statusLinePayload.workspace.current_dir,
-      terminalTitleHasActiveProgress,
       terminalTitleRunState,
-      terminalTitleSpinnerFrameIndex,
     ],
   );
-  const terminalTitle = useMemo(
-    () =>
-      terminalTitleShowsActionRequired
-        ? renderActionRequiredWindowTitle(
-            terminalTitleItems,
-            terminalTitleData,
-            terminalTitleActionPrefix,
-          )
-        : renderWindowTitle(terminalTitleItems, terminalTitleData),
-    [
-      terminalTitleActionPrefix,
-      terminalTitleData,
-      terminalTitleItems,
-      terminalTitleShowsActionRequired,
-    ],
-  );
-
-  const applyManagedTerminalTitle = useCallback((title: string | null) => {
-    if (title === lastManagedTerminalTitleRef.current) {
-      return;
-    }
-
-    if (title === null) {
-      if (lastManagedTerminalTitleRef.current !== null) {
-        clearTerminalTitle();
-        lastManagedTerminalTitleRef.current = null;
-      }
-      return;
-    }
-
-    const result = setTerminalTitle(title);
-    if (result === "applied") {
-      lastManagedTerminalTitleRef.current = title;
-      return;
-    }
-
-    if (lastManagedTerminalTitleRef.current !== null) {
-      clearTerminalTitle();
-      lastManagedTerminalTitleRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    applyManagedTerminalTitle(terminalTitle);
-  }, [applyManagedTerminalTitle, terminalTitle]);
-
-  useEffect(() => {
-    return () => {
-      if (lastManagedTerminalTitleRef.current !== null) {
-        clearTerminalTitle();
-        lastManagedTerminalTitleRef.current = null;
-      }
-    };
-  }, []);
 
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
@@ -4918,152 +4814,166 @@ export function App({
   }, [trajectoryTokenDisplay]);
 
   return (
-    <AppView
-      activeOverlay={activeOverlay}
-      agentId={agentId}
-      agentName={agentName}
-      agentState={agentState}
-      anySelectorOpen={anySelectorOpen}
-      approvalMap={approvalMap}
-      bashRunning={bashRunning}
-      billingTier={billingTier}
-      btwState={btwState}
-      buffersRef={buffersRef}
-      chromeColumns={chromeColumns}
-      closeOverlay={closeOverlay}
-      columns={columns}
-      commandRunner={commandRunner}
-      completeOverlay={completeOverlay}
-      contextTrackerRef={contextTrackerRef}
-      continueSession={continueSession}
-      conversationId={conversationId}
-      conversationSummary={conversationSummary}
-      projectDirectory={projectDirectory}
-      currentApproval={currentApproval}
-      currentApprovalContext={currentApprovalContext}
-      currentModelDisplay={currentModelDisplay}
-      currentModelHandle={currentModelHandle}
-      currentModelId={currentModelId}
-      currentModelServiceTier={currentModelServiceTier}
-      currentModelProvider={currentModelProvider}
-      isLocalBackend={isLocalBackend}
-      currentPersonalityId={currentPersonalityId}
-      currentReasoningEffort={currentReasoningEffort}
-      currentSystemPromptId={currentSystemPromptId}
-      currentToolset={currentToolset}
-      currentToolsetPreference={currentToolsetPreference}
-      expandedToolCallId={expandedToolCallId}
-      lastShellToolCallId={lastShellToolCallId}
-      handleCtrlO={handleCtrlO}
-      queueMode={queueMode}
-      deferModeSupported={deferModeSupported}
-      handleCtrlD={handleCtrlD}
-      emittedIdsRef={emittedIdsRef}
-      feedbackPrefill={feedbackPrefill}
-      footerUpdateText={footerUpdateText}
-      showInspirationalPromptHints={showInspirationalPromptHints}
-      onEscapeCommandCancel={onEscapeCommandCancel}
-      handleAgentSelect={handleAgentSelect}
-      handleApproveAlways={handleApproveAlways}
-      handleApproveCurrent={handleApproveCurrent}
-      handleBashInterrupt={handleBashInterrupt}
-      handleBashSubmit={handleBashSubmit}
-      handleBtwJump={handleBtwJump}
-      handleCancelApprovals={handleCancelApprovals}
-      handleCompactionModeSelect={handleCompactionModeSelect}
-      handleCreateNewAgent={handleCreateNewAgent}
-      handleCycleReasoningEffort={handleCycleReasoningEffort}
-      handleDenyCurrent={handleDenyCurrent}
-      handleQueueEdit={handleQueueEdit}
-      handleExit={handleExit}
-      handleExperimentsConfirm={handleExperimentsConfirm}
-      handleFeedbackSubmit={handleFeedbackSubmit}
-      handleInterrupt={handleInterrupt}
-      handleModelSelect={handleModelSelect}
-      handlePasteError={handlePasteError}
-      handlePermissionModeChange={handlePermissionModeChange}
-      handlePersonalitySelect={handlePersonalitySelect}
-      handleProfileEscapeCancel={handleProfileEscapeCancel}
-      handleQuestionSubmit={handleQuestionSubmit}
-      handleGoalLoopExit={handleGoalLoopExit}
-      handleSleeptimeModeSelect={handleSleeptimeModeSelect}
-      handleSystemPromptSelect={handleSystemPromptSelect}
-      handleToolsetSelect={handleToolsetSelect}
-      hasBackfilledRef={hasBackfilledRef}
-      hasTemporaryModelOverride={hasTemporaryModelOverride}
-      includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
-      inputEnabled={inputEnabled}
-      inputVisible={inputVisible}
-      interruptRequested={interruptRequested}
-      isAgentBusy={isAgentBusy}
-      liveItems={liveItems}
-      liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
-      loadingState={loadingState}
-      markLocalModelsAvailable={markLocalModelsAvailable}
-      maybeCarryOverActiveConversationModel={
-        maybeCarryOverActiveConversationModel
-      }
-      modelReasoningPrompt={modelReasoningPrompt}
-      modelSelectorOptions={modelSelectorOptions}
-      networkPhase={networkPhase}
-      executionPhase={executionPhase}
-      fileAutocompleteFdPath={fileAutocompleteFdPath}
-      onSubmit={onSubmit}
-      pendingApprovals={pendingApprovals}
-      pendingConversationSwitchRef={pendingConversationSwitchRef}
-      pendingIds={pendingIds}
-      pinDialogLocal={pinDialogLocal}
-      precomputedDiffsRef={precomputedDiffsRef}
-      profileConfirmPending={profileConfirmPending}
-      queueDisplay={queueDisplay}
-      queuedDecisions={queuedDecisions}
-      queuedIds={queuedIds}
-      reasoningTabCycleEnabled={reasoningTabCycleEnabled}
-      recoverRestoredPendingApprovals={recoverRestoredPendingApprovals}
-      refreshDerived={refreshDerived}
-      resetBootstrapReminderState={resetBootstrapReminderState}
-      resetDeferredToolCallCommits={resetDeferredToolCallCommits}
-      resetTrajectoryBases={resetTrajectoryBases}
-      restoredInput={restoredInput}
-      resumeKey={resumeKey}
-      searchQuery={searchQuery}
-      sessionStatsRef={sessionStatsRef}
-      worktreeDiffSelectorPending={worktreeDiffSelectorPending}
-      setWorktreeDiffSelectorPending={setWorktreeDiffSelectorPending}
-      setActiveOverlay={setActiveOverlay}
-      setBtwState={setBtwState}
-      setCommandRunning={setCommandRunning}
-      setConversationAutoTitleEligibility={setConversationAutoTitleEligibility}
-      setConversationIdAndRef={setConversationIdAndRef}
-      setConversationSummary={setConversationSummary}
-      setLines={setLines}
-      setModelReasoningPrompt={setModelReasoningPrompt}
-      setModelSelectorOptions={setModelSelectorOptions}
-      setQueuedOverlayAction={setQueuedOverlayAction}
-      setRestoredInput={setRestoredInput}
-      setStaticItems={setStaticItems}
-      setStaticRenderEpoch={setStaticRenderEpoch}
-      shouldAnimate={shouldAnimate}
-      showApprovalPreview={showApprovalPreview}
-      showCompactionsEnabled={showCompactionsEnabled}
-      showExitStats={showExitStats}
-      openOverlay={openOverlay}
-      staticItems={staticItems}
-      staticRenderEpoch={staticRenderEpoch}
-      statusLinePayload={statusLinePayload}
-      statusLinePrompt={CLI_GLYPHS.prompt}
-      terminalTitleData={terminalTitleData}
-      onTitlePreview={applyManagedTerminalTitle}
-      extensionAdapter={extensionAdapter}
-      streaming={streaming}
-      stubDescriptions={stubDescriptions}
-      thinkingMessage={thinkingMessage}
-      trajectoryTokenDisplay={trajectoryTokenDisplay}
-      usedContextTokens={usedContextTokens}
-      contextWindowSize={effectiveContextWindowSize}
-      uiPermissionMode={uiPermissionMode}
-      uiGoalLoopActive={uiGoalLoopActive}
-      updateAgentName={updateAgentName}
-    />
+    <>
+      <TerminalTitleWriter
+        projectDirectory={projectDirectory}
+        configRefreshKey={activeOverlay}
+        titleData={terminalTitleData}
+        shouldAnimate={shouldAnimate}
+        hasActiveProgress={terminalTitleTaskRunning}
+        requiresAction={pendingApprovals.length > 0}
+        previewTitle={terminalTitlePreviewOverride}
+      />
+      <AppView
+        activeOverlay={activeOverlay}
+        agentId={agentId}
+        agentName={agentName}
+        agentState={agentState}
+        anySelectorOpen={anySelectorOpen}
+        approvalMap={approvalMap}
+        bashRunning={bashRunning}
+        billingTier={billingTier}
+        btwState={btwState}
+        buffersRef={buffersRef}
+        chromeColumns={chromeColumns}
+        closeOverlay={closeOverlay}
+        columns={columns}
+        commandRunner={commandRunner}
+        completeOverlay={completeOverlay}
+        contextTrackerRef={contextTrackerRef}
+        continueSession={continueSession}
+        conversationId={conversationId}
+        conversationSummary={conversationSummary}
+        projectDirectory={projectDirectory}
+        currentApproval={currentApproval}
+        currentApprovalContext={currentApprovalContext}
+        currentModelDisplay={currentModelDisplay}
+        currentModelHandle={currentModelHandle}
+        currentModelId={currentModelId}
+        currentModelServiceTier={currentModelServiceTier}
+        currentModelProvider={currentModelProvider}
+        isLocalBackend={isLocalBackend}
+        currentPersonalityId={currentPersonalityId}
+        currentReasoningEffort={currentReasoningEffort}
+        currentSystemPromptId={currentSystemPromptId}
+        currentToolset={currentToolset}
+        currentToolsetPreference={currentToolsetPreference}
+        expandedToolCallId={expandedToolCallId}
+        lastShellToolCallId={lastShellToolCallId}
+        handleCtrlO={handleCtrlO}
+        queueMode={queueMode}
+        deferModeSupported={deferModeSupported}
+        handleCtrlD={handleCtrlD}
+        emittedIdsRef={emittedIdsRef}
+        feedbackPrefill={feedbackPrefill}
+        footerUpdateText={footerUpdateText}
+        showInspirationalPromptHints={showInspirationalPromptHints}
+        onEscapeCommandCancel={onEscapeCommandCancel}
+        handleAgentSelect={handleAgentSelect}
+        handleApproveAlways={handleApproveAlways}
+        handleApproveCurrent={handleApproveCurrent}
+        handleBashInterrupt={handleBashInterrupt}
+        handleBashSubmit={handleBashSubmit}
+        handleBtwJump={handleBtwJump}
+        handleCancelApprovals={handleCancelApprovals}
+        handleCompactionModeSelect={handleCompactionModeSelect}
+        handleCreateNewAgent={handleCreateNewAgent}
+        handleCycleReasoningEffort={handleCycleReasoningEffort}
+        handleDenyCurrent={handleDenyCurrent}
+        handleQueueEdit={handleQueueEdit}
+        handleExit={handleExit}
+        handleExperimentsConfirm={handleExperimentsConfirm}
+        handleFeedbackSubmit={handleFeedbackSubmit}
+        handleInterrupt={handleInterrupt}
+        handleModelSelect={handleModelSelect}
+        handlePasteError={handlePasteError}
+        handlePermissionModeChange={handlePermissionModeChange}
+        handlePersonalitySelect={handlePersonalitySelect}
+        handleProfileEscapeCancel={handleProfileEscapeCancel}
+        handleQuestionSubmit={handleQuestionSubmit}
+        handleGoalLoopExit={handleGoalLoopExit}
+        handleSleeptimeModeSelect={handleSleeptimeModeSelect}
+        handleSystemPromptSelect={handleSystemPromptSelect}
+        handleToolsetSelect={handleToolsetSelect}
+        hasBackfilledRef={hasBackfilledRef}
+        hasTemporaryModelOverride={hasTemporaryModelOverride}
+        includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
+        inputEnabled={inputEnabled}
+        inputVisible={inputVisible}
+        interruptRequested={interruptRequested}
+        isAgentBusy={isAgentBusy}
+        liveItems={liveItems}
+        liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
+        loadingState={loadingState}
+        markLocalModelsAvailable={markLocalModelsAvailable}
+        maybeCarryOverActiveConversationModel={
+          maybeCarryOverActiveConversationModel
+        }
+        modelReasoningPrompt={modelReasoningPrompt}
+        modelSelectorOptions={modelSelectorOptions}
+        networkPhase={networkPhase}
+        executionPhase={executionPhase}
+        fileAutocompleteFdPath={fileAutocompleteFdPath}
+        onSubmit={onSubmit}
+        pendingApprovals={pendingApprovals}
+        pendingConversationSwitchRef={pendingConversationSwitchRef}
+        pendingIds={pendingIds}
+        pinDialogLocal={pinDialogLocal}
+        precomputedDiffsRef={precomputedDiffsRef}
+        profileConfirmPending={profileConfirmPending}
+        queueDisplay={queueDisplay}
+        queuedDecisions={queuedDecisions}
+        queuedIds={queuedIds}
+        reasoningTabCycleEnabled={reasoningTabCycleEnabled}
+        recoverRestoredPendingApprovals={recoverRestoredPendingApprovals}
+        refreshDerived={refreshDerived}
+        resetBootstrapReminderState={resetBootstrapReminderState}
+        resetDeferredToolCallCommits={resetDeferredToolCallCommits}
+        resetTrajectoryBases={resetTrajectoryBases}
+        restoredInput={restoredInput}
+        resumeKey={resumeKey}
+        searchQuery={searchQuery}
+        sessionStatsRef={sessionStatsRef}
+        worktreeDiffSelectorPending={worktreeDiffSelectorPending}
+        setWorktreeDiffSelectorPending={setWorktreeDiffSelectorPending}
+        setActiveOverlay={setActiveOverlay}
+        setBtwState={setBtwState}
+        setCommandRunning={setCommandRunning}
+        setConversationAutoTitleEligibility={
+          setConversationAutoTitleEligibility
+        }
+        setConversationIdAndRef={setConversationIdAndRef}
+        setConversationSummary={setConversationSummary}
+        setLines={setLines}
+        setModelReasoningPrompt={setModelReasoningPrompt}
+        setModelSelectorOptions={setModelSelectorOptions}
+        setQueuedOverlayAction={setQueuedOverlayAction}
+        setRestoredInput={setRestoredInput}
+        setStaticItems={setStaticItems}
+        setStaticRenderEpoch={setStaticRenderEpoch}
+        shouldAnimate={shouldAnimate}
+        showApprovalPreview={showApprovalPreview}
+        showCompactionsEnabled={showCompactionsEnabled}
+        showExitStats={showExitStats}
+        openOverlay={openOverlay}
+        staticItems={staticItems}
+        staticRenderEpoch={staticRenderEpoch}
+        statusLinePayload={statusLinePayload}
+        statusLinePrompt={CLI_GLYPHS.prompt}
+        terminalTitleData={terminalTitleData}
+        onTitlePreview={setTerminalTitlePreviewOverride}
+        onTitlePreviewEnd={clearTerminalTitlePreviewOverride}
+        extensionAdapter={extensionAdapter}
+        streaming={streaming}
+        stubDescriptions={stubDescriptions}
+        thinkingMessage={thinkingMessage}
+        trajectoryTokenDisplay={trajectoryTokenDisplay}
+        usedContextTokens={usedContextTokens}
+        contextWindowSize={effectiveContextWindowSize}
+        uiPermissionMode={uiPermissionMode}
+        uiGoalLoopActive={uiGoalLoopActive}
+        updateAgentName={updateAgentName}
+      />
+    </>
   );
 }

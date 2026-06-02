@@ -5,7 +5,6 @@ import { memo, useCallback, useMemo, useRef, useState } from "react";
 import {
   normalizeWindowTitleItems,
   previewLineForWindowTitleItems,
-  renderWindowTitle,
   resolveWindowTitleConfig,
   WINDOW_TITLE_FIELD_INFO,
   WINDOW_TITLE_FIELDS,
@@ -20,6 +19,7 @@ interface WindowTitlePickerProps {
   projectDirectory: string;
   titleData: WindowTitleData;
   onTitlePreview: (title: string | null) => void;
+  onTitlePreviewEnd: () => void;
   onClose: () => void;
 }
 
@@ -27,6 +27,7 @@ export const WindowTitlePicker = memo(function WindowTitlePicker({
   projectDirectory,
   titleData,
   onTitlePreview,
+  onTitlePreviewEnd,
   onClose,
 }: WindowTitlePickerProps) {
   const currentItems = useMemo(
@@ -84,17 +85,16 @@ export const WindowTitlePicker = memo(function WindowTitlePicker({
       settingsManager.updateSettings({
         windowTitle: { items: normalizeWindowTitleItems(keys) },
       });
+      onTitlePreviewEnd();
       onClose();
     },
-    [onClose],
+    [onClose, onTitlePreviewEnd],
   );
 
   const handleCancel = useCallback(() => {
-    const savedItems = resolveWindowTitleConfig(projectDirectory);
-    const title = renderWindowTitle(savedItems, titleData);
-    onTitlePreview(title);
+    onTitlePreviewEnd();
     onClose();
-  }, [projectDirectory, titleData, onTitlePreview, onClose]);
+  }, [onTitlePreviewEnd, onClose]);
 
   return (
     <OverlayShell command="/title" title="Configure Terminal Title">
