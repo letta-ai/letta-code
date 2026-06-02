@@ -2661,7 +2661,7 @@ export class LocalStore {
         transcript: "skip",
       });
     }
-    for (const message of localMessages) {
+    for (const message of loadedMessages) {
       this.localMessageSeq = Math.max(
         this.localMessageSeq,
         numericSuffix(message.id, this.localMessageIdPrefix),

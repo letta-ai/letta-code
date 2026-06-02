@@ -1396,7 +1396,7 @@ describe("local backend pi transcript", () => {
     }
     const timestamp = new Date().toISOString();
     const orphanMessage = {
-      id: "ui-msg-orphan-tool-result",
+      id: "ui-msg-9999",
       role: "toolResult",
       toolCallId: "call-missing",
       toolName: "Read",
@@ -1459,6 +1459,22 @@ describe("local backend pi transcript", () => {
       orphanMessage.id,
     );
     expect(await readFile(messagesPath, "utf8")).toContain(orphanMessage.id);
+
+    await drain(
+      await reloadedBackend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "next" }],
+      } as ConversationMessageCreateBody),
+    );
+    const messagesAfterNextTurn = pageItems(
+      await reloadedBackend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(messagesAfterNextTurn.map((message) => message.id)).toContain(
+      "ui-msg-10000",
+    );
   });
 
   test("defers unversioned transcript migration errors until transcript read", async () => {
