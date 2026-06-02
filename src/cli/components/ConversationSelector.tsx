@@ -822,7 +822,7 @@ export function ConversationSelector({
         return;
       }
       onCancel();
-    } else if (key.ctrl && (input === "p" || input === "\u0010")) {
+    } else if (key.meta && (input === "p" || input === "P")) {
       togglePinnedConversation(filteredConversations[selectedIndex]);
     } else if (key.leftArrow || key.rightArrow) {
       // Let the search input own horizontal cursor movement.
@@ -1055,8 +1055,8 @@ export function ConversationSelector({
           const pageText = `Showing ${startIndex + 1}-${Math.min(startIndex + visibleConversations.length, filteredConversations.length)} of ${filteredConversations.length}${!normalizedSearch && hasMore ? "+" : ""}${loadingMore ? " (loading...)" : ""}`;
           const hintsText =
             mode === "pin"
-              ? "Enter/Ctrl+P toggle pin · ↑↓ navigate · Esc clear/close"
-              : "Enter select · ↑↓ navigate · Ctrl+P pin/unpin · Esc clear/cancel";
+              ? "Enter/Alt+P toggle pin · ↑↓ navigate · Esc clear/close"
+              : "Enter select · ↑↓ navigate · Alt+P pin/unpin · Esc clear/cancel";
 
           return (
             <Box flexDirection="column">
