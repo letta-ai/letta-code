@@ -30,6 +30,16 @@ describe("getModelInfo", () => {
       enable_reasoner: true,
     });
   });
+
+  test("resolves MiniMax M3 registry metadata", () => {
+    const info = getModelInfo("minimax-m3");
+    expect(info?.handle).toBe("minimax/MiniMax-M3");
+    expect(info?.label).toBe("MiniMax M3");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 1000000,
+      parallel_tool_calls: true,
+    });
+  });
 });
 
 describe("getModelInfoForLlmConfig", () => {
