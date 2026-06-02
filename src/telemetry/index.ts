@@ -99,6 +99,16 @@ export interface ReflectionEndData {
   success: boolean;
   subagent_id?: string;
   conversation_id?: string;
+  /**
+   * Message IDs bracketing the reflection window. Carried on both
+   * `reflection_start` and `reflection_end` so dashboards can correlate the
+   * two events via `start_message_id` — useful because
+   * `reflection_start.subagent_id` is often empty (the agent ID isn't
+   * resolved synchronously) but `reflection_end.subagent_id` is populated
+   * from the spawn callback.
+   */
+  start_message_id?: string;
+  end_message_id?: string;
   error?: string;
 }
 
@@ -231,6 +241,15 @@ class TelemetryManager {
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
   private serverVersion: string | null = null;
+  /**
+   * Tracks an in-flight flush so concurrent callers can await it instead of
+   * starting a second POST. Prevents the "double-flush on shutdown" race that
+   * was causing 429 `route_rps_rate_limit_exceeded` errors when SIGINT and
+   * normal-exit handlers both kicked off a flush within milliseconds of each
+   * other, dropping the second batch (typically containing late `reflection_end`
+   * events).
+   */
+  private inflightFlush: Promise<void> | null = null;
 
   private async resolveTelemetryApiKey(): Promise<string | undefined> {
     if (process.env.LETTA_API_KEY) {
@@ -244,8 +263,26 @@ class TelemetryManager {
       return undefined;
     }
   }
-  private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-  private readonly MAX_BATCH_SIZE = 100;
+  /**
+   * Periodic flush cadence. Previously 5 minutes, which meant a typical
+   * session's entire telemetry payload (well under 100 events) rode on the
+   * exit-path flush alone — losing the queue on Ctrl+C, crashes, or any other
+   * abnormal termination. 30s gives us much more durable coverage while
+   * staying well below any reasonable per-route rate limit.
+   */
+  private readonly FLUSH_INTERVAL_MS = 30 * 1000; // 30 seconds
+  /**
+   * Maximum number of events to accumulate before triggering an immediate
+   * flush. Tuned down from 100 so that bursty sessions (e.g. ~20 `tool_usage`
+   * events from a single user turn) flush at natural conversation boundaries
+   * rather than holding the queue until exit.
+   */
+  private readonly MAX_BATCH_SIZE = 25;
+  /**
+   * Maximum time to wait for queued events to drain on exit before letting
+   * the process terminate anyway. Bounded so we never hang the user's shell.
+   */
+  private readonly DRAIN_TIMEOUT_MS = 3_000;
   private sessionStatsGetter?: () => {
     totalWallMs: number;
     totalApiMs: number;
@@ -329,58 +366,59 @@ class TelemetryManager {
     // Don't let the interval prevent process from exiting
     this.flushInterval.unref();
 
-    // Safety net: Handle Ctrl+C interruption
-    // Note: Normal exits via handleExit flush explicitly
+    // Safety net: Handle Ctrl+C interruption.
+    // Normal exits via handleExit drain explicitly.
+    // We await drain() (bounded by DRAIN_TIMEOUT_MS) before exiting so the
+    // final batch — which typically contains late-arriving reflection_end
+    // events and session_end — actually makes it over the wire.
     process.on("SIGINT", () => {
-      try {
-        this.trackSessionEnd(undefined, "sigint");
-        // Fire and forget - try to flush but don't wait (might not complete)
-        this.flush().catch(() => {
-          // Silently ignore
-        });
-      } catch {
-        // Silently ignore - don't prevent process from exiting
-      }
-      // Exit immediately - don't wait for flush
-      process.exit(0);
+      void (async () => {
+        try {
+          this.trackSessionEnd(undefined, "sigint");
+          await this.drain();
+        } catch {
+          // Silently ignore - don't prevent process from exiting
+        }
+        process.exit(0);
+      })();
     });
 
     process.on("uncaughtException", (error) => {
-      try {
-        const msg = error instanceof Error ? error.message : String(error);
-        // Broken pipe/TTY — not actionable (e.g. terminal closed while writing)
-        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
-        this.trackError(
-          "uncaught_exception",
-          msg,
-          "process_uncaught_exception",
-        );
-        this.flush().catch(() => {
-          // Silently ignore
-        });
-      } catch {
-        // Silently ignore - don't prevent process from exiting
-      }
+      void (async () => {
+        try {
+          const msg = error instanceof Error ? error.message : String(error);
+          // Broken pipe/TTY — not actionable (e.g. terminal closed while writing)
+          if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
+          this.trackError(
+            "uncaught_exception",
+            msg,
+            "process_uncaught_exception",
+          );
+          await this.drain();
+        } catch {
+          // Silently ignore - don't prevent process from exiting
+        }
+      })();
     });
 
     process.on("unhandledRejection", (reason) => {
-      try {
-        const msg = reason instanceof Error ? reason.message : String(reason);
-        // Broken pipe/TTY — not actionable
-        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
-        // Rate limits surfacing as unhandled rejections — expected under load
-        if (/\b429\b/.test(msg) && /rate.?limit/i.test(msg)) return;
-        this.trackError(
-          "unhandled_rejection",
-          msg,
-          "process_unhandled_rejection",
-        );
-        this.flush().catch(() => {
-          // Silently ignore
-        });
-      } catch {
-        // Silently ignore - don't prevent process from exiting
-      }
+      void (async () => {
+        try {
+          const msg = reason instanceof Error ? reason.message : String(reason);
+          // Broken pipe/TTY — not actionable
+          if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
+          // Rate limits surfacing as unhandled rejections — expected under load
+          if (/\b429\b/.test(msg) && /rate.?limit/i.test(msg)) return;
+          this.trackError(
+            "unhandled_rejection",
+            msg,
+            "process_unhandled_rejection",
+          );
+          await this.drain();
+        } catch {
+          // Silently ignore - don't prevent process from exiting
+        }
+      })();
     });
 
     // TODO: Add telemetry for crashes and abnormal exits
@@ -708,6 +746,8 @@ class TelemetryManager {
     options?: {
       subagentId?: string;
       conversationId?: string;
+      startMessageId?: string;
+      endMessageId?: string;
       error?: string;
     },
   ) {
@@ -716,19 +756,36 @@ class TelemetryManager {
       success,
       subagent_id: options?.subagentId,
       conversation_id: options?.conversationId,
+      start_message_id: options?.startMessageId,
+      end_message_id: options?.endMessageId,
       error: options?.error,
     };
     this.track("reflection_end", data);
   }
 
   /**
-   * Flush events to the server
+   * Flush events to the server.
+   *
+   * Concurrent callers (e.g. timer interval + size threshold + exit handler all
+   * firing within the same tick) all await the same in-flight POST instead of
+   * each starting their own. This is the fix for the 429
+   * `route_rps_rate_limit_exceeded` race we were hitting on shutdown.
    */
   async flush(): Promise<void> {
+    if (this.inflightFlush) {
+      return this.inflightFlush;
+    }
     if (this.events.length === 0 || !this.isTelemetryEnabled()) {
       return;
     }
 
+    this.inflightFlush = this.performFlush().finally(() => {
+      this.inflightFlush = null;
+    });
+    return this.inflightFlush;
+  }
+
+  private async performFlush(): Promise<void> {
     const eventsToSend = [...this.events];
     this.events = [];
 
@@ -748,6 +805,36 @@ class TelemetryManager {
     } catch {
       // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);
+    }
+  }
+
+  /**
+   * Drain all queued events before exiting.
+   *
+   * Replaces the historical "fire and forget `flush()` then `process.exit(0)`"
+   * pattern in our exit handlers, which silently dropped any events that
+   * hadn't been POSTed by the time the process tore down. Awaits the
+   * in-flight flush (if any) and then drains the remaining queue, bounded by
+   * `DRAIN_TIMEOUT_MS` so a slow/unresponsive server never hangs the user's
+   * shell.
+   */
+  async drain(): Promise<void> {
+    if (!this.isTelemetryEnabled()) {
+      return;
+    }
+    const deadline = Date.now() + this.DRAIN_TIMEOUT_MS;
+    // Loop in case new events get tracked between awaits (e.g. trackError from
+    // an `uncaughtException` handler firing while drain is in flight).
+    while (this.events.length > 0 || this.inflightFlush) {
+      if (Date.now() >= deadline) {
+        return;
+      }
+      try {
+        await this.flush();
+      } catch {
+        // Swallow — already logged inside performFlush; don't block exit.
+        return;
+      }
     }
   }
 
