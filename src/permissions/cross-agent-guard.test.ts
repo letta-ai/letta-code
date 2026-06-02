@@ -8,6 +8,7 @@ import {
   evaluateCrossAgentGuard,
   extractTargetAgentPaths,
   isMemoryGuardDisabled,
+  isMemoryGuardEnabled,
   resolveAllowedAgents,
 } from "@/permissions/cross-agent-guard";
 import { permissionMode } from "@/permissions/mode";
@@ -117,6 +118,20 @@ describe("resolveAllowedAgents", () => {
 
     process.env.LETTA_CODE_AGENT_ROLE = "subagent";
     expect(isMemoryGuardDisabled()).toBe(false);
+  });
+
+  test("memory guard is disabled by default for parent processes", () => {
+    expect(isMemoryGuardEnabled()).toBe(false);
+  });
+
+  test("memory guard can be enabled by headless parent startup", () => {
+    cliPermissions.setMemoryGuardEnabledByDefault(true);
+    expect(isMemoryGuardEnabled()).toBe(true);
+  });
+
+  test("memory guard is enabled by default for subagents", () => {
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    expect(isMemoryGuardEnabled()).toBe(true);
   });
 });
 
@@ -288,6 +303,20 @@ describe("extractTargetAgentPaths", () => {
 // ---------------------------------------------------------------------------
 
 describe("evaluateCrossAgentGuard", () => {
+  beforeEach(() => {
+    cliPermissions.setMemoryGuardEnabledByDefault(true);
+  });
+
+  test("parent processes skip the guard unless headless startup enables it", () => {
+    cliPermissions.setMemoryGuardEnabledByDefault(false);
+    const result = evaluateCrossAgentGuard(
+      "Write",
+      { file_path: otherMemory("system/a.md") },
+      "/tmp",
+    );
+    expect(result).toBeNull();
+  });
+
   test("returns null for own memory", () => {
     const result = evaluateCrossAgentGuard(
       "Write",
@@ -378,11 +407,28 @@ describe("evaluateCrossAgentGuard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration with checkPermission — guard is unbypassable by any mode
+// Integration with checkPermission — when enabled, guard is unbypassable by any mode
 // ---------------------------------------------------------------------------
 
 describe("checkPermission integration", () => {
   const permissions = { allow: [], deny: [], ask: [] };
+
+  beforeEach(() => {
+    cliPermissions.setMemoryGuardEnabledByDefault(true);
+  });
+
+  test("parent processes use normal permissions when guard is not enabled", () => {
+    cliPermissions.setMemoryGuardEnabledByDefault(false);
+    permissionMode.setMode("acceptEdits");
+    const result = checkPermission(
+      "Write",
+      { file_path: otherMemory("system/a.md") },
+      permissions,
+      "/tmp",
+    );
+    expect(result.decision).toBe("allow");
+    expect(result.matchedRule).not.toBe("cross-agent guard");
+  });
 
   test("unrestricted mode does NOT let you write another agent's memory", () => {
     permissionMode.setMode("unrestricted");
@@ -511,6 +557,10 @@ describe("checkPermission integration", () => {
 // ---------------------------------------------------------------------------
 
 describe("shell bypass regression tests", () => {
+  beforeEach(() => {
+    cliPermissions.setMemoryGuardEnabledByDefault(true);
+  });
+
   test("enumeration: ls ~/.letta/agents is denied", () => {
     const result = evaluateCrossAgentGuard(
       "Bash",
@@ -620,6 +670,10 @@ cat "$TARGET/system/persona.md"`;
 
 describe("Grep/Glob ancestor-path regression tests", () => {
   const agentsTreeRoot = join(HOME, ".letta", "agents");
+
+  beforeEach(() => {
+    cliPermissions.setMemoryGuardEnabledByDefault(true);
+  });
 
   test("Glob with path='<home>/.letta/agents' is denied", () => {
     const result = evaluateCrossAgentGuard(

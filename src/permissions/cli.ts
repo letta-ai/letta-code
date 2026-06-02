@@ -17,6 +17,7 @@ import { normalizePermissionRule } from "./rule-normalization";
 export class CliPermissions {
   private allowedTools: string[] = [];
   private disallowedTools: string[] = [];
+  private memoryGuardEnabledByDefault = false;
   private memoryGuardDisabled = false;
 
   /**
@@ -33,6 +34,15 @@ export class CliPermissions {
    */
   setDisallowedTools(toolsString: string): void {
     this.disallowedTools = this.parseToolList(toolsString);
+  }
+
+  /**
+   * Set whether the parent process enables the cross-agent memory guard by
+   * default. Headless startup turns this on; interactive startup leaves it off.
+   * Subagent processes ignore this setting and always enable the guard.
+   */
+  setMemoryGuardEnabledByDefault(enabled: boolean): void {
+    this.memoryGuardEnabledByDefault = enabled;
   }
 
   /**
@@ -132,6 +142,13 @@ export class CliPermissions {
   }
 
   /**
+   * Whether this parent CLI process enables the memory guard by default.
+   */
+  isMemoryGuardEnabledByDefault(): boolean {
+    return this.memoryGuardEnabledByDefault;
+  }
+
+  /**
    * Whether --disable-memory-guard was set on the CLI.
    */
   isMemoryGuardDisabled(): boolean {
@@ -144,6 +161,7 @@ export class CliPermissions {
   clear(): void {
     this.allowedTools = [];
     this.disallowedTools = [];
+    this.memoryGuardEnabledByDefault = false;
     this.memoryGuardDisabled = false;
   }
 }
