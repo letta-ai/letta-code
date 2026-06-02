@@ -54,6 +54,20 @@ interface EnrichedConversation {
   isPinnedLocal: boolean;
 }
 
+function isPinShortcut(
+  input: string,
+  key: { ctrl?: boolean; meta?: boolean },
+): boolean {
+  if (key.ctrl) return false;
+
+  // macOS Option+P can arrive as literal glyphs when Option isn't Meta.
+  if (input === "π" || input === "∏") return true;
+
+  if (!key.meta) return false;
+  const normalizedInput = input.replaceAll("\u001b", "");
+  return normalizedInput === "p" || normalizedInput === "P";
+}
+
 const MAX_DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
 const ENRICH_MESSAGE_LIMIT = 20; // Same as original fetch limit
@@ -818,7 +832,7 @@ export function ConversationSelector({
         return;
       }
       onCancel();
-    } else if (key.meta && (input === "p" || input === "P")) {
+    } else if (isPinShortcut(input, key)) {
       togglePinnedConversation(filteredConversations[selectedIndex]);
     } else if (key.leftArrow || key.rightArrow) {
       // Let the search input own horizontal cursor movement.
@@ -980,7 +994,7 @@ export function ConversationSelector({
         <PasteAwareTextInput
           value={searchInput}
           onChange={(value) => {
-            setSearchInput(value);
+            setSearchInput(value.replace(/[π∏]/g, ""));
             setSelectedIndex(0);
           }}
           placeholder="search conversation titles"
