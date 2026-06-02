@@ -78,6 +78,7 @@ import {
 } from "@/cli/helpers/context-tracker";
 import {
   generateConversationTitleFromFork,
+  getConversationTitleSettings,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
@@ -1218,7 +1219,7 @@ export function App({
 
     // Heuristic-only when the experiment is off, on local backends, or for
     // the agent-direct "default" conversation (which can't be forked safely).
-    if (!experimentManager.isEnabled("conversation_titles")) {
+    if (!getConversationTitleSettings().enabled) {
       return fallback;
     }
     if (getBackend().capabilities.localModelCatalog) {
