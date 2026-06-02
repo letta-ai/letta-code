@@ -11,6 +11,7 @@ import {
   validateProfileLoad,
 } from "@/cli/commands/profile";
 import type { Buffers } from "@/cli/helpers/accumulator";
+import { settingsManager } from "@/settings-manager";
 import type { ActiveOverlay, AppCommandRunner } from "./types";
 
 type SubmitCommandResult = { submitted: boolean };
@@ -24,6 +25,7 @@ type ProfileConfirmPending = {
 type ProfileCommandRouterContext = {
   agentId: string;
   agentName: string | null;
+  conversationId: string;
   buffersRef: MutableRefObject<Buffers>;
   commandRunner: AppCommandRunner;
   handleAgentSelect: (
@@ -57,6 +59,7 @@ export async function handleProfileCommand(
   const {
     agentId,
     agentName,
+    conversationId,
     buffersRef,
     commandRunner,
     handleAgentSelect,
@@ -162,21 +165,56 @@ export async function handleProfileCommand(
         "Pin agents and conversations.",
         "",
         "USAGE",
-        "  /pin [name]        — pin the current agent globally",
-        "  /pin -l [name]     — pin the current agent to this project",
-        "  /pin agent [name]  — pin the current agent",
-        "  /pin convo         — manage pinned conversations",
-        "  /pin agents        — manage pinned agents",
-        "  /pin help          — show this help",
+        "  /pin [name]         — pin the current agent globally",
+        "  /pin -l [name]      — pin the current agent to this project",
+        "  /pin agent [name]   — pin the current agent",
+        "  /pin convo [-l]     — pin the current conversation",
+        "  /pin convos         — manage pinned conversations",
+        "  /pin agents         — manage pinned agents",
+        "  /pin help           — show this help",
       ].join("\n");
       cmd.finish(output, true);
       return { submitted: true };
     }
 
     if (target === "convo" || target === "conversation") {
+      const convoArgs = parts.slice(1);
+      const local = convoArgs.some(
+        (part) => part === "-l" || part === "--local",
+      );
+      const hasUnsupportedArg = convoArgs.some(
+        (part) => part !== "-l" && part !== "--local",
+      );
+      const cmd = commandRunner.start(trimmed, "Pinning conversation...");
+
+      if (hasUnsupportedArg) {
+        cmd.fail("Usage: /pin convo [-l]");
+        return { submitted: true };
+      }
+
+      const pinnedIds = local
+        ? settingsManager.getLocalPinnedConversations(agentId)
+        : settingsManager.getGlobalPinnedConversations(agentId);
+      const scopeText = local ? "to this project" : "globally";
+
+      if (pinnedIds.includes(conversationId)) {
+        cmd.fail(`This conversation is already pinned ${scopeText}.`);
+        return { submitted: true };
+      }
+
+      if (local) {
+        settingsManager.pinConversationLocal(agentId, conversationId);
+      } else {
+        settingsManager.pinConversationGlobal(agentId, conversationId);
+      }
+      cmd.finish(`Pinned current conversation ${scopeText}.`, true);
+      return { submitted: true };
+    }
+
+    if (target === "convos" || target === "conversations") {
       openOverlay(
         "pin-conversations",
-        "/pin convo",
+        "/pin convos",
         "Opening conversation pin manager...",
         "Conversation pin manager dismissed",
       );
@@ -206,7 +244,7 @@ export async function handleProfileCommand(
       }
     }
 
-    if (!hasNameArg) {
+    if (!hasNameArg && target !== "agent") {
       setPinDialogLocal(isLocal);
       openOverlay(
         "pin",
