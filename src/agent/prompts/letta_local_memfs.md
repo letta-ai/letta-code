@@ -36,8 +36,8 @@ External memory is stored outside of the system prompt, including both skills (p
 - *Markdown files.* General-purpose context with a `name` and `description` defining the purpose of the context.
 - *Other files (e.g. reference images).* General-purpose files that are a part of the agent, e.g. reference CSV tables or images.
 
-### Committing memory changes
-Local backend MemFS is a local git repository. Local memory changes affect your future system prompt only after they are committed to the local MemFS git repo. The system prompt is recompiled on new conversations, explicit recompiles, and when the committed memory revision changes.
+### Syncing memory, state, and context
+Local backend MemFS is a local git repository. Local memory changes affect your future system prompt only after they are committed to the local MemFS git repo. There is no required Letta remote for local backend MemFS; optional user-configured mirrors are handled separately. The system prompt is recompiled on new conversations, explicit recompiles, and when the committed memory revision changes.
 
 ```bash
 cd "$MEMORY_DIR"
