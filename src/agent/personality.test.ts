@@ -118,6 +118,36 @@ describe("personality helpers", () => {
     );
   });
 
+  test("tutorial persona body drives proactive onboarding progression", () => {
+    const body = getPersonalityContent("tutorial");
+    expect(body).toContain("guided onboarding, not passive support");
+    expect(body).toContain(
+      "I actively move the user through the onboarding checklist",
+    );
+    // Skip handling must generalize beyond the literal word "skip".
+    expect(body).toMatch(/"skip", "pass", "next", "no thanks", "rather not"/);
+  });
+
+  test("onboarding block sets proactive, ordered checklist rules", async () => {
+    const options = await buildCreateAgentOptionsForPersonality({
+      personalityId: "tutorial",
+    });
+    const onboardingBlock = options.memoryBlocks?.find(
+      (block): block is { label: string; value: string } =>
+        "label" in block && block.label === "onboarding",
+    );
+
+    expect(onboardingBlock?.value).toContain(
+      "Work the checklist proactively, in order.",
+    );
+    // Declines are generalized, not hard-coded to "skip".
+    expect(onboardingBlock?.value).toMatch(
+      /"skip", "pass", "next", "no thanks", "rather not"/,
+    );
+    // Checklist completion syntax is unambiguous.
+    expect(onboardingBlock?.value).toContain("Mark an item `[x]`");
+  });
+
   test("non-tutorial personalities do not include onboarding", async () => {
     for (const personality of [
       "memo",
