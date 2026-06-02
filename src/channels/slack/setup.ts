@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { upsertChannelAccount } from "../accounts";
-import type { DmPolicy, SlackChannelAccount } from "../types";
+import { upsertChannelAccountWithSecrets } from "@/channels/accounts";
+import {
+  DEFAULT_SLACK_PERMISSION_MODE,
+  type DmPolicy,
+  type SlackChannelAccount,
+} from "@/channels/types";
 import { resolveSlackAccountDisplayName } from "./adapter";
 import { ensureSlackRuntimeInstalled } from "./runtime";
 
@@ -31,9 +35,12 @@ export async function runSlackSetup(): Promise<boolean> {
     console.log(
       "  4. Enable App Home messages and subscribe to app_mention + message.channels + message.groups + message.im + reaction_added + reaction_removed\n",
     );
+    console.log(
+      "  5. Add the /cancel slash command if you want Slack-native cancellation\n",
+    );
     console.log("Recommended bot token scopes:");
     console.log(
-      "  app_mentions:read, channels:history, chat:write, groups:history, im:history, users:read",
+      "  app_mentions:read, channels:history, chat:write, commands, groups:history, im:history, users:read",
     );
     console.log("  reactions:read, reactions:write, files:read, files:write\n");
 
@@ -92,14 +99,14 @@ export async function runSlackSetup(): Promise<boolean> {
       botToken,
       appToken,
       agentId: null,
-      defaultPermissionMode: "standard",
+      defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
       dmPolicy: policy,
       allowedUsers,
       createdAt: now,
       updatedAt: now,
     };
 
-    upsertChannelAccount("slack", account);
+    await upsertChannelAccountWithSecrets("slack", account);
     console.log("\n✓ Slack app configured!");
     console.log("Config written to: ~/.letta/channels/slack/accounts.json\n");
     console.log("Next steps:");

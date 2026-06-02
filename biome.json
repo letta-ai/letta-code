@@ -1,13 +1,37 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.2.5/schema.json",
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2 },
-  "linter": { "enabled": true, "rules": { "recommended": true } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "noDefaultExport": "error",
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "./telemetry": "Use @/telemetry instead of a relative import — relative paths cause the bundler to emit duplicate module copies, breaking the singleton."
+            }
+          }
+        }
+      }
+    }
+  },
   "files": { "experimentalScannerIgnores": ["vendor/**"] },
   "overrides": [
     {
       "includes": ["vendor/**"],
       "linter": { "enabled": false },
       "formatter": { "enabled": false }
+    },
+    {
+      "includes": ["**/*.d.ts"],
+      "linter": {
+        "rules": {
+          "style": { "noDefaultExport": "off" }
+        }
+      }
     }
   ]
 }

@@ -1,10 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { SkillSource } from "./agent/skills";
+import type { MessageChannelToolDiscoveryScope } from "./channels/message-tool";
+import type { ChannelTurnSource } from "./channels/types";
 
 export type RuntimePermissionMode =
   | "standard"
   | "acceptEdits"
-  | "plan"
   | "memory"
   | "unrestricted";
 
@@ -14,10 +15,19 @@ export interface RuntimeContextSnapshot {
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
   workingDirectory?: string | null;
+  toolContextId?: string | null;
   permissionMode?: RuntimePermissionMode;
-  planFilePath?: string | null;
-  modeBeforePlan?: RuntimePermissionMode | null;
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  channelTurnSources?: ChannelTurnSource[];
 }
+
+export interface InheritedChannelContextPayload {
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  channelTurnSources?: ChannelTurnSource[];
+}
+
+export const LETTA_INHERITED_CHANNEL_CONTEXT_ENV =
+  "LETTA_INHERITED_CHANNEL_CONTEXT";
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
 
@@ -36,6 +46,9 @@ export function runWithRuntimeContext<T>(
       ...snapshot,
       ...(snapshot.skillSources
         ? { skillSources: [...snapshot.skillSources] }
+        : {}),
+      ...(snapshot.channelTurnSources
+        ? { channelTurnSources: [...snapshot.channelTurnSources] }
         : {}),
     },
     fn,
@@ -59,6 +72,9 @@ export function updateRuntimeContext(
     update,
     update.skillSources && {
       skillSources: [...update.skillSources],
+    },
+    update.channelTurnSources && {
+      channelTurnSources: [...update.channelTurnSources],
     },
   );
 }

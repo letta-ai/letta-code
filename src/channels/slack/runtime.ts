@@ -3,7 +3,7 @@ import {
   installChannelRuntime,
   isChannelRuntimeInstalled,
   loadChannelRuntimeModule,
-} from "../runtimeDeps";
+} from "@/channels/runtime-deps";
 
 export async function loadSlackBoltModule(): Promise<
   typeof import("@slack/bolt")

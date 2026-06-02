@@ -2,7 +2,7 @@
  * Shared registration helper for letta server / /server command.
  * Owns the HTTP request contract and error handling; callers own UX strings and logging.
  */
-import { getVersion } from "../version.ts";
+import { getVersion } from "@/version.ts";
 
 export interface RegisterResult {
   connectionId: string;
@@ -25,22 +25,47 @@ type FetchImpl = typeof fetch;
  */
 export class RegistrationError extends Error {
   readonly statusCode: number;
-  constructor(message: string, statusCode: number) {
+  readonly retryAfterMs?: number;
+  constructor(message: string, statusCode: number, retryAfterMs?: number) {
     super(message);
     this.name = "RegistrationError";
     this.statusCode = statusCode;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
 /** Returns true for errors that are likely transient and worth retrying. */
 function isTransientRegistrationError(error: unknown): boolean {
   if (error instanceof RegistrationError) {
+    // 429 = rate limit. The server explicitly asked us to slow down, not stop.
     // 5xx = server errors (including Cloudflare 521/522/523/524)
     // 0 = network-level failure (DNS, TCP, TLS)
-    return error.statusCode === 0 || error.statusCode >= 500;
+    return (
+      error.statusCode === 0 ||
+      error.statusCode === 429 ||
+      error.statusCode >= 500
+    );
   }
   // Non-RegistrationError from fetch (e.g. TypeError for DNS failure)
   return true;
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+
+  const dateMs = Date.parse(value);
+  if (Number.isFinite(dateMs)) {
+    return Math.max(0, dateMs - Date.now());
+  }
+
+  return undefined;
 }
 
 /**
@@ -78,12 +103,22 @@ export async function registerWithCloud(
 
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
+    const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
     const text = await response.text().catch(() => "");
     if (text) {
       try {
-        const parsed = JSON.parse(text) as { message?: string };
+        const parsed = JSON.parse(text) as {
+          error?: string;
+          errorCode?: string;
+          message?: string;
+        };
         if (parsed.message) {
           detail = parsed.message;
+        } else if (parsed.error) {
+          detail = `HTTP ${response.status}: ${parsed.error}`;
+          if (parsed.errorCode) {
+            detail += ` (${parsed.errorCode})`;
+          }
         } else {
           detail += `: ${text.slice(0, 200)}`;
         }
@@ -91,7 +126,7 @@ export async function registerWithCloud(
         detail += `: ${text.slice(0, 200)}`;
       }
     }
-    throw new RegistrationError(detail, response.status);
+    throw new RegistrationError(detail, response.status, retryAfterMs);
   }
 
   let body: unknown;
@@ -125,47 +160,72 @@ export async function registerWithCloud(
 const REGISTER_INITIAL_DELAY_MS = 1_000;
 const REGISTER_MAX_DELAY_MS = 30_000;
 const REGISTER_MAX_DURATION_MS = 2 * 60 * 1_000; // 2 minutes
+const REGISTER_MAX_JITTER_MS = 1_000;
+const REGISTER_JITTER_RATIO = 0.25;
 
 export interface RegisterRetryCallbacks {
   /** Called before each retry attempt. */
   onRetry?: (attempt: number, delayMs: number, error: Error) => void;
+  /** Maximum total retry duration. Defaults to two minutes. Use Infinity for long-running listeners. */
+  maxDurationMs?: number;
+  /** Test seam for avoiding real sleeps. */
+  sleep?: (delayMs: number) => Promise<void>;
+  /** Test seam for injecting fetch. */
+  fetchImpl?: FetchImpl;
+  /** Test seam for deterministic retry jitter. */
+  random?: () => number;
 }
 
 /**
- * Register with Cloud, retrying on transient errors (5xx, network failures)
- * with exponential backoff. Fails immediately on client errors (4xx).
+ * Register with Cloud, retrying on transient errors (429, 5xx, network failures)
+ * with exponential backoff. Fails immediately on other client errors (4xx).
  */
 export async function registerWithCloudRetry(
   opts: RegisterOptions,
   callbacks?: RegisterRetryCallbacks,
 ): Promise<RegisterResult> {
   const startTime = Date.now();
+  const maxDurationMs = callbacks?.maxDurationMs ?? REGISTER_MAX_DURATION_MS;
+  const sleep =
+    callbacks?.sleep ??
+    ((delayMs: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
   let attempt = 0;
 
   for (;;) {
     try {
-      return await registerWithCloud(opts);
+      return await registerWithCloud(opts, callbacks?.fetchImpl);
     } catch (error) {
       const elapsed = Date.now() - startTime;
 
-      if (
-        !isTransientRegistrationError(error) ||
-        elapsed >= REGISTER_MAX_DURATION_MS
-      ) {
+      if (!isTransientRegistrationError(error) || elapsed >= maxDurationMs) {
         throw error;
       }
 
       attempt++;
-      const delay = Math.min(
+      const backoffDelay = Math.min(
         REGISTER_INITIAL_DELAY_MS * 2 ** (attempt - 1),
         REGISTER_MAX_DELAY_MS,
       );
+      const delay =
+        error instanceof RegistrationError && error.retryAfterMs !== undefined
+          ? Math.max(error.retryAfterMs, backoffDelay)
+          : backoffDelay;
+      const jitterWindow = Math.min(
+        REGISTER_MAX_JITTER_MS,
+        Math.floor(delay * REGISTER_JITTER_RATIO),
+      );
+      const jitter =
+        jitterWindow > 0
+          ? Math.floor((callbacks?.random ?? Math.random)() * jitterWindow)
+          : 0;
+      const retryDelay = delay + jitter;
 
       if (error instanceof Error) {
-        callbacks?.onRetry?.(attempt, delay, error);
+        callbacks?.onRetry?.(attempt, retryDelay, error);
       }
 
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      await sleep(retryDelay);
     }
   }
 }

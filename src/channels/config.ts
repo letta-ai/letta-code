@@ -8,14 +8,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { migratePermissionMode } from "../permissions/mode";
+import { migratePermissionMode } from "@/permissions/mode";
 import type {
   ChannelConfig,
   ChannelDefaultPermissionMode,
   DiscordChannelConfig,
+  DiscordChannelMode,
   DmPolicy,
   SlackChannelConfig,
   TelegramChannelConfig,
+  TelegramGroupMode,
+  WhatsAppChannelConfig,
+  WhatsAppGroupMode,
 } from "./types";
 
 // ── Paths ─────────────────────────────────────────────────────────
@@ -144,6 +148,7 @@ const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
       token: String(parsed.token ?? ""),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      groupMode: parseTelegramGroupMode(parsed.group_mode),
       transcribeVoice: parsed.transcribe_voice === true,
     };
   },
@@ -175,9 +180,26 @@ function parseDefaultPermissionMode(
     : "standard";
 }
 
+function parseTelegramGroupMode(value: unknown): TelegramGroupMode {
+  return value === "mention-only" ? "mention-only" : "open";
+}
+
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
   parse(parsed) {
     const rawAllowedChannels = parsed.allowed_channels;
+    let allowedChannels: DiscordChannelConfig["allowedChannels"];
+    if (Array.isArray(rawAllowedChannels)) {
+      allowedChannels = rawAllowedChannels as string[];
+    } else if (
+      rawAllowedChannels &&
+      typeof rawAllowedChannels === "object" &&
+      !Array.isArray(rawAllowedChannels)
+    ) {
+      allowedChannels = rawAllowedChannels as Record<
+        string,
+        DiscordChannelMode
+      >;
+    }
     return {
       channel: "discord",
       enabled: parsed.enabled !== false,
@@ -187,9 +209,59 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
       ),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
-      allowedChannels: Array.isArray(rawAllowedChannels)
-        ? (rawAllowedChannels as string[])
+      allowedChannels,
+      transcribeVoice: parsed.transcribe_voice === true,
+      autoThreadOnMention:
+        typeof parsed.auto_thread_on_mention === "boolean"
+          ? parsed.auto_thread_on_mention
+          : undefined,
+      threadPolicyByChannel:
+        typeof parsed.thread_policy_by_channel === "object" &&
+        !Array.isArray(parsed.thread_policy_by_channel)
+          ? (parsed.thread_policy_by_channel as Record<string, boolean>)
+          : undefined,
+      acknowledgeMessageReaction:
+        typeof parsed.acknowledge_message_reaction === "boolean"
+          ? parsed.acknowledge_message_reaction
+          : undefined,
+      removeStaleRoutes:
+        typeof parsed.remove_stale_routes === "boolean"
+          ? parsed.remove_stale_routes
+          : undefined,
+      inboundDebounceMs:
+        typeof parsed.inbound_debounce_ms === "number" &&
+        Number.isFinite(parsed.inbound_debounce_ms) &&
+        parsed.inbound_debounce_ms >= 0
+          ? Math.trunc(Math.min(parsed.inbound_debounce_ms, 10000))
+          : undefined,
+    };
+  },
+};
+
+const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
+  parse(parsed) {
+    const rawAllowedGroups = parsed.allowed_groups;
+    const rawMentionPatterns = parsed.mention_patterns;
+    return {
+      channel: "whatsapp",
+      enabled: parsed.enabled !== false,
+      dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
+      allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      agentId: typeof parsed.agent_id === "string" ? parsed.agent_id : null,
+      selfChatMode: parsed.self_chat_mode !== false,
+      groupMode: (parsed.group_mode as WhatsAppGroupMode) ?? "disabled",
+      allowedGroups: Array.isArray(rawAllowedGroups)
+        ? (rawAllowedGroups as string[])
         : undefined,
+      mentionPatterns: Array.isArray(rawMentionPatterns)
+        ? (rawMentionPatterns as string[])
+        : undefined,
+      transcribeVoice: parsed.transcribe_voice === true,
+      downloadMedia: parsed.download_media === true,
+      mediaMaxBytes:
+        typeof parsed.media_max_bytes === "number"
+          ? parsed.media_max_bytes
+          : undefined,
     };
   },
 };
@@ -200,6 +272,7 @@ const CHANNEL_CONFIG_CODECS: Partial<
   telegram: telegramConfigCodec as ChannelConfigCodec<ChannelConfig>,
   slack: slackConfigCodec as ChannelConfigCodec<ChannelConfig>,
   discord: discordConfigCodec as ChannelConfigCodec<ChannelConfig>,
+  whatsapp: whatsappConfigCodec as ChannelConfigCodec<ChannelConfig>,
 };
 
 function getChannelConfigCodec(

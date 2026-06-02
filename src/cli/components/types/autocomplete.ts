@@ -2,6 +2,13 @@
  * Shared types for autocomplete components
  */
 
+export interface ExtensionCommandAutocompleteItem {
+  id: string;
+  description: string;
+  args?: string;
+  order: number;
+}
+
 /**
  * Base props shared by all autocomplete components
  */
@@ -20,14 +27,8 @@ export interface AutocompleteProps {
   agentId?: string;
   /** Working directory for local pin status checking */
   workingDirectory?: string;
-}
-
-/**
- * File autocomplete match item
- */
-export interface FileMatch {
-  path: string;
-  type: "file" | "dir" | "url";
+  /** Slash commands registered by trusted local extensions */
+  extensionCommands?: Record<string, ExtensionCommandAutocompleteItem>;
 }
 
 /**

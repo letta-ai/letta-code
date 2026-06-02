@@ -1,0 +1,272 @@
+/**
+ * Per-task cron run history backed by JSONL files next to crons.json.
+ *
+ * This mirrors the reference shape: job state stays in one JSON file, while
+ * each job/task gets an append-only `runs/<id>.jsonl` history file.
+ */
+
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import path from "node:path";
+import {
+  type CronRunOutcome,
+  type CronRunReason,
+  type CronTask,
+  getCronFilePath,
+} from "./cron-file";
+
+export type CronRunLogStatus = "ok" | "error" | "skipped";
+
+export interface CronRunLogEntry {
+  ts: number;
+  jobId: string;
+  action: "finished";
+  status?: CronRunLogStatus;
+  outcome?: CronRunOutcome;
+  reason?: CronRunReason;
+  error?: string;
+  summary?: string;
+  agentId?: string;
+  conversationId?: string;
+  runId?: string;
+  runAtMs?: number;
+  queueItemId?: string;
+  scheduledFor?: string | null;
+  firedAt?: string;
+  missedCount?: number;
+  windowStart?: string;
+  windowEnd?: string;
+}
+
+export interface CronRunLogPage {
+  entries: CronRunLogEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  nextOffset: number | null;
+}
+
+export const DEFAULT_CRON_RUN_LOG_MAX_BYTES = 2_000_000;
+export const DEFAULT_CRON_RUN_LOG_KEEP_LINES = 2_000;
+
+function assertSafeCronRunLogJobId(jobId: string): string {
+  const trimmed = jobId.trim();
+  if (!trimmed) {
+    throw new Error("invalid cron run log job id");
+  }
+  if (
+    trimmed.includes("/") ||
+    trimmed.includes("\\") ||
+    trimmed.includes("\0")
+  ) {
+    throw new Error("invalid cron run log job id");
+  }
+  return trimmed;
+}
+
+export function resolveCronRunLogPath(params: {
+  storePath: string;
+  jobId: string;
+}): string {
+  const storePath = path.resolve(params.storePath);
+  const runsDir = path.resolve(path.dirname(storePath), "runs");
+  const safeJobId = assertSafeCronRunLogJobId(params.jobId);
+  const resolvedPath = path.resolve(runsDir, `${safeJobId}.jsonl`);
+  if (!resolvedPath.startsWith(`${runsDir}${path.sep}`)) {
+    throw new Error("invalid cron run log job id");
+  }
+  return resolvedPath;
+}
+
+export function getCronRunLogPath(jobId: string): string {
+  return resolveCronRunLogPath({ storePath: getCronFilePath(), jobId });
+}
+
+function setSecureDirMode(dirPath: string): void {
+  try {
+    chmodSync(dirPath, 0o700);
+  } catch {
+    // Best effort on platforms/filesystems that do not support chmod.
+  }
+}
+
+function setSecureFileMode(filePath: string): void {
+  try {
+    chmodSync(filePath, 0o600);
+  } catch {
+    // Best effort on platforms/filesystems that do not support chmod.
+  }
+}
+
+function pruneIfNeeded(
+  filePath: string,
+  opts: { maxBytes: number; keepLines: number },
+): void {
+  let size = 0;
+  try {
+    size = statSync(filePath).size;
+  } catch {
+    return;
+  }
+  if (size <= opts.maxBytes) {
+    return;
+  }
+
+  const raw = readFileSync(filePath, "utf-8");
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const kept = lines.slice(Math.max(0, lines.length - opts.keepLines));
+  writeFileSync(filePath, `${kept.join("\n")}\n`, { mode: 0o600 });
+  setSecureFileMode(filePath);
+}
+
+export function appendCronRunLog(
+  filePath: string,
+  entry: CronRunLogEntry,
+  opts?: { maxBytes?: number; keepLines?: number },
+): void {
+  const resolved = path.resolve(filePath);
+  const runDir = path.dirname(resolved);
+  if (!existsSync(runDir)) {
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
+  }
+  setSecureDirMode(runDir);
+  appendFileSync(resolved, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+  setSecureFileMode(resolved);
+  pruneIfNeeded(resolved, {
+    maxBytes: opts?.maxBytes ?? DEFAULT_CRON_RUN_LOG_MAX_BYTES,
+    keepLines: opts?.keepLines ?? DEFAULT_CRON_RUN_LOG_KEEP_LINES,
+  });
+}
+
+function parseAllRunLogEntries(raw: string, jobId?: string): CronRunLogEntry[] {
+  if (!raw.trim()) {
+    return [];
+  }
+  const entries: CronRunLogEntry[] = [];
+  for (const rawLine of raw.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    try {
+      const obj = JSON.parse(line) as Partial<CronRunLogEntry> | null;
+      if (!obj || typeof obj !== "object") {
+        continue;
+      }
+      if (obj.action !== "finished") {
+        continue;
+      }
+      if (typeof obj.jobId !== "string" || obj.jobId.trim().length === 0) {
+        continue;
+      }
+      if (typeof obj.ts !== "number" || !Number.isFinite(obj.ts)) {
+        continue;
+      }
+      if (jobId && obj.jobId !== jobId) {
+        continue;
+      }
+      entries.push({
+        ts: obj.ts,
+        jobId: obj.jobId,
+        action: "finished",
+        status: obj.status,
+        outcome: obj.outcome,
+        reason: obj.reason,
+        error: obj.error,
+        summary: obj.summary,
+        agentId: obj.agentId,
+        conversationId: obj.conversationId,
+        runId: obj.runId,
+        runAtMs: obj.runAtMs,
+        queueItemId: obj.queueItemId,
+        scheduledFor: obj.scheduledFor,
+        firedAt: obj.firedAt,
+        missedCount: obj.missedCount,
+        windowStart: obj.windowStart,
+        windowEnd: obj.windowEnd,
+      });
+    } catch {
+      // Ignore invalid lines.
+    }
+  }
+  return entries;
+}
+
+export function readCronRunLogEntries(
+  filePath: string,
+  opts?: { limit?: number; jobId?: string },
+): CronRunLogEntry[] {
+  const limit = Math.max(1, Math.min(5000, Math.floor(opts?.limit ?? 200)));
+  let raw = "";
+  try {
+    raw = readFileSync(path.resolve(filePath), "utf-8");
+  } catch {
+    return [];
+  }
+  return parseAllRunLogEntries(raw, opts?.jobId).slice(-limit);
+}
+
+export function readCronRunLogEntriesPage(
+  filePath: string,
+  opts?: { limit?: number; offset?: number; jobId?: string; runId?: string },
+): CronRunLogPage {
+  const limit = Math.max(1, Math.min(200, Math.floor(opts?.limit ?? 50)));
+  const offset = Math.max(0, Math.floor(opts?.offset ?? 0));
+  const entries = readCronRunLogEntries(filePath, {
+    limit: 5000,
+    jobId: opts?.jobId,
+  })
+    .filter((entry) => !opts?.runId || entry.runId === opts.runId)
+    .toSorted((a, b) => b.ts - a.ts);
+  const pageEntries = entries.slice(offset, offset + limit);
+  const nextOffset = offset + pageEntries.length;
+  return {
+    entries: pageEntries,
+    total: entries.length,
+    offset,
+    limit,
+    hasMore: nextOffset < entries.length,
+    nextOffset: nextOffset < entries.length ? nextOffset : null,
+  };
+}
+
+export function appendCronRunLogForTask(
+  task: CronTask,
+  entry: Omit<CronRunLogEntry, "action" | "agentId" | "jobId" | "ts"> & {
+    ts?: number;
+  },
+): void {
+  appendCronRunLog(getCronRunLogPath(task.id), {
+    ts: entry.ts ?? Date.now(),
+    jobId: task.id,
+    action: "finished",
+    agentId: task.agent_id,
+    conversationId: task.conversation_id,
+    ...entry,
+  });
+}
+
+export function safeAppendCronRunLogForTask(
+  task: CronTask,
+  entry: Parameters<typeof appendCronRunLogForTask>[1],
+): void {
+  try {
+    appendCronRunLogForTask(task, entry);
+  } catch (err) {
+    console.error(
+      `[Cron] Error writing run log for task ${task.id}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}

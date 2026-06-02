@@ -1,12 +1,12 @@
 import { Box } from "ink";
 import { memo } from "react";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { parsePatchOperations } from "@/cli/helpers/format-args-display";
+import { isShellTool } from "@/cli/helpers/tool-name-mapping";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
 import { BashPreview } from "./previews/BashPreview";
-import { PlanPreview } from "./previews/PlanPreview";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
@@ -17,8 +17,6 @@ type Props = {
   toolArgs: string;
   precomputedDiff?: AdvancedDiffSuccess;
   allDiffs?: Map<string, AdvancedDiffSuccess>;
-  planContent?: string;
-  planFilePath?: string;
   toolCallId?: string;
 };
 
@@ -105,43 +103,39 @@ function getFileEditHeader(toolName: string, toolArgs: string): string {
  * what the inline approval components show.
  */
 export const ApprovalPreview = memo(
-  ({
-    toolName,
-    toolArgs,
-    precomputedDiff,
-    allDiffs,
-    planContent,
-    toolCallId,
-  }: Props) => {
+  ({ toolName, toolArgs, precomputedDiff, allDiffs, toolCallId }: Props) => {
     const columns = useTerminalWidth();
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
 
-    // ExitPlanMode: Use PlanPreview component
-    if (toolName === "ExitPlanMode" && planContent) {
-      return (
-        <Box flexDirection="column">
-          <PlanPreview plan={planContent} />
-        </Box>
-      );
-    }
-
     // Bash/Shell: Use BashPreview component
-    if (
-      toolName === "Bash" ||
-      toolName === "shell" ||
-      toolName === "Shell" ||
-      toolName === "shell_command"
-    ) {
+    if (isShellTool(toolName)) {
       try {
         const args = JSON.parse(toolArgs);
-        const command =
-          typeof args.command === "string"
-            ? args.command
-            : Array.isArray(args.command)
-              ? args.command.join(" ")
-              : "";
-        const description = args.description || args.justification || "";
+        let command = "";
+        let description = "";
+        if (toolName === "exec_command") {
+          command = typeof args.cmd === "string" ? args.cmd : "";
+        } else if (toolName === "write_stdin") {
+          const sessionId =
+            typeof args.session_id === "string" ||
+            typeof args.session_id === "number"
+              ? String(args.session_id)
+              : "unknown";
+          command = `write_stdin ${sessionId}`;
+          description =
+            typeof args.chars === "string" && args.chars.length > 0
+              ? "Write input to running shell session"
+              : "Poll running shell session";
+        } else {
+          command =
+            typeof args.command === "string"
+              ? args.command
+              : Array.isArray(args.command)
+                ? args.command.join(" ")
+                : "";
+          description = args.description || args.justification || "";
+        }
 
         return (
           <Box flexDirection="column">

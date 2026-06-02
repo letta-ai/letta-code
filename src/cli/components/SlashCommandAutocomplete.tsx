@@ -1,21 +1,31 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { settingsManager } from "../../settings-manager";
-import { commands } from "../commands/registry";
-import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { commands } from "@/cli/commands/registry";
+import { truncateText } from "@/cli/helpers/truncate-text";
+import { useAutocompleteNavigation } from "@/cli/hooks/use-autocomplete-navigation";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/use-terminal-width";
+import { settingsManager } from "@/settings-manager";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
-const VISIBLE_COMMANDS = 7; // Number of commands visible at once
+// Match Codex's slash-command popup behavior: a small hard cap that can shrink
+// on short terminals, but never expands just because the terminal is tall.
+const MAX_POPUP_ROWS = 8;
 const CMD_COL_WIDTH = 14;
 
-function truncateText(text: string, maxWidth: number): string {
-  if (maxWidth <= 0) return "";
-  if (text.length <= maxWidth) return text;
-  if (maxWidth <= 3) return text.slice(0, maxWidth);
-  return `${text.slice(0, maxWidth - 3)}...`;
-}
+const BUILTIN_SKILL_ALIASES = new Set([
+  "acquiring-skills",
+  "context_doctor",
+  "converting-mcps-to-skills",
+  "creating-skills",
+  "customizing-statusline",
+  "initializing-memory",
+  "migrating-memory",
+  "syncing-memory-filesystem",
+]);
 
 // Compute filtered command list (excluding hidden commands), sorted by order
 const _allCommands: CommandMatch[] = Object.entries(commands)
@@ -58,14 +68,16 @@ export function SlashCommandAutocomplete({
   onActiveChange,
   agentId,
   workingDirectory = process.cwd(),
+  extensionCommands = {},
 }: AutocompleteProps) {
   const columns = useTerminalWidth();
+  const terminalRows = useTerminalRows();
   const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
   const [skillCommands, setSkillCommands] = useState<CommandMatch[]>([]);
 
   // Load custom commands once on mount
   useEffect(() => {
-    import("../commands/custom.js").then(({ getCustomCommands }) => {
+    import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
         const matches: CommandMatch[] = customs.map((cmd) => ({
           cmd: `/${cmd.id}`,
@@ -84,17 +96,24 @@ export function SlashCommandAutocomplete({
     (async () => {
       try {
         const { discoverClientSideSkills } = await import(
-          "../../agent/clientSkills"
+          "@/agent/client-skills"
         );
-        const { getSkillSources } = await import("../../agent/context");
-        const { isUserInvocableSkill } = await import("../../agent/skills");
+        const { getSkillSources } = await import("@/agent/context");
+        const { isUserInvocableSkill } = await import("@/agent/skills");
         const discovery = await discoverClientSideSkills({
           agentId,
           skillSources: getSkillSources(),
         });
         if (cancelled) return;
         const matches: CommandMatch[] = discovery.skills
-          .filter(isUserInvocableSkill)
+          .filter(
+            (skill) =>
+              isUserInvocableSkill(skill) &&
+              !(
+                skill.source === "bundled" &&
+                BUILTIN_SKILL_ALIASES.has(skill.id)
+              ),
+          )
           .map((skill) => ({
             cmd: `/${skill.id}`,
             desc: `${skill.description}${skill.argumentHint ? ` ${skill.argumentHint}` : ""} (${skill.source} skill)`,
@@ -144,19 +163,49 @@ export function SlashCommandAutocomplete({
       }
     }
 
+    const extensionCommandMatches: CommandMatch[] = Object.values(
+      extensionCommands,
+    ).map((command) => ({
+      cmd: `/${command.id}`,
+      desc: `${command.description}${command.args ? ` ${command.args}` : ""} (extension)`,
+      order: command.order,
+    }));
+
+    const customCommandNames = new Set(customCommands.map((cmd) => cmd.cmd));
+    const extensionCommandNames = new Set(
+      extensionCommandMatches.map((cmd) => cmd.cmd),
+    );
+    const visibleBuiltins = builtins.filter(
+      (cmd) =>
+        !customCommandNames.has(cmd.cmd) && !extensionCommandNames.has(cmd.cmd),
+    );
+    const visibleExtensionCommands = extensionCommandMatches.filter(
+      (cmd) => !customCommandNames.has(cmd.cmd),
+    );
+
     const reservedCommands = new Set([
-      ...builtins.map((cmd) => cmd.cmd),
+      ...visibleBuiltins.map((cmd) => cmd.cmd),
+      ...visibleExtensionCommands.map((cmd) => cmd.cmd),
       ...customCommands.map((cmd) => cmd.cmd),
     ]);
     const visibleSkillCommands = skillCommands.filter(
       (cmd) => !reservedCommands.has(cmd.cmd),
     );
 
-    // Merge with custom commands and sort by order
-    return [...builtins, ...customCommands, ...visibleSkillCommands].sort(
-      (a, b) => (a.order ?? 100) - (b.order ?? 100),
-    );
-  }, [agentId, workingDirectory, customCommands, skillCommands]);
+    // Merge command sources and sort by order.
+    return [
+      ...visibleBuiltins,
+      ...visibleExtensionCommands,
+      ...customCommands,
+      ...visibleSkillCommands,
+    ].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+  }, [
+    agentId,
+    workingDirectory,
+    extensionCommands,
+    customCommands,
+    skillCommands,
+  ]);
 
   const queryInfo = useMemo(
     () => extractSearchQuery(currentInput, cursorPosition),
@@ -212,18 +261,13 @@ export function SlashCommandAutocomplete({
     manageActiveState: false,
   });
 
-  // Manually manage active state to include the "no matches" case
+  // Manually manage active state - only active when there are matches to select
+  // When there are no matches, we don't block submit so the user can still
+  // run commands that aren't in the autocomplete registry (e.g., /help, /reflection)
   useLayoutEffect(() => {
-    const queryLength = queryInfo?.query.length ?? 0;
-    const isActive =
-      !hideAutocomplete && (matches.length > 0 || queryLength > 0);
+    const isActive = !hideAutocomplete && matches.length > 0;
     onActiveChange?.(isActive);
-  }, [
-    hideAutocomplete,
-    matches.length,
-    onActiveChange,
-    queryInfo?.query.length,
-  ]);
+  }, [hideAutocomplete, matches.length, onActiveChange]);
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {
@@ -244,23 +288,25 @@ export function SlashCommandAutocomplete({
     return null;
   }
 
-  // Calculate visible window based on selected index
+  // Calculate visible window based on selected index, bounded by viewport.
+  const availablePopupRows = Math.max(1, terminalRows - 8);
+  const visibleCommandCount = Math.min(MAX_POPUP_ROWS, availablePopupRows);
   const totalMatches = matches.length;
-  const needsScrolling = totalMatches > VISIBLE_COMMANDS;
+  const needsScrolling = totalMatches > visibleCommandCount;
 
   let startIndex = 0;
   if (needsScrolling) {
     // Keep selected item visible, preferring to show it in the middle
-    const halfWindow = Math.floor(VISIBLE_COMMANDS / 2);
+    const halfWindow = Math.floor(visibleCommandCount / 2);
     startIndex = Math.max(0, selectedIndex - halfWindow);
-    startIndex = Math.min(startIndex, totalMatches - VISIBLE_COMMANDS);
+    startIndex = Math.min(startIndex, totalMatches - visibleCommandCount);
   }
 
   const visibleMatches = matches.slice(
     startIndex,
-    startIndex + VISIBLE_COMMANDS,
+    startIndex + visibleCommandCount,
   );
-  const showScrollDown = startIndex + VISIBLE_COMMANDS < totalMatches;
+  const showScrollDown = startIndex + visibleCommandCount < totalMatches;
 
   return (
     <AutocompleteBox>
@@ -288,7 +334,7 @@ export function SlashCommandAutocomplete({
       })}
       {showScrollDown ? (
         <Text dimColor>
-          {"  "}↓ {totalMatches - startIndex - VISIBLE_COMMANDS} more below
+          {"  "}↓ {totalMatches - startIndex - visibleCommandCount} more below
         </Text>
       ) : needsScrolling ? (
         <Text> </Text>

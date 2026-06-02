@@ -8,48 +8,53 @@
  */
 
 import { spawn } from "node:child_process";
-import {
-  type BackendMode,
-  getBackend,
-  getLocalBackendStorageDir,
-} from "../../backend";
-import { getBillingTier } from "../../backend/api/metadata";
-import { getLocalBackendMemoryFilesystemRoot } from "../../backend/local/paths";
-import { buildAgentReference } from "../../cli/helpers/appUrls";
+import { getAvailableModelHandles } from "@/agent/available-models";
+import { getCurrentAgentId } from "@/agent/context";
+import { getDefaultModelForTier, resolveModel } from "@/agent/model";
+import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
+import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import {
   addToolCall,
   emitStreamEvent,
   updateSubagent,
-} from "../../cli/helpers/subagentState.js";
+} from "@/agent/subagent-state.js";
+import {
+  type BackendMode,
+  getBackend,
+  getLocalBackendStorageDir,
+} from "@/backend";
+import { getBillingTier } from "@/backend/api/metadata";
+import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
+import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
   INTERRUPTED_BY_USER,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
-} from "../../constants";
-import { cliPermissions } from "../../permissions/cli";
+} from "@/constants";
+import { cliPermissions } from "@/permissions/cli-permissions-instance";
+import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
+import { permissionMode } from "@/permissions/mode";
+import { sessionPermissions } from "@/permissions/session";
 import {
-  parseScopeList,
-  resolveAllowedMemoryRoots,
-} from "../../permissions/memoryScope";
-import { permissionMode } from "../../permissions/mode";
-import { sessionPermissions } from "../../permissions/session";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+  type InheritedChannelContextPayload,
+  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
+  type RuntimeContextSnapshot,
+} from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
-} from "../../tools/impl/shellEnv";
-import { getErrorMessage } from "../../utils/error";
-import { getAvailableModelHandles } from "../available-models";
-import { getCurrentAgentId } from "../context";
-import { getDefaultModelForTier, resolveModel } from "../model";
-import recallSubagentPrompt from "../prompts/recall_subagent.md";
+} from "@/tools/impl/shell-env";
+import { debugLog, debugWarn } from "@/utils/debug";
+import { getErrorMessage } from "@/utils/error";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
-} from "./contextBudget";
+} from "./context-budget";
 
 // ============================================================================
 // Constants
@@ -197,12 +202,21 @@ export async function resolveSubagentModel(options: {
   billingTier?: string | null;
   availableHandles?: Set<string>;
   subagentType?: string;
+  backendMode?: BackendMode;
 }): Promise<string | null> {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
   const isFreeTier = billingTier?.toLowerCase() === "free";
 
   if (userModel) return userModel;
+
+  // Local backend has no server-side auto router. If the parent agent is
+  // already running successfully on a local model, spawned subagents should use
+  // that exact model instead of resolving auto/auto-memory to a provider
+  // default that may not match the active session.
+  if (options.backendMode === "local" && parentModelHandle) {
+    return parentModelHandle;
+  }
 
   if (options.subagentType === "reflection") {
     if (recommendedModel && recommendedModel !== "inherit") {
@@ -484,6 +498,13 @@ function parseResultFromStdout(
   const lines = stdout.trim().split("\n");
   const lastLine = lines[lines.length - 1] ?? "";
 
+  if (stdout.trim().length === 0) {
+    debugWarn(
+      "subagent",
+      `parseResultFromStdout: stdout is empty (agentId=${agentId})`,
+    );
+  }
+
   try {
     const result = JSON.parse(lastLine);
 
@@ -496,6 +517,10 @@ function parseResultFromStdout(
       };
     }
 
+    debugWarn(
+      "subagent",
+      `parseResultFromStdout: last line parsed as JSON but type=${result.type}, not "result" (agentId=${agentId})`,
+    );
     return {
       agentId: agentId || "",
       report: "",
@@ -503,6 +528,11 @@ function parseResultFromStdout(
       error: "Unexpected output format from subagent",
     };
   } catch (parseError) {
+    debugWarn(
+      "subagent",
+      `parseResultFromStdout: JSON.parse failed on last line (${lastLine.length} chars): ${getErrorMessage(parseError)}. ` +
+        `Total stdout: ${stdout.length} chars, ${lines.length} lines. Last line: ${lastLine.slice(0, 200)}`,
+    );
     return {
       agentId: agentId || "",
       report: "",
@@ -602,9 +632,8 @@ export interface ComposeSubagentChildEnvOptions {
   backendMode?: BackendMode;
   /** Local backend flatfile root to forward when backendMode="local". */
   localBackendStorageDir?: string | null;
-  /** Parent agent ID. When present, authorizes the subagent to touch the
-   * parent's memory via the cross-agent guard and sets LETTA_PARENT_AGENT_ID
-   * so prompts / scripts that reference it resolve correctly. */
+  /** Parent agent ID. When present, sets LETTA_PARENT_AGENT_ID so prompts,
+   * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
   /** The subagent config's declared permissionMode ("memory" triggers
    * memory-dir override; other modes leave the parent's MEMORY_DIR alone). */
@@ -622,20 +651,36 @@ export interface ComposeSubagentChildEnvOptions {
    * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
    * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
   transcriptPath?: string | null;
+  /** Serializable channel scope for child processes. Execution-context IDs are
+   * process-local, so channel scope must be copied explicitly across spawn. */
+  inheritedChannelContext?: InheritedChannelContextPayload | null;
+}
+
+function buildInheritedChannelContextPayload(
+  runtimeContext: RuntimeContextSnapshot | undefined,
+): InheritedChannelContextPayload | null {
+  const channelToolScope = runtimeContext?.channelToolScope;
+  const channelTurnSources = runtimeContext?.channelTurnSources ?? [];
+  if (!channelToolScope?.channels.length && channelTurnSources.length === 0) {
+    return null;
+  }
+
+  return {
+    ...(channelToolScope?.channels.length ? { channelToolScope } : {}),
+    ...(channelTurnSources.length
+      ? { channelTurnSources: [...channelTurnSources] }
+      : {}),
+  };
 }
 
 /**
  * Compose the env a subagent child process should be spawned with.
  *
- * Authorization (LETTA_MEMORY_SCOPE) and filesystem pointer (MEMORY_DIR) are
- * intentionally decoupled:
+ * The parent identity marker and filesystem pointer are intentionally
+ * decoupled:
  *
- *   - LETTA_MEMORY_SCOPE inherits any scope the parent process already had
- *     (env LETTA_MEMORY_SCOPE plus CLI --memory-scope) and also includes the
- *     immediate parent agent ID when one is known. Subagents should never
- *     lose explicit cross-agent access that the parent process already had.
- *     This applies to general-purpose/recall etc. — not just
- *     memory-writing subagents.
+ *   - LETTA_PARENT_AGENT_ID identifies the immediate parent. Subagents never
+ *     inherit a broad cross-agent memory-guard opt-out from the parent.
  *
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
  *     declares permissionMode=memory. Those subagents operate on the parent's
@@ -658,6 +703,7 @@ export function composeSubagentChildEnv(
     inheritedApiKey,
     inheritedBaseUrl,
     transcriptPath,
+    inheritedChannelContext,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -667,6 +713,11 @@ export function composeSubagentChildEnv(
     LETTA_CODE_AGENT_ROLE: "subagent",
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
+    ...(inheritedChannelContext && {
+      [LETTA_INHERITED_CHANNEL_CONTEXT_ENV]: JSON.stringify(
+        inheritedChannelContext,
+      ),
+    }),
   };
 
   if (backendMode === "local") {
@@ -676,25 +727,6 @@ export function composeSubagentChildEnv(
     }
   } else if (backendMode === "api") {
     childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "0";
-  }
-
-  const nextScope = new Set<string>([
-    ...parseScopeList(parentProcessEnv.LETTA_MEMORY_SCOPE),
-    ...cliPermissions.getMemoryScope(),
-  ]);
-  if (parentAgentId) {
-    nextScope.add(parentAgentId);
-  }
-
-  // Authorize the subagent to access both the parent's memory and any
-  // explicitly granted cross-agent scope the parent process already had.
-  // Independent of permissionMode — Read from those memories is legitimate
-  // for any subagent type, and the cross-agent guard would otherwise deny it
-  // as a foreign-agent access.
-  if (nextScope.size > 0) {
-    childEnv.LETTA_MEMORY_SCOPE = [...nextScope].join(",");
-  } else {
-    delete childEnv.LETTA_MEMORY_SCOPE;
   }
 
   // Only memory-mode subagents get MEMORY_DIR pointed at the parent. Other
@@ -828,6 +860,7 @@ export function buildSubagentPrompt(
 interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
+  extraTools?: string[];
 }
 
 /**
@@ -942,7 +975,10 @@ export function buildSubagentArgs(
     Array.isArray(config.allowedTools) &&
     config.allowedTools.length > 0
   ) {
-    args.push("--tools", config.allowedTools.join(","));
+    const scopedTools = Array.from(
+      new Set([...(config.allowedTools ?? []), ...(options.extraTools ?? [])]),
+    );
+    args.push("--tools", scopedTools.join(","));
   }
 
   // Add max turns limit if specified
@@ -996,6 +1032,9 @@ async function executeSubagent(
     const backendMode: BackendMode = activeBackend.capabilities.localMemfs
       ? "local"
       : "api";
+    const runtimeContext = getRuntimeContext();
+    const inheritedChannelContext =
+      buildInheritedChannelContextPayload(runtimeContext);
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
     const cliArgs = buildSubagentArgs(
       type,
@@ -1005,7 +1044,14 @@ async function executeSubagent(
       existingAgentId,
       existingConversationId,
       maxTurns,
-      { backendMode, promptTransport: "stdin" },
+      {
+        backendMode,
+        promptTransport: "stdin",
+        extraTools:
+          config.fork && inheritedChannelContext
+            ? ["MessageChannel"]
+            : undefined,
+      },
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
@@ -1062,6 +1108,7 @@ async function executeSubagent(
       inheritedApiKey,
       inheritedBaseUrl,
       transcriptPath,
+      inheritedChannelContext,
     });
 
     const proc = spawn(launcher.command, launcher.args, {
@@ -1199,6 +1246,11 @@ async function executeSubagent(
 
     // Return error if captured
     if (state.finalError) {
+      debugWarn(
+        "subagent",
+        `Subagent ${subagentId} (agentId=${state.agentId}) exited with captured error: ${state.finalError}. ` +
+          `exitCode=${exitCode}, stderr=${stderr.length} bytes`,
+      );
       return {
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
@@ -1209,9 +1261,30 @@ async function executeSubagent(
       };
     }
 
+    // No result or error captured during streaming — this is unusual
+    debugWarn(
+      "subagent",
+      `Subagent ${subagentId} (agentId=${state.agentId}) exited cleanly (exitCode=${exitCode}) ` +
+        `but no result event was captured during streaming. ` +
+        `stdout=${Buffer.concat(stdoutChunks).length} bytes, stderr=${stderr.length} bytes`,
+    );
+
     // Fallback: parse from stdout
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
-    return parseResultFromStdout(stdout, state.agentId);
+    debugLog(
+      "subagent",
+      `Falling back to parseResultFromStdout for ${subagentId} (agentId=${state.agentId}). ` +
+        `stdout=${stdout.length} bytes, stderr=${stderr.length} bytes, exitCode=${exitCode}`,
+    );
+    const result = parseResultFromStdout(stdout, state.agentId);
+    if (!result.success) {
+      debugWarn(
+        "subagent",
+        `parseResultFromStdout failed for ${subagentId}: ${result.error}. ` +
+          `stdout first 500 chars: ${stdout.slice(0, 500)}`,
+      );
+    }
+    return result;
   } catch (error) {
     return {
       agentId: "",
@@ -1257,8 +1330,18 @@ ${SYSTEM_REMINDER_CLOSE}
 `;
 }
 
-function buildForkSystemReminder(subagentType?: string): string {
+export function recallPromptForBackend(backendMode?: BackendMode): string {
+  return backendMode === "local"
+    ? recallSubagentLocalPrompt
+    : recallSubagentPrompt;
+}
+
+function buildForkSystemReminder(
+  subagentType?: string,
+  backendMode?: BackendMode,
+): string {
   if (subagentType === "recall") {
+    const recallPrompt = recallPromptForBackend(backendMode);
     return `${SYSTEM_REMINDER_OPEN}
 You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent and do not share its tools.
 
@@ -1269,7 +1352,7 @@ Your toolset is limited to Bash, Read, and TaskOutput. You cannot edit files, ru
 You CANNOT ask questions mid-execution — all instructions are provided upfront.
 Your final message will be returned to the caller.
 
-${recallSubagentPrompt}
+${recallPrompt}
 ${SYSTEM_REMINDER_CLOSE}
 
 `;
@@ -1333,6 +1416,10 @@ export async function spawnSubagent(
     existingAgentId || existingConversationId,
   );
 
+  const activeBackend = getBackend();
+  const backendMode: BackendMode = activeBackend.capabilities.localMemfs
+    ? "local"
+    : "api";
   const { handle: parentModelHandle, agent: parentAgent } =
     await getPrimaryAgentModelHandle();
   const billingTier = await getCurrentBillingTier();
@@ -1346,6 +1433,7 @@ export async function spawnSubagent(
         parentModelHandle,
         billingTier,
         subagentType: type,
+        backendMode,
       });
   const baseURL = getBaseURL();
 
@@ -1369,7 +1457,7 @@ export async function spawnSubagent(
         parentAgent ??
         (await getBackend().retrieveAgent(resolvedParentAgentId));
       if (forkedContext) {
-        const systemReminder = buildForkSystemReminder(type);
+        const systemReminder = buildForkSystemReminder(type, backendMode);
         finalPrompt = systemReminder + prompt;
       } else {
         const systemReminder = buildDeploySystemReminder(

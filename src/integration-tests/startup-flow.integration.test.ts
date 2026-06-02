@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { createIsolatedCliTestEnv } from "../tests/testProcessEnv";
+import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 import {
   formatAttemptDiagnostics,
   formatCapturedOutput,
-} from "./processDiagnostics";
+} from "./process-diagnostics";
 
 /**
  * Startup flow integration tests.
@@ -31,7 +31,7 @@ async function runCli(
       (resolve, reject) => {
         const proc = spawn("bun", ["run", "dev", "--no-memfs", ...args], {
           cwd: projectRoot,
-          env: createIsolatedCliTestEnv(),
+          env: createAuthenticatedCliTestEnv(),
         });
 
         let stdout = "";

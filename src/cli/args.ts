@@ -110,7 +110,7 @@ export const CLI_FLAG_CATALOG = {
     help: {
       argLabel: "<name>",
       description:
-        'Personality preset for --new-agent: "letta-code", "linus", "kawaii", "claude", or "codex"',
+        'Personality preset for --new-agent: "letta-code", "tutorial", "blank", "linus", "kawaii", "claude", or "codex"',
     },
   },
   "memory-blocks": { parser: { type: "string" }, mode: "both" },
@@ -148,16 +148,15 @@ export const CLI_FLAG_CATALOG = {
   allowedTools: { parser: { type: "string" }, mode: "both" },
   disallowedTools: { parser: { type: "string" }, mode: "both" },
   "permission-mode": { parser: { type: "string" }, mode: "both" },
-  "memory-scope": {
-    parser: { type: "string" },
-    mode: "both",
+  "disable-memory-guard": {
+    parser: { type: "boolean" },
+    mode: "headless",
     help: {
-      argLabel: "<ids>",
       description:
-        "Comma-separated agent IDs this session may access in addition to self.",
+        "Disable the headless cross-agent memory guard for this parent agent process.",
       continuationLines: [
-        "Example: --memory-scope agent-abc,agent-def",
-        "Required to read or write another agent's memory directory.",
+        "Allows intentional access to other agents' memory directories.",
+        "Ignored by subagents; their memory guard remains enabled.",
       ],
     },
   },
@@ -265,6 +264,14 @@ export const CLI_FLAG_CATALOG = {
     help: {
       description:
         "Disable first-turn environment reminder (device/git/cwd context)",
+    },
+  },
+  "no-extensions": {
+    parser: { type: "boolean" },
+    mode: "both",
+    help: {
+      description: "Disable local extensions for this session",
+      continuationLines: ["Recovery alias: LETTA_DISABLE_EXTENSIONS=1 letta"],
     },
   },
   "reflection-trigger": {

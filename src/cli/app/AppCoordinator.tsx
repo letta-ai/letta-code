@@ -9,140 +9,168 @@ import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ApprovalResult } from "../../agent/approval-execution";
-import { prefetchAvailableModelHandles } from "../../agent/available-models";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { setCurrentAgentId } from "../../agent/context";
-import { getScopedMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
+import type { ApprovalResult } from "@/agent/approval-execution";
+import { prefetchAvailableModelHandles } from "@/agent/available-models";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { setCurrentAgentId } from "@/agent/context";
+import { regenerateConversationDescription } from "@/agent/conversation-description";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
+  CHATGPT_FAST_SERVICE_TIER,
+  getChatGptFastRegistryHandleForModelHandle,
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
-} from "../../agent/model";
-import type { PersonalityId } from "../../agent/personality";
-import { shouldRecommendDefaultPrompt } from "../../agent/promptAssets";
-import { reconcileExistingAgentState } from "../../agent/reconcileExistingAgentState";
-import { recordSessionEnd } from "../../agent/sessionHistory";
-import { SessionStats } from "../../agent/stats";
-import { getBackend } from "../../backend";
-import { getClient } from "../../backend/api/client";
-import { getBillingTier } from "../../backend/api/metadata";
-import {
-  getTask,
-  handleMissedOneShot,
-  isProcessAlive,
-  readCronFile,
-  shouldFireTask,
-  updateTask,
-} from "../../cron";
-import { experimentManager } from "../../experiments/manager";
-import { runSessionEndHooks, runSessionStartHooks } from "../../hooks";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import { type PermissionMode, permissionMode } from "../../permissions/mode";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
-import {
-  type MessageQueueItem,
-  QueueRuntime,
-  type TaskNotificationQueueItem,
-} from "../../queue/queueRuntime";
-import { ralphMode } from "../../ralph/mode";
-import {
-  createSharedReminderState,
-  enqueueCommandIoReminder,
-  enqueueToolsetChangeReminder,
-  resetSharedReminderState,
-} from "../../reminders/state";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import {
-  releaseToolExecutionContext,
-  type ToolExecutionResult,
-} from "../../tools/manager";
-import {
-  prepareToolExecutionContextForResolvedTarget,
-  prepareToolExecutionContextForScope,
-  type ToolsetName,
-  type ToolsetPreference,
-} from "../../tools/toolset";
-import {
-  debugLog,
-  debugLogFile,
-  debugWarn,
-  isDebugEnabled,
-} from "../../utils/debug";
-import { recordTuiPerf } from "../../utils/tuiPerf";
-import {
-  type CommandFinishedEvent,
-  type CommandHandle,
-  createCommandRunner,
-} from "../commands/runner";
-import type { BtwState } from "../components/BtwPane";
-import {
-  appendStreamingOutput,
-  type Buffers,
-  createBuffers,
-  type Line,
-  toLines,
-} from "../helpers/accumulator";
-import { backfillBuffers } from "../helpers/backfill";
-import { chunkLog } from "../helpers/chunkLog";
-import {
-  createContextTracker,
-  resetContextHistory,
-} from "../helpers/contextTracker";
-import {
-  generateConversationTitleFromFork,
-  normalizeConversationTitle,
-} from "../helpers/conversationTitle";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { setErrorContext } from "../helpers/errorContext";
-import { parsePatchOperations } from "../helpers/formatArgsDisplay";
-import { getReflectionSettings } from "../helpers/memoryReminder";
-import {
-  addToMessageQueue,
-  type QueuedMessage,
-  setMessageQueueAdder,
-} from "../helpers/messageQueueBridge";
-import { generatePlanFilePath } from "../helpers/planName";
-import {
-  buildContentFromQueueBatch,
-  toQueuedMsg,
-} from "../helpers/queuedMessageParts";
-import { safeJsonParseOr } from "../helpers/safeJsonParse";
-import type { ApprovalRequest } from "../helpers/stream";
-import {
-  collectFinishedTaskToolCalls,
-  createSubagentGroupItem,
-  hasInProgressTaskToolCalls,
-} from "../helpers/subagentAggregation";
+} from "@/agent/model";
+import type { PersonalityId } from "@/agent/personality";
+import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
+import { reconcileExistingAgentState } from "@/agent/reconcile-existing-agent-state";
+import { recordSessionEnd } from "@/agent/session-history";
+import { SessionStats } from "@/agent/stats";
 import {
   clearSubagentsByIds,
   getActiveBackgroundAgents,
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
   subscribe as subscribeToSubagents,
-} from "../helpers/subagentState";
-import { buildStartupSystemPromptWarning } from "../helpers/systemPromptWarning.ts";
-import { appendTaskNotificationEventsToBuffer } from "../helpers/taskNotifications";
-import { getRandomThinkingVerb } from "../helpers/thinkingMessages";
+} from "@/agent/subagent-state";
+import { getBackend, isLocalBackendEnabled } from "@/backend";
+import { getClient } from "@/backend/api/client";
+import { getBillingTier } from "@/backend/api/metadata";
+import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-extension-registry";
+import {
+  cancelActiveConnectOperation,
+  isActiveConnectOperationCancellable,
+} from "@/cli/commands/connect-command-state";
+import {
+  type CommandFinishedEvent,
+  type CommandHandle,
+  createCommandRunner,
+} from "@/cli/commands/runner";
+import type { BtwState } from "@/cli/components/BtwPane";
+import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
+import { TerminalTitleWriter } from "@/cli/components/TerminalTitleWriter";
+import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
+import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
+import {
+  type LocalExtensionAdapter,
+  useLocalExtensionAdapter,
+} from "@/cli/extensions/use-local-extension-adapter";
+import {
+  appendStreamingOutput,
+  type Buffers,
+  createBuffers,
+  type Line,
+  toLines,
+} from "@/cli/helpers/accumulator";
+import { isLocalAgentId } from "@/cli/helpers/app-urls";
+import { backfillBuffers } from "@/cli/helpers/backfill";
+import { chunkLog } from "@/cli/helpers/chunk-log";
+import {
+  createContextTracker,
+  resetContextHistory,
+} from "@/cli/helpers/context-tracker";
+import {
+  generateConversationTitleFromFork,
+  normalizeConversationTitle,
+} from "@/cli/helpers/conversation-title";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { setErrorContext } from "@/cli/helpers/error-context";
+import { parsePatchOperations } from "@/cli/helpers/format-args-display";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
+import {
+  buildContentFromQueueBatch,
+  toQueuedMsg,
+} from "@/cli/helpers/queued-message-parts";
+import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
+import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
+import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import {
+  collectFinishedTaskToolCalls,
+  createSubagentGroupItem,
+  hasInProgressTaskToolCalls,
+} from "@/cli/helpers/subagent-aggregation";
+import { buildStartupSystemPromptWarning } from "@/cli/helpers/system-prompt-warning.ts";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
+  isShellOutputTool,
   isShellTool,
-} from "../helpers/toolNameMapping";
-import { isTaskTool } from "../helpers/toolNameMapping.js";
-import { getTuiBlockedReason } from "../helpers/tuiQueueAdapter";
-import { useConfigurableStatusLine } from "../hooks/useConfigurableStatusLine";
-import { useSuspend } from "../hooks/useSuspend/useSuspend.ts";
-import { useSyncedState } from "../hooks/useSyncedState";
-import { useTerminalRows, useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/cli/helpers/tool-name-mapping";
+import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
+import type { WindowTitleData } from "@/cli/helpers/window-title-config";
+import { useSyncedState } from "@/cli/hooks/use-synced-state";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/use-terminal-width";
+import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
+import {
+  getTask,
+  handleMissedOneShot,
+  isProcessAlive,
+  readCronFile,
+  safeAppendCronRunLogForTask,
+  shouldFireTask,
+  updateTask,
+} from "@/cron";
+import { experimentManager } from "@/experiments/manager";
+import { goalLoopMode } from "@/goal-loop-mode";
+import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import { type PermissionMode, permissionMode } from "@/permissions/mode";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import {
+  type MessageQueueItem,
+  QueueRuntime,
+  type TaskNotificationQueueItem,
+} from "@/queue/queue-runtime";
+import {
+  createSharedReminderState,
+  enqueueCommandIoReminder,
+  enqueueToolsetChangeReminder,
+  resetSharedReminderState,
+  type SharedReminderState,
+} from "@/reminders/state";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
+import {
+  releaseToolExecutionContext,
+  type ToolExecutionResult,
+} from "@/tools/manager";
+import {
+  prepareToolExecutionContextForResolvedTarget,
+  prepareToolExecutionContextForScope,
+  type ToolsetName,
+  type ToolsetPreference,
+} from "@/tools/toolset";
+import {
+  debugLog,
+  debugLogFile,
+  debugWarn,
+  isDebugEnabled,
+} from "@/utils/debug";
+import {
+  addToMessageQueue,
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
+import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
+import { recordTuiPerf } from "@/utils/tui-perf";
+import { getVersion } from "@/version";
 import { AppView } from "./AppView";
 import {
   ANIMATION_RESUME_HYSTERESIS_ROWS,
@@ -171,7 +199,7 @@ import {
   getPreferredAgentModelHandle,
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
-} from "./modelConfig";
+} from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
   ActiveOverlay,
@@ -179,18 +207,113 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
-import { useApprovalFlow } from "./useApprovalFlow";
-import { useBashHandlers } from "./useBashHandlers";
-import { useConfigurationHandlers } from "./useConfigurationHandlers";
-import { useConversationLoop } from "./useConversationLoop";
-import { useConversationSwitching } from "./useConversationSwitching";
-import { useFeedbackHandler } from "./useFeedbackHandler";
-import { useInterruptHandler } from "./useInterruptHandler";
-import { useQueuedApprovalSubmit } from "./useQueuedApprovalSubmit";
-import { useReasoningCycle } from "./useReasoningCycle";
-import { useSubmitHandler } from "./useSubmitHandler";
+import { useApprovalFlow } from "./use-approval-flow";
+import { useBashHandlers } from "./use-bash-handlers";
+import { useConfigurationHandlers } from "./use-configuration-handlers";
+import { useConversationLoop } from "./use-conversation-loop";
+import { useConversationSwitching } from "./use-conversation-switching";
+import { useFeedbackHandler } from "./use-feedback-handler";
+import { useInterruptHandler } from "./use-interrupt-handler";
+import { useQueuedApprovalSubmit } from "./use-queued-approval-submit";
+import { useReasoningCycle } from "./use-reasoning-cycle";
+import { useSubmitHandler } from "./use-submit-handler";
 
-export default function App({
+function buildStartupCommandHints(options: {
+  isResumingConversation: boolean;
+  isPinned: boolean;
+  isLocalBackend: boolean;
+  hasMessages: boolean;
+  hasCloudCredentials: boolean;
+  hasAvailableLocalModels: boolean;
+}): string[] {
+  const {
+    isResumingConversation,
+    isPinned,
+    isLocalBackend,
+    hasMessages,
+    hasCloudCredentials,
+    hasAvailableLocalModels,
+  } = options;
+
+  const baseHints = isResumingConversation
+    ? [
+        "→ **/agents**    list all agents",
+        "→ **/resume**    browse all conversations",
+        "→ **/new**       start a new conversation",
+        "→ **/init**      initialize your agent's memory",
+        "→ **/remember**  teach your agent",
+      ]
+    : isPinned
+      ? [
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/memory**    view your agent's memory",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ]
+      : [
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/pin**       save + name your agent",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ];
+
+  const onboardingHints: string[] = [];
+
+  if (isLocalBackend && !hasAvailableLocalModels) {
+    onboardingHints.push(
+      "→ **/model**     switch models",
+      "→ **/connect**   configure your llm api keys",
+    );
+  }
+
+  if (!hasMessages) {
+    onboardingHints.push(
+      "→ **/rename**    name your agent",
+      "→ **/init**      initialize your agent's memory",
+    );
+  }
+
+  if (!hasCloudCredentials) {
+    onboardingHints.push("→ **/login**     sign in to Constellation");
+  }
+
+  const dedupedHints: string[] = [];
+  const seenHints = new Set<string>();
+
+  for (const hint of [...onboardingHints, ...baseHints]) {
+    if (seenHints.has(hint)) {
+      continue;
+    }
+    seenHints.add(hint);
+    dedupedHints.push(hint);
+    if (dedupedHints.length === 5) {
+      break;
+    }
+  }
+
+  return dedupedHints;
+}
+
+function hasConversationContent(lines: Line[]): boolean {
+  return lines.some((line) => {
+    switch (line.kind) {
+      case "user":
+      case "assistant":
+      case "reasoning":
+      case "tool_call":
+      case "error":
+      case "command":
+      case "bash_command":
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
+export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
   conversationId: initialConversationId,
@@ -204,14 +327,25 @@ export default function App({
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
   agentProvenance = null,
+  startupHasCloudCredentials = false,
+  startupHasAvailableLocalModels = true,
+  fileAutocompleteFdPath = null,
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
+  extensionsDisabled = false,
   onReload,
 }: AppProps) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
     prefetchAvailableModelHandles();
+  }, []);
+
+  const [hasAvailableLocalModels, setHasAvailableLocalModels] = useState(
+    startupHasAvailableLocalModels,
+  );
+  const markLocalModelsAvailable = useCallback(() => {
+    setHasAvailableLocalModels(true);
   }, []);
 
   // Track current agent (can change when swapping)
@@ -237,6 +371,9 @@ export default function App({
 
   // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
+  const [conversationSummary, setConversationSummary] = useState<string | null>(
+    null,
+  );
 
   // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
@@ -266,7 +403,7 @@ export default function App({
 
   // Pending conversation switch context — consumed on first message after a switch
   const pendingConversationSwitchRef = useRef<
-    | import("../helpers/conversationSwitchAlert").ConversationSwitchContext
+    | import("@/cli/helpers/conversation-switch-alert").ConversationSwitchContext
     | null
   >(null);
 
@@ -306,20 +443,13 @@ export default function App({
     }
   }, [agentId]);
 
-  // Set terminal title to "{Agent Name} | Letta Code"
-  useEffect(() => {
-    const title = agentState?.name
-      ? `${agentState.name} | Letta Code`
-      : "Letta Code";
-    process.stdout.write(`\x1b]0;${title}\x07`);
-  }, [agentState?.name]);
-
   // Whether a stream is in flight (disables input)
   // Uses synced state to keep ref in sync for reliable async checks
   const [streaming, setStreaming, streamingRef] = useSyncedState(false);
   const [networkPhase, setNetworkPhase] = useState<
     "upload" | "download" | "error" | null
   >(null);
+  const [executionPhase, setExecutionPhase] = useState<ExecutionPhase>(null);
   // Track permission mode changes for UI updates.
   // Keep a ref in sync *synchronously* so async approval classification never
   // reads a stale mode during the render/effect window.
@@ -328,52 +458,27 @@ export default function App({
   );
   const uiPermissionModeRef = useRef<PermissionMode>(uiPermissionMode);
 
-  // Store the last plan file path for post-approval rendering
-  // (needed because plan mode is exited before rendering the result)
-  const lastPlanFilePathRef = useRef<string | null>(null);
-  const cacheLastPlanFilePath = useCallback((planFilePath: string | null) => {
-    if (planFilePath) {
-      lastPlanFilePathRef.current = planFilePath;
-    }
-  }, []);
-
-  const setUiPermissionMode = useCallback(
-    (mode: PermissionMode) => {
-      uiPermissionModeRef.current = mode;
-      _setUiPermissionMode(mode);
-
-      // Keep the permissionMode singleton in sync *immediately*.
-      //
-      // We also have a useEffect sync (below) as a safety net, but relying on it
-      // introduces a render/effect window where the UI can show YOLO while the
-      // singleton still reports an older mode. That window is enough to break
-      // plan-mode restoration (plan remembers the singleton's mode-at-entry).
-      if (permissionMode.getMode() !== mode) {
-        // If entering plan mode via UI state, ensure a plan file path is set.
-        if (mode === "plan" && !permissionMode.getPlanFilePath()) {
-          const planPath = generatePlanFilePath();
-          permissionMode.setPlanFilePath(planPath);
-          cacheLastPlanFilePath(planPath);
-        }
-        permissionMode.setMode(mode);
-      }
-    },
-    [cacheLastPlanFilePath],
+  // Track which tool call output is expanded (ctrl+o toggles last one)
+  const [expandedToolCallId, setExpandedToolCallId] = useState<string | null>(
+    null,
   );
 
-  const statusLineTriggerVersionRef = useRef(0);
-  const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
+  const setUiPermissionMode = useCallback((mode: PermissionMode) => {
+    uiPermissionModeRef.current = mode;
+    _setUiPermissionMode(mode);
+
+    // Keep the permissionMode singleton in sync *immediately*.
+    if (permissionMode.getMode() !== mode) {
+      permissionMode.setMode(mode);
+    }
+  }, []);
 
   useEffect(() => {
     if (!streaming) {
       setNetworkPhase(null);
+      setExecutionPhase(null);
     }
   }, [streaming]);
-
-  const triggerStatusLineRefresh = useCallback(() => {
-    statusLineTriggerVersionRef.current += 1;
-    setStatusLineTriggerVersion(statusLineTriggerVersionRef.current);
-  }, []);
 
   // Guard ref for preventing concurrent processConversation calls
   // Separate from streaming state which may be set early for UI responsiveness
@@ -398,6 +503,10 @@ export default function App({
     agentId: string;
     cmdId: string;
   } | null>(null);
+  const [worktreeDiffSelectorPending, setWorktreeDiffSelectorPending] =
+    useState<{
+      worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+    } | null>(null);
 
   // If we have approval requests, we should show the approval dialog instead of the input area
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
@@ -417,8 +526,6 @@ export default function App({
       | { type: "deny"; approval: ApprovalRequest; reason: string }
     >
   >([]);
-  const lastAutoApprovedEnterPlanToolCallIdRef = useRef<string | null>(null);
-  const lastAutoHandledExitPlanToolCallIdRef = useRef<string | null>(null);
   const [isExecutingTool, setIsExecutingTool] = useState(false);
   const [queuedApprovalResults, setQueuedApprovalResults] = useState<
     ApprovalResult[] | null
@@ -498,16 +605,9 @@ export default function App({
     [],
   );
 
-  // Ralph Wiggum mode: config waiting for next message to capture as prompt
-  const [pendingRalphConfig, setPendingRalphConfig] = useState<{
-    completionPromise: string | null | undefined;
-    maxIterations: number;
-    isYolo: boolean;
-  } | null>(null);
-
-  // Track ralph mode for UI updates (singleton state doesn't trigger re-renders)
-  const [uiRalphActive, setUiRalphActive] = useState(
-    ralphMode.getState().isActive,
+  // Track goal loop state for UI updates (singleton state does not trigger re-renders)
+  const [uiGoalLoopActive, setUiGoalLoopActive] = useState(
+    goalLoopMode.getState().isActive,
   );
 
   // Derive current approval from pending approvals and results
@@ -550,12 +650,19 @@ export default function App({
           return args.file_path || undefined;
         }
         if (isShellTool(approval.toolName)) {
-          const cmd =
-            typeof args.command === "string"
-              ? args.command
-              : Array.isArray(args.command)
-                ? args.command.join(" ")
-                : "";
+          const cmd = (() => {
+            if (typeof args.cmd === "string") return args.cmd;
+            if (typeof args.command === "string") return args.command;
+            if (Array.isArray(args.command)) return args.command.join(" ");
+            if (
+              approval.toolName === "write_stdin" &&
+              (typeof args.session_id === "string" ||
+                typeof args.session_id === "number")
+            ) {
+              return `write_stdin ${String(args.session_id)}`;
+            }
+            return "";
+          })();
           return cmd.length > 50 ? `${cmd.slice(0, 50)}...` : cmd || undefined;
         }
         if (isPatchTool(approval.toolName)) {
@@ -634,7 +741,12 @@ export default function App({
   const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
     modelLabel: string;
     initialModelId: string;
-    options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+    initialEffort?: ModelReasoningEffort;
+    options: Array<{
+      effort: ModelReasoningEffort;
+      modelId: string;
+      selection?: ModelSelectorSelection;
+    }>;
   } | null>(null);
   const closeOverlay = useCallback(() => {
     const pending = pendingOverlayCommandRef.current;
@@ -691,6 +803,13 @@ export default function App({
     conversationOverrideModelSettings,
     setConversationOverrideModelSettings,
   ] = useState<AgentState["model_settings"] | null>(null);
+  const conversationOverrideModelSettingsRef = useRef(
+    conversationOverrideModelSettings,
+  );
+  useEffect(() => {
+    conversationOverrideModelSettingsRef.current =
+      conversationOverrideModelSettings;
+  }, [conversationOverrideModelSettings]);
   const [
     conversationOverrideContextWindowLimit,
     setConversationOverrideContextWindowLimit,
@@ -753,10 +872,22 @@ export default function App({
     : agentState?.model_settings;
   const derivedReasoningEffort: ModelReasoningEffort | null =
     deriveReasoningEffort(effectiveModelSettings, llmConfig);
+  const currentModelServiceTier =
+    (effectiveModelSettings as { service_tier?: unknown } | null | undefined)
+      ?.service_tier === CHATGPT_FAST_SERVICE_TIER &&
+    currentModelLabel &&
+    getChatGptFastRegistryHandleForModelHandle(currentModelLabel)
+      ? CHATGPT_FAST_SERVICE_TIER
+      : null;
+  const startupModelDisplayOverride = getStartupModelDisplayOverride({
+    isLocalBackend: isLocalBackendEnabled(),
+    startupHasAvailableLocalModels: hasAvailableLocalModels,
+  });
 
   // Use tier-aware resolution so the display matches the agent's reasoning effort
   // (e.g. "GPT-5.3-Codex" not just "GPT-5" for the first match).
   const currentModelDisplay = useMemo(() => {
+    if (startupModelDisplayOverride) return startupModelDisplayOverride;
     if (!currentModelLabel) return null;
     const info = getModelInfoForLlmConfig(currentModelLabel, {
       reasoning_effort: derivedReasoningEffort ?? null,
@@ -764,6 +895,7 @@ export default function App({
         (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
         null,
       context_window: llmConfig?.context_window ?? null,
+      service_tier: currentModelServiceTier,
     });
     if (info) {
       return (info as { shortLabel?: string }).shortLabel ?? info.label;
@@ -773,8 +905,16 @@ export default function App({
       currentModelLabel.split("/").pop() ??
       null
     );
-  }, [currentModelLabel, derivedReasoningEffort, llmConfig]);
+  }, [
+    currentModelLabel,
+    derivedReasoningEffort,
+    currentModelServiceTier,
+    llmConfig,
+    startupModelDisplayOverride,
+  ]);
+
   const currentModelProvider = llmConfig?.provider_name ?? null;
+  const isLocalBackend = isLocalBackendEnabled();
   const currentReasoningEffort: ModelReasoningEffort | null =
     currentModelLabel?.startsWith("letta/auto")
       ? null
@@ -812,8 +952,14 @@ export default function App({
       modelDisplayName: currentModelDisplay ?? undefined,
       billingTier: billingTier ?? undefined,
       modelEndpointType: llmConfig?.model_endpoint_type ?? undefined,
+      modelLabel: currentModelLabel ?? undefined,
     });
-  }, [currentModelDisplay, billingTier, llmConfig?.model_endpoint_type]);
+  }, [
+    currentModelDisplay,
+    billingTier,
+    llmConfig?.model_endpoint_type,
+    currentModelLabel,
+  ]);
 
   // Fetch billing tier once on mount
   useEffect(() => {
@@ -845,6 +991,11 @@ export default function App({
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
 
+  // Live total context tokens (history + system + output). Mirrors
+  // `contextTrackerRef.current.lastContextTokens` into reactive state so
+  // UI can react during streaming — the ref itself doesn't trigger renders.
+  const [usedContextTokens, setUsedContextTokens] = useState(0);
+
   // Trajectory token/time bases (accumulated across runs)
   const [trajectoryTokenBase, setTrajectoryTokenBase] = useState(0);
   const [trajectoryElapsedBaseMs, setTrajectoryElapsedBaseMs] = useState(0);
@@ -856,11 +1007,18 @@ export default function App({
   const [thinkingMessage, setThinkingMessage] = useState(
     getRandomThinkingVerb(),
   );
+  const [terminalTitlePreviewOverride, setTerminalTitlePreviewOverride] =
+    useState<string | null | undefined>(undefined);
+  const clearTerminalTitlePreviewOverride = useCallback(() => {
+    setTerminalTitlePreviewOverride(undefined);
+  }, []);
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
+  const sessionExtensionStartAttemptedRef = useRef(false);
+  const extensionAdapterRef = useRef<LocalExtensionAdapter | null>(null);
 
   // Initialize chunk log for this agent + session (clears buffer, GCs old files).
   // Re-runs when agentId changes (e.g. agent switch via /agents).
@@ -961,25 +1119,54 @@ export default function App({
   }, [agentId, agentName, initialConversationId]);
 
   // Run SessionEnd hooks helper
-  const runEndHooks = useCallback(async () => {
-    const durationMs = Date.now() - sessionStartTimeRef.current;
-    try {
-      await runSessionEndHooks(
-        durationMs,
-        undefined,
-        undefined,
-        agentIdRef.current ?? undefined,
-        conversationIdRef.current ?? undefined,
-      );
-    } catch {
-      // Silently ignore hook errors
-    }
-  }, []);
+  const runEndHooks = useCallback(
+    async (reason: ExtensionConversationCloseReason = "quit") => {
+      const durationMs = Date.now() - sessionStartTimeRef.current;
+      try {
+        await runSessionEndHooks(
+          durationMs,
+          undefined,
+          undefined,
+          agentIdRef.current ?? undefined,
+          conversationIdRef.current ?? undefined,
+        );
+      } catch {
+        // Silently ignore hook errors
+      }
+
+      const extensionAdapter = extensionAdapterRef.current;
+      if (
+        extensionAdapter &&
+        !extensionAdapter.isLoading &&
+        extensionAdapter.hasExtensionSources
+      ) {
+        try {
+          await extensionAdapter.emitEvent("conversation_close", {
+            agentId: agentIdRef.current ?? null,
+            conversationId: conversationIdRef.current ?? null,
+            durationMs,
+            messageCount: telemetry.getMessageCount(),
+            reason,
+            toolCallCount: telemetry.getToolCallCount(),
+          });
+        } catch {
+          // Extension lifecycle events are best-effort on shutdown.
+        }
+      }
+    },
+    [],
+  );
 
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
-  const sharedReminderStateRef = useRef(createSharedReminderState());
+  const sharedReminderStateRef = useRef<SharedReminderState>(
+    (() => {
+      const state = createSharedReminderState();
+      state.pendingConversationBootstrap = !resumedExistingConversation;
+      return state;
+    })(),
+  );
   const _systemPromptRecompileByConversationRef = useRef(
     new Map<string, Promise<void>>(),
   );
@@ -992,11 +1179,17 @@ export default function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
+  const shouldAutoGenerateConversationDescriptionRef = useRef(
+    !resumedExistingConversation,
+  );
+  const isAutoConversationDescriptionInFlightRef = useRef(false);
   const firstUserQueryRef = useRef<string | null>(null);
   const setConversationAutoTitleEligibility = useCallback(
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
+      shouldAutoGenerateConversationDescriptionRef.current = enabled;
+      isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
     },
     [],
@@ -1050,9 +1243,51 @@ export default function App({
       return fallback;
     }
   }, [deriveAutoConversationTitle]);
-  const resetBootstrapReminderState = useCallback(() => {
-    resetSharedReminderState(sharedReminderStateRef.current);
-  }, []);
+  const generateConversationDescription = useCallback(
+    async (options?: { force?: boolean }) => {
+      if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {
+        return;
+      }
+      if (
+        (!options?.force &&
+          !shouldAutoGenerateConversationDescriptionRef.current) ||
+        isAutoConversationDescriptionInFlightRef.current
+      ) {
+        return;
+      }
+      if (getBackend().capabilities.localModelCatalog) {
+        return;
+      }
+
+      const conversationId = conversationIdRef.current;
+      if (!conversationId || conversationId === "default") {
+        return;
+      }
+
+      isAutoConversationDescriptionInFlightRef.current = true;
+      try {
+        const updated = await regenerateConversationDescription(conversationId);
+        if (updated) {
+          shouldAutoGenerateConversationDescriptionRef.current = false;
+        }
+      } catch (err) {
+        if (isDebugEnabled()) {
+          console.error("[DEBUG] generateConversationDescription failed:", err);
+        }
+      } finally {
+        isAutoConversationDescriptionInFlightRef.current = false;
+      }
+    },
+    [],
+  );
+  const resetBootstrapReminderState = useCallback(
+    (pendingConversationBootstrap = false) => {
+      resetSharedReminderState(sharedReminderStateRef.current);
+      sharedReminderStateRef.current.pendingConversationBootstrap =
+        pendingConversationBootstrap;
+    },
+    [],
+  );
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
 
@@ -1149,6 +1384,16 @@ export default function App({
             `cleared reason=${_reason} cleared_count=${_clearedCount}`,
           );
           setQueueDisplay([]);
+        },
+        onRemoved: (item, queueLen) => {
+          debugLog(
+            "queue-lifecycle",
+            `removed item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
+          );
+          // Remove the matching display item by queueItemId
+          setQueueDisplay((prev) =>
+            prev.filter((msg) => msg.queueItemId !== item.id),
+          );
         },
       },
     });
@@ -1276,6 +1521,13 @@ export default function App({
               });
             }
 
+            safeAppendCronRunLogForTask(freshTask, {
+              status: "ok",
+              runAtMs: now.getTime(),
+              scheduledFor: freshTask.scheduled_for,
+              firedAt: nowIso,
+            });
+
             debugLog("cron", `TUI shadow scheduler fired task ${taskId}`);
           };
 
@@ -1330,6 +1582,7 @@ export default function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
+          extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
         });
       }
 
@@ -1337,6 +1590,7 @@ export default function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
+          extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -1345,6 +1599,7 @@ export default function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
+        extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });
@@ -1360,6 +1615,24 @@ export default function App({
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
   // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
   const dequeueInFlightRef = useRef(false);
+
+  // Queue defer mode: when 'defer', queued messages only fire on end_turn stop reason.
+  // Defer mode is only meaningful in API backend mode (local backend fires end_turn
+  // between each sequential tool call, making defer indistinguishable from immediate).
+  const deferModeSupported = !isLocalAgentId(agentId);
+  // When 'immediate' (default), they fire on any turn end.
+  const [queueMode, setQueueMode] = useState<"immediate" | "defer">(
+    "immediate",
+  );
+  const handleCtrlD = useCallback(() => {
+    if (!deferModeSupported) return;
+    setQueueMode((prev) => (prev === "immediate" ? "defer" : "immediate"));
+  }, [deferModeSupported]);
+  // Ref mirror of queueMode so useConversationLoop can read it without stale closures.
+  const queueModeRef = useRef<"immediate" | "defer">("immediate");
+  queueModeRef.current = queueMode;
+  // Tracks the stop reason of the last completed turn, set by useConversationLoop.
+  const lastStopReasonRef = useRef<string | null>(null);
 
   // Track last dequeued message for restoration on error
   // If an error occurs after dequeue, we restore this to the input field (if input is empty)
@@ -1963,15 +2236,9 @@ export default function App({
     buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
   }, [tokenStreamingEnabled]);
 
-  // Configurable status line hook
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  const _memfsDirectory =
-    memfsEnabled && agentId && agentId !== "loading"
-      ? getScopedMemoryFilesystemRoot(agentId)
-      : null;
-  const statusLine = useConfigurableStatusLine({
+  const statusLinePayload = buildStatusLinePayload({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
     reasoningEffort: currentReasoningEffort,
@@ -1993,6 +2260,12 @@ export default function App({
     turnCount: sharedReminderStateRef.current.turnCount,
     reflectionMode: reflectionSettings.trigger,
     reflectionStepCount: reflectionSettings.stepCount,
+    memfsEnabled:
+      agentId !== "loading" ? settingsManager.isMemfsEnabled(agentId) : false,
+    memfsDirectory:
+      agentId !== "loading" && settingsManager.isMemfsEnabled(agentId)
+        ? getScopedMemoryFilesystemRoot(agentId)
+        : null,
     permissionMode: uiPermissionMode,
     networkPhase,
     terminalWidth: chromeColumns,
@@ -2001,25 +2274,58 @@ export default function App({
       status: a.status,
       duration_ms: Date.now() - a.startTime,
     })),
-    triggerVersion: statusLineTriggerVersion,
+  });
+  const extensionContext = useMemo(
+    () =>
+      buildStatuslineRenderContext({
+        payload: statusLinePayload,
+        ui: {
+          currentModelProvider: currentModelProvider ?? null,
+          goalStatusText: null,
+          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+          isByokProvider: Boolean(
+            currentModelProvider?.startsWith("lc-") ||
+              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          ),
+          isLocalBackend,
+          isOpenAICodexProvider:
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          rightColumnWidth: Math.max(
+            28,
+            Math.min(72, Math.floor(chromeColumns * 0.45)),
+          ),
+        },
+      }),
+    [
+      chromeColumns,
+      currentModelProvider,
+      hasTemporaryModelOverride,
+      isLocalBackend,
+      statusLinePayload,
+    ],
+  );
+  const extensionAdapter = useLocalExtensionAdapter(extensionContext, {
+    disabled: extensionsDisabled,
   });
 
-  const previousStreamingForStatusLineRef = useRef(streaming);
   useEffect(() => {
-    // Trigger status line when an assistant stream completes.
-    if (previousStreamingForStatusLineRef.current && !streaming) {
-      triggerStatusLineRefresh();
-    }
-    previousStreamingForStatusLineRef.current = streaming;
-  }, [streaming, triggerStatusLineRefresh]);
+    extensionAdapterRef.current = extensionAdapter;
+  }, [extensionAdapter]);
 
-  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${effectiveContextWindowSize ?? ""}|${currentReasoningEffort ?? ""}|${currentSystemPromptId ?? ""}|${currentToolset ?? ""}`;
-
-  // Trigger status line when key session identity/display state changes.
   useEffect(() => {
-    void statusLineRefreshIdentity;
-    triggerStatusLineRefresh();
-  }, [statusLineRefreshIdentity, triggerStatusLineRefresh]);
+    if (!agentId || agentId === "loading") return;
+    if (sessionExtensionStartAttemptedRef.current) return;
+    if (extensionAdapter.isLoading) return;
+    if (!extensionAdapter.hasExtensionSources) return;
+
+    sessionExtensionStartAttemptedRef.current = true;
+    void extensionAdapter.emitEvent("conversation_open", {
+      agentId,
+      agentName: agentName ?? null,
+      conversationId: conversationIdRef.current ?? null,
+      reason: "startup",
+    });
+  }, [agentId, agentName, extensionAdapter]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
@@ -2055,7 +2361,20 @@ export default function App({
         let command = "(no command)";
         let description = "";
 
-        if (t === "shell") {
+        if (t === "exec_command") {
+          command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+        } else if (t === "write_stdin") {
+          const sessionId =
+            typeof args.session_id === "string" ||
+            typeof args.session_id === "number"
+              ? String(args.session_id)
+              : "unknown";
+          command = `write_stdin ${sessionId}`;
+          description =
+            typeof args.chars === "string" && args.chars.length > 0
+              ? "Write input to running shell session"
+              : "Poll running shell session";
+        } else if (t === "shell") {
           const cmdVal = args.command;
           command = Array.isArray(cmdVal)
             ? cmdVal.join(" ")
@@ -2192,7 +2511,6 @@ export default function App({
 
   const currentApprovalShouldCommitPreview = useMemo(() => {
     if (!currentApproval) return false;
-    if (currentApproval.toolName === "ExitPlanMode") return false;
     return shouldEagerCommitApprovalPreview(currentApproval);
   }, [currentApproval, shouldEagerCommitApprovalPreview]);
 
@@ -2200,6 +2518,7 @@ export default function App({
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
     setTokenCount(b.tokenCount);
+    setUsedContextTokens(contextTrackerRef.current.lastContextTokens);
     const newLines = toLines(b);
     setLines(newLines);
     commitEligibleLines(b);
@@ -2290,6 +2609,43 @@ export default function App({
     pendingOverlayCommandRef.current = null;
     return pending.command;
   }, []);
+
+  // Combines startOverlayCommand + setActiveOverlay — these are always called together.
+  const openOverlay = useCallback(
+    (
+      overlay: NonNullable<ActiveOverlay>,
+      input: string,
+      openingOutput: string,
+      dismissOutput: string,
+    ) => {
+      const cmd = startOverlayCommand(
+        overlay,
+        input,
+        openingOutput,
+        dismissOutput,
+      );
+      setActiveOverlay(overlay);
+      return cmd;
+    },
+    [startOverlayCommand],
+  );
+
+  // Combines consumeOverlayCommand + the UI-reset side of closeOverlay, but WITHOUT
+  // calling cmd.finish(dismissOutput). Use this when the overlay completed successfully
+  // and the caller will finish the command with a real result. Contrast with
+  // closeOverlay() (cancel path) which does finish with the dismiss message.
+  const completeOverlay = useCallback(
+    (overlay: NonNullable<ActiveOverlay>) => {
+      const cmd = consumeOverlayCommand(overlay);
+      setActiveOverlay(null);
+      setFeedbackPrefill("");
+      setSearchQuery("");
+      setModelSelectorOptions({});
+      setModelReasoningPrompt(null);
+      return cmd;
+    },
+    [consumeOverlayCommand],
+  );
 
   useEffect(() => {
     const pending = pendingOverlayCommandRef.current;
@@ -2396,52 +2752,9 @@ export default function App({
     }
   }, [refreshDerived]);
 
-  // Eager commit for ExitPlanMode: Always commit plan preview to staticItems
-  // This keeps the dynamic area small (just approval options) to avoid flicker
-  useEffect(() => {
-    if (!currentApproval) return;
-    if (currentApproval.toolName !== "ExitPlanMode") return;
-
-    const toolCallId = currentApproval.toolCallId;
-    if (!toolCallId) return;
-
-    // Already committed preview for this approval?
-    if (eagerCommittedPreviewsRef.current.has(toolCallId)) return;
-
-    const planFilePath = permissionMode.getPlanFilePath();
-    if (!planFilePath) return;
-
-    try {
-      const { readFileSync, existsSync } = require("node:fs");
-      if (!existsSync(planFilePath)) return;
-
-      const planContent = readFileSync(planFilePath, "utf-8");
-
-      // Commit preview to static area
-      const previewItem: StaticItem = {
-        kind: "approval_preview",
-        id: `approval-preview-${toolCallId}`,
-        toolCallId,
-        toolName: currentApproval.toolName,
-        toolArgs: currentApproval.toolArgs || "{}",
-        planContent,
-        planFilePath,
-      };
-
-      setStaticItems((prev) => [...prev, previewItem]);
-      eagerCommittedPreviewsRef.current.add(toolCallId);
-
-      // Also capture plan file path for post-approval rendering
-      lastPlanFilePathRef.current = planFilePath;
-    } catch {
-      // Failed to read plan, don't commit preview
-    }
-  }, [currentApproval]);
-
   // Eager commit for large approval previews (bash/file edits) to avoid flicker
   useEffect(() => {
     if (!currentApproval) return;
-    if (currentApproval.toolName === "ExitPlanMode") return;
 
     const toolCallId = currentApproval.toolCallId;
     if (!toolCallId) return;
@@ -2468,8 +2781,9 @@ export default function App({
     eagerCommittedPreviewsRef.current.add(toolCallId);
   }, [currentApproval, currentApprovalShouldCommitPreview]);
 
-  // Backfill message history when resuming (only once)
-  useEffect(() => {
+  // Backfill message history when resuming (only once). Use layout timing so
+  // the ready input is not painted before the resumed transcript.
+  useLayoutEffect(() => {
     if (
       loadingState === "ready" &&
       messageHistory.length > 0 &&
@@ -2488,7 +2802,7 @@ export default function App({
             snapshot: {
               continueSession,
               agentState,
-              agentProvenance,
+              startupHasAvailableLocalModels,
               terminalWidth: columns,
             },
           },
@@ -2522,33 +2836,14 @@ export default function App({
         ? `Resuming conversation with **${agentName}**`
         : `Starting new conversation with **${agentName}**`;
 
-      // Command hints - vary based on agent state:
-      // - Resuming: show /new (they may want a fresh conversation)
-      // - New session + unpinned: show /pin (they should save their agent)
-      // - New session + pinned: show /memory (they're already saved)
-      const commandHints = isResumingConversation
-        ? [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    browse all conversations",
-            "→ **/new**       start a new conversation",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ]
-        : isPinned
-          ? [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/memory**    view your agent's memory",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ]
-          : [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/pin**       save + name your agent",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ];
+      const commandHints = buildStartupCommandHints({
+        isResumingConversation,
+        isPinned,
+        isLocalBackend: isLocalBackendEnabled(),
+        hasMessages: messageHistory.length > 0,
+        hasCloudCredentials: startupHasCloudCredentials,
+        hasAvailableLocalModels: startupHasAvailableLocalModels,
+      });
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -2585,9 +2880,10 @@ export default function App({
     continueSession,
     columns,
     agentState,
-    agentProvenance,
     resumedExistingConversation,
     releaseNotes,
+    startupHasCloudCredentials,
+    startupHasAvailableLocalModels,
     messageHistory,
   ]);
 
@@ -2623,7 +2919,7 @@ export default function App({
               };
               const sysNorm = normalize(agentSystem);
               const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "../../agent/promptAssets"
+                "@/agent/prompt-assets"
               );
 
               // Best-effort preset detection.
@@ -2683,9 +2979,7 @@ export default function App({
 
           // Derive model ID from the configured model handle for ModelSelector.
           const agentModelHandle = getPreferredAgentModelHandle(agent);
-          const { getModelInfoForLlmConfig } = await import(
-            "../../agent/model"
-          );
+          const { getModelInfoForLlmConfig } = await import("@/agent/model");
           const modelInfo = getModelInfoForLlmConfig(
             agentModelHandle || "",
             agent.llm_config as unknown as {
@@ -2707,9 +3001,7 @@ export default function App({
 
           if (persistedToolsetPreference === "auto") {
             if (agentModelHandle) {
-              const { switchToolsetForModel } = await import(
-                "../../tools/toolset"
-              );
+              const { switchToolsetForModel } = await import("@/tools/toolset");
               const derivedToolset = await switchToolsetForModel(
                 agentModelHandle,
                 agentId,
@@ -2719,7 +3011,7 @@ export default function App({
               setCurrentToolset(null);
             }
           } else {
-            const { forceToolsetSwitch } = await import("../../tools/toolset");
+            const { forceToolsetSwitch } = await import("@/tools/toolset");
             await forceToolsetSwitch(persistedToolsetPreference, agentId);
             setCurrentToolset(persistedToolsetPreference);
           }
@@ -2759,7 +3051,100 @@ export default function App({
         cancelled = true;
       };
     }
+    return undefined;
   }, [loadingState, agentId, initialAgentState]);
+
+  // Extension provider metadata can arrive after the first local AgentState
+  // projection on cold boot. Re-project the active local agent when the provider
+  // registry changes so statusline context windows reflect registered models.
+  useEffect(() => {
+    if (
+      !isLocalBackend ||
+      loadingState !== "ready" ||
+      !agentId ||
+      agentId === "loading"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let refreshQueued = false;
+
+    const refreshAgentFromRegisteredProviderMetadata = () => {
+      if (refreshQueued) return;
+      refreshQueued = true;
+
+      queueMicrotask(() => {
+        refreshQueued = false;
+        const currentAgentId = agentIdRef.current;
+        if (cancelled || !currentAgentId || currentAgentId === "loading") {
+          return;
+        }
+
+        void getBackend()
+          .retrieveAgent(currentAgentId)
+          .then((agent) => {
+            if (cancelled || agentIdRef.current !== agent.id) return;
+            setAgentState(agent);
+            setAgentDescription(agent.description ?? null);
+            setAgentLastRunAt(
+              (agent as { last_run_completion?: string | null })
+                .last_run_completion ?? null,
+            );
+
+            if (
+              conversationIdRef.current === "default" &&
+              !hasConversationModelOverrideRef.current
+            ) {
+              const agentModelHandle = getPreferredAgentModelHandle(agent);
+              setLlmConfig(agent.llm_config);
+              setCurrentModelHandle(agentModelHandle ?? null);
+              const modelInfo = getModelInfoForLlmConfig(
+                agentModelHandle || "",
+                {
+                  ...(agent.llm_config as unknown as {
+                    reasoning_effort?: string | null;
+                    enable_reasoner?: boolean | null;
+                  }),
+                  context_window:
+                    (
+                      agent as unknown as {
+                        context_window_limit?: number | null;
+                      }
+                    ).context_window_limit ?? null,
+                },
+              );
+              setCurrentModelId(modelInfo?.id ?? (agentModelHandle || null));
+            }
+          })
+          .catch((error) => {
+            debugLog(
+              "agent-config",
+              "Failed to refresh local agent after provider registry change: %O",
+              error,
+            );
+          });
+      });
+    };
+
+    if (!extensionAdapter.isLoading) {
+      refreshAgentFromRegisteredProviderMetadata();
+    }
+
+    const unsubscribe = subscribePiProviderRegistry(
+      refreshAgentFromRegisteredProviderMetadata,
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [
+    agentId,
+    extensionAdapter.isLoading,
+    hasConversationModelOverrideRef,
+    isLocalBackend,
+    loadingState,
+  ]);
 
   // Keep effective model state in sync with the active conversation override.
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref.current is intentionally read dynamically
@@ -2856,10 +3241,33 @@ export default function App({
           return;
         }
 
+        const hasConversationModelSettings =
+          conversationModelSettings !== undefined &&
+          conversationModelSettings !== null &&
+          Object.keys(conversationModelSettings as Record<string, unknown>)
+            .length > 0;
+        const resolvedConversationModelSettings = hasConversationModelSettings
+          ? conversationModelSettings
+          : conversationModel === undefined ||
+              conversationModel === null ||
+              conversationModel === agentModelHandle
+            ? (agentState.model_settings ?? null)
+            : null;
+
         const reasoningEffort = deriveReasoningEffort(
-          conversationModelSettings,
+          resolvedConversationModelSettings,
           agentState.llm_config,
         );
+        const conversationServiceTier =
+          (
+            resolvedConversationModelSettings as
+              | { service_tier?: unknown }
+              | null
+              | undefined
+          )?.service_tier === CHATGPT_FAST_SERVICE_TIER &&
+          getChatGptFastRegistryHandleForModelHandle(effectiveModelHandle)
+            ? CHATGPT_FAST_SERVICE_TIER
+            : null;
 
         const modelInfo = getModelInfoForLlmConfig(effectiveModelHandle, {
           reasoning_effort: reasoningEffort,
@@ -2870,6 +3278,7 @@ export default function App({
               }
             ).enable_reasoner ?? null,
           context_window: conversationContextWindowLimit ?? null,
+          service_tier: conversationServiceTier,
         });
         const modelPresetContextWindow = (
           modelInfo?.updateArgs as { context_window?: unknown } | undefined
@@ -2882,7 +3291,7 @@ export default function App({
             : conversationContextWindowLimit;
 
         setHasConversationModelOverride(true);
-        setConversationOverrideModelSettings(conversationModelSettings ?? null);
+        setConversationOverrideModelSettings(resolvedConversationModelSettings);
         setConversationOverrideContextWindowLimit(
           resolvedConversationContextWindowLimit,
         );
@@ -2980,9 +3389,7 @@ export default function App({
       }
 
       try {
-        const { updateConversationLLMConfig } = await import(
-          "../../agent/modify"
-        );
+        const { updateConversationLLMConfig } = await import("@/agent/modify");
         await updateConversationLLMConfig(
           targetConversationId,
           modelHandle,
@@ -3104,7 +3511,7 @@ export default function App({
       try {
         if (getBackend().capabilities.localMemfs) {
           const { initializeLocalMemoryRepo } = await import(
-            "../../agent/memoryGit"
+            "@/agent/memory-git"
           );
           await initializeLocalMemoryRepo({
             memoryDir: getScopedMemoryFilesystemRoot(agentId),
@@ -3116,7 +3523,7 @@ export default function App({
         }
 
         const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
-          "../../agent/memoryGit"
+          "@/agent/memory-git"
         );
         if (!isGitRepo(agentId)) {
           await cloneMemoryRepo(agentId);
@@ -3201,6 +3608,7 @@ export default function App({
     clearApprovalToolContext,
     closeTrajectorySegment,
     consumeQueuedMessages,
+    queueModeRef,
     contextTrackerRef,
     conversationBusyRetriesRef,
     conversationGenerationRef,
@@ -3208,6 +3616,8 @@ export default function App({
     currentModelId,
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
+    generateConversationDescription,
+    extensionAdapter,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -3243,20 +3653,23 @@ export default function App({
     setCurrentModelHandle,
     setCurrentModelId,
     setDequeueEpoch,
+    lastStopReasonRef,
     setIsExecutingTool,
     setLlmConfig,
     setNeedsEagerApprovalCheck,
     setNetworkPhase,
+    setExecutionPhase,
     setPendingApprovals,
     setRestoreQueueOnCancel,
     setRestoredInput,
     setStreaming,
+    setConversationSummary,
     setTempModelOverride,
     setThinkingMessage,
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -3279,11 +3692,7 @@ export default function App({
     handleApproveAlways,
     handleDenyCurrent,
     handleCancelApprovals,
-    handlePlanApprove,
-    handlePlanKeepPlanning,
     handleQuestionSubmit,
-    handleEnterPlanModeApprove,
-    handleEnterPlanModeReject,
   } = useApprovalFlow({
     abortControllerRef,
     agentId,
@@ -3295,21 +3704,18 @@ export default function App({
     autoDeniedApprovals,
     autoHandledResults,
     buffersRef,
-    cacheLastPlanFilePath,
     clearApprovalToolContext,
     closeTrajectorySegment,
     commandRunner,
     commitEligibleLines,
     consumeQueuedMessages,
+    queueModeRef,
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
     executingToolCallIdsRef,
     interruptQueuedRef,
     isExecutingTool,
-    lastAutoApprovedEnterPlanToolCallIdRef,
-    lastAutoHandledExitPlanToolCallIdRef,
-    lastPlanFilePathRef,
     loadingState,
     openTrajectorySegment,
     pendingApprovals,
@@ -3392,10 +3798,37 @@ export default function App({
     currentModelProvider,
   ]);
 
-  // Handler when user presses UP/ESC to load queue into input for editing
-  const handleEnterQueueEditMode = useCallback(() => {
-    tuiQueueRef.current?.clear("stale_generation");
-  }, []);
+  // Queue edit: load all queued user messages into the input (joined with newlines),
+  // then clear them from the queue so the user can edit and re-submit as one message.
+  const handleQueueEdit = useCallback((): string => {
+    const userMessages = queueDisplay.filter((m) => m.kind === "user");
+    if (userMessages.length === 0) return "";
+
+    // Try to remove each message from the runtime queue. Only include text
+    // from messages that were actually removed — if removeItem returns null,
+    // the item was already dequeued (race with auto-send) and should NOT be
+    // loaded into the input (it would cause a double-send).
+    const removedTexts: string[] = [];
+    for (const msg of userMessages) {
+      if (msg.queueItemId) {
+        const removed = tuiQueueRef.current?.removeItem(msg.queueItemId);
+        if (removed) {
+          removedTexts.push(msg.text);
+        }
+        // If removed is null, item was already dequeued/sent — skip it
+      } else {
+        // No queueItemId (shouldn't happen for user messages), include anyway
+        removedTexts.push(msg.text);
+      }
+    }
+
+    if (removedTexts.length === 0) return ""; // All already dequeued/sent
+
+    // Clear display immediately — same render cycle as the input update
+    setQueueDisplay((prev) => prev.filter((m) => m.kind !== "user"));
+
+    return removedTexts.join("\n");
+  }, [queueDisplay]);
 
   // Handle paste errors (e.g., image too large)
   const handlePasteError = useCallback(
@@ -3503,6 +3936,7 @@ export default function App({
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
+    extensionAdapter,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
@@ -3523,6 +3957,7 @@ export default function App({
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setCurrentModelHandle,
     setInterruptRequested,
     setIsExecutingTool,
@@ -3576,9 +4011,7 @@ export default function App({
     appendTaskNotificationEvents,
     bashCommandCacheRef,
     buffersRef,
-    cacheLastPlanFilePath,
     checkPendingApprovalsForSlashCommand,
-    chromeColumns,
     commandRunner,
     commandRunning,
     consumeQueuedApprovalInputForCurrentConversation,
@@ -3586,18 +4019,16 @@ export default function App({
     conversationGenerationRef,
     conversationId,
     conversationIdRef,
-    currentModelDisplay,
     currentModelHandle,
     currentModelId,
     currentModelLabel,
     currentModelProvider,
-    currentReasoningEffort,
-    currentSystemPromptId,
-    currentToolset,
     effectiveContextWindowSize,
     emittedIdsRef,
+    extensionAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
+    generateConversationDescription,
     generateConversationTitle,
     handleAgentSelect,
     handleBtwCommand,
@@ -3605,17 +4036,14 @@ export default function App({
     hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
-    lastRunIdRef,
     llmConfigRef,
     maybeCarryOverActiveConversationModel,
     needsEagerApprovalCheck,
-    networkPhase,
     openTrajectorySegment,
     overrideContentPartsRef,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingGitReminderRef,
-    pendingRalphConfig,
     processConversation,
     processConversationWithQueuedApprovals,
     profileConfirmPending,
@@ -3634,12 +4062,13 @@ export default function App({
     sessionHooksRanRef,
     sessionStartFeedbackRef,
     sessionStatsRef,
-    setActiveOverlay,
+    openOverlay,
     setAgentDescription,
     setAgentState,
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setConversationOverrideContextWindowLimit,
     setConversationOverrideModelSettings,
     setCurrentPersonalityId,
@@ -3648,11 +4077,12 @@ export default function App({
     setHasConversationModelOverride,
     setLines,
     setLlmConfig,
+    markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPendingRalphConfig,
     setPinDialogLocal,
     setProfileConfirmPending,
+    setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
     setSearchQuery,
     setStaticItems,
@@ -3662,10 +4092,9 @@ export default function App({
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiRalphActive,
+    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
-    startOverlayCommand,
     streaming,
     systemInfoReminderEnabled,
     systemPromptRecompileByConversationRef:
@@ -3673,9 +4102,7 @@ export default function App({
     tokenStreamingEnabled,
     trajectoryRunTokenStartRef,
     trajectoryTokenDisplayRef,
-    triggerStatusLineRefresh,
     tuiQueueRef,
-    uiPermissionMode,
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
@@ -3709,7 +4136,13 @@ export default function App({
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current && // Don't dequeue if user just cancelled
       !abortControllerRef.current && // Don't dequeue while processConversation is still active
-      !dequeueInFlightRef.current // Don't dequeue while previous dequeue submit is still in flight
+      !dequeueInFlightRef.current && // Don't dequeue while previous dequeue submit is still in flight
+      // In defer mode, only dequeue when the agent is truly done:
+      // - last stop reason was end_turn (not requires_approval or error)
+      // - processingConversationRef === 0 (no nested processConversation calls outstanding)
+      (queueMode === "immediate" ||
+        (lastStopReasonRef.current === "end_turn" &&
+          processingConversationRef.current === 0))
     ) {
       // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
@@ -3742,6 +4175,8 @@ export default function App({
       // Lock prevents re-entrant dequeue if deps churn before processConversation
       // sets abortControllerRef (which is the normal long-term gate).
       dequeueInFlightRef.current = true;
+      // Reset to immediate mode after each dequeue — defer is opt-in per batch.
+      setQueueMode("immediate");
       void onSubmitRef.current(concatenatedMessage).finally(() => {
         dequeueInFlightRef.current = false;
         // If more items arrived while in-flight, bump epoch so the effect re-runs.
@@ -3779,6 +4214,7 @@ export default function App({
     anySelectorOpen,
     dequeueEpoch,
     queuedOverlayAction,
+    queueMode,
   ]);
 
   const {
@@ -3789,6 +4225,7 @@ export default function App({
     handleCompactionModeSelect,
     handleToolsetSelect,
     handleExperimentSelect,
+    handleExperimentsConfirm,
   } = useConfigurationHandlers({
     activeOverlay,
     agentId,
@@ -3799,6 +4236,7 @@ export default function App({
     contextTrackerRef,
     conversationIdRef,
     currentModelHandle,
+    currentModelId,
     currentToolset,
     isAgentBusy,
     llmConfig,
@@ -3811,6 +4249,7 @@ export default function App({
     setConversationOverrideModelSettings,
     setCurrentModelHandle,
     setCurrentModelId,
+    setHasAvailableLocalModels,
     setCurrentPersonalityId,
     setCurrentSystemPromptId,
     setCurrentToolset,
@@ -3840,10 +4279,16 @@ export default function App({
       // Process the queued action
       if (action.type === "switch_agent") {
         // Call handleAgentSelect - it will see isAgentBusy() as false now
-        handleAgentSelect(action.agentId, { commandId: action.commandId });
+        handleAgentSelect(action.agentId, {
+          commandId: action.commandId,
+          backendMode: action.backendMode,
+        });
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
-        handleModelSelect(action.modelId, action.commandId);
+        handleModelSelect(
+          action.modelSelection ?? action.modelId,
+          action.commandId,
+        );
       } else if (action.type === "set_sleeptime") {
         handleSleeptimeModeSelect(action.settings, action.commandId);
       } else if (action.type === "set_compaction") {
@@ -3960,10 +4405,10 @@ export default function App({
     agentId,
     agentName,
     billingTier,
-    closeOverlay,
+    completeOverlay,
     commandRunner,
-    consumeOverlayCommand,
     currentModelId,
+    lastRunIdRef,
     sessionStatsRef,
     withCommandLock,
   });
@@ -3977,48 +4422,62 @@ export default function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Handle ralph mode exit from Input component (shift+tab)
-  const handleRalphExit = useCallback(() => {
-    const ralph = ralphMode.getState();
-    if (ralph.isActive) {
-      const wasYolo = ralph.isYolo;
-      const wasGoal = ralph.mode === "goal";
-      ralphMode.deactivate();
-      setUiRalphActive(false);
-      if (wasGoal) {
-        settingsManager.updateConversationGoalStatus(
-          conversationIdRef.current,
-          "paused",
-        );
-      }
-      if (wasYolo) {
-        permissionMode.setMode("standard");
-        setUiPermissionMode("standard");
+  // Handle goal loop exit from Input component (Shift+Tab).
+  const handleGoalLoopExit = useCallback(() => {
+    if (!goalLoopMode.getState().isActive) {
+      return;
+    }
+    goalLoopMode.deactivate();
+    setUiGoalLoopActive(false);
+    settingsManager.updateConversationGoalStatus(
+      conversationIdRef.current,
+      "paused",
+    );
+    permissionMode.setMode("standard");
+    setUiPermissionMode("standard");
+  }, [setUiPermissionMode]);
+
+  // Toggle expand/collapse for a specific tool call ID
+  const handleToggleExpandedToolCall = useCallback((id: string) => {
+    setExpandedToolCallId((prev) => (prev === id ? null : id));
+  }, []);
+
+  // The ID of the last finished shell tool call — used for the ctrl+o hint and handler.
+  // lines is intentionally in the dep array to recompute when buffers change (buffersRef is a ref).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lines triggers recompute when buffer changes
+  const lastShellToolCallId = useMemo(() => {
+    const order = buffersRef.current.order;
+    for (let i = order.length - 1; i >= 0; i--) {
+      const id = order[i];
+      if (!id) continue;
+      const ln = buffersRef.current.byId.get(id);
+      if (
+        ln?.kind === "tool_call" &&
+        ln.phase === "finished" &&
+        ln.resultText &&
+        ln.name &&
+        isShellOutputTool(ln.name)
+      ) {
+        return id;
       }
     }
-  }, [setUiPermissionMode]);
+    return null;
+  }, [lines]);
+
+  // ctrl+o toggles the last shell tool call output
+  const handleCtrlO = useCallback(() => {
+    if (lastShellToolCallId) {
+      handleToggleExpandedToolCall(lastShellToolCallId);
+    }
+  }, [lastShellToolCallId, handleToggleExpandedToolCall]);
 
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
-      if (mode === "plan" && !settingsManager.isPlanModeEnabled()) {
-        permissionMode.setMode("unrestricted");
-        setUiPermissionMode("unrestricted");
-        triggerStatusLineRefresh();
-        return;
-      }
-
-      // When entering plan mode via tab cycling, generate and set the plan file path
-      if (mode === "plan") {
-        const planPath = generatePlanFilePath();
-        permissionMode.setPlanFilePath(planPath);
-        cacheLastPlanFilePath(planPath);
-      }
       // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
-      triggerStatusLineRefresh();
     },
-    [triggerStatusLineRefresh, setUiPermissionMode, cacheLastPlanFilePath],
+    [setUiPermissionMode],
   );
 
   const { flushPendingReasoningEffort, handleCycleReasoningEffort } =
@@ -4027,6 +4486,7 @@ export default function App({
       agentIdRef,
       agentStateRef,
       commandRunner,
+      conversationOverrideModelSettingsRef,
       conversationIdRef,
       hasConversationModelOverrideRef,
       isAgentBusy,
@@ -4165,6 +4625,57 @@ export default function App({
     });
   }, [estimatedLiveHeight, terminalRows]);
 
+  const terminalTitleTaskRunning =
+    loadingState !== "ready" ||
+    streaming ||
+    isExecutingTool ||
+    commandRunning ||
+    bashRunning ||
+    pendingApprovals.length > 0;
+  const terminalTitleRunState =
+    loadingState !== "ready"
+      ? "Starting"
+      : !terminalTitleTaskRunning
+        ? "Ready"
+        : executionPhase === "thinking"
+          ? "Thinking"
+          : "Working";
+  const terminalTitleData = useMemo<WindowTitleData>(
+    () => ({
+      agentName,
+      appName: "Letta Code",
+      version: getVersion(),
+      conversationSummary,
+      conversationId,
+      projectDirectory,
+      currentDirectory: statusLinePayload.workspace.current_dir,
+      runState: terminalTitleRunState,
+      modelDisplayName: currentModelDisplay,
+      reasoningEffort: currentReasoningEffort,
+      contextUsedPercentage: statusLinePayload.context_window.used_percentage,
+      contextRemainingPercentage:
+        statusLinePayload.context_window.remaining_percentage,
+      totalInputTokens: statusLinePayload.context_window.total_input_tokens,
+      totalOutputTokens: statusLinePayload.context_window.total_output_tokens,
+      fastMode: currentModelServiceTier === CHATGPT_FAST_SERVICE_TIER,
+    }),
+    [
+      agentName,
+      conversationId,
+      conversationSummary,
+      currentModelDisplay,
+      currentModelServiceTier,
+      currentReasoningEffort,
+      projectDirectory,
+      statusLinePayload.context_window.remaining_percentage,
+      statusLinePayload.context_window.total_input_tokens,
+      statusLinePayload.context_window.total_output_tokens,
+      statusLinePayload.context_window.used_percentage,
+      statusLinePayload.workspace.current_dir,
+      terminalTitleRunState,
+    ],
+  );
+
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
   useEffect(() => {
@@ -4187,7 +4698,7 @@ export default function App({
           snapshot: {
             continueSession,
             agentState,
-            agentProvenance,
+            startupHasAvailableLocalModels,
             terminalWidth: columns,
           },
         },
@@ -4205,27 +4716,19 @@ export default function App({
       // Build status message based on session type
       const agentName = agentState?.name || "Unnamed Agent";
       const headerMessage = resumedExistingConversation
-        ? `Resuming (empty) conversation with **${agentName}**`
+        ? `Resuming new conversation with **${agentName}**`
         : continueSession
           ? `Starting new conversation with **${agentName}**`
           : "Creating a new agent";
 
-      // Command hints - for pinned agents show /memory, for unpinned show /pin
-      const commandHints = isPinned
-        ? [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/memory**    view your agent's memory",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ]
-        : [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/pin**       save + name your agent",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ];
+      const commandHints = buildStartupCommandHints({
+        isResumingConversation: resumedExistingConversation,
+        isPinned,
+        isLocalBackend: isLocalBackendEnabled(),
+        hasMessages: messageHistory.length > 0,
+        hasCloudCredentials: startupHasCloudCredentials,
+        hasAvailableLocalModels: startupHasAvailableLocalModels,
+      });
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -4265,6 +4768,8 @@ export default function App({
     agentState,
     refreshDerived,
     releaseNotes,
+    startupHasCloudCredentials,
+    startupHasAvailableLocalModels,
   ]);
 
   const liveTrajectorySnapshot =
@@ -4284,6 +4789,20 @@ export default function App({
   const inputVisible = !showExitStats;
   const inputEnabled =
     !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+  const onEscapeCommandCancel = useCallback(() => {
+    if (isActiveConnectOperationCancellable()) {
+      cancelActiveConnectOperation();
+      return true;
+    }
+    return false;
+  }, []);
+  const showInspirationalPromptHints =
+    loadingState === "ready" &&
+    !hasConversationContent(lines) &&
+    !streaming &&
+    queueDisplay.length === 0 &&
+    pendingApprovals.length === 0 &&
+    !anySelectorOpen;
   const currentApprovalPreviewCommitted = currentApproval?.toolCallId
     ? eagerCommittedPreviewsRef.current.has(currentApproval.toolCallId)
     : false;
@@ -4295,133 +4814,166 @@ export default function App({
   }, [trajectoryTokenDisplay]);
 
   return (
-    <AppView
-      activeOverlay={activeOverlay}
-      agentId={agentId}
-      agentName={agentName}
-      agentState={agentState}
-      anySelectorOpen={anySelectorOpen}
-      approvalMap={approvalMap}
-      bashRunning={bashRunning}
-      billingTier={billingTier}
-      btwState={btwState}
-      buffersRef={buffersRef}
-      chromeColumns={chromeColumns}
-      closeOverlay={closeOverlay}
-      columns={columns}
-      commandRunner={commandRunner}
-      consumeOverlayCommand={consumeOverlayCommand}
-      contextTrackerRef={contextTrackerRef}
-      continueSession={continueSession}
-      conversationId={conversationId}
-      currentApproval={currentApproval}
-      currentApprovalContext={currentApprovalContext}
-      currentModelDisplay={currentModelDisplay}
-      currentModelId={currentModelId}
-      currentModelProvider={currentModelProvider}
-      currentPersonalityId={currentPersonalityId}
-      currentReasoningEffort={currentReasoningEffort}
-      currentSystemPromptId={currentSystemPromptId}
-      currentToolset={currentToolset}
-      currentToolsetPreference={currentToolsetPreference}
-      emittedIdsRef={emittedIdsRef}
-      feedbackPrefill={feedbackPrefill}
-      footerUpdateText={footerUpdateText}
-      handleAgentSelect={handleAgentSelect}
-      handleApproveAlways={handleApproveAlways}
-      handleApproveCurrent={handleApproveCurrent}
-      handleBashInterrupt={handleBashInterrupt}
-      handleBashSubmit={handleBashSubmit}
-      handleBtwJump={handleBtwJump}
-      handleCancelApprovals={handleCancelApprovals}
-      handleCompactionModeSelect={handleCompactionModeSelect}
-      handleCreateNewAgent={handleCreateNewAgent}
-      handleCycleReasoningEffort={handleCycleReasoningEffort}
-      handleDenyCurrent={handleDenyCurrent}
-      handleEnterPlanModeApprove={handleEnterPlanModeApprove}
-      handleEnterPlanModeReject={handleEnterPlanModeReject}
-      handleEnterQueueEditMode={handleEnterQueueEditMode}
-      handleExit={handleExit}
-      handleExperimentSelect={handleExperimentSelect}
-      handleFeedbackSubmit={handleFeedbackSubmit}
-      handleInterrupt={handleInterrupt}
-      handleModelSelect={handleModelSelect}
-      handlePasteError={handlePasteError}
-      handlePermissionModeChange={handlePermissionModeChange}
-      handlePersonalitySelect={handlePersonalitySelect}
-      handlePlanApprove={handlePlanApprove}
-      handlePlanKeepPlanning={handlePlanKeepPlanning}
-      handleProfileEscapeCancel={handleProfileEscapeCancel}
-      handleQuestionSubmit={handleQuestionSubmit}
-      handleRalphExit={handleRalphExit}
-      handleSleeptimeModeSelect={handleSleeptimeModeSelect}
-      handleSystemPromptSelect={handleSystemPromptSelect}
-      handleToolsetSelect={handleToolsetSelect}
-      hasBackfilledRef={hasBackfilledRef}
-      hasTemporaryModelOverride={hasTemporaryModelOverride}
-      includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
-      inputEnabled={inputEnabled}
-      inputVisible={inputVisible}
-      interruptRequested={interruptRequested}
-      isAgentBusy={isAgentBusy}
-      lastPlanFilePathRef={lastPlanFilePathRef}
-      liveItems={liveItems}
-      liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
-      loadingState={loadingState}
-      maybeCarryOverActiveConversationModel={
-        maybeCarryOverActiveConversationModel
-      }
-      modelReasoningPrompt={modelReasoningPrompt}
-      modelSelectorOptions={modelSelectorOptions}
-      networkPhase={networkPhase}
-      onSubmit={onSubmit}
-      pendingApprovals={pendingApprovals}
-      pendingConversationSwitchRef={pendingConversationSwitchRef}
-      pendingIds={pendingIds}
-      pendingRalphConfig={pendingRalphConfig}
-      pinDialogLocal={pinDialogLocal}
-      precomputedDiffsRef={precomputedDiffsRef}
-      profileConfirmPending={profileConfirmPending}
-      queueDisplay={queueDisplay}
-      queuedDecisions={queuedDecisions}
-      queuedIds={queuedIds}
-      reasoningTabCycleEnabled={reasoningTabCycleEnabled}
-      recoverRestoredPendingApprovals={recoverRestoredPendingApprovals}
-      refreshDerived={refreshDerived}
-      resetBootstrapReminderState={resetBootstrapReminderState}
-      resetDeferredToolCallCommits={resetDeferredToolCallCommits}
-      resetTrajectoryBases={resetTrajectoryBases}
-      restoredInput={restoredInput}
-      resumeKey={resumeKey}
-      searchQuery={searchQuery}
-      sessionStatsRef={sessionStatsRef}
-      setActiveOverlay={setActiveOverlay}
-      setBtwState={setBtwState}
-      setCommandRunning={setCommandRunning}
-      setConversationAutoTitleEligibility={setConversationAutoTitleEligibility}
-      setConversationIdAndRef={setConversationIdAndRef}
-      setLines={setLines}
-      setModelReasoningPrompt={setModelReasoningPrompt}
-      setModelSelectorOptions={setModelSelectorOptions}
-      setQueuedOverlayAction={setQueuedOverlayAction}
-      setRestoredInput={setRestoredInput}
-      setStaticItems={setStaticItems}
-      setStaticRenderEpoch={setStaticRenderEpoch}
-      shouldAnimate={shouldAnimate}
-      showApprovalPreview={showApprovalPreview}
-      showCompactionsEnabled={showCompactionsEnabled}
-      showExitStats={showExitStats}
-      startOverlayCommand={startOverlayCommand}
-      staticItems={staticItems}
-      staticRenderEpoch={staticRenderEpoch}
-      statusLine={statusLine}
-      streaming={streaming}
-      stubDescriptions={stubDescriptions}
-      thinkingMessage={thinkingMessage}
-      trajectoryTokenDisplay={trajectoryTokenDisplay}
-      uiPermissionMode={uiPermissionMode}
-      uiRalphActive={uiRalphActive}
-      updateAgentName={updateAgentName}
-    />
+    <>
+      <TerminalTitleWriter
+        projectDirectory={projectDirectory}
+        configRefreshKey={activeOverlay}
+        titleData={terminalTitleData}
+        shouldAnimate={shouldAnimate}
+        hasActiveProgress={terminalTitleTaskRunning}
+        requiresAction={pendingApprovals.length > 0}
+        previewTitle={terminalTitlePreviewOverride}
+      />
+      <AppView
+        activeOverlay={activeOverlay}
+        agentId={agentId}
+        agentName={agentName}
+        agentState={agentState}
+        anySelectorOpen={anySelectorOpen}
+        approvalMap={approvalMap}
+        bashRunning={bashRunning}
+        billingTier={billingTier}
+        btwState={btwState}
+        buffersRef={buffersRef}
+        chromeColumns={chromeColumns}
+        closeOverlay={closeOverlay}
+        columns={columns}
+        commandRunner={commandRunner}
+        completeOverlay={completeOverlay}
+        contextTrackerRef={contextTrackerRef}
+        continueSession={continueSession}
+        conversationId={conversationId}
+        conversationSummary={conversationSummary}
+        projectDirectory={projectDirectory}
+        currentApproval={currentApproval}
+        currentApprovalContext={currentApprovalContext}
+        currentModelDisplay={currentModelDisplay}
+        currentModelHandle={currentModelHandle}
+        currentModelId={currentModelId}
+        currentModelServiceTier={currentModelServiceTier}
+        currentModelProvider={currentModelProvider}
+        isLocalBackend={isLocalBackend}
+        currentPersonalityId={currentPersonalityId}
+        currentReasoningEffort={currentReasoningEffort}
+        currentSystemPromptId={currentSystemPromptId}
+        currentToolset={currentToolset}
+        currentToolsetPreference={currentToolsetPreference}
+        expandedToolCallId={expandedToolCallId}
+        lastShellToolCallId={lastShellToolCallId}
+        handleCtrlO={handleCtrlO}
+        queueMode={queueMode}
+        deferModeSupported={deferModeSupported}
+        handleCtrlD={handleCtrlD}
+        emittedIdsRef={emittedIdsRef}
+        feedbackPrefill={feedbackPrefill}
+        footerUpdateText={footerUpdateText}
+        showInspirationalPromptHints={showInspirationalPromptHints}
+        onEscapeCommandCancel={onEscapeCommandCancel}
+        handleAgentSelect={handleAgentSelect}
+        handleApproveAlways={handleApproveAlways}
+        handleApproveCurrent={handleApproveCurrent}
+        handleBashInterrupt={handleBashInterrupt}
+        handleBashSubmit={handleBashSubmit}
+        handleBtwJump={handleBtwJump}
+        handleCancelApprovals={handleCancelApprovals}
+        handleCompactionModeSelect={handleCompactionModeSelect}
+        handleCreateNewAgent={handleCreateNewAgent}
+        handleCycleReasoningEffort={handleCycleReasoningEffort}
+        handleDenyCurrent={handleDenyCurrent}
+        handleQueueEdit={handleQueueEdit}
+        handleExit={handleExit}
+        handleExperimentsConfirm={handleExperimentsConfirm}
+        handleFeedbackSubmit={handleFeedbackSubmit}
+        handleInterrupt={handleInterrupt}
+        handleModelSelect={handleModelSelect}
+        handlePasteError={handlePasteError}
+        handlePermissionModeChange={handlePermissionModeChange}
+        handlePersonalitySelect={handlePersonalitySelect}
+        handleProfileEscapeCancel={handleProfileEscapeCancel}
+        handleQuestionSubmit={handleQuestionSubmit}
+        handleGoalLoopExit={handleGoalLoopExit}
+        handleSleeptimeModeSelect={handleSleeptimeModeSelect}
+        handleSystemPromptSelect={handleSystemPromptSelect}
+        handleToolsetSelect={handleToolsetSelect}
+        hasBackfilledRef={hasBackfilledRef}
+        hasTemporaryModelOverride={hasTemporaryModelOverride}
+        includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
+        inputEnabled={inputEnabled}
+        inputVisible={inputVisible}
+        interruptRequested={interruptRequested}
+        isAgentBusy={isAgentBusy}
+        liveItems={liveItems}
+        liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
+        loadingState={loadingState}
+        markLocalModelsAvailable={markLocalModelsAvailable}
+        maybeCarryOverActiveConversationModel={
+          maybeCarryOverActiveConversationModel
+        }
+        modelReasoningPrompt={modelReasoningPrompt}
+        modelSelectorOptions={modelSelectorOptions}
+        networkPhase={networkPhase}
+        executionPhase={executionPhase}
+        fileAutocompleteFdPath={fileAutocompleteFdPath}
+        onSubmit={onSubmit}
+        pendingApprovals={pendingApprovals}
+        pendingConversationSwitchRef={pendingConversationSwitchRef}
+        pendingIds={pendingIds}
+        pinDialogLocal={pinDialogLocal}
+        precomputedDiffsRef={precomputedDiffsRef}
+        profileConfirmPending={profileConfirmPending}
+        queueDisplay={queueDisplay}
+        queuedDecisions={queuedDecisions}
+        queuedIds={queuedIds}
+        reasoningTabCycleEnabled={reasoningTabCycleEnabled}
+        recoverRestoredPendingApprovals={recoverRestoredPendingApprovals}
+        refreshDerived={refreshDerived}
+        resetBootstrapReminderState={resetBootstrapReminderState}
+        resetDeferredToolCallCommits={resetDeferredToolCallCommits}
+        resetTrajectoryBases={resetTrajectoryBases}
+        restoredInput={restoredInput}
+        resumeKey={resumeKey}
+        searchQuery={searchQuery}
+        sessionStatsRef={sessionStatsRef}
+        worktreeDiffSelectorPending={worktreeDiffSelectorPending}
+        setWorktreeDiffSelectorPending={setWorktreeDiffSelectorPending}
+        setActiveOverlay={setActiveOverlay}
+        setBtwState={setBtwState}
+        setCommandRunning={setCommandRunning}
+        setConversationAutoTitleEligibility={
+          setConversationAutoTitleEligibility
+        }
+        setConversationIdAndRef={setConversationIdAndRef}
+        setConversationSummary={setConversationSummary}
+        setLines={setLines}
+        setModelReasoningPrompt={setModelReasoningPrompt}
+        setModelSelectorOptions={setModelSelectorOptions}
+        setQueuedOverlayAction={setQueuedOverlayAction}
+        setRestoredInput={setRestoredInput}
+        setStaticItems={setStaticItems}
+        setStaticRenderEpoch={setStaticRenderEpoch}
+        shouldAnimate={shouldAnimate}
+        showApprovalPreview={showApprovalPreview}
+        showCompactionsEnabled={showCompactionsEnabled}
+        showExitStats={showExitStats}
+        openOverlay={openOverlay}
+        staticItems={staticItems}
+        staticRenderEpoch={staticRenderEpoch}
+        statusLinePayload={statusLinePayload}
+        statusLinePrompt={CLI_GLYPHS.prompt}
+        terminalTitleData={terminalTitleData}
+        onTitlePreview={setTerminalTitlePreviewOverride}
+        onTitlePreviewEnd={clearTerminalTitlePreviewOverride}
+        extensionAdapter={extensionAdapter}
+        streaming={streaming}
+        stubDescriptions={stubDescriptions}
+        thinkingMessage={thinkingMessage}
+        trajectoryTokenDisplay={trajectoryTokenDisplay}
+        usedContextTokens={usedContextTokens}
+        contextWindowSize={effectiveContextWindowSize}
+        uiPermissionMode={uiPermissionMode}
+        uiGoalLoopActive={uiGoalLoopActive}
+        updateAgentName={updateAgentName}
+      />
+    </>
   );
 }

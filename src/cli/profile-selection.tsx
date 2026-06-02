@@ -6,9 +6,16 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
-import { getBackend } from "../backend";
-import { settingsManager } from "../settings-manager";
+import { isLocalAgentId } from "@/agent/agent-id";
+import {
+  getReasoningTierOptionsForHandle,
+  type ModelReasoningEffort,
+} from "@/agent/model";
+import { getBackendForMode } from "@/backend";
+import { getRecentAgentOptions } from "@/cli/helpers/recent-agent-options";
+import { settingsManager } from "@/settings-manager";
 import { colors } from "./components/colors";
+import { ModelReasoningSelector } from "./components/ModelReasoningSelector";
 import { Text } from "./components/Text";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 
@@ -25,9 +32,11 @@ interface ProfileSelectionResult {
   agentId?: string;
   profileName?: string | null;
   model?: string;
+  reasoningEffort?: ModelReasoningEffort;
 }
 
 const MAX_DISPLAY = 3;
+const RECENT_FALLBACK_DISPLAY = 2;
 const MAX_VISIBLE_MODELS = 8;
 const MODEL_SEARCH_THRESHOLD = 10; // Show search input when more than this many models
 
@@ -65,6 +74,40 @@ function getLabel(option: ProfileOption, freshRepoMode?: boolean): string {
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 
+function buildInitialProfileOptions(
+  lruAgentId: string | null,
+): ProfileOption[] {
+  const mergedPinned = settingsManager.getMergedPinnedAgents();
+  const options: ProfileOption[] = [];
+  const seenAgentIds = new Set<string>();
+
+  if (lruAgentId) {
+    const matchingPinned = mergedPinned.find((p) => p.agentId === lruAgentId);
+    options.push({
+      name: null,
+      agentId: lruAgentId,
+      isLocal: matchingPinned?.isLocal || false,
+      isLru: true,
+      agent: null,
+    });
+    seenAgentIds.add(lruAgentId);
+  }
+
+  for (const pinned of mergedPinned) {
+    if (seenAgentIds.has(pinned.agentId)) continue;
+    options.push({
+      name: null,
+      agentId: pinned.agentId,
+      isLocal: pinned.isLocal,
+      isLru: false,
+      agent: null,
+    });
+    seenAgentIds.add(pinned.agentId);
+  }
+
+  return options;
+}
+
 function ProfileSelectionUI({
   lruAgentId,
   externalLoading,
@@ -84,25 +127,29 @@ function ProfileSelectionUI({
   serverBaseUrl?: string;
   onComplete: (result: ProfileSelectionResult) => void;
 }) {
-  const [options, setOptions] = useState<ProfileOption[]>([]);
-  const [internalLoading, setInternalLoading] = useState(true);
-  const loading = externalLoading || internalLoading;
+  const [options, setOptions] = useState<ProfileOption[]>(() =>
+    externalLoading ? [] : buildInitialProfileOptions(lruAgentId),
+  );
+  const loading = externalLoading;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showAll, setShowAll] = useState(false);
-  // Model selection mode for self-hosted servers
+  // Model selection mode for custom API backends
   // Start in model selection mode if serverModelsForNewAgent is provided and no agents to show
   const [selectingModel, setSelectingModel] = useState(
     !!(serverModelsForNewAgent && serverModelsForNewAgent.length > 0),
   );
   const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
+  const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
+    model: string;
+    initialModelId: string;
+    initialEffort?: ModelReasoningEffort;
+    options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+  } | null>(null);
 
   const loadOptions = useCallback(async () => {
-    setInternalLoading(true);
     try {
       const mergedPinned = settingsManager.getMergedPinnedAgents();
-      const backend = getBackend();
-
       const optionsToFetch: ProfileOption[] = [];
       const seenAgentIds = new Set<string>();
 
@@ -136,9 +183,15 @@ function ProfileSelectionUI({
       }
 
       // Fetch agent data
-      const fetchedOptions = await Promise.all(
+      let fetchedOptions = await Promise.all(
         optionsToFetch.map(async (opt) => {
+          if (opt.agent) {
+            return opt;
+          }
           try {
+            const backend = getBackendForMode(
+              isLocalAgentId(opt.agentId) ? "local" : "api",
+            );
             const agent = await backend.retrieveAgent(opt.agentId, {
               include: ["agent.blocks"],
             });
@@ -149,17 +202,38 @@ function ProfileSelectionUI({
         }),
       );
 
-      setOptions(fetchedOptions.filter((opt) => opt.agent !== null));
+      fetchedOptions = fetchedOptions.filter((opt) => opt.agent !== null);
+
+      // Fresh repo / invalid pins fallback: show recent agents from the active backend(s)
+      if (fetchedOptions.length === 0) {
+        const recentAgents = await getRecentAgentOptions({
+          includeLocal: false,
+          includeConstellation: true,
+          limit: RECENT_FALLBACK_DISPLAY,
+        });
+
+        fetchedOptions = recentAgents.map((recent) => ({
+          name: recent.agent.name,
+          agentId: recent.agent.id,
+          isLocal: recent.isLocal,
+          isLru: false,
+          agent: recent.agent,
+        }));
+      }
+
+      setOptions(fetchedOptions);
     } catch {
       setOptions([]);
-    } finally {
-      setInternalLoading(false);
     }
   }, [lruAgentId]);
 
   useEffect(() => {
+    if (externalLoading) return;
+    setOptions((current) =>
+      current.length > 0 ? current : buildInitialProfileOptions(lruAgentId),
+    );
     loadOptions();
-  }, [loadOptions]);
+  }, [externalLoading, loadOptions, lruAgentId]);
 
   const displayOptions = showAll ? options : options.slice(0, MAX_DISPLAY);
   const hasMore = options.length > MAX_DISPLAY;
@@ -194,6 +268,10 @@ function ProfileSelectionUI({
   useInput((_input, key) => {
     if (loading) return;
 
+    if (modelReasoningPrompt) {
+      return;
+    }
+
     // Model selection mode
     if (selectingModel && serverModelsForNewAgent) {
       if (key.upArrow) {
@@ -205,6 +283,21 @@ function ProfileSelectionUI({
       } else if (key.return) {
         const selected = filteredModels[modelSelectedIndex];
         if (selected) {
+          const reasoningOptions = getReasoningTierOptionsForHandle(selected);
+          if (reasoningOptions.length > 1) {
+            const preferredOption =
+              reasoningOptions.find((option) => option.effort === "medium") ??
+              reasoningOptions[0];
+            if (preferredOption) {
+              setModelReasoningPrompt({
+                model: selected,
+                initialModelId: preferredOption.modelId,
+                initialEffort: preferredOption.effort,
+                options: reasoningOptions,
+              });
+              return;
+            }
+          }
           onComplete({ type: "new_with_model", model: selected });
         }
       } else if (key.escape || (key.ctrl && _input === "c")) {
@@ -287,7 +380,6 @@ function ProfileSelectionUI({
         loadingState={loading ? "loading_profiles" : "ready"}
         continueSession={false}
         agentState={null}
-        agentProvenance={null}
       />
       <Box height={1} />
 
@@ -298,7 +390,25 @@ function ProfileSelectionUI({
         </>
       )}
 
-      {loading ? null : selectingModel && serverModelsForNewAgent ? (
+      {loading ? null : modelReasoningPrompt ? (
+        <ModelReasoningSelector
+          modelLabel={
+            modelReasoningPrompt.model.split("/").pop() ??
+            modelReasoningPrompt.model
+          }
+          options={modelReasoningPrompt.options}
+          initialModelId={modelReasoningPrompt.initialModelId}
+          initialEffort={modelReasoningPrompt.initialEffort}
+          onSelect={(selectedOption) => {
+            onComplete({
+              type: "new_with_model",
+              model: selectedOption.modelId,
+              reasoningEffort: selectedOption.effort,
+            });
+          }}
+          onCancel={() => setModelReasoningPrompt(null)}
+        />
+      ) : selectingModel && serverModelsForNewAgent ? (
         // Model selection mode
         <Box flexDirection="column" gap={1}>
           <Text bold color={colors.selector.title}>
@@ -362,9 +472,6 @@ function ProfileSelectionUI({
         // Agent selection mode
         <Box flexDirection="column" gap={1}>
           <Text dimColor>{contextMessage}</Text>
-          {options.length > 0 && (
-            <Text bold>Which agent would you like to use?</Text>
-          )}
 
           <Box flexDirection="column" gap={1}>
             {displayOptions.map((option, index) => {
@@ -444,7 +551,7 @@ function ProfileSelectionUI({
             </Box>
           </Box>
 
-          <Box>
+          <Box marginLeft={2}>
             <Text dimColor>↑↓ navigate · Enter select · Esc exit</Text>
           </Box>
         </Box>
@@ -482,7 +589,10 @@ export function ProfileSelectionInline({
   onSelect: (agentId: string) => void;
   onCreateNew: () => void;
   /** Called when user selects a model from serverModelsForNewAgent */
-  onCreateNewWithModel?: (model: string) => void;
+  onCreateNewWithModel?: (
+    model: string,
+    reasoningEffort?: ModelReasoningEffort,
+  ) => void;
   onExit: () => void;
 }) {
   const handleComplete = (result: ProfileSelectionResult) => {
@@ -491,7 +601,7 @@ export function ProfileSelectionInline({
     } else if (result.type === "select" && result.agentId) {
       onSelect(result.agentId);
     } else if (result.type === "new_with_model" && result.model) {
-      onCreateNewWithModel?.(result.model);
+      onCreateNewWithModel?.(result.model, result.reasoningEffort);
     } else {
       onCreateNew();
     }

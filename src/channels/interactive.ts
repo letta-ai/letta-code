@@ -1,7 +1,7 @@
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
-} from "../types/protocol_v2";
+} from "@/types/protocol_v2";
 import type { ChannelControlRequestEvent } from "./types";
 
 type AskUserQuestionInput = {
@@ -50,21 +50,6 @@ function isAffirmativeResponse(text: string): boolean {
   ].includes(normalized);
 }
 
-function isNegativeResponse(text: string): boolean {
-  const normalized = normalizeWhitespace(text).toLowerCase();
-  return [
-    "deny",
-    "denied",
-    "reject",
-    "rejected",
-    "no",
-    "n",
-    "cancel",
-    "skip",
-    "keep planning",
-  ].includes(normalized);
-}
-
 function stripApprovalPrefix(text: string): string {
   return normalizeWhitespace(
     text.replace(
@@ -85,20 +70,6 @@ function summarizeControlRequestInput(
     return serialized;
   }
   return `${serialized.slice(0, 1197).trimEnd()}...`;
-}
-
-function summarizePlanPreview(planContent: string): string {
-  const normalized = planContent.trim();
-  if (!normalized) {
-    return "";
-  }
-
-  const maxLength = 1800;
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, maxLength).trimEnd()}\n\n[Plan preview truncated for channel delivery.]`;
 }
 
 function buildQuestionPrompt(
@@ -461,34 +432,6 @@ function formatAskUserQuestionPrompt(
   return lines.join("\n");
 }
 
-function formatEnterPlanModePrompt(): string {
-  return [
-    "The agent wants to enter plan mode before making changes.",
-    "",
-    "Reply `approve` to let it plan first, or reply `deny` to skip planning and continue normally.",
-  ].join("\n");
-}
-
-function formatExitPlanModePrompt(event: ChannelControlRequestEvent): string {
-  const lines = [
-    "The agent is ready to leave plan mode and start implementing.",
-  ];
-
-  if (event.planContent?.trim()) {
-    lines.push("", "Proposed plan:", summarizePlanPreview(event.planContent));
-    if (event.planFilePath?.trim()) {
-      lines.push("", `Plan file: ${event.planFilePath.trim()}`);
-    }
-  }
-
-  lines.push(
-    "",
-    "Reply `approve` to accept the plan and start coding.",
-    "Reply with feedback instead if you want the agent to keep planning.",
-  );
-  return lines.join("\n");
-}
-
 function formatGenericToolApprovalPrompt(
   event: ChannelControlRequestEvent,
 ): string {
@@ -513,10 +456,6 @@ export function formatChannelControlRequestPrompt(
   switch (event.kind) {
     case "ask_user_question":
       return formatAskUserQuestionPrompt(event);
-    case "enter_plan_mode":
-      return formatEnterPlanModePrompt();
-    case "exit_plan_mode":
-      return formatExitPlanModePrompt(event);
     case "generic_tool_approval":
       return formatGenericToolApprovalPrompt(event);
     default: {
@@ -593,59 +532,6 @@ function parseAskUserQuestionResponse(
   };
 }
 
-function parseEnterPlanModeResponse(
-  event: ChannelControlRequestEvent,
-  rawText: string,
-): ParsedChannelControlRequestResponse {
-  if (isAffirmativeResponse(rawText)) {
-    return {
-      type: "response",
-      response: buildAllowResponse(event.requestId, {
-        behavior: "allow",
-      }),
-    };
-  }
-
-  if (isNegativeResponse(rawText)) {
-    return {
-      type: "response",
-      response: buildDenyResponse(
-        event.requestId,
-        "User chose to skip plan mode and continue implementing directly.",
-      ),
-    };
-  }
-
-  return {
-    type: "reprompt",
-    message:
-      "Reply `approve` to let the agent enter plan mode, or `deny` to skip planning.",
-  };
-}
-
-function parseExitPlanModeResponse(
-  event: ChannelControlRequestEvent,
-  rawText: string,
-): ParsedChannelControlRequestResponse {
-  if (isAffirmativeResponse(rawText)) {
-    return {
-      type: "response",
-      response: buildAllowResponse(event.requestId, {
-        behavior: "allow",
-      }),
-    };
-  }
-
-  const feedback = stripApprovalPrefix(rawText);
-  return {
-    type: "response",
-    response: buildDenyResponse(
-      event.requestId,
-      feedback || "Please keep planning and revise the proposal.",
-    ),
-  };
-}
-
 function parseGenericToolApprovalResponse(
   event: ChannelControlRequestEvent,
   rawText: string,
@@ -686,10 +572,6 @@ export function parseChannelControlRequestResponse(
   switch (event.kind) {
     case "ask_user_question":
       return parseAskUserQuestionResponse(event, trimmed);
-    case "enter_plan_mode":
-      return parseEnterPlanModeResponse(event, trimmed);
-    case "exit_plan_mode":
-      return parseExitPlanModeResponse(event, trimmed);
     case "generic_tool_approval":
       return parseGenericToolApprovalResponse(event, trimmed);
     default: {

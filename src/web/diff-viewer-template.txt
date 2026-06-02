@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Worktree Diff | Letta Code</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f5f3ee;
+  --bg-gradient-1: rgba(121, 85, 255, 0.14);
+  --bg-gradient-2: rgba(255, 152, 102, 0.12);
+  --fg: #1d1b20;
+  --muted: #6d6975;
+  --subtle: #8b8792;
+  --border: rgba(31, 28, 39, 0.12);
+  --border-strong: rgba(31, 28, 39, 0.2);
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-solid: #fffdf8;
+  --panel-elevated: rgba(255, 255, 255, 0.92);
+  --accent: #7657ff;
+  --accent-2: #ff8159;
+  --good: #22863a;
+  --bad: #c7352f;
+  --shadow: 0 24px 80px rgba(48, 33, 89, 0.13), 0 2px 10px rgba(34, 30, 42, 0.06);
+  --radius: 18px;
+  --hero-offset: 168px;
+  --mono: "SFMono-Regular", "Berkeley Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #09090d;
+    --bg-gradient-1: rgba(118, 87, 255, 0.22);
+    --bg-gradient-2: rgba(255, 129, 89, 0.13);
+    --fg: #f4f0ff;
+    --muted: #aaa3b8;
+    --subtle: #7d768a;
+    --border: rgba(239, 234, 255, 0.12);
+    --border-strong: rgba(239, 234, 255, 0.2);
+    --panel: rgba(21, 19, 29, 0.78);
+    --panel-solid: #121019;
+    --panel-elevated: rgba(28, 25, 39, 0.92);
+    --accent: #a896ff;
+    --accent-2: #ff9d79;
+    --good: #63c174;
+    --bad: #ff756d;
+    --shadow: 0 24px 90px rgba(0, 0, 0, 0.45), 0 2px 14px rgba(0, 0, 0, 0.35);
+  }
+}
+* { box-sizing: border-box; }
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--hero-offset) + 24px);
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 14% -8%, var(--bg-gradient-1), transparent 34rem),
+    radial-gradient(circle at 85% 4%, var(--bg-gradient-2), transparent 30rem),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 92%, #fff 8%), var(--bg));
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 14px;
+}
+a { color: inherit; }
+.top-curtain {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--hero-offset);
+  z-index: 50;
+  background: var(--bg);
+  pointer-events: none;
+}
+.shell {
+  width: min(1600px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 24px 0 56px;
+}
+.hero {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 18px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+}
+.kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.kicker::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 0 18px var(--accent);
+}
+h1 {
+  margin: 0;
+  font-size: clamp(24px, 4vw, 40px);
+  line-height: 1.02;
+  letter-spacing: -0.05em;
+}
+.subtitle {
+  margin: 10px 0 0;
+  max-width: 980px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 10px;
+  min-width: min(500px, 44vw);
+}
+.meta-card,
+.stat-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-elevated) 86%, transparent);
+  padding: 10px 12px;
+}
+.meta-label,
+.stat-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.meta-value {
+  display: block;
+  overflow: hidden;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.stat-card {
+  padding: 14px 16px;
+  background: var(--panel);
+  backdrop-filter: blur(18px);
+}
+.stat-value {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+.stat-value.add { color: var(--good); }
+.stat-value.del { color: var(--bad); }
+.layout {
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.sidebar {
+  position: sticky;
+  top: calc(var(--hero-offset) + 16px);
+  max-height: calc(100vh - var(--hero-offset) - 34px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px) saturate(130%);
+}
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-title {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.search {
+  width: calc(100% - 28px);
+  margin: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  outline: none;
+  background: var(--panel-elevated);
+  color: var(--fg);
+  font: 13px var(--sans);
+}
+.search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+.file-list {
+  max-height: calc(100vh - var(--hero-offset) - 154px);
+  margin: 0;
+  padding: 0 10px 12px;
+  overflow: auto;
+  list-style: none;
+}
+.file-link {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  text-decoration: none;
+}
+.file-link:hover,
+.file-link.active {
+  border-color: var(--border-strong);
+  background: var(--panel-elevated);
+}
+.file-name {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--subtle);
+  font-size: 12px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.delta { font-family: var(--mono); }
+.delta.add { color: var(--good); }
+.delta.del { color: var(--bad); }
+.diff-stack { min-width: 0; }
+.diff-file {
+  position: relative;
+  margin: 0 0 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+}
+.diff-anchor {
+  display: block;
+  width: 0;
+  height: 0;
+  visibility: hidden;
+}
+.file-header {
+  position: sticky;
+  top: var(--hero-offset);
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 42%),
+    var(--panel-solid);
+}
+.file-title {
+  min-width: 0;
+}
+.file-title-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.file-title-main code {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rename {
+  margin-top: 5px;
+  color: var(--subtle);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+.copy-path,
+.collapse {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-solid);
+  color: var(--fg);
+  cursor: pointer;
+  font: 700 12px var(--sans);
+  padding: 7px 10px;
+}
+.copy-path:hover,
+.collapse:hover { border-color: var(--accent); color: var(--accent); }
+.diff-content {
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--panel-solid);
+  scrollbar-gutter: stable;
+}
+.diff-content::-webkit-scrollbar {
+  height: 12px;
+}
+.diff-content::-webkit-scrollbar-track {
+  background: var(--panel-solid);
+}
+.diff-content::-webkit-scrollbar-thumb {
+  border: 3px solid var(--panel-solid);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.diff-file.collapsed .diff-content { display: none; }
+.diff-content pre,
+.diff-content code,
+.diff-content [class*="diff"] {
+  font-family: var(--mono);
+}
+
+.notice {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 22px;
+  color: var(--muted);
+  box-shadow: var(--shadow);
+}
+.empty-state {
+  padding: 54px;
+  text-align: center;
+}
+.footer {
+  margin-top: 18px;
+  color: var(--subtle);
+  font-size: 12px;
+  text-align: center;
+}
+@media (max-width: 1100px) {
+  :root { --hero-offset: 0px; }
+  .hero { position: relative; top: 0; grid-template-columns: 1fr; }
+  .meta-grid { min-width: 0; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { position: relative; top: 0; max-height: none; }
+  .file-list { max-height: 320px; }
+  html { scroll-padding-top: 24px; }
+}
+@media (max-width: 640px) {
+  .shell { width: min(100vw - 20px, 1600px); padding-top: 10px; }
+  .hero, .file-header { grid-template-columns: 1fr; }
+  .meta-grid, .stats { grid-template-columns: 1fr; }
+  .file-header { align-items: flex-start; }
+  .file-actions { width: 100%; flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+<div class="top-curtain" aria-hidden="true"></div>
+<div class="shell">
+  <header class="hero">
+    <div>
+      <div class="kicker">Letta Code Experiments</div>
+      <h1>Worktree Diff</h1>
+      <p class="subtitle">A browser diff preview for the current worktree, rendered with Pierre Diffs themes, split layout, word-level highlights, and compact hunk separators.</p>
+    </div>
+    <div class="meta-grid" aria-label="Diff metadata">
+      <div class="meta-card"><span class="meta-label">Repository</span><span class="meta-value" id="repo"></span></div>
+      <div class="meta-card"><span class="meta-label">Worktree</span><span class="meta-value" id="worktree"></span></div>
+      <div class="meta-card"><span class="meta-label">Base</span><span class="meta-value" id="base"></span></div>
+      <div class="meta-card"><span class="meta-label">Generated</span><span class="meta-value" id="generated"></span></div>
+    </div>
+  </header>
+  <section class="stats" id="stats"></section>
+  <main id="app"></main>
+  <div class="footer">Rendered with <strong>@pierre/diffs</strong> via Letta Code.</div>
+</div>
+<script type="application/json" id="payload"><!--LETTA_DIFF_DATA_PLACEHOLDER--></script>
+<script>
+const data = JSON.parse(document.getElementById("payload").textContent);
+const app = document.getElementById("app");
+const stats = document.getElementById("stats");
+const text = (value) => value == null || value === "" ? "—" : String(value);
+const setText = (id, value) => { document.getElementById(id).textContent = text(value); };
+setText("repo", data.repoRoot);
+setText("worktree", data.worktreePath);
+setText("base", data.baseRef || data.baseCommit);
+setText("generated", new Date(data.generatedAt).toLocaleString());
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function fileTypeLabel(type) {
+  return ({
+    "new": "added",
+    "deleted": "deleted",
+    "change": "changed",
+    "rename-pure": "renamed",
+    "rename-changed": "renamed",
+  })[type] || type;
+}
+
+function renderStats() {
+  stats.innerHTML = `
+    <div class="stat-card"><span class="stat-label">Files</span><div class="stat-value">${data.files.length}</div></div>
+    <div class="stat-card"><span class="stat-label">Insertions</span><div class="stat-value add">+${data.insertions}</div></div>
+    <div class="stat-card"><span class="stat-label">Deletions</span><div class="stat-value del">-${data.deletions}</div></div>
+    <div class="stat-card"><span class="stat-label">Changed lines</span><div class="stat-value">${data.insertions + data.deletions}</div></div>
+  `;
+}
+
+function renderFileNav() {
+  return `
+    <aside class="sidebar">
+      <div class="sidebar-header"><div class="sidebar-title">Changed files</div><span class="badge">${data.files.length}</span></div>
+      <input class="search" id="fileSearch" placeholder="Filter files…" autocomplete="off" />
+      <ul class="file-list" id="fileList">
+        ${data.files.map((file, index) => `
+          <li data-file-row data-name="${escapeHtml(file.name.toLowerCase())}">
+            <a class="file-link" href="#file-${index}" data-file-link="${index}" data-file-target="${index}">
+              <span class="file-name">${escapeHtml(file.name)}</span>
+              <span class="file-meta">
+                <span class="badge">${escapeHtml(fileTypeLabel(file.type))}</span>
+                <span class="delta add">+${file.additions}</span>
+                <span class="delta del">-${file.deletions}</span>
+              </span>
+            </a>
+          </li>
+        `).join("")}
+      </ul>
+    </aside>
+  `;
+}
+
+function renderFile(file, index) {
+  const rename = file.prevName && file.prevName !== file.name
+    ? `<div class="rename">${escapeHtml(file.prevName)} → ${escapeHtml(file.name)}</div>`
+    : "";
+  return `
+    <section class="diff-file" data-file-section="${index}">
+      <span class="diff-anchor" id="file-${index}"></span>
+      <div class="file-header">
+        <div class="file-title">
+          <div class="file-title-main">
+            <span class="badge">${escapeHtml(fileTypeLabel(file.type))}</span>
+            <code title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</code>
+          </div>
+          ${rename}
+        </div>
+        <div class="file-actions">
+          <span class="delta add">+${file.additions}</span>
+          <span class="delta del">-${file.deletions}</span>
+          <button class="copy-path" data-copy-path="${escapeHtml(file.name)}">Copy path</button>
+          <button class="collapse" data-collapse="${index}">Collapse</button>
+        </div>
+      </div>
+      <div class="diff-content">${file.html}</div>
+    </section>
+  `;
+}
+
+
+function bindInteractions() {
+  document.getElementById("fileSearch")?.addEventListener("input", (event) => {
+    const query = event.target.value.trim().toLowerCase();
+    for (const row of document.querySelectorAll("[data-file-row]")) {
+      row.style.display = row.dataset.name.includes(query) ? "" : "none";
+    }
+  });
+
+  for (const button of document.querySelectorAll("[data-copy-path]")) {
+    button.addEventListener("click", async () => {
+      const path = button.dataset.copyPath;
+      try {
+        await navigator.clipboard.writeText(path);
+        const original = button.textContent;
+        button.textContent = "Copied";
+        setTimeout(() => { button.textContent = original; }, 1200);
+      } catch {
+        button.textContent = "Copy failed";
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll("[data-collapse]")) {
+    button.addEventListener("click", () => {
+      const section = document.querySelector(`[data-file-section="${button.dataset.collapse}"]`);
+      section.classList.toggle("collapsed");
+      button.textContent = section.classList.contains("collapsed") ? "Expand" : "Collapse";
+    });
+  }
+
+  const links = [...document.querySelectorAll("[data-file-link]")];
+  const sections = [...document.querySelectorAll("[data-file-section]")];
+
+  function setActive(index) {
+    for (const link of links) {
+      link.classList.toggle("active", link.dataset.fileLink === String(index));
+    }
+  }
+
+  function offsetTop() {
+    const value = getComputedStyle(document.documentElement).getPropertyValue("--hero-offset");
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  // Suppress scroll-spy updates briefly while we programmatically scroll,
+  // otherwise intermediate sections flip the active state mid-animation.
+  let lockUntil = 0;
+
+  function scrollToSection(index) {
+    const section = document.querySelector(`[data-file-section="${index}"]`);
+    if (!section) return;
+    const top =
+      section.getBoundingClientRect().top + window.scrollY - offsetTop() - 12;
+    lockUntil = Date.now() + 700;
+    setActive(index);
+    window.scrollTo({ top, behavior: "smooth" });
+  }
+
+  for (const link of links) {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      scrollToSection(link.dataset.fileTarget);
+    });
+  }
+
+  function updateActiveFromScroll() {
+    if (Date.now() < lockUntil) return;
+    const threshold = offsetTop() + 24;
+    let activeIndex = sections.length ? sections[0].dataset.fileSection : null;
+    for (const section of sections) {
+      if (section.getBoundingClientRect().top - threshold <= 0) {
+        activeIndex = section.dataset.fileSection;
+      } else {
+        break;
+      }
+    }
+    if (activeIndex != null) setActive(activeIndex);
+  }
+
+  let scrollRaf = 0;
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (scrollRaf) return;
+      scrollRaf = window.requestAnimationFrame(() => {
+        scrollRaf = 0;
+        updateActiveFromScroll();
+      });
+    },
+    { passive: true },
+  );
+  updateActiveFromScroll();
+}
+
+function syncHeroOffset() {
+  const hero = document.querySelector(".hero");
+  if (!hero) return;
+  const offset = Math.ceil(hero.getBoundingClientRect().height) + 12;
+  document.documentElement.style.setProperty("--hero-offset", offset + "px");
+}
+
+renderStats();
+if (!data.files.length) {
+  app.innerHTML = `<div class="notice empty-state"><h2>No diff found</h2><p>This worktree has no committed, unstaged, staged, or untracked changes compared with its base.</p></div>`;
+} else {
+  app.innerHTML = `<div class="layout">${renderFileNav()}<div class="diff-stack">${data.files.map(renderFile).join("")}</div></div>`;
+  bindInteractions();
+}
+
+syncHeroOffset();
+window.addEventListener("resize", syncHeroOffset);
+window.addEventListener("load", syncHeroOffset);
+</script>
+</body>
+</html>

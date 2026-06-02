@@ -1,26 +1,29 @@
 import { Box, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clearAvailableModelsCache } from "@/agent/available-models";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
-  BYOK_PROVIDERS,
   type ByokProvider,
   checkProviderApiKey,
   createOrUpdateProvider,
+  defaultProviderApiKey,
+  defaultProviderStorageTarget,
   getConnectedProviders,
+  getProviderConfigs,
   type ProviderField,
   type ProviderResponse,
+  type ProviderStorageTarget,
   removeProviderByName,
-} from "../../providers/byok-providers";
-import {
-  type AwsProfile,
-  parseAwsCredentials,
-} from "../../utils/aws-credentials";
-import { debugLog } from "../../utils/debug";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/providers/byok-providers";
+import { type Settings, settingsManager } from "@/settings-manager";
+import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
+import { debugLog } from "@/utils/debug";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
+const VISIBLE_PROVIDERS = 8;
 
 type ViewState =
   | { type: "list" }
@@ -28,14 +31,98 @@ type ViewState =
   | { type: "multiInput"; provider: ByokProvider; authMethod?: AuthMethod }
   | { type: "methodSelect"; provider: ByokProvider }
   | { type: "profileSelect"; provider: ByokProvider }
-  | { type: "options"; provider: ByokProvider; providerId: string };
+  | { type: "options"; provider: ByokProvider };
 
 type ValidationState = "idle" | "validating" | "valid" | "invalid" | "saving";
 
+type ProviderSelectionFlow =
+  | "options"
+  | "oauth"
+  | "methodSelect"
+  | "multiInput"
+  | "input";
+
+type ConnectedProvidersByTarget = Partial<
+  Record<ProviderStorageTarget, Map<string, ProviderResponse>>
+>;
+
 interface ProviderSelectorProps {
   onCancel: () => void;
-  /** Called when ChatGPT/Codex OAuth flow should start */
-  onStartOAuth?: () => void;
+  /** Called when an OAuth flow should start */
+  onStartOAuth?: (
+    provider: ByokProvider,
+    target: ProviderStorageTarget,
+  ) => void;
+}
+
+export function providerApiKeyFromInput(
+  provider: ByokProvider,
+  input: string,
+): string | undefined {
+  return input.trim() || defaultProviderApiKey(provider);
+}
+
+export function hasConstellationProviderStoreCredentials(
+  settings: Pick<Settings, "env" | "refreshToken">,
+  env: { LETTA_API_KEY?: string } = {
+    LETTA_API_KEY: process.env.LETTA_API_KEY,
+  },
+): boolean {
+  return Boolean(
+    env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || settings.refreshToken,
+  );
+}
+
+export function shouldShowProviderStoreTabs(
+  hasConstellationCredentials: boolean | null,
+): boolean {
+  return hasConstellationCredentials === true;
+}
+
+export function filterProviderConfigs(
+  providers: readonly ByokProvider[],
+  query: string,
+): ByokProvider[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return [...providers];
+
+  return providers.filter((provider) => {
+    const searchable = [
+      provider.id,
+      provider.displayName,
+      provider.description,
+      provider.providerType,
+      provider.providerName,
+      provider.oauthProviderId,
+      ...(provider.providerNames ?? []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return searchable.includes(normalized);
+  });
+}
+
+export function providerSelectionFlow(
+  provider: ByokProvider,
+  connectedProviderId?: string,
+): ProviderSelectionFlow {
+  if (connectedProviderId) return "options";
+  if (provider.isOAuth) return "oauth";
+  if ("authMethods" in provider && provider.authMethods) return "methodSelect";
+  if ("fields" in provider && provider.fields) return "multiInput";
+  return "input";
+}
+
+export function isProviderTargetLoading(input: {
+  selectedTarget: ProviderStorageTarget;
+  connectedProvidersByTarget: ConnectedProvidersByTarget;
+  showProviderStoreTabs: boolean;
+}): boolean {
+  return (
+    input.connectedProvidersByTarget[input.selectedTarget] === undefined &&
+    (input.selectedTarget === "local" || input.showProviderStoreTabs)
+  );
 }
 
 export function ProviderSelector({
@@ -46,12 +133,19 @@ export function ProviderSelector({
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
 
   // State
+  const [selectedTarget, setSelectedTarget] = useState<ProviderStorageTarget>(
+    defaultProviderStorageTarget(),
+  );
+  const [hasConstellationCredentials, setHasConstellationCredentials] =
+    useState<boolean | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [connectedProviders, setConnectedProviders] = useState<
-    Map<string, ProviderResponse>
-  >(new Map());
-  const [isLoading, setIsLoading] = useState(true);
+  const [connectedProvidersByTarget, setConnectedProvidersByTarget] =
+    useState<ConnectedProvidersByTarget>({});
+  const [loadingTargets, setLoadingTargets] = useState<
+    Set<ProviderStorageTarget>
+  >(new Set());
   const [viewState, setViewState] = useState<ViewState>({ type: "list" });
+  const [searchQuery, setSearchQuery] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [validationState, setValidationState] =
     useState<ValidationState>("idle");
@@ -66,6 +160,46 @@ export function ProviderSelector({
   const [awsProfiles, setAwsProfiles] = useState<AwsProfile[]>([]);
   const [profileIndex, setProfileIndex] = useState(0);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
+  const providers = useMemo(
+    () => getProviderConfigs(selectedTarget),
+    [selectedTarget],
+  );
+  const filteredProviders = useMemo(
+    () => filterProviderConfigs(providers, searchQuery),
+    [providers, searchQuery],
+  );
+  const showProviderStoreTabs = shouldShowProviderStoreTabs(
+    hasConstellationCredentials,
+  );
+  const connectedProviders = useMemo(
+    () => connectedProvidersByTarget[selectedTarget] ?? new Map(),
+    [connectedProvidersByTarget, selectedTarget],
+  );
+  const isLoading = isProviderTargetLoading({
+    selectedTarget,
+    connectedProvidersByTarget,
+    showProviderStoreTabs,
+  });
+  const selectableProviders = filteredProviders;
+  const providerStartIndex = useMemo(() => {
+    if (selectedIndex < VISIBLE_PROVIDERS) return 0;
+    return Math.min(
+      selectedIndex - VISIBLE_PROVIDERS + 1,
+      Math.max(0, selectableProviders.length - VISIBLE_PROVIDERS),
+    );
+  }, [selectedIndex, selectableProviders.length]);
+  const visibleProviders = useMemo(
+    () =>
+      selectableProviders.slice(
+        providerStartIndex,
+        providerStartIndex + VISIBLE_PROVIDERS,
+      ),
+    [selectableProviders, providerStartIndex],
+  );
+  const providersBelow = Math.max(
+    0,
+    selectableProviders.length - providerStartIndex - VISIBLE_PROVIDERS,
+  );
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -75,63 +209,196 @@ export function ProviderSelector({
     };
   }, []);
 
-  // Load connected providers on mount
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    settingsManager
+      .getSettingsWithSecureTokens()
+      .then((settings) => {
+        if (cancelled || !mountedRef.current) return;
+        setHasConstellationCredentials(
+          hasConstellationProviderStoreCredentials(settings),
+        );
+      })
+      .catch(() => {
+        if (cancelled || !mountedRef.current) return;
+        setHasConstellationCredentials(Boolean(process.env.LETTA_API_KEY));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const setConnectedProvidersForTarget = useCallback(
+    (
+      target: ProviderStorageTarget,
+      providers: Map<string, ProviderResponse>,
+    ) => {
+      setConnectedProvidersByTarget((previous) => ({
+        ...previous,
+        [target]: providers,
+      }));
+    },
+    [],
+  );
+
+  const refreshConnectedProviders = useCallback(
+    async (target: ProviderStorageTarget) => {
+      setLoadingTargets((previous) => new Set(previous).add(target));
       try {
-        const providers = await getConnectedProviders();
+        const providers = await getConnectedProviders({ target });
         if (mountedRef.current) {
-          setConnectedProviders(providers);
-          setIsLoading(false);
+          setConnectedProvidersForTarget(target, providers);
         }
       } catch {
         if (mountedRef.current) {
-          setIsLoading(false);
+          setConnectedProvidersForTarget(target, new Map());
+        }
+      } finally {
+        if (mountedRef.current) {
+          setLoadingTargets((previous) => {
+            const next = new Set(previous);
+            next.delete(target);
+            return next;
+          });
         }
       }
-    })();
+    },
+    [setConnectedProvidersForTarget],
+  );
+
+  // Load connected providers once per target while the overlay is mounted.
+  useEffect(() => {
+    if (selectedTarget === "api" && !showProviderStoreTabs) return;
+    if (connectedProvidersByTarget[selectedTarget]) return;
+    if (loadingTargets.has(selectedTarget)) return;
+    void refreshConnectedProviders(selectedTarget);
+  }, [
+    connectedProvidersByTarget,
+    loadingTargets,
+    refreshConnectedProviders,
+    selectedTarget,
+    showProviderStoreTabs,
+  ]);
+
+  // When both tabs are available, prefetch the inactive tab so switching tabs
+  // can render from overlay-local cache instead of flashing a loading state.
+  useEffect(() => {
+    if (!showProviderStoreTabs) return;
+    for (const target of ["local", "api"] as const) {
+      if (target === selectedTarget) continue;
+      if (connectedProvidersByTarget[target]) continue;
+      if (loadingTargets.has(target)) continue;
+      void refreshConnectedProviders(target);
+    }
+  }, [
+    connectedProvidersByTarget,
+    loadingTargets,
+    refreshConnectedProviders,
+    selectedTarget,
+    showProviderStoreTabs,
+  ]);
+
+  useEffect(() => {
+    if (!showProviderStoreTabs && selectedTarget !== "local") {
+      setSelectedTarget("local");
+      setSelectedIndex(0);
+      setSearchQuery("");
+      setViewState({ type: "list" });
+    }
+  }, [selectedTarget, showProviderStoreTabs]);
+
+  useEffect(() => {
+    setSelectedIndex(0);
+    setViewState({ type: "list" });
   }, []);
+
+  useEffect(() => {
+    if (selectableProviders.length === 0) {
+      if (selectedIndex !== 0) setSelectedIndex(0);
+      return;
+    }
+
+    if (selectedIndex >= selectableProviders.length) {
+      setSelectedIndex(selectableProviders.length - 1);
+    }
+  }, [selectedIndex, selectableProviders.length]);
+
+  const switchTarget = useCallback(() => {
+    if (!showProviderStoreTabs) return;
+    setSelectedTarget((target) => (target === "local" ? "api" : "local"));
+    setSelectedIndex(0);
+    setSearchQuery("");
+    setViewState({ type: "list" });
+  }, [showProviderStoreTabs]);
 
   // Check if a provider is connected
   const isConnected = useCallback(
     (provider: ByokProvider) => {
-      return connectedProviders.has(provider.providerName);
+      const providerNames = provider.providerNames ?? [provider.providerName];
+      return providerNames.some((name) => {
+        const connected = connectedProviders.get(name);
+        if (!connected) return false;
+        if (selectedTarget !== "local" || !connected.auth_type) return true;
+        return provider.isOAuth
+          ? connected.auth_type === "oauth"
+          : connected.auth_type !== "oauth";
+      });
     },
-    [connectedProviders],
+    [connectedProviders, selectedTarget],
+  );
+
+  const getConnectedProviderName = useCallback(
+    (provider: ByokProvider): string | undefined => {
+      const providerNames = provider.providerNames ?? [provider.providerName];
+      return providerNames.find((name) => {
+        const connected = connectedProviders.get(name);
+        if (!connected) return false;
+        if (selectedTarget !== "local" || !connected.auth_type) return true;
+        return provider.isOAuth
+          ? connected.auth_type === "oauth"
+          : connected.auth_type !== "oauth";
+      });
+    },
+    [connectedProviders, selectedTarget],
   );
 
   // Get provider ID if connected
   const getProviderId = useCallback(
     (provider: ByokProvider): string | undefined => {
-      return connectedProviders.get(provider.providerName)?.id;
+      const providerName = getConnectedProviderName(provider);
+      return providerName
+        ? connectedProviders.get(providerName)?.id
+        : undefined;
     },
-    [connectedProviders],
+    [connectedProviders, getConnectedProviderName],
   );
 
   // Handle selecting a provider from the list
   const handleSelectProvider = useCallback(
     (provider: ByokProvider) => {
-      if ("isOAuth" in provider && provider.isOAuth) {
+      const providerId = getProviderId(provider);
+      const flow = providerSelectionFlow(provider, providerId);
+
+      if (flow === "options") {
+        setViewState({ type: "options", provider });
+        setOptionIndex(0);
+        return;
+      }
+
+      if (flow === "oauth") {
         // OAuth provider - trigger OAuth flow
         if (onStartOAuth) {
-          onStartOAuth();
+          onStartOAuth(provider, selectedTarget);
         }
         return;
       }
 
-      const connected = isConnected(provider);
-      if (connected) {
-        // Show options for connected provider
-        const providerId = getProviderId(provider);
-        if (providerId) {
-          setViewState({ type: "options", provider, providerId });
-          setOptionIndex(0);
-        }
-      } else if ("authMethods" in provider && provider.authMethods) {
+      if (flow === "methodSelect") {
         // Provider with multiple auth methods - show method selection
         setViewState({ type: "methodSelect", provider });
         setMethodIndex(0);
-      } else if ("fields" in provider && provider.fields) {
+      } else if (flow === "multiInput") {
         // Multi-field provider - show multi-input view
         setViewState({ type: "multiInput", provider });
         setFieldValues({});
@@ -146,7 +413,7 @@ export function ProviderSelector({
         setValidationError(null);
       }
     },
-    [isConnected, getProviderId, onStartOAuth],
+    [getProviderId, onStartOAuth, selectedTarget],
   );
 
   // Handle selecting an auth method
@@ -214,9 +481,10 @@ export function ProviderSelector({
   // Handle API key validation and saving
   const handleValidateAndSave = useCallback(async () => {
     if (viewState.type !== "input") return;
-    if (!apiKeyInput.trim()) return;
 
     const { provider } = viewState;
+    const apiKey = providerApiKeyFromInput(provider, apiKeyInput);
+    if (!apiKey) return;
 
     // If already validated, save
     if (validationState === "valid") {
@@ -225,12 +493,20 @@ export function ProviderSelector({
         await createOrUpdateProvider(
           provider.providerType,
           provider.providerName,
-          apiKeyInput.trim(),
+          apiKey,
+          undefined,
+          undefined,
+          undefined,
+          {},
+          { target: selectedTarget },
         );
+        clearAvailableModelsCache();
         // Refresh connected providers
-        const providers = await getConnectedProviders();
+        const providers = await getConnectedProviders({
+          target: selectedTarget,
+        });
         if (mountedRef.current) {
-          setConnectedProviders(providers);
+          setConnectedProvidersForTarget(selectedTarget, providers);
           setViewState({ type: "list" });
           setApiKeyInput("");
           setValidationState("idle");
@@ -251,7 +527,14 @@ export function ProviderSelector({
     setValidationError(null);
 
     try {
-      await checkProviderApiKey(provider.providerType, apiKeyInput.trim());
+      await checkProviderApiKey(
+        provider.providerType,
+        apiKey,
+        undefined,
+        undefined,
+        undefined,
+        { target: selectedTarget },
+      );
       if (mountedRef.current) {
         setValidationState("valid");
       }
@@ -263,7 +546,13 @@ export function ProviderSelector({
         );
       }
     }
-  }, [viewState, apiKeyInput, validationState]);
+  }, [
+    viewState,
+    apiKeyInput,
+    validationState,
+    selectedTarget,
+    setConnectedProvidersForTarget,
+  ]);
 
   // Handle multi-field validation and saving (for providers like Bedrock)
   const handleMultiFieldValidateAndSave = useCallback(async () => {
@@ -284,6 +573,7 @@ export function ProviderSelector({
     const accessKey = fieldValues.accessKey?.trim();
     const region = fieldValues.region?.trim();
     const profile = fieldValues.profile?.trim();
+    const baseURL = fieldValues.baseUrl?.trim();
 
     // If already validated, save
     if (validationState === "valid") {
@@ -296,11 +586,16 @@ export function ProviderSelector({
           accessKey,
           region,
           profile,
+          baseURL ? { baseURL } : {},
+          { target: selectedTarget },
         );
+        clearAvailableModelsCache();
         // Refresh connected providers
-        const providers = await getConnectedProviders();
+        const providers = await getConnectedProviders({
+          target: selectedTarget,
+        });
         if (mountedRef.current) {
-          setConnectedProviders(providers);
+          setConnectedProvidersForTarget(selectedTarget, providers);
           setViewState({ type: "list" });
           setFieldValues({});
           setValidationState("idle");
@@ -327,6 +622,7 @@ export function ProviderSelector({
         accessKey,
         region,
         profile,
+        { target: selectedTarget },
       );
       if (mountedRef.current) {
         setValidationState("valid");
@@ -339,7 +635,13 @@ export function ProviderSelector({
         );
       }
     }
-  }, [viewState, fieldValues, validationState]);
+  }, [
+    viewState,
+    fieldValues,
+    validationState,
+    selectedTarget,
+    setConnectedProvidersForTarget,
+  ]);
 
   // Handle disconnect
   const handleDisconnect = useCallback(async () => {
@@ -347,17 +649,28 @@ export function ProviderSelector({
 
     const { provider } = viewState;
     try {
-      await removeProviderByName(provider.providerName);
+      await removeProviderByName(
+        getConnectedProviderName(provider) ?? provider.providerName,
+        {
+          target: selectedTarget,
+        },
+      );
+      clearAvailableModelsCache();
       // Refresh connected providers
-      const providers = await getConnectedProviders();
+      const providers = await getConnectedProviders({ target: selectedTarget });
       if (mountedRef.current) {
-        setConnectedProviders(providers);
+        setConnectedProvidersForTarget(selectedTarget, providers);
         setViewState({ type: "list" });
       }
     } catch {
       // Silently fail, stay on options view
     }
-  }, [viewState]);
+  }, [
+    viewState,
+    selectedTarget,
+    getConnectedProviderName,
+    setConnectedProvidersForTarget,
+  ]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -371,18 +684,48 @@ export function ProviderSelector({
       if (isLoading) return;
 
       if (key.escape) {
-        onCancel();
+        if (searchQuery) {
+          setSearchQuery("");
+          setSelectedIndex(0);
+        } else {
+          onCancel();
+        }
+      } else if (
+        showProviderStoreTabs &&
+        (key.leftArrow || key.rightArrow || key.tab)
+      ) {
+        switchTarget();
+      } else if (key.backspace || key.delete) {
+        if (searchQuery) {
+          setSearchQuery((prev) => prev.slice(0, -1));
+          setSelectedIndex(0);
+        }
       } else if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
         setSelectedIndex((prev) =>
-          Math.min(BYOK_PROVIDERS.length - 1, prev + 1),
+          selectableProviders.length === 0
+            ? 0
+            : Math.min(selectableProviders.length - 1, prev + 1),
         );
       } else if (key.return) {
-        const provider = BYOK_PROVIDERS[selectedIndex];
+        const provider = selectableProviders[selectedIndex];
         if (provider) {
           handleSelectProvider(provider);
         }
+      } else if (
+        input &&
+        !key.ctrl &&
+        !key.meta &&
+        !key.return &&
+        !key.tab &&
+        !key.leftArrow &&
+        !key.rightArrow &&
+        !key.upArrow &&
+        !key.downArrow
+      ) {
+        setSearchQuery((prev) => prev + input);
+        setSelectedIndex(0);
       }
     } else if (viewState.type === "input") {
       if (key.escape) {
@@ -543,6 +886,43 @@ export function ProviderSelector({
           Connect your LLM API keys
         </Text>
         <Text dimColor>Change models with /model after connecting</Text>
+        {showProviderStoreTabs && (
+          <Box marginTop={1} flexDirection="row">
+            <Text>{"  "}</Text>
+            <Text
+              bold={selectedTarget === "local"}
+              color={
+                selectedTarget === "local"
+                  ? colors.selector.title
+                  : colors.command.running
+              }
+            >
+              {selectedTarget === "local" ? "[ Local ]" : "  Local  "}
+            </Text>
+            <Text>{"  "}</Text>
+            <Text
+              bold={selectedTarget === "api"}
+              color={
+                selectedTarget === "api"
+                  ? colors.selector.title
+                  : colors.command.running
+              }
+            >
+              {selectedTarget === "api"
+                ? "[ Constellation ]"
+                : "  Constellation  "}
+            </Text>
+          </Box>
+        )}
+        {!showProviderStoreTabs && <Box height={1} />}
+        <Text>
+          <Text dimColor>{"  Filter: "}</Text>
+          {searchQuery ? (
+            <Text>{searchQuery}</Text>
+          ) : (
+            <Text dimColor>(type to filter)</Text>
+          )}
+        </Text>
       </Box>
 
       {isLoading ? (
@@ -551,8 +931,12 @@ export function ProviderSelector({
         </Box>
       ) : (
         <Box flexDirection="column">
-          {BYOK_PROVIDERS.map((provider, index) => {
-            const isSelected = index === selectedIndex;
+          {selectableProviders.length === 0 && searchQuery ? (
+            <Text dimColor>{"  "}No providers match your filter.</Text>
+          ) : null}
+          {visibleProviders.map((provider, index) => {
+            const actualIndex = providerStartIndex + index;
+            const isSelected = actualIndex === selectedIndex;
             const connected = isConnected(provider);
 
             return (
@@ -587,12 +971,27 @@ export function ProviderSelector({
               </Box>
             );
           })}
+          {providersBelow > 0 ? (
+            <Text dimColor>
+              {"  "}↓ {providersBelow} more below
+            </Text>
+          ) : selectableProviders.length > VISIBLE_PROVIDERS ? (
+            <Text> </Text>
+          ) : null}
         </Box>
       )}
 
       {!isLoading && (
         <Box marginTop={1}>
-          <Text dimColor>{"  "}Enter select · ↑↓ navigate · Esc cancel</Text>
+          <Text dimColor>
+            {searchQuery
+              ? showProviderStoreTabs
+                ? "  Enter select · ↑↓ navigate · Backspace edit filter · Tab/←→ switch tab · Esc clear"
+                : "  Enter select · ↑↓ navigate · Backspace edit filter · Esc clear"
+              : showProviderStoreTabs
+                ? "  Enter select · ↑↓ navigate · type filter · Tab/←→ switch tab · Esc cancel"
+                : "  Enter select · ↑↓ navigate · type filter · Esc cancel"}
+          </Text>
         </Box>
       )}
     </>
@@ -602,6 +1001,8 @@ export function ProviderSelector({
   const renderInputView = () => {
     if (viewState.type !== "input") return null;
     const { provider } = viewState;
+    const hasDefaultApiKey = defaultProviderApiKey(provider) !== undefined;
+    const hasTypedApiKey = Boolean(apiKeyInput.trim());
 
     const statusText =
       validationState === "validating"
@@ -632,13 +1033,22 @@ export function ProviderSelector({
       <>
         <Box flexDirection="column" marginBottom={1}>
           <Text>
-            {"  "}Connect your {provider.displayName} key:
+            {"  "}
+            {hasDefaultApiKey
+              ? `Connect ${provider.displayName} (API key optional):`
+              : `Connect your ${provider.displayName} key:`}
           </Text>
         </Box>
 
         <Box flexDirection="row">
           <Text color={colors.selector.itemHighlighted}>{"> "}</Text>
-          <Text>{apiKeyInput ? maskApiKey(apiKeyInput) : "(enter key)"}</Text>
+          <Text>
+            {apiKeyInput
+              ? maskApiKey(apiKeyInput)
+              : hasDefaultApiKey
+                ? "(press Enter for default key)"
+                : "(enter key)"}
+          </Text>
           <Text
             color={statusColor}
             dimColor={
@@ -652,7 +1062,9 @@ export function ProviderSelector({
         <Box marginTop={1}>
           <Text dimColor>
             {"  "}
-            {footerText}
+            {hasDefaultApiKey && !hasTypedApiKey && validationState === "idle"
+              ? "Enter to validate with default key · Esc cancel"
+              : footerText}
           </Text>
         </Box>
       </>
@@ -923,11 +1335,15 @@ export function ProviderSelector({
   const renderOptionsView = () => {
     if (viewState.type !== "options") return null;
     const { provider } = viewState;
-    const options = ["Disconnect", "Back"];
+    const options = ["Disconnect provider", "Back"];
 
     return (
       <>
         <Box flexDirection="column" marginBottom={1}>
+          <Text bold color={colors.selector.title}>
+            Disconnect {provider.displayName}
+          </Text>
+          <Box height={1} />
           <Box flexDirection="row">
             <Text>{"  "}</Text>
             <Text color="green">[✓]</Text>
@@ -964,7 +1380,7 @@ export function ProviderSelector({
         </Box>
 
         <Box marginTop={1}>
-          <Text dimColor>{"  "}Enter select · ↑↓ navigate · Esc back</Text>
+          <Text dimColor>{"  "}Enter confirm · ↑↓ navigate · Esc back</Text>
         </Box>
       </>
     );

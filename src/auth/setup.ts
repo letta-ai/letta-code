@@ -4,25 +4,45 @@
 
 import { render } from "ink";
 import React from "react";
-import { SetupUI } from "./setup-ui";
+import { type SetupInitialMode, type SetupResult, SetupUI } from "./setup-ui";
+
+interface RunSetupOptions {
+  initialMode?: SetupInitialMode;
+}
 
 /**
  * Run the setup flow
  * Returns a promise that resolves when setup is complete
  */
-export async function runSetup(): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const { waitUntilExit } = render(
+export async function runSetup(
+  options: RunSetupOptions = {},
+): Promise<SetupResult> {
+  return new Promise<SetupResult>((resolve) => {
+    let settled = false;
+    let instance: ReturnType<typeof render>;
+    const settle = (result: SetupResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      instance.unmount();
+      resolve(result);
+    };
+
+    instance = render(
       React.createElement(SetupUI, {
-        onComplete: () => {
-          resolve();
-        },
+        initialMode: options.initialMode,
+        onComplete: settle,
+        onCancel: () => settle({ kind: "cancelled" }),
       }),
     );
 
-    waitUntilExit().catch((error) => {
-      console.error("Setup failed:", error);
-      process.exit(1);
-    });
+    instance
+      .waitUntilExit()
+      .then(() => settle({ kind: "cancelled" }))
+      .catch((error) => {
+        console.error("Setup failed:", error);
+        process.exit(1);
+      });
   });
 }

@@ -24,11 +24,17 @@ export const TEMP_QUOTA_OVERRIDE_MODEL = "letta/auto";
 // Provider fallback: Anthropic model ID -> Bedrock model ID.
 // After 1 failed retry against Anthropic, automatically retry via Bedrock.
 export const PROVIDER_FALLBACK_MAP: Record<string, string> = {
+  // Opus 4.7 variants -> Bedrock Opus 4.7
+  "opus-4.7-low": "bedrock-opus-4.7",
+  "opus-4.7-medium": "bedrock-opus-4.7",
+  "opus-4.7-high": "bedrock-opus-4.7",
+  "opus-4.7-xhigh": "bedrock-opus-4.7",
+  "opus-4.7-max": "bedrock-opus-4.7",
   // Opus 4.6 variants -> Bedrock Opus 4.6
-  opus: "bedrock-opus-4.6",
   "opus-4.6-no-reasoning": "bedrock-opus-4.6",
   "opus-4.6-low": "bedrock-opus-4.6",
   "opus-4.6-medium": "bedrock-opus-4.6",
+  "opus-4.6-high": "bedrock-opus-4.6",
   "opus-4.6-xhigh": "bedrock-opus-4.6",
   // Sonnet 4.6 variants -> Bedrock Sonnet 4.6
   sonnet: "bedrock-sonnet-4.6",
@@ -76,5 +82,3 @@ export const MIN_WRAP_WIDTH = 10;
 export const TEXT_WRAP_GUTTER = 6;
 export const DIFF_WRAP_GUTTER = 12;
 export const SHELL_PREVIEW_MAX_LINES = 3;
-
-export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";

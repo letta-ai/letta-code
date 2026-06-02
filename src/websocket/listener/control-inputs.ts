@@ -1,23 +1,16 @@
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type WebSocket from "ws";
-import { getBackend } from "../../backend";
-import {
-  ensureFileIndex,
-  getIndexRoot,
-  setIndexRoot,
-} from "../../cli/helpers/fileIndex";
-import { generatePlanFilePath } from "../../cli/helpers/planName";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import { migratePermissionMode } from "../../permissions/mode";
-import { settingsManager } from "../../settings-manager";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
+import { getBackend } from "@/backend";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { migratePermissionMode } from "@/permissions/mode";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
-} from "../../types/protocol_v2";
-import { isDebugEnabled } from "../../utils/debug";
+} from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   rejectPendingApprovalResolvers,
   resolvePendingApprovalResolver,
@@ -27,12 +20,11 @@ import {
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
 } from "./cwd";
-import { isGitWorktreeRoot } from "./file-commands";
 import { stashRecoveredApprovalInterrupts } from "./interrupts";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
-} from "./permissionMode";
+} from "./permission-mode";
 import {
   emitDeviceStatusUpdate,
   emitInterruptedStatusDelta,
@@ -74,14 +66,6 @@ function trackListenerError(
   });
 }
 
-function isPlanModeEnabled(): boolean {
-  try {
-    return settingsManager.isPlanModeEnabled();
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Handle mode change request from cloud.
  * Stores the new mode in ListenerRuntime.permissionModeByConversation so
@@ -107,19 +91,10 @@ export function handleModeChange(
     );
 
     // Migrate legacy mode values from older clients
-    const incomingMode = migratePermissionMode(msg.mode) ?? msg.mode;
-
-    // Reject plan mode if it's disabled in settings
-    if (incomingMode === "plan" && !settingsManager.isPlanModeEnabled()) {
-      if (current.mode === "plan") {
-        current.mode = "unrestricted";
-        current.planFilePath = null;
-        current.modeBeforePlan = null;
-        persistPermissionModeMapForRuntime(runtime);
-      }
-      emitRuntimeStateUpdates(runtime, scope);
+    const incomingMode = migratePermissionMode(msg.mode);
+    if (!incomingMode) {
       emitLoopErrorNotice(socket, runtime, {
-        message: "Plan mode is disabled in user settings.",
+        message: `Unsupported permission mode: ${msg.mode}`,
         stopReason: "error",
         isTerminal: false,
         agentId: scope?.agent_id,
@@ -128,22 +103,7 @@ export function handleModeChange(
       return;
     }
 
-    // Track previous mode so ExitPlanMode can restore it
-    if (incomingMode === "plan" && current.mode !== "plan") {
-      current.modeBeforePlan = current.mode;
-    }
     current.mode = incomingMode;
-
-    // Generate plan file path when entering plan mode
-    if (incomingMode === "plan" && !current.planFilePath) {
-      current.planFilePath = generatePlanFilePath();
-    }
-
-    // Clear plan-related state when leaving plan mode
-    if (incomingMode !== "plan") {
-      current.planFilePath = null;
-      current.modeBeforePlan = null;
-    }
 
     persistPermissionModeMapForRuntime(runtime);
 
@@ -404,7 +364,7 @@ export async function handleAbortMessageInput(
   listener: ListenerRuntime,
   params: {
     command: AbortMessageCommand;
-    socket: WebSocket;
+    socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
       connectionId?: string;
@@ -647,25 +607,6 @@ export async function handleCwdChange(
     // updated CWD/git info on the next turn.
     runtime.reminderState.hasSentSessionContext = false;
     runtime.reminderState.pendingSessionContextReason = "cwd_changed";
-
-    // If the new cwd is outside the current file-index root, or is a git
-    // worktree nested under it, re-root the index so file search covers
-    // the new workspace.  setIndexRoot() triggers a non-blocking rebuild
-    // and does NOT mutate process.cwd(), keeping concurrent conversations safe.
-    const currentRoot = getIndexRoot();
-    const needsReroot =
-      !normalizedPath.startsWith(currentRoot) ||
-      (normalizedPath !== currentRoot &&
-        (await isGitWorktreeRoot(normalizedPath)));
-    if (needsReroot) {
-      setIndexRoot(normalizedPath);
-    }
-
-    // Proactively warm the file index so @ file search is instant when
-    // the user first types "@".  ensureFileIndex() is idempotent — if the
-    // index was already built (or a rebuild is in-flight from setIndexRoot
-    // above), this returns immediately / joins the existing promise.
-    void ensureFileIndex();
 
     emitDeviceStatusUpdate(socket, runtime, {
       agent_id: agentId,

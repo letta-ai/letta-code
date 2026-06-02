@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -6,9 +7,12 @@ import type {
   DiscordChannelAccount,
   InboundChannelMessage,
   OutboundChannelMessage,
-} from "../types";
-import { isDiscordGuildChannelAllowed } from "./channelGating";
-import { formatDiscordDeliveryError } from "./errorReply";
+} from "@/channels/types";
+import {
+  isDiscordGuildChannelAllowed,
+  resolveDiscordChannelMode,
+} from "./channel-gating";
+import { formatDiscordDeliveryError } from "./error-reply";
 import {
   resolveDiscordInboundAttachments,
   resolveDiscordThreadHistory,
@@ -245,6 +249,18 @@ function resolveDiscordReactionEmoji(value: string): string {
   return nameMap[normalized] ?? normalized;
 }
 
+export function shouldAutoThreadOnDiscordMention(
+  account: Pick<
+    DiscordChannelAccount,
+    "autoThreadOnMention" | "threadPolicyByChannel"
+  >,
+  channelId: string,
+): boolean {
+  const override = account.threadPolicyByChannel?.[channelId];
+  if (typeof override === "boolean") return override;
+  return account.autoThreadOnMention ?? false;
+}
+
 export function buildDiscordIngressMessageKey(
   accountId: string | undefined,
   messageId: string | undefined,
@@ -272,14 +288,10 @@ export function buildDiscordReplyOptions(
 }
 
 function formatDiscordLifecycleErrorMessage(errorText: string): string {
-  const normalized = errorText.trim() || "Unknown error";
-  const truncated =
-    normalized.length > DISCORD_LIFECYCLE_ERROR_TEXT_MAX
-      ? `${normalized
-          .slice(0, DISCORD_LIFECYCLE_ERROR_TEXT_MAX - 1)
-          .trimEnd()}…`
-      : normalized;
-  return `Turn failed:\n\`\`\`\n${truncated.replace(/```/g, "``\u200b`")}\n\`\`\``;
+  return formatChannelLifecycleErrorMessage(errorText, {
+    codeBlock: true,
+    maxLength: DISCORD_LIFECYCLE_ERROR_TEXT_MAX,
+  });
 }
 
 /**
@@ -699,19 +711,28 @@ export function createDiscordAdapter(
         }
 
         // ── Guild handling ────────────────────────────────────────
-        // Outside a thread: only process @mentions (auto-create thread).
+        // Outside a thread:
+        //   - "open" channels process every non-bot message
+        //   - "mention-only" channels process @mentions only
         // Inside a thread: surface messages and let the registry decide whether
         // the thread is already routed, or whether a new mention is required.
-        if (!isThread && !wasMentioned) return;
+        const parentChannelId =
+          (message.channel as { parentId?: string | null }).parentId ?? null;
+        const channelMode = resolveDiscordChannelMode(
+          message.channelId,
+          parentChannelId,
+          isThread,
+          config.allowedChannels,
+        );
+        const isOpenChannel = channelMode === "open";
+        if (!isThread && !wasMentioned && !isOpenChannel) return;
 
         // Channel allowlist: when configured, only process guild messages whose
         // channel ID (or parent channel ID for thread messages) is allowed.
         if (
           !isDiscordGuildChannelAllowed({
             channelId: message.channelId,
-            parentChannelId:
-              (message.channel as { parentId?: string | null }).parentId ??
-              null,
+            parentChannelId,
             isThread,
             allowedChannels: config.allowedChannels,
           })
@@ -757,8 +778,12 @@ export function createDiscordAdapter(
           timestamp: message.createdTimestamp,
           messageId: message.id,
           threadId: effectiveThreadId,
+          parentChannelId: isThread
+            ? (parentChannelId ?? undefined)
+            : message.channelId,
           chatType: "channel",
           isMention: wasMentioned,
+          isOpenChannel,
           attachments,
           raw: message,
         };

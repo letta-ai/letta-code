@@ -9,26 +9,26 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
-import { getBackend } from "../backend";
+import { type Backend, getBackend } from "@/backend";
 import {
   type ClientTool,
   type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareCurrentToolExecutionContext,
   waitForToolsetReady,
-} from "../tools/manager";
-import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
+} from "@/tools/manager";
+import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   assertSupportedBase64ImageMediaTypes,
   normalizeMessageImageParts,
-} from "../utils/messageImageNormalization";
-import { createStreamAbortRelay } from "../utils/streamAbortRelay";
-import { isTimingsEnabled } from "../utils/timing";
+} from "@/utils/message-image-normalization";
+import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
+import { isTimingsEnabled } from "@/utils/timing";
 import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
-import { buildClientSkillsPayload } from "./clientSkills";
+import { buildClientSkillsPayload } from "./client-skills";
 import { getSkillSources } from "./context";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
@@ -94,6 +94,12 @@ export type SendMessageStreamOptions = {
   actingUserId?: string;
 };
 
+export type SendMessageStreamRequestOptions = {
+  maxRetries?: number;
+  signal?: AbortSignal;
+  headers?: Record<string, string>;
+};
+
 export function buildConversationMessagesCreateRequestBody(
   conversationId: string,
   messages: Array<MessageCreate | ApprovalCreate>,
@@ -141,17 +147,35 @@ export async function sendMessageStream(
   opts: SendMessageStreamOptions = { streamTokens: true, background: true },
   // Disable SDK retries by default - state management happens outside the stream,
   // so retries would violate idempotency and create race conditions
-  requestOptions: {
-    maxRetries?: number;
-    signal?: AbortSignal;
-    headers?: Record<string, string>;
-  } = {
+  requestOptions: SendMessageStreamRequestOptions = {
+    maxRetries: 0,
+  },
+): Promise<Stream<LettaStreamingResponse>> {
+  return sendMessageStreamWithBackend(
+    getBackend(),
+    conversationId,
+    messages,
+    opts,
+    requestOptions,
+  );
+}
+
+/**
+ * Send a message through an explicit backend instance. Use this when a caller
+ * composes several backend operations and needs fork/send to stay on the same
+ * backend without reaching back through the global backend singleton.
+ */
+export async function sendMessageStreamWithBackend(
+  backend: Backend,
+  conversationId: string,
+  messages: Array<MessageCreate | ApprovalCreate>,
+  opts: SendMessageStreamOptions = { streamTokens: true, background: true },
+  requestOptions: SendMessageStreamRequestOptions = {
     maxRetries: 0,
   },
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
-  const backend = getBackend();
   const normalizedMessages = opts.skipImageNormalization
     ? messages
     : await normalizeMessageImageParts(messages);

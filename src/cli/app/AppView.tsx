@@ -4,88 +4,92 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "../../agent/memory";
-import type { ModelReasoningEffort } from "../../agent/model";
-import type { PersonalityId } from "../../agent/personality";
-import type { SessionStats } from "../../agent/stats";
-import { getBackend } from "../../backend";
-import { experimentManager } from "../../experiments/manager";
-import type { ExperimentId } from "../../experiments/types";
-import type { ApprovalContext } from "../../permissions/analyzer";
-import type { PermissionMode } from "../../permissions/mode";
-import { permissionMode } from "../../permissions/mode";
-import { settingsManager } from "../../settings-manager";
-import type { ToolsetName, ToolsetPreference } from "../../tools/toolset";
-import type { CommandHandle } from "../commands/runner";
-import { AgentSelector } from "../components/AgentSelector";
-import { ApprovalSwitch } from "../components/ApprovalSwitch";
-import { AssistantMessage } from "../components/AssistantMessageRich";
-import { BashCommandMessage } from "../components/BashCommandMessage";
-import { BtwPane, type BtwState } from "../components/BtwPane";
-import { CommandMessage } from "../components/CommandMessage";
-import { CompactionSelector } from "../components/CompactionSelector";
-import { ConversationSelector } from "../components/ConversationSelector";
-// EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
-import { ErrorMessage } from "../components/ErrorMessageRich";
-import { EventMessage } from "../components/EventMessage";
-import { ExperimentSelector } from "../components/ExperimentSelector";
-import { FeedbackDialog } from "../components/FeedbackDialog";
-import { HelpDialog } from "../components/HelpDialog";
-import { HooksManager } from "../components/HooksManager";
-import { Input } from "../components/InputRich";
-import { InstallGithubAppFlow } from "../components/InstallGithubAppFlow";
-import { McpConnectFlow } from "../components/McpConnectFlow";
-import { McpSelector } from "../components/McpSelector";
-import { MemfsTreeViewer } from "../components/MemfsTreeViewer";
-import { MemoryTabViewer } from "../components/MemoryTabViewer";
-import { MessageSearch } from "../components/MessageSearch";
-import { ModelReasoningSelector } from "../components/ModelReasoningSelector";
-import { ModelSelector } from "../components/ModelSelector";
-import { NewAgentDialog } from "../components/NewAgentDialog";
-import { PendingApprovalStub } from "../components/PendingApprovalStub";
-import { PersonalitySelector } from "../components/PersonalitySelector";
-import { PinDialog } from "../components/PinDialog";
-import { ProviderSelector } from "../components/ProviderSelector";
-import { ReasoningMessage } from "../components/ReasoningMessageRich";
-import { SkillsDialog } from "../components/SkillsDialog";
-import { SleeptimeSelector } from "../components/SleeptimeSelector";
-// InlinePlanApproval kept for easy rollback if needed
-// import { InlinePlanApproval } from "../components/InlinePlanApproval";
-import { StatusMessage } from "../components/StatusMessage";
-import { SubagentGroupDisplay } from "../components/SubagentGroupDisplay";
-import { SubagentManager } from "../components/SubagentManager";
-import { SystemPromptSelector } from "../components/SystemPromptSelector";
-import { ToolCallMessage } from "../components/ToolCallMessageRich";
-import { ToolsetSelector } from "../components/ToolsetSelector";
-import { UserMessage } from "../components/UserMessageRich";
-import { WelcomeScreen } from "../components/WelcomeScreen";
-import { AnimationProvider } from "../contexts/AnimationContext";
-import { type Buffers, type Line, toLines } from "../helpers/accumulator";
-import { backfillBuffers } from "../helpers/backfill";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
+import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
+import type { ModelReasoningEffort } from "@/agent/model";
+import type { PersonalityId } from "@/agent/personality";
+import type { SessionStats } from "@/agent/stats";
+import { getBackend } from "@/backend";
+import type { CommandHandle } from "@/cli/commands/runner";
+import { AgentSelector } from "@/cli/components/AgentSelector";
+import { ApprovalSwitch } from "@/cli/components/ApprovalSwitch";
+import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
+import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
+import { BtwPane, type BtwState } from "@/cli/components/BtwPane";
+import { CommandMessage } from "@/cli/components/CommandMessage";
+import { CompactionSelector } from "@/cli/components/CompactionSelector";
+import { ConstellationLoginOverlay } from "@/cli/components/ConstellationLoginOverlay";
+import { ConversationSelector } from "@/cli/components/ConversationSelector";
+import { ErrorMessage } from "@/cli/components/ErrorMessageRich";
+import { EventMessage } from "@/cli/components/EventMessage";
+import { ExperimentSelector } from "@/cli/components/ExperimentSelector";
+import { FeedbackDialog } from "@/cli/components/FeedbackDialog";
+import { HelpDialog } from "@/cli/components/HelpDialog";
+import { HooksManager } from "@/cli/components/HooksManager";
+import { Input } from "@/cli/components/InputRich";
+import { InstallGithubAppFlow } from "@/cli/components/InstallGithubAppFlow";
+import { McpConnectFlow } from "@/cli/components/McpConnectFlow";
+import { McpSelector } from "@/cli/components/McpSelector";
+import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
+import { MemoryTabViewer } from "@/cli/components/MemoryTabViewer";
+import { MessageSearch } from "@/cli/components/MessageSearch";
+import { ModelReasoningSelector } from "@/cli/components/ModelReasoningSelector";
+import {
+  ModelSelector,
+  type ModelSelectorSelection,
+} from "@/cli/components/ModelSelector";
+import { PendingApprovalStub } from "@/cli/components/PendingApprovalStub";
+import { PersonalitySelector } from "@/cli/components/PersonalitySelector";
+import { PinDialog } from "@/cli/components/PinDialog";
+import { ProviderSelector } from "@/cli/components/ProviderSelector";
+import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
+import { SkillsDialog } from "@/cli/components/SkillsDialog";
+import { SleeptimeSelector } from "@/cli/components/SleeptimeSelector";
+import { StatusMessage } from "@/cli/components/StatusMessage";
+import { SubagentGroupDisplay } from "@/cli/components/SubagentGroupDisplay";
+import { SubagentManager } from "@/cli/components/SubagentManager";
+import { SystemPromptSelector } from "@/cli/components/SystemPromptSelector";
+import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
+import { ToolsetSelector } from "@/cli/components/ToolsetSelector";
+import { UserMessage } from "@/cli/components/UserMessageRich";
+import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
+import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
+import { WorktreeDiffSelector } from "@/cli/components/WorktreeDiffSelector";
+import { AnimationProvider } from "@/cli/contexts/AnimationContext";
+import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
+import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
+import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
   type ContextTracker,
   resetContextHistory,
-} from "../helpers/contextTracker";
-import type { ConversationSwitchContext } from "../helpers/conversationSwitchAlert";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
-import { CLI_GLYPHS } from "../helpers/glyphs";
+} from "@/cli/helpers/context-tracker";
+import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   getReflectionSettings,
   type ReflectionSettings,
-} from "../helpers/memoryReminder";
-import type { QueuedMessage } from "../helpers/messageQueueBridge";
-import type { ApprovalRequest } from "../helpers/stream";
+} from "@/cli/helpers/memory-reminder";
+import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
+import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
-} from "../helpers/toolNameMapping";
-import { isTaskTool } from "../helpers/toolNameMapping.js";
-import type { StatusLineState } from "../hooks/useConfigurableStatusLine";
+} from "@/cli/helpers/tool-name-mapping";
+import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import type { WindowTitleData } from "@/cli/helpers/window-title-config";
+import { experimentManager } from "@/experiments/manager";
+import type { ExperimentId } from "@/experiments/types";
+import type { ApprovalContext } from "@/permissions/analyzer";
+import type { PermissionMode } from "@/permissions/mode";
+import { settingsManager } from "@/settings-manager";
+import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { ExitStats } from "./ExitStats";
 import { uid } from "./ids";
-import { _readPlanFile } from "./planFile";
 import { StaticTranscript } from "./StaticTranscript";
 import type {
   ActiveOverlay,
@@ -103,13 +107,12 @@ type ModelSelectorOptions = {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
-  options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
-};
-
-type PendingRalphConfig = {
-  completionPromise: string | null | undefined;
-  maxIterations: number;
-  isYolo: boolean;
+  initialEffort?: ModelReasoningEffort;
+  options: Array<{
+    effort: ModelReasoningEffort;
+    modelId: string;
+    selection?: ModelSelectorSelection;
+  }>;
 };
 
 type QueuedApprovalDecision = {
@@ -132,29 +135,46 @@ type AppViewProps = {
   closeOverlay: () => void;
   columns: number;
   commandRunner: AppCommandRunner;
-  consumeOverlayCommand: (overlay: ActiveOverlay) => CommandHandle | null;
+  completeOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
+  ) => CommandHandle | null;
   contextTrackerRef: RefObject<ContextTracker>;
   continueSession: boolean;
   conversationId: string;
+  conversationSummary: string | null;
+  projectDirectory: string;
   currentApproval: ApprovalRequest | undefined;
   currentApprovalContext: ApprovalContext | undefined;
   currentModelDisplay: string | null;
+  currentModelHandle: string | null;
   currentModelId: string | null;
+  currentModelServiceTier: string | null;
   currentModelProvider: string | null;
+  isLocalBackend: boolean;
   currentPersonalityId: PersonalityId | null;
   currentReasoningEffort: ModelReasoningEffort | null;
   currentSystemPromptId: string | null;
   currentToolset: ToolsetName | null;
   currentToolsetPreference: ToolsetPreference;
   emittedIdsRef: RefObject<Set<string>>;
+  expandedToolCallId: string | null;
+  lastShellToolCallId: string | null;
+  handleCtrlO: () => void;
+  queueMode: "immediate" | "defer";
+  deferModeSupported: boolean;
+  handleCtrlD: () => void;
+
   feedbackPrefill: string;
   footerUpdateText: string | null;
+  showInspirationalPromptHints: boolean;
+  onEscapeCommandCancel?: () => boolean;
   handleAgentSelect: (
     targetAgentId: string,
     opts?: {
       profileName?: string;
       conversationId?: string;
       commandId?: string;
+      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
     },
   ) => Promise<void>;
   handleApproveAlways: (
@@ -172,23 +192,30 @@ type AppViewProps = {
     mode: string,
     commandId?: string | null,
   ) => Promise<void>;
-  handleCreateNewAgent: (name: string) => Promise<void>;
+  handleCreateNewAgent: (
+    name: string,
+    opts?: {
+      commandId?: string;
+      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
+    },
+  ) => Promise<void>;
   handleCycleReasoningEffort: () => void;
   handleDenyCurrent: (reason: string) => Promise<void>;
-  handleEnterPlanModeApprove: (preserveMode?: boolean) => Promise<void>;
-  handleEnterPlanModeReject: () => Promise<void>;
-  handleEnterQueueEditMode: () => void;
+  handleQueueEdit: () => string;
   handleExit: () => Promise<void>;
-  handleExperimentSelect: (
-    selection: { experimentId: ExperimentId; enabled: boolean },
-    commandId?: string | null,
+  handleExperimentsConfirm: (
+    changes: Array<{ experimentId: ExperimentId; enabled: boolean }>,
   ) => Promise<void>;
   handleFeedbackSubmit: (message: string) => Promise<void>;
   handleInterrupt: () => Promise<void>;
   handleModelSelect: (
-    modelId: string,
+    model: string | ModelSelectorSelection,
     commandId?: string | null,
-    opts?: { skipReasoningPrompt?: boolean },
+    opts?: {
+      promptReasoning?: boolean;
+      skipReasoningPrompt?: boolean;
+      reasoningEffort?: ModelReasoningEffort;
+    },
   ) => Promise<void>;
   handlePasteError: (message: string) => void;
   handlePermissionModeChange: (mode: PermissionMode) => void;
@@ -196,11 +223,9 @@ type AppViewProps = {
     personalityId: PersonalityId,
     commandId?: string | null,
   ) => Promise<void>;
-  handlePlanApprove: (acceptEdits?: boolean) => Promise<void>;
-  handlePlanKeepPlanning: (reason: string) => Promise<void>;
   handleProfileEscapeCancel: () => void;
   handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
-  handleRalphExit: () => void;
+  handleGoalLoopExit: () => void;
   handleSleeptimeModeSelect: (
     reflectionSettings: ReflectionSettings,
     commandId?: string | null,
@@ -220,21 +245,21 @@ type AppViewProps = {
   inputVisible: boolean;
   interruptRequested: boolean;
   isAgentBusy: () => boolean;
-  lastPlanFilePathRef: RefObject<string | null>;
   liveItems: Line[];
   liveTrajectoryElapsedBaseMs: number;
   loadingState: AppLoadingState;
+  markLocalModelsAvailable: () => void;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
   ) => Promise<void>;
   modelReasoningPrompt: ModelReasoningPrompt | null;
   modelSelectorOptions: ModelSelectorOptions;
   networkPhase: "error" | "upload" | "download" | null;
+  executionPhase: ExecutionPhase;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
   pendingIds: Set<string>;
-  pendingRalphConfig: PendingRalphConfig | null;
   pinDialogLocal: boolean;
   precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;
   profileConfirmPending: {
@@ -251,18 +276,27 @@ type AppViewProps = {
     options?: { notifyOnManualApproval?: boolean },
   ) => Promise<void>;
   refreshDerived: () => void;
-  resetBootstrapReminderState: () => void;
+  resetBootstrapReminderState: (pendingConversationBootstrap?: boolean) => void;
   resetDeferredToolCallCommits: () => void;
   resetTrajectoryBases: () => void;
   restoredInput: string | null;
   resumeKey: number;
   searchQuery: string;
   sessionStatsRef: RefObject<SessionStats>;
+  worktreeDiffSelectorPending: {
+    worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+  } | null;
+  setWorktreeDiffSelectorPending: Dispatch<
+    SetStateAction<{
+      worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+    } | null>
+  >;
   setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
   setBtwState: Dispatch<SetStateAction<BtwState>>;
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationSummary: (summary: string | null) => void;
   setLines: Dispatch<SetStateAction<Line[]>>;
   setModelReasoningPrompt: Dispatch<
     SetStateAction<ModelReasoningPrompt | null>
@@ -276,21 +310,29 @@ type AppViewProps = {
   showApprovalPreview: boolean;
   showCompactionsEnabled: boolean;
   showExitStats: boolean;
-  startOverlayCommand: (
-    overlay: ActiveOverlay,
+  openOverlay: (
+    overlay: NonNullable<ActiveOverlay>,
     input: string,
     openingOutput: string,
     dismissOutput: string,
   ) => CommandHandle;
   staticItems: StaticItem[];
   staticRenderEpoch: number;
-  statusLine: StatusLineState;
+  statusLinePayload: StatusLinePayload;
+  statusLinePrompt: string;
+  terminalTitleData: WindowTitleData;
+  onTitlePreview: (title: string | null) => void;
+  onTitlePreviewEnd: () => void;
+  extensionAdapter: LocalExtensionAdapter;
+  fileAutocompleteFdPath?: string | null;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
   thinkingMessage: string;
   trajectoryTokenDisplay: number;
+  usedContextTokens: number;
+  contextWindowSize: number | null | undefined;
   uiPermissionMode: PermissionMode;
-  uiRalphActive: boolean;
+  uiGoalLoopActive: boolean;
   updateAgentName: (name: string) => void;
 };
 
@@ -310,23 +352,35 @@ export function AppView(props: AppViewProps) {
     closeOverlay,
     columns,
     commandRunner,
-    consumeOverlayCommand,
+    completeOverlay,
     contextTrackerRef,
     continueSession,
     conversationId,
+    projectDirectory,
     currentApproval,
     currentApprovalContext,
     currentModelDisplay,
+    currentModelHandle,
     currentModelId,
+    currentModelServiceTier,
     currentModelProvider,
+    isLocalBackend,
     currentPersonalityId,
     currentReasoningEffort,
     currentSystemPromptId,
     currentToolset,
     currentToolsetPreference,
     emittedIdsRef,
+    expandedToolCallId,
+    lastShellToolCallId,
+    handleCtrlO,
+    queueMode,
+    deferModeSupported,
+    handleCtrlD,
     feedbackPrefill,
     footerUpdateText,
+    showInspirationalPromptHints,
+    onEscapeCommandCancel,
     handleAgentSelect,
     handleApproveAlways,
     handleApproveCurrent,
@@ -338,22 +392,18 @@ export function AppView(props: AppViewProps) {
     handleCreateNewAgent,
     handleCycleReasoningEffort,
     handleDenyCurrent,
-    handleEnterPlanModeApprove,
-    handleEnterPlanModeReject,
-    handleEnterQueueEditMode,
+    handleQueueEdit,
     handleExit,
-    handleExperimentSelect,
+    handleExperimentsConfirm,
     handleFeedbackSubmit,
     handleInterrupt,
     handleModelSelect,
     handlePasteError,
     handlePermissionModeChange,
     handlePersonalitySelect,
-    handlePlanApprove,
-    handlePlanKeepPlanning,
     handleProfileEscapeCancel,
     handleQuestionSubmit,
-    handleRalphExit,
+    handleGoalLoopExit,
     handleSleeptimeModeSelect,
     handleSystemPromptSelect,
     handleToolsetSelect,
@@ -364,19 +414,20 @@ export function AppView(props: AppViewProps) {
     inputVisible,
     interruptRequested,
     isAgentBusy,
-    lastPlanFilePathRef,
     liveItems,
     liveTrajectoryElapsedBaseMs,
     loadingState,
+    markLocalModelsAvailable,
     maybeCarryOverActiveConversationModel,
     modelReasoningPrompt,
     modelSelectorOptions,
     networkPhase,
+    executionPhase,
+    fileAutocompleteFdPath,
     onSubmit,
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingIds,
-    pendingRalphConfig,
     pinDialogLocal,
     precomputedDiffsRef,
     profileConfirmPending,
@@ -393,11 +444,14 @@ export function AppView(props: AppViewProps) {
     resumeKey,
     searchQuery,
     sessionStatsRef,
+    worktreeDiffSelectorPending,
+    setWorktreeDiffSelectorPending,
     setActiveOverlay,
     setBtwState,
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setLines,
     setModelReasoningPrompt,
     setModelSelectorOptions,
@@ -409,16 +463,23 @@ export function AppView(props: AppViewProps) {
     showApprovalPreview,
     showCompactionsEnabled,
     showExitStats,
-    startOverlayCommand,
+    openOverlay,
     staticItems,
     staticRenderEpoch,
-    statusLine,
+    statusLinePayload,
+    statusLinePrompt,
+    terminalTitleData,
+    onTitlePreview,
+    onTitlePreviewEnd,
+    extensionAdapter,
     streaming,
     stubDescriptions,
     thinkingMessage,
     trajectoryTokenDisplay,
+    usedContextTokens,
+    contextWindowSize,
     uiPermissionMode,
-    uiRalphActive,
+    uiGoalLoopActive,
     updateAgentName,
   } = props;
 
@@ -428,10 +489,11 @@ export function AppView(props: AppViewProps) {
         renderEpoch={staticRenderEpoch}
         items={staticItems}
         columns={columns}
-        statusLinePrompt={statusLine.prompt}
+        statusLinePrompt={statusLinePrompt}
         showCompactionsEnabled={showCompactionsEnabled}
         precomputedDiffs={precomputedDiffsRef.current}
-        lastPlanFilePath={lastPlanFilePathRef.current}
+        hiddenToolCallId={expandedToolCallId ?? undefined}
+        lastShellToolCallId={lastShellToolCallId ?? undefined}
       />
 
       <Box flexDirection="column">
@@ -498,11 +560,7 @@ export function AppView(props: AppViewProps) {
                             onApproveAlways={handleApproveAlways}
                             onDeny={handleDenyCurrent}
                             onCancel={handleCancelApprovals}
-                            onPlanApprove={handlePlanApprove}
-                            onPlanKeepPlanning={handlePlanKeepPlanning}
                             onQuestionSubmit={handleQuestionSubmit}
-                            onEnterPlanModeApprove={handleEnterPlanModeApprove}
-                            onEnterPlanModeReject={handleEnterPlanModeReject}
                             precomputedDiff={
                               ln.toolCallId
                                 ? precomputedDiffsRef.current.get(ln.toolCallId)
@@ -523,22 +581,9 @@ export function AppView(props: AppViewProps) {
                                   "project")
                             }
                             showPreview={showApprovalPreview}
-                            planContent={
-                              currentApproval.toolName === "ExitPlanMode"
-                                ? _readPlanFile(lastPlanFilePathRef.current)
-                                : undefined
-                            }
-                            planFilePath={
-                              currentApproval.toolName === "ExitPlanMode"
-                                ? (permissionMode.getPlanFilePath() ??
-                                  lastPlanFilePathRef.current ??
-                                  undefined)
-                                : undefined
-                            }
-                            agentName={agentName ?? undefined}
                           />
                         ) : ln.kind === "user" ? (
-                          <UserMessage line={ln} prompt={statusLine.prompt} />
+                          <UserMessage line={ln} prompt={statusLinePrompt} />
                         ) : ln.kind === "reasoning" ? (
                           <ReasoningMessage line={ln} />
                         ) : ln.kind === "assistant" ? (
@@ -572,8 +617,9 @@ export function AppView(props: AppViewProps) {
                           <ToolCallMessage
                             line={ln}
                             precomputedDiffs={precomputedDiffsRef.current}
-                            lastPlanFilePath={lastPlanFilePathRef.current}
                             isStreaming={streaming}
+                            expandedToolCallId={expandedToolCallId}
+                            lastShellToolCallId={lastShellToolCallId}
                           />
                         ) : ln.kind === "error" ? (
                           <ErrorMessage line={ln} />
@@ -601,11 +647,7 @@ export function AppView(props: AppViewProps) {
                     onApproveAlways={handleApproveAlways}
                     onDeny={handleDenyCurrent}
                     onCancel={handleCancelApprovals}
-                    onPlanApprove={handlePlanApprove}
-                    onPlanKeepPlanning={handlePlanKeepPlanning}
                     onQuestionSubmit={handleQuestionSubmit}
-                    onEnterPlanModeApprove={handleEnterPlanModeApprove}
-                    onEnterPlanModeReject={handleEnterPlanModeReject}
                     allDiffs={precomputedDiffsRef.current}
                     isFocused={true}
                     approveAlwaysText={
@@ -620,19 +662,6 @@ export function AppView(props: AppViewProps) {
                         : (currentApprovalContext?.defaultScope ?? "project")
                     }
                     showPreview={showApprovalPreview}
-                    planContent={
-                      currentApproval.toolName === "ExitPlanMode"
-                        ? _readPlanFile(lastPlanFilePathRef.current)
-                        : undefined
-                    }
-                    planFilePath={
-                      currentApproval.toolName === "ExitPlanMode"
-                        ? (permissionMode.getPlanFilePath() ??
-                          lastPlanFilePathRef.current ??
-                          undefined)
-                        : undefined
-                    }
-                    agentName={agentName ?? undefined}
                   />
                 </Box>
               )}
@@ -670,6 +699,8 @@ export function AppView(props: AppViewProps) {
                 visible={inputVisible}
                 streaming={streaming}
                 tokenCount={trajectoryTokenDisplay}
+                usedContextTokens={usedContextTokens}
+                contextWindowSize={contextWindowSize}
                 elapsedBaseMs={liveTrajectoryElapsedBaseMs}
                 thinkingMessage={thinkingMessage}
                 includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
@@ -690,35 +721,41 @@ export function AppView(props: AppViewProps) {
                 }
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
+                onCtrlO={handleCtrlO}
+                onCtrlD={handleCtrlD}
+                queueMode={queueMode}
+                deferModeSupported={deferModeSupported}
                 interruptRequested={interruptRequested}
                 agentId={agentId}
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
+                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
+                fileAutocompleteFdPath={fileAutocompleteFdPath}
                 messageQueue={queueDisplay}
-                onEnterQueueEditMode={handleEnterQueueEditMode}
+                onQueueEdit={handleQueueEdit}
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
+                onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
-                ralphActive={uiRalphActive}
-                ralphPending={pendingRalphConfig !== null}
-                ralphPendingYolo={pendingRalphConfig?.isYolo ?? false}
-                onRalphExit={handleRalphExit}
+                goalLoopActive={uiGoalLoopActive}
+                onGoalLoopExit={handleGoalLoopExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
                 networkPhase={networkPhase}
+                executionPhase={executionPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
-                statusLineText={statusLine.text || undefined}
-                statusLineRight={statusLine.rightText || undefined}
-                statusLinePadding={statusLine.padding || 0}
-                statusLinePrompt={statusLine.prompt}
+                statusLinePayload={statusLinePayload}
+                extensionAdapter={extensionAdapter}
+                statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
+                showInspirationalPromptHints={showInspirationalPromptHints}
               />
             </Box>
 
@@ -729,18 +766,50 @@ export function AppView(props: AppViewProps) {
                   modelLabel={modelReasoningPrompt.modelLabel}
                   options={modelReasoningPrompt.options}
                   initialModelId={modelReasoningPrompt.initialModelId}
-                  onSelect={(selectedModelId) => {
+                  initialEffort={modelReasoningPrompt.initialEffort}
+                  onSelect={(selectedOption) => {
                     setModelReasoningPrompt(null);
-                    void handleModelSelect(selectedModelId, null, {
-                      skipReasoningPrompt: true,
-                    });
+                    void handleModelSelect(
+                      selectedOption.selection ?? selectedOption.modelId,
+                      null,
+                      {
+                        skipReasoningPrompt: true,
+                        reasoningEffort: selectedOption.effort,
+                      },
+                    );
                   }}
                   onCancel={() => setModelReasoningPrompt(null)}
                 />
               ) : (
                 <ModelSelector
                   currentModelId={currentModelId ?? undefined}
-                  onSelect={handleModelSelect}
+                  currentModelHandle={currentModelHandle}
+                  currentModelServiceTier={currentModelServiceTier}
+                  onSelect={(selection) => {
+                    void handleModelSelect(selection, null, {
+                      promptReasoning: true,
+                    });
+                  }}
+                  onOpenConnect={() => {
+                    const overlayCommand = completeOverlay("model");
+                    overlayCommand?.finish("Models dialog dismissed", true);
+                    openOverlay(
+                      "connect",
+                      "/connect",
+                      "Opening provider selector...",
+                      "Connect dialog dismissed",
+                    );
+                  }}
+                  onOpenLogin={() => {
+                    const overlayCommand = completeOverlay("model");
+                    overlayCommand?.finish("Models dialog dismissed", true);
+                    openOverlay(
+                      "login",
+                      "/login",
+                      "Opening login...",
+                      "Login dismissed",
+                    );
+                  }}
                   onCancel={closeOverlay}
                   filterProvider={modelSelectorOptions.filterProvider}
                   forceRefresh={modelSelectorOptions.forceRefresh}
@@ -762,7 +831,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "sleeptime" && (
               <SleeptimeSelector
                 initialSettings={getReflectionSettings(agentId)}
-                memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
+                memfsEnabled={isActiveMemfsEnabled(agentId)}
                 onSave={handleSleeptimeModeSelect}
                 onCancel={closeOverlay}
               />
@@ -776,13 +845,22 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
+            {/* Window Title Configurator - for customizing terminal title */}
+            {activeOverlay === "window-title" && (
+              <WindowTitlePicker
+                projectDirectory={projectDirectory}
+                titleData={terminalTitleData}
+                onTitlePreview={onTitlePreview}
+                onTitlePreviewEnd={onTitlePreviewEnd}
+                onClose={closeOverlay}
+              />
+            )}
+
             {/* GitHub App Installer - setup Letta Code GitHub Action */}
             {activeOverlay === "install-github-app" && (
               <InstallGithubAppFlow
                 onComplete={(result) => {
-                  const overlayCommand =
-                    consumeOverlayCommand("install-github-app");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("install-github-app");
 
                   const cmd =
                     overlayCommand ??
@@ -858,17 +936,15 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
-                onStartOAuth={async () => {
-                  const overlayCommand = consumeOverlayCommand("connect");
-                  // Close selector and start OAuth flow
-                  closeOverlay();
+                onStartOAuth={async (provider, target) => {
+                  const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
                     commandRunner.start("/connect", "Starting connection...");
                   const {
                     handleConnect,
                     setActiveCommandId: setActiveConnectCommandId,
-                  } = await import("../commands/connect");
+                  } = await import("@/cli/commands/connect");
                   setActiveConnectCommandId(cmd.id);
                   try {
                     await handleConnect(
@@ -876,21 +952,22 @@ export function AppView(props: AppViewProps) {
                         buffersRef,
                         refreshDerived,
                         setCommandRunning,
+                        target,
                         onCodexConnected: () => {
+                          markLocalModelsAvailable();
                           setModelSelectorOptions({
                             filterProvider: "chatgpt-plus-pro",
                             forceRefresh: true,
                           });
-                          startOverlayCommand(
+                          openOverlay(
                             "model",
                             "/model",
                             "Opening model selector...",
                             "Models dialog dismissed",
                           );
-                          setActiveOverlay("model");
                         },
                       },
-                      "/connect chatgpt",
+                      `/connect ${provider.id === "openai-codex-oauth" ? "chatgpt" : provider.id}`,
                     );
                   } finally {
                     setActiveConnectCommandId(null);
@@ -903,10 +980,55 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "experiment" && (
               <ExperimentSelector
                 experiments={experimentManager.list()}
-                onSelect={handleExperimentSelect}
+                onConfirm={handleExperimentsConfirm}
                 onCancel={closeOverlay}
               />
             )}
+
+            {activeOverlay === "worktree-diff" &&
+              worktreeDiffSelectorPending && (
+                <WorktreeDiffSelector
+                  worktrees={worktreeDiffSelectorPending.worktrees}
+                  onSelect={(path) => {
+                    setWorktreeDiffSelectorPending(null);
+                    const overlayCommand = completeOverlay("worktree-diff");
+                    const cmd =
+                      overlayCommand ??
+                      commandRunner.start(
+                        "/experiments",
+                        "Opening worktree diff...",
+                      );
+                    void import("@/web/generate-diff-viewer")
+                      .then(({ generateAndOpenDiffViewer }) =>
+                        generateAndOpenDiffViewer(path),
+                      )
+                      .then((result) => {
+                        const fileSummary = `${result.fileCount} file${result.fileCount === 1 ? "" : "s"}`;
+                        if (result.opened) {
+                          cmd.finish(
+                            `Opened worktree diff (${fileSummary})`,
+                            true,
+                          );
+                        } else {
+                          cmd.finish(
+                            `Open manually: ${result.filePath} (${fileSummary})`,
+                            true,
+                          );
+                        }
+                      })
+                      .catch((err: unknown) => {
+                        cmd.finish(
+                          `Failed to open diff: ${err instanceof Error ? err.message : String(err)}`,
+                          false,
+                        );
+                      });
+                  }}
+                  onCancel={() => {
+                    setWorktreeDiffSelectorPending(null);
+                    closeOverlay();
+                  }}
+                />
+              )}
 
             {/* Toolset Selector - conditionally mounted as overlay */}
             {activeOverlay === "toolset" && (
@@ -944,18 +1066,62 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "resume" && (
               <AgentSelector
                 currentAgentId={agentId}
-                onSelect={async (id) => {
-                  const overlayCommand = consumeOverlayCommand("resume");
-                  closeOverlay();
+                onSelect={async (id, backendMode) => {
+                  const overlayCommand = completeOverlay("resume");
                   await handleAgentSelect(id, {
                     commandId: overlayCommand?.id,
+                    backendMode,
                   });
                 }}
-                onCancel={closeOverlay}
-                onCreateNewAgent={() => {
-                  closeOverlay();
-                  setActiveOverlay("new");
+                onLogin={() => {
+                  completeOverlay("resume");
+                  openOverlay(
+                    "login",
+                    "/login",
+                    "Opening login...",
+                    "Login dismissed",
+                  );
                 }}
+                onCancel={closeOverlay}
+                onCreateNewAgent={(name: string, backendMode) => {
+                  const overlayCommand = completeOverlay("resume");
+                  void handleCreateNewAgent(name, {
+                    commandId: overlayCommand?.id,
+                    backendMode,
+                  });
+                }}
+              />
+            )}
+
+            {activeOverlay === "login" && (
+              <ConstellationLoginOverlay
+                onComplete={() => {
+                  const overlayCommand = completeOverlay("login");
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/login",
+                      "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                    );
+                  cmd.finish(
+                    "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                    true,
+                  );
+                }}
+                onAlreadyLoggedIn={() => {
+                  const overlayCommand = completeOverlay("login");
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/login",
+                      "Already signed in to Constellation. Run /logout to sign out.",
+                    );
+                  cmd.finish(
+                    "Already signed in to Constellation. Run /logout to sign out.",
+                    true,
+                  );
+                }}
+                onCancel={closeOverlay}
               />
             )}
 
@@ -966,8 +1132,7 @@ export function AppView(props: AppViewProps) {
                 agentName={agentName ?? undefined}
                 currentConversationId={conversationId}
                 onSelect={async (convId, selectorContext) => {
-                  const overlayCommand = consumeOverlayCommand("conversations");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("conversations");
 
                   // Skip if already on this conversation
                   if (convId === conversationId) {
@@ -1026,6 +1191,7 @@ export function AppView(props: AppViewProps) {
                       // Only update state after validation succeeds
                       setConversationIdAndRef(convId);
                       setConversationAutoTitleEligibility(false);
+                      setConversationSummary(selectorContext?.summary ?? null);
 
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
@@ -1143,8 +1309,7 @@ export function AppView(props: AppViewProps) {
                   }
                 }}
                 onNewConversation={async () => {
-                  const overlayCommand = consumeOverlayCommand("conversations");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("conversations");
 
                   // Lock input for async operation
                   setCommandRunning(true);
@@ -1172,6 +1337,7 @@ export function AppView(props: AppViewProps) {
                     );
                     setConversationIdAndRef(conversation.id);
                     setConversationAutoTitleEligibility(true);
+                    setConversationSummary(null);
                     settingsManager.persistSession(agentId, conversation.id);
 
                     // Build success command with agent + conversation info
@@ -1199,7 +1365,7 @@ export function AppView(props: AppViewProps) {
                     buffersRef.current.order = [];
                     buffersRef.current.tokenCount = 0;
                     resetContextHistory(contextTrackerRef.current);
-                    resetBootstrapReminderState();
+                    resetBootstrapReminderState(true);
                     emittedIdsRef.current.clear();
                     resetDeferredToolCallCommits();
                     setStaticItems([]);
@@ -1231,8 +1397,7 @@ export function AppView(props: AppViewProps) {
                   targetConvId,
                   searchContext,
                 ) => {
-                  const overlayCommand = consumeOverlayCommand("search");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("search");
 
                   // Different agent: use handleAgentSelect (which supports optional conversationId)
                   if (targetAgentId !== agentId) {
@@ -1413,12 +1578,24 @@ export function AppView(props: AppViewProps) {
             {/* Memory Viewer - conditionally mounted as overlay */}
             {/* Use tree view for memfs-enabled agents, tab view otherwise */}
             {activeOverlay === "memory" &&
-              (settingsManager.isMemfsEnabled(agentId) ? (
+              (isActiveMemfsEnabled(agentId) ? (
                 <MemfsTreeViewer
                   agentId={agentId}
                   agentName={agentState?.name}
                   onClose={closeOverlay}
                   conversationId={conversationId}
+                  contextUsage={
+                    usedContextTokens > 0
+                      ? {
+                          usedTokens: usedContextTokens,
+                          contextWindow: contextWindowSize ?? 0,
+                          model:
+                            currentModelHandle ??
+                            currentModelDisplay ??
+                            "unknown",
+                        }
+                      : undefined
+                  }
                 />
               ) : (
                 <MemoryTabViewer
@@ -1448,8 +1625,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "mcp-connect" && (
               <McpConnectFlow
                 onComplete={(serverName, serverId, toolCount) => {
-                  const overlayCommand = consumeOverlayCommand("mcp-connect");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("mcp-connect");
                   const cmd =
                     overlayCommand ??
                     commandRunner.start(
@@ -1481,22 +1657,13 @@ export function AppView(props: AppViewProps) {
               <HooksManager onClose={closeOverlay} agentId={agentId} />
             )}
 
-            {/* New Agent Dialog - for naming new agent before creation */}
-            {activeOverlay === "new" && (
-              <NewAgentDialog
-                onSubmit={handleCreateNewAgent}
-                onCancel={closeOverlay}
-              />
-            )}
-
             {/* Pin Dialog - for naming agent before pinning */}
             {activeOverlay === "pin" && (
               <PinDialog
                 currentName={agentName || ""}
                 local={pinDialogLocal}
                 onSubmit={async (newName) => {
-                  const overlayCommand = consumeOverlayCommand("pin");
-                  closeOverlay();
+                  const overlayCommand = completeOverlay("pin");
                   setCommandRunning(true);
 
                   const cmd =
@@ -1548,10 +1715,8 @@ export function AppView(props: AppViewProps) {
             )}
 
             {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
-            {/* ExitPlanMode approval is handled by InlinePlanApproval component */}
 
             {/* AskUserQuestion now rendered inline via InlineQuestionApproval */}
-            {/* EnterPlanMode now rendered inline in liveItems above */}
             {/* ApprovalDialog removed - all approvals now render inline via InlineGenericApproval fallback */}
           </>
         )}

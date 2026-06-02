@@ -246,10 +246,90 @@
     },
     {
       "id": "opus",
+      "handle": "anthropic/claude-opus-4-8",
+      "label": "Opus 4.8",
+      "description": "Anthropic's best model (high reasoning)",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "high",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.8-low",
+      "handle": "anthropic/claude-opus-4-8",
+      "label": "Opus 4.8",
+      "description": "Opus 4.8 (low reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "low",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 4000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.8-medium",
+      "handle": "anthropic/claude-opus-4-8",
+      "label": "Opus 4.8",
+      "description": "Opus 4.8 (med reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "medium",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 12000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.8-high",
+      "handle": "anthropic/claude-opus-4-8",
+      "label": "Opus 4.8",
+      "description": "Opus 4.8 (high reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "high",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.8-xhigh",
+      "handle": "anthropic/claude-opus-4-8",
+      "label": "Opus 4.8",
+      "description": "Opus 4.8 (extra-high reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "xhigh",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.8-max",
+      "handle": "anthropic/claude-opus-4-8",
+      "label": "Opus 4.8",
+      "description": "Opus 4.8 (max reasoning)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "max",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-4.7-medium",
       "handle": "anthropic/claude-opus-4-7",
       "label": "Opus 4.7",
-      "description": "Anthropic's best model (med reasoning)",
-      "isFeatured": true,
+      "description": "Opus 4.7 (med reasoning)",
       "updateArgs": {
         "context_window": 200000,
         "max_output_tokens": 128000,
@@ -458,6 +538,20 @@
         "context_window": 180000,
         "max_output_tokens": 64000,
         "max_reasoning_tokens": 31999,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "bedrock-opus-4.7",
+      "handle": "bedrock/us.anthropic.claude-opus-4-7",
+      "label": "Bedrock Opus 4.7",
+      "shortLabel": "Opus 4.7 BR",
+      "description": "Anthropic's Opus 4.7 (via AWS Bedrock)",
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "medium",
+        "enable_reasoner": true,
         "parallel_tool_calls": true
       }
     },
@@ -1386,10 +1480,21 @@
       }
     },
     {
+      "id": "minimax-m3",
+      "handle": "minimax/MiniMax-M3",
+      "label": "MiniMax M3",
+      "description": "MiniMax's frontier M-series model for agentic reasoning, tool use, coding, multimodal chat input, and long-context tasks",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 500000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "minimax-m2.7",
       "handle": "minimax/MiniMax-M2.7",
       "label": "MiniMax 2.7",
-      "description": "MiniMax's latest coding model",
+      "description": "MiniMax's M2.7 coding model",
       "isFeatured": true,
       "free": true,
       "updateArgs": {
@@ -1401,8 +1506,8 @@
     {
       "id": "minimax-m2",
       "handle": "openrouter/minimax/minimax-m2",
-      "label": "Minimax M2",
-      "description": "Minimax's latest model",
+      "label": "MiniMax M2",
+      "description": "MiniMax's M2 model",
       "updateArgs": {
         "context_window": 160000,
         "max_output_tokens": 64000,
@@ -1439,6 +1544,29 @@
       "isFeatured": true,
       "updateArgs": {
         "context_window": 180000,
+        "temperature": 1.0,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "handle": "google_ai/gemini-3.5-flash",
+      "label": "Gemini 3.5 Flash",
+      "description": "Google's Gemini 3.5 Flash model",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 1048576,
+        "temperature": 1.0,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gemini-3.1-flash-lite",
+      "handle": "google_ai/gemini-3.1-flash-lite",
+      "label": "Gemini 3.1 Flash-Lite",
+      "description": "Google's lightweight Gemini 3.1 Flash-Lite model",
+      "updateArgs": {
+        "context_window": 1048576,
         "temperature": 1.0,
         "parallel_tool_calls": true
       }

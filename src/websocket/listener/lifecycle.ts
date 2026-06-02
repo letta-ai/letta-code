@@ -1,28 +1,44 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
-import { getChannelRegistry } from "../../channels/registry";
-import type { ChannelTurnSource } from "../../channels/types";
-import { setMessageQueueAdder } from "../../cli/helpers/messageQueueBridge";
 import {
   getSubagents,
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
-} from "../../cli/helpers/subagentState";
+} from "@/agent/subagent-state";
+import {
+  buildChannelModelListMessage,
+  buildChannelModelListUnavailableMessage,
+  buildChannelModelUpdatedMessage,
+  buildChannelModelUpdateFailedMessage,
+} from "@/channels/commands";
+import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
+import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
 import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
-} from "../../cron/scheduler";
-import type { DequeuedBatch } from "../../queue/queueRuntime";
-import { createSharedReminderState } from "../../reminders/state";
-import { getCurrentWorkingDirectory } from "../../runtime-context";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
-import { loadTools } from "../../tools/manager";
-import { isDebugEnabled } from "../../utils/debug";
-import { killAllTerminals } from "../terminalHandler";
+} from "@/cron/scheduler";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
+import { createSharedReminderState } from "@/reminders/state";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import {
+  getListenerTelemetrySurface,
+  getTerminalTelemetrySurface,
+  telemetry,
+} from "@/telemetry";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { loadTools } from "@/tools/manager";
+import { isDebugEnabled } from "@/utils/debug";
+import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
 import { handleChannelRegistryEvent } from "./commands/channels";
+import {
+  applyModelUpdateForRuntime,
+  buildListModelsResponse,
+  resolveModelForUpdate,
+} from "./commands/model-toolset";
 import {
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_DELAY_MS,
@@ -41,7 +57,11 @@ import {
 import { loadPersistedCwdMap } from "./cwd";
 import { createFileCommandSession } from "./file-commands";
 import { createListenerMessageHandler } from "./message-router";
-import { loadPersistedPermissionModeMap } from "./permissionMode";
+import {
+  getOrCreateConversationPermissionModeStateRef,
+  loadPersistedPermissionModeMap,
+  persistPermissionModeMapForRuntime,
+} from "./permission-mode";
 import {
   emitDeviceStatusUpdate,
   emitLoopStatusUpdate,
@@ -80,6 +100,13 @@ import {
   scheduleListenerWarmupsAfterSync,
 } from "./warmup";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
+
+function escapeTaskNotificationSummary(summary: string): string {
+  return summary
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
 function trackListenerError(
   errorType: string,
@@ -171,6 +198,7 @@ export async function replaySyncStateForRuntime(
       runtime: ListenerRuntime,
       scope: { agent_id: string; conversation_id: string },
     ) => void;
+    forceDeviceStatus?: boolean;
   },
 ): Promise<void> {
   const syncScopedRuntime = getOrCreateScopedRuntime(
@@ -196,7 +224,9 @@ export async function replaySyncStateForRuntime(
     }
   }
 
-  emitStateSync(socket, listenerRuntime, scope);
+  emitStateSync(socket, listenerRuntime, scope, {
+    forceDeviceStatus: opts?.forceDeviceStatus,
+  });
   (opts?.scheduleWarmupsAfterSync ?? scheduleListenerWarmupsAfterSync)(
     listenerRuntime,
     scope,
@@ -398,6 +428,18 @@ export async function wireChannelIngress(
     );
     if (!rawRuntime) return;
 
+    if (delivery.defaultPermissionMode) {
+      const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+        listener,
+        delivery.route.agentId,
+        delivery.route.conversationId,
+      );
+      if (permissionModeState.mode !== delivery.defaultPermissionMode) {
+        permissionModeState.mode = delivery.defaultPermissionMode;
+        persistPermissionModeMapForRuntime(listener);
+      }
+    }
+
     const conversationRuntime = ensureConversationQueueRuntime(
       listener,
       rawRuntime,
@@ -438,6 +480,190 @@ export async function wireChannelIngress(
       processQueuedTurn,
     }),
   );
+
+  registry.setCancelHandler(async ({ runtime }) =>
+    handleAbortMessageInput(listener, {
+      command: {
+        type: "abort_message",
+        runtime,
+        request_id: `channel-cancel-${crypto.randomUUID()}`,
+        run_id: null,
+      },
+      socket,
+      opts,
+      processQueuedTurn,
+    }),
+  );
+
+  registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
+    if (!modelIdentifier) {
+      try {
+        const response = await buildListModelsResponse(
+          `channel-model-list-${crypto.randomUUID()}`,
+        );
+        if (!response.success) {
+          return {
+            handled: true,
+            text: buildChannelModelListUnavailableMessage(
+              channelId,
+              response.error ?? "Failed to list models",
+            ),
+          };
+        }
+        return {
+          handled: true,
+          text: buildChannelModelListMessage(channelId, {
+            entries: response.entries,
+            availableHandles: response.available_handles,
+            recentHandles: settingsManager.getRecentModels(),
+          }),
+        };
+      } catch (error) {
+        return {
+          handled: true,
+          text: buildChannelModelListUnavailableMessage(
+            channelId,
+            error instanceof Error ? error.message : "Failed to list models",
+          ),
+        };
+      }
+    }
+
+    const resolvedModel = resolveModelForUpdate({
+      model_id: modelIdentifier,
+      model_handle: modelIdentifier,
+    });
+    if (!resolvedModel) {
+      return {
+        handled: true,
+        text: buildChannelModelUpdateFailedMessage(
+          channelId,
+          modelIdentifier,
+          "Model not found. Use /model to see available models.",
+        ),
+      };
+    }
+
+    try {
+      const scopedRuntime = getOrCreateScopedRuntime(
+        listener,
+        runtime.agent_id,
+        runtime.conversation_id,
+      );
+      const response = await applyModelUpdateForRuntime({
+        socket,
+        listener,
+        scopedRuntime,
+        requestId: `channel-model-update-${crypto.randomUUID()}`,
+        model: resolvedModel,
+      });
+      if (!response.success) {
+        return {
+          handled: true,
+          text: buildChannelModelUpdateFailedMessage(
+            channelId,
+            modelIdentifier,
+            response.error ?? "Failed to update model",
+          ),
+        };
+      }
+
+      settingsManager.addRecentModel(resolvedModel.handle);
+      return {
+        handled: true,
+        text: buildChannelModelUpdatedMessage(channelId, {
+          modelLabel: resolvedModel.label,
+          modelHandle: response.model_handle ?? resolvedModel.handle,
+          appliedTo: response.applied_to,
+        }),
+      };
+    } catch (error) {
+      return {
+        handled: true,
+        text: buildChannelModelUpdateFailedMessage(
+          channelId,
+          modelIdentifier,
+          error instanceof Error ? error.message : "Failed to update model",
+        ),
+      };
+    }
+  });
+
+  registry.setReflectionHandler(async ({ runtime }) => {
+    const agentId = runtime.agent_id;
+    const conversationId = runtime.conversation_id;
+
+    const result = await launchReflectionSubagent({
+      agentId,
+      conversationId,
+      memfsEnabled: settingsManager.isMemfsEnabled(agentId),
+      triggerSource: "manual",
+      description: "Reflecting on channel conversation",
+      recompileByConversation: listener.systemPromptRecompileByConversation,
+      recompileQueuedByConversation:
+        listener.queuedSystemPromptRecompileByConversation,
+      onCompletionMessage: async (completionMessage) => {
+        const conversationRuntime = getOrCreateConversationRuntime(
+          listener,
+          agentId,
+          conversationId,
+        );
+        const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
+          completionMessage,
+        )}</summary></task-notification>`;
+        emitStreamDelta(
+          socket,
+          conversationRuntime,
+          {
+            type: "message",
+            id: `user-msg-${crypto.randomUUID()}`,
+            date: new Date().toISOString(),
+            message_type: "user_message",
+            content: [{ type: "text", text: notificationXml }],
+          } as import("@/types/protocol_v2").StreamDelta,
+          {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          },
+        );
+      },
+    });
+
+    if (!result.launched) {
+      if (result.reason === "memfs_disabled") {
+        return {
+          handled: true,
+          text: "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.",
+        };
+      }
+      if (result.reason === "already_active") {
+        return {
+          handled: true,
+          text: "A reflection agent is already running for this conversation.",
+        };
+      }
+      if (result.reason === "no_payload") {
+        return {
+          handled: true,
+          text: "No new transcript content to reflect on for this conversation.",
+        };
+      }
+
+      const message =
+        result.error instanceof Error
+          ? result.error.message
+          : String(result.error ?? "Unknown error");
+      return {
+        handled: true,
+        text: `Failed to start reflection: ${message}`,
+      };
+    }
+
+    return {
+      handled: true,
+      text: "Started a reflection pass for this conversation.",
+    };
+  });
 
   registry.setReady();
 }
@@ -484,13 +710,13 @@ export function enqueueChannelTurn(
   const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
   const enqueuedItem = runtime.queueRuntime.enqueue({
     kind: "message",
-    source: "channel" as import("../../types/protocol").QueueItemSource,
+    source: "channel" as import("@/types/protocol").QueueItemSource,
     content: messageContent,
     clientMessageId,
     agentId: route.agentId,
     conversationId: route.conversationId,
   } as Omit<
-    import("../../queue/queueRuntime").MessageQueueItem,
+    import("@/queue/queue-runtime").MessageQueueItem,
     "id" | "enqueuedAt"
   >);
 
@@ -722,7 +948,7 @@ export async function startConnectedListenerRuntime(
       emitStreamDelta(
         transport,
         runtime,
-        event as unknown as import("../../types/protocol_v2").StreamDelta,
+        event as unknown as import("@/types/protocol_v2").StreamDelta,
         subagent?.parentAgentId
           ? {
               agent_id: subagent.parentAgentId,
@@ -759,7 +985,7 @@ export async function startConnectedListenerRuntime(
       conversationId:
         queuedMessage.conversationId ?? targetRuntime.conversationId,
     } as Omit<
-      import("../../queue/queueRuntime").TaskNotificationQueueItem,
+      import("@/queue/queue-runtime").TaskNotificationQueueItem,
       "id" | "enqueuedAt"
     >);
 
@@ -818,7 +1044,7 @@ export async function startListenerClient(
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
   setActiveRuntime(runtime);
-  telemetry.setSurface("websocket");
+  telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
   await connectWithRetry(runtime, opts);
@@ -851,7 +1077,7 @@ export async function startLocalChannelListener(
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
   setActiveRuntime(runtime);
-  telemetry.setSurface("websocket");
+  telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
   try {
@@ -1211,6 +1437,6 @@ export function stopListenerClient(): void {
     return;
   }
   setActiveRuntime(null);
-  telemetry.setSurface(process.stdin.isTTY ? "tui" : "headless");
+  telemetry.setSurface(getTerminalTelemetrySurface(!process.stdin.isTTY));
   stopRuntime(runtime, true);
 }

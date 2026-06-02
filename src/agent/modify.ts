@@ -8,9 +8,10 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { getBackend } from "../backend";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
-import { debugLog } from "../utils/debug";
+import { getBackend } from "@/backend";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { debugLog } from "@/utils/debug";
+import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
 
 type ModelSettings =
@@ -20,11 +21,10 @@ type ModelSettings =
   | Record<string, unknown>;
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
-  return modelHandle.includes("claude-opus-4-7");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return (
+    modelHandle.includes("claude-opus-4-7") ||
+    modelHandle.includes("claude-opus-4-8")
+  );
 }
 
 /**
@@ -36,8 +36,10 @@ function buildModelSettings(
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
   // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
+  const isOpenAICodex = modelHandle.startsWith("openai-codex/");
   const isOpenAI =
     modelHandle.startsWith("openai/") ||
+    isOpenAICodex ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
   // Include legacy custom Anthropic OAuth provider (claude-pro-max) and minimax
   const isAnthropic =
@@ -57,6 +59,10 @@ function buildModelSettings(
       provider_type: "openai",
       parallel_tool_calls: true,
     };
+    if (isOpenAICodex) {
+      (openaiSettings as Record<string, unknown>).provider_type =
+        "chatgpt_oauth";
+    }
     if (updateArgs?.reasoning_effort) {
       openaiSettings.reasoning = {
         reasoning_effort: updateArgs.reasoning_effort as
@@ -77,6 +83,10 @@ function buildModelSettings(
     if (typeof updateArgs?.strict === "boolean") {
       openaiSettings.strict = updateArgs.strict;
     }
+    if (updateArgs && "service_tier" in updateArgs) {
+      (openaiSettings as Record<string, unknown>).service_tier =
+        updateArgs.service_tier === "priority" ? "priority" : null;
+    }
     settings = openaiSettings;
   } else if (isAnthropic) {
     const anthropicSettings: AnthropicModelSettings = {
@@ -89,7 +99,7 @@ function buildModelSettings(
     if (effort === "low" || effort === "medium" || effort === "high") {
       anthropicSettings.effort = effort;
     } else if (effort === "xhigh") {
-      // "xhigh" is only distinct on Opus 4.7; older Anthropic models map it to backend "max".
+      // "xhigh" is distinct on Opus 4.7+; older Anthropic models map it to backend "max".
       (anthropicSettings as Record<string, unknown>).effort = hasDistinctXHigh
         ? "xhigh"
         : "max";
@@ -188,6 +198,17 @@ function buildModelSettings(
           ? updateArgs.parallel_tool_calls
           : true,
     };
+    if (updateArgs?.reasoning_effort) {
+      openaiProxySettings.reasoning = {
+        reasoning_effort: updateArgs.reasoning_effort as
+          | "none"
+          | "minimal"
+          | "low"
+          | "medium"
+          | "high"
+          | "xhigh",
+      };
+    }
     if (typeof updateArgs?.strict === "boolean") {
       (openaiProxySettings as Record<string, unknown>).strict =
         updateArgs.strict;
@@ -416,9 +437,9 @@ export async function updateAgentSystemPrompt(
 ): Promise<UpdateSystemPromptResult> {
   try {
     const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
-      "./promptAssets"
+      "@/agent/prompt-assets"
     );
-    const { settingsManager } = await import("../settings-manager");
+    const { settingsManager } = await import("@/settings-manager");
 
     const backend = getBackend();
     const memoryMode = backend.capabilities.localMemfs
@@ -489,10 +510,16 @@ export async function updateAgentSystemPromptMemfs(
   enableMemfs: boolean,
 ): Promise<SystemPromptUpdateResult> {
   try {
-    const { settingsManager } = await import("../settings-manager");
-    const { isKnownPreset, buildSystemPrompt } = await import("./promptAssets");
+    const { settingsManager } = await import("@/settings-manager");
+    const { isKnownPreset, buildSystemPrompt } = await import(
+      "@/agent/prompt-assets"
+    );
 
-    const newMode = enableMemfs ? "memfs" : "standard";
+    const newMode = enableMemfs
+      ? getBackend().capabilities.localMemfs
+        ? "local-memfs"
+        : "memfs"
+      : "standard";
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;

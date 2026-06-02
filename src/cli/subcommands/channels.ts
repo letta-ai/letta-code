@@ -17,36 +17,36 @@ import {
   getChannelAccount,
   listChannelAccounts,
   upsertChannelAccount,
-} from "../../channels/accounts";
+} from "@/channels/accounts";
 import {
   getApprovedUsers,
   getPendingPairings,
   loadPairingStore,
-} from "../../channels/pairing";
+} from "@/channels/pairing";
 import {
   getChannelDisplayName,
   getSupportedChannelIds,
   isSupportedChannelId,
   loadChannelPlugin,
-} from "../../channels/pluginRegistry";
-import { completePairing } from "../../channels/registry";
+} from "@/channels/plugin-registry";
+import { completePairing } from "@/channels/registry";
 import {
   addRoute,
   getAllRoutes,
   getRoutesForChannel,
   loadRoutes,
   removeRoute,
-} from "../../channels/routing";
+} from "@/channels/routing";
 import {
   getChannelRuntimeDir,
   isChannelRuntimeInstalled,
-} from "../../channels/runtimeDeps";
-import { listChannelAccountSnapshots } from "../../channels/service";
+} from "@/channels/runtime-deps";
+import { listChannelAccountSnapshots } from "@/channels/service";
 import type {
   ChannelRoute,
   SlackChannelAccount,
   SupportedChannelId,
-} from "../../channels/types";
+} from "@/channels/types";
 
 // ── Usage ───────────────────────────────────────────────────────────
 
@@ -96,6 +96,16 @@ Recommended Telegram flow:
 
 Headless deploy flow:
   letta server --channels telegram --install-channel-runtimes
+
+Local backend flow:
+  1. letta channels install telegram
+  2. letta channels configure telegram
+  3. letta server --backend local --channels telegram
+  4. Message the bot once to get a pairing code
+  5. letta channels pair --channel telegram --code <code> --agent <agent-id> --conversation default
+
+Only set LETTA_BASE_URL when targeting a separate self-hosted server. Do not set
+a dummy LETTA_BASE_URL for --backend local.
 
 State files:
   ~/.letta/channels/telegram/accounts.json
@@ -208,9 +218,7 @@ async function handleInstall(channel: string): Promise<number> {
   }
 
   try {
-    const { installChannelRuntime } = await import(
-      "../../channels/runtimeDeps"
-    );
+    const { installChannelRuntime } = await import("@/channels/runtime-deps");
     await installChannelRuntime(channelId);
     console.log(
       JSON.stringify(
@@ -469,9 +477,7 @@ async function handlePair(
 
   // Load existing state
   loadRoutes(channelId);
-  const { loadPairingStore: loadPairing } = await import(
-    "../../channels/pairing"
-  );
+  const { loadPairingStore: loadPairing } = await import("@/channels/pairing");
   loadPairing(channelId);
 
   const result = completePairing(

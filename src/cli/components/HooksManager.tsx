@@ -3,7 +3,8 @@
 
 import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { getBackend } from "../../backend";
+import { getBackend } from "@/backend";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type HookCommand,
   type HookEvent,
@@ -14,7 +15,7 @@ import {
   type SimpleHookEvent,
   type SimpleHookMatcher,
   type ToolHookEvent,
-} from "../../hooks/types";
+} from "@/hooks/types";
 import {
   addHookMatcher,
   addSimpleHookMatcher,
@@ -28,9 +29,8 @@ import {
   removeHook,
   type SaveLocation,
   setHooksDisabled,
-} from "../../hooks/writer";
-import { settingsManager } from "../../settings-manager";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/hooks/writer";
+import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { Text } from "./Text";
@@ -98,8 +98,6 @@ const FALLBACK_TOOL_NAMES = [
   "TodoWrite",
   "AskUserQuestion",
   "Skill",
-  "EnterPlanMode",
-  "ExitPlanMode",
   "TaskOutput",
   "KillBash",
 ];
@@ -180,7 +178,7 @@ export const HooksManager = memo(function HooksManager({
         if (!getBackend().capabilities.serverSideToolManagement) {
           return;
         }
-        const { getClient } = await import("../../backend/api/client");
+        const { getClient } = await import("@/backend/api/client");
         const client = await getClient();
         // Use dedicated tools endpoint instead of fetching whole agent
         // Pass limit to avoid pagination issues

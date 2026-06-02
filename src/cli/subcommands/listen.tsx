@@ -14,16 +14,16 @@ import {
   pollForToken,
   refreshAccessToken,
   requestDeviceCode,
-} from "../../auth/oauth";
-import { settingsManager } from "../../settings-manager";
-import { telemetry } from "../../telemetry";
-import { RemoteSessionLog } from "../../websocket/listen-log";
+} from "@/auth/oauth";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import { settingsManager } from "@/settings-manager";
+import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
+import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
-  registerWithCloud,
   registerWithCloudRetry,
-} from "../../websocket/listen-register";
-import { ListenerStatusUI } from "../components/ListenerStatusUI";
+} from "@/websocket/listen-register";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
@@ -108,7 +108,11 @@ function getListenerServerUrl(settings: {
 
 type ListenerStartupMode =
   | { kind: "remote"; serverUrl: string }
-  | { kind: "local-channels"; serverUrl: string }
+  | {
+      kind: "local-channels";
+      serverUrl: string;
+      backend: "local" | "self-hosted";
+    }
   | { kind: "unsupported-self-hosted"; serverUrl: string };
 
 function normalizeListenerBaseUrl(url: string): string {
@@ -128,6 +132,14 @@ async function resolveListenerStartupMode(
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
+  if (isLocalBackendEnvEnabled() && channelNames.length > 0) {
+    return {
+      kind: "local-channels",
+      serverUrl: "local-backend",
+      backend: "local",
+    };
+  }
+
   if (isCloudListenerServerUrl(serverUrl)) {
     return { kind: "remote", serverUrl };
   }
@@ -141,7 +153,7 @@ async function resolveListenerStartupMode(
   }
 
   if (channelNames.length > 0) {
-    return { kind: "local-channels", serverUrl };
+    return { kind: "local-channels", serverUrl, backend: "self-hosted" };
   }
 
   return { kind: "unsupported-self-hosted", serverUrl };
@@ -166,10 +178,7 @@ async function refreshListenerAccessToken(
   );
 
   settingsManager.updateSettings({
-    env: {
-      ...settings.env,
-      LETTA_API_KEY: tokens.access_token,
-    },
+    env: { LETTA_API_KEY: tokens.access_token },
     tokenExpiresAt: now + tokens.expires_in * 1000,
     ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
   });
@@ -181,7 +190,6 @@ async function refreshListenerAccessToken(
 }
 
 async function runListenerOAuthLogin(
-  currentEnv: Record<string, string> | undefined,
   deviceId: string,
   connectionName: string,
 ): Promise<string> {
@@ -206,10 +214,7 @@ async function runListenerOAuthLogin(
   const now = Date.now();
 
   settingsManager.updateSettings({
-    env: {
-      ...currentEnv,
-      LETTA_API_KEY: tokens.access_token,
-    },
+    env: { LETTA_API_KEY: tokens.access_token },
     tokenExpiresAt: now + tokens.expires_in * 1000,
     ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
   });
@@ -263,11 +268,7 @@ async function resolveListenerRegistrationOptions(
     }
 
     if (!apiKey) {
-      apiKey = await runListenerOAuthLogin(
-        settings.env,
-        deviceId,
-        connectionName,
-      );
+      apiKey = await runListenerOAuthLogin(deviceId, connectionName);
     }
   }
 
@@ -369,7 +370,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   }
 
   await settingsManager.initialize();
-  telemetry.setSurface("websocket");
+  telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
   const exitWithTelemetry = async (
@@ -378,7 +379,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   ): Promise<never> => {
     // Stop channel adapters on actual process exit
     try {
-      const { getChannelRegistry } = await import("../../channels/registry");
+      const { getChannelRegistry } = await import("@/channels/registry");
       const registry = getChannelRegistry();
       if (registry) {
         await registry.stopAll();
@@ -401,16 +402,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         .map((s) => s.trim())
         .filter(Boolean)
     : process.env.LETTA_RESTORE_ENABLED_CHANNELS === "1"
-      ? (await import("../../channels/service")).listEnabledChannelIds()
+      ? (await import("@/channels/service")).listEnabledChannelIds()
       : [];
 
   if (channelNames.length > 0) {
     if (values.channels && values["install-channel-runtimes"]) {
       const { ensureChannelRuntimeInstalled } = await import(
-        "../../channels/runtimeDeps"
+        "@/channels/runtime-deps"
       );
       const { isSupportedChannelId } = await import(
-        "../../channels/pluginRegistry"
+        "@/channels/plugin-registry"
       );
 
       for (const channelName of channelNames) {
@@ -424,8 +425,19 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       }
     }
 
-    const { initializeChannels } = await import("../../channels/registry");
-    await initializeChannels(channelNames);
+    const { initializeChannels } = await import("@/channels/registry");
+    try {
+      await initializeChannels(channelNames, {
+        failOnStartupError: Boolean(values.channels),
+        logger: debugMode
+          ? (message) => console.log(`[${formatTimestamp()}] ${message}`)
+          : undefined,
+      });
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      await flushListenerTelemetryEnd("listener_channel_start_failed");
+      return 1;
+    }
   }
 
   // Determine connection name
@@ -494,17 +506,17 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     if (startupMode.kind === "local-channels") {
       const connectionId = `local-${deviceId}`;
-      sessionLog.log(
-        `Starting local channel listener for ${startupMode.serverUrl}`,
-      );
+      const startupLabel =
+        startupMode.backend === "local"
+          ? "local backend"
+          : `self-hosted server ${startupMode.serverUrl}`;
+      sessionLog.log(`Starting local channel listener for ${startupLabel}`);
       sessionLog.log("Skipping environment registration");
-      console.log(
-        `Starting local channel listener for self-hosted server ${startupMode.serverUrl}`,
-      );
+      console.log(`Starting local channel listener for ${startupLabel}`);
       console.log("Skipping environment registration. Press Ctrl+C to stop.\n");
 
       const { startLocalChannelListener } = await import(
-        "../../websocket/listen-client"
+        "@/websocket/listen-client"
       );
 
       await startLocalChannelListener({
@@ -577,7 +589,18 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
 
     const { connectionId, wsUrl, supportsSplitStatusChannels } =
-      await registerWithCloud(registerOptions);
+      await registerWithCloudRetry(registerOptions, {
+        onRetry: (attempt, delayMs, error) => {
+          sessionLog.log(
+            `Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+          );
+          if (debugMode) {
+            console.log(
+              `[${formatTimestamp()}] Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+            );
+          }
+        },
+      });
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
@@ -591,9 +614,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
 
     // Import and start WebSocket client
-    const { startListenerClient } = await import(
-      "../../websocket/listen-client"
-    );
+    const { startListenerClient } = await import("@/websocket/listen-client");
 
     // Re-register helper with retry for transient errors (e.g. 521).
     // Uses exponential backoff so a temporary server outage doesn't
@@ -609,6 +630,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         connectionName,
       );
       const result = await registerWithCloudRetry(nextRegisterOptions, {
+        maxDurationMs: Infinity,
         onRetry: (attempt, delayMs, error) => {
           sessionLog.log(
             `Registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,

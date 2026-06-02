@@ -7,16 +7,17 @@ import type {
   ToolReturn,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
-import type { ChannelTurnSource } from "../channels/types";
-import type { ApprovalRequest } from "../cli/helpers/stream";
-import { INTERRUPTED_BY_USER } from "../constants";
-import { getCurrentWorkingDirectory } from "../runtime-context";
+import type { ChannelTurnSource } from "@/channels/types";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   executeTool,
+  isExtensionToolParallelSafeForContext,
   prepareCurrentToolExecutionContext,
   type ToolExecutionResult,
   type ToolReturnContent,
-} from "../tools/manager";
+} from "@/tools/manager";
 
 /**
  * Extract displayable text from tool return content (for UI display).
@@ -82,13 +83,13 @@ const PARALLEL_SAFE_TOOLS = new Set([
   // Task spawns independent subagents
   "Task",
   "Agent",
-  // Plan mode tools (no parameters, no file operations)
-  "EnterPlanMode",
-  "ExitPlanMode",
 ]);
 
-function isParallelSafe(toolName: string): boolean {
-  return PARALLEL_SAFE_TOOLS.has(toolName);
+function isParallelSafe(toolName: string, toolContextId?: string): boolean {
+  return (
+    PARALLEL_SAFE_TOOLS.has(toolName) ||
+    isExtensionToolParallelSafeForContext(toolName, toolContextId)
+  );
 }
 
 /**
@@ -120,6 +121,8 @@ const GLOBAL_LOCK_TOOLS = new Set([
   // Memory tool (file + git side effects)
   "memory",
   "shell_command",
+  "exec_command",
+  "write_stdin",
   "shell",
   "ShellCommand",
   "Shell",
@@ -417,7 +420,7 @@ export async function executeApprovalBatch(
 
     const toolName = decision.approval.toolName;
 
-    if (isParallelSafe(toolName)) {
+    if (isParallelSafe(toolName, toolContextId)) {
       parallelIndices.push(i);
     } else {
       // Get resource key for write tools

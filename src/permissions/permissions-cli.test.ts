@@ -1,0 +1,496 @@
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { checkPermission } from "@/permissions/checker";
+import { cliPermissions } from "@/permissions/cli-permissions-instance";
+import { permissionMode } from "@/permissions/mode";
+import type { PermissionRules } from "@/permissions/types";
+
+beforeEach(() => {
+  permissionMode.setMode("standard");
+});
+
+// Clean up after each test
+afterEach(() => {
+  cliPermissions.clear();
+  permissionMode.reset();
+});
+
+// ============================================================================
+// CLI Permission Parsing Tests
+// ============================================================================
+
+test("Parse simple tool list", () => {
+  cliPermissions.setAllowedTools("Bash,Read,Write");
+  const tools = cliPermissions.getAllowedTools();
+
+  // Bash is normalized to Bash(:*), file tools get (**) wildcard
+  expect(tools).toEqual(["Bash(:*)", "Read(**)", "Write(**)"]);
+});
+
+test("Parse tool list with parameters", () => {
+  cliPermissions.setAllowedTools("Bash(npm install),Read(src/**)");
+  const tools = cliPermissions.getAllowedTools();
+
+  expect(tools).toEqual(["Bash(npm install)", "Read(src/**)"]);
+});
+
+test("Parse tool list with mixed formats", () => {
+  cliPermissions.setAllowedTools("Bash,Read(src/**),Write");
+  const tools = cliPermissions.getAllowedTools();
+
+  expect(tools).toEqual(["Bash(:*)", "Read(src/**)", "Write(**)"]);
+});
+
+test("Parse tool list with wildcards", () => {
+  cliPermissions.setAllowedTools("Bash(git diff:*),Bash(npm run test:*)");
+  const tools = cliPermissions.getAllowedTools();
+
+  expect(tools).toEqual(["Bash(git diff:*)", "Bash(npm run test:*)"]);
+});
+
+test("Handle empty tool list", () => {
+  cliPermissions.setAllowedTools("");
+  const tools = cliPermissions.getAllowedTools();
+
+  expect(tools).toEqual([]);
+});
+
+test("Handle whitespace in tool list", () => {
+  cliPermissions.setAllowedTools("Bash , Read , Write");
+  const tools = cliPermissions.getAllowedTools();
+
+  expect(tools).toEqual(["Bash(:*)", "Read(**)", "Write(**)"]);
+});
+
+test("tracks memory guard disabled state", () => {
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
+  cliPermissions.setMemoryGuardDisabled(false);
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
+});
+
+test("stores singleton on global symbol for bundled duplicate modules", () => {
+  const key = Symbol.for("@letta/cliPermissions");
+  const globals = globalThis as unknown as Record<symbol, unknown>;
+
+  expect(globals[key]).toBe(cliPermissions);
+});
+
+test("clear resets disable-memory-guard CLI override", () => {
+  cliPermissions.setMemoryGuardDisabled(false);
+  cliPermissions.clear();
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
+});
+
+// ============================================================================
+// CLI allowedTools Override Tests
+// ============================================================================
+
+test("allowedTools overrides settings deny rules", () => {
+  cliPermissions.setAllowedTools("Bash");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "npm install" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("Bash(:*) (CLI)");
+  expect(result.reason).toBe("Matched --allowedTools flag");
+});
+
+test("allowedTools with pattern matches specific command", () => {
+  cliPermissions.setAllowedTools("Bash(npm install)");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "npm install" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe("Bash(npm install) (CLI)");
+});
+
+test("allowedTools pattern does not match different command", () => {
+  cliPermissions.setAllowedTools("Bash(npm install)");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "rm -rf /" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // Should not match, fall back to default behavior
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("allowedTools with wildcard prefix matches multiple commands", () => {
+  cliPermissions.setAllowedTools("Bash(npm run test:*)");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result1 = checkPermission(
+    "Bash",
+    { command: "npm run test:unit" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(result1.decision).toBe("allow");
+
+  const result2 = checkPermission(
+    "Bash",
+    { command: "npm run test:integration" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(result2.decision).toBe("allow");
+
+  const result3 = checkPermission(
+    "Bash",
+    { command: "npm run lint" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(result3.decision).toBe("ask"); // Should not match
+});
+
+test("allowedTools applies to multiple tools", () => {
+  cliPermissions.setAllowedTools("Bash,Read,Write");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const bashResult = checkPermission(
+    "Bash",
+    { command: "ls" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(bashResult.decision).toBe("allow");
+
+  const readResult = checkPermission(
+    "Read",
+    { file_path: "/etc/passwd" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(readResult.decision).toBe("allow");
+
+  const writeResult = checkPermission(
+    "Write",
+    { file_path: "/tmp/test.txt" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(writeResult.decision).toBe("allow");
+});
+
+// ============================================================================
+// CLI disallowedTools Override Tests
+// ============================================================================
+
+test("disallowedTools denies tool", () => {
+  cliPermissions.setDisallowedTools("WebFetch");
+
+  const permissions: PermissionRules = {
+    allow: ["WebFetch"],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "WebFetch",
+    { url: "https://example.com" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("WebFetch (CLI)");
+  expect(result.reason).toBe("Matched --disallowedTools flag");
+});
+
+test("disallowedTools with pattern denies specific command", () => {
+  cliPermissions.setDisallowedTools("Bash(curl:*)");
+
+  const permissions: PermissionRules = {
+    allow: ["Bash"],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "curl https://malicious.com" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("Bash(curl:*) (CLI)");
+});
+
+test("disallowedTools overrides settings allow rules", () => {
+  cliPermissions.setDisallowedTools("Bash");
+
+  const permissions: PermissionRules = {
+    allow: ["Bash"],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "ls" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.reason).toBe("Matched --disallowedTools flag");
+});
+
+test("disallowedTools does NOT override settings deny rules", () => {
+  cliPermissions.setAllowedTools("Bash");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: ["Bash(rm -rf:*)"],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "rm -rf /" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // Settings deny should take precedence
+  expect(result.decision).toBe("deny");
+  expect(result.reason).toBe("Matched deny rule");
+  expect(result.matchedRule).toBe("Bash(rm -rf:*)");
+});
+
+// ============================================================================
+// Combined allowedTools and disallowedTools Tests
+// ============================================================================
+
+test("disallowedTools takes precedence over allowedTools", () => {
+  cliPermissions.setAllowedTools("Bash");
+  cliPermissions.setDisallowedTools("Bash(curl:*)");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  // curl should be denied
+  const curlResult = checkPermission(
+    "Bash",
+    { command: "curl https://example.com" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(curlResult.decision).toBe("deny");
+
+  // other commands should be allowed
+  const lsResult = checkPermission(
+    "Bash",
+    { command: "ls" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(lsResult.decision).toBe("allow");
+});
+
+test("allowedTools and disallowedTools with multiple tools", () => {
+  cliPermissions.setAllowedTools("Bash,Read");
+  cliPermissions.setDisallowedTools("Write");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const bashResult = checkPermission(
+    "Bash",
+    { command: "ls" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(bashResult.decision).toBe("allow");
+
+  const readResult = checkPermission(
+    "Read",
+    { file_path: "/tmp/file.txt" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(readResult.decision).toBe("allow");
+
+  const writeResult = checkPermission(
+    "Write",
+    { file_path: "/tmp/file.txt" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(writeResult.decision).toBe("deny");
+});
+
+// ============================================================================
+// Precedence Tests
+// ============================================================================
+
+test("Precedence: settings deny > CLI disallowedTools", () => {
+  cliPermissions.setDisallowedTools("Bash(npm:*)");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: ["Bash(curl:*)"],
+    ask: [],
+  };
+
+  // Settings deny should match first
+  const result = checkPermission(
+    "Bash",
+    { command: "curl https://example.com" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.matchedRule).toBe("Bash(curl:*)");
+  expect(result.reason).toBe("Matched deny rule");
+});
+
+test("Precedence: CLI allowedTools > settings allow", () => {
+  cliPermissions.setAllowedTools("Bash(npm install)");
+
+  const permissions: PermissionRules = {
+    allow: ["Bash(docker:*)"],
+    deny: [],
+    ask: [],
+  };
+
+  // CLI should match for npm install
+  const npmResult = checkPermission(
+    "Bash",
+    { command: "npm install" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(npmResult.decision).toBe("allow");
+  expect(npmResult.matchedRule).toBe("Bash(npm install) (CLI)");
+
+  // Settings should match for docker (non-read-only command)
+  const dockerResult = checkPermission(
+    "Bash",
+    { command: "docker build ." },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(dockerResult.decision).toBe("allow");
+  expect(dockerResult.matchedRule).toBe("Bash(docker:*)");
+});
+
+test("CLI allowedTools normalizes shell aliases to Bash wildcard", () => {
+  cliPermissions.clear();
+  cliPermissions.setAllowedTools("run_shell_command");
+
+  const tools = cliPermissions.getAllowedTools();
+  expect(tools).toEqual(["Bash(:*)"]);
+});
+
+test("CLI allowedTools normalizes file alias family", () => {
+  cliPermissions.clear();
+  cliPermissions.setAllowedTools("WriteFileGemini");
+
+  const tools = cliPermissions.getAllowedTools();
+  expect(tools).toEqual(["Write(**)"]);
+});
+
+test("ShellCommand auto-allows captured read-only inspection scripts", () => {
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const capturedInspectionScripts = [
+    "printf '== apps/client-ui/vite.config.ts ==\\n'; sed -n '1,240p' apps/client-ui/vite.config.ts; printf '\\n== apps/client-ui/package.json ==\\n'; if [ -f apps/client-ui/package.json ]; then sed -n '1,240p' apps/client-ui/package.json; fi",
+    "printf '== workstation ui config files ==\\n'; rg --files apps/workstation/ui | rg '(vite\\.config|package\\.json|project\\.json|index\\.html|main\\.tsx|main\\.ts|tsconfig|sentry|source|map)' ; printf '\\n== apps/workstation/ui/project.json ==\\n'; sed -n '1,240p' apps/workstation/ui/project.json 2>/dev/null; printf '\\n== apps/workstation/ui/vite.config.* ==\\n'; for f in apps/workstation/ui/vite.config.*; do echo \"--- $f ---\"; sed -n '1,260p' \"$f\"; done",
+    "printf '== workstation packaging files ==\\n'; rg --files apps/workstation apps/workstation/electron | rg '(project\\.json|builder|forge|tsup|esbuild|vite\\.config|package\\.json|entitlements|plist|yaml|yml|desktop.*config|notarize|afterSign)' ; printf '\\n== relevant project/build files contents ==\\n'; for f in apps/workstation/project.json apps/workstation/electron/project.json apps/workstation/project.config.json apps/workstation/electron-builder.yml apps/workstation/electron/builder.yml; do if [ -f \"$f\" ]; then echo \"--- $f ---\"; sed -n '1,260p' \"$f\"; fi; done",
+    "printf '== stale asset summary ==\\n'; printf 'JS bundles: '; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.js' | wc -l; printf 'CSS bundles: '; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.css' | wc -l; printf 'All asset files: '; find apps/workstation/dist/assets -maxdepth 1 -type f | wc -l; printf '\\nRecent asset mtimes:\\n'; find apps/workstation/dist/assets -maxdepth 1 -type f -name 'index-*.*' -exec stat -f '%Sm %N' -t '%Y-%m-%d %H:%M' {} \\; | sort | tail -n 20",
+  ] as const;
+
+  for (const command of capturedInspectionScripts) {
+    const result = checkPermission(
+      "ShellCommand",
+      { command },
+      permissions,
+      "/Users/test/project",
+    );
+
+    expect(result.decision).toBe("allow");
+    expect(result.reason).toBe("Read-only shell command");
+  }
+});
+
+test("exec_command uses cmd for Bash permission matching", () => {
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const readOnly = checkPermission(
+    "exec_command",
+    { cmd: "git status --short" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(readOnly.decision).toBe("allow");
+  expect(readOnly.reason).toBe("Read-only shell command");
+
+  cliPermissions.setAllowedTools("Bash(npm run test:*)");
+  const allowed = checkPermission(
+    "exec_command",
+    { cmd: "npm run test:unit" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(allowed.decision).toBe("allow");
+  expect(allowed.matchedRule).toBe("Bash(npm run test:*) (CLI)");
+});

@@ -1,18 +1,13 @@
-// existsSync, readFileSync removed - no longer needed since plan content
-// is shown via StaticPlanApproval during approval, not in tool result
 import { Box } from "ink";
 import { Fragment, memo, type ReactNode } from "react";
-import { INTERRUPTED_BY_USER } from "../../constants";
-import { listTasks } from "../../tools/impl/tasks/store.js";
-import { clipToolReturn } from "../../tools/manager.js";
-import type { AdvancedDiffSuccess } from "../helpers/diff";
+import { getSubagentByToolCallId } from "@/agent/subagent-state.js";
+import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import {
   formatArgsDisplay,
   parsePatchInput,
   parsePatchOperations,
-} from "../helpers/formatArgsDisplay.js";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { getSubagentByToolCallId } from "../helpers/subagentState.js";
+} from "@/cli/helpers/format-args-display.js";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   getDisplayToolName,
   isFileEditTool,
@@ -28,7 +23,12 @@ import {
   isTaskCrudTool,
   isTaskTool,
   isTodoTool,
-} from "../helpers/toolNameMapping.js";
+} from "@/cli/helpers/tool-name-mapping.js";
+import { formatUnifiedExecOutputForTui } from "@/cli/helpers/unified-exec-output.js";
+import { INTERRUPTED_BY_USER } from "@/constants";
+import { listTasks } from "@/tools/impl/tasks/store.js";
+import { clipToolReturn } from "@/tools/manager.js";
+import { isRecord } from "@/utils/type-guards";
 import { Text } from "./Text";
 
 /**
@@ -87,11 +87,15 @@ function colorizeArgs(argsStr: string): ReactNode {
   return <>{parts}</>;
 }
 
-import type { StreamingState } from "../helpers/accumulator";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import type { StreamingState } from "@/cli/helpers/accumulator";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
 import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
+import {
+  CreateWorktreeResultRenderer,
+  parseCreateWorktreeResult,
+} from "./CreateWorktreeResultRenderer.js";
 import { colors } from "./colors.js";
 import {
   EditRenderer,
@@ -126,6 +130,7 @@ type ToolCallLine = {
   toolCallId?: string;
   name?: string;
   argsText?: string;
+  unifiedExecCommandDisplay?: string;
   resultText?: string;
   resultOk?: boolean;
   phase: "streaming" | "ready" | "running" | "finished";
@@ -146,13 +151,15 @@ export const ToolCallMessage = memo(
   ({
     line,
     precomputedDiffs,
-    lastPlanFilePath,
     isStreaming,
+    expandedToolCallId,
+    lastShellToolCallId,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
-    lastPlanFilePath?: string | null;
     isStreaming?: boolean;
+    expandedToolCallId?: string | null;
+    lastShellToolCallId?: string | null;
   }) => {
     const columns = useTerminalWidth();
     try {
@@ -234,7 +241,13 @@ export const ToolCallMessage = memo(
             return { formatted: null, parseable: true };
           }
           try {
-            const formatted = formatArgsDisplay(argsText, rawName);
+            const formatted = formatArgsDisplay(argsText, rawName, {
+              unifiedExecCommandDisplay: line.unifiedExecCommandDisplay,
+              suppressUnifiedExecInteractionLabel:
+                rawName === "write_stdin" &&
+                line.phase === "finished" &&
+                line.resultOk === false,
+            });
             return { formatted, parseable: true };
           } catch {
             return { formatted: null, parseable: false };
@@ -253,13 +266,22 @@ export const ToolCallMessage = memo(
           args = "(…)";
         } else {
           const formattedArgs =
-            formatted ?? formatArgsDisplay(argsText, rawName);
+            formatted ??
+            formatArgsDisplay(argsText, rawName, {
+              unifiedExecCommandDisplay: line.unifiedExecCommandDisplay,
+              suppressUnifiedExecInteractionLabel:
+                rawName === "write_stdin" &&
+                line.phase === "finished" &&
+                line.resultOk === false,
+            });
           if (formattedArgs.shellSemantic) {
             shellSemanticKind = formattedArgs.shellSemantic.kind;
             displayName = formattedArgs.shellSemantic.label;
             if (formattedArgs.shellSemantic.kind === "run") {
               shellCommand = formattedArgs.shellSemantic.rawCommand;
             }
+          } else if (formattedArgs.displayName) {
+            displayName = formattedArgs.displayName;
           }
           // Normalize newlines to spaces to prevent forced line breaks
           const normalizedDisplay = formattedArgs.display.replace(/\n/g, " ");
@@ -283,7 +305,9 @@ export const ToolCallMessage = memo(
       ) {
         try {
           const parsedArgs = JSON.parse(argsText);
-          if (typeof parsedArgs.command === "string") {
+          if (typeof parsedArgs.cmd === "string") {
+            shellCommand = parsedArgs.cmd;
+          } else if (typeof parsedArgs.command === "string") {
             shellCommand = parsedArgs.command;
           } else if (Array.isArray(parsedArgs.command)) {
             shellCommand = parsedArgs.command.join(" ");
@@ -397,10 +421,6 @@ export const ToolCallMessage = memo(
           /\n+$/,
           "",
         );
-
-        // Helper to check if a value is a record
-        const isRecord = (v: unknown): v is Record<string, unknown> =>
-          typeof v === "object" && v !== null;
 
         // Check if this is a todo_write tool with successful result
         if (
@@ -557,25 +577,12 @@ export const ToolCallMessage = memo(
           // Fall through to regular handling if parsing fails
         }
 
-        // Check if this is ExitPlanMode - just show path, not plan content
-        // The plan content was already shown during approval via StaticPlanApproval
-        // (rendered via Ink's <Static> and is visible in terminal scrollback)
-        if (rawName === "ExitPlanMode" && line.resultOk !== false) {
-          const planFilePath = lastPlanFilePath;
-
-          if (planFilePath) {
-            return (
-              <Box flexDirection="row">
-                <Box width={prefixWidth} flexShrink={0}>
-                  <Text>{prefix}</Text>
-                </Box>
-                <Box flexGrow={1} width={contentWidth}>
-                  <Text dimColor>Plan saved to: {planFilePath}</Text>
-                </Box>
-              </Box>
-            );
+        // Check if this is CreateWorktree - show a compact structured summary
+        // instead of the full instructional tool return.
+        if (rawName === "CreateWorktree" && line.resultOk !== false) {
+          if (parseCreateWorktreeResult(extractedText)) {
+            return <CreateWorktreeResultRenderer resultText={extractedText} />;
           }
-          // Fall through to default if no plan path
         }
 
         // Check if this is a file edit tool - show diff instead of success message
@@ -1045,12 +1052,23 @@ export const ToolCallMessage = memo(
           {isShellOutputTool(rawName) &&
             line.phase === "finished" &&
             line.resultText &&
-            line.resultOk !== false && (
-              <CollapsedOutputDisplay
-                output={extractMessageFromResult(line.resultText)}
-                maxChars={300}
-              />
-            )}
+            line.resultOk !== false &&
+            (() => {
+              const output = formatUnifiedExecOutputForTui(
+                extractMessageFromResult(line.resultText),
+                { hideEmptyCompletion: rawName === "write_stdin" },
+              );
+              return output ? (
+                <CollapsedOutputDisplay
+                  output={output}
+                  maxChars={300}
+                  expanded={
+                    expandedToolCallId != null && expandedToolCallId === line.id
+                  }
+                  isLast={lastShellToolCallId === line.id}
+                />
+              ) : null;
+            })()}
 
           {/* Tool result for non-shell tools or shell tool errors */}
           {(() => {

@@ -3,6 +3,8 @@ export {
   type AddTaskResult,
   addTask,
   type CancelReason,
+  type CronRunOutcome,
+  type CronRunReason,
   type CronTask,
   type CronTaskStatus,
   claimSchedulerLease,
@@ -21,7 +23,7 @@ export {
   updateTask,
   verifySchedulerLease,
   withLock,
-} from "./cronFile";
+} from "./cron-file";
 
 export {
   cronMatchesTime,
@@ -31,8 +33,21 @@ export {
   type ParsedInterval,
   parseAt,
   parseEvery,
-} from "./parseInterval";
-
+} from "./parse-interval";
+export {
+  appendCronRunLog,
+  appendCronRunLogForTask,
+  type CronRunLogEntry,
+  type CronRunLogPage,
+  type CronRunLogStatus,
+  DEFAULT_CRON_RUN_LOG_KEEP_LINES,
+  DEFAULT_CRON_RUN_LOG_MAX_BYTES,
+  getCronRunLogPath,
+  readCronRunLogEntries,
+  readCronRunLogEntriesPage,
+  resolveCronRunLogPath,
+  safeAppendCronRunLogForTask,
+} from "./run-log";
 export {
   handleMissedOneShot,
   shouldFireTask,

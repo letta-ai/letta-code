@@ -1,8 +1,8 @@
 /**
  * Model resolution and handling utilities
  */
-import modelsData from "../models.json";
-import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import modelsData from "@/models.json";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 
 export const models = modelsData.models;
 
@@ -15,6 +15,15 @@ export type ModelReasoningEffort =
   | "xhigh"
   | "max";
 
+type ModelConfigSnapshot = {
+  model?: string | null;
+  model_endpoint_type?: string | null;
+  reasoning_effort?: string | null;
+  enable_reasoner?: boolean | null;
+  context_window?: number | null;
+  service_tier?: string | null;
+};
+
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
   "minimal",
@@ -25,11 +34,104 @@ const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "max",
 ];
 
+const LOCAL_REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
+  "none",
+  "low",
+  "medium",
+  "high",
+];
+
+const LOCAL_MODEL_HANDLE_PREFIXES = [
+  "ollama/",
+  "ollama-cloud/",
+  "lmstudio/",
+  "llama.cpp/",
+  "llama-cpp/",
+];
+
+const LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX = "openai-codex/";
+const CHATGPT_OAUTH_LLM_CONFIG_PROVIDER = "chatgpt_oauth";
+export const CHATGPT_FAST_SERVICE_TIER = "priority";
+
+export function isLocalModelHandle(modelHandle: string): boolean {
+  return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
+    modelHandle.startsWith(prefix),
+  );
+}
+
+export function getLocalModelLabel(modelHandle: string): string {
+  const providerPrefix = LOCAL_MODEL_HANDLE_PREFIXES.find((prefix) =>
+    modelHandle.startsWith(prefix),
+  );
+  return providerPrefix
+    ? modelHandle.slice(providerPrefix.length)
+    : modelHandle;
+}
+
 function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
   return (
     typeof value === "string" &&
     REASONING_EFFORT_ORDER.includes(value as ModelReasoningEffort)
   );
+}
+
+export function normalizeModelHandleForRegistry(
+  modelHandle: string | null | undefined,
+): string | null {
+  if (!modelHandle) return null;
+  const [provider, ...modelParts] = modelHandle.split("/");
+  const model = modelParts.join("/");
+  if (
+    (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER ||
+      provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1)) &&
+    model.length > 0 &&
+    !model.endsWith("-fast")
+  ) {
+    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
+  }
+  return modelHandle;
+}
+
+function modelPortion(modelHandle: string): string | null {
+  const slashIndex = modelHandle.indexOf("/");
+  if (slashIndex === -1) return null;
+  return modelHandle.slice(slashIndex + 1);
+}
+
+export function isLocalChatGptOAuthModelHandle(modelHandle: string): boolean {
+  return modelHandle.startsWith(LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX);
+}
+
+export function getChatGptFastRegistryHandleForModelHandle(
+  modelHandle: string,
+): string | null {
+  const [provider] = modelHandle.split("/");
+  if (
+    provider !== LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
+    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER
+  ) {
+    return null;
+  }
+  const normalized = normalizeModelHandleForRegistry(modelHandle);
+  if (!normalized?.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`)) return null;
+  const model = modelPortion(normalized);
+  if (!model || model.endsWith("-fast")) return null;
+  const fastHandle = `${OPENAI_CODEX_PROVIDER_NAME}/${model}-fast`;
+  return models.some((entry) => entry.handle === fastHandle)
+    ? fastHandle
+    : null;
+}
+
+function displayRegistryHandleForServiceTier(
+  modelHandle: string,
+  serviceTier?: string | null,
+): string {
+  if (serviceTier === CHATGPT_FAST_SERVICE_TIER) {
+    return (
+      getChatGptFastRegistryHandleForModelHandle(modelHandle) ?? modelHandle
+    );
+  }
+  return normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
 }
 
 export function getReasoningTierOptionsForHandle(
@@ -40,9 +142,11 @@ export function getReasoningTierOptionsForHandle(
   modelId: string;
 }> {
   const byEffort = new Map<ModelReasoningEffort, string>();
+  const registryHandle =
+    normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
 
   for (const model of models) {
-    if (model.handle !== modelHandle) continue;
+    if (model.handle !== registryHandle) continue;
     if (contextWindow !== undefined) {
       const mCtx = (model.updateArgs as { context_window?: number } | null)
         ?.context_window;
@@ -54,6 +158,13 @@ export function getReasoningTierOptionsForHandle(
     if (!byEffort.has(effort)) {
       byEffort.set(effort, model.id);
     }
+  }
+
+  if (byEffort.size === 0 && isLocalModelHandle(registryHandle)) {
+    return LOCAL_REASONING_EFFORT_ORDER.map((effort) => ({
+      effort,
+      modelId: registryHandle,
+    }));
   }
 
   return REASONING_EFFORT_ORDER.flatMap((effort) => {
@@ -128,7 +239,8 @@ export function getModelInfo(modelIdentifier: string) {
   const byId = models.find((m) => m.id === modelIdentifier);
   if (byId) return byId;
 
-  const byHandle = models.find((m) => m.handle === modelIdentifier);
+  const normalizedHandle = normalizeModelHandleForRegistry(modelIdentifier);
+  const byHandle = models.find((m) => m.handle === normalizedHandle);
   if (byHandle) return byHandle;
 
   return null;
@@ -149,13 +261,18 @@ export function getModelInfoForLlmConfig(
     reasoning_effort?: string | null;
     enable_reasoner?: boolean | null;
     context_window?: number | null;
+    service_tier?: string | null;
   } | null,
 ) {
+  const registryHandle = displayRegistryHandleForServiceTier(
+    modelHandle,
+    llmConfig?.service_tier ?? null,
+  );
   // Try ID/handle direct resolution first.
-  const direct = getModelInfo(modelHandle);
+  const direct = getModelInfo(registryHandle);
 
   // Collect all candidates that share this handle.
-  let candidates = models.filter((m) => m.handle === modelHandle);
+  let candidates = models.filter((m) => m.handle === registryHandle);
   if (candidates.length === 0) {
     return direct;
   }
@@ -212,6 +329,59 @@ export function getModelInfoForLlmConfig(
     return candidates[0] ?? direct ?? null;
   }
   return direct ?? candidates[0] ?? null;
+}
+
+function buildModelHandleFromConfig(
+  config: ModelConfigSnapshot | null | undefined,
+): string | null {
+  if (!config) return null;
+  if (config.model_endpoint_type && config.model) {
+    return `${config.model_endpoint_type}/${config.model}`;
+  }
+  return config.model ?? null;
+}
+
+export function shouldPreserveContextWindowForModelSelection(input: {
+  currentModelHandle?: string | null;
+  currentModelId?: string | null;
+  currentLlmConfig?: ModelConfigSnapshot | null;
+  selectedModelHandle: string;
+  selectedContextWindow?: number;
+}): boolean {
+  const currentRegistryModelHandle = normalizeModelHandleForRegistry(
+    input.currentModelHandle ??
+      buildModelHandleFromConfig(input.currentLlmConfig),
+  );
+  const selectedRegistryModelHandle = normalizeModelHandleForRegistry(
+    input.selectedModelHandle,
+  );
+
+  if (
+    selectedRegistryModelHandle === null ||
+    selectedRegistryModelHandle !== currentRegistryModelHandle
+  ) {
+    return false;
+  }
+
+  const currentModelInfo = input.currentModelId
+    ? getModelInfo(input.currentModelId)
+    : currentRegistryModelHandle
+      ? getModelInfoForLlmConfig(
+          currentRegistryModelHandle,
+          input.currentLlmConfig,
+        )
+      : null;
+  const currentPresetContextWindow = (
+    currentModelInfo?.updateArgs as { context_window?: unknown } | undefined
+  )?.context_window;
+
+  return (
+    typeof input.selectedContextWindow !== "number" ||
+    (typeof currentPresetContextWindow === "number" &&
+      input.selectedContextWindow === currentPresetContextWindow) ||
+    (typeof currentPresetContextWindow !== "number" &&
+      input.selectedContextWindow === input.currentLlmConfig?.context_window)
+  );
 }
 
 /**
@@ -375,14 +545,16 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
     candidates[0] ??
     null;
 
+  const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+
   // Try exact match first
-  const exactMatch = models.find((m) => m.handle === handle);
+  const exactMatch = models.find((m) => m.handle === registryHandle);
   if (exactMatch) return exactMatch;
 
   // For handles like "bedrock/claude-opus-4-5-20251101" where the API returns without
   // vendor prefix or version suffix, but models.json has
   // "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0", try fuzzy matching
-  const [provider, ...rest] = handle.split("/");
+  const [provider, ...rest] = registryHandle.split("/");
   if (provider && rest.length > 0) {
     const modelPortion = rest.join("/");
     // Find models with the same provider where the model portion is contained

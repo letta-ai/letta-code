@@ -6,23 +6,31 @@ import {
   getAvailableModelHandles,
   getAvailableModelsCacheInfo,
   getCachedModelHandles,
-} from "../../agent/available-models";
-import { models } from "../../agent/model";
+} from "@/agent/available-models";
+import {
+  CHATGPT_FAST_SERVICE_TIER,
+  getChatGptFastRegistryHandleForModelHandle,
+  getLocalModelLabel,
+  getModelInfo,
+  models,
+  normalizeModelHandleForRegistry,
+} from "@/agent/model";
+
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
   listProviders,
-} from "../../providers/byok-providers";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/providers/byok-providers";
+import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
+import { OverlayShell } from "./OverlayShell";
+import { TabBar } from "./TabBar";
 import { Text } from "./Text";
-
-// Horizontal line character (matches approval dialogs)
-const SOLID_LINE = "─";
 
 const VISIBLE_ITEMS = 8;
 
 type ModelCategory =
+  | "recents"
   | "supported"
   | "byok"
   | "byok-all"
@@ -40,30 +48,94 @@ export function usesBackendModelCatalog(
   return Boolean(isSelfHosted || localModelCatalog);
 }
 
+export function getEmptyStateActionDescriptors(
+  showLoginAction: boolean,
+): Array<{
+  id: "connect" | "login";
+  label: string;
+  description: string;
+}> {
+  return [
+    {
+      id: "connect",
+      label: "/connect",
+      description: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
+    },
+    ...(showLoginAction
+      ? [
+          {
+            id: "login" as const,
+            label: "/login",
+            description: "Sign in to Letta Constellation",
+          },
+        ]
+      : []),
+  ];
+}
+
 // Get tab order for model categories.
 // For self-hosted servers, only show server-specific tabs.
 // For Letta-hosted, keep ordering consistent across billing tiers.
+// "recents" is prepended when the user has >= 2 recently used models.
 export function getModelCategories(
   _billingTier?: string,
   isSelfHosted?: boolean,
   localModelCatalog?: boolean,
+  recentModelCount?: number,
 ): ModelCategory[] {
+  const showRecents =
+    (recentModelCount ?? settingsManager.getRecentModels().length) >= 2;
   if (usesBackendModelCatalog(isSelfHosted, localModelCatalog)) {
-    return ["server-recommended", "server-all"];
+    const base: ModelCategory[] = ["server-recommended", "server-all"];
+    if (showRecents) {
+      return ["recents", ...base];
+    }
+    return base;
   }
-  return ["supported", "all", "byok", "byok-all"];
+  const base: ModelCategory[] = ["supported", "all", "byok", "byok-all"];
+  if (showRecents) {
+    return ["recents", ...base];
+  }
+  return base;
 }
 
-type UiModel = {
+export type UiModel = {
   id: string;
   handle: string;
   label: string;
   description: string;
+  registryHandle?: string;
   isDefault?: boolean;
   isFeatured?: boolean;
   free?: boolean;
   updateArgs?: Record<string, unknown>;
 };
+
+export type ModelSelectorSelection = Pick<
+  UiModel,
+  "id" | "handle" | "label" | "description" | "registryHandle" | "updateArgs"
+>;
+
+export function toSelectorModelForHandle(handle: string): UiModel {
+  const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+  const modelInfo = getModelInfo(registryHandle);
+  if (modelInfo) {
+    return {
+      id: handle,
+      handle,
+      registryHandle,
+      label: modelInfo.label,
+      description: modelInfo.description ?? "",
+      updateArgs: modelInfo.updateArgs as Record<string, unknown> | undefined,
+    };
+  }
+  return {
+    id: handle,
+    handle,
+    label: getLocalModelLabel(handle),
+    description: "",
+  };
+}
 
 const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
 
@@ -88,7 +160,12 @@ export function filterModelsByAvailabilityForSelector<
 
 interface ModelSelectorProps {
   currentModelId?: string;
-  onSelect: (modelId: string) => void;
+  /** The current model's handle (e.g., "anthropic/claude-sonnet-4.6") for accurate current model highlighting */
+  currentModelHandle?: string | null;
+  currentModelServiceTier?: string | null;
+  onSelect: (selection: ModelSelectorSelection) => void;
+  onOpenConnect?: () => void;
+  onOpenLogin?: () => void;
   onCancel: () => void;
   /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
   filterProvider?: string;
@@ -104,7 +181,11 @@ interface ModelSelectorProps {
 
 export function ModelSelector({
   currentModelId,
+  currentModelHandle,
+  currentModelServiceTier,
   onSelect,
+  onOpenConnect,
+  onOpenLogin,
   onCancel,
   filterProvider,
   forceRefresh: forceRefreshOnMount,
@@ -112,8 +193,6 @@ export function ModelSelector({
   isSelfHosted,
   localModelCatalog,
 }: ModelSelectorProps) {
-  const terminalWidth = useTerminalWidth();
-  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
 
   // For self-hosted and local backends, only show the active backend's model catalog.
@@ -146,6 +225,7 @@ export function ModelSelector({
   const [isCached, setIsCached] = useState(cachedHandlesAtMount !== null);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showLoginAction, setShowLoginAction] = useState(false);
   const [byokProviderAliases, setByokProviderAliases] = useState<
     Record<string, string>
   >(() => buildByokProviderAliases([]));
@@ -157,6 +237,29 @@ export function ModelSelector({
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (isSelfHosted) {
+      setShowLoginAction(false);
+      return;
+    }
+
+    let cancelled = false;
+    void settingsManager
+      .getSettingsWithSecureTokens()
+      .then((settings) => {
+        if (cancelled) return;
+        setShowLoginAction(!settings.refreshToken);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setShowLoginAction(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSelfHosted]);
 
   // Fetch available models from the API (with caching + inflight dedupe)
   const loadModels = useRef(async (forceRefresh = false) => {
@@ -213,9 +316,10 @@ export function ModelSelector({
 
   const pickPreferredStaticModel = useCallback(
     (handle: string, contextWindow?: number): UiModel | undefined => {
+      const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
       const staticCandidates = typedModels.filter(
         (m) =>
-          m.handle === handle &&
+          m.handle === registryHandle &&
           (contextWindow === undefined ||
             (m.updateArgs?.context_window as number | undefined) ===
               contextWindow),
@@ -237,6 +341,77 @@ export function ModelSelector({
       );
     },
     [typedModels],
+  );
+
+  const serviceTierForModel = useCallback((model: UiModel): string | null => {
+    const value = model.updateArgs?.service_tier;
+    return value === CHATGPT_FAST_SERVICE_TIER
+      ? CHATGPT_FAST_SERVICE_TIER
+      : null;
+  }, []);
+
+  const withActualHandle = useCallback(
+    (
+      model: UiModel,
+      handle: string,
+      registryHandle?: string,
+      updateArgs?: Record<string, unknown>,
+    ): UiModel => ({
+      ...model,
+      id:
+        updateArgs?.service_tier === CHATGPT_FAST_SERVICE_TIER
+          ? `${handle}::service_tier=${CHATGPT_FAST_SERVICE_TIER}`
+          : handle,
+      handle,
+      registryHandle: registryHandle ?? model.registryHandle ?? model.handle,
+      updateArgs: updateArgs ?? model.updateArgs,
+    }),
+    [],
+  );
+
+  const modelsForBackendHandle = useCallback(
+    (handle: string, includeUnknown: boolean): UiModel[] => {
+      const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+      const baseStaticModel = pickPreferredStaticModel(registryHandle);
+      const fastRegistryHandle =
+        getChatGptFastRegistryHandleForModelHandle(handle);
+
+      const baseUpdateArgs = {
+        ...((baseStaticModel?.updateArgs as
+          | Record<string, unknown>
+          | undefined) ?? {}),
+        ...(fastRegistryHandle ? { service_tier: null } : {}),
+      };
+      const baseModel = baseStaticModel
+        ? withActualHandle(
+            baseStaticModel,
+            handle,
+            registryHandle,
+            Object.keys(baseUpdateArgs).length > 0 ? baseUpdateArgs : undefined,
+          )
+        : includeUnknown
+          ? toSelectorModelForHandle(handle)
+          : null;
+
+      const result = baseModel ? [baseModel] : [];
+
+      if (fastRegistryHandle) {
+        const fastStaticModel = pickPreferredStaticModel(fastRegistryHandle);
+        if (fastStaticModel) {
+          result.push(
+            withActualHandle(fastStaticModel, handle, fastRegistryHandle, {
+              ...((fastStaticModel.updateArgs as
+                | Record<string, unknown>
+                | undefined) ?? {}),
+              service_tier: CHATGPT_FAST_SERVICE_TIER,
+            }),
+          );
+        }
+      }
+
+      return result;
+    },
+    [pickPreferredStaticModel, withActualHandle],
   );
 
   // Supported models: models.json entries that are available
@@ -274,7 +449,7 @@ export function ModelSelector({
     const deduped: UiModel[] = [];
     for (const m of available) {
       const contextWindow = m.updateArgs?.context_window as number | undefined;
-      const key = `${m.handle}:${contextWindow ?? 0}`;
+      const key = `${m.handle}:${contextWindow ?? 0}:${serviceTierForModel(m) ?? "default"}`;
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(pickPreferredStaticModel(m.handle, contextWindow) ?? m);
@@ -290,6 +465,7 @@ export function ModelSelector({
     filterProvider,
     searchQuery,
     pickPreferredStaticModel,
+    serviceTierForModel,
   ]);
 
   // BYOK models: models from ChatGPT OAuth, standard lc-* providers, or any connected custom BYOK provider
@@ -425,15 +601,16 @@ export function ModelSelector({
   // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
     if (!backendModelCatalog || availableHandles === undefined) return [];
-    let available = typedModels.filter(
-      (m) => availableHandles?.has(m.handle) && m.handle !== "letta/letta-free",
-    );
+    let available = allApiHandles
+      .filter((handle) => handle !== "letta/letta-free")
+      .flatMap((handle) => modelsForBackendHandle(handle, false));
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       available = available.filter(
         (m) =>
           m.label.toLowerCase().includes(query) ||
           m.description.toLowerCase().includes(query) ||
+          m.registryHandle?.toLowerCase().includes(query) ||
           m.handle.toLowerCase().includes(query),
       );
     }
@@ -442,71 +619,145 @@ export function ModelSelector({
     const deduped: UiModel[] = [];
     for (const m of available) {
       const contextWindow = m.updateArgs?.context_window as number | undefined;
-      const key = `${m.handle}:${contextWindow ?? 0}`;
+      const key = `${m.handle}:${contextWindow ?? 0}:${serviceTierForModel(m) ?? "default"}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      deduped.push(pickPreferredStaticModel(m.handle, contextWindow) ?? m);
+      deduped.push(m);
     }
     return deduped;
   }, [
     backendModelCatalog,
-    typedModels,
     availableHandles,
+    allApiHandles,
     searchQuery,
-    pickPreferredStaticModel,
+    modelsForBackendHandle,
+    serviceTierForModel,
   ]);
 
   // Server-all models: ALL handles from the server (for self-hosted)
   // Filter out letta/letta-free legacy model
   const serverAllModels = useMemo(() => {
     if (!backendModelCatalog) return [];
-    let handles = allApiHandles.filter((h) => h !== "letta/letta-free");
+    const handles = allApiHandles.filter((h) => h !== "letta/letta-free");
+    return handles;
+  }, [backendModelCatalog, allApiHandles]);
+
+  const serverAllModelRows = useMemo(() => {
+    if (!backendModelCatalog) return [];
+    let rows = serverAllModels.flatMap((handle) =>
+      modelsForBackendHandle(handle, true),
+    );
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      handles = handles.filter((h) => h.toLowerCase().includes(query));
+      rows = rows.filter(
+        (model) =>
+          model.label.toLowerCase().includes(query) ||
+          model.description.toLowerCase().includes(query) ||
+          model.registryHandle?.toLowerCase().includes(query) ||
+          model.handle.toLowerCase().includes(query),
+      );
     }
-    return handles;
-  }, [backendModelCatalog, allApiHandles, searchQuery]);
+    return rows;
+  }, [
+    backendModelCatalog,
+    serverAllModels,
+    modelsForBackendHandle,
+    searchQuery,
+  ]);
+
+  // Recent models: models the user has recently selected (max 5)
+  // Only includes models that are currently available
+  const recentModels = useMemo(() => {
+    if (availableHandles === undefined) return [];
+    const recentHandles = settingsManager.getRecentModels();
+    if (recentHandles.length < 2) return []; // Don't show recents with < 2 items
+
+    const resolved: UiModel[] = [];
+    for (const handle of recentHandles) {
+      // When availableHandles is non-null, skip unavailable models
+      if (availableHandles !== null && !availableHandles.has(handle)) continue;
+
+      // Try to resolve to a static model with label/description
+      const staticModel = pickPreferredStaticModel(handle);
+      if (staticModel) {
+        resolved.push({
+          ...staticModel,
+          id: handle,
+          handle,
+        });
+      } else {
+        resolved.push(toSelectorModelForHandle(handle));
+      }
+    }
+    return resolved;
+  }, [availableHandles, pickPreferredStaticModel]);
+
+  // Map category -> list for O(1) lookup
+  const categoryListMap = useMemo(
+    () => ({
+      recents: recentModels,
+      supported: supportedModels,
+      byok: byokModels,
+      "byok-all": byokAllModels.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      })),
+      "server-recommended": serverRecommendedModels,
+      "server-all": serverAllModelRows,
+      all: allLettaModels,
+    }),
+    [
+      recentModels,
+      supportedModels,
+      byokModels,
+      byokAllModels,
+      allLettaModels,
+      serverRecommendedModels,
+      serverAllModelRows,
+    ],
+  );
+
+  // Filter out empty categories so the tab bar never shows tabs with 0 items
+  const nonEmptyCategories = useMemo(
+    () =>
+      modelCategories.filter((cat) => {
+        const list = categoryListMap[cat];
+        if (!list || list.length === 0) return false;
+        // Recents tab only shows when there are ≥2 available recent models
+        if (cat === "recents" && list.length < 2) return false;
+        return true;
+      }),
+    [modelCategories, categoryListMap],
+  );
+
+  // All categories empty → show null state under a single "All" tab
+  const allEmpty =
+    !isLoading && nonEmptyCategories.length === 0 && !searchQuery;
+  const emptyStateActions = useMemo(
+    () =>
+      getEmptyStateActionDescriptors(showLoginAction).map((action) => ({
+        ...action,
+        onSelect: action.id === "connect" ? onOpenConnect : onOpenLogin,
+      })),
+    [onOpenConnect, onOpenLogin, showLoginAction],
+  );
+
+  // When all categories are empty, collapse to a single "All" tab
+  const displayCategories = useMemo(
+    () =>
+      allEmpty
+        ? ([backendModelCatalog ? "server-all" : "all"] as ModelCategory[])
+        : nonEmptyCategories,
+    [allEmpty, backendModelCatalog, nonEmptyCategories],
+  );
 
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
-    if (category === "supported") {
-      return supportedModels;
-    }
-    if (category === "byok") {
-      return byokModels;
-    }
-    if (category === "byok-all") {
-      // Convert raw handles to UiModel
-      return byokAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-      }));
-    }
-    if (category === "server-recommended") {
-      return serverRecommendedModels;
-    }
-    if (category === "server-all") {
-      // Convert raw handles to UiModel
-      return serverAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-      }));
-    }
-    return allLettaModels;
-  }, [
-    category,
-    supportedModels,
-    byokModels,
-    byokAllModels,
-    allLettaModels,
-    serverRecommendedModels,
-    serverAllModels,
-  ]);
+    const list = categoryListMap[category] as UiModel[] | undefined;
+    return list ?? [];
+  }, [category, categoryListMap]);
 
   // Show 1 fewer item because Search line takes space
   const visibleCount = VISIBLE_ITEMS - 1;
@@ -528,17 +779,29 @@ export function ModelSelector({
   const showScrollDown = startIndex + visibleCount < currentList.length;
   const itemsBelow = currentList.length - startIndex - visibleCount;
 
+  // Auto-switch to first non-empty category if current category becomes empty
+  useEffect(() => {
+    if (allEmpty) return;
+    if (
+      nonEmptyCategories.length > 0 &&
+      !nonEmptyCategories.includes(category)
+    ) {
+      setCategory(nonEmptyCategories[0] as ModelCategory);
+      setSelectedIndex(0);
+    }
+  }, [nonEmptyCategories, category, allEmpty]);
+
   // Reset selection when category changes
   const cycleCategory = useCallback(() => {
     setCategory((current) => {
-      const idx = modelCategories.indexOf(current);
-      return modelCategories[
-        (idx + 1) % modelCategories.length
-      ] as ModelCategory;
+      const cats =
+        displayCategories.length > 0 ? displayCategories : modelCategories;
+      const idx = cats.indexOf(current);
+      return cats[(idx + 1) % cats.length] as ModelCategory;
     });
     setSelectedIndex(0);
     setSearchQuery("");
-  }, [modelCategories]);
+  }, [displayCategories, modelCategories]);
 
   // Set initial selection to current model on mount
   const initializedRef = useRef(false);
@@ -554,10 +817,13 @@ export function ModelSelector({
 
   // Clamp selectedIndex when list changes
   useEffect(() => {
-    if (selectedIndex >= currentList.length && currentList.length > 0) {
-      setSelectedIndex(currentList.length - 1);
+    const selectableCount = allEmpty
+      ? emptyStateActions.length
+      : currentList.length;
+    if (selectedIndex >= selectableCount && selectableCount > 0) {
+      setSelectedIndex(selectableCount - 1);
     }
-  }, [selectedIndex, currentList.length]);
+  }, [selectedIndex, currentList.length, allEmpty, emptyStateActions.length]);
 
   useInput(
     (input, key) => {
@@ -596,10 +862,10 @@ export function ModelSelector({
       if (key.leftArrow) {
         // Cycle backwards through categories
         setCategory((current) => {
-          const idx = modelCategories.indexOf(current);
-          return modelCategories[
-            idx === 0 ? modelCategories.length - 1 : idx - 1
-          ] as ModelCategory;
+          const cats =
+            displayCategories.length > 0 ? displayCategories : modelCategories;
+          const idx = cats.indexOf(current);
+          return cats[idx === 0 ? cats.length - 1 : idx - 1] as ModelCategory;
         });
         setSelectedIndex(0);
         setSearchQuery("");
@@ -613,6 +879,23 @@ export function ModelSelector({
           setSelectedIndex(0);
         }
         return;
+      }
+
+      if (allEmpty) {
+        if (key.upArrow) {
+          setSelectedIndex((prev) => Math.max(0, prev - 1));
+          return;
+        }
+        if (key.downArrow) {
+          setSelectedIndex((prev) =>
+            Math.min(emptyStateActions.length - 1, prev + 1),
+          );
+          return;
+        }
+        if (key.return) {
+          emptyStateActions[selectedIndex]?.onSelect?.();
+          return;
+        }
       }
 
       // Capture text input for search (allow typing even with 0 results)
@@ -643,7 +926,14 @@ export function ModelSelector({
       } else if (key.return) {
         const selectedModel = currentList[selectedIndex];
         if (selectedModel) {
-          onSelect(selectedModel.id);
+          onSelect({
+            id: selectedModel.id,
+            handle: selectedModel.handle,
+            label: selectedModel.label,
+            description: selectedModel.description,
+            registryHandle: selectedModel.registryHandle,
+            updateArgs: selectedModel.updateArgs,
+          });
         }
       }
     },
@@ -652,16 +942,21 @@ export function ModelSelector({
   );
 
   const getCategoryLabel = (cat: ModelCategory) => {
+    if (cat === "recents") return `Recents [${recentModels.length}]`;
     if (cat === "supported") return `Letta API [${supportedModels.length}]`;
     if (cat === "byok") return `BYOK [${byokModels.length}]`;
     if (cat === "byok-all") return `BYOK (all) [${byokAllModels.length}]`;
     if (cat === "server-recommended")
       return `Recommended [${serverRecommendedModels.length}]`;
-    if (cat === "server-all") return `All models [${serverAllModels.length}]`;
+    if (cat === "server-all")
+      return `All models [${serverAllModelRows.length}]`;
     return `Letta API (all) [${allLettaModels.length}]`;
   };
 
   const getCategoryDescription = (cat: ModelCategory) => {
+    if (cat === "recents") {
+      return "Models you've recently used";
+    }
     if (cat === "server-recommended") {
       return "Recommended models currently available for this account";
     }
@@ -685,55 +980,80 @@ export function ModelSelector({
     return "All Letta API models currently available for this account";
   };
 
-  // Render tab bar (matches AgentSelector style)
-  const renderTabBar = () => (
-    <Box flexDirection="row" gap={2}>
-      {modelCategories.map((cat) => {
-        const isActive = cat === category;
-        return (
-          <Text
-            key={cat}
-            backgroundColor={
-              isActive ? colors.selector.itemHighlighted : undefined
-            }
-            color={isActive ? "white" : undefined}
-            bold={isActive}
-          >
-            {` ${getCategoryLabel(cat)} `}
-          </Text>
-        );
-      })}
-    </Box>
-  );
-
   return (
-    <Box flexDirection="column">
-      {/* Command header */}
-      <Text dimColor>{"> /model"}</Text>
-      <Text dimColor>{solidLine}</Text>
-
-      <Box height={1} />
-
-      {/* Title and tabs */}
-      <Box flexDirection="column" gap={1} marginBottom={1}>
-        <Text bold color={colors.selector.title}>
-          Swap your agent's model
-        </Text>
-        {!isLoading && (
-          <Box flexDirection="column" paddingLeft={1}>
-            {renderTabBar()}
-            <Text dimColor> {getCategoryDescription(category)}</Text>
-            <Text>
-              <Text dimColor> Search: </Text>
-              {searchQuery ? (
-                <Text>{searchQuery}</Text>
-              ) : (
-                <Text dimColor>(type to filter)</Text>
-              )}
+    <OverlayShell
+      command="/model"
+      title="Swap your agent's model"
+      footer={
+        !isLoading && currentList.length > 0 ? (
+          <Box flexDirection="column">
+            <Text dimColor>
+              {"  "}
+              {currentList.length} models{isCached ? " · cached" : ""}
+              {refreshing ? " · refreshing..." : " · R to refresh list"}
+            </Text>
+            <Text dimColor>
+              {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel
             </Text>
           </Box>
-        )}
-      </Box>
+        ) : undefined
+      }
+    >
+      {!isLoading && !allEmpty && (
+        <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
+          <TabBar
+            tabs={displayCategories}
+            activeTab={category}
+            getLabel={getCategoryLabel}
+          />
+          <Text dimColor> {getCategoryDescription(category)}</Text>
+          <Text>
+            <Text dimColor> Search: </Text>
+            {searchQuery ? (
+              <Text>{searchQuery}</Text>
+            ) : (
+              <Text dimColor>(type to filter)</Text>
+            )}
+          </Text>
+        </Box>
+      )}
+
+      {/* Null state — no models available */}
+      {!isLoading && allEmpty && (
+        <Box flexDirection="column" paddingLeft={1}>
+          <TabBar
+            tabs={displayCategories}
+            activeTab={displayCategories[0] as ModelCategory}
+            getLabel={getCategoryLabel}
+          />
+          <Box flexDirection="column" paddingLeft={1} marginTop={1}>
+            <Text dimColor>No models available.</Text>
+            <Text dimColor>
+              Set an LLM API key in your env and restart `letta` or use the
+              following options:
+            </Text>
+            <Box height={1} />
+            {emptyStateActions.map((action, index) => {
+              const isSelected = index === selectedIndex;
+              return (
+                <Box key={action.id} flexDirection="column" marginBottom={1}>
+                  <Text
+                    color={
+                      isSelected ? colors.selector.itemHighlighted : undefined
+                    }
+                  >
+                    {isSelected ? "> " : "  "}
+                    {action.label}
+                  </Text>
+                  <Box paddingLeft={2}>
+                    <Text dimColor>{action.description}</Text>
+                  </Box>
+                </Box>
+              );
+            })}
+          </Box>
+        </Box>
+      )}
 
       {/* Loading states */}
       {isLoading && (
@@ -750,11 +1070,11 @@ export function ModelSelector({
         </Box>
       )}
 
-      {!isLoading && visibleModels.length === 0 && (
+      {!isLoading && !allEmpty && visibleModels.length === 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>
-            {category === "supported"
-              ? "No supported models available."
+            {searchQuery
+              ? "No models match your search."
               : "No additional models available."}
           </Text>
         </Box>
@@ -770,7 +1090,15 @@ export function ModelSelector({
         {visibleModels.map((model, index) => {
           const actualIndex = startIndex + index;
           const isSelected = actualIndex === selectedIndex;
-          const isCurrent = model.id === currentModelId;
+          const modelServiceTier = serviceTierForModel(model);
+          const currentServiceTier =
+            currentModelServiceTier === CHATGPT_FAST_SERVICE_TIER
+              ? CHATGPT_FAST_SERVICE_TIER
+              : null;
+          const isCurrent =
+            (model.id === currentModelId ||
+              model.handle === currentModelHandle) &&
+            modelServiceTier === currentServiceTier;
           // Show lock for non-free models when on free tier (only for Letta API tabs)
           const showLock =
             isFreeTier &&
@@ -812,20 +1140,6 @@ export function ModelSelector({
           <Text> </Text>
         ) : null}
       </Box>
-
-      {/* Footer */}
-      {!isLoading && currentList.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>
-            {"  "}
-            {currentList.length} models{isCached ? " · cached" : ""}
-            {refreshing ? " · refreshing..." : " · R to refresh list"}
-          </Text>
-          <Text dimColor>
-            {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel
-          </Text>
-        </Box>
-      )}
-    </Box>
+    </OverlayShell>
   );
 }

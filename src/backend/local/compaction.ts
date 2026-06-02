@@ -7,13 +7,14 @@ import {
   type Model,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { isContextWindowOverflowError } from "../dev/contextWindowOverflow";
+import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
-} from "../dev/PiModelFactory";
-import type { LocalMessage } from "./LocalMessage";
-import type { LocalAgentRecord } from "./LocalStore";
+} from "@/backend/dev/pi-model-factory";
+import { isRecord } from "@/utils/type-guards";
+import type { LocalMessage } from "./local-message";
+import type { LocalAgentRecord } from "./local-types";
 
 const ALL_WORD_LIMIT = 500;
 const SLIDING_WORD_LIMIT = 300;
@@ -127,10 +128,6 @@ export interface LocalSlidingWindowCompactionPlan {
 export interface LocalAllCompactionPlan {
   messagesToSummarize: LocalMessage[];
   messagesToKeep: LocalMessage[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringifyUnknown(value: unknown): string {
@@ -291,9 +288,11 @@ function localMessagesToSummaryOpenAIDicts(
       continue;
     }
 
-    const content = textFromUserContent(message);
-    if (content !== undefined) {
-      result.push({ role: "user", content });
+    if (message.role === "user") {
+      const content = textFromUserContent(message);
+      if (content !== undefined) {
+        result.push({ role: "user", content });
+      }
     }
   }
   return result;

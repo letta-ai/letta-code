@@ -1,7 +1,11 @@
 type TimerHandle = ReturnType<typeof setTimeout>;
 
+export interface BackgroundProcessHandle {
+  kill(signal?: string | number): unknown;
+}
+
 export interface BackgroundProcess {
-  process: import("child_process").ChildProcess;
+  process: BackgroundProcessHandle;
   command: string;
   stdout: string[];
   stderr: string[];
@@ -31,10 +35,19 @@ export interface BackgroundTask {
 export const backgroundProcesses = new Map<string, BackgroundProcess>();
 export const backgroundTasks = new Map<string, BackgroundTask>();
 let bashIdCounter = 1;
-export const getNextBashId = () => `bash_${bashIdCounter++}`;
+export function getNextBashId() {
+  return `bash_${bashIdCounter++}`;
+}
+
+let execSessionIdCounter = 1;
+export function getNextExecSessionId() {
+  return String(execSessionIdCounter++);
+}
 
 let taskIdCounter = 1;
-export const getNextTaskId = () => `task_${taskIdCounter++}`;
+export function getNextTaskId() {
+  return `task_${taskIdCounter++}`;
+}
 
 interface BackgroundRetentionConfig {
   completedEntryTtlMs: number;

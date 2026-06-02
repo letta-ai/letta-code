@@ -1,34 +1,24 @@
 // src/agent/check-approval.ts
 // Check for pending approvals and retrieve recent message history when resuming an agent/conversation
 
-import type Letta from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   Message,
   MessageType,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import {
-  type AgentMessageListBody,
-  type ConversationMessageListBody,
-  getBackend,
-} from "../backend";
-import type { ApprovalRequest } from "../cli/helpers/stream";
-import { debugLog, debugWarn, isDebugEnabled } from "../utils/debug";
+import { getBackend } from "@/backend";
+import type { ApprovalRequest } from "@/cli/helpers/stream";
+import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 
 // Backfill should feel like "the last turn(s)", not "the last N raw messages".
 // Fetch every renderable message type so the TUI can reconstruct the transcript.
-const BACKFILL_PRIMARY_MESSAGE_LIMIT = 12; // user/assistant/reasoning/event/summary
-const BACKFILL_MAX_RENDERABLE_MESSAGES = 80; // safety cap
-
-// Stop fetching once we have enough actual conversational anchors.
-// Reasoning can be extremely tool-step heavy, so anchor on user/assistant.
-const BACKFILL_ANCHOR_MESSAGE_LIMIT = 6;
+const BACKFILL_PRIMARY_MESSAGE_LIMIT = 10; // user/assistant/reasoning/event/summary
+const BACKFILL_MAX_RENDERABLE_MESSAGES = 40; // safety cap
 
 // We fetch more than we render so tool-heavy turns don't push the last
 // user-visible assistant message out of the backfill window.
-const BACKFILL_PAGE_LIMIT = 200;
-const BACKFILL_MAX_PAGES = 25; // 5k messages max
+const BACKFILL_PAGE_LIMIT = 50;
 const BACKFILL_MIN_ASSISTANT = 1;
 
 const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
@@ -41,12 +31,6 @@ const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
   "tool_return_message",
   "approval_response_message",
 ];
-
-const DEFAULT_RESUME_MESSAGE_TYPES = RESUME_BACKFILL_MESSAGE_TYPES;
-
-function isAnchorMessageType(messageType: string | undefined): boolean {
-  return messageType === "user_message" || messageType === "assistant_message";
-}
 
 /**
  * Check if message backfilling is enabled via LETTA_BACKFILL env var.
@@ -213,6 +197,65 @@ function pendingApprovalsFromMessageVariants(messages: Message[]): {
   };
 }
 
+function sourceMessageIdFromVariant(messageId: string): string {
+  const variantSeparator = messageId.search(/:(assistant|reasoning|tool):/);
+  return variantSeparator >= 0
+    ? messageId.slice(0, variantSeparator)
+    : messageId;
+}
+
+function messageMatchesSourceId(message: Message, sourceId: string): boolean {
+  return (
+    message.id === sourceId ||
+    sourceMessageIdFromVariant(message.id) === sourceId
+  );
+}
+
+function pendingApprovalsFromTail(
+  messages: Message[],
+  lastInContextId?: string | null,
+): ReturnType<typeof pendingApprovalsFromMessageVariants> {
+  if (messages.length === 0) {
+    return {
+      messageToCheck: undefined,
+      pendingApproval: null,
+      pendingApprovals: [],
+    };
+  }
+
+  if (lastInContextId) {
+    const variants = messages.filter((message) =>
+      messageMatchesSourceId(message, lastInContextId),
+    );
+    if (variants.length > 0) {
+      return pendingApprovalsFromMessageVariants(variants);
+    }
+    return {
+      messageToCheck: undefined,
+      pendingApproval: null,
+      pendingApprovals: [],
+    };
+  }
+
+  const latestSourceId = sourceMessageIdFromVariant(
+    messages[messages.length - 1]?.id ?? "",
+  );
+  const latestVariants = latestSourceId
+    ? messages.filter((message) =>
+        messageMatchesSourceId(message, latestSourceId),
+      )
+    : [messages[messages.length - 1]].filter((msg): msg is Message => !!msg);
+  return pendingApprovalsFromMessageVariants(latestVariants);
+}
+
+function tailStartsInsideSourceMessage(
+  messages: Message[],
+  sourceId: string,
+): boolean {
+  const firstMessage = messages[0];
+  return firstMessage ? messageMatchesSourceId(firstMessage, sourceId) : false;
+}
+
 /**
  * Prepare message history for backfill, trimming orphaned tool returns.
  * Messages should already be in chronological order (oldest first).
@@ -273,8 +316,8 @@ export function prepareMessageHistory(messages: Message[]): Message[] {
     messageHistory = messageHistory.slice(-BACKFILL_MAX_RENDERABLE_MESSAGES);
   }
 
-  // Skip if starts with orphaned tool_return (incomplete turn)
-  if (messageHistory[0]?.message_type === "tool_return_message") {
+  // Skip any leading orphaned tool returns (incomplete turn after tail clipping).
+  while (messageHistory[0]?.message_type === "tool_return_message") {
     messageHistory = messageHistory.slice(1);
   }
 
@@ -321,60 +364,26 @@ function sortChronological(messages: Message[]): Message[] {
   });
 }
 
-async function fetchConversationBackfillMessages(
-  conversationId: string,
-): Promise<Message[]> {
-  const collected: Message[] = [];
-  // Messages can have multiple variants with the same id (e.g. approval_request + reasoning).
-  // Dedupe using a key that preserves distinct variants while still preventing
-  // overlap across pagination pages.
+function collectResumeTailMessages(tailMessages: Message[]): Message[] {
   const seen = new Set<string>();
-
-  let cursorBefore: string | null = null;
   let assistantCount = 0;
-  let anchorCount = 0;
+  const collected: Message[] = [];
 
-  for (let pageIndex = 0; pageIndex < BACKFILL_MAX_PAGES; pageIndex += 1) {
-    const page = await getBackend().listConversationMessages(conversationId, {
-      limit: BACKFILL_PAGE_LIMIT,
-      order: "desc",
-      include_return_message_types: RESUME_BACKFILL_MESSAGE_TYPES,
-      ...(cursorBefore ? { before: cursorBefore } : {}),
-    } as unknown as ConversationMessageListBody);
-    const items = page.getPaginatedItems();
-    if (items.length === 0) break;
+  for (const m of tailMessages) {
+    if (!m?.id) continue;
 
-    // items are newest->oldest; use the last item as our "before" cursor.
-    cursorBefore = items[items.length - 1]?.id ?? null;
+    // Prefer otid when available (it is unique across variants). Otherwise,
+    // include message_type to avoid dropping variants that share ids.
+    const key =
+      "otid" in m && (m as { otid?: unknown }).otid
+        ? `otid:${String((m as { otid?: unknown }).otid)}`
+        : `id:${m.id}:${m.message_type ?? ""}`;
 
-    for (const m of items) {
-      if (!m?.id) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    collected.push(m);
 
-      // Prefer otid when available (it is unique across variants). Otherwise,
-      // include message_type to avoid dropping variants that share ids.
-      const key =
-        "otid" in m && (m as { otid?: unknown }).otid
-          ? `otid:${String((m as { otid?: unknown }).otid)}`
-          : `id:${m.id}:${m.message_type ?? ""}`;
-
-      if (seen.has(key)) continue;
-      seen.add(key);
-      collected.push(m);
-
-      if (m.message_type === "assistant_message") assistantCount += 1;
-      if (isAnchorMessageType(m.message_type)) anchorCount += 1;
-    }
-
-    // Stop once we can confidently show a good recent slice.
-    if (
-      assistantCount >= BACKFILL_MIN_ASSISTANT &&
-      anchorCount >= BACKFILL_ANCHOR_MESSAGE_LIMIT
-    ) {
-      break;
-    }
-
-    // If the server returned fewer than requested, we're likely at the end.
-    if (items.length < BACKFILL_PAGE_LIMIT) break;
+    if (m.message_type === "assistant_message") assistantCount += 1;
   }
 
   if (assistantCount < BACKFILL_MIN_ASSISTANT) {
@@ -385,6 +394,48 @@ async function fetchConversationBackfillMessages(
   }
 
   return sortChronological(collected);
+}
+
+async function fetchResumeTail(
+  agentId: string,
+  conversationId: string,
+  limit = BACKFILL_PAGE_LIMIT,
+): Promise<{
+  conversation?: { in_context_message_ids?: string[] | null };
+  messages: Message[];
+}> {
+  const tail = await getBackend().getConversationResumeTail(
+    agentId,
+    conversationId,
+    {
+      limit,
+      includeReturnMessageTypes: RESUME_BACKFILL_MESSAGE_TYPES,
+    },
+  );
+  return {
+    conversation: tail.conversation,
+    messages: collectResumeTailMessages(tail.messages),
+  };
+}
+
+async function pendingApprovalsFromTailOrRetrieve(
+  messages: Message[],
+  lastInContextId?: string | null,
+): Promise<ReturnType<typeof pendingApprovalsFromMessageVariants>> {
+  const tailCheck = pendingApprovalsFromTail(messages, lastInContextId);
+  if (
+    lastInContextId &&
+    tailCheck.pendingApprovals.length > 0 &&
+    tailStartsInsideSourceMessage(messages, lastInContextId)
+  ) {
+    const retrievedMessages =
+      await getBackend().retrieveMessage(lastInContextId);
+    return pendingApprovalsFromMessageVariants(retrievedMessages);
+  }
+  if (tailCheck.messageToCheck || !lastInContextId) return tailCheck;
+
+  const retrievedMessages = await getBackend().retrieveMessage(lastInContextId);
+  return pendingApprovalsFromMessageVariants(retrievedMessages);
 }
 
 /**
@@ -405,182 +456,43 @@ export async function getResumeDataFromBackend(
 ): Promise<ResumeData> {
   try {
     const includeMessageHistory = options.includeMessageHistory ?? true;
+    const shouldFetchTail = includeMessageHistory && isBackfillEnabled();
     const agentWithInContext = agent as AgentState & {
       in_context_message_ids?: string[] | null;
     };
+    const activeConversationId = conversationId ?? "default";
+    const useConversationsApi =
+      activeConversationId && activeConversationId !== "default";
+
     let inContextMessageIds: string[] | null | undefined;
     let messages: Message[] = [];
 
-    // Use conversations API for explicit conversations,
-    // use agents API for "default" or no conversationId (agent's primary message history)
-    const useConversationsApi = conversationId && conversationId !== "default";
-
     if (useConversationsApi) {
-      // Get conversation to access in_context_message_ids (source of truth)
-      const conversation =
-        await getBackend().retrieveConversation(conversationId);
-      inContextMessageIds = conversation.in_context_message_ids;
+      if (shouldFetchTail) {
+        try {
+          const tail = await fetchResumeTail(agent.id, activeConversationId);
+          messages = tail.messages;
+          inContextMessageIds = tail.conversation?.in_context_message_ids;
+        } catch (backfillError) {
+          debugWarn(
+            "check-approval",
+            `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
+          );
+        }
+      }
 
-      if (!inContextMessageIds || inContextMessageIds.length === 0) {
+      if (!inContextMessageIds) {
+        const conversation =
+          await getBackend().retrieveConversation(activeConversationId);
+        inContextMessageIds = conversation.in_context_message_ids;
+      }
+
+      const lastInContextId = inContextMessageIds?.at(-1);
+      if (!lastInContextId) {
         debugWarn(
           "check-approval",
           "No in-context messages - no pending approvals",
         );
-        if (includeMessageHistory && isBackfillEnabled()) {
-          try {
-            const backfill =
-              await fetchConversationBackfillMessages(conversationId);
-            return {
-              pendingApproval: null,
-              pendingApprovals: [],
-              messageHistory: prepareMessageHistory(backfill),
-            };
-          } catch (backfillError) {
-            debugWarn(
-              "check-approval",
-              `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
-            );
-          }
-        }
-        return {
-          pendingApproval: null,
-          pendingApprovals: [],
-          messageHistory: [],
-        };
-      }
-
-      // Fetch the last in-context message directly by ID
-      // (We already checked inContextMessageIds.length > 0 above)
-      const lastInContextId = inContextMessageIds.at(-1);
-      if (!lastInContextId) {
-        throw new Error("Expected at least one in-context message");
-      }
-      const retrievedMessages =
-        await getBackend().retrieveMessage(lastInContextId);
-
-      // Fetch message history separately for backfill (desc then reverse for last N chronological)
-      // Wrapped in try/catch so backfill failures don't crash the CLI
-      if (includeMessageHistory && isBackfillEnabled()) {
-        try {
-          messages = await fetchConversationBackfillMessages(conversationId);
-        } catch (backfillError) {
-          debugWarn(
-            "check-approval",
-            `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
-          );
-        }
-      }
-
-      // Find the approval_request_message variant if it exists, but only treat
-      // it as pending when no matching tool result/approval response has been
-      // projected from the same underlying message.
-      const { messageToCheck, pendingApproval, pendingApprovals } =
-        pendingApprovalsFromMessageVariants(retrievedMessages);
-
-      if (messageToCheck) {
-        const logFoundMessage =
-          pendingApprovals.length > 0 ? debugWarn : debugLog;
-        logFoundMessage(
-          "check-approval",
-          `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
-            (retrievedMessages.length > 1
-              ? ` - had ${retrievedMessages.length} variants`
-              : ""),
-        );
-
-        // Check for pending approval(s) inline since we already have the message
-        if (pendingApprovals.length > 0) {
-          return {
-            pendingApproval,
-            pendingApprovals,
-            messageHistory: prepareMessageHistory(messages),
-          };
-        }
-      } else {
-        debugWarn(
-          "check-approval",
-          `Last in-context message ${lastInContextId} not found via retrieve`,
-        );
-      }
-
-      return {
-        pendingApproval: null,
-        pendingApprovals: [],
-        messageHistory: prepareMessageHistory(messages),
-      };
-    } else {
-      // For the default conversation, use the agent's in-context message IDs as
-      // the primary anchor, mirroring the explicit-conversation path. Fall back
-      // to the default-conversation message stream only when that anchor is not
-      // available, and keep using the stream for backfill/history.
-      inContextMessageIds = agentWithInContext.in_context_message_ids;
-      const lastInContextId = inContextMessageIds?.at(-1);
-      let defaultConversationMessages: Message[] = [];
-      if ((includeMessageHistory && isBackfillEnabled()) || !lastInContextId) {
-        const listLimit =
-          includeMessageHistory && isBackfillEnabled()
-            ? BACKFILL_PAGE_LIMIT
-            : 1;
-        try {
-          const messagesPage = await getBackend().listAgentMessages(agent.id, {
-            conversation_id: "default",
-            limit: listLimit,
-            order: "desc",
-            include_return_message_types: DEFAULT_RESUME_MESSAGE_TYPES,
-          } as unknown as AgentMessageListBody);
-          defaultConversationMessages = sortChronological(
-            messagesPage.getPaginatedItems(),
-          );
-          if (includeMessageHistory && isBackfillEnabled()) {
-            messages = defaultConversationMessages;
-          }
-          if (isDebugEnabled()) {
-            debugLog(
-              "check-approval",
-              "conversations.messages.list(default, agent_id=%s) returned %d messages",
-              agent.id,
-              defaultConversationMessages.length,
-            );
-          }
-        } catch (backfillError) {
-          debugWarn(
-            "check-approval",
-            `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
-          );
-        }
-      }
-
-      if (lastInContextId) {
-        const retrievedMessages =
-          await getBackend().retrieveMessage(lastInContextId);
-        const { messageToCheck, pendingApproval, pendingApprovals } =
-          pendingApprovalsFromMessageVariants(retrievedMessages);
-
-        if (messageToCheck) {
-          const logFoundMessage =
-            pendingApprovals.length > 0 ? debugWarn : debugLog;
-          logFoundMessage(
-            "check-approval",
-            `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
-              (retrievedMessages.length > 1
-                ? ` - had ${retrievedMessages.length} variants`
-                : ""),
-          );
-
-          if (pendingApprovals.length > 0) {
-            return {
-              pendingApproval,
-              pendingApprovals,
-              messageHistory: prepareMessageHistory(messages),
-            };
-          }
-        } else {
-          debugWarn(
-            "check-approval",
-            `Last in-context message ${lastInContextId} not found via retrieve`,
-          );
-        }
-
         return {
           pendingApproval: null,
           pendingApprovals: [],
@@ -588,80 +500,71 @@ export async function getResumeDataFromBackend(
         };
       }
 
-      if (isDebugEnabled()) {
-        debugLog(
-          "check-approval",
-          "default conversation message stream returned %d messages for agent_id=%s",
-          defaultConversationMessages.length,
-          agent.id,
-        );
-      }
-
-      if (defaultConversationMessages.length === 0) {
-        debugWarn(
-          "check-approval",
-          "No messages in default conversation stream - no pending approvals",
-        );
-        return {
-          pendingApproval: null,
-          pendingApprovals: [],
-          messageHistory: [],
-        };
-      }
-
-      const lastDefaultMessage =
-        defaultConversationMessages[defaultConversationMessages.length - 1];
-      const latestMessageId = lastDefaultMessage?.id;
-      const latestMessageVariants = latestMessageId
-        ? defaultConversationMessages.filter(
-            (msg) => msg.id === latestMessageId,
-          )
-        : [];
-      const fallbackPendingCheck = pendingApprovalsFromMessageVariants(
-        latestMessageVariants.length > 0
-          ? latestMessageVariants
-          : [lastDefaultMessage].filter((msg): msg is Message => !!msg),
-      );
-      const { messageToCheck, pendingApproval, pendingApprovals } =
-        fallbackPendingCheck.messageToCheck
-          ? fallbackPendingCheck
-          : {
-              messageToCheck: lastDefaultMessage,
-              pendingApproval: null,
-              pendingApprovals: [],
-            };
-
-      if (messageToCheck) {
-        const logFoundMessage =
-          pendingApprovals.length > 0 ? debugWarn : debugLog;
-        logFoundMessage(
-          "check-approval",
-          `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
-            (latestMessageVariants.length > 1
-              ? ` - had ${latestMessageVariants.length} variants`
-              : ""),
-        );
-
-        if (pendingApprovals.length > 0) {
-          return {
-            pendingApproval,
-            pendingApprovals,
-            messageHistory: prepareMessageHistory(messages),
-          };
-        }
-      } else {
-        debugWarn(
-          "check-approval",
-          "Last default conversation message not found after list()",
-        );
-      }
-
+      const { pendingApproval, pendingApprovals } =
+        await pendingApprovalsFromTailOrRetrieve(messages, lastInContextId);
       return {
-        pendingApproval: null,
-        pendingApprovals: [],
+        pendingApproval,
+        pendingApprovals,
         messageHistory: prepareMessageHistory(messages),
       };
     }
+
+    inContextMessageIds =
+      agentWithInContext.in_context_message_ids ?? agent.message_ids;
+    const lastInContextId = inContextMessageIds?.at(-1);
+
+    if (shouldFetchTail || !lastInContextId) {
+      try {
+        const tailLimit = shouldFetchTail ? BACKFILL_PAGE_LIMIT : 1;
+        messages = (await fetchResumeTail(agent.id, "default", tailLimit))
+          .messages;
+        if (isDebugEnabled()) {
+          debugLog(
+            "check-approval",
+            "resume tail(default, agent_id=%s) returned %d messages",
+            agent.id,
+            messages.length,
+          );
+        }
+      } catch (backfillError) {
+        debugWarn(
+          "check-approval",
+          `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
+        );
+      }
+    }
+
+    if (lastInContextId) {
+      const { pendingApproval, pendingApprovals } =
+        await pendingApprovalsFromTailOrRetrieve(messages, lastInContextId);
+      return {
+        pendingApproval,
+        pendingApprovals,
+        messageHistory: prepareMessageHistory(messages),
+      };
+    }
+
+    if (messages.length === 0) {
+      debugWarn(
+        "check-approval",
+        "No messages in default conversation stream - no pending approvals",
+      );
+      return {
+        pendingApproval: null,
+        pendingApprovals: [],
+        messageHistory: [],
+      };
+    }
+
+    const { pendingApproval, pendingApprovals } = pendingApprovalsFromTail(
+      messages,
+      null,
+    );
+    return {
+      pendingApproval,
+      pendingApprovals,
+      messageHistory: prepareMessageHistory(messages),
+    };
   } catch (error) {
     // Re-throw "not found" errors (404/422) so callers can handle appropriately
     // (e.g., /resume command should fail for non-existent conversations)
@@ -674,16 +577,4 @@ export async function getResumeDataFromBackend(
     console.error("Error getting resume data:", error);
     return { pendingApproval: null, pendingApprovals: [], messageHistory: [] };
   }
-}
-
-/**
- * @deprecated Pass through for older call sites. Resume data is loaded through getBackend().
- */
-export async function getResumeData(
-  _client: Letta,
-  agent: AgentState,
-  conversationId?: string,
-  options: GetResumeDataOptions = {},
-): Promise<ResumeData> {
-  return getResumeDataFromBackend(agent, conversationId, options);
 }

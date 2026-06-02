@@ -1,11 +1,24 @@
-import { getServerUrl } from "../backend/api/client";
-import { getServerHealth } from "../backend/api/health";
-import { submitTelemetryMetadata } from "../backend/api/metadata";
-import { settingsManager } from "../settings-manager";
-import { debugLogFile } from "../utils/debug";
-import { getVersion } from "../version";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { getServerUrl } from "@/backend/api/client";
+import { getServerHealth } from "@/backend/api/health";
+import { submitTelemetryMetadata } from "@/backend/api/metadata";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { settingsManager } from "@/settings-manager";
+import { debugLogFile } from "@/utils/debug";
+import { getVersion } from "@/version";
 
-export type TelemetrySurface = "tui" | "headless" | "websocket";
+export type TelemetrySurface =
+  | "letta_code_tui"
+  | "letta_code_headless"
+  | "letta_code_cli_server"
+  | "letta_code_desktop";
+
+export type TelemetryBackend =
+  | "constellation"
+  | "local"
+  | "docker_deprecated"
+  | "self_hosted_api"
+  | "unknown";
 
 export interface TelemetryEvent {
   type:
@@ -89,6 +102,100 @@ export interface ReflectionEndData {
   error?: string;
 }
 
+export function isLettaCodeDesktopRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.LETTA_DESKTOP_DEBUG_PANEL === "1";
+}
+
+export function getTerminalTelemetrySurface(
+  isHeadless: boolean,
+): TelemetrySurface {
+  return isHeadless ? "letta_code_headless" : "letta_code_tui";
+}
+
+export function getListenerTelemetrySurface(
+  env: NodeJS.ProcessEnv = process.env,
+): TelemetrySurface {
+  return isLettaCodeDesktopRuntime(env)
+    ? "letta_code_desktop"
+    : "letta_code_cli_server";
+}
+
+function parseTelemetryUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    try {
+      return new URL(`http://${value}`);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function isTelemetryCloudServerUrl(serverUrl: string): boolean {
+  const parsed = parseTelemetryUrl(serverUrl);
+  const cloud = parseTelemetryUrl(LETTA_CLOUD_API_URL);
+  return Boolean(parsed && cloud && parsed.hostname === cloud.hostname);
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "0.0.0.0" ||
+    normalized === "::1" ||
+    normalized.startsWith("127.")
+  );
+}
+
+function isLikelyDeprecatedDockerBackendUrl(serverUrl: string): boolean {
+  const parsed = parseTelemetryUrl(serverUrl);
+  return Boolean(
+    parsed && isLoopbackHost(parsed.hostname) && parsed.port === "8283",
+  );
+}
+
+function getServerUrlForTelemetry(): string | null {
+  try {
+    return getServerUrl();
+  } catch {
+    return process.env.LETTA_BASE_URL || LETTA_CLOUD_API_URL;
+  }
+}
+
+export function resolveTelemetryBackend(options?: {
+  env?: NodeJS.ProcessEnv;
+  serverUrl?: string | null;
+}): TelemetryBackend {
+  const env = options?.env ?? process.env;
+  if (isLocalBackendEnvEnabled(env)) {
+    return "local";
+  }
+
+  const serverUrl = Object.hasOwn(options ?? {}, "serverUrl")
+    ? options?.serverUrl
+    : getServerUrlForTelemetry();
+  if (!serverUrl) {
+    return "unknown";
+  }
+
+  if (isTelemetryCloudServerUrl(serverUrl)) {
+    return "constellation";
+  }
+
+  if (isLettaCodeDesktopRuntime(env)) {
+    return "constellation";
+  }
+
+  if (isLikelyDeprecatedDockerBackendUrl(serverUrl)) {
+    return "docker_deprecated";
+  }
+
+  return "self_hosted_api";
+}
+
 /**
  * Returns true for error messages that are non-actionable noise:
  * - Billing/plan limit responses (premium-unavailable, usage-exceeded, not-enough-credits)
@@ -116,7 +223,7 @@ class TelemetryManager {
   private sessionId: string;
   private deviceId: string | null = null;
   private currentAgentId: string | null = null;
-  private surface: TelemetrySurface = "tui";
+  private surface: TelemetrySurface = "letta_code_tui";
   private sessionStartTime: number;
   private messageCount = 0;
   private toolCallCount = 0;
@@ -311,6 +418,7 @@ class TelemetryManager {
         session_id: this.sessionId,
         agent_id: this.currentAgentId || undefined,
         surface: this.surface,
+        backend: resolveTelemetryBackend(),
       },
     };
 

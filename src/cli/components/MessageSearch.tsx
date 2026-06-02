@@ -1,11 +1,13 @@
 import type { MessageSearchResponse } from "@letta-ai/letta-client/resources/messages";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getBackend } from "@/backend";
 import {
   searchMessagesForBackend,
   warmMessageSearchCacheForBackend,
-} from "../../backend/messageSearch";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/backend/message-search";
+import { truncateText } from "@/cli/helpers/truncate-text";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -73,16 +75,22 @@ function isSearchRangeAvailable(
 export function buildSearchTargetPlan(
   mode: SearchMode,
   range: SearchRange,
-  options: { agentId?: string; conversationId?: string },
+  options: {
+    agentId?: string;
+    conversationId?: string;
+    textOnlyModes?: boolean;
+  },
 ): { primary: SearchTarget; prefetch: SearchTarget[] } {
   const availableRanges = SEARCH_RANGES.filter((candidateRange) =>
     isSearchRangeAvailable(candidateRange, options),
   );
 
   const prefetch = [
-    ...SEARCH_MODES.filter((candidateMode) => candidateMode !== mode).map(
-      (candidateMode) => ({ mode: candidateMode, range }),
-    ),
+    ...(options.textOnlyModes
+      ? []
+      : SEARCH_MODES.filter((candidateMode) => candidateMode !== mode).map(
+          (candidateMode) => ({ mode: candidateMode, range }),
+        )),
     ...availableRanges
       .filter((candidateRange) => candidateRange !== range)
       .map((candidateRange) => ({ mode, range: candidateRange })),
@@ -92,6 +100,30 @@ export function buildSearchTargetPlan(
     primary: { mode, range },
     prefetch,
   };
+}
+
+export function buildMessageSearchRequestBody(
+  query: string,
+  mode: SearchMode,
+  range: SearchRange,
+  options: { agentId?: string; conversationId?: string; limit?: number },
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    query: query.trim(),
+    search_mode: mode,
+    limit: options.limit ?? SEARCH_LIMIT,
+  };
+
+  if (range === "agent" && options.agentId) {
+    body.agent_id = options.agentId;
+  } else if (range === "conv" && options.conversationId) {
+    body.conversation_id = options.conversationId;
+    if (options.agentId) {
+      body.agent_id = options.agentId;
+    }
+  }
+
+  return body;
 }
 
 /**
@@ -119,19 +151,24 @@ function formatLocalTime(dateStr: string | null | undefined): string {
 /**
  * Truncate text to fit width, adding ellipsis if needed
  */
-function truncateText(text: string, maxWidth: number): string {
-  if (text.length <= maxWidth) return text;
-  return `${text.slice(0, maxWidth - 3)}...`;
-}
-
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
+}
+
+function stringifyMessageValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 /**
  * Get display text from a message
  */
-function getMessageText(msg: MessageSearchResponse[number]): string {
+export function getMessageText(msg: MessageSearchResponse[number]): string {
   // Assistant message content
   if ("content" in msg) {
     const content = msg.content;
@@ -161,9 +198,9 @@ function getMessageText(msg: MessageSearchResponse[number]): string {
   // Tool return messages - show tool name and preview of return
   if ("tool_return" in msg) {
     const toolName = "name" in msg ? (msg.name as string) : "tool";
-    const returnValue = msg.tool_return as string;
+    const returnValue = stringifyMessageValue(msg.tool_return);
     // Truncate long return values
-    const preview = returnValue?.slice(0, 100) || "";
+    const preview = returnValue.slice(0, 100);
     return `${toolName}: ${preview}`;
   }
   return `[${msg.message_type || "unknown"}]`;
@@ -226,6 +263,7 @@ export function MessageSearch({
   const [expandedMessage, setExpandedMessage] = useState<
     MessageSearchResponse[number] | null
   >(null);
+  const textOnlyModes = getBackend().capabilities.localModelCatalog;
   const searchRequestIdRef = useRef(0);
   // Cache results per query+mode+range combination to avoid re-fetching
   const resultsCache = useRef<Map<string, MessageSearchResponse>>(new Map());
@@ -243,32 +281,26 @@ export function MessageSearch({
   // Get cache key for a specific query+mode+range combination
   const getCacheKey = useCallback(
     (query: string, mode: SearchMode, range: SearchRange) => {
+      const modeKey = textOnlyModes ? "text" : mode;
       const rangeKey =
         range === "agent"
           ? agentId || "no-agent"
           : range === "conv"
             ? conversationId || "no-conv"
             : "all";
-      return `${query.trim()}-${mode}-${rangeKey}`;
+      return `${query.trim()}-${modeKey}-${rangeKey}`;
     },
-    [agentId, conversationId],
+    [agentId, conversationId, textOnlyModes],
   );
 
   // Execute search for a single mode (returns results, doesn't set state)
   const fetchSearchResults = useCallback(
     async (query: string, mode: SearchMode, range: SearchRange) => {
-      const body: Record<string, unknown> = {
-        query: query.trim(),
-        search_mode: mode,
+      const body = buildMessageSearchRequestBody(query, mode, range, {
+        agentId,
+        conversationId,
         limit: SEARCH_LIMIT,
-      };
-
-      // Add filters based on range
-      if (range === "agent" && agentId) {
-        body.agent_id = agentId;
-      } else if (range === "conv" && conversationId) {
-        body.conversation_id = conversationId;
-      }
+      });
 
       return searchMessagesForBackend<MessageSearchResponse>(body);
     },
@@ -314,6 +346,7 @@ export function MessageSearch({
       const { prefetch } = buildSearchTargetPlan(mode, range, {
         agentId,
         conversationId,
+        textOnlyModes,
       });
 
       if (prefetch.length === 0) {
@@ -336,7 +369,7 @@ export function MessageSearch({
         }
       })();
     },
-    [agentId, conversationId, fetchAndCacheSearchResults],
+    [agentId, conversationId, fetchAndCacheSearchResults, textOnlyModes],
   );
 
   // Execute the active search first, then prefetch adjacent tab/range results

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
-import { getChannelDir } from "../config";
-import type { ChannelMessageAttachment } from "../types";
+import { getChannelDir } from "@/channels/config";
+import type { ChannelMessageAttachment } from "@/channels/types";
 
 export const TELEGRAM_MEDIA_GROUP_FLUSH_MS = 150;
 export const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 15_000;
@@ -12,17 +12,34 @@ export const MAX_TELEGRAM_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg"]);
 const ANIMATION_EXTENSIONS = new Set([".gif"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".webm"]);
-const AUDIO_EXTENSIONS = new Set([".mp3", ".m4a"]);
+const AUDIO_EXTENSIONS = new Set([".mp3", ".m4a", ".wav"]);
 const VOICE_EXTENSIONS = new Set([".ogg", ".oga", ".opus"]);
 const STATIC_STICKER_EXTENSIONS = new Set([".webp"]);
 
 export type TelegramLikeMessage = {
   media_group_id?: string;
+  message_thread_id?: number | string;
   message_id: number | string;
   date: number;
   text?: string;
   caption?: string;
-  chat: { id: number | string };
+  entities?: Array<{
+    type?: string;
+    offset?: number;
+    length?: number;
+  }>;
+  caption_entities?: Array<{
+    type?: string;
+    offset?: number;
+    length?: number;
+  }>;
+  reply_to_message?: TelegramLikeMessage;
+  chat: {
+    id: number | string;
+    type?: string;
+    title?: string;
+    username?: string;
+  };
   from?: {
     id: number | string;
     username?: string;
@@ -388,6 +405,9 @@ export function inferMimeTypeFromName(name: string): string | undefined {
   if (extension === ".m4a") {
     return "audio/mp4";
   }
+  if (extension === ".wav") {
+    return "audio/wav";
+  }
   if (VOICE_EXTENSIONS.has(extension)) {
     return "audio/ogg";
   }
@@ -427,6 +447,10 @@ function extensionForMimeType(mimeType?: string): string {
       return ".mp3";
     case "audio/mp4":
       return ".m4a";
+    case "audio/wav":
+    case "audio/x-wav":
+    case "audio/wave":
+      return ".wav";
     case "audio/ogg":
     case "audio/opus":
       return ".ogg";
@@ -513,12 +537,18 @@ async function downloadTelegramAttachment(params: {
     typeof candidate.sizeBytes === "number" &&
     candidate.sizeBytes > MAX_TELEGRAM_DOWNLOAD_BYTES
   ) {
+    console.warn(
+      `[Telegram] Skipping attachment ${candidate.name ?? candidate.fileId}: ${candidate.sizeBytes} bytes exceeds Telegram download limit (${MAX_TELEGRAM_DOWNLOAD_BYTES} bytes).`,
+    );
     return null;
   }
 
   const file = await params.bot.api.getFile(candidate.fileId);
   const remotePath = file.file_path;
   if (!remotePath) {
+    console.warn(
+      `[Telegram] getFile returned no file_path for attachment ${candidate.name ?? candidate.fileId}.`,
+    );
     return null;
   }
 
@@ -527,6 +557,9 @@ async function downloadTelegramAttachment(params: {
     TELEGRAM_DOWNLOAD_TIMEOUT_MS,
   );
   if (!response.ok) {
+    console.warn(
+      `[Telegram] Failed to download attachment ${candidate.name ?? candidate.fileId} from ${remotePath}: ${response.status} ${response.statusText}`,
+    );
     return null;
   }
 
@@ -537,12 +570,18 @@ async function downloadTelegramAttachment(params: {
       Number.isFinite(parsedLength) &&
       parsedLength > MAX_TELEGRAM_DOWNLOAD_BYTES
     ) {
+      console.warn(
+        `[Telegram] Refusing attachment ${candidate.name ?? candidate.fileId}: content-length ${parsedLength} exceeds limit ${MAX_TELEGRAM_DOWNLOAD_BYTES}.`,
+      );
       return null;
     }
   }
 
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.byteLength > MAX_TELEGRAM_DOWNLOAD_BYTES) {
+    console.warn(
+      `[Telegram] Refusing attachment ${candidate.name ?? candidate.fileId}: downloaded size ${buffer.byteLength} exceeds limit ${MAX_TELEGRAM_DOWNLOAD_BYTES}.`,
+    );
     return null;
   }
 
@@ -585,13 +624,22 @@ async function downloadTelegramAttachment(params: {
   // Auto-transcribe voice memos when enabled and an API key is available.
   if (candidate.isVoice && params.transcribeVoice) {
     const { isTranscriptionConfigured, transcribeAudioFile } = await import(
-      "../transcription/index"
+      "@/channels/transcription/index"
     );
     if (isTranscriptionConfigured()) {
       const result = await transcribeAudioFile(localPath);
       if (result.success && result.text) {
         attachment.transcription = result.text;
+      } else if (result.error) {
+        attachment.transcriptionError = result.error;
+        console.warn(
+          `[Telegram] Voice transcription failed for ${fileName}:`,
+          result.error,
+        );
       }
+    } else {
+      attachment.transcriptionError =
+        "OPENAI_API_KEY not set; transcription skipped.";
     }
   }
 
@@ -625,7 +673,13 @@ export async function resolveTelegramInboundAttachments(params: {
         bot: params.bot,
         candidate,
         transcribeVoice: params.transcribeVoice,
-      }).catch(() => null),
+      }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[Telegram] Attachment download failed for ${candidate.name ?? candidate.fileId}: ${message}`,
+        );
+        return null;
+      }),
     ),
   );
 

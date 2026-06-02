@@ -5,21 +5,22 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { fetchRunErrorInfo } from "../../agent/approval-recovery";
-import { getResumeDataFromBackend } from "../../agent/check-approval";
-import { sendMessageStream } from "../../agent/message";
+import { fetchRunErrorInfo } from "@/agent/approval-recovery";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { sendMessageStream } from "@/agent/message";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
+  extractConversationBusyRunId,
   getPreStreamErrorAction,
   getRetryDelayMs,
   parseRetryAfterHeaderMs,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-} from "../../agent/turn-recovery-policy";
-import { type ConversationMessageStreamBody, getBackend } from "../../backend";
-import { getRetryStatusMessage } from "../../cli/helpers/errorFormatter";
-import { prepareToolExecutionContextForScope } from "../../tools/toolset";
-import { createStreamAbortRelay } from "../../utils/streamAbortRelay";
+} from "@/agent/turn-recovery-policy";
+import { type ConversationMessageStreamBody, getBackend } from "@/backend";
+import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
+import { prepareToolExecutionContextForScope } from "@/tools/toolset";
+import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
   rememberPendingApprovalBatchIds,
   resolveRecoveryBatchId,
@@ -27,15 +28,21 @@ import {
 import {
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
+  PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { getOrCreateConversationPermissionModeStateRef } from "./permissionMode";
+import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitDequeuedUserMessage,
   emitRetryDelta,
   setLoopStatus,
 } from "./protocol-outbound";
+import {
+  maybeApplyProviderFallback,
+  type ProviderFallbackState,
+} from "./provider-fallback";
 import { consumeQueuedTurn } from "./queue";
+import { emitRecoverableRetryNotice } from "./recoverable-notices";
 import {
   drainRecoveryStreamWithEmission,
   finalizeHandledRecoveryTurn,
@@ -45,6 +52,13 @@ import {
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime } from "./types";
+
+const ACTIVE_BLOCKING_RUN_STATUSES = new Set(["created", "running"]);
+const BUSY_RUN_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+const BUSY_RUN_POLL_INTERVAL_MS = 5000;
+
+type MessageStreamResult = Awaited<ReturnType<typeof sendMessageStream>>;
+type BlockingRunWaitResult = "settled" | "timed_out" | "unavailable";
 
 export function isApprovalOnlyInput(
   input: Array<MessageCreate | ApprovalCreate>,
@@ -71,6 +85,185 @@ function isBackendNotFoundError(err: unknown): boolean {
     (err instanceof APIError && (err.status === 404 || err.status === 422)) ||
     (err instanceof Error && err.name === "LocalBackendNotFoundError")
   );
+}
+
+function isBlockingRunActive(status: unknown): boolean {
+  return typeof status === "string" && ACTIVE_BLOCKING_RUN_STATUSES.has(status);
+}
+
+async function sleepWithAbort(
+  delayMs: number,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  if (delayMs <= 0) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    function cleanup() {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      abortSignal?.removeEventListener("abort", onAbort);
+    }
+
+    function onAbort() {
+      cleanup();
+      reject(new Error("Cancelled by user"));
+    }
+
+    if (abortSignal?.aborted) {
+      onAbort();
+      return;
+    }
+
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+  });
+}
+
+async function waitForBlockingRunToSettle(
+  runId: string,
+  abortSignal?: AbortSignal,
+): Promise<BlockingRunWaitResult> {
+  const timeoutMs = BUSY_RUN_WAIT_TIMEOUT_MS;
+  const startedAt = Date.now();
+
+  while (true) {
+    if (abortSignal?.aborted) {
+      throw new Error("Cancelled by user");
+    }
+
+    let run: Awaited<ReturnType<ReturnType<typeof getBackend>["retrieveRun"]>>;
+    try {
+      run = await getBackend().retrieveRun(runId);
+    } catch {
+      return "unavailable";
+    }
+
+    if (!isBlockingRunActive(run.status)) {
+      return "settled";
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= timeoutMs) {
+      return "timed_out";
+    }
+
+    await sleepWithAbort(
+      Math.min(BUSY_RUN_POLL_INTERVAL_MS, timeoutMs - elapsedMs),
+      abortSignal,
+    );
+  }
+}
+
+async function maybeWaitForBlockingRun(params: {
+  runId: string | null;
+  retriedAfterSettled: Set<string>;
+  abortSignal?: AbortSignal;
+}): Promise<"retry_now" | "fall_back"> {
+  const { runId, retriedAfterSettled, abortSignal } = params;
+  if (!runId) {
+    return "fall_back";
+  }
+
+  const waitResult = await waitForBlockingRunToSettle(runId, abortSignal);
+
+  if (waitResult === "settled") {
+    if (retriedAfterSettled.has(runId)) {
+      return "fall_back";
+    }
+    retriedAfterSettled.add(runId);
+    return "retry_now";
+  }
+
+  if (waitResult === "timed_out") {
+    throw new Error(
+      `Conversation is still busy because run ${runId} remained active after ${BUSY_RUN_WAIT_TIMEOUT_MS}ms`,
+    );
+  }
+
+  return "fall_back";
+}
+
+function getConversationBusyRetryNotice(
+  blockingRunId: string | null,
+  retryDelayMs: number,
+): { message: string; delayMs: number } {
+  if (!blockingRunId) {
+    return {
+      message: "Conversation is busy, waiting and retrying…",
+      delayMs: retryDelayMs,
+    };
+  }
+
+  return {
+    message: `Conversation is busy; waiting for run ${blockingRunId} to finish…`,
+    delayMs: BUSY_RUN_POLL_INTERVAL_MS,
+  };
+}
+
+async function tryResumeBusyConversationStream(params: {
+  conversationId: string;
+  messages: Parameters<typeof sendMessageStream>[1];
+  runtime: ConversationRuntime;
+  abortSignal?: AbortSignal;
+  debugMessage: string;
+}): Promise<MessageStreamResult | null> {
+  const { conversationId, messages, runtime, abortSignal, debugMessage } =
+    params;
+
+  try {
+    const backend = getBackend();
+    const messageOtid = messages
+      .map((item) => (item as Record<string, unknown>).otid)
+      .find((value): value is string => typeof value === "string");
+    const resumeAbortRelay = createStreamAbortRelay(abortSignal);
+
+    if (abortSignal?.aborted) {
+      throw new Error("Cancelled by user");
+    }
+
+    try {
+      const resumeStream = await backend.streamConversationMessages(
+        conversationId,
+        {
+          agent_id:
+            conversationId === "default"
+              ? (runtime.agentId ?? undefined)
+              : undefined,
+          otid: messageOtid ?? undefined,
+          starting_after: 0,
+          batch_size: 1000,
+        } as unknown as ConversationMessageStreamBody,
+        resumeAbortRelay ? { signal: resumeAbortRelay.signal } : undefined,
+      );
+      resumeAbortRelay?.attach(resumeStream as object);
+      return resumeStream;
+    } catch (resumeError) {
+      resumeAbortRelay?.cleanup();
+      throw resumeError;
+    }
+  } catch (resumeError) {
+    if (abortSignal?.aborted) {
+      throw new Error("Cancelled by user");
+    }
+    if (process.env.DEBUG) {
+      console.warn(
+        debugMessage,
+        resumeError instanceof Error
+          ? resumeError.message
+          : String(resumeError),
+      );
+    }
+    return null;
+  }
 }
 
 /**
@@ -240,11 +433,16 @@ export async function sendMessageStreamWithRetry(
   socket: ListenerTransport,
   runtime: ConversationRuntime,
   abortSignal?: AbortSignal,
+  retryOptions: {
+    providerFallback?: ProviderFallbackState;
+  } = {},
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   let transientRetries = 0;
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
+  let currentOpts = opts;
+  const retriedAfterBlockingRunSettled = new Set<string>();
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -261,7 +459,7 @@ export async function sendMessageStreamWithRetry(
       return await sendMessageStream(
         conversationId,
         messages,
-        opts,
+        currentOpts,
         abortSignal
           ? { maxRetries: 0, signal: abortSignal }
           : { maxRetries: 0 },
@@ -329,6 +527,26 @@ export async function sendMessageStreamWithRetry(
           conversation_id: conversationId,
         });
         const attempt = transientRetries + 1;
+        transientRetries = attempt;
+        const fallbackHandle = maybeApplyProviderFallback(
+          retryOptions.providerFallback,
+          attempt,
+        );
+        if (fallbackHandle) {
+          currentOpts = { ...currentOpts, overrideModel: fallbackHandle };
+          emitRecoverableRetryNotice(socket, runtime, {
+            kind: "transient_provider_retry",
+            message: PROVIDER_FALLBACK_NOTICE,
+            reason: "llm_api_error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs: 0,
+            agentId: runtime.agentId ?? undefined,
+            conversationId,
+          });
+          continue;
+        }
+
         const retryAfterMs =
           preStreamError instanceof APIError
             ? parseRetryAfterHeaderMs(
@@ -341,7 +559,6 @@ export async function sendMessageStreamWithRetry(
           detail: errorDetail,
           retryAfterMs,
         });
-        transientRetries = attempt;
 
         const retryMessage = getRetryStatusMessage(errorDetail);
         if (retryMessage) {
@@ -363,80 +580,63 @@ export async function sendMessageStreamWithRetry(
         continue;
       }
 
-      if (action === "retry_conversation_busy") {
+      const blockingRunId = extractConversationBusyRunId(errorDetail);
+
+      if (action === "retry_conversation_busy" || blockingRunId) {
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
           agent_id: runtime.agentId,
           conversation_id: conversationId,
         });
-        try {
-          const backend = getBackend();
-          const messageOtid = messages
-            .map((item) => (item as Record<string, unknown>).otid)
-            .find((value): value is string => typeof value === "string");
-          const resumeAbortRelay = createStreamAbortRelay(abortSignal);
-
-          if (abortSignal?.aborted) {
-            throw new Error("Cancelled by user");
-          }
-
-          try {
-            const resumeStream = await backend.streamConversationMessages(
-              conversationId,
-              {
-                agent_id:
-                  conversationId === "default"
-                    ? (runtime.agentId ?? undefined)
-                    : undefined,
-                otid: messageOtid ?? undefined,
-                starting_after: 0,
-                batch_size: 1000,
-              } as unknown as ConversationMessageStreamBody,
-              resumeAbortRelay
-                ? { signal: resumeAbortRelay.signal }
-                : undefined,
-            );
-            resumeAbortRelay?.attach(resumeStream as object);
-            return resumeStream;
-          } catch (resumeError) {
-            resumeAbortRelay?.cleanup();
-            throw resumeError;
-          }
-        } catch (resumeError) {
-          if (abortSignal?.aborted) {
-            throw new Error("Cancelled by user");
-          }
-          if (process.env.DEBUG) {
-            console.warn(
-              "[Listen] Pre-stream resume failed, falling back to wait/retry:",
-              resumeError instanceof Error
-                ? resumeError.message
-                : String(resumeError),
-            );
-          }
+        const resumeStream = await tryResumeBusyConversationStream({
+          conversationId,
+          messages,
+          runtime,
+          abortSignal,
+          debugMessage:
+            "[Listen] Pre-stream resume failed, falling back to wait/retry:",
+        });
+        if (resumeStream) {
+          return resumeStream;
         }
 
+        const retryBudgetAvailable = action === "retry_conversation_busy";
         const attempt = conversationBusyRetries + 1;
+        if (retryBudgetAvailable) {
+          conversationBusyRetries = attempt;
+        }
         const delayMs = getRetryDelayMs({
           category: "conversation_busy",
           attempt,
         });
-        conversationBusyRetries = attempt;
+        const retryNotice = getConversationBusyRetryNotice(
+          blockingRunId,
+          delayMs,
+        );
 
         emitRetryDelta(socket, runtime, {
-          message: "Conversation is busy, waiting and retrying…",
+          message: retryNotice.message,
           reason: "error",
           attempt,
           maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
-          delayMs,
+          delayMs: retryNotice.delayMs,
           agentId: runtime.agentId ?? undefined,
           conversationId,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        if (abortSignal?.aborted) {
-          throw new Error("Cancelled by user");
+        const blockingRunDisposition = await maybeWaitForBlockingRun({
+          runId: blockingRunId,
+          retriedAfterSettled: retriedAfterBlockingRunSettled,
+          abortSignal,
+        });
+        if (blockingRunDisposition === "retry_now") {
+          continue;
         }
+        if (!retryBudgetAvailable) {
+          throw preStreamError;
+        }
+
+        await sleepWithAbort(delayMs, abortSignal);
         continue;
       }
 
@@ -454,6 +654,7 @@ export async function sendApprovalContinuationWithRetry(
   abortSignal?: AbortSignal,
   retryOptions: {
     allowApprovalRecovery?: boolean;
+    providerFallback?: ProviderFallbackState;
   } = {},
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>> | null> {
   const allowApprovalRecovery = retryOptions.allowApprovalRecovery ?? true;
@@ -461,6 +662,8 @@ export async function sendApprovalContinuationWithRetry(
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
+  let currentOpts = opts;
+  const retriedAfterBlockingRunSettled = new Set<string>();
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -477,7 +680,7 @@ export async function sendApprovalContinuationWithRetry(
       return await sendMessageStream(
         conversationId,
         messages,
-        opts,
+        currentOpts,
         abortSignal
           ? { maxRetries: 0, signal: abortSignal }
           : { maxRetries: 0 },
@@ -557,6 +760,26 @@ export async function sendApprovalContinuationWithRetry(
           conversation_id: conversationId,
         });
         const attempt = transientRetries + 1;
+        transientRetries = attempt;
+        const fallbackHandle = maybeApplyProviderFallback(
+          retryOptions.providerFallback,
+          attempt,
+        );
+        if (fallbackHandle) {
+          currentOpts = { ...currentOpts, overrideModel: fallbackHandle };
+          emitRecoverableRetryNotice(socket, runtime, {
+            kind: "transient_provider_retry",
+            message: PROVIDER_FALLBACK_NOTICE,
+            reason: "llm_api_error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs: 0,
+            agentId: runtime.agentId ?? undefined,
+            conversationId,
+          });
+          continue;
+        }
+
         const retryAfterMs =
           preStreamError instanceof APIError
             ? parseRetryAfterHeaderMs(
@@ -569,7 +792,6 @@ export async function sendApprovalContinuationWithRetry(
           detail: errorDetail,
           retryAfterMs,
         });
-        transientRetries = attempt;
 
         const retryMessage = getRetryStatusMessage(errorDetail);
         if (retryMessage) {
@@ -591,80 +813,64 @@ export async function sendApprovalContinuationWithRetry(
         continue;
       }
 
-      if (action === "retry_conversation_busy") {
-        conversationBusyRetries += 1;
+      const blockingRunId = extractConversationBusyRunId(errorDetail);
+
+      if (action === "retry_conversation_busy" || blockingRunId) {
+        const retryBudgetAvailable = action === "retry_conversation_busy";
+        const attempt = conversationBusyRetries + 1;
+        if (retryBudgetAvailable) {
+          conversationBusyRetries = attempt;
+        }
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
           agent_id: runtime.agentId,
           conversation_id: conversationId,
         });
 
-        try {
-          const backend = getBackend();
-          const messageOtid = messages
-            .map((item) => (item as Record<string, unknown>).otid)
-            .find((value): value is string => typeof value === "string");
-          const resumeAbortRelay = createStreamAbortRelay(abortSignal);
-
-          if (abortSignal?.aborted) {
-            throw new Error("Cancelled by user");
-          }
-
-          try {
-            const resumeStream = await backend.streamConversationMessages(
-              conversationId,
-              {
-                agent_id:
-                  conversationId === "default"
-                    ? (runtime.agentId ?? undefined)
-                    : undefined,
-                otid: messageOtid ?? undefined,
-                starting_after: 0,
-                batch_size: 1000,
-              } as unknown as ConversationMessageStreamBody,
-              resumeAbortRelay
-                ? { signal: resumeAbortRelay.signal }
-                : undefined,
-            );
-            resumeAbortRelay?.attach(resumeStream as object);
-            return resumeStream;
-          } catch (resumeError) {
-            resumeAbortRelay?.cleanup();
-            throw resumeError;
-          }
-        } catch (resumeError) {
-          if (abortSignal?.aborted) {
-            throw new Error("Cancelled by user");
-          }
-          if (process.env.DEBUG) {
-            console.warn(
-              "[Listen] Approval continuation pre-stream resume failed, falling back to wait/retry:",
-              resumeError instanceof Error
-                ? resumeError.message
-                : String(resumeError),
-            );
-          }
+        const resumeStream = await tryResumeBusyConversationStream({
+          conversationId,
+          messages,
+          runtime,
+          abortSignal,
+          debugMessage:
+            "[Listen] Approval continuation pre-stream resume failed, falling back to wait/retry:",
+        });
+        if (resumeStream) {
+          return resumeStream;
         }
 
         const retryDelayMs = getRetryDelayMs({
           category: "conversation_busy",
-          attempt: conversationBusyRetries,
+          attempt,
         });
+        const retryNotice = getConversationBusyRetryNotice(
+          blockingRunId,
+          retryDelayMs,
+        );
 
         emitRetryDelta(socket, runtime, {
-          message: "Conversation is busy, waiting and retrying…",
+          message: retryNotice.message,
           reason: "error",
-          attempt: conversationBusyRetries,
+          attempt,
           maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
-          delayMs: retryDelayMs,
+          delayMs: retryNotice.delayMs,
           agentId: runtime.agentId ?? undefined,
           conversationId,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-        if (abortSignal?.aborted) {
-          throw new Error("Cancelled by user");
+        const blockingRunDisposition = await maybeWaitForBlockingRun({
+          runId: blockingRunId,
+          retriedAfterSettled: retriedAfterBlockingRunSettled,
+          abortSignal,
+        });
+        if (blockingRunDisposition === "retry_now") {
+          continue;
         }
+        if (!retryBudgetAvailable) {
+          throw preStreamError;
+        }
+
+        await sleepWithAbort(retryDelayMs, abortSignal);
         continue;
       }
 

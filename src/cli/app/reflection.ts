@@ -1,6 +1,4 @@
-import type { ReflectionSettings } from "../helpers/memoryReminder";
-import { isReflectionSubagentActive } from "../helpers/reflectionGate";
-import { getSubagents } from "../helpers/subagentState";
+import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
 
 export function formatReflectionSettings(settings: ReflectionSettings): string {
   if (settings.trigger === "off") {
@@ -10,11 +8,4 @@ export function formatReflectionSettings(settings: ReflectionSettings): string {
     return "Compaction event";
   }
   return `Step count (every ${settings.stepCount} turns)`;
-}
-
-export function hasActiveReflectionSubagent(
-  agentId: string,
-  conversationId: string,
-): boolean {
-  return isReflectionSubagentActive(getSubagents(), agentId, conversationId);
 }

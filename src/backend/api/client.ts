@@ -1,12 +1,12 @@
 import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
+import { LETTA_CLOUD_API_URL, refreshAccessToken } from "@/auth/oauth";
+import { experimentManager } from "@/experiments/manager";
+import { type Settings, settingsManager } from "@/settings-manager";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { isDebugEnabled } from "@/utils/debug";
+import { createTimingFetch, isTimingsEnabled } from "@/utils/timing";
 import packageJson from "../../../package.json";
-import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../../auth/oauth";
-import { experimentManager } from "../../experiments/manager";
-import { type Settings, settingsManager } from "../../settings-manager";
-import { trackBoundaryError } from "../../telemetry/errorReporting";
-import { isDebugEnabled } from "../../utils/debug";
-import { createTimingFetch, isTimingsEnabled } from "../../utils/timing";
 
 const SDK_DIAGNOSTIC_MAX_LEN = 400;
 const SDK_DIAGNOSTIC_MAX_LINES = 4;
@@ -141,6 +141,9 @@ export function getClientDefaultHeaders(): Record<string, string> {
       : nodeExperiment.enabled
         ? { "x-letta-node": "1" }
         : {}),
+    ...(process.env.LETTA_MEMFS_BACKEND === "hosted"
+      ? { "x-letta-memfs-backend": "hosted" }
+      : {}),
   };
 }
 
@@ -206,7 +209,7 @@ export async function getClient() {
 
         // Update settings with new token (secrets handles secure storage automatically)
         settingsManager.updateSettings({
-          env: { ...settings.env, LETTA_API_KEY: tokens.access_token },
+          env: { LETTA_API_KEY: tokens.access_token },
           refreshToken: tokens.refresh_token || settings.refreshToken,
           tokenExpiresAt: now + tokens.expires_in * 1000,
         });

@@ -2,9 +2,11 @@ import WebSocket from "ws";
 import {
   channelPluginConfigShouldRefreshDisplayName,
   getChannelPluginConfig,
-} from "../../../channels/accountConfig";
-import type { ChannelRegistryEvent } from "../../../channels/registry";
-import type { DequeuedBatch } from "../../../queue/queueRuntime";
+} from "@/channels/account-config";
+import { removeUserPlugin } from "@/channels/custom/scaffolding";
+import { getChannelPluginMetadata } from "@/channels/plugin-registry";
+import type { ChannelRegistryEvent } from "@/channels/registry";
+import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type {
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -29,11 +31,11 @@ import type {
   ChannelTargetsListCommand,
   ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
   ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
-} from "../../../types/protocol_v2";
+} from "@/types/protocol_v2";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
-} from "../permissionMode";
+} from "@/websocket/listener/permission-mode";
 import {
   isChannelAccountBindCommand,
   isChannelAccountCreateCommand,
@@ -55,16 +57,16 @@ import {
   isChannelsListCommand,
   isChannelTargetBindCommand,
   isChannelTargetsListCommand,
-} from "../protocol-inbound";
-import type { ListenerTransport } from "../transport";
+} from "@/websocket/listener/protocol-inbound";
+import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
   ListenerRuntime,
   StartListenerOptions,
-} from "../types";
+} from "@/websocket/listener/types";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
-type ChannelsServiceModule = typeof import("../../../channels/service");
+type ChannelsServiceModule = typeof import("@/channels/service");
 
 type ProcessQueuedTurn = (
   queuedTurn: IncomingMessage,
@@ -92,7 +94,7 @@ async function loadChannelsService(): Promise<ChannelsServiceModule> {
   if (channelsServiceLoaderOverride) {
     return channelsServiceLoaderOverride();
   }
-  return import("../../../channels/service");
+  return import("@/channels/service");
 }
 
 export type ChannelsCommand =
@@ -252,7 +254,7 @@ export async function handleChannelsProtocolCommand(
     bindChannelPairing,
     bindChannelAccountLive,
     bindChannelTarget,
-    createChannelAccountLive,
+    createChannelAccountLiveWithSecrets,
     refreshChannelAccountDisplayNameLive,
     getChannelConfigSnapshot,
     listChannelAccountSnapshots,
@@ -268,23 +270,34 @@ export async function handleChannelsProtocolCommand(
     stopChannelAccountLive,
     stopChannelLive,
     unbindChannelAccountLive,
-    updateChannelAccountLive,
+    updateChannelAccountLiveWithSecrets,
     updateChannelRouteLive,
   } = await loadChannelsService();
 
   const mapChannelSummary = (
     summary: ReturnType<typeof listChannelSummaries>[number],
-  ) => ({
-    channel_id: summary.channelId,
-    display_name: summary.displayName,
-    configured: summary.configured,
-    enabled: summary.enabled,
-    running: summary.running,
-    dm_policy: summary.dmPolicy,
-    pending_pairings_count: summary.pendingPairingsCount,
-    approved_users_count: summary.approvedUsersCount,
-    routes_count: summary.routesCount,
-  });
+  ) => {
+    let configSchema: import("@/types/protocol_v2").ChannelConfigSchema | null =
+      null;
+    try {
+      configSchema =
+        getChannelPluginMetadata(summary.channelId).configSchema ?? null;
+    } catch {
+      // Unsupported channel — leave schema null.
+    }
+    return {
+      channel_id: summary.channelId,
+      display_name: summary.displayName,
+      configured: summary.configured,
+      enabled: summary.enabled,
+      running: summary.running,
+      dm_policy: summary.dmPolicy,
+      pending_pairings_count: summary.pendingPairingsCount,
+      approved_users_count: summary.approvedUsersCount,
+      routes_count: summary.routesCount,
+      config_schema: configSchema,
+    };
+  };
 
   const mapChannelConfig = (
     snapshot: ReturnType<typeof getChannelConfigSnapshot>,
@@ -450,25 +463,18 @@ export async function handleChannelsProtocolCommand(
         "listener_channels_command",
       );
 
-      const accountsNeedingRefresh = accounts.filter((account) =>
-        parsed.channel_id === "slack" ? true : !account.displayName,
+      const accountsNeedingRefresh = accounts.filter(
+        (account) => !account.displayName,
       );
 
       if (accountsNeedingRefresh.length > 0) {
         runDetachedListenerTask("channel_accounts_refresh", async () => {
           const refreshResults = await Promise.allSettled(
             accountsNeedingRefresh.map(async (account) => {
-              const refreshed =
-                parsed.channel_id === "slack"
-                  ? await refreshChannelAccountDisplayNameLive(
-                      parsed.channel_id,
-                      account.accountId,
-                      { force: true },
-                    )
-                  : await refreshChannelAccountDisplayNameLive(
-                      parsed.channel_id,
-                      account.accountId,
-                    );
+              const refreshed = await refreshChannelAccountDisplayNameLive(
+                parsed.channel_id,
+                account.accountId,
+              );
 
               return refreshed.displayName !== account.displayName;
             }),
@@ -509,10 +515,15 @@ export async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_create") {
     try {
+      // Custom-app model: multiple custom apps are represented as
+      // multiple accounts under the first-party "custom" channel. Do not
+      // scaffold per-app plugin folders/channel IDs here.
+      const effectiveChannelId = parsed.channel_id;
+
       const pluginConfig =
         getChannelPluginConfig(parsed.account as Record<string, unknown>) ?? {};
-      const created = createChannelAccountLive(
-        parsed.channel_id,
+      const created = await createChannelAccountLiveWithSecrets(
+        effectiveChannelId,
         {
           displayName:
             "display_name" in parsed.account
@@ -535,7 +546,7 @@ export async function handleChannelsProtocolCommand(
         "display_name" in parsed.account
           ? created
           : await refreshChannelAccountDisplayNameLive(
-              parsed.channel_id,
+              effectiveChannelId,
               created.accountId,
               { force: true },
             );
@@ -546,17 +557,17 @@ export async function handleChannelsProtocolCommand(
           type: "channel_account_create_response",
           request_id: parsed.request_id,
           success: true,
-          channel_id: parsed.channel_id,
+          channel_id: effectiveChannelId,
           account: mapChannelAccount(account),
         },
         "listener_channels_send_failed",
         "listener_channels_command",
       );
       emitChannelAccountsUpdated(socket, safeSocketSend, {
-        channelId: parsed.channel_id,
+        channelId: effectiveChannelId,
         accountId: account.accountId,
       });
-      emitChannelsUpdated(socket, safeSocketSend, parsed.channel_id);
+      emitChannelsUpdated(socket, safeSocketSend, effectiveChannelId);
     } catch (err) {
       safeSocketSend(
         socket,
@@ -582,7 +593,7 @@ export async function handleChannelsProtocolCommand(
     try {
       const pluginConfig =
         getChannelPluginConfig(parsed.patch as Record<string, unknown>) ?? {};
-      const updated = updateChannelAccountLive(
+      const updated = await updateChannelAccountLiveWithSecrets(
         parsed.channel_id,
         parsed.account_id,
         {
@@ -760,6 +771,10 @@ export async function handleChannelsProtocolCommand(
         "listener_channels_command",
       );
       if (deleted) {
+        // Remove the plugin folder if this was a user-scaffolded channel
+        // so the display name can be reused.
+        removeUserPlugin(parsed.channel_id);
+
         emitChannelAccountsUpdated(socket, safeSocketSend, {
           channelId: parsed.channel_id,
           accountId: parsed.account_id,
@@ -1407,13 +1422,22 @@ export function handleChannelRegistryEvent(
     return;
   }
 
+  if (event.type === "channel_account_state_updated") {
+    if (socket instanceof WebSocket) {
+      emitChannelAccountsUpdated(socket, safeSocketSend, {
+        channelId: event.channelId as ChannelId,
+        accountId: event.accountId,
+      });
+      emitChannelsUpdated(socket, safeSocketSend, event.channelId as ChannelId);
+    }
+    return;
+  }
+
   const permissionModeState = getOrCreateConversationPermissionModeStateRef(
     runtime,
     event.agentId,
     event.conversationId,
   );
   permissionModeState.mode = event.defaultPermissionMode;
-  permissionModeState.planFilePath = null;
-  permissionModeState.modeBeforePlan = null;
   persistPermissionModeMapForRuntime(runtime);
 }

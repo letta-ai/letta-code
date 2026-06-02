@@ -1,15 +1,11 @@
 import { cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
-import {
-  getMemoryGitStatus,
-  getMemoryRepoDir,
-  isGitRepo,
-  pullMemory,
-} from "../../agent/memoryGit";
-import { runMemoryTokensAction } from "./memoryTokens";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getMemoryGitStatus, isGitRepo, pullMemory } from "@/agent/memory-git";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { runMemoryTokensAction } from "./memory-tokens";
 
 function printUsage(): void {
   console.log(
@@ -70,11 +66,11 @@ function parseMemoryArgs(argv: string[]) {
 }
 
 function getMemoryRoot(agentId: string): string {
-  return join(homedir(), ".letta", "agents", agentId, "memory");
+  return getScopedMemoryFilesystemRoot(agentId);
 }
 
 function getAgentRoot(agentId: string): string {
-  return join(homedir(), ".letta", "agents", agentId);
+  return dirname(getMemoryRoot(agentId));
 }
 
 function formatBackupTimestamp(date = new Date()): string {
@@ -185,7 +181,7 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFile = promisify(execFileCb);
-      const dir = getMemoryRepoDir(agentId);
+      const dir = getScopedMemoryFilesystemRoot(agentId);
       const { stdout } = await execFile("git", ["diff"], { cwd: dir });
       if (stdout.trim()) {
         console.log(stdout);
@@ -199,6 +195,20 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
       if (!isGitRepo(agentId)) {
         console.error("Not a git repo. Enable git-backed memory first.");
         return 1;
+      }
+      if (isLocalBackendEnvEnabled()) {
+        console.log(
+          JSON.stringify(
+            {
+              updated: false,
+              summary:
+                "Local backend MemFS is stored locally; no remote pull is required.",
+            },
+            null,
+            2,
+          ),
+        );
+        return 0;
       }
       const result = await pullMemory(agentId);
       console.log(JSON.stringify(result, null, 2));

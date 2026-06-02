@@ -3,29 +3,38 @@ import {
   addTask as addCronTask,
   deleteAllTasks as deleteAllCronTasks,
   deleteTask as deleteCronTask,
+  getCronRunLogPath,
   getTask as getCronTask,
   listTasks as listCronTasks,
-} from "../../../cron";
+  readCronRunLogEntriesPage,
+} from "@/cron";
+import { runCronTaskNow } from "@/cron/scheduler";
 import type {
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
-} from "../../../types/protocol_v2";
+  CronRunsCommand,
+  CronTriggerCommand,
+} from "@/types/protocol_v2";
 import {
   isCronAddCommand,
   isCronDeleteAllCommand,
   isCronDeleteCommand,
   isCronGetCommand,
   isCronListCommand,
-} from "../protocol-inbound";
+  isCronRunsCommand,
+  isCronTriggerCommand,
+} from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 export type CronCommand =
   | CronListCommand
   | CronAddCommand
   | CronGetCommand
+  | CronRunsCommand
+  | CronTriggerCommand
   | CronDeleteCommand
   | CronDeleteAllCommand;
 
@@ -178,6 +187,80 @@ export async function handleCronCommand(
     return true;
   }
 
+  if (parsed.type === "cron_runs") {
+    try {
+      const page = readCronRunLogEntriesPage(
+        getCronRunLogPath(parsed.task_id),
+        {
+          jobId: parsed.task_id,
+          limit: parsed.limit,
+          offset: parsed.offset,
+          runId: parsed.run_id,
+        },
+      );
+      safeSocketSend(
+        socket,
+        {
+          type: "cron_runs_response",
+          request_id: parsed.request_id,
+          success: true,
+          page,
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "cron_runs_response",
+          request_id: parsed.request_id,
+          success: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to list cron run history",
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+    }
+    return true;
+  }
+
+  if (parsed.type === "cron_trigger") {
+    try {
+      const result = await runCronTaskNow(parsed.task_id);
+      safeSocketSend(
+        socket,
+        {
+          type: "cron_trigger_response",
+          request_id: parsed.request_id,
+          success: result.success,
+          found: result.found,
+          ...(result.task ? { task: result.task } : {}),
+          ...(result.error ? { error: result.error } : {}),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "cron_trigger_response",
+          request_id: parsed.request_id,
+          success: false,
+          found: false,
+          error: err instanceof Error ? err.message : "Failed to trigger cron",
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+    }
+    return true;
+  }
+
   if (parsed.type === "cron_delete") {
     try {
       const existingTask = getCronTask(parsed.task_id);
@@ -263,6 +346,8 @@ export function handleCronProtocolCommand(
     isCronListCommand(parsed) ||
     isCronAddCommand(parsed) ||
     isCronGetCommand(parsed) ||
+    isCronRunsCommand(parsed) ||
+    isCronTriggerCommand(parsed) ||
     isCronDeleteCommand(parsed) ||
     isCronDeleteAllCommand(parsed)
   ) {

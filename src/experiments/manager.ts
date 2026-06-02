@@ -1,4 +1,4 @@
-import { settingsManager } from "../settings-manager";
+import { settingsManager } from "@/settings-manager";
 import type {
   ExperimentDefinition,
   ExperimentId,
@@ -13,6 +13,18 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
     label: "conversation titles",
     description:
       "Generate conversation titles from the transcript with letta/auto (uses your credits).",
+  },
+  {
+    id: "desktop_conversation_bootstrap",
+    label: "conversation bootstrap",
+    description:
+      "Inject lightweight prior-conversation context into the first turn of brand-new Letta Code conversations.",
+  },
+  {
+    id: "diffs",
+    label: "diffs",
+    description:
+      "Open browser-based worktree diff previews powered by Diffs from Pierre.",
   },
   {
     id: "node",

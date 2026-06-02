@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
-import { resizeImageIfNeeded } from "./imageResize";
-import { allocateImage } from "./pasteRegistry";
+import { resizeImageIfNeeded } from "@/utils/image-resize";
+import { allocateImage } from "./paste-registry";
 
 /**
  * Result type for clipboard image import.

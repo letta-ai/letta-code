@@ -1,13 +1,14 @@
 import { relative } from "node:path";
 import { Box } from "ink";
 import { useMemo } from "react";
+import stringWidth from "string-width";
 import {
   ADV_DIFF_CONTEXT_LINES,
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
-} from "../helpers/diff";
-import { CLI_GLYPHS } from "../helpers/glyphs";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+} from "@/cli/helpers/diff";
+import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { EditRenderer, MultiEditRenderer, WriteRenderer } from "./DiffRenderer";
 import {
@@ -16,6 +17,10 @@ import {
   type StyledSpan,
 } from "./SyntaxHighlightedCommand";
 import { Text } from "./Text";
+
+const TAB_WIDTH = 4;
+const HIGHLIGHT_MAX_BYTES = 512 * 1024;
+const HIGHLIGHT_MAX_LINES = 10_000;
 
 type EditItem = {
   old_string: string;
@@ -62,6 +67,77 @@ function padLeft(n: number, width: number): string {
 // A styled text chunk with optional color/dim for row-splitting.
 type StyledChunk = { text: string; color?: string; dimColor?: boolean };
 
+export type AdvancedDiffRenderRow = {
+  kind: "context" | "remove" | "add";
+  displayNo: number;
+  text: string;
+  syntaxSpans?: StyledSpan[];
+};
+
+export function expandTabsForDiffDisplay(text: string): string {
+  return text.replaceAll("\t", " ".repeat(TAB_WIDTH));
+}
+
+export function exceedsAdvancedDiffHighlightLimits(
+  hunks: AdvancedDiffSuccess["hunks"],
+): boolean {
+  let totalBytes = 0;
+  let totalLines = 0;
+
+  for (const hunk of hunks) {
+    for (const line of hunk.lines) {
+      const raw = line.raw || "";
+      if (raw.charAt(0) === "\\") continue;
+      totalBytes += Buffer.byteLength(raw.slice(1), "utf8");
+      totalLines += 1;
+      if (
+        totalBytes > HIGHLIGHT_MAX_BYTES ||
+        totalLines > HIGHLIGHT_MAX_LINES
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function takePrefixByDisplayWidth(
+  text: string,
+  maxWidth: number,
+): { prefix: string; rest: string; width: number } {
+  if (maxWidth <= 0) {
+    return { prefix: "", rest: text, width: 0 };
+  }
+
+  let prefix = "";
+  let width = 0;
+
+  for (const char of text) {
+    const charWidth = stringWidth(char);
+    if (width + charWidth > maxWidth) {
+      break;
+    }
+    prefix += char;
+    width += charWidth;
+  }
+
+  return { prefix, rest: text.slice(prefix.length), width };
+}
+
+function takeFirstCharacter(text: string): {
+  prefix: string;
+  rest: string;
+  width: number;
+} {
+  const prefix = Array.from(text)[0] ?? "";
+  return {
+    prefix,
+    rest: text.slice(prefix.length),
+    width: stringWidth(prefix),
+  };
+}
+
 // Split styled chunks into rows of exactly `cols` characters, padding the last row.
 // Continuation rows start with a blank indent of `contIndent` characters
 // (matching Codex's empty-gutter + 2-space continuation, diff_render.rs:922-929).
@@ -73,30 +149,41 @@ function buildPaddedRows(
   if (cols <= 0) return [chunks];
   const rows: StyledChunk[][] = [];
   let row: StyledChunk[] = [];
-  let len = 0;
+  let width = 0;
   for (const chunk of chunks) {
     let rem = chunk.text;
     while (rem.length > 0) {
-      const space = cols - len;
-      if (rem.length <= space) {
+      if (width >= cols) {
+        rows.push(row);
+        row = [{ text: " ".repeat(contIndent) }];
+        width = contIndent;
+      }
+
+      const space = Math.max(1, cols - width);
+      if (stringWidth(rem) <= space) {
         row.push({ text: rem, color: chunk.color, dimColor: chunk.dimColor });
-        len += rem.length;
+        width += stringWidth(rem);
         rem = "";
       } else {
+        let next = takePrefixByDisplayWidth(rem, space);
+        if (!next.prefix) {
+          next = takeFirstCharacter(rem);
+        }
         row.push({
-          text: rem.slice(0, space),
+          text: next.prefix,
           color: chunk.color,
           dimColor: chunk.dimColor,
         });
+        width += next.width;
+        rem = next.rest;
         rows.push(row);
         // Start continuation row with blank gutter indent
         row = [{ text: " ".repeat(contIndent) }];
-        len = contIndent;
-        rem = rem.slice(space);
+        width = contIndent;
       }
     }
   }
-  if (len < cols) row.push({ text: " ".repeat(cols - len) });
+  if (width < cols) row.push({ text: " ".repeat(cols - width) });
   if (row.length > 0) rows.push(row);
   return rows;
 }
@@ -144,10 +231,13 @@ function Line({
   chunks.push({ text: " " });
   if (syntaxSpans && syntaxSpans.length > 0) {
     for (const span of syntaxSpans) {
-      chunks.push({ text: span.text, color: span.color });
+      chunks.push({
+        text: expandTabsForDiffDisplay(span.text),
+        color: span.color,
+      });
     }
   } else {
-    chunks.push({ text });
+    chunks.push({ text: expandTabsForDiffDisplay(text) });
   }
 
   // Continuation indent = indent + gutter + sign + space (blank, same width)
@@ -169,6 +259,75 @@ function Line({
       ))}
     </>
   );
+}
+
+export function buildAdvancedDiffRows(
+  hunks: AdvancedDiffSuccess["hunks"],
+  hunkSyntaxLines: (StyledSpan[] | undefined)[][] = [],
+): AdvancedDiffRenderRow[] {
+  const rows: AdvancedDiffRenderRow[] = [];
+
+  for (let hIdx = 0; hIdx < hunks.length; hIdx++) {
+    const h = hunks[hIdx];
+    if (!h) {
+      continue;
+    }
+
+    const syntaxForHunk = hunkSyntaxLines[hIdx] ?? [];
+    let oldNo = h.oldStart;
+    let newNo = h.newStart;
+    let displayLineIdx = 0; // index into syntaxForHunk
+    for (let i = 0; i < h.lines.length; i++) {
+      const line = h.lines[i];
+      if (!line) continue;
+      const raw = line.raw || "";
+      const ch = raw.charAt(0);
+      const body = raw.slice(1);
+      // Skip meta lines (e.g., "\ No newline at end of file")
+      if (ch === "\\") continue;
+
+      const spans = syntaxForHunk[displayLineIdx];
+      displayLineIdx++;
+
+      if (ch === " ") {
+        rows.push({
+          kind: "context",
+          displayNo: newNo,
+          text: body,
+          syntaxSpans: spans,
+        });
+        oldNo++;
+        newNo++;
+      } else if (ch === "-") {
+        rows.push({
+          kind: "remove",
+          displayNo: oldNo,
+          text: body,
+          syntaxSpans: spans,
+        });
+        oldNo++;
+      } else if (ch === "+") {
+        rows.push({
+          kind: "add",
+          displayNo: newNo,
+          text: body,
+          syntaxSpans: spans,
+        });
+        newNo++;
+      } else {
+        rows.push({
+          kind: "context",
+          displayNo: newNo,
+          text: raw,
+          syntaxSpans: spans,
+        });
+        oldNo++;
+        newNo++;
+      }
+    }
+  }
+
+  return rows;
 }
 
 export function AdvancedDiffRenderer(
@@ -259,6 +418,7 @@ export function AdvancedDiffRenderer(
   // Syntax-highlight all hunk content at once per hunk (preserves parser state
   // across consecutive lines, like Codex's hunk-level highlighting approach).
   const lang = languageFromPath(filePath);
+  const shouldHighlight = lang && !exceedsAdvancedDiffHighlightLimits(hunks);
   const hunkSyntaxLines: (StyledSpan[] | undefined)[][] = [];
   for (const h of hunks) {
     // Concatenate all displayable lines in the hunk for a single highlight pass.
@@ -270,79 +430,16 @@ export function AdvancedDiffRenderer(
       textLines.push(raw.slice(1));
     }
     const block = textLines.join("\n");
-    const highlighted = lang ? highlightCode(block, lang) : undefined;
+    const highlighted = shouldHighlight
+      ? highlightCode(block, lang)
+      : undefined;
+    const syntaxLines =
+      highlighted?.length === textLines.length ? highlighted : undefined;
     // Map highlighted per-line spans back; undefined when highlighting failed.
-    hunkSyntaxLines.push(textLines.map((_, i) => highlighted?.[i]));
+    hunkSyntaxLines.push(textLines.map((_, i) => syntaxLines?.[i]));
   }
 
-  // Prepare display rows with shared-line-number behavior.
-  type Row = {
-    kind: "context" | "remove" | "add";
-    displayNo: number;
-    text: string;
-    syntaxSpans?: StyledSpan[];
-  };
-  const rows: Row[] = [];
-  for (let hIdx = 0; hIdx < hunks.length; hIdx++) {
-    const h = hunks[hIdx];
-    if (!h) {
-      continue;
-    }
-
-    const syntaxForHunk = hunkSyntaxLines[hIdx] ?? [];
-    let oldNo = h.oldStart;
-    let newNo = h.newStart;
-    let lastRemovalNo: number | null = null;
-    let displayLineIdx = 0; // index into syntaxForHunk
-    for (let i = 0; i < h.lines.length; i++) {
-      const line = h.lines[i];
-      if (!line) continue;
-      const raw = line.raw || "";
-      const ch = raw.charAt(0);
-      const body = raw.slice(1);
-      // Skip meta lines (e.g., "\ No newline at end of file")
-      if (ch === "\\") continue;
-
-      const spans = syntaxForHunk[displayLineIdx];
-      displayLineIdx++;
-
-      if (ch === " ") {
-        rows.push({
-          kind: "context",
-          displayNo: oldNo,
-          text: body,
-          syntaxSpans: spans,
-        });
-        oldNo++;
-        newNo++;
-        lastRemovalNo = null;
-      } else if (ch === "-") {
-        rows.push({
-          kind: "remove",
-          displayNo: oldNo,
-          text: body,
-          syntaxSpans: spans,
-        });
-        lastRemovalNo = oldNo;
-        oldNo++;
-      } else if (ch === "+") {
-        const displayNo = lastRemovalNo !== null ? lastRemovalNo : newNo;
-        rows.push({ kind: "add", displayNo, text: body, syntaxSpans: spans });
-        newNo++;
-        lastRemovalNo = null;
-      } else {
-        rows.push({
-          kind: "context",
-          displayNo: oldNo,
-          text: raw,
-          syntaxSpans: spans,
-        });
-        oldNo++;
-        newNo++;
-        lastRemovalNo = null;
-      }
-    }
-  }
+  const rows = buildAdvancedDiffRows(hunks, hunkSyntaxLines);
   // Compute gutter width based on the maximum display number we will render,
   // so multi-digit line numbers (e.g., 10) never wrap.
   const maxDisplayNo = rows.reduce((m, r) => Math.max(m, r.displayNo), 1);

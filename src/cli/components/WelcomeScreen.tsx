@@ -2,12 +2,12 @@ import { homedir } from "node:os";
 import type { Letta } from "@letta-ai/letta-client";
 import { Box } from "ink";
 import { useEffect, useState } from "react";
-import type { AgentProvenance } from "../../agent/create";
-import { getModelDisplayName } from "../../agent/model";
-import { isLocalBackendEnabled } from "../../backend";
-import { settingsManager } from "../../settings-manager";
-import { getVersion } from "../../version";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { getModelDisplayName } from "@/agent/model";
+import { isLocalBackendEnabled } from "@/backend";
+import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import { settingsManager } from "@/settings-manager";
+import { getVersion } from "@/version";
 import { AnimatedLogo } from "./AnimatedLogo";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -72,12 +72,12 @@ export function WelcomeScreen({
   loadingState,
   continueSession,
   agentState,
-  agentProvenance: _agentProvenance,
+  startupHasAvailableLocalModels = true,
 }: {
   loadingState: LoadingState;
   continueSession?: boolean;
   agentState?: Letta.AgentState | null;
-  agentProvenance?: AgentProvenance | null;
+  startupHasAvailableLocalModels?: boolean;
 }) {
   // Keep hook call for potential future responsive behavior
   useTerminalWidth();
@@ -93,9 +93,15 @@ export function WelcomeScreen({
     llmConfig?.model_endpoint_type && llmConfig?.model
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null);
-  const model = fullModel
-    ? (getModelDisplayName(fullModel) ?? fullModel.split("/").pop())
-    : undefined;
+  const startupModelDisplayOverride = getStartupModelDisplayOverride({
+    isLocalBackend: isLocalBackendEnabled(),
+    startupHasAvailableLocalModels,
+  });
+  const model =
+    startupModelDisplayOverride ??
+    (fullModel
+      ? (getModelDisplayName(fullModel) ?? fullModel.split("/").pop())
+      : undefined);
 
   // Get auth method - use sync check for env vars, async only for keychain
   const initialAuth = getInitialAuthMethod();
@@ -114,9 +120,7 @@ export function WelcomeScreen({
       ? "Local"
       : authMethod === "url"
         ? process.env.LETTA_BASE_URL || "Custom URL"
-        : authMethod === "api-key"
-          ? "API key auth"
-          : "OAuth";
+        : "Constellation";
 
   // Check if memfs (context repositories) is enabled for this agent
   const memfsEnabled = agentState?.id

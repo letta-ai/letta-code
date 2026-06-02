@@ -1,8 +1,9 @@
 /**
- * Voice memo transcription via OpenAI Whisper.
+ * Voice memo transcription via OpenAI.
  *
  * Minimal: one API call, no format conversion, no chunking.
- * Telegram voice memos are .ogg/opus which Whisper supports natively.
+ * Telegram voice memos are .ogg/opus which OpenAI transcription supports
+ * natively.
  */
 
 import { readFileSync } from "node:fs";
@@ -14,8 +15,10 @@ export interface TranscriptionResult {
   error?: string;
 }
 
-const WHISPER_API_URL = "https://api.openai.com/v1/audio/transcriptions";
-const TRANSCRIPTION_TIMEOUT_MS = 10_000;
+const OPENAI_TRANSCRIPTION_API_URL =
+  "https://api.openai.com/v1/audio/transcriptions";
+const OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+const TRANSCRIPTION_TIMEOUT_MS = 30_000;
 
 /** Check whether an API key is available for transcription. */
 export function isTranscriptionConfigured(): boolean {
@@ -23,7 +26,7 @@ export function isTranscriptionConfigured(): boolean {
 }
 
 /**
- * Transcribe a local audio file using OpenAI Whisper.
+ * Transcribe a local audio file using OpenAI's transcription API.
  * Never throws; returns { success: false, error } on failure.
  */
 export async function transcribeAudioFile(
@@ -44,7 +47,7 @@ export async function transcribeAudioFile(
     const formData = new FormData();
     const blob = new Blob([buffer], { type: "audio/ogg" });
     formData.append("file", blob, filename);
-    formData.append("model", "whisper-1");
+    formData.append("model", OPENAI_TRANSCRIPTION_MODEL);
 
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -53,7 +56,7 @@ export async function transcribeAudioFile(
     );
 
     try {
-      const response = await fetch(WHISPER_API_URL, {
+      const response = await fetch(OPENAI_TRANSCRIPTION_API_URL, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}` },
         body: formData,
@@ -64,7 +67,7 @@ export async function transcribeAudioFile(
         const errorText = await response.text();
         return {
           success: false,
-          error: `Whisper API error (${response.status}): ${errorText}`,
+          error: `OpenAI transcription API error (${response.status}): ${errorText}`,
         };
       }
 
