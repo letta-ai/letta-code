@@ -55,6 +55,7 @@ import {
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
+import { useFrameCycle } from "@/cli/components/spinners/use-frame-cycle";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
 import {
@@ -99,6 +100,10 @@ import {
   hasInProgressTaskToolCalls,
 } from "@/cli/helpers/subagent-aggregation";
 import { buildStartupSystemPromptWarning } from "@/cli/helpers/system-prompt-warning.ts";
+import {
+  clearTerminalTitle,
+  setTerminalTitle,
+} from "@/cli/helpers/terminal-title";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import {
   isFileEditTool,
@@ -110,8 +115,16 @@ import {
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
 import {
+  renderActionRequiredWindowTitle,
   renderWindowTitle,
   resolveWindowTitleConfig,
+  TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL_MS,
+  TERMINAL_TITLE_ACTION_REQUIRED_PREFIX,
+  TERMINAL_TITLE_ACTION_REQUIRED_PREFIX_HIDDEN,
+  TERMINAL_TITLE_SPINNER_FRAMES,
+  TERMINAL_TITLE_SPINNER_INTERVAL_MS,
+  titleUsesActivity,
+  type WindowTitleData,
 } from "@/cli/helpers/window-title-config";
 import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
@@ -314,6 +327,11 @@ function hasConversationContent(lines: Line[]): boolean {
     }
   });
 }
+
+const TERMINAL_TITLE_ACTION_REQUIRED_FRAMES = [
+  TERMINAL_TITLE_ACTION_REQUIRED_PREFIX,
+  TERMINAL_TITLE_ACTION_REQUIRED_PREFIX_HIDDEN,
+] as const;
 
 export function App({
   agentId: initialAgentId,
@@ -915,18 +933,6 @@ export function App({
     startupModelDisplayOverride,
   ]);
 
-  // Set terminal title from window title config
-  useEffect(() => {
-    const items = resolveWindowTitleConfig(projectDirectory);
-    const title = renderWindowTitle(items, {
-      agentName: agentState?.name ?? null,
-      appName: "Letta Code",
-      version: getVersion(),
-      conversationSummary,
-    });
-    process.stdout.write(`\x1b]0;${title}\x07`);
-  }, [agentState?.name, conversationSummary, projectDirectory]);
-
   const currentModelProvider = llmConfig?.provider_name ?? null;
   const isLocalBackend = isLocalBackendEnabled();
   const currentReasoningEffort: ModelReasoningEffort | null =
@@ -1021,6 +1027,7 @@ export function App({
   const [thinkingMessage, setThinkingMessage] = useState(
     getRandomThinkingVerb(),
   );
+  const lastManagedTerminalTitleRef = useRef<string | null>(null);
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
@@ -4634,6 +4641,145 @@ export function App({
     });
   }, [estimatedLiveHeight, terminalRows]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeOverlay changes after /title persists settings; recompute the config on close.
+  const terminalTitleItems = useMemo(
+    () => resolveWindowTitleConfig(projectDirectory),
+    [projectDirectory, activeOverlay],
+  );
+  const terminalTitleUsesActivity = titleUsesActivity(terminalTitleItems);
+  const terminalTitleRequiresAction = pendingApprovals.length > 0;
+  const terminalTitleShowsActionRequired =
+    terminalTitleRequiresAction && terminalTitleUsesActivity;
+  const terminalTitleTaskRunning =
+    loadingState !== "ready" ||
+    streaming ||
+    isExecutingTool ||
+    commandRunning ||
+    bashRunning ||
+    pendingApprovals.length > 0;
+  const terminalTitleHasActiveProgress =
+    !terminalTitleShowsActionRequired && terminalTitleTaskRunning;
+  const terminalTitleRunState =
+    loadingState !== "ready"
+      ? "Starting"
+      : !terminalTitleTaskRunning
+        ? "Ready"
+        : executionPhase === "thinking"
+          ? "Thinking"
+          : "Working";
+  const terminalTitleSpinnerFrameIndex = useFrameCycle(
+    TERMINAL_TITLE_SPINNER_FRAMES,
+    TERMINAL_TITLE_SPINNER_INTERVAL_MS,
+    shouldAnimate &&
+      terminalTitleUsesActivity &&
+      terminalTitleHasActiveProgress,
+  );
+  const terminalTitleActionFrameIndex = useFrameCycle(
+    TERMINAL_TITLE_ACTION_REQUIRED_FRAMES,
+    TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL_MS,
+    shouldAnimate && terminalTitleShowsActionRequired,
+  );
+  const terminalTitleActionPrefix =
+    TERMINAL_TITLE_ACTION_REQUIRED_FRAMES[terminalTitleActionFrameIndex] ??
+    TERMINAL_TITLE_ACTION_REQUIRED_PREFIX;
+  const terminalTitleData = useMemo<WindowTitleData>(
+    () => ({
+      agentName,
+      appName: "Letta Code",
+      version: getVersion(),
+      conversationSummary,
+      conversationId,
+      projectDirectory,
+      currentDirectory: statusLinePayload.workspace.current_dir,
+      activityFrame:
+        shouldAnimate && terminalTitleHasActiveProgress
+          ? (TERMINAL_TITLE_SPINNER_FRAMES[terminalTitleSpinnerFrameIndex] ??
+            null)
+          : null,
+      runState: terminalTitleRunState,
+      modelDisplayName: currentModelDisplay,
+      reasoningEffort: currentReasoningEffort,
+      contextUsedPercentage: statusLinePayload.context_window.used_percentage,
+      contextRemainingPercentage:
+        statusLinePayload.context_window.remaining_percentage,
+      totalInputTokens: statusLinePayload.context_window.total_input_tokens,
+      totalOutputTokens: statusLinePayload.context_window.total_output_tokens,
+      fastMode: currentModelServiceTier === CHATGPT_FAST_SERVICE_TIER,
+    }),
+    [
+      agentName,
+      conversationId,
+      conversationSummary,
+      currentModelDisplay,
+      currentModelServiceTier,
+      currentReasoningEffort,
+      projectDirectory,
+      shouldAnimate,
+      statusLinePayload.context_window.remaining_percentage,
+      statusLinePayload.context_window.total_input_tokens,
+      statusLinePayload.context_window.total_output_tokens,
+      statusLinePayload.context_window.used_percentage,
+      statusLinePayload.workspace.current_dir,
+      terminalTitleHasActiveProgress,
+      terminalTitleRunState,
+      terminalTitleSpinnerFrameIndex,
+    ],
+  );
+  const terminalTitle = useMemo(
+    () =>
+      terminalTitleShowsActionRequired
+        ? renderActionRequiredWindowTitle(
+            terminalTitleItems,
+            terminalTitleData,
+            terminalTitleActionPrefix,
+          )
+        : renderWindowTitle(terminalTitleItems, terminalTitleData),
+    [
+      terminalTitleActionPrefix,
+      terminalTitleData,
+      terminalTitleItems,
+      terminalTitleShowsActionRequired,
+    ],
+  );
+
+  const applyManagedTerminalTitle = useCallback((title: string | null) => {
+    if (title === lastManagedTerminalTitleRef.current) {
+      return;
+    }
+
+    if (title === null) {
+      if (lastManagedTerminalTitleRef.current !== null) {
+        clearTerminalTitle();
+        lastManagedTerminalTitleRef.current = null;
+      }
+      return;
+    }
+
+    const result = setTerminalTitle(title);
+    if (result === "applied") {
+      lastManagedTerminalTitleRef.current = title;
+      return;
+    }
+
+    if (lastManagedTerminalTitleRef.current !== null) {
+      clearTerminalTitle();
+      lastManagedTerminalTitleRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    applyManagedTerminalTitle(terminalTitle);
+  }, [applyManagedTerminalTitle, terminalTitle]);
+
+  useEffect(() => {
+    return () => {
+      if (lastManagedTerminalTitleRef.current !== null) {
+        clearTerminalTitle();
+        lastManagedTerminalTitleRef.current = null;
+      }
+    };
+  }, []);
+
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
   useEffect(() => {
@@ -4906,6 +5052,8 @@ export function App({
       staticRenderEpoch={staticRenderEpoch}
       statusLinePayload={statusLinePayload}
       statusLinePrompt={CLI_GLYPHS.prompt}
+      terminalTitleData={terminalTitleData}
+      onTitlePreview={applyManagedTerminalTitle}
       extensionAdapter={extensionAdapter}
       streaming={streaming}
       stubDescriptions={stubDescriptions}
