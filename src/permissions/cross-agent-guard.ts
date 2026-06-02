@@ -1,7 +1,7 @@
 // src/permissions/crossAgentGuard.ts
-// Cross-agent guard: hard-denies any tool call whose target resolves under
-// another agent's memory directory unless the parent CLI process explicitly
-// disabled the guard.
+// Cross-agent guard: when enabled, hard-denies any tool call whose target
+// resolves under another agent's memory directory unless the parent CLI
+// process explicitly disabled the guard.
 //
 // The guard runs BEFORE any other permission logic (mode overrides, CLI
 // allow/deny rules, settings rules). Its deny is unbypassable by modes and
@@ -11,6 +11,8 @@
 //   - self:   current AGENT_ID
 //   - parent: explicit LETTA_PARENT_AGENT_ID for subagent processes
 //
+// The guard is enabled by default for headless parent processes and subagents.
+// Interactive parent processes leave it off by default.
 // --disable-memory-guard is parent-process only. Subagents always evaluate the
 // guard and cannot use the flag to open broad cross-agent memory access.
 
