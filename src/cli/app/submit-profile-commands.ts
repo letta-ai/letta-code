@@ -169,8 +169,6 @@ export async function handleProfileCommand(
         "  /pin -l [name]      — pin the current agent to this project",
         "  /pin agent [name]   — pin the current agent",
         "  /pin convo [-l]     — pin the current conversation",
-        "  /pin convos         — manage pinned conversations",
-        "  /pin agents         — manage pinned agents",
         "  /pin help           — show this help",
       ].join("\n");
       cmd.finish(output, true);
@@ -211,23 +209,13 @@ export async function handleProfileCommand(
       return { submitted: true };
     }
 
-    if (target === "convos" || target === "conversations") {
-      openOverlay(
-        "pin-conversations",
-        "/pin convos",
-        "Opening conversation pin manager...",
-        "Conversation pin manager dismissed",
-      );
-      return { submitted: true };
-    }
-
-    if (target === "agents") {
-      openOverlay(
-        "pin-agents",
-        "/pin agents",
-        "Opening agent pin manager...",
-        "Agent pin manager dismissed",
-      );
+    if (
+      target === "convos" ||
+      target === "conversations" ||
+      target === "agents"
+    ) {
+      const cmd = commandRunner.start(trimmed, "Checking pin command...");
+      cmd.fail("Usage: /pin agent [name] or /pin convo [-l]");
       return { submitted: true };
     }
 

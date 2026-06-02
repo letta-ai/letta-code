@@ -34,7 +34,6 @@ interface ConversationSelectorProps {
   ) => void;
   onNewConversation?: () => void;
   onCancel: () => void;
-  mode?: "resume" | "pin";
 }
 
 // Preview line with role prefix
@@ -303,7 +302,6 @@ export function ConversationSelector({
   currentConversationId,
   onSelect,
   onCancel,
-  mode = "resume",
 }: ConversationSelectorProps) {
   const backendRef = useRef<Backend | null>(null);
   const selectorBackend = useCallback(() => {
@@ -808,9 +806,7 @@ export function ConversationSelector({
       }
     } else if (key.return) {
       const selected = filteredConversations[selectedIndex];
-      if (mode === "pin") {
-        togglePinnedConversation(selected);
-      } else if (selected?.conversation.id) {
+      if (selected?.conversation.id) {
         onSelect(selected.conversation.id, {
           summary: selected.conversation.summary ?? undefined,
           messageCount: selected.messageCount,
@@ -967,7 +963,7 @@ export function ConversationSelector({
   return (
     <Box flexDirection="column">
       {/* Command header */}
-      <Text dimColor>{mode === "pin" ? "> /pin convo" : "> /resume"}</Text>
+      <Text dimColor>{"> /resume"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />
@@ -975,9 +971,7 @@ export function ConversationSelector({
       {/* Title */}
       <Box marginBottom={1}>
         <Text bold color={colors.selector.title}>
-          {mode === "pin"
-            ? "Pin conversations"
-            : "Resume a previous conversation"}
+          Resume a previous conversation
         </Text>
       </Box>
 
@@ -1025,11 +1019,7 @@ export function ConversationSelector({
               ? "No matching conversations"
               : `No conversations for ${agentName || agentId.slice(0, 12)}`}
           </Text>
-          <Text dimColor>
-            {mode === "pin"
-              ? "Press Esc to clear/close"
-              : "Press Esc to cancel"}
-          </Text>
+          <Text dimColor>Press Esc to cancel</Text>
         </Box>
       )}
 
@@ -1054,9 +1044,7 @@ export function ConversationSelector({
           const footerWidth = Math.max(0, terminalWidth - 2);
           const pageText = `Showing ${startIndex + 1}-${Math.min(startIndex + visibleConversations.length, filteredConversations.length)} of ${filteredConversations.length}${!normalizedSearch && hasMore ? "+" : ""}${loadingMore ? " (loading...)" : ""}`;
           const hintsText =
-            mode === "pin"
-              ? "Enter/Alt+P toggle pin · ↑↓ navigate · Esc clear/close"
-              : "Enter select · ↑↓ navigate · Alt+P pin/unpin · Esc clear/cancel";
+            "Enter select · ↑↓ navigate · Alt+P pin/unpin · Esc clear/cancel";
 
           return (
             <Box flexDirection="column">
