@@ -57,6 +57,9 @@ interface SchedulerState {
   token: string;
   tickInterval: NodeJS.Timeout;
   gcInterval: NodeJS.Timeout;
+  socket: ListenerTransport;
+  opts: StartListenerOptions;
+  processQueuedTurn: ProcessQueuedTurn;
   /** Last mtime of crons.json — skip re-reads when unchanged. */
   lastMtime: number;
   /** Cached active tasks (refreshed on file change). */
@@ -203,7 +206,7 @@ async function fireCronTask(
   socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
-): Promise<void> {
+): Promise<boolean> {
   const listener = getActiveRuntime();
   if (!listener) {
     setLastRunOutcome(task.id, {
@@ -220,7 +223,7 @@ async function fireCronTask(
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
     });
-    return;
+    return false;
   }
 
   let targetConversationId: string | undefined;
@@ -234,7 +237,7 @@ async function fireCronTask(
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
     });
-    return;
+    return false;
   }
 
   const rawRuntime = getOrCreateConversationRuntime(
@@ -258,7 +261,7 @@ async function fireCronTask(
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
     });
-    return;
+    return false;
   }
 
   // Ensure the queue runtime is initialized (getOrCreateConversationRuntime
@@ -294,7 +297,7 @@ async function fireCronTask(
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
     });
-    return;
+    return false;
   }
 
   scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
@@ -335,6 +338,7 @@ async function fireCronTask(
     conversationId: targetConversationId ?? "default",
   });
   emitCronsUpdated(socket, task, targetConversationId ?? "default");
+  return true;
 }
 
 /** Returns true if the task was marked as missed (caller should skip firing). */
@@ -373,6 +377,52 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
     return true;
   }
   return false;
+}
+
+export async function runCronTaskNow(taskId: string): Promise<{
+  success: boolean;
+  found: boolean;
+  task?: CronTask;
+  error?: string;
+}> {
+  const task = getTask(taskId);
+  if (!task) {
+    return { success: false, found: false, error: "Schedule not found" };
+  }
+
+  if (task.status !== "active") {
+    return { success: false, found: true, task, error: "Schedule is not active" };
+  }
+
+  if (!schedulerState) {
+    return {
+      success: false,
+      found: true,
+      task,
+      error: "Cron scheduler is not running",
+    };
+  }
+
+  const now = new Date();
+  const fired = await fireCronTask(
+    task,
+    now,
+    schedulerState.socket,
+    schedulerState.opts,
+    schedulerState.processQueuedTurn,
+  );
+
+  if (!fired) {
+    return {
+      success: false,
+      found: true,
+      task,
+      error: "Failed to enqueue schedule run",
+    };
+  }
+
+  refreshTaskCache(schedulerState);
+  return { success: true, found: true, task: getTask(taskId) ?? task };
 }
 
 function tick(
@@ -511,6 +561,9 @@ export function startScheduler(
     token,
     tickInterval: null as unknown as NodeJS.Timeout,
     gcInterval: null as unknown as NodeJS.Timeout,
+    socket,
+    opts,
+    processQueuedTurn,
     lastMtime: 0,
     cachedTasks: [],
     firedThisMinute: new Set(),

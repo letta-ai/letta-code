@@ -8,12 +8,14 @@ import {
   listTasks as listCronTasks,
   readCronRunLogEntriesPage,
 } from "@/cron";
+import { runCronTaskNow } from "@/cron/scheduler";
 import type {
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  CronRunCommand,
   CronRunsCommand,
 } from "@/types/protocol_v2";
 import {
@@ -22,6 +24,7 @@ import {
   isCronDeleteCommand,
   isCronGetCommand,
   isCronListCommand,
+  isCronRunCommand,
   isCronRunsCommand,
 } from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
@@ -31,6 +34,7 @@ export type CronCommand =
   | CronAddCommand
   | CronGetCommand
   | CronRunsCommand
+  | CronRunCommand
   | CronDeleteCommand
   | CronDeleteAllCommand;
 
@@ -224,6 +228,39 @@ export async function handleCronCommand(
     return true;
   }
 
+  if (parsed.type === "cron_run") {
+    try {
+      const result = await runCronTaskNow(parsed.task_id);
+      safeSocketSend(
+        socket,
+        {
+          type: "cron_run_response",
+          request_id: parsed.request_id,
+          success: result.success,
+          found: result.found,
+          ...(result.task ? { task: result.task } : {}),
+          ...(result.error ? { error: result.error } : {}),
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+    } catch (err) {
+      safeSocketSend(
+        socket,
+        {
+          type: "cron_run_response",
+          request_id: parsed.request_id,
+          success: false,
+          found: false,
+          error: err instanceof Error ? err.message : "Failed to run cron",
+        },
+        "listener_cron_send_failed",
+        "listener_cron_command",
+      );
+    }
+    return true;
+  }
+
   if (parsed.type === "cron_delete") {
     try {
       const existingTask = getCronTask(parsed.task_id);
@@ -310,6 +347,7 @@ export function handleCronProtocolCommand(
     isCronAddCommand(parsed) ||
     isCronGetCommand(parsed) ||
     isCronRunsCommand(parsed) ||
+    isCronRunCommand(parsed) ||
     isCronDeleteCommand(parsed) ||
     isCronDeleteAllCommand(parsed)
   ) {
