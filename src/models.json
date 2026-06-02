@@ -1480,10 +1480,21 @@
       }
     },
     {
+      "id": "minimax-m3",
+      "handle": "minimax/MiniMax-M3",
+      "label": "MiniMax M3",
+      "description": "MiniMax's frontier M-series model for agentic reasoning, tool use, coding, multimodal chat input, and long-context tasks",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 1000000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "minimax-m2.7",
       "handle": "minimax/MiniMax-M2.7",
       "label": "MiniMax 2.7",
-      "description": "MiniMax's latest coding model",
+      "description": "MiniMax's M2.7 coding model",
       "isFeatured": true,
       "free": true,
       "updateArgs": {
@@ -1495,8 +1506,8 @@
     {
       "id": "minimax-m2",
       "handle": "openrouter/minimax/minimax-m2",
-      "label": "Minimax M2",
-      "description": "Minimax's latest model",
+      "label": "MiniMax M2",
+      "description": "MiniMax's M2 model",
       "updateArgs": {
         "context_window": 160000,
         "max_output_tokens": 64000,

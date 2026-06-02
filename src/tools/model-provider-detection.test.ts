@@ -51,6 +51,12 @@ describe("deriveToolsetFromModel", () => {
     expect(deriveToolsetFromModel("gemini-pro")).toBe("default");
   });
 
+  test("maps MiniMax M3 to default (anthropic) toolset", () => {
+    expect(isOpenAIModel("minimax-m3")).toBe(false);
+    expect(deriveToolsetFromModel("minimax-m3")).toBe("default");
+    expect(deriveToolsetFromModel("minimax/MiniMax-M3")).toBe("default");
+  });
+
   test("maps auto models to default (anthropic) toolset", () => {
     expect(deriveToolsetFromModel("auto")).toBe("default");
     expect(deriveToolsetFromModel("letta/auto")).toBe("default");
