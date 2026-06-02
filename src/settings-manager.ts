@@ -2,6 +2,7 @@
 // In-memory settings manager that loads once and provides sync access
 
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { isCloudAgentId, isLocalAgentId } from "./agent/agent-id";
@@ -178,6 +179,7 @@ const DEFAULT_LOCAL_PROJECT_SETTINGS: LocalProjectSettings = {
 };
 
 const DEFAULT_LETTA_API_URL = "https://api.letta.com";
+const SETTINGS_BASE_URL_ENV = "LETTA_SETTINGS_BASE_URL";
 
 function isSubagentProcess(): boolean {
   return process.env.LETTA_CODE_AGENT_ROLE === "subagent";
@@ -246,8 +248,8 @@ function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
 /**
  * Get the current server key for indexing settings.
  * Uses the local backend storage path when local backend mode is active,
- * otherwise LETTA_BASE_URL env var or settings.env.LETTA_BASE_URL, defaulting
- * to api.letta.com.
+ * otherwise LETTA_SETTINGS_BASE_URL, LETTA_BASE_URL, or
+ * settings.env.LETTA_BASE_URL, defaulting to api.letta.com.
  * @param settings - Optional settings object to check for env overrides
  * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283", "local:/path/to/store")
  */
@@ -257,6 +259,8 @@ function getCurrentServerKey(settings?: Settings | null): string {
   }
 
   const baseUrl =
+    process.env[SETTINGS_BASE_URL_ENV] ||
+    settings?.env?.[SETTINGS_BASE_URL_ENV] ||
     process.env.LETTA_BASE_URL ||
     settings?.env?.LETTA_BASE_URL ||
     DEFAULT_LETTA_API_URL;
@@ -319,6 +323,81 @@ class SettingsManager {
 
   private clearSecureTokensCache(): void {
     this.secureTokensCache = {};
+  }
+
+  private ensureInitialized(): void {
+    if (!this.initialized || !this.settings) {
+      throw new Error(
+        "Settings not initialized. Call settingsManager.initialize() first.",
+      );
+    }
+  }
+
+  private readJsonObjectSync(path: string): Record<string, unknown> {
+    if (!exists(path)) return {};
+    try {
+      return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+
+  private normalizeSettingsRecord(
+    raw: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const normalized = { ...raw };
+    delete normalized.reflectionBehavior;
+    return normalized;
+  }
+
+  private settingsFromRaw(raw: Record<string, unknown>): Settings {
+    return {
+      ...DEFAULT_SETTINGS,
+      ...(this.normalizeSettingsRecord(raw) as Partial<Settings>),
+    };
+  }
+
+  private readSettingsSnapshot(): Settings {
+    this.ensureInitialized();
+    const raw = this.readJsonObjectSync(this.getSettingsPath());
+    const mergedRaw = this.normalizeSettingsRecord(raw);
+
+    if (this.settings) {
+      const currentRecord = this.settings as unknown as Record<string, unknown>;
+      for (const key of this.dirtyKeys) {
+        if (key in currentRecord) {
+          mergedRaw[key] = currentRecord[key];
+        } else {
+          delete mergedRaw[key];
+        }
+      }
+    }
+
+    const settings = this.settingsFromRaw(mergedRaw);
+    this.settings = settings;
+    for (const key of Object.keys(mergedRaw)) {
+      this.managedKeys.add(key);
+    }
+    return settings;
+  }
+
+  private writeSettingsRecordSync(raw: Record<string, unknown>): void {
+    const settingsPath = this.getSettingsPath();
+    const home = process.env.HOME || homedir();
+    const dirPath = join(home, ".letta");
+    if (!exists(dirPath)) {
+      mkdirSync(dirPath, { recursive: true });
+    }
+
+    const normalized = this.normalizeSettingsRecord(raw);
+    writeFileSync(settingsPath, JSON.stringify(normalized, null, 2), {
+      encoding: "utf-8",
+      flush: true,
+    });
+    this.settings = this.settingsFromRaw(normalized);
+    for (const key of Object.keys(normalized)) {
+      this.managedKeys.add(key);
+    }
   }
 
   /**
@@ -1721,9 +1800,46 @@ class SettingsManager {
    * Get globally pinned conversation IDs for an agent on the current server.
    */
   getGlobalPinnedConversations(agentId: string): string[] {
-    const settings = this.getSettings();
+    const settings = this.readSettingsSnapshot();
     const serverKey = getCurrentServerKey(settings);
     return settings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
+  }
+
+  private readLocalProjectSettingsSnapshot(
+    workingDirectory: string,
+  ): LocalProjectSettings {
+    const raw = this.normalizeSettingsRecord(
+      this.readJsonObjectSync(
+        this.getLocalProjectSettingsPath(workingDirectory),
+      ),
+    );
+    const settings = {
+      ...DEFAULT_LOCAL_PROJECT_SETTINGS,
+      ...(raw as Partial<LocalProjectSettings>),
+    };
+    this.localProjectSettings.set(workingDirectory, settings);
+    return settings;
+  }
+
+  private writeLocalProjectSettingsRecordSync(
+    workingDirectory: string,
+    raw: Record<string, unknown>,
+  ): void {
+    const dirPath = join(workingDirectory, ".letta");
+    if (!exists(dirPath)) {
+      mkdirSync(dirPath, { recursive: true });
+    }
+
+    const normalized = this.normalizeSettingsRecord(raw);
+    writeFileSync(
+      this.getLocalProjectSettingsPath(workingDirectory),
+      JSON.stringify(normalized, null, 2),
+      { encoding: "utf-8", flush: true },
+    );
+    this.localProjectSettings.set(workingDirectory, {
+      ...DEFAULT_LOCAL_PROJECT_SETTINGS,
+      ...(normalized as Partial<LocalProjectSettings>),
+    });
   }
 
   /**
@@ -1733,9 +1849,10 @@ class SettingsManager {
     agentId: string,
     workingDirectory: string = process.cwd(),
   ): string[] {
-    const globalSettings = this.getSettings();
+    const globalSettings = this.readSettingsSnapshot();
     const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    const localSettings =
+      this.readLocalProjectSettingsSnapshot(workingDirectory);
     return (
       localSettings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? []
     );
@@ -1773,36 +1890,50 @@ class SettingsManager {
   }
 
   pinConversationGlobal(agentId: string, conversationId: string): void {
-    const settings = this.getSettings();
+    this.ensureInitialized();
+    const raw = this.normalizeSettingsRecord(
+      this.readJsonObjectSync(this.getSettingsPath()),
+    );
+    const settings = this.settingsFromRaw(raw);
     const serverKey = getCurrentServerKey(settings);
-    const current = this.getGlobalPinnedConversations(agentId);
+    const current =
+      settings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
     if (current.includes(conversationId)) return;
 
-    this.updateSettings({
+    this.writeSettingsRecordSync({
+      ...raw,
       pinnedConversationsByServer: {
-        ...settings.pinnedConversationsByServer,
+        ...(settings.pinnedConversationsByServer ?? {}),
         [serverKey]: {
           ...(settings.pinnedConversationsByServer?.[serverKey] ?? {}),
           [agentId]: [...current, conversationId],
         },
       },
     });
+    this.dirtyKeys.delete("pinnedConversationsByServer");
   }
 
   unpinConversationGlobal(agentId: string, conversationId: string): void {
-    const settings = this.getSettings();
+    this.ensureInitialized();
+    const raw = this.normalizeSettingsRecord(
+      this.readJsonObjectSync(this.getSettingsPath()),
+    );
+    const settings = this.settingsFromRaw(raw);
     const serverKey = getCurrentServerKey(settings);
-    const current = this.getGlobalPinnedConversations(agentId);
+    const current =
+      settings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
 
-    this.updateSettings({
+    this.writeSettingsRecordSync({
+      ...raw,
       pinnedConversationsByServer: {
-        ...settings.pinnedConversationsByServer,
+        ...(settings.pinnedConversationsByServer ?? {}),
         [serverKey]: {
           ...(settings.pinnedConversationsByServer?.[serverKey] ?? {}),
           [agentId]: current.filter((id) => id !== conversationId),
         },
       },
     });
+    this.dirtyKeys.delete("pinnedConversationsByServer");
   }
 
   pinConversationLocal(
@@ -1810,24 +1941,31 @@ class SettingsManager {
     conversationId: string,
     workingDirectory: string = process.cwd(),
   ): void {
-    const globalSettings = this.getSettings();
+    const globalSettings = this.readSettingsSnapshot();
     const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const current = this.getLocalPinnedConversations(agentId, workingDirectory);
+    const raw = this.normalizeSettingsRecord(
+      this.readJsonObjectSync(
+        this.getLocalProjectSettingsPath(workingDirectory),
+      ),
+    );
+    const localSettings = {
+      ...DEFAULT_LOCAL_PROJECT_SETTINGS,
+      ...(raw as Partial<LocalProjectSettings>),
+    };
+    const current =
+      localSettings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
     if (current.includes(conversationId)) return;
 
-    this.updateLocalProjectSettings(
-      {
-        pinnedConversationsByServer: {
-          ...localSettings.pinnedConversationsByServer,
-          [serverKey]: {
-            ...(localSettings.pinnedConversationsByServer?.[serverKey] ?? {}),
-            [agentId]: [...current, conversationId],
-          },
+    this.writeLocalProjectSettingsRecordSync(workingDirectory, {
+      ...raw,
+      pinnedConversationsByServer: {
+        ...(localSettings.pinnedConversationsByServer ?? {}),
+        [serverKey]: {
+          ...(localSettings.pinnedConversationsByServer?.[serverKey] ?? {}),
+          [agentId]: [...current, conversationId],
         },
       },
-      workingDirectory,
-    );
+    });
   }
 
   unpinConversationLocal(
@@ -1835,23 +1973,30 @@ class SettingsManager {
     conversationId: string,
     workingDirectory: string = process.cwd(),
   ): void {
-    const globalSettings = this.getSettings();
+    const globalSettings = this.readSettingsSnapshot();
     const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const current = this.getLocalPinnedConversations(agentId, workingDirectory);
+    const raw = this.normalizeSettingsRecord(
+      this.readJsonObjectSync(
+        this.getLocalProjectSettingsPath(workingDirectory),
+      ),
+    );
+    const localSettings = {
+      ...DEFAULT_LOCAL_PROJECT_SETTINGS,
+      ...(raw as Partial<LocalProjectSettings>),
+    };
+    const current =
+      localSettings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
 
-    this.updateLocalProjectSettings(
-      {
-        pinnedConversationsByServer: {
-          ...localSettings.pinnedConversationsByServer,
-          [serverKey]: {
-            ...(localSettings.pinnedConversationsByServer?.[serverKey] ?? {}),
-            [agentId]: current.filter((id) => id !== conversationId),
-          },
+    this.writeLocalProjectSettingsRecordSync(workingDirectory, {
+      ...raw,
+      pinnedConversationsByServer: {
+        ...(localSettings.pinnedConversationsByServer ?? {}),
+        [serverKey]: {
+          ...(localSettings.pinnedConversationsByServer?.[serverKey] ?? {}),
+          [agentId]: current.filter((id) => id !== conversationId),
         },
       },
-      workingDirectory,
-    );
+    });
   }
 
   unpinConversationBoth(

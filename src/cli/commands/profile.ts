@@ -314,18 +314,18 @@ export function handleProfileUsage(
 // Default is global, use -l for local-only
 function parsePinArgs(argsStr: string): { local: boolean; name?: string } {
   const parts = argsStr.trim().split(/\s+/).filter(Boolean);
+  const nameParts: string[] = [];
   let local = false;
-  let name: string | undefined;
 
   for (const part of parts) {
     if (part === "-l" || part === "--local") {
       local = true;
-    } else if (!name) {
-      name = part;
+    } else {
+      nameParts.push(part);
     }
   }
 
-  return { local, name };
+  return { local, name: nameParts.join(" ") || undefined };
 }
 
 // /pin [-l] [name] - Pin the current agent globally (or locally with -l)
