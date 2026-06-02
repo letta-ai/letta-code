@@ -17,7 +17,6 @@ import {
   setCurrentAgentId,
 } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
-import { runPostTurnMemorySync } from "@/agent/memory-git";
 import {
   getStreamToolContextId,
   type sendMessageStream,
@@ -53,6 +52,7 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
+import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
   type SharedReminderState,

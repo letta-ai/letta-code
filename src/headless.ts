@@ -35,7 +35,6 @@ import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
-import { runPostTurnMemorySync } from "./agent/memory-git";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
   getModelInfo,
@@ -124,6 +123,7 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "./reminders/engine";
+import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
 import {
   createSharedReminderState,
   enqueueMemoryGitSyncReminder,

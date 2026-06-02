@@ -27,7 +27,6 @@ import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
 } from "@/agent/memory-filesystem";
-import { runPostTurnMemorySync } from "@/agent/memory-git";
 import {
   getActiveMemoryDirectory,
   isActiveMemfsEnabled,
@@ -117,6 +116,7 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "@/reminders/engine";
+import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
   type SharedReminderState,
