@@ -145,36 +145,22 @@ export async function memory_apply_patch(
       authorEmail: `${agentId}@letta.com`,
     },
     syncMode,
-    replay: async () => applyMemoryPatch(memoryDir, input),
   });
   if (!commitResult.committed) {
     throw new Error(
       syncMode === "local"
         ? "memory_apply_patch made no effective changes; nothing was committed. " +
             "The patched content matched what was already on disk."
-        : "memory_apply_patch made no effective changes; nothing was committed or pushed. " +
+        : "memory_apply_patch made no effective changes; nothing was committed. " +
             "The patched content matched what was already on disk.",
     );
-  }
-
-  if (commitResult.replayed && commitResult.replayNoop) {
-    return {
-      message:
-        "memory_apply_patch matched newer remote memory; skipped an extra commit.",
-    };
-  }
-
-  if (commitResult.replayed) {
-    return {
-      message: `memory_apply_patch reapplied on top of newer remote memory and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
-    };
   }
 
   return {
     message:
       syncMode === "local"
         ? `memory_apply_patch committed locally (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`
-        : `memory_apply_patch applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+        : `memory_apply_patch committed (${commitResult.sha?.slice(0, 7) ?? "unknown"}); harness will sync after the turn.`,
   };
 }
 

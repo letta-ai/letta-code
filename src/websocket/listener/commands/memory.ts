@@ -725,7 +725,7 @@ export function handleMemoryProtocolCommand(
           // Best-effort — fall back to agent id as the author name.
         }
 
-        // ── Commit + push (with replay-on-conflict from helper) ────────
+        // ── Commit locally; post-turn harness sync handles remote push ─
         // Use posix separators in the pathspec — git expects forward slashes
         // even on Windows.
         const pathspec = rel.split(sep).join("/");
@@ -741,12 +741,6 @@ export function handleMemoryProtocolCommand(
             authorEmail: `${parsed.agent_id}@letta.com`,
           },
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
-          replay: async () => {
-            // Re-write the same bytes on top of the latest remote state.
-            await mkdir(dirname(absolutePath), { recursive: true });
-            await writeFile(absolutePath, buffer);
-            return [pathspec];
-          },
         });
 
         // ── Notify UI so the memory view auto-refreshes ────────────────
@@ -910,7 +904,7 @@ export function handleMemoryProtocolCommand(
           // Best-effort — fall back to agent id as the author name.
         }
 
-        // ── Commit + push (replay re-deletes after rebase) ─────────────
+        // ── Commit locally; post-turn harness sync handles remote push ─
         const reason =
           parsed.commit_message?.trim() || `Delete memory file ${pathspec}`;
         const commitResult = await commitAndSyncMemoryWrite({
@@ -923,12 +917,6 @@ export function handleMemoryProtocolCommand(
             authorEmail: `${parsed.agent_id}@letta.com`,
           },
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
-          replay: async () => {
-            // Re-delete on top of the latest remote state in case the
-            // remote restored the file between our commit and push.
-            await removeIfPresent();
-            return [pathspec];
-          },
         });
 
         if (commitResult.committed) {

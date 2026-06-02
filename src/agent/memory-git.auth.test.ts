@@ -572,7 +572,7 @@ describe("pullMemory recovery", () => {
 });
 
 describe("assertMemoryRepoReadyForWrite", () => {
-  test("pushes clean local commits before blocking memory writes", async () => {
+  test("allows clean local commits to wait for post-turn sync", async () => {
     const { repo, remote } = makeSyncedRepo();
     const localSha = commitFile(repo, "local.md", "local");
     process.env.LETTA_API_KEY = "test-token";
@@ -582,15 +582,15 @@ describe("assertMemoryRepoReadyForWrite", () => {
 
     await assertMemoryRepoReadyForWrite(repo, "agent-123");
 
-    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("0");
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
     expect(
       execSync(`git --git-dir ${remote} rev-parse main`, {
         encoding: "utf-8",
       }).trim(),
-    ).toBe(localSha);
+    ).not.toBe(localSha);
   });
 
-  test("leaves clean behind repos for write-time conflict replay", async () => {
+  test("allows clean behind repos for post-turn rebase", async () => {
     const { repo, remote } = makeSyncedRepo();
     const originalSha = git(repo, "rev-parse HEAD").trim();
     const other = cloneRepo(remote);

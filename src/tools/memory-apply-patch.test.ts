@@ -130,15 +130,6 @@ async function initTrackedMemoryRepo(
   await runGit(repoDir, ["push", "-u", "origin", "main"]);
 }
 
-async function listRescueRefs(cwd: string): Promise<string[]> {
-  const output = await runGit(cwd, [
-    "for-each-ref",
-    "--format=%(refname)",
-    "refs/letta-conflicts",
-  ]);
-  return output ? output.split("\n").filter(Boolean) : [];
-}
-
 describe("memory_apply_patch tool", () => {
   let tempRoot: string;
   let memoryDir: string;
@@ -352,10 +343,10 @@ describe("memory_apply_patch tool", () => {
     await loadSpecificTools(["memory", "memory_apply_patch"]);
 
     expect(getToolSchema("memory")?.description).toContain(
-      "automatically commits changes locally",
+      "memory changes are committed locally",
     );
     expect(getToolSchema("memory_apply_patch")?.description).toContain(
-      "automatically commit the change locally",
+      "memory changes are committed locally",
     );
     expect(getToolSchema("memory_apply_patch")?.description).not.toContain(
       "Pushes to remote",
@@ -461,7 +452,7 @@ describe("memory_apply_patch tool", () => {
     ).rejects.toThrow(/read_only/i);
   });
 
-  test("returns error when push fails but keeps local commit", async () => {
+  test("commits without pushing even when remote is unavailable", async () => {
     await runScopedMemoryApplyPatch({
       reason: "seed notes",
       input: [
@@ -479,20 +470,20 @@ describe("memory_apply_patch tool", () => {
       join(tempRoot, "missing-remote.git"),
     ]);
 
-    const reason = "Update notes with failing push";
-    await expect(
-      runScopedMemoryApplyPatch({
-        reason,
-        input: [
-          "*** Begin Patch",
-          "*** Update File: reference/history/notes.md",
-          "@@",
-          "-old",
-          "+new",
-          "*** End Patch",
-        ].join("\n"),
-      }),
-    ).rejects.toThrow(/committed .* but push failed/i);
+    const reason = "Update notes with unavailable remote";
+    const result = await runScopedMemoryApplyPatch({
+      reason,
+      input: [
+        "*** Begin Patch",
+        "*** Update File: reference/history/notes.md",
+        "@@",
+        "-old",
+        "+new",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    expect(result.message).toContain("harness will sync after the turn");
 
     const subject = await runGit(memoryDir, [
       "log",
@@ -502,9 +493,9 @@ describe("memory_apply_patch tool", () => {
     expect(subject).toBe(reason);
   });
 
-  test("replays patches on top of newer remote memory", async () => {
+  test("commits local patches when remote memory has advanced", async () => {
     await runScopedMemoryApplyPatch({
-      reason: "seed replay patch notes",
+      reason: "seed diverged patch notes",
       input: [
         "*** Begin Patch",
         "*** Add File: reference/history/notes.md",
@@ -518,6 +509,9 @@ describe("memory_apply_patch tool", () => {
 
     const remoteCloneDir = join(tempRoot, "remote-patch-clone");
     await cloneRemoteRepo(remoteDir, remoteCloneDir);
+    mkdirSync(join(remoteCloneDir, "reference", "history"), {
+      recursive: true,
+    });
     writeFileSync(
       join(remoteCloneDir, "reference", "history", "notes.md"),
       ["---", "description: Notes block", "---", "old", "remote line"].join(
@@ -530,7 +524,7 @@ describe("memory_apply_patch tool", () => {
     await runGit(remoteCloneDir, ["push", "origin", "main"]);
 
     const result = await runScopedMemoryApplyPatch({
-      reason: "Replay patch update",
+      reason: "Commit patch update",
       input: [
         "*** Begin Patch",
         "*** Update File: reference/history/notes.md",
@@ -541,16 +535,14 @@ describe("memory_apply_patch tool", () => {
       ].join("\n"),
     });
 
-    expect(result.message).toContain(
-      "reapplied on top of newer remote memory and pushed",
-    );
+    expect(result.message).toContain("harness will sync after the turn");
 
     const content = await runGit(memoryDir, [
       "show",
       "HEAD:reference/history/notes.md",
     ]);
     expect(content).toContain("new");
-    expect(content).toContain("remote line");
+    expect(content).not.toContain("remote line");
 
     const divergence = await runGit(memoryDir, [
       "rev-list",
@@ -558,71 +550,7 @@ describe("memory_apply_patch tool", () => {
       "--count",
       "@{u}...HEAD",
     ]);
-    expect(divergence).toBe("0\t0");
-  });
-
-  test("fails closed when replayed patch no longer matches remote", async () => {
-    await runScopedMemoryApplyPatch({
-      reason: "seed conflicting patch notes",
-      input: [
-        "*** Begin Patch",
-        "*** Add File: reference/history/notes.md",
-        "+---",
-        "+description: Notes block",
-        "+---",
-        "+old",
-        "*** End Patch",
-      ].join("\n"),
-    });
-
-    const remoteCloneDir = join(tempRoot, "remote-patch-conflict-clone");
-    await cloneRemoteRepo(remoteDir, remoteCloneDir);
-    writeFileSync(
-      join(remoteCloneDir, "reference", "history", "notes.md"),
-      ["---", "description: Notes block", "---", "remote"].join("\n"),
-      "utf8",
-    );
-    await runGit(remoteCloneDir, ["add", "reference/history/notes.md"]);
-    await runGit(remoteCloneDir, ["commit", "-m", "Remote conflicting patch"]);
-    await runGit(remoteCloneDir, ["push", "origin", "main"]);
-
-    await expect(
-      runScopedMemoryApplyPatch({
-        reason: "Attempt conflicting patch replay",
-        input: [
-          "*** Begin Patch",
-          "*** Update File: reference/history/notes.md",
-          "@@",
-          "-old",
-          "+new",
-          "*** End Patch",
-        ].join("\n"),
-      }),
-    ).rejects.toThrow(/could not be replayed safely/i);
-
-    const divergence = await runGit(memoryDir, [
-      "rev-list",
-      "--left-right",
-      "--count",
-      "@{u}...HEAD",
-    ]);
-    expect(divergence).toBe("0\t0");
-
-    const content = await runGit(memoryDir, [
-      "show",
-      "HEAD:reference/history/notes.md",
-    ]);
-    expect(content).toContain("remote");
-    expect(content).not.toContain("new");
-
-    const rescueRefs = await listRescueRefs(memoryDir);
-    expect(rescueRefs.length).toBeGreaterThan(0);
-
-    const rescuedContent = await runGit(memoryDir, [
-      "show",
-      `${rescueRefs[0]}:reference/history/notes.md`,
-    ]);
-    expect(rescuedContent).toContain("new");
+    expect(divergence).toBe("0\t2");
   });
 
   test("throws when an update produces no effective changes", async () => {

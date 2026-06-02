@@ -683,7 +683,6 @@ export async function applyPersonalityToMemory(
     reason: commitMessage,
     author,
     syncMode: isLocalMemfs ? "local" : "remote",
-    replay: async () => applyPersonalityFiles(filesToUpdate),
   });
 
   if (!commitResult.committed) {

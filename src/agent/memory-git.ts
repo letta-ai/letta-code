@@ -7,9 +7,8 @@
  * through a localhost proxy transiently, but that URL must not be persisted in
  * the repo's git config.
  * This module provides the CLI harness helpers: clone on first run,
- * pull on startup, and status check for system reminders.
- *
- * The agent itself handles commit/push via Bash tool calls.
+ * pull on startup, commit memory writes, post-turn push for clean pending
+ * commits, and status checks for system reminders.
  */
 
 import { execFile as execFileCb } from "node:child_process";
@@ -67,7 +66,6 @@ export interface CommitAndSyncMemoryWriteParams {
   pathspecs: string[];
   reason: string;
   author: MemoryCommitAuthor;
-  replay?: () => Promise<string[]>;
   syncMode?: MemoryWriteSyncMode;
 }
 
@@ -76,9 +74,6 @@ export type MemoryWriteSyncMode = "remote" | "local";
 export interface CommitAndSyncMemoryWriteResult {
   committed: boolean;
   sha?: string;
-  replayed?: boolean;
-  replayNoop?: boolean;
-  rescueRef?: string;
 }
 
 /** Get the agent root directory (~/.letta/agents/{id}/) */
@@ -1324,207 +1319,17 @@ async function unstageMemoryPaths(
   }
 }
 
-async function fetchMemoryRemote(
-  memoryDir: string,
-  token: string,
-): Promise<void> {
-  await runGitWithRetry(memoryDir, ["fetch", "origin"], token, {
-    operation: "fetch origin",
-  });
-}
-
-async function getMemoryAheadBehind(
-  memoryDir: string,
-): Promise<{ ahead: number; behind: number } | null> {
-  try {
-    const { stdout } = await runGit(memoryDir, [
-      "rev-list",
-      "--left-right",
-      "--count",
-      "HEAD...@{u}",
-    ]);
-    const [aheadRaw, behindRaw] = stdout.trim().split(/\s+/);
-    return {
-      ahead: Number.parseInt(aheadRaw ?? "0", 10) || 0,
-      behind: Number.parseInt(behindRaw ?? "0", 10) || 0,
-    };
-  } catch {
-    // No upstream configured or unable to inspect divergence.
-    return null;
-  }
-}
-
-async function pushCleanPendingMemoryCommitsForWrite(
-  memoryDir: string,
-  agentId: string,
-  token: string,
-): Promise<void> {
-  await prepareMemoryRepoForGitOps(memoryDir, agentId, token);
-
-  const divergence = await getMemoryAheadBehind(memoryDir);
-
-  if (divergence && divergence.ahead > 0) {
-    await runGitWithRetry(memoryDir, ["push"], token, {
-      operation: "push pending memory commits",
-    });
-  }
-}
-
-async function resetMemoryToUpstream(
-  memoryDir: string,
-  token: string,
-): Promise<void> {
-  await runGit(memoryDir, ["reset", "--hard", "@{u}"], token);
-}
-
-function buildMemoryConflictRef(sha: string): string {
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[-:TZ.]/g, "")
-    .slice(0, 14);
-  return `refs/letta-conflicts/${timestamp}-${sha.slice(0, 7)}`;
-}
-
-async function preserveMemoryCommit(
-  memoryDir: string,
-  sha: string,
-): Promise<string> {
-  const ref = buildMemoryConflictRef(sha);
-  await runGit(memoryDir, ["update-ref", ref, sha]);
-  return ref;
-}
-
-function formatCommittedButPushFailed(sha: string, error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return `Memory changes were committed (${sha.slice(0, 7)}) but push failed: ${message}`;
-}
-
-function formatReplayConflict(
-  sha: string,
-  rescueRef: string,
-  error: unknown,
-): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return `Memory changes conflicted with newer remote memory and could not be replayed safely. Preserved local commit ${sha.slice(0, 7)} at ${rescueRef}; local branch was reset to upstream. Replay error: ${message}`;
-}
-
-function formatReplayPushFailure(
-  originalSha: string,
-  originalRef: string,
-  replaySha: string | undefined,
-  replayRef: string | undefined,
-  error: unknown,
-): string {
-  const message = error instanceof Error ? error.message : String(error);
-  const replaySummary =
-    replaySha && replayRef
-      ? ` Replayed commit ${replaySha.slice(0, 7)} was preserved at ${replayRef}.`
-      : "";
-  return `Memory changes conflicted with newer remote memory and the replayed update could not be pushed safely. Original commit ${originalSha.slice(0, 7)} was preserved at ${originalRef}.${replaySummary} Local branch was reset to upstream. Push error: ${message}`;
-}
-
-async function recoverMemoryPushConflict(
-  params: CommitAndSyncMemoryWriteParams,
-  token: string,
-  initialSha: string,
-): Promise<CommitAndSyncMemoryWriteResult> {
-  const rescueRef = await preserveMemoryCommit(params.memoryDir, initialSha);
-
-  await fetchMemoryRemote(params.memoryDir, token);
-  await resetMemoryToUpstream(params.memoryDir, token);
-
-  let replayedPathspecs: string[] = [];
-  try {
-    replayedPathspecs = normalizePathspecs((await params.replay?.()) ?? []);
-  } catch (error) {
-    await resetMemoryToUpstream(params.memoryDir, token);
-    throw new Error(formatReplayConflict(initialSha, rescueRef, error));
-  }
-
-  let replayCommit: { committed: boolean; sha?: string };
-  try {
-    replayCommit = await commitMemoryPaths(
-      params.memoryDir,
-      replayedPathspecs,
-      params.reason,
-      params.author,
-    );
-  } catch (error) {
-    await resetMemoryToUpstream(params.memoryDir, token);
-    throw new Error(formatReplayConflict(initialSha, rescueRef, error));
-  }
-
-  if (!replayCommit.committed) {
-    return {
-      committed: true,
-      replayed: true,
-      replayNoop: true,
-      rescueRef,
-    };
-  }
-
-  try {
-    await runGit(params.memoryDir, ["push"], token);
-  } catch (error) {
-    const replayRef = replayCommit.sha
-      ? await preserveMemoryCommit(params.memoryDir, replayCommit.sha)
-      : undefined;
-    await resetMemoryToUpstream(params.memoryDir, token);
-    throw new Error(
-      formatReplayPushFailure(
-        initialSha,
-        rescueRef,
-        replayCommit.sha,
-        replayRef,
-        error,
-      ),
-    );
-  }
-
-  return {
-    committed: true,
-    sha: replayCommit.sha,
-    replayed: true,
-    rescueRef,
-  };
-}
-
 export async function assertMemoryRepoReadyForWrite(
   memoryDir: string,
-  agentId?: string,
+  _agentId?: string,
   options: { syncMode?: MemoryWriteSyncMode } = {},
 ): Promise<void> {
-  const syncMode = options.syncMode ?? "remote";
+  void options;
   const status = await runGit(memoryDir, ["status", "--porcelain"]);
   if (status.stdout.trim().length > 0) {
     throw new Error(
       "Memory repo has uncommitted changes. Commit, discard, or sync them before using memory tools.",
     );
-  }
-
-  if (syncMode === "remote" && agentId) {
-    const token = await getAuthToken();
-    await pushCleanPendingMemoryCommitsForWrite(memoryDir, agentId, token);
-  }
-
-  if (syncMode === "local") {
-    return;
-  }
-
-  try {
-    const divergence = await getMemoryAheadBehind(memoryDir);
-    if (divergence && divergence.ahead > 0) {
-      throw new Error(
-        "Memory repo has local commits that are not pushed to remote. Sync the repo before using memory tools.",
-      );
-    }
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes("not pushed to remote")
-    ) {
-      throw error;
-    }
   }
 }
 
@@ -1561,15 +1366,6 @@ export async function commitAndSyncMemoryWrite(
   );
   if (!commitResult.committed || !commitResult.sha) {
     return { committed: false };
-  }
-
-  try {
-    await runGit(params.memoryDir, ["push"], token);
-  } catch (error) {
-    if (!params.replay || !isNonFastForwardPushError(error)) {
-      throw new Error(formatCommittedButPushFailed(commitResult.sha, error));
-    }
-    return recoverMemoryPushConflict(params, token, commitResult.sha);
   }
 
   return {
@@ -1996,6 +1792,27 @@ async function getMemoryConflictSummary(
     );
   }
   return parts.join("; ");
+}
+
+async function getMemoryAheadBehind(
+  memoryDir: string,
+): Promise<{ ahead: number; behind: number } | null> {
+  try {
+    const { stdout } = await runGit(memoryDir, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "HEAD...@{u}",
+    ]);
+    const [aheadRaw, behindRaw] = stdout.trim().split(/\s+/);
+    return {
+      ahead: Number.parseInt(aheadRaw ?? "0", 10) || 0,
+      behind: Number.parseInt(behindRaw ?? "0", 10) || 0,
+    };
+  } catch {
+    // No upstream configured or unable to inspect divergence.
+    return null;
+  }
 }
 
 export async function syncPendingMemoryCommitsAfterTurn(
