@@ -246,10 +246,8 @@ class TelemetryManager {
       return undefined;
     }
   }
-  /** 30s (was 5min) — flushes events during the session rather than relying solely on the exit path. */
-  private readonly FLUSH_INTERVAL_MS = 30 * 1000; // 30 seconds
-  /** 25 (was 100) — flushes at natural conversation boundaries instead of holding until exit. */
-  private readonly MAX_BATCH_SIZE = 25;
+  private readonly FLUSH_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+  private readonly MAX_BATCH_SIZE = 50;
   /** Max time to drain queued events on exit (bounded so we never hang the shell). */
   private readonly DRAIN_TIMEOUT_MS = 3_000;
   private sessionStatsGetter?: () => {
