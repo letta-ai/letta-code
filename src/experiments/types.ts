@@ -1,4 +1,5 @@
 export type ExperimentId =
+  | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"
   | "node"

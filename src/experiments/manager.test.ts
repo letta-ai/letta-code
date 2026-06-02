@@ -74,4 +74,25 @@ describe("experimentManager", () => {
       override: false,
     });
   });
+
+  test("maps conversation title experiment controls to the persistent setting", async () => {
+    expect(experimentManager.getSnapshot("conversation_titles")).toMatchObject({
+      id: "conversation_titles",
+      enabled: true,
+    });
+
+    expect(experimentManager.set("conversation_titles", false)).toMatchObject({
+      id: "conversation_titles",
+      enabled: false,
+    });
+    await settingsManager.flush();
+
+    await settingsManager.reset();
+    await settingsManager.initialize();
+
+    expect(experimentManager.getSnapshot("conversation_titles")).toMatchObject({
+      id: "conversation_titles",
+      enabled: false,
+    });
+  });
 });

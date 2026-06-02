@@ -947,29 +947,6 @@ describe("listen-client parseServerMessage", () => {
     expect(setExperiment?.type).toBe("set_experiment");
   });
 
-  test("parses conversation title settings commands", () => {
-    const getSettings = parseServerMessage(
-      Buffer.from(
-        JSON.stringify({
-          type: "get_conversation_title_settings",
-          request_id: "title-settings-get-1",
-        }),
-      ),
-    );
-    const setSettings = parseServerMessage(
-      Buffer.from(
-        JSON.stringify({
-          type: "set_conversation_title_settings",
-          request_id: "title-settings-set-1",
-          enabled: false,
-        }),
-      ),
-    );
-
-    expect(getSettings?.type).toBe("get_conversation_title_settings");
-    expect(setSettings?.type).toBe("set_conversation_title_settings");
-  });
-
   test("advertises context-limit and parses the legacy set-max-context alias", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("context-limit");
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
@@ -2644,7 +2621,7 @@ describe("listen-client experiment command handling", () => {
     const originalGetSettings = settingsManager.getSettings;
     const originalUpdateSettings = settingsManager.updateSettings;
     const originalNodeFlag = process.env.LETTA_NODE;
-    const globalSettings = {} as Settings;
+    const globalSettings = { autoConversationTitles: true } as Settings;
 
     try {
       delete process.env.LETTA_NODE;
@@ -2686,6 +2663,10 @@ describe("listen-client experiment command handling", () => {
             id: "node",
             enabled: false,
             source: "default",
+          }),
+          expect.objectContaining({
+            id: "conversation_titles",
+            enabled: true,
           }),
         ]),
       });
@@ -2729,82 +2710,39 @@ describe("listen-client experiment command handling", () => {
           ]),
         },
       });
-    } finally {
-      if (originalNodeFlag === undefined) {
-        delete process.env.LETTA_NODE;
-      } else {
-        process.env.LETTA_NODE = originalNodeFlag;
-      }
-      (settingsManager as typeof settingsManager).getSettings =
-        originalGetSettings;
-      (settingsManager as typeof settingsManager).updateSettings =
-        originalUpdateSettings;
-    }
-  });
-});
-
-describe("listen-client conversation title settings command handling", () => {
-  test("wraps typed conversation title settings reads and writes over WS", async () => {
-    const originalGetSettings = settingsManager.getSettings;
-    const originalUpdateSettings = settingsManager.updateSettings;
-    const globalSettings = { autoConversationTitles: true } as Settings;
-
-    try {
-      (settingsManager as typeof settingsManager).getSettings = (() =>
-        globalSettings) as typeof settingsManager.getSettings;
-      (settingsManager as typeof settingsManager).updateSettings = ((
-        updates: Record<string, unknown>,
-      ) => {
-        Object.assign(
-          globalSettings as unknown as Record<string, unknown>,
-          updates,
-        );
-      }) as typeof settingsManager.updateSettings;
-
-      const socket = new MockSocket(WebSocket.OPEN);
-      const listener = __listenClientTestUtils.createListenerRuntime();
-
-      await __listenClientTestUtils.handleConversationTitleSettingsCommand(
-        {
-          type: "get_conversation_title_settings",
-          request_id: "title-settings-get-1",
-        },
-        socket as unknown as WebSocket,
-        listener,
-      );
-
-      const getResponse = JSON.parse(socket.sentPayloads[0] as string);
-      expect(getResponse).toMatchObject({
-        type: "get_conversation_title_settings_response",
-        request_id: "title-settings-get-1",
-        success: true,
-        conversation_title_settings: { enabled: true },
-      });
 
       socket.sentPayloads.length = 0;
 
-      await __listenClientTestUtils.handleConversationTitleSettingsCommand(
+      await __listenClientTestUtils.handleExperimentCommand(
         {
-          type: "set_conversation_title_settings",
-          request_id: "title-settings-set-1",
+          type: "set_experiment",
+          request_id: "conversation-titles-set-1",
+          experiment_id: "conversation_titles",
           enabled: false,
         },
         socket as unknown as WebSocket,
         listener,
       );
 
-      const setResponse = JSON.parse(socket.sentPayloads[0] as string);
-      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(listener);
-      expect(setResponse).toMatchObject({
-        type: "set_conversation_title_settings_response",
-        request_id: "title-settings-set-1",
+      const titleSetResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(titleSetResponse).toMatchObject({
+        type: "set_experiment_response",
+        request_id: "conversation-titles-set-1",
         success: true,
-        conversation_title_settings: { enabled: false },
+        experiments: expect.arrayContaining([
+          expect.objectContaining({
+            id: "conversation_titles",
+            enabled: false,
+          }),
+        ]),
       });
-      expect(deviceStatus).toMatchObject({
-        conversation_title_settings: { enabled: false },
-      });
+      expect(globalSettings.autoConversationTitles).toBe(false);
     } finally {
+      if (originalNodeFlag === undefined) {
+        delete process.env.LETTA_NODE;
+      } else {
+        process.env.LETTA_NODE = originalNodeFlag;
+      }
       (settingsManager as typeof settingsManager).getSettings =
         originalGetSettings;
       (settingsManager as typeof settingsManager).updateSettings =

@@ -26,7 +26,6 @@ import {
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
-  handleConversationTitleSettingsCommand,
   handleExperimentCommand,
   handleReflectionSettingsCommand,
 } from "./commands/settings";
@@ -520,17 +519,6 @@ export const __listenClientTestUtils = {
     socket: WebSocket,
     listener: ListenerRuntime,
   ) => handleExperimentCommand(parsed, socket, listener, safeSocketSend),
-  handleConversationTitleSettingsCommand: (
-    parsed: Parameters<typeof handleConversationTitleSettingsCommand>[0],
-    socket: WebSocket,
-    listener: ListenerRuntime,
-  ) =>
-    handleConversationTitleSettingsCommand(
-      parsed,
-      socket,
-      listener,
-      safeSocketSend,
-    ),
   handleReflectionSettingsCommand: (
     parsed: Parameters<typeof handleReflectionSettingsCommand>[0],
     socket: WebSocket,
