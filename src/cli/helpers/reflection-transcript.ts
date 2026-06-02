@@ -107,6 +107,7 @@ export interface MultiReflectionManifest {
   type: "multi_transcript_reflection_payload";
   agent_id: string;
   created_at: string;
+  user_instruction?: string;
   selection_policy:
     | { mode: "recent"; limit: number }
     | { mode: "explicit-conversations"; conversation_ids: string[] }
@@ -171,6 +172,7 @@ export interface ReflectionAutoCandidates {
   current_conversation_id?: string;
   created_at: string;
   max_selected: number;
+  user_instruction?: string;
   instructions: string;
   candidates: ReflectionAutoCandidate[];
 }
@@ -185,6 +187,7 @@ export interface ReflectionAutoPayload {
 }
 
 export interface ReflectionPromptInput {
+  instruction?: string;
   memoryDir: string;
   parentMemory?: string;
 }
@@ -206,17 +209,44 @@ export function buildReflectionSubagentPrompt(
     "",
   );
 
+  if (input.instruction?.trim()) {
+    lines.push(
+      "Additional user-provided reflection instruction:",
+      input.instruction.trim(),
+      "",
+      "Use this instruction to focus what you look for, but still only persist durable memory-worthy learnings and do not store transient task state.",
+      "",
+    );
+  }
+
   if (input.parentMemory) {
     lines.push(input.parentMemory);
   }
   return lines.join("\n");
 }
 
-export function buildReflectionSelectorPrompt(): string {
-  return [
+export function buildReflectionSelectorPrompt(options?: {
+  instruction?: string;
+}): string {
+  const lines = [
     "You are selecting conversation transcripts for memory reflection. The transcript candidates path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Read/Edit file_path is literal and does NOT expand env vars.",
     "",
     "The payload is `auto_transcript_reflection_candidates` with compact metadata about candidate conversations. Your job is only to choose which conversations should be opened for a full reflection pass. Do not edit memory files. Do not commit anything.",
+    "",
+  ];
+
+  if (options?.instruction?.trim()) {
+    lines.push(
+      "Additional user-provided reflection instruction:",
+      options.instruction.trim(),
+      "",
+      "Prefer transcript candidates that help satisfy this instruction, while still avoiding transient or low-signal conversations.",
+      "",
+    );
+  }
+
+  lines.push(
+    "If the candidates payload includes `user_instruction`, use it as the requested focus for selection.",
     "",
     "Select up to `max_selected` conversations. Prefer candidates likely to contain durable memory updates: explicit user corrections, repeated preferences, coding/review/commit style preferences, repo or workflow gotchas, durable facts about people/projects, contradictions with current memory, or repeated agent failures.",
     "Avoid one-off debugging, transient task status, duplicated/redundant candidates, and conversations already fully reflected unless they are useful for deduplication or contradiction resolution.",
@@ -225,7 +255,9 @@ export function buildReflectionSelectorPrompt(): string {
     "Return strict JSON as your final response with this shape:",
     '{"selected_conversations":[{"conversation_id":"conv-...","reason":"durable reason for selecting this transcript","priority":"high"}]}',
     'Use priority values `high`, `medium`, or `low`. If nothing looks memory-worthy, write `{"selected_conversations":[]}`.',
-  ].join("\n");
+  );
+
+  return lines.join("\n");
 }
 
 interface ParentMemoryFile {
@@ -1324,12 +1356,14 @@ function shouldKeepAutoCandidate(candidate: ReflectionAutoCandidate): boolean {
 export async function buildReflectionAutoPayload(options: {
   agentId: string;
   currentConversationId?: string;
+  instruction?: string;
   maxSelected?: number;
   maxCatalogCandidates?: number;
 }): Promise<ReflectionAutoPayload | null> {
   const {
     agentId,
     currentConversationId,
+    instruction,
     maxSelected = REFLECTION_AUTO_MAX_SELECTED_TRANSCRIPTS,
     maxCatalogCandidates = REFLECTION_AUTO_MAX_CATALOG_CANDIDATES,
   } = options;
@@ -1493,6 +1527,7 @@ export async function buildReflectionAutoPayload(options: {
     current_conversation_id: currentConversationId,
     created_at: new Date().toISOString(),
     max_selected: maxSelected,
+    user_instruction: instruction?.trim() || undefined,
     instructions:
       "Choose conversations likely to contain durable memory updates. Prefer explicit corrections, repeated preferences, project conventions, and contradictions; avoid one-off debugging and transient task state.",
     candidates: sortedCandidates,
@@ -1707,6 +1742,7 @@ type MultiReflectionSelectionPolicy =
 
 export interface BuildMultiReflectionPayloadOptions {
   agentId: string;
+  instruction?: string;
   selectionPolicy: MultiReflectionSelectionPolicy;
   systemPrompt?: string;
   maxReplayTurnsPerConversation?: number;
@@ -1776,6 +1812,7 @@ export async function buildMultiReflectionPayload(
 ): Promise<MultiReflectionPayload | null> {
   const {
     agentId,
+    instruction,
     selectionPolicy,
     systemPrompt,
     maxReplayTurnsPerConversation = 50,
@@ -1872,6 +1909,7 @@ export async function buildMultiReflectionPayload(
     type: "multi_transcript_reflection_payload",
     agent_id: agentId,
     created_at: new Date().toISOString(),
+    user_instruction: instruction?.trim() || undefined,
     selection_policy: manifestSelectionPolicy(selectionPolicy),
     transcripts,
   };

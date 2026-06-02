@@ -562,10 +562,14 @@ describe("reflectionTranscript helper", () => {
 
     const multi = await buildMultiReflectionPayload({
       agentId,
+      instruction: "Focus on cross-session coding preferences.",
       selectionPolicy: { mode: "recent", limit: 10 },
     });
     expect(multi).not.toBeNull();
     if (!multi) return;
+    expect(multi.manifest.user_instruction).toBe(
+      "Focus on cross-session coding preferences.",
+    );
     expect(multi.manifest.transcripts).toHaveLength(2);
     expect(multi.manifest.transcripts.every((t) => t.mode === "replay")).toBe(
       true,
@@ -804,6 +808,7 @@ describe("reflectionTranscript helper", () => {
 
   test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {
     const prompt = buildReflectionSubagentPrompt({
+      instruction: "Focus on repo gotchas.",
       memoryDir: "/tmp/memory",
       parentMemory: "<parent_memory>snapshot</parent_memory>",
     });
@@ -824,6 +829,8 @@ describe("reflectionTranscript helper", () => {
     expect(prompt).toContain(
       "Additional memory files (such as skills and external memory) may also be read and modified.",
     );
+    expect(prompt).toContain("Additional user-provided reflection instruction");
+    expect(prompt).toContain("Focus on repo gotchas.");
     expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
   });
 
@@ -1018,10 +1025,13 @@ describe("reflectionTranscript helper", () => {
   });
 
   test("reflection selector prompt describes auto-only mode", () => {
-    const prompt = buildReflectionSelectorPrompt();
+    const prompt = buildReflectionSelectorPrompt({
+      instruction: "Find repeated mistakes.",
+    });
     expect(prompt).toContain("auto_transcript_reflection_candidates");
     expect(prompt).toContain("Do not edit memory files");
     expect(prompt).toContain("Return strict JSON");
+    expect(prompt).toContain("Find repeated mistakes.");
   });
 
   test("readReflectionAutoSelection validates and caps selector report", async () => {
