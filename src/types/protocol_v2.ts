@@ -10,6 +10,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { DmPolicy } from "@/channels/types";
+import type { ConversationTitleSettingsSnapshot } from "@/cli/helpers/conversation-title";
 import type { CronRunLogPage, CronTask } from "@/cron";
 import type { ExperimentId, ExperimentSnapshot } from "@/experiments/types";
 
@@ -334,6 +335,7 @@ export interface DeviceStatus {
   background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
   experiments: ExperimentSnapshot[];
+  conversation_title_settings: ConversationTitleSettingsSnapshot;
   memory_directory: string | null;
   /**
    * Persisted CWD overrides keyed by listener scope key.
@@ -1153,6 +1155,17 @@ export interface SetExperimentCommand {
   enabled: boolean;
 }
 
+export interface GetConversationTitleSettingsCommand {
+  type: "get_conversation_title_settings";
+  request_id: string;
+}
+
+export interface SetConversationTitleSettingsCommand {
+  type: "set_conversation_title_settings";
+  request_id: string;
+  enabled: boolean;
+}
+
 export interface ChannelsListCommand {
   type: "channels_list";
   request_id: string;
@@ -1423,6 +1436,22 @@ export interface SetExperimentResponseMessage {
   request_id: string;
   success: boolean;
   experiments: ExperimentSnapshot[];
+  error?: string;
+}
+
+export interface GetConversationTitleSettingsResponseMessage {
+  type: "get_conversation_title_settings_response";
+  request_id: string;
+  success: boolean;
+  conversation_title_settings: ConversationTitleSettingsSnapshot;
+  error?: string;
+}
+
+export interface SetConversationTitleSettingsResponseMessage {
+  type: "set_conversation_title_settings_response";
+  request_id: string;
+  success: boolean;
+  conversation_title_settings: ConversationTitleSettingsSnapshot;
   error?: string;
 }
 
@@ -1839,6 +1868,8 @@ export type WsProtocolCommand =
   | SetReflectionSettingsCommand
   | GetExperimentsCommand
   | SetExperimentCommand
+  | GetConversationTitleSettingsCommand
+  | SetConversationTitleSettingsCommand
   | ChannelsListCommand
   | ChannelAccountsListCommand
   | ChannelAccountCreateCommand
@@ -1877,6 +1908,8 @@ export type WsProtocolMessage =
   | UpdateToolsetResponseMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
+  | GetConversationTitleSettingsResponseMessage
+  | SetConversationTitleSettingsResponseMessage
   | ChannelsListResponseMessage
   | ChannelAccountsListResponseMessage
   | ChannelAccountCreateResponseMessage

@@ -1,5 +1,4 @@
 export type ExperimentId =
-  | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"
   | "node"
@@ -12,7 +11,6 @@ export interface ExperimentDefinition {
   label: string;
   description: string;
   envVar?: string;
-  defaultEnabled?: boolean;
 }
 
 export interface ExperimentSnapshot extends ExperimentDefinition {

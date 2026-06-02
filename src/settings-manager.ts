@@ -77,6 +77,7 @@ export interface Settings {
   showCompactions?: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
+  autoConversationTitles: boolean; // Generate AI conversation titles when possible
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
   includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
@@ -161,6 +162,7 @@ const DEFAULT_SETTINGS: Settings = {
   enableSleeptime: false,
   conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
+  autoConversationTitles: true,
   autoSwapOnQuotaLimit: true,
   includeWorktreeTool: true,
   recentModels: [],

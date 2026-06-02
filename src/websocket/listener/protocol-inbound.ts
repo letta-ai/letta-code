@@ -39,6 +39,7 @@ import type {
   EnableMemfsCommand,
   ExecuteCommandCommand,
   FileOpsCommand,
+  GetConversationTitleSettingsCommand,
   GetCwdMapCommand,
   GetExperimentsCommand,
   GetReflectionSettingsCommand,
@@ -59,6 +60,7 @@ import type {
   SearchFilesCommand,
   SecretApplyCommand,
   SecretListCommand,
+  SetConversationTitleSettingsCommand,
   SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -78,7 +80,6 @@ import type {
 } from "@/types/protocol_v2";
 
 const EXPERIMENT_IDS = new Set<ExperimentId>([
-  "conversation_titles",
   "desktop_conversation_bootstrap",
   "node",
   "tui_cron",
@@ -992,6 +993,36 @@ export function isSetExperimentCommand(
   );
 }
 
+export function isGetConversationTitleSettingsCommand(
+  value: unknown,
+): value is GetConversationTitleSettingsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+  };
+  return (
+    c.type === "get_conversation_title_settings" &&
+    typeof c.request_id === "string"
+  );
+}
+
+export function isSetConversationTitleSettingsCommand(
+  value: unknown,
+): value is SetConversationTitleSettingsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    enabled?: unknown;
+  };
+  return (
+    c.type === "set_conversation_title_settings" &&
+    typeof c.request_id === "string" &&
+    typeof c.enabled === "boolean"
+  );
+}
+
 function isChannelId(value: unknown): value is string {
   return typeof value === "string" && isSupportedChannelId(value);
 }
@@ -1658,6 +1689,8 @@ export function parseServerMessage(
       isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||
+      isGetConversationTitleSettingsCommand(parsed) ||
+      isSetConversationTitleSettingsCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||

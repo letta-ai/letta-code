@@ -5,6 +5,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
+import { getConversationTitleSettings } from "@/cli/helpers/conversation-title";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
@@ -401,6 +402,7 @@ export function buildDeviceStatus(
       background_processes: buildBackgroundProcessSnapshot(),
       pending_control_requests: [],
       experiments: experimentManager.list(),
+      conversation_title_settings: getConversationTitleSettings(),
       memory_directory: null,
       cwd_map: {},
       boot_working_directory: fallbackCwd,
@@ -474,6 +476,7 @@ export function buildDeviceStatus(
       ? []
       : getPendingControlRequests(listener, scope),
     experiments: experimentManager.list(),
+    conversation_title_settings: getConversationTitleSettings(),
     memory_directory: scopedAgentId
       ? getMemoryFilesystemRoot(scopedAgentId)
       : null,
