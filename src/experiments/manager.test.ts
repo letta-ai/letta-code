@@ -42,10 +42,10 @@ afterEach(async () => {
 });
 
 describe("experimentManager", () => {
-  test("conversation title generation is opt-in by default", () => {
+  test("conversation title generation is enabled by default", () => {
     expect(experimentManager.getSnapshot("conversation_titles")).toMatchObject({
       id: "conversation_titles",
-      enabled: false,
+      enabled: true,
       source: "default",
       override: null,
     });
@@ -85,11 +85,11 @@ describe("experimentManager", () => {
   });
 
   test("persists explicit conversation title overrides", async () => {
-    expect(experimentManager.set("conversation_titles", true)).toMatchObject({
+    expect(experimentManager.set("conversation_titles", false)).toMatchObject({
       id: "conversation_titles",
-      enabled: true,
+      enabled: false,
       source: "override",
-      override: true,
+      override: false,
     });
     await settingsManager.flush();
 
@@ -98,9 +98,9 @@ describe("experimentManager", () => {
 
     expect(experimentManager.getSnapshot("conversation_titles")).toMatchObject({
       id: "conversation_titles",
-      enabled: true,
+      enabled: false,
       source: "override",
-      override: true,
+      override: false,
     });
   });
 });

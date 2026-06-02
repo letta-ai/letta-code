@@ -13,6 +13,7 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
     label: "conversation titles",
     description:
       "Generate conversation titles from the transcript with letta/auto (uses your credits).",
+    defaultEnabled: true,
   },
   {
     id: "desktop_conversation_bootstrap",
@@ -86,10 +87,11 @@ class ExperimentManager {
     const envEnabled = definition.envVar
       ? isEnabledToggle(process.env[definition.envVar])
       : false;
+    const defaultEnabled = definition.defaultEnabled ?? false;
 
     return {
       ...definition,
-      enabled: envEnabled,
+      enabled: envEnabled || defaultEnabled,
       source: envEnabled ? "env" : "default",
       override: null,
     };
