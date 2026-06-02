@@ -47,7 +47,6 @@
     "metadata": {
       "type": "object",
       "description": "Metadata keys to merge into the existing metadata bag (existing keys are preserved; matching keys are overwritten).",
-      "propertyNames": { "type": "string" },
       "additionalProperties": { "type": "string" }
     }
   },
