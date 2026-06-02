@@ -1228,7 +1228,21 @@ export async function handleIncomingMessage(
       conversation_id: conversationId,
     });
 
-    if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+    let shouldRunMemorySync = false;
+    if (agentId) {
+      try {
+        shouldRunMemorySync = settingsManager.isMemfsEnabled(agentId);
+      } catch (error) {
+        debugWarn(
+          "memfs-git",
+          `Skipping post-turn listener memory sync because settings are unavailable: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    if (agentId && shouldRunMemorySync) {
       try {
         const { syncPendingMemoryCommitsAfterTurn } = await import(
           "@/agent/memory-git"
