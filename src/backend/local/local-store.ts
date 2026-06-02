@@ -857,7 +857,7 @@ function localTranscriptRowsResult(
     ? activeMessageIds
         .map((id) => messageById.get(id))
         .filter((message): message is LocalMessage => message !== undefined)
-    : allMessages;
+    : Array.from(messageById.values());
   const firstActiveId = activeMessages[0]?.id;
 
   return {

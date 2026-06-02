@@ -359,16 +359,20 @@ export interface LocalToolResultRepairResult {
 export function removeOrphanLocalToolResults(
   messages: readonly LocalMessage[],
 ): LocalToolResultRepairResult {
-  const seenToolCallIds = new Set<string>();
+  // Mirror pi-ai transformMessages() tool-flow boundaries: tool results only
+  // belong to the immediately pending assistant tool calls. A user or another
+  // assistant message closes that pending tool-result window.
+  let pendingToolCallIds = new Set<string>();
   const repaired: LocalMessage[] = [];
   const removedMessageIds: string[] = [];
 
   for (const message of messages) {
     if (message.role === "assistant") {
+      pendingToolCallIds = new Set<string>();
       if (assistantMessageCanContributeToolCalls(message)) {
         for (const content of message.content) {
           if (isLocalToolCallContent(content)) {
-            addToolCallIdLookupKeys(seenToolCallIds, content.id);
+            addToolCallIdLookupKeys(pendingToolCallIds, content.id);
           }
         }
       }
@@ -376,8 +380,14 @@ export function removeOrphanLocalToolResults(
       continue;
     }
 
+    if (message.role === "user") {
+      pendingToolCallIds = new Set<string>();
+      repaired.push(message);
+      continue;
+    }
+
     if (message.role === "toolResult") {
-      if (hasToolCallIdLookupKey(seenToolCallIds, message.toolCallId)) {
+      if (hasToolCallIdLookupKey(pendingToolCallIds, message.toolCallId)) {
         repaired.push(message);
       } else {
         removedMessageIds.push(message.id);

@@ -1316,6 +1316,37 @@ describe("local backend pi transcript", () => {
       "assistant_message",
       "approval_request_message",
     ]);
+
+    const conversationPath = join(conversationDir, "conversation.json");
+    const persistedConversation = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      conversationPath,
+      `${JSON.stringify(
+        { ...persistedConversation, in_context_message_ids: [] },
+        null,
+        2,
+      )}\n`,
+    );
+    const reloadedWithoutActiveIds = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const messagesWithoutActiveIds = pageItems(
+      await reloadedWithoutActiveIds.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(
+      messagesWithoutActiveIds.map((message) => message.message_type),
+    ).toEqual([
+      "user_message",
+      "assistant_message",
+      "approval_request_message",
+    ]);
   });
 
   test("repairs orphan tool results from active local transcript context", async () => {
