@@ -418,6 +418,83 @@ describe("PiStreamAdapter", () => {
     expect(messages).toHaveLength(1);
   });
 
+  test("drops orphan tool results from provider context", async () => {
+    let capturedContext: Context | undefined;
+    const stream: PiStreamFunction = (
+      _model: Model<string>,
+      context: Context,
+    ) => {
+      capturedContext = context;
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({ stream });
+    const turnInput: ProviderTurnInput = {
+      ...input(),
+      uiMessages: [
+        {
+          id: "ui-msg-1",
+          role: "user",
+          content: "hello",
+          timestamp: Date.now(),
+        },
+        {
+          id: "ui-msg-2",
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "call-valid",
+              name: "Read",
+              arguments: { path: "README.md" },
+            },
+          ],
+          api: "openai-responses" as never,
+          provider: "openai" as never,
+          model: "gpt-5.5",
+          usage: emptyLocalUsage(),
+          stopReason: "toolUse",
+          timestamp: Date.now(),
+        },
+        {
+          id: "ui-msg-3",
+          role: "toolResult",
+          toolCallId: "call-valid",
+          toolName: "Read",
+          content: [{ type: "text", text: "README contents" }],
+          isError: false,
+          timestamp: Date.now(),
+        },
+        {
+          id: "ui-msg-4",
+          role: "toolResult",
+          toolCallId: "call-missing",
+          toolName: "Read",
+          content: [{ type: "text", text: "orphan contents" }],
+          isError: false,
+          timestamp: Date.now(),
+        },
+      ],
+    };
+
+    for await (const _event of adapter.stream(turnInput)) {
+      // drain
+    }
+
+    expect(capturedContext).toBeDefined();
+    // biome-ignore lint/style/noNonNullAssertion: capturedContext is asserted defined on the line above
+    const messages = capturedContext!.messages;
+    expect(JSON.stringify(messages)).toContain("README contents");
+    expect(JSON.stringify(messages)).not.toContain("orphan contents");
+    expect(
+      messages.filter((message) => message.role === "toolResult"),
+    ).toHaveLength(1);
+  });
+
   test("retries retryable Codex transport errors before model output", async () => {
     let calls = 0;
     const stream: PiStreamFunction = () => {

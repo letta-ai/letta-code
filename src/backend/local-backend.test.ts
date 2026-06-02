@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   readdir,
@@ -1220,6 +1221,260 @@ describe("local backend pi transcript", () => {
       "tool_return_message",
       "assistant_message",
     ]);
+  });
+
+  test("persists updated assistant snapshots when tool calls are appended later", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-tool-update-"),
+    );
+    let calls = 0;
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        calls += 1;
+        if (calls === 1) {
+          return lettaStreamFromChunks([
+            {
+              message_type: "assistant_message",
+              content: [{ type: "text", text: "I will inspect that." }],
+            } as LettaStreamingResponse,
+            {
+              message_type: "stop_reason",
+              stop_reason: "end_turn",
+            } as LettaStreamingResponse,
+          ]);
+        }
+
+        return lettaStreamFromChunks([
+          {
+            message_type: "approval_request_message",
+            tool_call: {
+              tool_call_id: "call-readme",
+              name: "Read",
+              arguments: JSON.stringify({ path: "README.md" }),
+            },
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "requires_approval",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "inspect the readme" }],
+      } as ConversationMessageCreateBody),
+    );
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [],
+      } as never),
+    );
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const entries = (
+      await readFile(join(conversationDir, "messages.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const assistantMessages = entries
+      .filter((entry) => entry.type === "message")
+      .map((entry) => entry.message as Record<string, unknown>)
+      .filter((message) => message.role === "assistant");
+    expect(assistantMessages).toHaveLength(2);
+    expect(new Set(assistantMessages.map((message) => message.id)).size).toBe(
+      1,
+    );
+    expect(JSON.stringify(assistantMessages.at(-1))).toContain("call-readme");
+
+    const reloadedBackend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const reloadedMessages = pageItems(
+      await reloadedBackend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(reloadedMessages.map((message) => message.message_type)).toEqual([
+      "user_message",
+      "assistant_message",
+      "approval_request_message",
+    ]);
+
+    const conversationPath = join(conversationDir, "conversation.json");
+    const persistedConversation = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      conversationPath,
+      `${JSON.stringify(
+        { ...persistedConversation, in_context_message_ids: [] },
+        null,
+        2,
+      )}\n`,
+    );
+    const reloadedWithoutActiveIds = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const messagesWithoutActiveIds = pageItems(
+      await reloadedWithoutActiveIds.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(
+      messagesWithoutActiveIds.map((message) => message.message_type),
+    ).toEqual([
+      "user_message",
+      "assistant_message",
+      "approval_request_message",
+    ]);
+  });
+
+  test("repairs orphan tool results from active local transcript context", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-orphan-tool-result-"),
+    );
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "done" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "hello" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const messagesPath = join(conversationDir, "messages.jsonl");
+    const conversationPath = join(conversationDir, "conversation.json");
+    const rows = (await readFile(messagesPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const parentId = rows.at(-1)?.id;
+    if (typeof parentId !== "string") {
+      throw new Error("Expected a parent entry id");
+    }
+    const timestamp = new Date().toISOString();
+    const orphanMessage = {
+      id: "ui-msg-9999",
+      role: "toolResult",
+      toolCallId: "call-missing",
+      toolName: "Read",
+      content: [{ type: "text", text: "orphan output" }],
+      isError: false,
+      timestamp: Date.now(),
+      metadata: {
+        created_at: timestamp,
+        updated_at: timestamp,
+        agent_id: agent.id,
+        conversation_id: conversation.id,
+      },
+    };
+    await appendFile(
+      messagesPath,
+      `${JSON.stringify({
+        type: "message",
+        id: "orphan-entry",
+        parentId,
+        timestamp,
+        message: orphanMessage,
+      })}\n`,
+    );
+    const persistedConversation = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as { in_context_message_ids?: string[] };
+    await writeFile(
+      conversationPath,
+      `${JSON.stringify(
+        {
+          ...persistedConversation,
+          in_context_message_ids: [
+            ...(persistedConversation.in_context_message_ids ?? []),
+            orphanMessage.id,
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const reloadedBackend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const reloadedMessages = pageItems(
+      await reloadedBackend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(
+      reloadedMessages.map((message) => message.message_type),
+    ).not.toContain("tool_return_message");
+    const repairedConversation = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as { in_context_message_ids?: string[] };
+    expect(repairedConversation.in_context_message_ids).not.toContain(
+      orphanMessage.id,
+    );
+    expect(await readFile(messagesPath, "utf8")).toContain(orphanMessage.id);
+
+    await drain(
+      await reloadedBackend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "next" }],
+      } as ConversationMessageCreateBody),
+    );
+    const messagesAfterNextTurn = pageItems(
+      await reloadedBackend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(messagesAfterNextTurn.map((message) => message.id)).toContain(
+      "ui-msg-10000",
+    );
   });
 
   test("defers unversioned transcript migration errors until transcript read", async () => {
