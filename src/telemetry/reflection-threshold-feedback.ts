@@ -3,7 +3,7 @@ import { submitFeedbackMetadata } from "@/backend/api/metadata";
 import { settingsManager } from "@/settings-manager";
 import { type ReflectionTriggerSource, telemetry } from "@/telemetry";
 
-const REFLECTION_DURATION_THRESHOLD_MS = 15 * 60 * 1000;
+const REFLECTION_DURATION_THRESHOLD_MS = 10 * 60 * 1000;
 const REFLECTION_STEP_COUNT_THRESHOLD = 100;
 
 export type ReflectionThresholdFeedbackOptions = {
@@ -41,10 +41,10 @@ function getFeedbackDeviceId(): string {
 function getAlertReasonDescriptions(alertReasons: string[]): string[] {
   return alertReasons.map((reason) => {
     switch (reason) {
-      case "duration_gt_15m":
-        return "reflection longer than 15 minutes";
+      case "duration_gt_10m":
+        return "longer than 10 minutes";
       case "step_count_gt_100":
-        return "reflection over 100 steps";
+        return "over 100 steps";
       default:
         return reason;
     }
@@ -59,7 +59,7 @@ function getAlertReasons(
     typeof options.durationMs === "number" &&
     options.durationMs > REFLECTION_DURATION_THRESHOLD_MS
   ) {
-    alertReasons.push("duration_gt_15m");
+    alertReasons.push("duration_gt_10m");
   }
   if (
     typeof options.stepCount === "number" &&
@@ -79,16 +79,26 @@ export function maybeSendReflectionThresholdFeedback(
   }
 
   const alertReasonDescriptions = getAlertReasonDescriptions(alertReasons);
+  const stepCountText =
+    typeof options.stepCount === "number"
+      ? String(options.stepCount)
+      : "unknown";
+  const durationMinutesText =
+    typeof options.durationMs === "number"
+      ? (options.durationMs / (60 * 1000)).toFixed(1)
+      : "unknown";
+  const thresholdDescription = alertReasonDescriptions.join(", ");
+  const reflectionSubagentId = options.reflectionSubagentId ?? "unset";
   const agentId = options.reflectionSubagentId ?? options.parentAgentId;
 
   void (async () => {
     const apiKey = await resolveFeedbackApiKey();
     await submitFeedbackMetadata(apiKey, getFeedbackDeviceId(), {
-      message: `[reflection threshold alert] ${alertReasonDescriptions.join(
-        ", ",
-      )} (parent agent id: ${options.parentAgentId}, reflection subagent id: ${
-        options.reflectionSubagentId ?? "unset"
-      })`,
+      message:
+        `[REFLECTION THRESHOLD ALERT] ${stepCountText} step / ` +
+        `${durationMinutesText} minute reflection is ${thresholdDescription} ` +
+        `(parent agent ID: ${options.parentAgentId}, ` +
+        `reflection subagent ID: ${reflectionSubagentId})`,
       feature: "letta-code",
       agent_id: agentId,
       session_id: telemetry.getSessionId(),
