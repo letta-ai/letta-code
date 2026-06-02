@@ -171,28 +171,6 @@ describe("reflection telemetry correlation", () => {
     settingsManager.getSettings = originalGetSettings;
   });
 
-  test("reflection_end carries start_message_id and end_message_id", () => {
-    telemetry.trackReflectionEnd("step-count", true, {
-      subagentId: "agent-deadbeef",
-      conversationId: "conv-1",
-      startMessageId: "message-start",
-      endMessageId: "message-end",
-    });
-
-    const event = telemetryState.events[0] as {
-      type: string;
-      data: {
-        subagent_id?: string;
-        start_message_id?: string;
-        end_message_id?: string;
-      };
-    };
-    expect(event.type).toBe("reflection_end");
-    expect(event.data.subagent_id).toBe("agent-deadbeef");
-    expect(event.data.start_message_id).toBe("message-start");
-    expect(event.data.end_message_id).toBe("message-end");
-  });
-
   test("both reflection_start and reflection_end carry subagent_id for in-flight tracking", () => {
     // Mirrors the post-deferred-emit launcher: by the time
     // trackReflectionStart fires (after the background agent-id wait), we
@@ -208,14 +186,12 @@ describe("reflection telemetry correlation", () => {
     telemetry.trackReflectionEnd("step-count", true, {
       subagentId: "agent-resolved-in-background",
       conversationId: "conv-1",
-      startMessageId: "message-start-1",
-      endMessageId: "message-end-1",
     });
 
     expect(telemetryState.events).toHaveLength(2);
     type ReflectionEvent = {
       type: string;
-      data: { start_message_id?: string; subagent_id?: string };
+      data: { subagent_id?: string };
     };
     const events = telemetryState.events as ReflectionEvent[];
     const startEvent = events[0];
@@ -231,11 +207,6 @@ describe("reflection telemetry correlation", () => {
     // identify the subagent from reflection_start alone (no JOIN needed).
     expect(startEvent.data.subagent_id).toBe("agent-resolved-in-background");
     expect(endEvent.data.subagent_id).toBe("agent-resolved-in-background");
-
-    // start_message_id is still the stable correlation key for pairing.
-    expect(startEvent.data.start_message_id).toBe(
-      endEvent.data.start_message_id,
-    );
   });
 
   test("reflection_start falls back to undefined subagent_id if wait times out", () => {

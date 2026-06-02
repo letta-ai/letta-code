@@ -168,8 +168,6 @@ export async function launchReflectionSubagent(
         telemetry.trackReflectionEnd(triggerSource, success, {
           subagentId: reflectionAgentId ?? undefined,
           conversationId,
-          startMessageId: autoPayload.startMessageId,
-          endMessageId: autoPayload.endMessageId,
           error,
         });
         await finalizeAutoReflectionPayload(

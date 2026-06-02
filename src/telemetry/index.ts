@@ -99,9 +99,6 @@ export interface ReflectionEndData {
   success: boolean;
   subagent_id?: string;
   conversation_id?: string;
-  /** Correlation keys for pairing `reflection_start` and `reflection_end` when `subagent_id` is absent on start. */
-  start_message_id?: string;
-  end_message_id?: string;
   error?: string;
 }
 
@@ -714,8 +711,6 @@ class TelemetryManager {
     options?: {
       subagentId?: string;
       conversationId?: string;
-      startMessageId?: string;
-      endMessageId?: string;
       error?: string;
     },
   ) {
@@ -724,8 +719,6 @@ class TelemetryManager {
       success,
       subagent_id: options?.subagentId,
       conversation_id: options?.conversationId,
-      start_message_id: options?.startMessageId,
-      end_message_id: options?.endMessageId,
       error: options?.error,
     };
     this.track("reflection_end", data);
