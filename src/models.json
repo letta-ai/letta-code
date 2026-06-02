@@ -1486,7 +1486,7 @@
       "description": "MiniMax's frontier M-series model for agentic reasoning, tool use, coding, multimodal chat input, and long-context tasks",
       "isFeatured": true,
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 500000,
         "parallel_tool_calls": true
       }
     },
