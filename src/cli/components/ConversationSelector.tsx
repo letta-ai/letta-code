@@ -529,9 +529,9 @@ export function ConversationSelector({
 
     if (loading) return;
 
-    if (key.upArrow) {
+    if (key.upArrow || input === "k") {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
-    } else if (key.downArrow) {
+    } else if (key.downArrow || input === "j") {
       setSelectedIndex((prev) =>
         Math.min(pageConversations.length - 1, prev + 1),
       );
