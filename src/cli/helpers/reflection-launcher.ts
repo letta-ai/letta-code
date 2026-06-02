@@ -15,25 +15,7 @@ import { debugLog, debugWarn } from "@/utils/debug";
 
 export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
-/**
- * Maximum time to wait (in the background, non-blocking) for the spawned
- * reflection subagent to be assigned a concrete agent ID before we emit the
- * `reflection_start` telemetry event with whatever we have.
- *
- * Background: `spawnBackgroundSubagentTask` returns immediately with a local
- * task id, but the actual Letta agent is created asynchronously via an HTTP
- * POST that typically takes 1–10 seconds (longer under congestion or cold
- * start). Previously this wait was capped at 1s AND awaited inline, which
- * (a) blocked the reflection-launch path for up to 1s, and (b) almost always
- * timed out, causing `reflection_start.subagent_id` to be empty in 100% of
- * production rows.
- *
- * The fix: do the wait in the background and emit `reflection_start` when the
- * ID resolves. The launcher returns immediately so the trigger UX is
- * unaffected. 30s comfortably covers the agent-creation round trip in nearly
- * all cases. If we exceed the deadline we emit with `subagent_id` empty as a
- * last resort rather than dropping the event entirely.
- */
+/** Max background wait for the reflection subagent's agent ID before emitting `reflection_start` (previously 1s inline, timed out ~100% of the time). */
 export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
 
 export type ReflectionLaunchTriggerSource =
@@ -165,13 +147,7 @@ export async function launchReflectionSubagent(
     const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
       await import("@/tools/impl/task");
 
-    // We need the resolved agent ID on `reflection_start` so dashboards can
-    // identify the subagent for *in-flight* reflections (i.e. cases where
-    // `reflection_end` never lands — crashes, early exits, long-running).
-    // But we can't block the reflection-launch path on the agent-creation
-    // HTTP round trip (1–10s, sometimes longer). So we defer the
-    // `reflection_start` emission until the ID is known, in the background,
-    // with a bounded 30s timeout. The launch path returns immediately.
+    // Defer `reflection_start` until the agent ID resolves (background, bounded by REFLECTION_AGENT_ID_WAIT_MS).
     const emitReflectionStart = (resolvedAgentId: string | null) => {
       telemetry.trackReflectionStart(triggerSource, {
         subagentId: resolvedAgentId ?? undefined,
@@ -228,10 +204,7 @@ export async function launchReflectionSubagent(
         });
       },
     });
-    // Fire-and-forget: emit `reflection_start` as soon as the subagent has a
-    // concrete agent ID, or after the bounded timeout. Either way, the event
-    // ships with whatever ID is available at that point. The launcher itself
-    // returns immediately so we never delay the reflection trigger UX.
+    // Fire-and-forget: emit `reflection_start` when the agent ID resolves or after timeout.
     void waitForBackgroundSubagentAgentId(
       subagentId,
       REFLECTION_AGENT_ID_WAIT_MS,
@@ -240,8 +213,7 @@ export async function launchReflectionSubagent(
         emitReflectionStart(resolvedAgentId);
       })
       .catch((err) => {
-        // Worst case — still emit the event with no subagent_id so we don't
-        // lose visibility into the reflection trigger entirely.
+        // Worst case — still emit with no subagent_id so we don't lose the event.
         debugWarn(
           "memory",
           `Failed waiting for reflection agent ID: ${

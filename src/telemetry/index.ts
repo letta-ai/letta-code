@@ -99,14 +99,7 @@ export interface ReflectionEndData {
   success: boolean;
   subagent_id?: string;
   conversation_id?: string;
-  /**
-   * Message IDs bracketing the reflection window. Carried on both
-   * `reflection_start` and `reflection_end` so dashboards can correlate the
-   * two events via `start_message_id` — useful because
-   * `reflection_start.subagent_id` is often empty (the agent ID isn't
-   * resolved synchronously) but `reflection_end.subagent_id` is populated
-   * from the spawn callback.
-   */
+  /** Correlation keys for pairing `reflection_start` and `reflection_end` when `subagent_id` is absent on start. */
   start_message_id?: string;
   end_message_id?: string;
   error?: string;
@@ -241,14 +234,7 @@ class TelemetryManager {
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
   private serverVersion: string | null = null;
-  /**
-   * Tracks an in-flight flush so concurrent callers can await it instead of
-   * starting a second POST. Prevents the "double-flush on shutdown" race that
-   * was causing 429 `route_rps_rate_limit_exceeded` errors when SIGINT and
-   * normal-exit handlers both kicked off a flush within milliseconds of each
-   * other, dropping the second batch (typically containing late `reflection_end`
-   * events).
-   */
+  /** Deduplicates concurrent flushes (prevents the 429 double-flush race on shutdown). */
   private inflightFlush: Promise<void> | null = null;
 
   private async resolveTelemetryApiKey(): Promise<string | undefined> {
@@ -263,25 +249,11 @@ class TelemetryManager {
       return undefined;
     }
   }
-  /**
-   * Periodic flush cadence. Previously 5 minutes, which meant a typical
-   * session's entire telemetry payload (well under 100 events) rode on the
-   * exit-path flush alone — losing the queue on Ctrl+C, crashes, or any other
-   * abnormal termination. 30s gives us much more durable coverage while
-   * staying well below any reasonable per-route rate limit.
-   */
+  /** 30s (was 5min) — flushes events during the session rather than relying solely on the exit path. */
   private readonly FLUSH_INTERVAL_MS = 30 * 1000; // 30 seconds
-  /**
-   * Maximum number of events to accumulate before triggering an immediate
-   * flush. Tuned down from 100 so that bursty sessions (e.g. ~20 `tool_usage`
-   * events from a single user turn) flush at natural conversation boundaries
-   * rather than holding the queue until exit.
-   */
+  /** 25 (was 100) — flushes at natural conversation boundaries instead of holding until exit. */
   private readonly MAX_BATCH_SIZE = 25;
-  /**
-   * Maximum time to wait for queued events to drain on exit before letting
-   * the process terminate anyway. Bounded so we never hang the user's shell.
-   */
+  /** Max time to drain queued events on exit (bounded so we never hang the shell). */
   private readonly DRAIN_TIMEOUT_MS = 3_000;
   private sessionStatsGetter?: () => {
     totalWallMs: number;
@@ -366,11 +338,7 @@ class TelemetryManager {
     // Don't let the interval prevent process from exiting
     this.flushInterval.unref();
 
-    // Safety net: Handle Ctrl+C interruption.
-    // Normal exits via handleExit drain explicitly.
-    // We await drain() (bounded by DRAIN_TIMEOUT_MS) before exiting so the
-    // final batch — which typically contains late-arriving reflection_end
-    // events and session_end — actually makes it over the wire.
+    // Await drain() (bounded by DRAIN_TIMEOUT_MS) so the final batch ships before exit.
     process.on("SIGINT", () => {
       void (async () => {
         try {
@@ -763,14 +731,7 @@ class TelemetryManager {
     this.track("reflection_end", data);
   }
 
-  /**
-   * Flush events to the server.
-   *
-   * Concurrent callers (e.g. timer interval + size threshold + exit handler all
-   * firing within the same tick) all await the same in-flight POST instead of
-   * each starting their own. This is the fix for the 429
-   * `route_rps_rate_limit_exceeded` race we were hitting on shutdown.
-   */
+  /** Concurrent callers share one in-flight POST (prevents 429 double-flush race on shutdown). */
   async flush(): Promise<void> {
     if (this.inflightFlush) {
       return this.inflightFlush;
@@ -808,23 +769,13 @@ class TelemetryManager {
     }
   }
 
-  /**
-   * Drain all queued events before exiting.
-   *
-   * Replaces the historical "fire and forget `flush()` then `process.exit(0)`"
-   * pattern in our exit handlers, which silently dropped any events that
-   * hadn't been POSTed by the time the process tore down. Awaits the
-   * in-flight flush (if any) and then drains the remaining queue, bounded by
-   * `DRAIN_TIMEOUT_MS` so a slow/unresponsive server never hangs the user's
-   * shell.
-   */
+  /** Await in-flight flush and drain remaining queue (bounded by DRAIN_TIMEOUT_MS). Replaces fire-and-forget flush on exit. */
   async drain(): Promise<void> {
     if (!this.isTelemetryEnabled()) {
       return;
     }
     const deadline = Date.now() + this.DRAIN_TIMEOUT_MS;
-    // Loop in case new events get tracked between awaits (e.g. trackError from
-    // an `uncaughtException` handler firing while drain is in flight).
+    // Loop in case new events arrive mid-drain (e.g. trackError from uncaughtException).
     while (this.events.length > 0 || this.inflightFlush) {
       if (Date.now() >= deadline) {
         return;
