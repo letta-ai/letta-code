@@ -122,11 +122,9 @@ describe("personality helpers", () => {
     const body = getPersonalityContent("tutorial");
     expect(body).not.toContain("The skill owns the tutorial flow");
     expect(body).not.toContain("letta-help");
-    expect(body).toContain("Never end on a generic offer");
-    expect(body).toContain("Every turn ends pointing at a concrete next thing");
-    expect(body).toContain(
-      "Progress through the onboarding checklist naturally",
-    );
+    expect(body).toContain("I never leave someone standing in an open field");
+    expect(body).toContain("Every turn ends with a clear next step");
+    expect(body).toContain("Progress through the onboarding naturally");
     expect(body).toContain("what should I call you");
   });
 
