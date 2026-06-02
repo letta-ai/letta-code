@@ -32,6 +32,7 @@ const DEFAULT_UPDATE_REGISTRY_BASE_URL = "https://registry.npmjs.org";
 const UPDATE_PACKAGE_NAME_ENV = "LETTA_UPDATE_PACKAGE_NAME";
 const UPDATE_REGISTRY_BASE_URL_ENV = "LETTA_UPDATE_REGISTRY_BASE_URL";
 const UPDATE_INSTALL_REGISTRY_URL_ENV = "LETTA_UPDATE_INSTALL_REGISTRY_URL";
+const DESKTOP_MANAGED_ENV = "LETTA_CODE_DESKTOP_MANAGED";
 
 const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
   npm: ["install", "-g"],
@@ -142,10 +143,29 @@ function canWritePath(path: string): boolean {
   }
 }
 
+function isDesktopManagedRuntime(resolvedEntrypoint: string): boolean {
+  return (
+    process.env[DESKTOP_MANAGED_ENV] === "1" ||
+    resolvedEntrypoint.includes("app.asar.unpacked")
+  );
+}
+
 export function getSelfUpdateStatus(): SelfUpdateStatus {
   const pm = detectPackageManager();
   const manualCommand = buildInstallCommand(pm);
   const resolvedEntrypoint = getResolvedEntrypoint();
+
+  if (isDesktopManagedRuntime(resolvedEntrypoint)) {
+    return {
+      supported: false,
+      writable: false,
+      reason:
+        "Self-update is disabled because this Letta Code runtime is managed by Letta Code Desktop.",
+      manual_command:
+        "Update Letta Code Desktop to upgrade the bundled Letta Code runtime.",
+    };
+  }
+
   const installPath = findInstalledPackagePath(resolvedEntrypoint);
 
   if (!installPath) {

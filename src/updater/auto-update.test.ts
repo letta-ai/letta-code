@@ -7,6 +7,7 @@ import {
   buildLatestVersionUrl,
   checkForUpdate,
   detectPackageManager,
+  getSelfUpdateStatus,
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
   resolveUpdateRegistryBaseUrl,
@@ -220,6 +221,52 @@ describe("detectPackageManager", () => {
     process.argv[1] =
       "/usr/local/lib/node_modules/@letta-ai/letta-code/dist/index.js";
     expect(detectPackageManager()).toBe("npm");
+  });
+});
+
+describe("getSelfUpdateStatus", () => {
+  let originalArgv1: string;
+  let originalDesktopManaged: string | undefined;
+
+  beforeEach(() => {
+    originalArgv1 = process.argv[1] || "";
+    originalDesktopManaged = process.env.LETTA_CODE_DESKTOP_MANAGED;
+    delete process.env.LETTA_CODE_DESKTOP_MANAGED;
+  });
+
+  afterEach(() => {
+    process.argv[1] = originalArgv1;
+    if (originalDesktopManaged !== undefined) {
+      process.env.LETTA_CODE_DESKTOP_MANAGED = originalDesktopManaged;
+    } else {
+      delete process.env.LETTA_CODE_DESKTOP_MANAGED;
+    }
+  });
+
+  test("disables self-update for packaged Desktop runtimes", () => {
+    process.argv[1] =
+      "/Applications/Letta.app/Contents/Resources/app.asar.unpacked/node_modules/@letta-ai/letta-code/letta.js";
+
+    const status = getSelfUpdateStatus();
+
+    expect(status.supported).toBe(false);
+    expect(status.writable).toBe(false);
+    expect(status.reason).toContain("managed by Letta Code Desktop");
+    expect(status.manual_command).toBe(
+      "Update Letta Code Desktop to upgrade the bundled Letta Code runtime.",
+    );
+  });
+
+  test("disables self-update when Desktop marks the runtime as managed", () => {
+    process.env.LETTA_CODE_DESKTOP_MANAGED = "1";
+    process.argv[1] =
+      "/Users/test/.nvm/versions/node/v20.10.0/lib/node_modules/@letta-ai/letta-code/dist/index.js";
+
+    const status = getSelfUpdateStatus();
+
+    expect(status.supported).toBe(false);
+    expect(status.writable).toBe(false);
+    expect(status.reason).toContain("managed by Letta Code Desktop");
   });
 });
 
