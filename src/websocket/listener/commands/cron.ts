@@ -15,8 +15,8 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
-  CronTriggerCommand,
   CronRunsCommand,
+  CronTriggerCommand,
 } from "@/types/protocol_v2";
 import {
   isCronAddCommand,
@@ -24,8 +24,8 @@ import {
   isCronDeleteCommand,
   isCronGetCommand,
   isCronListCommand,
-  isCronTriggerCommand,
   isCronRunsCommand,
+  isCronTriggerCommand,
 } from "@/websocket/listener/protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 

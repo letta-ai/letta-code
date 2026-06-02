@@ -32,8 +32,8 @@ import type {
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
-  CronTriggerCommand,
   CronRunsCommand,
+  CronTriggerCommand,
   DeleteMemoryFileCommand,
   EditFileCommand,
   EnableMemfsCommand,
@@ -805,7 +805,9 @@ export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
   );
 }
 
-export function isCronTriggerCommand(value: unknown): value is CronTriggerCommand {
+export function isCronTriggerCommand(
+  value: unknown,
+): value is CronTriggerCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as {
     type?: unknown;

@@ -391,7 +391,12 @@ export async function runCronTaskNow(taskId: string): Promise<{
   }
 
   if (task.status !== "active") {
-    return { success: false, found: true, task, error: "Schedule is not active" };
+    return {
+      success: false,
+      found: true,
+      task,
+      error: "Schedule is not active",
+    };
   }
 
   if (!schedulerState) {
