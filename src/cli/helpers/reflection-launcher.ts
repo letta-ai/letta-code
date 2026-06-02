@@ -46,6 +46,7 @@ export interface ReflectionLaunchOptions {
   memfsEnabled: boolean;
   triggerSource: ReflectionLaunchTriggerSource;
   description: string;
+  instruction?: string;
   systemPrompt?: string;
   completionConversationId?: string | (() => string);
   recompileByConversation: Map<string, Promise<void>>;
@@ -137,6 +138,7 @@ export async function launchReflectionSubagent(
     const memoryDir = getScopedMemoryFilesystemRoot(agentId);
     const parentMemory = await buildParentMemorySnapshot(memoryDir);
     const reflectionPrompt = buildReflectionSubagentPrompt({
+      instruction: options.instruction,
       memoryDir,
       parentMemory,
     });

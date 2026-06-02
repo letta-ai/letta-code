@@ -333,22 +333,80 @@ type SubmitHandlerContext = {
 };
 
 type ReflectCommandArgs =
-  | { kind: "single" }
-  | { kind: "recent"; limit: number }
-  | { kind: "conversations"; conversationIds: string[] }
-  | { kind: "auto" };
+  | { instruction?: string; kind: "single" }
+  | { instruction?: string; kind: "recent"; limit: number }
+  | { conversationIds: string[]; instruction?: string; kind: "conversations" }
+  | { instruction?: string; kind: "auto" };
+
+function isReflectCommandFlag(value: string): boolean {
+  return (
+    value === "--" ||
+    value === "--auto" ||
+    value === "--conversation" ||
+    value === "--instruction" ||
+    value === "--instructions" ||
+    value === "--recent" ||
+    value === "-i" ||
+    value.startsWith("--instruction=")
+  );
+}
 
 function parseReflectCommandArgs(input: string): ReflectCommandArgs {
-  const parts = input.trim().split(/\s+/).slice(1);
+  const trimmed = input.trim();
+  const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect";
+  const parts = parseExtensionCommandArgv(trimmed.slice(command.length).trim());
   if (parts.length === 0) {
     return { kind: "single" };
   }
 
   let recentLimit: number | null = null;
   const conversationIds: string[] = [];
+  const instructions: string[] = [];
   let auto = false;
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
+    if (!part) continue;
+    if (
+      part === "--instruction" ||
+      part === "--instructions" ||
+      part === "-i"
+    ) {
+      let instructionEnd = index + 1;
+      while (instructionEnd < parts.length) {
+        const instructionPart = parts[instructionEnd];
+        if (!instructionPart || isReflectCommandFlag(instructionPart)) break;
+        instructionEnd += 1;
+      }
+      const instruction = parts
+        .slice(index + 1, instructionEnd)
+        .join(" ")
+        .trim();
+      if (!instruction?.trim()) {
+        throw new Error("Usage: /reflect --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      index = instructionEnd - 1;
+      continue;
+    }
+    if (part.startsWith("--instruction=")) {
+      const instruction = part.slice("--instruction=".length).trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      continue;
+    }
+    if (part === "--") {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect -- <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
     if (part === "--auto") {
       auto = true;
       continue;
@@ -373,10 +431,11 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
       continue;
     }
     throw new Error(
-      "Usage: /reflect [--recent N | --conversation <id> ... | --auto]",
+      "Usage: /reflect [--recent N | --conversation <id> ... | --auto] [--instruction <instruction>]",
     );
   }
 
+  const instruction = instructions.join("\n").trim() || undefined;
   const modes = [recentLimit !== null, conversationIds.length > 0, auto].filter(
     Boolean,
   ).length;
@@ -384,15 +443,15 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
     throw new Error("Use only one of --recent, --conversation, or --auto.");
   }
   if (auto) {
-    return { kind: "auto" };
+    return { instruction, kind: "auto" };
   }
   if (recentLimit !== null) {
-    return { kind: "recent", limit: recentLimit };
+    return { instruction, kind: "recent", limit: recentLimit };
   }
   if (conversationIds.length > 0) {
-    return { kind: "conversations", conversationIds };
+    return { conversationIds, instruction, kind: "conversations" };
   }
-  return { kind: "single" };
+  return { instruction, kind: "single" };
 }
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
@@ -2834,6 +2893,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 memfsEnabled: isActiveMemfsEnabled(agentId),
                 triggerSource: "manual",
                 description: AUTO_REFLECTION_DESCRIPTION,
+                instruction: reflectArgs.instruction,
                 completionConversationId: () => conversationIdRef.current,
                 recompileByConversation:
                   systemPromptRecompileByConversationRef.current,
@@ -2887,6 +2947,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               const autoPayload = await buildReflectionAutoPayload({
                 agentId,
                 currentConversationId: reflectionConversationId,
+                instruction: reflectArgs.instruction,
               });
               if (!autoPayload) {
                 cmd.fail("No transcript candidates found for auto selection.");
@@ -2899,7 +2960,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               const { subagentId: selectorSubagentId } =
                 spawnBackgroundSubagentTask({
                   subagentType: "reflection",
-                  prompt: buildReflectionSelectorPrompt(),
+                  prompt: buildReflectionSelectorPrompt({
+                    instruction: reflectArgs.instruction,
+                  }),
                   description: "Selecting reflection transcripts",
                   silentCompletion: true,
                   transcriptPath: autoPayload.candidatesPath,
@@ -2936,6 +2999,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                             selectedConversations,
                             candidatesPath: autoPayload.candidatesPath,
                           },
+                          instruction: reflectArgs.instruction,
                           systemPrompt,
                         });
                       if (!autoReflectionPayload) {
@@ -2949,6 +3013,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       const parentMemory =
                         await buildParentMemorySnapshot(memoryDir);
                       const reflectionPrompt = buildReflectionSubagentPrompt({
+                        instruction: reflectArgs.instruction,
                         memoryDir,
                         parentMemory,
                       });
@@ -3043,6 +3108,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       mode: "explicit-conversations",
                       conversationIds: reflectArgs.conversationIds,
                     },
+              instruction: reflectArgs.instruction,
               systemPrompt,
             });
 
@@ -3056,6 +3122,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const memoryDir = getScopedMemoryFilesystemRoot(agentId);
             const parentMemory = await buildParentMemorySnapshot(memoryDir);
             const reflectionPrompt = buildReflectionSubagentPrompt({
+              instruction: reflectArgs.instruction,
               memoryDir,
               parentMemory,
             });
