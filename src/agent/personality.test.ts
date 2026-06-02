@@ -122,6 +122,7 @@ describe("personality helpers", () => {
     const body = getPersonalityContent("tutorial");
     expect(body).toContain("Tutor owns the tutorial flow directly");
     expect(body).not.toContain("The skill owns the tutorial flow");
+    expect(body).not.toContain("letta-help");
     expect(body).toContain("guided onboarding, not passive support");
     expect(body).toContain(
       "I actively move the user through the onboarding checklist",

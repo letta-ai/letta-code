@@ -21,7 +21,6 @@ const BUILTIN_SKILL_ALIASES = new Set([
   "creating-skills",
   "customizing-statusline",
   "initializing-memory",
-  "letta-help",
   "migrating-memory",
   "syncing-memory-filesystem",
 ]);
