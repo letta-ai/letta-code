@@ -11,6 +11,7 @@ export type SharedReminderId =
   | "agent-info"
   | "secrets-info"
   | "permission-mode"
+  | "memory-git-sync"
   | "reflection-step-count"
   | "reflection-compaction"
   | "command-io"
@@ -62,6 +63,16 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "permission-mode",
       description: "Permission mode reminder",
+      modes: [
+        "interactive",
+        "headless-one-shot",
+        "headless-bidirectional",
+        "listen",
+      ],
+    },
+    {
+      id: "memory-git-sync",
+      description: "Queued post-turn memory git sync status",
       modes: [
         "interactive",
         "headless-one-shot",

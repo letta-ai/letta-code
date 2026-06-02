@@ -97,7 +97,10 @@ describe("built-in subagents", () => {
   test("keeps API-backed built-in prompts free of local backend wording", async () => {
     const configs = await getAllSubagentConfigs();
 
-    expect(configs.init?.systemPrompt).toContain("Commit and push");
+    expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
+    expect(configs.init?.systemPrompt).not.toContain("git push");
+    expect(configs.memory?.systemPrompt).not.toContain("git push");
+    expect(configs.reflection?.systemPrompt).not.toContain("git push");
     expect(configs.memory?.systemPrompt).not.toContain(
       "local backend git-backed memory filesystem",
     );

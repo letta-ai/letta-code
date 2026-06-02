@@ -35,6 +35,7 @@ import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import { syncPendingMemoryCommitsAfterTurn } from "./agent/memory-git";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
   getModelInfo,
@@ -123,8 +124,10 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "./reminders/engine";
+import { formatMemoryPostTurnSyncReminder } from "./reminders/memory-git-sync";
 import {
   createSharedReminderState,
+  enqueueMemoryGitSyncReminder,
   syncReminderStateFromContextTracker,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
@@ -248,6 +251,33 @@ async function reportStartupErrorAndExit(
   }
 
   return await flushAndExit(1);
+}
+
+async function runPostTurnMemorySync(params: {
+  agentId: string;
+  enqueueReminder?: (text: string) => void;
+  emitWarning?: (text: string) => void | Promise<void>;
+}): Promise<void> {
+  if (!settingsManager.isMemfsEnabled(params.agentId)) {
+    return;
+  }
+
+  try {
+    const syncResult = await syncPendingMemoryCommitsAfterTurn(params.agentId);
+    const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
+    if (!syncReminder) {
+      return;
+    }
+    params.enqueueReminder?.(syncReminder);
+    await params.emitWarning?.(syncReminder);
+  } catch (error) {
+    debugWarn(
+      "memfs-git",
+      `Post-turn headless memory sync failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 export type BidirectionalQueuedInput = QueuedTurnInput<
@@ -2986,6 +3016,15 @@ ${SYSTEM_REMINDER_CLOSE}
     await exitHeadless(1, "headless_runtime_exception");
   }
 
+  await runPostTurnMemorySync({
+    agentId: agent.id,
+    emitWarning: (text) => {
+      if (outputFormat !== "stream-json") {
+        console.error(text);
+      }
+    },
+  });
+
   // Update stats with final usage data from buffers
   sessionStats.updateUsageFromBuffers(buffers);
 
@@ -4517,6 +4556,15 @@ async function runBidirectionalMode(
         };
         writeWireMessage(errorResultMsg);
       } finally {
+        await runPostTurnMemorySync({
+          agentId: agent.id,
+          enqueueReminder: (text) => {
+            enqueueMemoryGitSyncReminder(sharedReminderState, { text });
+          },
+          emitWarning: (text) => {
+            debugWarn("memfs-git", text);
+          },
+        });
         turnInProgress = false;
         blockedEmittedThisTurn = false;
         currentAbortController = null;

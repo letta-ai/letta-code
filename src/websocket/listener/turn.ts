@@ -52,7 +52,9 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
+import { formatMemoryPostTurnSyncReminder } from "@/reminders/memory-git-sync";
 import {
+  enqueueMemoryGitSyncReminder,
   type SharedReminderState,
   syncReminderStateFromContextTracker,
 } from "@/reminders/state";
@@ -1225,6 +1227,28 @@ export async function handleIncomingMessage(
       agent_id: agentId || null,
       conversation_id: conversationId,
     });
+
+    if (agentId && settingsManager.isMemfsEnabled(agentId)) {
+      try {
+        const { syncPendingMemoryCommitsAfterTurn } = await import(
+          "@/agent/memory-git"
+        );
+        const syncResult = await syncPendingMemoryCommitsAfterTurn(agentId);
+        const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
+        if (syncReminder) {
+          enqueueMemoryGitSyncReminder(runtime.reminderState, {
+            text: syncReminder,
+          });
+        }
+      } catch (error) {
+        debugWarn(
+          "memfs-git",
+          `Post-turn listener memory sync failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
 
     try {
       const currentConversationId = getConversationId();

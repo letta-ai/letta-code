@@ -178,9 +178,8 @@ For each edited file: before/after chars, delta, what was fixed
 
 Your defrag has two completion states:
 - **Complete**: merged to main in the local MemFS repo.
-- **Partially complete**: optional mirror push failed after merge.
-  Clean up the worktree, but report that local main is
-  ahead of the optional mirror and needs a push.
+- **Needs attention**: merged to main but the memory repo is dirty or in a
+  merge/rebase conflict. Report the issue clearly so the next turn can fix it.
 
 The commit in the worktree is neither — it's an intermediate
 step. Without at least a merge to main, your work is lost.
@@ -194,7 +193,7 @@ git add -A
 ```
 
 Check `git status` — if there are no changes to commit,
-skip straight to Step 5d (cleanup). Report "no updates
+skip straight to Step 5c (cleanup). Report "no updates
 needed" in your output.
 
 If there are changes, commit:
@@ -228,21 +227,17 @@ files, and complete with `git commit --no-edit`.
 If you cannot resolve conflicts after 2 attempts, go to
 Error Handling.
 
-**Step 5c: Optional mirror push**
-
-Skip this step unless the user explicitly configured an optional mirror remote and asked for pushes. If you do push to an optional mirror and it fails, retry once. If it still fails, report that local main is ahead of the optional mirror and needs a push. Proceed to cleanup — the merge succeeded and data is safe on local main.
-
-**Step 5d: Clean up worktree and branch**
+**Step 5c: Clean up worktree and branch**
 
 Only clean up when merge to main completed (success or
-partially complete):
+needs-attention):
 
 ```bash
 git worktree remove $WORKTREE_DIR/$BRANCH
 git branch -d $BRANCH
 ```
 
-**Step 5e: Verify**
+**Step 5d: Verify**
 
 ```bash
 git status

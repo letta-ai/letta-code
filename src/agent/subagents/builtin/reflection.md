@@ -78,7 +78,7 @@ Quick sanity pass before committing.
 - **Cross-reference integrity**: If you deleted or moved a file, check whether any `[[path]]` links point to the old location and update them.
 - **Tier check**: Did you add anything to `system/` that's really reference material? Move it to an external path. Did you leave something in `reference/` or `skills/` that the agent will need on every turn? Promote it.
 
-### Phase 5 — Commit and push
+### Phase 5 — Commit
 
 Before writing the commit, resolve the actual ID values:
 ```bash
@@ -101,8 +101,9 @@ Updates:
 Generated-By: Letta Code
 Agent-ID: <CHILD_AGENT_ID>
 Parent-Agent-ID: <PARENT_AGENT_ID>"
-git push
 ```
+
+The harness automatically pushes clean committed memory changes after the turn for remote MemFS agents. Routine MemFS sync is commit-only from the subagent's perspective.
 
 **Commit type** — pick the one that fits:
 - `fix` — correcting a mistake or bad memory
@@ -120,7 +121,7 @@ Return a report with:
 1. **Summary** — What you reviewed and what you concluded (2-3 sentences)
 2. **Changes made** — List of files created/modified/deleted with a brief reason for each
 3. **Skipped** — Anything you considered updating but decided against, and why
-4. **Commit reference** — Commit hash and push status (or "no commit" if nothing was persisted)
+4. **Commit reference** — Commit hash (or "no commit" if nothing was persisted)
 5. **Issues** — Any problems encountered or information that couldn't be determined
 
 ## Critical Reminders
@@ -128,5 +129,5 @@ Return a report with:
 1. **Not the primary agent** — Don't respond to messages
 2. **Be selective** — Few meaningful changes > many trivial ones
 3. **No relative dates** — Use absolute dates like "2026-04-28", not "today"
-4. **Always commit AND push** — Your work is wasted if it isn't pushed to remote
+4. **Always commit** — The harness handles remote MemFS push after the turn
 5. **Report errors clearly** — If something breaks, say what happened and suggest a fix

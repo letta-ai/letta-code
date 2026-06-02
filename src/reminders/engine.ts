@@ -212,6 +212,19 @@ async function buildPermissionModeReminder(
   return `${SYSTEM_REMINDER_OPEN}${prefix}: ${currentMode}. ${description}${SYSTEM_REMINDER_CLOSE}\n\n`;
 }
 
+async function buildMemoryGitSyncReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  if (context.state.pendingMemoryGitSyncReminders.length === 0) {
+    return null;
+  }
+
+  return context.state.pendingMemoryGitSyncReminders
+    .splice(0)
+    .map((reminder) => reminder.text)
+    .join("\n\n");
+}
+
 async function buildReflectionStepReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
@@ -392,6 +405,7 @@ export const sharedReminderProviders: Record<
   "secrets-info": buildSecretsInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
+  "memory-git-sync": buildMemoryGitSyncReminder,
   "reflection-step-count": buildReflectionStepReminder,
   "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,

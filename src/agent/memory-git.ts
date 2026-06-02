@@ -23,7 +23,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { getClient } from "@/backend/api/client";
 import {
@@ -1877,6 +1877,21 @@ export interface MemoryGitStatus {
   summary: string;
 }
 
+export type MemoryPostTurnSyncStatus =
+  | "clean"
+  | "pushed"
+  | "dirty"
+  | "conflict"
+  | "push_failed"
+  | "skipped";
+
+export interface MemoryPostTurnSyncResult {
+  status: MemoryPostTurnSyncStatus;
+  summary: string;
+  memoryDir: string;
+  localOnly: boolean;
+}
+
 /**
  * Check git status of the memory directory.
  * Used to decide whether to inject a sync reminder.
@@ -1923,6 +1938,200 @@ export async function getMemoryGitStatus(
     aheadOfRemote,
     summary: parts.length > 0 ? parts.join(", ") : "clean",
   };
+}
+
+function isUnmergedStatusCode(code: string): boolean {
+  return code.includes("U") || code === "AA" || code === "DD";
+}
+
+async function getMemoryGitDir(memoryDir: string): Promise<string> {
+  const { stdout } = await runGit(memoryDir, ["rev-parse", "--git-dir"]);
+  const gitDir = stdout.trim() || ".git";
+  return isAbsolute(gitDir) ? gitDir : join(memoryDir, gitDir);
+}
+
+async function getMemoryConflictSummary(
+  memoryDir: string,
+  statusOut?: string,
+): Promise<string | null> {
+  let operation: string | null = null;
+  try {
+    const gitDir = await getMemoryGitDir(memoryDir);
+    if (existsSync(join(gitDir, "MERGE_HEAD"))) {
+      operation = "merge in progress";
+    } else if (
+      existsSync(join(gitDir, "rebase-merge")) ||
+      existsSync(join(gitDir, "rebase-apply"))
+    ) {
+      operation = "rebase in progress";
+    }
+  } catch {
+    operation = null;
+  }
+
+  const status =
+    statusOut ?? (await runGit(memoryDir, ["status", "--porcelain"])).stdout;
+  const conflictedFiles = status
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line && isUnmergedStatusCode(line.slice(0, 2)))
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean);
+
+  if (!operation && conflictedFiles.length === 0) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  if (operation) {
+    parts.push(operation);
+  }
+  if (conflictedFiles.length > 0) {
+    parts.push(
+      `conflicted file(s): ${conflictedFiles.slice(0, 10).join(", ")}${
+        conflictedFiles.length > 10
+          ? `, and ${conflictedFiles.length - 10} more`
+          : ""
+      }`,
+    );
+  }
+  return parts.join("; ");
+}
+
+export async function syncPendingMemoryCommitsAfterTurn(
+  agentId: string,
+  options: { memoryDir?: string } = {},
+): Promise<MemoryPostTurnSyncResult> {
+  const { getBackend } = await import("@/backend");
+  const backend = getBackend();
+  const localOnly =
+    backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs;
+  const memoryDir = options.memoryDir ?? getScopedMemoryFilesystemRoot(agentId);
+
+  if (!existsSync(join(memoryDir, ".git"))) {
+    return {
+      status: "skipped",
+      summary: "Memory repo is not initialized.",
+      memoryDir,
+      localOnly,
+    };
+  }
+
+  const { stdout: statusOut } = await runGit(memoryDir, [
+    "status",
+    "--porcelain",
+  ]);
+  const conflictSummary = await getMemoryConflictSummary(memoryDir, statusOut);
+  if (conflictSummary) {
+    return {
+      status: "conflict",
+      summary: conflictSummary,
+      memoryDir,
+      localOnly,
+    };
+  }
+
+  if (statusOut.trim().length > 0) {
+    const changedCount = statusOut
+      .split("\n")
+      .filter((line) => line.trim().length > 0).length;
+    return {
+      status: "dirty",
+      summary: `${changedCount} uncommitted memory change(s).`,
+      memoryDir,
+      localOnly,
+    };
+  }
+
+  if (!backend.capabilities.remoteMemfs) {
+    return {
+      status: "skipped",
+      summary: localOnly
+        ? "Local backend MemFS has no Letta remote to push."
+        : "Active backend does not support remote MemFS pushes.",
+      memoryDir,
+      localOnly,
+    };
+  }
+
+  const token = await getAuthToken();
+  await prepareMemoryRepoForGitOps(memoryDir, agentId, token);
+  const divergence = await getMemoryAheadBehind(memoryDir);
+  if (!divergence || divergence.ahead <= 0) {
+    return {
+      status: "clean",
+      summary: "Memory repo is clean and has no pending commits to push.",
+      memoryDir,
+      localOnly,
+    };
+  }
+
+  try {
+    await runGitWithRetry(memoryDir, ["push"], token, {
+      operation: "post-turn push pending memory commits",
+    });
+    return {
+      status: "pushed",
+      summary: `Pushed ${divergence.ahead} pending memory commit(s).`,
+      memoryDir,
+      localOnly,
+    };
+  } catch (pushError) {
+    if (!isNonFastForwardPushError(pushError)) {
+      return {
+        status: "push_failed",
+        summary:
+          pushError instanceof Error ? pushError.message : String(pushError),
+        memoryDir,
+        localOnly,
+      };
+    }
+
+    try {
+      await runGitWithRetry(memoryDir, ["pull", "--rebase"], token, {
+        operation: "post-turn rebase memory before push",
+      });
+      const postRebaseConflictSummary =
+        await getMemoryConflictSummary(memoryDir);
+      if (postRebaseConflictSummary) {
+        return {
+          status: "conflict",
+          summary: postRebaseConflictSummary,
+          memoryDir,
+          localOnly,
+        };
+      }
+      await runGitWithRetry(memoryDir, ["push"], token, {
+        operation: "post-turn push rebased memory commits",
+      });
+      return {
+        status: "pushed",
+        summary: `Rebased and pushed ${divergence.ahead} pending memory commit(s).`,
+        memoryDir,
+        localOnly,
+      };
+    } catch (rebaseOrPushError) {
+      const postFailureConflictSummary =
+        await getMemoryConflictSummary(memoryDir);
+      if (postFailureConflictSummary) {
+        return {
+          status: "conflict",
+          summary: postFailureConflictSummary,
+          memoryDir,
+          localOnly,
+        };
+      }
+      return {
+        status: "push_failed",
+        summary:
+          rebaseOrPushError instanceof Error
+            ? rebaseOrPushError.message
+            : String(rebaseOrPushError),
+        memoryDir,
+        localOnly,
+      };
+    }
+  }
 }
 
 /**

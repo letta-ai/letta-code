@@ -25,7 +25,9 @@ import {
   pullMemory,
   redactGitAuthInText,
   shouldConfigurePersistentMemfsCredentialHelper,
+  syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
+import { __testSetBackend, type Backend } from "@/backend";
 import {
   __testOverrideGetClient,
   getMemfsServerUrl,
@@ -42,6 +44,7 @@ const ORIGINAL_LETTA_API_KEY = process.env.LETTA_API_KEY;
 let tempDirs: string[] = [];
 
 afterEach(() => {
+  __testSetBackend(null);
   __testOverrideGetClient(null);
 
   for (const dir of tempDirs) {
@@ -601,5 +604,76 @@ describe("assertMemoryRepoReadyForWrite", () => {
     await assertMemoryRepoReadyForWrite(repo, "agent-123");
 
     expect(git(repo, "rev-parse HEAD").trim()).toBe(originalSha);
+  });
+});
+
+describe("syncPendingMemoryCommitsAfterTurn", () => {
+  test("pushes clean pending memory commits after a turn", async () => {
+    const { repo, remote } = makeSyncedRepo();
+    const localSha = commitFile(repo, "local.md", "local");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("pushed");
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("0");
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(localSha);
+  });
+
+  test("returns a dirty reminder state without pushing", async () => {
+    const { repo } = makeSyncedRepo();
+    writeFileSync(join(repo, "dirty.md"), "dirty", "utf-8");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("dirty");
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("0");
+  });
+
+  test("returns a conflict reminder state without pushing", async () => {
+    const { repo } = makeSyncedRepo();
+    const head = git(repo, "rev-parse HEAD").trim();
+    writeFileSync(join(repo, ".git", "MERGE_HEAD"), `${head}\n`, "utf-8");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("conflict");
+    expect(result.summary).toContain("merge in progress");
+  });
+
+  test("skips remote push for local backend memory repos", async () => {
+    const { repo } = makeSyncedRepo();
+    commitFile(repo, "local-only.md", "local");
+    __testSetBackend({
+      capabilities: { localMemfs: true, remoteMemfs: false },
+    } as unknown as Backend);
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-local", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("skipped");
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
   });
 });
