@@ -49,20 +49,31 @@ describe("sendMessageStream acting-user header propagation (contract)", () => {
     expect(source).toMatch(/headers:\s*\{[\s\S]*?\.\.\.extraHeaders[\s\S]*?\}/);
   });
 
-  test("previous response id is forwarded when a response state was observed", () => {
+  test("response-state header carries tool context and previous id only for approval continuations", () => {
     expect(source).toContain(
-      'const PREVIOUS_RESPONSE_ID_HEADER = "X-Letta-Previous-Response-Id"',
+      'const RESPONSE_STATE_HEADER = "X-Letta-Response-State"',
     );
     expect(source).toContain(
-      "const previousResponseId = responseStateIdsByScope.get(responseStateScope)",
+      'const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary"',
     );
     expect(source).toContain(
-      "extraHeaders[PREVIOUS_RESPONSE_ID_HEADER] = previousResponseId",
+      "isApprovalContinuationRequest(normalizedMessages)",
+    );
+    expect(source).toContain(
+      "extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader",
+    );
+    expect(source).toContain("client_tool_context_id: contextId");
+    expect(source).toContain("previous_response_id: previousResponseId");
+    expect(source).toContain(
+      "responseStateIdsByScope.delete(responseStateScope)",
     );
   });
 
-  test("response state ids are captured from the stream", () => {
+  test("approval-boundary response state ids are captured from the stream", () => {
     expect(source).toContain('candidate.message_type !== "response_state"');
+    expect(source).toContain(
+      "candidate.cache_scope !== RESPONSE_STATE_CACHE_SCOPE",
+    );
     expect(source).toContain(
       "responseStateIdsByScope.set(params.scope, responseId)",
     );

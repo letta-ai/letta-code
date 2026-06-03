@@ -2,6 +2,7 @@
  * Utilities for sending messages to an agent via conversations
  **/
 
+import { Buffer } from "node:buffer";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -33,7 +34,8 @@ import { getSkillSources } from "./context";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
-const PREVIOUS_RESPONSE_ID_HEADER = "X-Letta-Previous-Response-Id";
+const RESPONSE_STATE_HEADER = "X-Letta-Response-State";
+const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary";
 const responseStateIdsByScope = new Map<string, string>();
 
 export type StreamRequestContext = {
@@ -48,6 +50,14 @@ const streamRequestContexts = new WeakMap<object, StreamRequestContext>();
 type ResponseStateChunk = {
   message_type?: unknown;
   response_id?: unknown;
+  cache_scope?: unknown;
+};
+
+type ResponseStateHeaderPayload = {
+  v: 1;
+  cache_scope: typeof RESPONSE_STATE_CACHE_SCOPE;
+  previous_response_id?: string;
+  client_tool_context_id?: string;
 };
 
 function buildResponseStateScope(
@@ -63,7 +73,10 @@ function getResponseStateId(chunk: unknown): string | null {
   }
 
   const candidate = chunk as ResponseStateChunk;
-  if (candidate.message_type !== "response_state") {
+  if (
+    candidate.message_type !== "response_state" ||
+    candidate.cache_scope !== RESPONSE_STATE_CACHE_SCOPE
+  ) {
     return null;
   }
 
@@ -71,6 +84,27 @@ function getResponseStateId(chunk: unknown): string | null {
     candidate.response_id.length > 0
     ? candidate.response_id
     : null;
+}
+
+function encodeResponseStateHeader(
+  payload: ResponseStateHeaderPayload,
+): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function isApprovalContinuationRequest(
+  messages: Array<MessageCreate | ApprovalCreate>,
+): boolean {
+  if (messages.length !== 1) {
+    return false;
+  }
+
+  const [message] = messages;
+  return (
+    Boolean(message) &&
+    (message as { type?: unknown }).type === "approval" &&
+    Array.isArray((message as { approvals?: unknown }).approvals)
+  );
 }
 
 function attachResponseStateTracking(
@@ -290,7 +324,11 @@ export async function sendMessageStreamWithBackend(
     resolvedConversationId,
     opts.agentId ?? null,
   );
-  const previousResponseId = responseStateIdsByScope.get(responseStateScope);
+  const isApprovalContinuation =
+    isApprovalContinuationRequest(normalizedMessages);
+  const previousResponseId = isApprovalContinuation
+    ? responseStateIdsByScope.get(responseStateScope)
+    : undefined;
   const requestBody = buildConversationMessagesCreateRequestBody(
     conversationId,
     normalizedMessages,
@@ -333,15 +371,25 @@ export async function sendMessageStreamWithBackend(
   if (process.env.LETTA_RESPONSES_WS === "1") {
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
   }
+  extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
+    v: 1,
+    cache_scope: RESPONSE_STATE_CACHE_SCOPE,
+    client_tool_context_id: contextId,
+    ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+  });
   if (previousResponseId) {
-    extraHeaders[PREVIOUS_RESPONSE_ID_HEADER] = previousResponseId;
+    responseStateIdsByScope.delete(responseStateScope);
     debugLog(
       "response-state",
-      "sending previous_response_id=%s conversation_id=%s agent_id=%s",
+      "sending previous_response_id=%s cache_scope=%s conversation_id=%s agent_id=%s tool_context_id=%s",
       previousResponseId,
+      RESPONSE_STATE_CACHE_SCOPE,
       resolvedConversationId,
       opts.agentId ?? "none",
+      contextId,
     );
+  } else if (!isApprovalContinuation) {
+    responseStateIdsByScope.delete(responseStateScope);
   }
   // Echo the cloud user id back to cloud-api so it can re-attribute
   // credits + rate limits on multi-user sandboxes. See
