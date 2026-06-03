@@ -32,6 +32,7 @@ import {
   isActiveMemfsEnabled,
   isLocalMemfsActive,
 } from "@/agent/memory-runtime";
+import { sendMessageStreamWithBackend } from "@/agent/message";
 import {
   detectPersonalityFromPersonaFile,
   type PersonalityId,
@@ -715,6 +716,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               agentId,
               backend: extensionAdapter.getBackend(),
               conversationId: conversationIdRef.current,
+              sendMessageStream: sendMessageStreamWithBackend,
               workingDirectory: cwd,
             });
             const commandContext: ExtensionCommandContext = {

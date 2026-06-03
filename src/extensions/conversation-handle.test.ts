@@ -3,6 +3,8 @@ import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend, ConversationMessageListBody } from "@/backend";
 import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 
+const sendMessageStream = async () => (async function* () {})();
+
 describe("extension conversation handle", () => {
   test("uses the internal backend directly for scoped fork and history", async () => {
     const calls: string[] = [];
@@ -36,6 +38,7 @@ describe("extension conversation handle", () => {
       agentId: "agent-1",
       backend,
       conversationId: null,
+      sendMessageStream,
       workingDirectory: "/tmp/project",
     });
 
@@ -56,6 +59,7 @@ describe("extension conversation handle", () => {
   test("throws a scoped error when no backend is available", () => {
     const handle = createExtensionConversationHandle({
       conversationId: "conversation-1",
+      sendMessageStream,
     });
 
     expect(() => handle.getHistory()).toThrow(

@@ -418,12 +418,7 @@ export interface ExtensionToolRunContext {
   agent: {
     id: string | null;
   };
-  conversation: {
-    id: string | null;
-    getHistory: (
-      options?: ExtensionConversationHistoryOptions,
-    ) => Promise<Message[]>;
-  };
+  conversation: ExtensionConversationHandle;
   getContext: () => ExtensionContext;
 }
 

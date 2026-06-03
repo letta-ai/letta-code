@@ -1,12 +1,25 @@
-import { sendMessageStreamWithBackend } from "@/agent/message";
 import type { Backend } from "@/backend";
 import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
-import type { ExtensionConversationHandle } from "@/extensions/types";
+import type {
+  ExtensionConversationHandle,
+  ExtensionConversationMessage,
+  ExtensionConversationSendMessageOptions,
+  ExtensionConversationSendMessageRequestOptions,
+} from "@/extensions/types";
+
+type SendExtensionConversationMessageStream = (
+  backend: Backend,
+  conversationId: string,
+  messages: ExtensionConversationMessage[],
+  options?: ExtensionConversationSendMessageOptions & { agentId?: string },
+  requestOptions?: ExtensionConversationSendMessageRequestOptions,
+) => ReturnType<ExtensionConversationHandle["sendMessageStream"]>;
 
 export function createExtensionConversationHandle(options: {
   agentId?: string | null;
   backend?: Backend;
   conversationId?: string | null;
+  sendMessageStream: SendExtensionConversationMessageStream;
   workingDirectory?: string | null;
 }): ExtensionConversationHandle {
   const conversationId = options.conversationId ?? "default";
@@ -40,7 +53,7 @@ export function createExtensionConversationHandle(options: {
       );
     },
     sendMessageStream(messages, sendOptions, requestOptions) {
-      return sendMessageStreamWithBackend(
+      return options.sendMessageStream(
         requireBackend(),
         conversationId,
         messages,
