@@ -117,7 +117,7 @@ describe("channel credential storage", () => {
     expect(hydrated?.appToken).toBe("xapp-secret");
   });
 
-  test("keyring mode leaves existing plaintext tokens usable during hydration", async () => {
+  test("keyring mode migrates existing plaintext tokens out of accounts.json", async () => {
     __setActiveChannelCredentialsStoreModeForTests("keyring");
     mkdirSync(join(channelsRoot, "slack"), { recursive: true });
     writeFileSync(
@@ -127,26 +127,20 @@ describe("channel credential storage", () => {
 
     await hydrateChannelAccountSecrets("slack");
 
-    const hydrated = (await getChannelAccountWithSecrets(
-      "slack",
-      "slack-account",
-    )) as SlackChannelAccount | null;
-    expect(hydrated?.botToken).toBe("xoxb-secret");
-    expect(hydrated?.appToken).toBe("xapp-secret");
     expect(
       secrets.get(buildChannelSecretName("slack", "slack-account", "botToken")),
-    ).toBeUndefined();
+    ).toBe("xoxb-secret");
     expect(
       secrets.get(buildChannelSecretName("slack", "slack-account", "appToken")),
-    ).toBeUndefined();
+    ).toBe("xapp-secret");
 
     const persistedText = readFileSync(
       join(channelsRoot, "slack", "accounts.json"),
       "utf-8",
     );
-    expect(persistedText).toContain("xoxb-secret");
-    expect(persistedText).toContain("xapp-secret");
-    expect(persistedText).not.toContain("__letta_secret_refs");
+    expect(persistedText).not.toContain("xoxb-secret");
+    expect(persistedText).not.toContain("xapp-secret");
+    expect(persistedText).toContain("__letta_secret_refs");
   });
 
   test("deleting an account removes keyring secrets", async () => {

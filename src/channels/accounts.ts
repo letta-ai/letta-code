@@ -521,13 +521,23 @@ export async function hydrateChannelAccountSecrets(
     return;
   }
 
+  let migratedPlaintextSecrets = false;
   let removedMissingSecretRefs = false;
 
   for (const account of store.accounts) {
     for (const fieldPath of getSecretFieldPaths(account)) {
       const currentValue = getSecretValueFromAccount(account, fieldPath);
       if (typeof currentValue === "string" && currentValue.trim().length > 0) {
-        if (isSecretPlaceholder(currentValue)) {
+        markSecretRef(account, fieldPath);
+        if (!isSecretPlaceholder(currentValue)) {
+          await setChannelSecret(
+            account.channel,
+            account.accountId,
+            fieldPath,
+            currentValue,
+          );
+          migratedPlaintextSecrets = true;
+        } else {
           const storedValue = await getChannelSecret(
             account.channel,
             account.accountId,
@@ -545,8 +555,9 @@ export async function hydrateChannelAccountSecrets(
     }
   }
 
-  if (removedMissingSecretRefs) {
+  if (migratedPlaintextSecrets || removedMissingSecretRefs) {
     saveChannelAccounts(channelId);
+    await flushPendingChannelSecretWrites();
   }
 }
 
