@@ -2937,6 +2937,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               onCompletionMessage: (completionMessage) => {
                 appendTaskNotificationEvents([completionMessage]);
               },
+              feedbackContext: {
+                parentAgentName: agentName,
+                parentAgentDescription: agentDescription,
+                surface: "letta_code_tui",
+                model: currentModelId,
+              },
             });
 
             if (!result.launched) {
@@ -3361,6 +3367,12 @@ ${SYSTEM_REMINDER_CLOSE}
             queuedSystemPromptRecompileByConversationRef.current,
           onCompletionMessage: (completionMessage) => {
             appendTaskNotificationEvents([completionMessage]);
+          },
+          feedbackContext: {
+            parentAgentName: agentName,
+            parentAgentDescription: agentDescription,
+            surface: "letta_code_tui",
+            model: currentModelId,
           },
         });
         return result.launched;

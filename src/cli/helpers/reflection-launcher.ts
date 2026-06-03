@@ -11,6 +11,7 @@ import {
   finalizeAutoReflectionPayload,
 } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
+import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
 
 export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
@@ -61,6 +62,12 @@ export interface ReflectionLaunchOptions {
       reflectionAgentId?: string;
     },
   ) => void | Promise<void>;
+  feedbackContext?: {
+    parentAgentName?: string | null;
+    parentAgentDescription?: string | null;
+    model?: string | null;
+    surface?: string;
+  };
 }
 
 async function resolveSystemPrompt(
@@ -164,11 +171,34 @@ export async function launchReflectionSubagent(
       silentCompletion: true,
       transcriptPath: autoPayload.payloadPath,
       parentScope: { agentId, conversationId },
-      onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
+      onComplete: async ({
+        success,
+        error,
+        agentId: reflectionAgentId,
+        stepCount,
+        durationMs,
+      }) => {
         telemetry.trackReflectionEnd(triggerSource, success, {
           subagentId: reflectionAgentId ?? undefined,
           conversationId,
           error,
+          stepCount,
+          durationMs,
+        });
+        maybeSendReflectionThresholdFeedback({
+          parentAgentId: agentId,
+          parentAgentName: options.feedbackContext?.parentAgentName,
+          parentAgentDescription:
+            options.feedbackContext?.parentAgentDescription,
+          reflectionSubagentId: reflectionAgentId ?? undefined,
+          conversationId,
+          triggerSource,
+          success,
+          error,
+          stepCount,
+          durationMs,
+          surface: options.feedbackContext?.surface,
+          model: options.feedbackContext?.model,
         });
         await finalizeAutoReflectionPayload(
           agentId,

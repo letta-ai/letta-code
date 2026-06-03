@@ -57,7 +57,7 @@ import {
   syncReminderStateFromContextTracker,
 } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
@@ -182,6 +182,9 @@ function buildMaybeLaunchReflectionSubagent(params: {
         runtime.listener.systemPromptRecompileByConversation,
       recompileQueuedByConversation:
         runtime.listener.queuedSystemPromptRecompileByConversation,
+      feedbackContext: {
+        surface: getListenerTelemetrySurface(),
+      },
       onCompletionMessage: async (completionMessage) => {
         const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
           completionMessage,
