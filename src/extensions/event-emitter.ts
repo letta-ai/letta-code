@@ -4,17 +4,14 @@ import type {
   ExtensionEventName,
 } from "@/extensions/types";
 
-export type ExtensionAdapterEventSnapshot = {
-  hasExtensionSources: boolean;
-  isLoading: boolean;
-};
-
-export type ExtensionEventEmitter = {
-  emitEvent: <TName extends ExtensionEventName>(
+// Narrow event capability exposed by the extension adapter. Adapter-owned
+// implementations are guarded, so lower layers can emit events without
+// depending on adapter lifecycle or registry APIs.
+export type ExtensionEvents = {
+  emit: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
   ) => Promise<ExtensionEventEmissionResult<TName>>;
-  getSnapshot: () => ExtensionAdapterEventSnapshot;
 };
 
 export function emptyEventEmissionResult<TName extends ExtensionEventName>(
@@ -24,18 +21,13 @@ export function emptyEventEmissionResult<TName extends ExtensionEventName>(
 }
 
 export async function emitExtensionEvent<TName extends ExtensionEventName>(
-  emitter: ExtensionEventEmitter | undefined,
+  events: ExtensionEvents | undefined,
   name: TName,
   event: ExtensionEventMap[TName],
 ): Promise<ExtensionEventEmissionResult<TName>> {
-  if (!emitter) {
+  if (!events) {
     return emptyEventEmissionResult(name);
   }
 
-  const snapshot = emitter.getSnapshot();
-  if (snapshot.isLoading || !snapshot.hasExtensionSources) {
-    return emptyEventEmissionResult(name);
-  }
-
-  return emitter.emitEvent(name, event);
+  return events.emit(name, event);
 }

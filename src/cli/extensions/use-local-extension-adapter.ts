@@ -9,19 +9,10 @@ import {
   type ExtensionAdapter,
   type ExtensionAdapterSnapshot,
 } from "./local-extension-loader";
-import type {
-  ExtensionContext,
-  ExtensionEventEmissionResult,
-  ExtensionEventMap,
-  ExtensionEventName,
-} from "./types";
+import type { ExtensionContext } from "./types";
 
 export interface LocalExtensionAdapter {
-  emitEvent: <TName extends ExtensionEventName>(
-    name: TName,
-    event: ExtensionEventMap[TName],
-  ) => Promise<ExtensionEventEmissionResult<TName>>;
-  eventEmitter: ExtensionAdapter["eventEmitter"];
+  events: ExtensionAdapter["events"];
   getBackendApi: () => ExtensionAdapterBackendApi | undefined;
   getContext: () => ExtensionContext;
   hadStatuslineRenderer: boolean; // Used to prevent flicker on reload
@@ -98,8 +89,7 @@ export function useLocalExtensionAdapter(
 
   return useMemo(
     () => ({
-      emitEvent: adapter.emitEvent,
-      eventEmitter: adapter.eventEmitter,
+      events: adapter.events,
       getBackendApi: adapter.getBackendApi,
       getContext: adapter.getContext,
       hadStatuslineRenderer: snapshot.hadStatuslineRenderer,

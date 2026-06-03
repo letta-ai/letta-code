@@ -9,7 +9,7 @@ import {
   disableExtensionsForProcess,
 } from "@/extensions/disable";
 import {
-  type ExtensionEventEmitter,
+  type ExtensionEvents,
   emptyEventEmissionResult,
 } from "@/extensions/event-emitter";
 import {
@@ -23,9 +23,6 @@ import { clearExtensionTools } from "@/extensions/tool-registry";
 import type {
   ExtensionAdapterBackendApi,
   ExtensionContext,
-  ExtensionEventEmissionResult,
-  ExtensionEventMap,
-  ExtensionEventName,
 } from "@/extensions/types";
 import { debugLog } from "@/utils/debug";
 
@@ -105,21 +102,15 @@ function createDisabledExtensionAdapter(
     isLoading: false,
     registry,
   };
-  const eventEmitter: ExtensionEventEmitter = {
-    emitEvent(name) {
+  const events: ExtensionEvents = {
+    emit(name) {
       return Promise.resolve(emptyEventEmissionResult(name));
-    },
-    getSnapshot() {
-      return snapshot;
     },
   };
 
   return {
     dispose() {},
-    emitEvent(name) {
-      return Promise.resolve(emptyEventEmissionResult(name));
-    },
-    eventEmitter,
+    events,
     getBackendApi() {
       return undefined;
     },
@@ -144,11 +135,7 @@ function createDisabledExtensionAdapter(
 
 export interface ExtensionAdapter {
   dispose: () => void;
-  emitEvent: <TName extends ExtensionEventName>(
-    name: TName,
-    event: ExtensionEventMap[TName],
-  ) => Promise<ExtensionEventEmissionResult<TName>>;
-  eventEmitter: ExtensionEventEmitter;
+  events: ExtensionEvents;
   getBackendApi: () => ExtensionAdapterBackendApi | undefined;
   getContext: () => ExtensionContext;
   getSnapshot: () => ExtensionAdapterSnapshot;
@@ -236,12 +223,12 @@ export function createExtensionAdapter(
     getContext,
   });
 
-  const eventEmitter: ExtensionEventEmitter = {
-    emitEvent(name, event) {
+  const events: ExtensionEvents = {
+    emit(name, event) {
+      if (loadState.isLoading || !loadState.hasExtensionSources) {
+        return Promise.resolve(emptyEventEmissionResult(name));
+      }
       return engine.emitEvent(name, event, getBackendApi());
-    },
-    getSnapshot() {
-      return loadState;
     },
   };
 
@@ -319,10 +306,7 @@ export function createExtensionAdapter(
       unsubscribeEngine();
       listeners.clear();
     },
-    emitEvent(name, event) {
-      return engine.emitEvent(name, event, getBackendApi());
-    },
-    eventEmitter,
+    events,
     getBackendApi,
     getContext,
     getSnapshot,

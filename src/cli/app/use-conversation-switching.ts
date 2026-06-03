@@ -434,7 +434,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           })
           .catch(() => {});
         sessionHooksRanRef.current = true;
-        void extensionAdapter.emitEvent("conversation_open", {
+        void extensionAdapter.events.emit("conversation_open", {
           agentId,
           agentName: agentName ?? null,
           conversationId,
