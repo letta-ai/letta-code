@@ -19,6 +19,7 @@ try {
 let SERVICE_NAME = "letta-code";
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
+const SECRET_OPERATION_TIMEOUT_MS = 5_000;
 
 const warnedSecretReadFailures = new Set<string>();
 let secretGetOverrideForTests:
@@ -37,6 +38,31 @@ function isDuplicateKeychainItemError(error: unknown): boolean {
   );
 }
 
+async function withSecretOperationTimeout<T>(
+  operation: Promise<T>,
+  label: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(
+            new Error(
+              `${label} timed out after ${SECRET_OPERATION_TIMEOUT_MS}ms`,
+            ),
+          );
+        }, SECRET_OPERATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 export async function getSecretValue(
   name: string,
   label: string,
@@ -52,7 +78,10 @@ export async function getSecretValue(
     };
     const value = secretGetOverrideForTests
       ? await secretGetOverrideForTests(options)
-      : await secrets.get(options);
+      : await withSecretOperationTimeout(
+          secrets.get(options),
+          `Retrieving ${label} from secrets`,
+        );
     warnedSecretReadFailures.delete(name);
     return value;
   } catch (error) {
@@ -76,11 +105,14 @@ export async function setSecretValue(
   }
 
   try {
-    await secrets.set({
-      service: SERVICE_NAME,
-      name,
-      value,
-    });
+    await withSecretOperationTimeout(
+      secrets.set({
+        service: SERVICE_NAME,
+        name,
+        value,
+      }),
+      "Saving secret",
+    );
     return;
   } catch (error) {
     if (!isDuplicateKeychainItemError(error)) {
@@ -90,19 +122,25 @@ export async function setSecretValue(
 
   // Replace existing keychain item and retry once.
   try {
-    await secrets.delete({
-      service: SERVICE_NAME,
-      name,
-    });
+    await withSecretOperationTimeout(
+      secrets.delete({
+        service: SERVICE_NAME,
+        name,
+      }),
+      "Deleting secret",
+    );
   } catch {
     // Ignore delete errors and retry set below.
   }
 
-  await secrets.set({
-    service: SERVICE_NAME,
-    name,
-    value,
-  });
+  await withSecretOperationTimeout(
+    secrets.set({
+      service: SERVICE_NAME,
+      name,
+      value,
+    }),
+    "Saving secret",
+  );
 }
 
 export async function deleteSecretValue(name: string): Promise<boolean> {
@@ -111,10 +149,13 @@ export async function deleteSecretValue(name: string): Promise<boolean> {
   }
 
   try {
-    return await secrets.delete({
-      service: SERVICE_NAME,
-      name,
-    });
+    return await withSecretOperationTimeout(
+      secrets.delete({
+        service: SERVICE_NAME,
+        name,
+      }),
+      "Deleting secret",
+    );
   } catch (error) {
     console.warn(`Failed to delete secret ${name}: ${error}`);
     return false;
@@ -285,10 +326,13 @@ export async function isKeychainAvailable(): Promise<boolean> {
 
   try {
     // Non-mutating probe: if this call succeeds (even with null), keychain is usable.
-    await secrets.get({
-      service: SERVICE_NAME,
-      name: API_KEY_NAME,
-    });
+    await withSecretOperationTimeout(
+      secrets.get({
+        service: SERVICE_NAME,
+        name: API_KEY_NAME,
+      }),
+      "Checking keychain availability",
+    );
     return true;
   } catch {
     return false;

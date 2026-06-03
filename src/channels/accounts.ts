@@ -167,9 +167,10 @@ function applySecretPlaceholders(account: ChannelAccount): void {
 
 function queueSecretWrite(promise: Promise<unknown>): void {
   pendingSecretWrites.push(
-    promise.catch((error) => {
-      console.warn("Failed to persist channel secret:", error);
-      throw error;
+    promise.catch(() => {
+      // Best-effort background secret persistence. Foreground commands that
+      // need to validate credentials surface errors explicitly; detached secret
+      // writes should not spam startup logs or crash the process.
     }),
   );
 }
@@ -520,23 +521,13 @@ export async function hydrateChannelAccountSecrets(
     return;
   }
 
-  let migratedPlaintextSecrets = false;
   let removedMissingSecretRefs = false;
 
   for (const account of store.accounts) {
     for (const fieldPath of getSecretFieldPaths(account)) {
       const currentValue = getSecretValueFromAccount(account, fieldPath);
       if (typeof currentValue === "string" && currentValue.trim().length > 0) {
-        markSecretRef(account, fieldPath);
-        if (!isSecretPlaceholder(currentValue)) {
-          await setChannelSecret(
-            account.channel,
-            account.accountId,
-            fieldPath,
-            currentValue,
-          );
-          migratedPlaintextSecrets = true;
-        } else {
+        if (isSecretPlaceholder(currentValue)) {
           const storedValue = await getChannelSecret(
             account.channel,
             account.accountId,
@@ -554,9 +545,8 @@ export async function hydrateChannelAccountSecrets(
     }
   }
 
-  if (migratedPlaintextSecrets || removedMissingSecretRefs) {
+  if (removedMissingSecretRefs) {
     saveChannelAccounts(channelId);
-    await flushPendingChannelSecretWrites();
   }
 }
 

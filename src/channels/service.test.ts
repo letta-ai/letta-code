@@ -336,6 +336,151 @@ describe("channel service", () => {
     );
   });
 
+  test("updateChannelRouteLive creates a Telegram route and binds the account", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-token",
+        dmPolicy: "open",
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    const created = updateChannelRouteLive(
+      "telegram",
+      "8450770457",
+      "agent-telegram",
+      "default",
+      "telegram-bot",
+    );
+
+    expect(created).toEqual(
+      expect.objectContaining({
+        channelId: "telegram",
+        accountId: "telegram-bot",
+        chatId: "8450770457",
+        agentId: "agent-telegram",
+        conversationId: "default",
+        enabled: true,
+      }),
+    );
+    expect(getRoute("telegram", "8450770457", "telegram-bot")).toEqual(
+      expect.objectContaining({
+        accountId: "telegram-bot",
+        agentId: "agent-telegram",
+        conversationId: "default",
+      }),
+    );
+    expect(getChannelAccountSnapshot("telegram", "telegram-bot")).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          binding: {
+            agent_id: "agent-telegram",
+            conversation_id: "default",
+          },
+        }),
+      }),
+    );
+  });
+
+  test("updateChannelAccountLive updates Telegram allowlist users", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    const updated = updateChannelAccountLive("telegram", "telegram-bot", {
+      displayName: "tele test2",
+      dmPolicy: "allowlist",
+      allowedUsers: ["8450770457"],
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        channelId: "telegram",
+        accountId: "telegram-bot",
+        displayName: "tele test2",
+        dmPolicy: "allowlist",
+        allowedUsers: ["8450770457"],
+      }),
+    );
+  });
+
+  test("updateChannelAccountLive updates a Telegram token without secret hydration", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "old-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    const updated = updateChannelAccountLive("telegram", "telegram-bot", {
+      config: { token: "new-token" },
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        channelId: "telegram",
+        accountId: "telegram-bot",
+        config: expect.objectContaining({ has_token: true }),
+      }),
+    );
+  });
+
+  test("createChannelAccountLive creates a Telegram allowlist account without secret hydration", () => {
+    const created = createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-token",
+        dmPolicy: "allowlist",
+        allowedUsers: ["8450770457"],
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    expect(created).toEqual(
+      expect.objectContaining({
+        channelId: "telegram",
+        accountId: "telegram-bot",
+        displayName: "Telegram Bot",
+        dmPolicy: "allowlist",
+        allowedUsers: ["8450770457"],
+      }),
+    );
+  });
+
+  test("removeChannelAccountLive deletes a Telegram account without secret hydration", async () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    expect(await removeChannelAccountLive("telegram", "telegram-bot")).toBe(
+      true,
+    );
+    expect(getChannelAccountSnapshot("telegram", "telegram-bot")).toBeNull();
+  });
+
   test("updateChannelRouteLive leaves the Slack app's default agent unchanged when route save fails", () => {
     createChannelAccountLive(
       "slack",
