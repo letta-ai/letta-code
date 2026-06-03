@@ -8,11 +8,11 @@
     },
     "login": {
       "type": "boolean",
-      "description": "Whether to run the shell with -l/-i semantics. Defaults to true."
+      "description": "True runs the shell with -l/-i semantics; false disables them. Defaults to true."
     },
     "max_output_tokens": {
       "type": "number",
-      "description": "Maximum number of tokens to return. Excess output will be truncated."
+      "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
     },
     "shell": {
       "type": "string",
@@ -20,15 +20,15 @@
     },
     "tty": {
       "type": "boolean",
-      "description": "Whether to allocate a TTY for the command. Defaults to false (plain pipes); set to true to open a PTY and access TTY process."
+      "description": "True allocates a PTY for the command; false or omitted uses plain pipes."
     },
     "workdir": {
       "type": "string",
-      "description": "Optional working directory to run the command in; defaults to the turn cwd."
+      "description": "Working directory for the command. Defaults to the turn cwd."
     },
     "yield_time_ms": {
       "type": "number",
-      "description": "How long to wait (in milliseconds) for output before yielding."
+      "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
     }
   },
   "required": ["cmd"],

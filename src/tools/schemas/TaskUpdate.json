@@ -1,0 +1,56 @@
+{
+  "type": "object",
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "description": "The ID of the task to update (e.g. \"task_1\")."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": ["pending", "in_progress", "completed"]
+        },
+        {
+          "type": "string",
+          "const": "deleted"
+        }
+      ],
+      "description": "New status. Use 'deleted' to soft-delete the task (it will be excluded from TaskList but remains fetchable via TaskGet)."
+    },
+    "subject": {
+      "type": "string",
+      "description": "Replacement subject."
+    },
+    "description": {
+      "type": "string",
+      "description": "Replacement description."
+    },
+    "activeForm": {
+      "type": "string",
+      "description": "Replacement active form."
+    },
+    "owner": {
+      "type": "string",
+      "description": "Assign an owner (free-form string, e.g. agent id or human name)."
+    },
+    "addBlocks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Task IDs to append to this task's 'blocks' list (tasks that cannot start until this one finishes)."
+    },
+    "addBlockedBy": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Task IDs to append to this task's 'blockedBy' list (tasks that must finish before this one can start)."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Metadata keys to merge into the existing metadata bag (existing keys are preserved; matching keys are overwritten).",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "required": ["taskId"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

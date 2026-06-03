@@ -239,6 +239,8 @@ class TelemetryManager {
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
   private serverVersion: string | null = null;
+  /** Deduplicates concurrent flushes (prevents the 429 double-flush race on shutdown). */
+  private inflightFlush: Promise<void> | null = null;
 
   private async resolveTelemetryApiKey(): Promise<string | undefined> {
     if (process.env.LETTA_API_KEY) {
@@ -276,8 +278,10 @@ class TelemetryManager {
     return fallback;
   }
 
-  private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-  private readonly MAX_BATCH_SIZE = 100;
+  private readonly FLUSH_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+  private readonly MAX_BATCH_SIZE = 50;
+  /** Max time to drain queued events on exit (bounded so we never hang the shell). */
+  private readonly DRAIN_TIMEOUT_MS = 3_000;
   private sessionStatsGetter?: () => {
     totalWallMs: number;
     totalApiMs: number;
@@ -361,58 +365,55 @@ class TelemetryManager {
     // Don't let the interval prevent process from exiting
     this.flushInterval.unref();
 
-    // Safety net: Handle Ctrl+C interruption
-    // Note: Normal exits via handleExit flush explicitly
+    // Await drain() (bounded by DRAIN_TIMEOUT_MS) so the final batch ships before exit.
     process.on("SIGINT", () => {
-      try {
-        this.trackSessionEnd(undefined, "sigint");
-        // Fire and forget - try to flush but don't wait (might not complete)
-        this.flush().catch(() => {
-          // Silently ignore
-        });
-      } catch {
-        // Silently ignore - don't prevent process from exiting
-      }
-      // Exit immediately - don't wait for flush
-      process.exit(0);
+      void (async () => {
+        try {
+          this.trackSessionEnd(undefined, "sigint");
+          await this.drain();
+        } catch {
+          // Silently ignore - don't prevent process from exiting
+        }
+        process.exit(0);
+      })();
     });
 
     process.on("uncaughtException", (error) => {
-      try {
-        const msg = error instanceof Error ? error.message : String(error);
-        // Broken pipe/TTY — not actionable (e.g. terminal closed while writing)
-        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
-        this.trackError(
-          "uncaught_exception",
-          msg,
-          "process_uncaught_exception",
-        );
-        this.flush().catch(() => {
-          // Silently ignore
-        });
-      } catch {
-        // Silently ignore - don't prevent process from exiting
-      }
+      void (async () => {
+        try {
+          const msg = error instanceof Error ? error.message : String(error);
+          // Broken pipe/TTY — not actionable (e.g. terminal closed while writing)
+          if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
+          this.trackError(
+            "uncaught_exception",
+            msg,
+            "process_uncaught_exception",
+          );
+          await this.drain();
+        } catch {
+          // Silently ignore - don't prevent process from exiting
+        }
+      })();
     });
 
     process.on("unhandledRejection", (reason) => {
-      try {
-        const msg = reason instanceof Error ? reason.message : String(reason);
-        // Broken pipe/TTY — not actionable
-        if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
-        // Rate limits surfacing as unhandled rejections — expected under load
-        if (/\b429\b/.test(msg) && /rate.?limit/i.test(msg)) return;
-        this.trackError(
-          "unhandled_rejection",
-          msg,
-          "process_unhandled_rejection",
-        );
-        this.flush().catch(() => {
-          // Silently ignore
-        });
-      } catch {
-        // Silently ignore - don't prevent process from exiting
-      }
+      void (async () => {
+        try {
+          const msg = reason instanceof Error ? reason.message : String(reason);
+          // Broken pipe/TTY — not actionable
+          if (/\b(EPIPE|EIO|EBADF)\b/.test(msg)) return;
+          // Rate limits surfacing as unhandled rejections — expected under load
+          if (/\b429\b/.test(msg) && /rate.?limit/i.test(msg)) return;
+          this.trackError(
+            "unhandled_rejection",
+            msg,
+            "process_unhandled_rejection",
+          );
+          await this.drain();
+        } catch {
+          // Silently ignore - don't prevent process from exiting
+        }
+      })();
     });
 
     // TODO: Add telemetry for crashes and abnormal exits
@@ -757,14 +758,22 @@ class TelemetryManager {
     this.track("reflection_end", data);
   }
 
-  /**
-   * Flush events to the server
-   */
+  /** Concurrent callers share one in-flight POST (prevents 429 double-flush race on shutdown). */
   async flush(): Promise<void> {
+    if (this.inflightFlush) {
+      return this.inflightFlush;
+    }
     if (this.events.length === 0 || !this.isTelemetryEnabled()) {
       return;
     }
 
+    this.inflightFlush = this.performFlush().finally(() => {
+      this.inflightFlush = null;
+    });
+    return this.inflightFlush;
+  }
+
+  private async performFlush(): Promise<void> {
     const eventsToSend = [...this.events];
     this.events = [];
 
@@ -786,6 +795,26 @@ class TelemetryManager {
     } catch (error) {
       // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);
+    }
+  }
+
+  /** Await in-flight flush and drain remaining queue (bounded by DRAIN_TIMEOUT_MS). Replaces fire-and-forget flush on exit. */
+  async drain(): Promise<void> {
+    if (!this.isTelemetryEnabled()) {
+      return;
+    }
+    const deadline = Date.now() + this.DRAIN_TIMEOUT_MS;
+    // Loop in case new events arrive mid-drain (e.g. trackError from uncaughtException).
+    while (this.events.length > 0 || this.inflightFlush) {
+      if (Date.now() >= deadline) {
+        return;
+      }
+      try {
+        await this.flush();
+      } catch {
+        // Swallow — already logged inside performFlush; don't block exit.
+        return;
+      }
     }
   }
 

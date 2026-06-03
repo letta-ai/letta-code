@@ -363,7 +363,10 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Read",
   "Skill",
   "Task",
-  "TodoWrite",
+  "TaskCreate",
+  "TaskGet",
+  "TaskList",
+  "TaskUpdate",
   "Write",
 ];
 
@@ -454,6 +457,10 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   ReadLSP: { requiresApproval: false },
   Skill: { requiresApproval: false },
   Task: { requiresApproval: true },
+  TaskCreate: { requiresApproval: false },
+  TaskGet: { requiresApproval: false },
+  TaskList: { requiresApproval: false },
+  TaskUpdate: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
   shell_command: { requiresApproval: true },

@@ -4,11 +4,11 @@
   "properties": {
     "chars": {
       "type": "string",
-      "description": "Bytes to write to stdin (may be empty to poll)."
+      "description": "Bytes to write to stdin. Defaults to empty, which polls without writing."
     },
     "max_output_tokens": {
       "type": "number",
-      "description": "Maximum number of tokens to return. Excess output will be truncated."
+      "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
     },
     "session_id": {
       "type": "number",
@@ -16,7 +16,7 @@
     },
     "yield_time_ms": {
       "type": "number",
-      "description": "How long to wait (in milliseconds) for output before yielding."
+      "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default."
     }
   },
   "required": ["session_id"],

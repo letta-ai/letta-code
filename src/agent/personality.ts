@@ -110,8 +110,6 @@ export interface PersonalityBlockDefinition {
 
 export const ONBOARDING_PERSONALITIES = [
   "tutorial",
-  "linus",
-  "kawaii",
 ] as const satisfies readonly PersonalityId[];
 
 export function supportsOnboardingBlock(

@@ -150,10 +150,10 @@ export const CLI_FLAG_CATALOG = {
   "permission-mode": { parser: { type: "string" }, mode: "both" },
   "disable-memory-guard": {
     parser: { type: "boolean" },
-    mode: "both",
+    mode: "headless",
     help: {
       description:
-        "Disable the cross-agent memory guard for this parent agent process.",
+        "Disable the headless cross-agent memory guard for this parent agent process.",
       continuationLines: [
         "Allows intentional access to other agents' memory directories.",
         "Ignored by subagents; their memory guard remains enabled.",

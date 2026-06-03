@@ -106,7 +106,7 @@ letta.capabilities.ui.customStatuslineRenderer
 Before finishing, verify:
 
 - The extension has one clear owner/file and does not mix unrelated features.
-- Command/tool IDs are valid and do not collide with built-ins.
+- Command/tool IDs are valid; command overrides of built-ins are intentional, and tool IDs do not collide with built-ins.
 - Tool descriptions explain when the model should call them.
 - JSON schemas are object schemas with useful descriptions.
 - Optional UI/event/statusline APIs are capability-guarded.

@@ -4,6 +4,13 @@ import { join } from "node:path";
 import { TestDirectory } from "@/test-utils/test-fs";
 import { apply_patch } from "@/tools/impl/apply-patch";
 
+function utf16leWithBom(content: string): Buffer {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(content, "utf16le"),
+  ]);
+}
+
 describe("apply_patch tool", () => {
   let testDir: TestDirectory | undefined;
   let originalUserCwd: string | undefined;
@@ -107,6 +114,31 @@ describe("apply_patch tool", () => {
 
     const filePath = join(testDir.path, "module.py");
     expect(readFileSync(filePath, "utf-8")).toBe("import foo\nbar\n");
+  });
+
+  test("rejects UTF-16LE update targets without modifying them", async () => {
+    testDir = new TestDirectory();
+    originalUserCwd = process.env.USER_CWD;
+    process.env.USER_CWD = testDir.path;
+
+    const filePath = join(testDir.path, "utf16.md");
+    const original = utf16leWithBom("old\n");
+    writeFileSync(filePath, original);
+
+    await expect(
+      apply_patch({
+        input: `*** Begin Patch
+*** Update File: utf16.md
+@@
+-old
++new
+*** End Patch`,
+      }),
+    ).rejects.toThrow(
+      /Failed to read file to update utf16\.md: File is not valid UTF-8 text: .*Detected UTF-16LE BOM; convert the file to UTF-8 and retry\./,
+    );
+
+    expect(Buffer.compare(readFileSync(filePath), original)).toBe(0);
   });
 
   test("matches hunks with trailing whitespace tolerance", async () => {

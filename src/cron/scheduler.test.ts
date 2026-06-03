@@ -10,7 +10,7 @@ import {
 } from "@/cron/cron-file";
 import { cronMatchesTime } from "@/cron/parse-interval";
 import { getCronRunLogPath, readCronRunLogEntries } from "@/cron/run-log";
-import { handleMissedOneShot } from "@/cron/scheduler";
+import { handleMissedOneShot, wrapCronPrompt } from "@/cron/scheduler";
 
 // ── Test setup ──────────────────────────────────────────────────────
 
@@ -128,6 +128,21 @@ describe("per-minute deduplication", () => {
 // ── Task lifecycle tests ────────────────────────────────────────────
 
 describe("task lifecycle", () => {
+  test("cron prompt is visible user message text", () => {
+    const { task } = addTask(makeInput());
+
+    expect(wrapCronPrompt(task)).toBe(
+      [
+        'Scheduled task "Test task" is firing.',
+        "Description: A test cron task",
+        "This is fire #1 (cron: */5 * * * *).",
+        "",
+        "Prompt: echo hello",
+      ].join("\n"),
+    );
+    expect(wrapCronPrompt(task)).not.toContain("<system-reminder>");
+  });
+
   test("new recurring task starts with fire_count 0", () => {
     const { task } = addTask(makeInput());
     expect(task.fire_count).toBe(0);

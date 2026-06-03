@@ -1019,6 +1019,12 @@ export interface CronAddCommand {
   /** Echoed back in the response for request correlation. */
   request_id: string;
   agent_id: string;
+  /**
+   * Conversation target for scheduled fires.
+   * - omitted/"default": agent default conversation
+   * - "new": create a fresh conversation for every fire
+   * - any other string: existing conversation id
+   */
   conversation_id?: string;
   name: string;
   description: string;
@@ -1048,6 +1054,13 @@ export interface CronRunsCommand {
   offset?: number;
   /** Optional run id filter. */
   run_id?: string;
+}
+
+export interface CronTriggerCommand {
+  type: "cron_trigger";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  task_id: string;
 }
 
 export interface CronDeleteCommand {
@@ -1106,6 +1119,42 @@ export interface GetCwdMapResponseMessage {
   cwd_map: Record<string, string>;
   /** Listener boot CWD used when a conversation has no entry in cwd_map. */
   boot_working_directory: string | null;
+  error?: string;
+}
+
+export type ConversationPinScope = "global" | "local_project" | "both";
+export type ConversationPinAction = "pin" | "unpin" | "toggle";
+
+export interface ListConversationPinsCommand {
+  type: "list_conversation_pins";
+  request_id: string;
+  runtime: RuntimeScope;
+}
+
+export interface ListConversationPinsResponseMessage {
+  type: "list_conversation_pins_response";
+  request_id: string;
+  success: boolean;
+  pins: Array<{ conversation_id: string; is_local: boolean }>;
+  error?: string;
+}
+
+export interface SetConversationPinCommand {
+  type: "set_conversation_pin";
+  request_id: string;
+  runtime: RuntimeScope;
+  conversation_id: string;
+  action: ConversationPinAction;
+  scope?: ConversationPinScope;
+}
+
+export interface SetConversationPinResponseMessage {
+  type: "set_conversation_pin_response";
+  request_id: string;
+  success: boolean;
+  conversation_id: string;
+  pinned: boolean;
+  pins: Array<{ conversation_id: string; is_local: boolean }>;
   error?: string;
 }
 
@@ -1334,6 +1383,15 @@ export interface CronRunsResponseMessage {
   request_id: string;
   success: boolean;
   page?: CronRunLogPage;
+  error?: string;
+}
+
+export interface CronTriggerResponseMessage {
+  type: "cron_trigger_response";
+  request_id: string;
+  success: boolean;
+  found: boolean;
+  task?: CronTask;
   error?: string;
 }
 
@@ -1806,12 +1864,15 @@ export type WsProtocolCommand =
   | CronAddCommand
   | CronGetCommand
   | CronRunsCommand
+  | CronTriggerCommand
   | CronDeleteCommand
   | CronDeleteAllCommand
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
   | GetCwdMapCommand
+  | ListConversationPinsCommand
+  | SetConversationPinCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | GetExperimentsCommand
@@ -1854,6 +1915,8 @@ export type WsProtocolMessage =
   | UpdateToolsetResponseMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
+  | ListConversationPinsResponseMessage
+  | SetConversationPinResponseMessage
   | ChannelsListResponseMessage
   | ChannelAccountsListResponseMessage
   | ChannelAccountCreateResponseMessage

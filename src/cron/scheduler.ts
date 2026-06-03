@@ -12,14 +12,20 @@
  * On stop: clears interval, releases lease.
  */
 
+import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
+import { getBackend } from "@/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
 import {
   getActiveRuntime,
   getOrCreateConversationRuntime,
+  safeEmitWsEvent,
 } from "@/websocket/listener/runtime";
-import type { ListenerTransport } from "@/websocket/listener/transport";
+import {
+  isListenerTransportOpen,
+  type ListenerTransport,
+} from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
   StartListenerOptions,
@@ -51,6 +57,9 @@ interface SchedulerState {
   token: string;
   tickInterval: NodeJS.Timeout;
   gcInterval: NodeJS.Timeout;
+  socket: ListenerTransport;
+  opts: StartListenerOptions;
+  processQueuedTurn: ProcessQueuedTurn;
   /** Last mtime of crons.json — skip re-reads when unchanged. */
   lastMtime: number;
   /** Cached active tasks (refreshed on file change). */
@@ -71,6 +80,7 @@ const TICK_INTERVAL_MS = 60_000;
 const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
 const LEASE_RETRY_MS = 30_000; // 30 seconds between lease claim retries
 const MAX_LEASE_RETRIES = 3;
+const NEW_CONVERSATION_TARGET = "new";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -80,17 +90,61 @@ export function minuteKey(date: Date): string {
 
 export function wrapCronPrompt(task: CronTask): string {
   const lines = [
-    "<system-reminder>",
     `Scheduled task "${task.name}" is firing.`,
     `Description: ${task.description}`,
     task.recurring
       ? `This is fire #${task.fire_count + 1} (cron: ${task.cron}).`
       : `This is a one-off scheduled task.`,
     "",
-    task.prompt,
-    "</system-reminder>",
+    `Prompt: ${task.prompt}`,
   ];
   return lines.join("\n");
+}
+
+function getCronConversationSummary(task: CronTask): string {
+  return `[Schedule] ${task.name}`;
+}
+
+async function resolveCronFireConversationId(
+  task: CronTask,
+): Promise<string | undefined> {
+  if (task.conversation_id === NEW_CONVERSATION_TARGET) {
+    const conversation = await getBackend().createConversation({
+      agent_id: task.agent_id,
+      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+      summary: getCronConversationSummary(task),
+    });
+    return conversation.id;
+  }
+
+  return task.conversation_id === "default" ? undefined : task.conversation_id;
+}
+
+function emitCronsUpdated(
+  socket: ListenerTransport,
+  task: CronTask,
+  conversationId?: string | null,
+): void {
+  if (!isListenerTransportOpen(socket)) {
+    return;
+  }
+
+  const payload = {
+    type: "crons_updated",
+    timestamp: Date.now(),
+    agent_id: task.agent_id,
+    conversation_id: conversationId ?? task.conversation_id,
+  };
+
+  try {
+    socket.send(JSON.stringify(payload));
+    safeEmitWsEvent("send", "protocol", payload);
+  } catch (err) {
+    console.error(
+      `[Cron] Error sending crons_updated for task ${task.id}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 // ── Core tick logic ─────────────────────────────────────────────────
@@ -146,13 +200,13 @@ export function shouldFireTask(task: CronTask, now: Date): boolean {
   return cronMatchesTime(task.cron, now, task.timezone);
 }
 
-function fireCronTask(
+async function fireCronTask(
   task: CronTask,
   now: Date,
   socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
-): void {
+): Promise<boolean> {
   const listener = getActiveRuntime();
   if (!listener) {
     setLastRunOutcome(task.id, {
@@ -169,13 +223,27 @@ function fireCronTask(
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
     });
-    return;
+    return false;
+  }
+
+  let targetConversationId: string | undefined;
+  try {
+    targetConversationId = await resolveCronFireConversationId(task);
+  } catch (err) {
+    safeAppendCronRunLogForTask(task, {
+      status: "error",
+      error:
+        err instanceof Error ? err.message : "failed to resolve conversation",
+      runAtMs: now.getTime(),
+      scheduledFor: task.scheduled_for,
+    });
+    return false;
   }
 
   const rawRuntime = getOrCreateConversationRuntime(
     listener,
     task.agent_id,
-    task.conversation_id === "default" ? undefined : task.conversation_id,
+    targetConversationId,
   );
 
   if (!rawRuntime) {
@@ -193,7 +261,7 @@ function fireCronTask(
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
     });
-    return;
+    return false;
   }
 
   // Ensure the queue runtime is initialized (getOrCreateConversationRuntime
@@ -211,7 +279,7 @@ function fireCronTask(
     text,
     cronTaskId: task.id,
     agentId: task.agent_id,
-    conversationId: task.conversation_id,
+    conversationId: targetConversationId ?? "default",
   } as Omit<CronPromptQueueItem, "id" | "enqueuedAt">);
 
   if (!queuedItem) {
@@ -229,7 +297,7 @@ function fireCronTask(
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
     });
-    return;
+    return false;
   }
 
   scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
@@ -267,7 +335,10 @@ function fireCronTask(
     queueItemId: queuedItem.id,
     scheduledFor: task.scheduled_for,
     firedAt: nowIso,
+    conversationId: targetConversationId ?? "default",
   });
+  emitCronsUpdated(socket, task, targetConversationId ?? "default");
+  return true;
 }
 
 /** Returns true if the task was marked as missed (caller should skip firing). */
@@ -306,6 +377,57 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
     return true;
   }
   return false;
+}
+
+export async function runCronTaskNow(taskId: string): Promise<{
+  success: boolean;
+  found: boolean;
+  task?: CronTask;
+  error?: string;
+}> {
+  const task = getTask(taskId);
+  if (!task) {
+    return { success: false, found: false, error: "Schedule not found" };
+  }
+
+  if (task.status !== "active") {
+    return {
+      success: false,
+      found: true,
+      task,
+      error: "Schedule is not active",
+    };
+  }
+
+  if (!schedulerState) {
+    return {
+      success: false,
+      found: true,
+      task,
+      error: "Cron scheduler is not running",
+    };
+  }
+
+  const now = new Date();
+  const fired = await fireCronTask(
+    task,
+    now,
+    schedulerState.socket,
+    schedulerState.opts,
+    schedulerState.processQueuedTurn,
+  );
+
+  if (!fired) {
+    return {
+      success: false,
+      found: true,
+      task,
+      error: "Failed to enqueue schedule run",
+    };
+  }
+
+  refreshTaskCache(schedulerState);
+  return { success: true, found: true, task: getTask(taskId) ?? task };
 }
 
 function tick(
@@ -356,9 +478,13 @@ function tick(
         const freshTask = getTask(taskId);
         if (!freshTask || freshTask.status !== "active") return;
 
-        try {
-          fireCronTask(freshTask, now, socket, opts, processQueuedTurn);
-        } catch (err) {
+        void fireCronTask(
+          freshTask,
+          now,
+          socket,
+          opts,
+          processQueuedTurn,
+        ).catch((err) => {
           console.error(`[Cron] Error firing task ${taskId}:`, err);
           setLastRunOutcome(freshTask.id, {
             outcome: "failed",
@@ -374,7 +500,7 @@ function tick(
             runAtMs: now.getTime(),
             scheduledFor: freshTask.scheduled_for,
           });
-        }
+        });
       };
 
       if (jitterMs > 0) {
@@ -440,6 +566,9 @@ export function startScheduler(
     token,
     tickInterval: null as unknown as NodeJS.Timeout,
     gcInterval: null as unknown as NodeJS.Timeout,
+    socket,
+    opts,
+    processQueuedTurn,
     lastMtime: 0,
     cachedTasks: [],
     firedThisMinute: new Set(),

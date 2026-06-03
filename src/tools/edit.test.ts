@@ -3,6 +3,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { TestDirectory } from "@/test-utils/test-fs";
 import { edit } from "@/tools/impl/edit";
 
+function utf16leWithBom(content: string): Buffer {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(content, "utf16le"),
+  ]);
+}
+
 describe("Edit tool", () => {
   let testDir: TestDirectory;
 
@@ -120,6 +127,25 @@ describe("Edit tool", () => {
         new_string: "Bun",
       }),
     ).rejects.toThrow("old_string cannot be empty");
+  });
+
+  test("rejects UTF-16LE files without modifying them", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("utf16.md", "");
+    const original = utf16leWithBom("hello\n");
+    writeFileSync(file, original);
+
+    await expect(
+      edit({
+        file_path: file,
+        old_string: "hello",
+        new_string: "goodbye",
+      }),
+    ).rejects.toThrow(
+      `File is not valid UTF-8 text: ${file}. Detected UTF-16LE BOM; convert the file to UTF-8 and retry.`,
+    );
+
+    expect(Buffer.compare(readFileSync(file), original)).toBe(0);
   });
 
   test("throws error when file_path is missing", async () => {

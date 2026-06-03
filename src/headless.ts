@@ -557,6 +557,12 @@ export async function handleHeadlessCommand(
     const { toolFilter } = await import("@/tools/filter");
     toolFilter.setEnabledTools(values.tools);
   }
+
+  const { cliPermissions } = await import(
+    "@/permissions/cli-permissions-instance"
+  );
+  cliPermissions.setMemoryGuardDisabled(false);
+
   // Set permission mode if provided (or via --yolo alias)
   const permissionModeValue = values["permission-mode"];
   const yoloMode = values.yolo;
@@ -579,9 +585,6 @@ export async function handleHeadlessCommand(
     values.disallowedTools ||
     values["disable-memory-guard"]
   ) {
-    const { cliPermissions } = await import(
-      "@/permissions/cli-permissions-instance"
-    );
     if (values.allowedTools) {
       cliPermissions.setAllowedTools(values.allowedTools);
     }
