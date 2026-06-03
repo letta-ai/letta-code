@@ -713,7 +713,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const cwd = getCurrentWorkingDirectory();
             const conversation = createExtensionConversationHandle({
               agentId,
-              backend: extensionAdapter.getBackendApi(),
+              backend: extensionAdapter.getBackend(),
               conversationId: conversationIdRef.current,
               workingDirectory: cwd,
             });

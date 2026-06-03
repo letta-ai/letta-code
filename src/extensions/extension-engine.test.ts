@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
+import type { Backend } from "@/backend";
 import {
   clearRegisteredPiProviders,
   getRegisteredPiProvider,
@@ -16,7 +17,6 @@ import {
   getExtensionToolDefinition,
 } from "@/extensions/tool-registry";
 import type {
-  ExtensionAdapterBackendApi,
   ExtensionCapabilities,
   ExtensionContext,
   ExtensionPanelHandle,
@@ -24,13 +24,16 @@ import type {
 
 type ExtensionTestGlobal = typeof globalThis & {
   __lettaExtensionBackend?: unknown;
+  __lettaExtensionBackendCalls?: string[];
   __lettaExtensionForkResult?: { id: string };
+  __lettaExtensionHistoryResult?: string[];
   __lettaExtensionCapabilities?: ExtensionCapabilities;
   __lettaExtensionEvents?: string[];
   __lettaExtensionGate?: Promise<void>;
   __lettaExtensionPanel?: ExtensionPanelHandle;
   __lettaExtensionSignal?: AbortSignal;
   __lettaExtensionStarted?: () => void;
+  __lettaSwapBackend?: () => void;
 };
 
 function createTempDir(): string {
@@ -84,11 +87,11 @@ function createExtensionContext(): ExtensionContext {
 function createEngine(
   root: string,
   capabilities?: ExtensionCapabilities,
-  backend?: ExtensionAdapterBackendApi,
+  backend?: Backend,
 ): ExtensionEngine {
   return createExtensionEngine({
     cacheDirectory: path.join(root, "extension-cache"),
-    ...(backend ? { backend } : {}),
+    ...(backend ? { getBackend: () => backend } : {}),
     ...(capabilities ? { capabilities } : {}),
     getClient: async () => ({}) as unknown as Letta,
     getContext: createExtensionContext,
@@ -214,16 +217,13 @@ describe("extension engine", () => {
     delete testGlobal.__lettaExtensionBackend;
     delete testGlobal.__lettaExtensionForkResult;
 
-    const backend: ExtensionAdapterBackendApi = {
-      forkConversation: async (conversationId, options) => ({
+    const backend = {
+      forkConversation: async (
+        ...[conversationId, options]: Parameters<Backend["forkConversation"]>
+      ) => ({
         id: `${conversationId}:${options?.agentId}:${options?.hidden ? "hidden" : "visible"}`,
       }),
-      getConversationHistory: async () => [],
-      sendMessageStream: async () =>
-        (async function* () {
-          // Empty stream for engine plumbing tests.
-        })(),
-    };
+    } as unknown as Backend;
 
     try {
       const extensionDir = path.join(root, "global-extensions");
@@ -259,6 +259,90 @@ describe("extension engine", () => {
     } finally {
       delete testGlobal.__lettaExtensionBackend;
       delete testGlobal.__lettaExtensionForkResult;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("captures backend once per event invocation for composed conversation helpers", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ExtensionTestGlobal;
+    testGlobal.__lettaExtensionBackendCalls = [];
+    delete testGlobal.__lettaExtensionHistoryResult;
+    delete testGlobal.__lettaSwapBackend;
+
+    const createBackend = (label: string) =>
+      ({
+        forkConversation: async (
+          ...[conversationId, options]: Parameters<Backend["forkConversation"]>
+        ) => {
+          testGlobal.__lettaExtensionBackendCalls?.push(
+            `${label}:fork:${conversationId}:${options?.agentId}:${options?.hidden}`,
+          );
+          return { id: `${label}-forked-conversation` };
+        },
+        listConversationMessages: async (
+          ...[conversationId, body]: Parameters<
+            Backend["listConversationMessages"]
+          >
+        ) => {
+          testGlobal.__lettaExtensionBackendCalls?.push(
+            `${label}:history:${conversationId}:${body?.limit}`,
+          );
+          return {
+            getPaginatedItems: () => [{ id: `${label}-message` }],
+          };
+        },
+      }) as unknown as Backend;
+
+    const backendA = createBackend("a");
+    const backendB = createBackend("b");
+    let activeBackend = backendA;
+    testGlobal.__lettaSwapBackend = () => {
+      activeBackend = backendB;
+    };
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const extensionPath = path.join(extensionDir, "scoped-backend.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          letta.events.on("conversation_open", async (_event, ctx) => {
+            const fork = await ctx.conversation.fork({ hidden: true });
+            globalThis.__lettaSwapBackend();
+            const history = await fork.getHistory({ limit: 1 });
+            globalThis.__lettaExtensionHistoryResult = history.map((message) => message.id);
+          });
+        }`,
+      );
+
+      const engine = createExtensionEngine({
+        cacheDirectory: path.join(root, "extension-cache"),
+        getBackend: () => activeBackend,
+        getClient: async () => ({}) as unknown as Letta,
+        getContext: createExtensionContext,
+        globalExtensionsDirectory: extensionDir,
+      });
+      await engine.reload();
+      await engine.emitEvent("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conv-1",
+        reason: "startup",
+      });
+
+      expect(testGlobal.__lettaExtensionBackendCalls).toEqual([
+        "a:fork:conv-1:agent-1:true",
+        "a:history:a-forked-conversation:1",
+      ]);
+      const historyResult = (globalThis as ExtensionTestGlobal)
+        .__lettaExtensionHistoryResult;
+      expect(historyResult).toEqual(["a-message"]);
+    } finally {
+      delete testGlobal.__lettaExtensionBackendCalls;
+      delete testGlobal.__lettaExtensionHistoryResult;
+      delete testGlobal.__lettaSwapBackend;
       rmSync(root, { force: true, recursive: true });
     }
   });
@@ -373,11 +457,9 @@ describe("extension engine", () => {
         }`,
       );
 
-      const backend: ExtensionAdapterBackendApi = {
+      const backend = {
         forkConversation: async () => ({ id: "forked" }),
-        getConversationHistory: async () => [],
-        sendMessageStream: async () => (async function* () {})(),
-      };
+      } as unknown as Backend;
       const engine = createEngine(root, undefined, backend);
       await engine.reload();
       expect(engine.getSnapshot().events.conversation_open).toHaveLength(2);
