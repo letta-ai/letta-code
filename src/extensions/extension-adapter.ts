@@ -1,4 +1,3 @@
-import type Letta from "@letta-ai/letta-client";
 import type { Backend } from "@/backend";
 import {
   areExtensionsDisabled,
@@ -29,10 +28,8 @@ export interface ExtensionAdapterSnapshot extends ExtensionAdapterLoadState {
 }
 
 export interface CreateExtensionAdapterOptions
-  extends Omit<CreateExtensionEngineOptions, "getBackend" | "getContext"> {
+  extends Omit<CreateExtensionEngineOptions, "getContext"> {
   disabled?: boolean;
-  getBackend?: () => Backend | undefined;
-  getClient: () => Promise<Letta>;
   initialContext: ExtensionContext;
 }
 
