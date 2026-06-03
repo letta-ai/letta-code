@@ -167,9 +167,10 @@ function applySecretPlaceholders(account: ChannelAccount): void {
 
 function queueSecretWrite(promise: Promise<unknown>): void {
   pendingSecretWrites.push(
-    promise.catch((error) => {
-      console.warn("Failed to persist channel secret:", error);
-      throw error;
+    promise.catch(() => {
+      // Best-effort background secret persistence. Foreground commands that
+      // need to validate credentials surface errors explicitly; detached secret
+      // writes should not spam startup logs or crash the process.
     }),
   );
 }
