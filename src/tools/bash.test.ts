@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { bash } from "@/tools/impl/bash";
+import { backgroundProcesses } from "@/tools/impl/process_manager";
 
 async function runBashInTemp(
   command: string,
@@ -97,6 +98,85 @@ describe("Bash tool", () => {
 
     expect(result.content[0]?.text).toContain("background with ID:");
     expect(result.content[0]?.text).toMatch(/bash_\d+/);
+  });
+
+  test("background mode falls back to available Windows PowerShell when pwsh is unavailable", async () => {
+    if (process.platform === "win32") return;
+
+    const tempDir = await mkdtemp(path.join(tmpdir(), "letta-bash-win-bg-"));
+    const fakePowerShell = path.join(tempDir, "powershell");
+    await writeFile(
+      fakePowerShell,
+      "#!/bin/sh\nprintf fake-background-powershell\n",
+      {
+        mode: 0o755,
+      },
+    );
+
+    const originalPlatform = Object.getOwnPropertyDescriptor(
+      process,
+      "platform",
+    );
+    const originalPath = process.env.PATH;
+    const originalPathext = process.env.PATHEXT;
+    const startedIds: string[] = [];
+
+    Object.defineProperty(process, "platform", { value: "win32" });
+    process.env.PATH = tempDir;
+    delete process.env.PATHEXT;
+
+    try {
+      const result = await bash({
+        command: "ignored",
+        description: "Test Windows PowerShell fallback",
+        run_in_background: true,
+      });
+
+      expect(result.status).toBe("success");
+      const bashId = result.content[0]?.text.match(/bash_\d+/)?.[0];
+      expect(bashId).toBeDefined();
+      if (!bashId) throw new Error("Expected background Bash id");
+      startedIds.push(bashId);
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const processEntry = backgroundProcesses.get(bashId);
+        if (
+          processEntry?.status !== "running" ||
+          processEntry?.stdout.join("\n").includes("fake-background-powershell")
+        ) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      const processEntry = backgroundProcesses.get(bashId);
+      expect(processEntry?.stdout.join("\n")).toContain(
+        "fake-background-powershell",
+      );
+      expect(processEntry?.exitCode).toBe(0);
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalPathext === undefined) delete process.env.PATHEXT;
+      else process.env.PATHEXT = originalPathext;
+
+      for (const id of startedIds) {
+        const processEntry = backgroundProcesses.get(id);
+        try {
+          processEntry?.process.kill("SIGTERM");
+        } catch {
+          // Ignore already-completed processes.
+        }
+        if (processEntry?.outputFile) {
+          await rm(processEntry.outputFile, { force: true });
+        }
+        backgroundProcesses.delete(id);
+      }
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("handles complex commands with pipes", async () => {
