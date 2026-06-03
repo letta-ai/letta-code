@@ -1,18 +1,15 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import { sendMessageStreamWithBackend } from "@/agent/message";
 import { getModelInfo } from "@/agent/model";
 import type { SessionStats } from "@/agent/stats";
 import type { Backend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
-import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
 import {
   createExtensionAdapter,
   type ExtensionAdapter,
 } from "@/extensions/extension-adapter";
 import type {
-  ExtensionAdapterBackendApi,
   ExtensionCapabilities,
   ExtensionContext,
   ExtensionConversationOpenReason,
@@ -37,35 +34,6 @@ export const HEADLESS_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
     customStatuslineRenderer: false,
   },
 };
-
-function createHeadlessExtensionBackendApi(
-  backend: Backend,
-): ExtensionAdapterBackendApi {
-  return {
-    forkConversation(conversationId, options) {
-      return backend.forkConversation(conversationId, options);
-    },
-    getConversationHistory(conversationId, options) {
-      return loadExtensionConversationHistoryFromBackend(
-        backend,
-        {
-          agentId: options?.agentId,
-          conversationId,
-        },
-        options,
-      );
-    },
-    sendMessageStream(conversationId, messages, options, requestOptions) {
-      return sendMessageStreamWithBackend(
-        backend,
-        conversationId,
-        messages,
-        options,
-        requestOptions,
-      );
-    },
-  };
-}
 
 function isHeadlessMemfsEnabled(agentId: string): boolean {
   try {
@@ -176,7 +144,7 @@ export function createHeadlessExtensionAdapter(options: {
       : {}),
     capabilities: HEADLESS_EXTENSION_CAPABILITIES,
     disabled: options.disabled,
-    getBackendApi: () => createHeadlessExtensionBackendApi(options.backend),
+    getBackend: () => options.backend,
     getClient,
     ...(options.globalExtensionsDirectory
       ? { globalExtensionsDirectory: options.globalExtensionsDirectory }

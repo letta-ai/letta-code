@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
+import type { Backend } from "@/backend";
 import {
   clearRegisteredPiProviders,
   listRegisteredPiProviders,
@@ -16,10 +17,7 @@ import {
   getExtensionToolDefinition,
   registerExtensionTool,
 } from "@/extensions/tool-registry";
-import type {
-  ExtensionAdapterBackendApi,
-  ExtensionContext,
-} from "@/extensions/types";
+import type { ExtensionContext } from "@/extensions/types";
 
 type ExtensionAdapterTestGlobal = typeof globalThis & {
   __lettaAdapterEvents?: string[];
@@ -265,14 +263,12 @@ describe("extension adapter", () => {
         }`,
       );
 
-      const backend: ExtensionAdapterBackendApi = {
+      const backend = {
         forkConversation: async () => ({ id: "forked-conversation" }),
-        getConversationHistory: async () => [],
-        sendMessageStream: async () => (async function* () {})(),
-      };
+      } as unknown as Backend;
       const adapter = createExtensionAdapter({
         cacheDirectory: path.join(root, "extension-cache"),
-        getBackendApi: () => backend,
+        getBackend: () => backend,
         getClient: async () => ({}) as unknown as Letta,
         globalExtensionsDirectory: extensionDir,
         initialContext: createExtensionContext(),

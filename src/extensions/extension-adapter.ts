@@ -1,4 +1,5 @@
 import type Letta from "@letta-ai/letta-client";
+import type { Backend } from "@/backend";
 import { clearRegisteredPiProviders } from "@/backend/dev/pi-provider-extension-registry";
 import {
   cloneExtensionCapabilities,
@@ -20,10 +21,7 @@ import {
   resolveLocalExtensionSources,
 } from "@/extensions/extension-engine";
 import { clearExtensionTools } from "@/extensions/tool-registry";
-import type {
-  ExtensionAdapterBackendApi,
-  ExtensionContext,
-} from "@/extensions/types";
+import type { ExtensionContext } from "@/extensions/types";
 import { debugLog } from "@/utils/debug";
 
 export interface ExtensionAdapterLoadState {
@@ -37,9 +35,9 @@ export interface ExtensionAdapterSnapshot extends ExtensionAdapterLoadState {
 }
 
 export interface CreateExtensionAdapterOptions
-  extends Omit<CreateExtensionEngineOptions, "backend" | "getContext"> {
+  extends Omit<CreateExtensionEngineOptions, "getBackend" | "getContext"> {
   disabled?: boolean;
-  getBackendApi?: () => ExtensionAdapterBackendApi | undefined;
+  getBackend?: () => Backend | undefined;
   getClient: () => Promise<Letta>;
   initialContext: ExtensionContext;
 }
@@ -111,7 +109,7 @@ function createDisabledExtensionAdapter(
   return {
     dispose() {},
     events,
-    getBackendApi() {
+    getBackend() {
       return undefined;
     },
     getContext() {
@@ -136,7 +134,7 @@ function createDisabledExtensionAdapter(
 export interface ExtensionAdapter {
   dispose: () => void;
   events: ExtensionEvents;
-  getBackendApi: () => ExtensionAdapterBackendApi | undefined;
+  getBackend: () => Backend | undefined;
   getContext: () => ExtensionContext;
   getSnapshot: () => ExtensionAdapterSnapshot;
   engine: ExtensionEngine;
@@ -156,35 +154,6 @@ function hasExtensionSources(
   );
 }
 
-function createLazyAdapterBackendApi(
-  getBackendApi: () => ExtensionAdapterBackendApi | undefined,
-): ExtensionAdapterBackendApi {
-  const requireBackend = () => {
-    const backend = getBackendApi();
-    if (!backend) {
-      throw new Error("Extension backend is not available");
-    }
-    return backend;
-  };
-
-  return {
-    forkConversation(conversationId, options) {
-      return requireBackend().forkConversation(conversationId, options);
-    },
-    getConversationHistory(conversationId, options) {
-      return requireBackend().getConversationHistory(conversationId, options);
-    },
-    sendMessageStream(conversationId, messages, options, requestOptions) {
-      return requireBackend().sendMessageStream(
-        conversationId,
-        messages,
-        options,
-        requestOptions,
-      );
-    },
-  };
-}
-
 export function createExtensionAdapter(
   options: CreateExtensionAdapterOptions,
 ): ExtensionAdapter {
@@ -197,7 +166,7 @@ export function createExtensionAdapter(
   }
 
   const {
-    getBackendApi: resolveBackendApi,
+    getBackend: resolveBackend,
     initialContext,
     ...engineOptions
   } = options;
@@ -211,15 +180,12 @@ export function createExtensionAdapter(
   };
   const listeners = new Set<() => void>();
 
-  const getBackendApi = () => resolveBackendApi?.();
+  const getBackend = () => resolveBackend?.();
   const getContext = () => context;
-  const backend = resolveBackendApi
-    ? createLazyAdapterBackendApi(getBackendApi)
-    : undefined;
 
   const engine = createExtensionEngine({
     ...engineOptions,
-    ...(backend ? { backend } : {}),
+    ...(resolveBackend ? { getBackend } : {}),
     getContext,
   });
 
@@ -228,7 +194,7 @@ export function createExtensionAdapter(
       if (loadState.isLoading || !loadState.hasExtensionSources) {
         return Promise.resolve(emptyEventEmissionResult(name));
       }
-      return engine.emitEvent(name, event, getBackendApi());
+      return engine.emitEvent(name, event);
     },
   };
 
@@ -307,7 +273,7 @@ export function createExtensionAdapter(
       listeners.clear();
     },
     events,
-    getBackendApi,
+    getBackend,
     getContext,
     getSnapshot,
     engine,

@@ -16,6 +16,7 @@ import { pathToFileURL } from "node:url";
 import type Letta from "@letta-ai/letta-client";
 import * as ts from "typescript";
 import { clearAvailableModelsCache } from "@/agent/available-models";
+import type { Backend } from "@/backend";
 import type { PiProviderRegistration } from "@/backend/dev/pi-provider-extension-registry";
 import {
   registerPiProvider,
@@ -39,7 +40,6 @@ import {
   unregisterExtensionToolsForOwner,
 } from "@/extensions/tool-registry";
 import type {
-  ExtensionAdapterBackendApi,
   ExtensionCapabilities,
   ExtensionCommand,
   ExtensionCommandRegistration,
@@ -207,7 +207,6 @@ export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionAdapterBackendApi;
   capabilities?: ExtensionCapabilities;
   builtinCommandIds?: Iterable<string>;
   generation?: number;
@@ -221,7 +220,6 @@ export interface ExtensionEngine {
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-    backend?: ExtensionAdapterBackendApi,
   ) => Promise<ExtensionEventEmissionResult<TName>>;
   getSnapshot: () => LocalExtensionRegistry;
   reload: () => Promise<void>;
@@ -232,7 +230,7 @@ export interface CreateExtensionEngineOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionAdapterBackendApi;
+  getBackend?: () => Backend | undefined;
   builtinCommandIds?: Iterable<string>;
   capabilities?: ExtensionCapabilities;
   reservedToolNames?: Iterable<string>;
@@ -1256,7 +1254,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
   name: TName,
   event: ExtensionEventMap[TName],
   getContext: () => ExtensionContext,
-  backend?: ExtensionAdapterBackendApi,
+  backend?: Backend,
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
 ): Promise<ExtensionEventEmissionResult<TName>> {
   if (!registry) {
@@ -1397,16 +1395,19 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
 export function createExtensionEngine(
   options: CreateExtensionEngineOptions,
 ): ExtensionEngine {
+  const { getBackend, ...extensionOptions } = options;
   let generation = 0;
   let disposed = false;
-  const capabilities = resolveExtensionCapabilities(options.capabilities);
+  const capabilities = resolveExtensionCapabilities(
+    extensionOptions.capabilities,
+  );
   const getContext =
-    options.getContext ??
+    extensionOptions.getContext ??
     (() => {
       throw new Error("Extension context is not available yet");
     });
   let activeRegistry = createEmptyExtensionRegistry(
-    resolveLocalExtensionSources(options),
+    resolveLocalExtensionSources(extensionOptions),
     generation,
     capabilities,
   );
@@ -1427,7 +1428,7 @@ export function createExtensionEngine(
     generation += 1;
     const loadGeneration = generation;
     activeRegistry = createEmptyExtensionRegistry(
-      resolveLocalExtensionSources(options),
+      resolveLocalExtensionSources(extensionOptions),
       loadGeneration,
       capabilities,
     );
@@ -1435,7 +1436,7 @@ export function createExtensionEngine(
 
     let loadingRegistry: LocalExtensionRegistry | null = null;
     const nextRegistry = await loadLocalExtensions({
-      ...options,
+      ...extensionOptions,
       generation: loadGeneration,
       onChange: () => {
         if (!disposed && loadingRegistry && loadGeneration === generation) {
@@ -1486,23 +1487,24 @@ export function createExtensionEngine(
       generation += 1;
       disposeLocalExtensions(activeRegistry);
       activeRegistry = createEmptyExtensionRegistry(
-        resolveLocalExtensionSources(options),
+        resolveLocalExtensionSources(extensionOptions),
         generation,
         capabilities,
       );
       publish();
       listeners.clear();
     },
-    async emitEvent(name, payload, backend) {
+    async emitEvent(name, payload) {
       if (disposed) {
         return { diagnostics: [], handlerCount: 0, name, results: [] };
       }
+      const invocationBackend = getBackend?.();
       const result = await emitLocalExtensionEvent(
         activeRegistry,
         name,
         payload,
         getContext,
-        backend ?? options.backend,
+        invocationBackend,
       );
       if (result.diagnostics.length > 0) {
         publish();
