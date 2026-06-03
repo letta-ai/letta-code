@@ -12,6 +12,7 @@ import {
   type CreateExtensionEngineOptions,
   createExtensionEngine,
   type ExtensionEngine,
+  type ResolveLocalExtensionSourcesOptions,
   resolveLocalExtensionSources,
 } from "@/extensions/extension-engine";
 import type { ExtensionContext } from "@/extensions/types";
@@ -46,10 +47,7 @@ export interface ExtensionAdapter {
 }
 
 function hasExtensionSources(
-  options: Pick<
-    CreateExtensionAdapterOptions,
-    "cacheDirectory" | "globalExtensionsDirectory"
-  >,
+  options: ResolveLocalExtensionSourcesOptions,
 ): boolean {
   return resolveLocalExtensionSources(options).some(
     (source) => source.files.length > 0,
@@ -59,19 +57,21 @@ function hasExtensionSources(
 export function createExtensionAdapter(
   options: CreateExtensionAdapterOptions,
 ): ExtensionAdapter {
-  if (options.disabled) {
-    disableExtensionsForProcess();
-  }
-
-  if (options.disabled || areExtensionsDisabled()) {
-    return createDisabledExtensionAdapter(options);
-  }
-
   const {
+    disabled,
     getBackend: resolveBackend,
     initialContext,
     ...engineOptions
   } = options;
+
+  const alreadyDisabled = areExtensionsDisabled();
+  if (disabled || alreadyDisabled) {
+    if (!alreadyDisabled) {
+      disableExtensionsForProcess();
+    }
+    return createDisabledExtensionAdapter({ initialContext });
+  }
+
   let context = initialContext;
   let disposed = false;
   const initialHasExtensionSources = hasExtensionSources(engineOptions);
@@ -87,13 +87,15 @@ export function createExtensionAdapter(
 
   const engine = createExtensionEngine({
     ...engineOptions,
-    ...(resolveBackend ? { getBackend } : {}),
+    getBackend,
     getContext,
   });
 
   const events: ExtensionEvents = {
     emit(name, event) {
       if (loadState.isLoading || !loadState.hasExtensionSources) {
+        // Events are best-effort hooks; do not deliver them while the extension
+        // registry is unavailable or in flux.
         return Promise.resolve(emptyEventEmissionResult(name));
       }
       return engine.emitEvent(name, event);
@@ -152,8 +154,9 @@ export function createExtensionAdapter(
     }
 
     for (const diagnostic of nextRegistry.diagnostics) {
-      if (diagnostic.phase !== "command.override") continue;
-      debugLog("extensions", "%s", diagnostic.error.message);
+      if (diagnostic.phase === "command.override") {
+        debugLog("extensions", "%s", diagnostic.error.message);
+      }
     }
 
     loadState = {
