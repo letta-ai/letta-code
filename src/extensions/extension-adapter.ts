@@ -1,14 +1,10 @@
 import type Letta from "@letta-ai/letta-client";
 import type { Backend } from "@/backend";
-import { clearRegisteredPiProviders } from "@/backend/dev/pi-provider-extension-registry";
-import {
-  cloneExtensionCapabilities,
-  DISABLED_EXTENSION_CAPABILITIES,
-} from "@/extensions/capabilities";
 import {
   areExtensionsDisabled,
   disableExtensionsForProcess,
 } from "@/extensions/disable";
+import { createDisabledExtensionAdapter } from "@/extensions/disabled-extension-adapter";
 import {
   type ExtensionEvents,
   emptyEventEmissionResult,
@@ -17,10 +13,8 @@ import {
   type CreateExtensionEngineOptions,
   createExtensionEngine,
   type ExtensionEngine,
-  type LocalExtensionRegistry,
   resolveLocalExtensionSources,
 } from "@/extensions/extension-engine";
-import { clearExtensionTools } from "@/extensions/tool-registry";
 import type { ExtensionContext } from "@/extensions/types";
 import { debugLog } from "@/utils/debug";
 
@@ -40,95 +34,6 @@ export interface CreateExtensionAdapterOptions
   getBackend?: () => Backend | undefined;
   getClient: () => Promise<Letta>;
   initialContext: ExtensionContext;
-}
-
-function createDisabledExtensionRegistry(): LocalExtensionRegistry {
-  return {
-    capabilities: cloneExtensionCapabilities(DISABLED_EXTENSION_CAPABILITIES),
-    commands: {},
-    diagnostics: [],
-    disposers: [],
-    errors: [],
-    events: {},
-    generation: 0,
-    loadedPaths: [],
-    ownerAbortControllers: {},
-    owners: {},
-    sources: [],
-    tools: {},
-    ui: {
-      panels: {},
-      statuslineRenderer: null,
-      statusOwners: {},
-      statusValues: {},
-    },
-  };
-}
-
-function createDisabledExtensionEngine(
-  registry: LocalExtensionRegistry,
-): ExtensionEngine {
-  return {
-    dispose() {},
-    emitEvent(name) {
-      return Promise.resolve(emptyEventEmissionResult(name));
-    },
-    getSnapshot() {
-      return registry;
-    },
-    reload() {
-      return Promise.resolve();
-    },
-    subscribe() {
-      return () => undefined;
-    },
-  };
-}
-
-function createDisabledExtensionAdapter(
-  options: CreateExtensionAdapterOptions,
-): ExtensionAdapter {
-  clearExtensionTools();
-  clearRegisteredPiProviders();
-
-  let context = options.initialContext;
-  const registry = createDisabledExtensionRegistry();
-  const engine = createDisabledExtensionEngine(registry);
-  const snapshot: ExtensionAdapterSnapshot = {
-    hadStatuslineRenderer: false,
-    hasExtensionSources: false,
-    isLoading: false,
-    registry,
-  };
-  const events: ExtensionEvents = {
-    emit(name) {
-      return Promise.resolve(emptyEventEmissionResult(name));
-    },
-  };
-
-  return {
-    dispose() {},
-    events,
-    getBackend() {
-      return undefined;
-    },
-    getContext() {
-      return context;
-    },
-    getSnapshot() {
-      return snapshot;
-    },
-    engine,
-    reload() {
-      return Promise.resolve();
-    },
-    subscribe() {
-      return () => undefined;
-    },
-    updateContext(nextContext) {
-      context = nextContext;
-    },
-  };
 }
 
 export interface ExtensionAdapter {
