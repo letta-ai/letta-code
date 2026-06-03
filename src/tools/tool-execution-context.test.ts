@@ -405,6 +405,89 @@ describe("tool execution context snapshot", () => {
     ]);
   });
 
+  test("captures backend once for extension tool conversation handles", async () => {
+    const calls: string[] = [];
+    const backendA = {
+      forkConversation: async (
+        ...[conversationId, options]: Parameters<Backend["forkConversation"]>
+      ) => {
+        calls.push(
+          `a:fork:${conversationId}:${options?.agentId}:${options?.hidden}`,
+        );
+        return { id: "forked-conversation" };
+      },
+      listConversationMessages: async (
+        ...[conversationId, body]: Parameters<
+          Backend["listConversationMessages"]
+        >
+      ) => {
+        calls.push(`a:history:${conversationId}:${body?.limit}`);
+        return {
+          getPaginatedItems: () => [{ id: "forked-message" }],
+        };
+      },
+    } as unknown as Backend;
+    const backendB = {
+      listConversationMessages: async (
+        ...[conversationId, body]: Parameters<
+          Backend["listConversationMessages"]
+        >
+      ) => {
+        calls.push(`b:history:${conversationId}:${body?.limit}`);
+        return {
+          getPaginatedItems: () => [{ id: "wrong-backend-message" }],
+        };
+      },
+    } as unknown as Backend;
+    __testSetBackend(backendA);
+
+    const controller = new AbortController();
+    registerExtensionTool({
+      name: "fork_history",
+      description: "Fork conversation and read fork history",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/fork-history.ts",
+        path: "/tmp/fork-history.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/fork-history.ts",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      getContext: () => {
+        throw new Error("context should not be needed for this test");
+      },
+      isAvailable: () => true,
+      run: async (ctx) => {
+        const fork = await ctx.conversation.fork({ hidden: true });
+        __testSetBackend(backendB);
+        const history = await fork.getHistory({ limit: 1 });
+        return [
+          ctx.conversation.id,
+          fork.id,
+          typeof ctx.conversation.sendMessageStream,
+          history.map((message) => message.id).join(","),
+        ].join(":");
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-1", conversationId: "conversation-1" },
+      () => executeTool("fork_history", {}),
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe(
+      "conversation-1:forked-conversation:function:forked-message",
+    );
+    expect(calls).toEqual([
+      "a:fork:conversation-1:agent-1:true",
+      "a:history:forked-conversation:1",
+    ]);
+  });
+
   test("extension tools take precedence over external tools with the same name", async () => {
     registerExternalTools([
       {

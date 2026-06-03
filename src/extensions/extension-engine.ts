@@ -16,6 +16,7 @@ import { pathToFileURL } from "node:url";
 import type Letta from "@letta-ai/letta-client";
 import * as ts from "typescript";
 import { clearAvailableModelsCache } from "@/agent/available-models";
+import { sendMessageStreamWithBackend } from "@/agent/message";
 import type { Backend } from "@/backend";
 import type { PiProviderRegistration } from "@/backend/dev/pi-provider-extension-registry";
 import {
@@ -1297,6 +1298,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
             typeof event.conversationId === "string"
               ? event.conversationId
               : context.sessionId,
+          sendMessageStream: sendMessageStreamWithBackend,
           workingDirectory: context.cwd,
         }),
         context,

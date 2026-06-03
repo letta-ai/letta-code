@@ -10,6 +10,7 @@ import {
 } from "@/agent/context";
 import { getModelInfo } from "@/agent/model";
 import { getAllSubagentConfigs } from "@/agent/subagents";
+import { getBackend } from "@/backend";
 import {
   buildDynamicMessageChannelToolDefinition,
   getCachedDynamicMessageChannelToolDefinition,
@@ -18,7 +19,7 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
+import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import {
   type ExtensionEvents,
   emitExtensionEvent,
@@ -1985,6 +1986,7 @@ async function executeExtensionTool(
     }
 
     try {
+      const backend = getBackend();
       const context: ExtensionToolRunContext = {
         args: args as Record<string, unknown>,
         cwd: options.workingDirectory,
@@ -2005,20 +2007,18 @@ async function executeExtensionTool(
           : {}),
         permissionMode: executionScope.permissionMode ?? null,
         agent: { id: executionScope.agentId ?? null },
-        conversation: {
-          id: executionScope.conversationId ?? null,
-          getHistory: async (historyOptions) => {
-            const { getBackend } = await import("@/backend");
-            return loadExtensionConversationHistoryFromBackend(
-              getBackend(),
-              {
-                agentId: executionScope.agentId,
-                conversationId: executionScope.conversationId,
-              },
-              historyOptions,
+        conversation: createExtensionConversationHandle({
+          agentId: executionScope.agentId,
+          backend,
+          conversationId: executionScope.conversationId,
+          sendMessageStream: async (...sendArgs) => {
+            const { sendMessageStreamWithBackend } = await import(
+              "@/agent/message"
             );
+            return sendMessageStreamWithBackend(...sendArgs);
           },
-        },
+          workingDirectory: options.workingDirectory,
+        }),
         getContext: tool.getContext,
       };
       const result = await runExtensionTool(tool, context);
