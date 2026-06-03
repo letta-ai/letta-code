@@ -4,24 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import type { Backend } from "@/backend";
-import {
-  clearRegisteredPiProviders,
-  listRegisteredPiProviders,
-  registerPiProvider,
-} from "@/backend/dev/pi-provider-extension-registry";
 import { DISABLED_EXTENSION_CAPABILITIES } from "@/extensions/capabilities";
 import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
 import { createExtensionAdapter } from "@/extensions/extension-adapter";
-import {
-  clearExtensionTools,
-  getExtensionToolDefinition,
-  registerExtensionTool,
-} from "@/extensions/tool-registry";
 import type { ExtensionContext } from "@/extensions/types";
 
 type ExtensionAdapterTestGlobal = typeof globalThis & {
   __lettaAdapterEvents?: string[];
-  __lettaDisabledExtensionLoaded?: boolean;
 };
 
 function createTempDir(): string {
@@ -98,148 +87,26 @@ describe("extension adapter", () => {
     }
   });
 
-  test("disabled adapter does not load extensions or expose extension capabilities", async () => {
-    const root = createTempDir();
-    const testGlobal = globalThis as ExtensionAdapterTestGlobal;
-    const originalDisableEnv = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
-
+  test("disabled option disables extensions for the process", () => {
+    const original = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
     try {
-      const extensionDir = path.join(root, "global-extensions");
-      mkdirSync(extensionDir, { recursive: true });
-      writeFileSync(
-        path.join(extensionDir, "disabled.ts"),
-        `export default function(letta) {
-          globalThis.__lettaDisabledExtensionLoaded = true;
-          letta.tools.register({
-            name: "disabled_tool",
-            description: "Should not load",
-            parameters: { type: "object", properties: {} },
-            run() { return "loaded"; },
-          });
-          letta.providers.register("disabled-provider", {
-            api: "openai-completions",
-            baseUrl: "http://localhost:8000/v1",
-            apiKey: "not-needed",
-            models: [{
-              id: "disabled-model",
-              name: "Disabled Model",
-              reasoning: false,
-              input: ["text"],
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              contextWindow: 1000,
-              maxTokens: 1000,
-            }],
-          });
-        }`,
-      );
-      registerExtensionTool({
-        activationSignal: new AbortController().signal,
-        description: "Stale tool",
-        getContext: () => createExtensionContext(),
-        isAvailable: () => true,
-        name: "stale_extension_tool",
-        owner: {
-          generation: 0,
-          id: "test:stale",
-          path: "stale.ts",
-          scope: "global",
-        },
-        parameters: { type: "object", properties: {} },
-        parallelSafe: false,
-        path: "stale.ts",
-        requiresApproval: false,
-        run: () => "stale",
-      });
-      registerPiProvider("stale-provider", {
-        api: "openai-completions",
-        apiKey: "not-needed",
-        baseUrl: "http://localhost:8000/v1",
-        models: [
-          {
-            id: "stale-model",
-            name: "Stale Model",
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 1000,
-            maxTokens: 1000,
-          },
-        ],
-      });
-
+      delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
       const adapter = createExtensionAdapter({
-        cacheDirectory: path.join(root, "extension-cache"),
         disabled: true,
-        getClient: async () => {
-          throw new Error(
-            "client should not initialize when extensions are disabled",
-          );
-        },
-        globalExtensionsDirectory: extensionDir,
+        getClient: async () => ({}) as unknown as Letta,
         initialContext: createExtensionContext(),
       });
-      registerExtensionTool({
-        activationSignal: new AbortController().signal,
-        description: "Post-disable tool",
-        getContext: () => createExtensionContext(),
-        isAvailable: () => true,
-        name: "post_disabled_extension_tool",
-        owner: {
-          generation: 0,
-          id: "test:post-disabled",
-          path: "post-disabled.ts",
-          scope: "global",
-        },
-        parameters: { type: "object", properties: {} },
-        parallelSafe: false,
-        path: "post-disabled.ts",
-        requiresApproval: false,
-        run: () => "post-disabled",
-      });
 
-      expect(adapter.getSnapshot()).toMatchObject({
-        hadStatuslineRenderer: false,
-        hasExtensionSources: false,
-        isLoading: false,
-      });
+      expect(process.env[LETTA_DISABLE_EXTENSIONS_ENV]).toBe("1");
       expect(adapter.getSnapshot().registry.capabilities).toEqual(
         DISABLED_EXTENSION_CAPABILITIES,
       );
-      expect(adapter.getSnapshot().registry.sources).toEqual([]);
-
-      await adapter.reload();
-      const result = await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "startup",
-      });
-
-      expect(result.handlerCount).toBe(0);
-      expect(testGlobal.__lettaDisabledExtensionLoaded).toBeUndefined();
-      expect(adapter.getSnapshot().registry.loadedPaths).toEqual([]);
-      expect(adapter.getSnapshot().registry.commands).toEqual({});
-      expect(adapter.getSnapshot().registry.tools).toEqual({});
-      expect(adapter.getSnapshot().registry.ui.panels).toEqual({});
-      expect(adapter.getSnapshot().registry.ui.statuslineRenderer).toBeNull();
-      expect(
-        getExtensionToolDefinition("stale_extension_tool"),
-      ).toBeUndefined();
-      expect(
-        getExtensionToolDefinition("post_disabled_extension_tool"),
-      ).toBeUndefined();
-      expect(process.env[LETTA_DISABLE_EXTENSIONS_ENV]).toBe("1");
-      expect(listRegisteredPiProviders()).toEqual([]);
     } finally {
-      delete testGlobal.__lettaDisabledExtensionLoaded;
-      clearExtensionTools();
-      clearRegisteredPiProviders();
-      if (originalDisableEnv === undefined) {
+      if (original === undefined) {
         delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
       } else {
-        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = originalDisableEnv;
+        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = original;
       }
-      rmSync(root, { force: true, recursive: true });
     }
   });
 

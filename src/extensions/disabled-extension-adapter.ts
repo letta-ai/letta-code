@@ -55,7 +55,7 @@ function createDisabledExtensionEngine(
     reload() {
       return Promise.resolve();
     },
-    subscribe() {
+    subscribe(_listener: () => void) {
       return () => undefined;
     },
   };
@@ -98,7 +98,7 @@ export function createDisabledExtensionAdapter(
     reload() {
       return Promise.resolve();
     },
-    subscribe() {
+    subscribe(_listener: () => void) {
       return () => undefined;
     },
     updateContext(nextContext: ExtensionContext) {
