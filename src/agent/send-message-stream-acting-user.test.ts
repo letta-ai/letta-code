@@ -48,4 +48,24 @@ describe("sendMessageStream acting-user header propagation (contract)", () => {
     // call's options.headers.
     expect(source).toMatch(/headers:\s*\{[\s\S]*?\.\.\.extraHeaders[\s\S]*?\}/);
   });
+
+  test("previous response id is forwarded when a response state was observed", () => {
+    expect(source).toContain(
+      'const PREVIOUS_RESPONSE_ID_HEADER = "X-Letta-Previous-Response-Id"',
+    );
+    expect(source).toContain(
+      "const previousResponseId = responseStateIdsByScope.get(responseStateScope)",
+    );
+    expect(source).toContain(
+      "extraHeaders[PREVIOUS_RESPONSE_ID_HEADER] = previousResponseId",
+    );
+  });
+
+  test("response state ids are captured from the stream", () => {
+    expect(source).toContain('candidate.message_type !== "response_state"');
+    expect(source).toContain(
+      "responseStateIdsByScope.set(params.scope, responseId)",
+    );
+    expect(source).toContain("stream = attachResponseStateTracking(stream");
+  });
 });

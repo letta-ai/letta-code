@@ -33,6 +33,8 @@ import { getSkillSources } from "./context";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
+const PREVIOUS_RESPONSE_ID_HEADER = "X-Letta-Previous-Response-Id";
+const responseStateIdsByScope = new Map<string, string>();
 
 export type StreamRequestContext = {
   conversationId: string;
@@ -42,6 +44,90 @@ export type StreamRequestContext = {
   otid?: string;
 };
 const streamRequestContexts = new WeakMap<object, StreamRequestContext>();
+
+type ResponseStateChunk = {
+  message_type?: unknown;
+  response_id?: unknown;
+};
+
+function buildResponseStateScope(
+  conversationId: string,
+  agentId: string | null | undefined,
+): string {
+  return agentId ? `${conversationId}:${agentId}` : conversationId;
+}
+
+function getResponseStateId(chunk: unknown): string | null {
+  if (typeof chunk !== "object" || chunk === null) {
+    return null;
+  }
+
+  const candidate = chunk as ResponseStateChunk;
+  if (candidate.message_type !== "response_state") {
+    return null;
+  }
+
+  return typeof candidate.response_id === "string" &&
+    candidate.response_id.length > 0
+    ? candidate.response_id
+    : null;
+}
+
+function attachResponseStateTracking(
+  stream: Stream<LettaStreamingResponse>,
+  params: {
+    scope: string;
+    conversationId: string;
+    agentId: string | null;
+  },
+): Stream<LettaStreamingResponse> {
+  const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
+  const streamWithIterator = stream as Stream<LettaStreamingResponse> & {
+    [Symbol.asyncIterator]: () => AsyncIterator<LettaStreamingResponse>;
+  };
+
+  streamWithIterator[Symbol.asyncIterator] = () => {
+    const iterator = originalAsyncIterator();
+
+    return {
+      async next() {
+        const result = await iterator.next();
+        if (!result.done) {
+          const responseId = getResponseStateId(result.value);
+          if (responseId) {
+            responseStateIdsByScope.set(params.scope, responseId);
+            debugLog(
+              "response-state",
+              "received response_id=%s conversation_id=%s agent_id=%s",
+              responseId,
+              params.conversationId,
+              params.agentId ?? "none",
+            );
+          }
+        }
+
+        return result;
+      },
+      return(value?: unknown) {
+        if (iterator.return) {
+          return iterator.return(value);
+        }
+        return Promise.resolve({
+          done: true as const,
+          value: value as LettaStreamingResponse,
+        });
+      },
+      throw(error?: unknown) {
+        if (iterator.throw) {
+          return iterator.throw(error);
+        }
+        return Promise.reject(error);
+      },
+    };
+  };
+
+  return stream;
+}
 
 export function getStreamRequestStartTime(
   stream: Stream<LettaStreamingResponse>,
@@ -200,6 +286,11 @@ export async function sendMessageStreamWithBackend(
     });
 
   const resolvedConversationId = conversationId;
+  const responseStateScope = buildResponseStateScope(
+    resolvedConversationId,
+    opts.agentId ?? null,
+  );
+  const previousResponseId = responseStateIdsByScope.get(responseStateScope);
   const requestBody = buildConversationMessagesCreateRequestBody(
     conversationId,
     normalizedMessages,
@@ -241,6 +332,16 @@ export async function sendMessageStreamWithBackend(
   const extraHeaders: Record<string, string> = {};
   if (process.env.LETTA_RESPONSES_WS === "1") {
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
+  }
+  if (previousResponseId) {
+    extraHeaders[PREVIOUS_RESPONSE_ID_HEADER] = previousResponseId;
+    debugLog(
+      "response-state",
+      "sending previous_response_id=%s conversation_id=%s agent_id=%s",
+      previousResponseId,
+      resolvedConversationId,
+      opts.agentId ?? "none",
+    );
   }
   // Echo the cloud user id back to cloud-api so it can re-attribute
   // credits + rate limits on multi-user sandboxes. See
@@ -294,6 +395,11 @@ export async function sendMessageStreamWithBackend(
         },
       },
     );
+    stream = attachResponseStateTracking(stream, {
+      scope: responseStateScope,
+      conversationId: resolvedConversationId,
+      agentId: opts.agentId ?? null,
+    });
   } catch (error) {
     abortRelay?.cleanup();
     debugWarn(
