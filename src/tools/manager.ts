@@ -33,6 +33,7 @@ import {
   runExtensionTool,
 } from "@/extensions/tool-registry";
 import type { ExtensionToolRunContext } from "@/extensions/types";
+import type { ExtensionEventEmissionResult } from "@/extensions/types";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -1930,7 +1931,7 @@ async function emitToolStartEvent(options: {
   executionScope: RuntimeContextSnapshot;
   toolCallId?: string;
   toolName: string;
-}): Promise<ToolArgs> {
+}): Promise<{ args: ToolArgs; denied?: { reason?: string } }> {
   const event = {
     agentId: options.executionScope.agentId ?? null,
     conversationId: options.executionScope.conversationId ?? null,
@@ -1939,14 +1940,25 @@ async function emitToolStartEvent(options: {
     args: cloneToolArgsForExtensionEvent(options.args),
   };
 
+  let emitResult: ExtensionEventEmissionResult<"tool_start"> | undefined;
   try {
-    await emitExtensionEvent(options.events, "tool_start", event);
+    emitResult = await emitExtensionEvent(options.events, "tool_start", event);
   } catch (error) {
     debugLog("extensions", "tool_start event failed", error);
-    return options.args;
+    return { args: options.args };
   }
 
-  return isToolStartArgs(event.args) ? event.args : options.args;
+  // Check for denial from any handler. First denial wins.
+  const firstDenial = emitResult?.results?.find(
+    (r): r is { deny: true; reason?: string } =>
+      typeof r === "object" && r !== null && r.deny === true,
+  );
+  if (firstDenial) {
+    debugLog("extensions", `tool_start denied: ${firstDenial.reason ?? "no reason given"}`);
+    return { args: isToolStartArgs(event.args) ? event.args : options.args, denied: { reason: firstDenial.reason } };
+  }
+
+  return { args: isToolStartArgs(event.args) ? event.args : options.args };
 }
 
 async function executeExtensionTool(
@@ -2201,13 +2213,19 @@ export async function executeTool(
         status: "error",
       };
     }
-    const eventArgs = await emitToolStartEvent({
+    const { args: eventArgs, denied: extDenial } = await emitToolStartEvent({
       args,
       events: extensionEvents,
       executionScope,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    if (extDenial) {
+      return {
+        toolReturn: `Error: Tool execution denied by extension. ${extDenial.reason ?? "No reason given."}`,
+        status: "error",
+      };
+    }
     return executeExtensionTool(
       name,
       extensionTool,
@@ -2225,13 +2243,19 @@ export async function executeTool(
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
-    const eventArgs = await emitToolStartEvent({
+    const { args: eventArgs, denied: extDenial } = await emitToolStartEvent({
       args,
       events: extensionEvents,
       executionScope,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    if (extDenial) {
+      return {
+        toolReturn: `Error: Tool execution denied by extension. ${extDenial.reason ?? "No reason given."}`,
+        status: "error",
+      };
+    }
     return executeExternalTool(
       options?.toolCallId ?? `ext-${Date.now()}`,
       name,
@@ -2266,13 +2290,20 @@ export async function executeTool(
     };
   }
 
-  args = await emitToolStartEvent({
+  const { args: eventArgs, denied: extDenial } = await emitToolStartEvent({
     args,
     events: extensionEvents,
     executionScope,
     toolCallId: options?.toolCallId,
     toolName: internalName,
   });
+  args = eventArgs;
+  if (extDenial) {
+    return {
+      toolReturn: `Error: Tool execution denied by extension. ${extDenial.reason ?? "No reason given."}`,
+      status: "error",
+    };
+  }
   const startTime = Date.now();
 
   const run = async (): Promise<ToolExecutionResult> => {
