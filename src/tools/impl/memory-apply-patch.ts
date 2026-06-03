@@ -1,13 +1,5 @@
 import { existsSync } from "node:fs";
-import {
-  access,
-  mkdir,
-  readFile,
-  rm,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, rm, stat, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
@@ -16,6 +8,7 @@ import {
   commitAndSyncMemoryWrite,
   type MemoryWriteSyncMode,
 } from "@/agent/memory-git";
+import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation";
 
 type ParsedPatchOp =
@@ -207,7 +200,7 @@ async function applyMemoryPatch(
       return pending;
     }
 
-    const content = await readFile(absPath, "utf8").catch((error) => {
+    const content = await readUtf8TextStrict(absPath).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(
         `memory_apply_patch: failed to read ${sourcePathForErrors}: ${message}`,
@@ -290,7 +283,7 @@ async function applyMemoryPatch(
 
   for (const [absPath, content] of pendingWrites.entries()) {
     await mkdir(dirname(absPath), { recursive: true });
-    await writeFile(absPath, content, "utf8");
+    await writeUtf8Text(absPath, content);
   }
 
   for (const absPath of pendingDeletes) {
@@ -643,7 +636,7 @@ async function loadEditableMemoryFile(
   filePath: string,
   sourcePath: string,
 ): Promise<ParsedMemoryFile> {
-  const content = await readFile(filePath, "utf8").catch((error) => {
+  const content = await readUtf8TextStrict(filePath).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
       `memory_apply_patch: failed to read ${sourcePath}: ${message}`,

@@ -1,6 +1,6 @@
-import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation.js";
 
 interface Edit {
@@ -49,7 +49,7 @@ export async function multi_edit(
       );
   }
   try {
-    const rawContent = await fs.readFile(resolvedPath, "utf-8");
+    const rawContent = await readUtf8TextStrict(resolvedPath);
     // Normalize line endings to LF for consistent matching (Windows uses CRLF)
     let content = rawContent.replace(/\r\n/g, "\n");
     const appliedEdits: EditWithLine[] = [];
@@ -86,7 +86,7 @@ export async function multi_edit(
         startLine,
       });
     }
-    await fs.writeFile(resolvedPath, content, "utf-8");
+    await writeUtf8Text(resolvedPath, content);
     const editList = appliedEdits
       .map((edit, i) => `${i + 1}. ${edit.description}`)
       .join("\n");
