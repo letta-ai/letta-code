@@ -77,6 +77,7 @@ describe("Shell Launchers", () => {
       expect(launchers[3]?.[0]).toBe(
         "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       );
+      expect(launchers[4]?.[0]).toBe("cmd.exe");
       expect(launchers[0]?.at(-1)).toContain(POWERSHELL_UTF8_OUTPUT_PREFIX);
       expect(launchers[1]?.at(-1)).toContain(POWERSHELL_UTF8_OUTPUT_PREFIX);
       expect(launchers[2]?.at(-1)).toContain(POWERSHELL_UTF8_OUTPUT_PREFIX);

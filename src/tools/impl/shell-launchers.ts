@@ -139,12 +139,7 @@ function windowsLaunchers(
     powerShellCommand,
   ]);
 
-  // Fall back to cmd.exe if PowerShell fails
-  const envComSpecRaw = process.env.ComSpec || process.env.COMSPEC;
-  const envComSpec = envComSpecRaw?.trim();
-  if (envComSpec) {
-    pushUnique(launchers, seen, [envComSpec, "/d", "/s", "/c", trimmed]);
-  }
+  // Fall back to cmd.exe if PowerShell fails.
   pushUnique(launchers, seen, ["cmd.exe", "/d", "/s", "/c", trimmed]);
 
   return launchers;
