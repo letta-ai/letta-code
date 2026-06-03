@@ -4,6 +4,7 @@ import {
   buildDefaultConversationEntry,
   formatConversationTimestampText,
   mergePinnedConversationRecords,
+  searchConversationTitlesForSelector,
 } from "@/cli/components/ConversationSelector";
 
 describe("ConversationSelector timestamps", () => {
@@ -90,5 +91,56 @@ describe("ConversationSelector pinned conversations", () => {
     expect(
       mergePinnedConversationRecords(listed, pinned).map((c) => c.id),
     ).toEqual(["recent-1", "old-pinned"]);
+  });
+});
+
+describe("ConversationSelector title search", () => {
+  test("uses backend conversation search and dedupes title matches", async () => {
+    const listCalls: unknown[] = [];
+    const backend = {
+      capabilities: { localModelCatalog: true },
+      listConversations: async (body: unknown) => {
+        listCalls.push(body);
+        return [
+          { id: "conv-1", summary: "TUI title search" },
+          { id: "conv-1", summary: "TUI title search" },
+          { id: "conv-2", summary: "Unrelated" },
+        ] as Conversation[];
+      },
+    };
+
+    const results = await searchConversationTitlesForSelector({
+      agentId: "agent-1",
+      query: "title search",
+      backend: backend as never,
+      limit: 10,
+    });
+
+    expect(results.map((conversation) => conversation.id)).toEqual(["conv-1"]);
+    expect(listCalls).toEqual([
+      {
+        agent_id: "agent-1",
+        limit: 10,
+        order: "desc",
+        order_by: "last_message_at",
+      },
+    ]);
+  });
+
+  test("does not search blank queries", async () => {
+    const backend = {
+      capabilities: { localModelCatalog: true },
+      listConversations: async () => {
+        throw new Error("should not list conversations");
+      },
+    };
+
+    await expect(
+      searchConversationTitlesForSelector({
+        agentId: "agent-1",
+        query: "   ",
+        backend: backend as never,
+      }),
+    ).resolves.toEqual([]);
   });
 });

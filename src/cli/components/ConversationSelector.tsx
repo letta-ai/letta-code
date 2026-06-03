@@ -6,6 +6,7 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Backend, getBackend } from "@/backend";
+import { searchConversationsForBackend } from "@/backend/conversation-search";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   useTerminalRows,
@@ -308,6 +309,37 @@ export function mergePinnedConversationRecords(
     ),
     ...listedConversations,
   ];
+}
+
+export async function searchConversationTitlesForSelector(params: {
+  agentId: string;
+  query: string;
+  backend: Backend;
+  limit?: number;
+}): Promise<Conversation[]> {
+  const query = params.query.trim();
+  if (!query) return [];
+
+  const results = await searchConversationsForBackend(
+    {
+      agent_id: params.agentId,
+      query,
+      search_mode: "hybrid",
+      search_target: "summary",
+      limit: params.limit ?? 20,
+    },
+    params.backend,
+  );
+
+  const conversations: Conversation[] = [];
+  const seenConversationIds = new Set<string>();
+  for (const result of results) {
+    const conversation = result.conversation;
+    if (seenConversationIds.has(conversation.id)) continue;
+    seenConversationIds.add(conversation.id);
+    conversations.push(conversation);
+  }
+  return conversations;
 }
 
 export function ConversationSelector({
@@ -649,20 +681,11 @@ export function ConversationSelector({
         backendRef.current = backend;
         setSearching(true);
         try {
-          const page = await backend.listConversations({
-            agent_id: agentId,
+          const dedupedResults = await searchConversationTitlesForSelector({
+            agentId,
+            query,
+            backend,
             limit: 20,
-            order: "desc",
-            order_by: "last_run_completion",
-            summary_search: query,
-          });
-          const results = paginatedItems<Conversation>(page);
-          const seenConversationIds = new Set<string>();
-          const dedupedResults = results.filter((conversation) => {
-            const conversationId = conversation.id;
-            if (seenConversationIds.has(conversationId)) return false;
-            seenConversationIds.add(conversationId);
-            return true;
           });
           if (cancelled) return;
           setSearchResults(
