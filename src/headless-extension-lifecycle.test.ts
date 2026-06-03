@@ -173,7 +173,7 @@ describe("headless extension adapter", () => {
           agentId: agent.id,
           cachedAgent: agent,
           conversationId: "default",
-          extensionEventEmitter: adapter.eventEmitter,
+          extensionEvents: adapter.events,
         });
       const clientToolNames =
         prepared.preparedToolContext.preparedToolContext.clientTools.map(
@@ -313,7 +313,7 @@ describe("headless extension adapter", () => {
           agentId: agent.id,
           cachedAgent: agent,
           conversationId: "default",
-          extensionEventEmitter: adapter.eventEmitter,
+          extensionEvents: adapter.events,
         });
 
       const result = await executeTool(
@@ -335,7 +335,7 @@ describe("headless extension adapter", () => {
     }
   });
 
-  test("uses the captured adapter emitter for tool_start", async () => {
+  test("uses the captured adapter events for tool_start", async () => {
     const root = mkdtempSync(
       path.join(tmpdir(), "letta-headless-tool-start-captured-"),
     );
@@ -397,7 +397,7 @@ describe("headless extension adapter", () => {
           agentId: agent.id,
           cachedAgent: agent,
           conversationId: "default",
-          extensionEventEmitter: firstAdapter.eventEmitter,
+          extensionEvents: firstAdapter.events,
         });
 
       secondAdapter = createHeadlessExtensionAdapter({

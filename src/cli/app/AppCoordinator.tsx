@@ -78,6 +78,7 @@ import {
 } from "@/cli/helpers/context-tracker";
 import {
   generateConversationTitleFromFork,
+  getConversationTitleSettings,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
@@ -1135,13 +1136,9 @@ export function App({
       }
 
       const extensionAdapter = extensionAdapterRef.current;
-      if (
-        extensionAdapter &&
-        !extensionAdapter.isLoading &&
-        extensionAdapter.hasExtensionSources
-      ) {
+      if (extensionAdapter) {
         try {
-          await extensionAdapter.emitEvent("conversation_close", {
+          await extensionAdapter.events.emit("conversation_close", {
             agentId: agentIdRef.current ?? null,
             conversationId: conversationIdRef.current ?? null,
             durationMs,
@@ -1218,7 +1215,7 @@ export function App({
 
     // Heuristic-only when the experiment is off, on local backends, or for
     // the agent-direct "default" conversation (which can't be forked safely).
-    if (!experimentManager.isEnabled("conversation_titles")) {
+    if (!getConversationTitleSettings().enabled) {
       return fallback;
     }
     if (getBackend().capabilities.localModelCatalog) {
@@ -1582,7 +1579,7 @@ export function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
-          extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
+          extensionEvents: extensionAdapterRef.current?.events,
         });
       }
 
@@ -1590,7 +1587,7 @@ export function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
-          extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
+          extensionEvents: extensionAdapterRef.current?.events,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -1599,7 +1596,7 @@ export function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
-        extensionEventEmitter: extensionAdapterRef.current?.eventEmitter,
+        extensionEvents: extensionAdapterRef.current?.events,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });
@@ -2319,7 +2316,7 @@ export function App({
     if (!extensionAdapter.hasExtensionSources) return;
 
     sessionExtensionStartAttemptedRef.current = true;
-    void extensionAdapter.emitEvent("conversation_open", {
+    void extensionAdapter.events.emit("conversation_open", {
       agentId,
       agentName: agentName ?? null,
       conversationId: conversationIdRef.current ?? null,

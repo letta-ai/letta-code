@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { readUtf8TextStrict } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation.js";
 
 const MAX_LINE_LENGTH = 500;
@@ -81,7 +81,7 @@ async function readSliceMode(
   offset: number,
   limit: number,
 ): Promise<string[]> {
-  const content = await fs.readFile(filePath, "utf8");
+  const content = await readUtf8TextStrict(filePath);
   const allLines = content.split(/\r?\n/);
 
   const collected: string[] = [];
@@ -127,7 +127,7 @@ async function readIndentationMode(
   }
 
   // Read and parse all lines
-  const content = await fs.readFile(filePath, "utf8");
+  const content = await readUtf8TextStrict(filePath);
   const rawLines = content.split(/\r?\n/);
 
   if (rawLines.length === 0 || anchorLine > rawLines.length) {

@@ -64,6 +64,8 @@ type TaskRunResult = {
   success: boolean;
   error?: string;
   totalTokens?: number;
+  stepCount?: number;
+  durationMs?: number;
 };
 
 export interface SpawnBackgroundSubagentTaskArgs {
@@ -118,6 +120,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
     error?: string;
     agentId?: string;
     conversationId?: string;
+    stepCount?: number;
+    durationMs?: number;
   }) => void | Promise<void>;
   /**
    * Optional dependency overrides for tests.
@@ -426,6 +430,8 @@ export function spawnBackgroundSubagentTask(
           error: result.error,
           agentId: result.agentId,
           conversationId: result.conversationId,
+          stepCount: result.stepCount,
+          durationMs: result.durationMs,
         });
       } catch (error) {
         const errorMessage =

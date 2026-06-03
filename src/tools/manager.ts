@@ -20,7 +20,7 @@ import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
 import {
-  type ExtensionEventEmitter,
+  type ExtensionEvents,
   emitExtensionEvent,
 } from "@/extensions/event-emitter";
 import {
@@ -361,7 +361,10 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Read",
   "Skill",
   "Task",
-  "TodoWrite",
+  "TaskCreate",
+  "TaskGet",
+  "TaskList",
+  "TaskUpdate",
   "Write",
 ];
 
@@ -452,6 +455,10 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   ReadLSP: { requiresApproval: false },
   Skill: { requiresApproval: false },
   Task: { requiresApproval: true },
+  TaskCreate: { requiresApproval: false },
+  TaskGet: { requiresApproval: false },
+  TaskList: { requiresApproval: false },
+  TaskUpdate: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
   shell_command: { requiresApproval: true },
@@ -580,7 +587,7 @@ type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
-  extensionEventEmitter?: ExtensionEventEmitter;
+  extensionEvents?: ExtensionEvents;
   extensionTools: Map<string, ExtensionToolDefinition>;
   workingDirectory: string;
   runtimeContext: RuntimeContextSnapshot;
@@ -1003,14 +1010,14 @@ function capturePreparedToolExecutionContext(
     toolRegistry: ToolRegistry;
     externalTools: Map<string, ExternalToolDefinition>;
     externalExecutor?: ExternalToolExecutor;
-    extensionEventEmitter?: ExtensionEventEmitter;
+    extensionEvents?: ExtensionEvents;
     extensionTools: Map<string, ExtensionToolDefinition>;
   },
   options?: {
     clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
-    extensionEventEmitter?: ExtensionEventEmitter;
+    extensionEvents?: ExtensionEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
@@ -1030,8 +1037,7 @@ function capturePreparedToolExecutionContext(
       options?.clientToolAllowlist,
     ),
     externalExecutor: snapshot.externalExecutor,
-    extensionEventEmitter:
-      options?.extensionEventEmitter ?? snapshot.extensionEventEmitter,
+    extensionEvents: options?.extensionEvents ?? snapshot.extensionEvents,
     extensionTools: filterExtensionToolsByClientAllowlist(
       snapshot.extensionTools,
       options?.clientToolAllowlist,
@@ -1086,7 +1092,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: ChannelTurnSource[];
-  extensionEventEmitter?: ExtensionEventEmitter;
+  extensionEvents?: ExtensionEvents;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -1099,7 +1105,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEventEmitter: options?.extensionEventEmitter,
+      extensionEvents: options?.extensionEvents,
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
@@ -1114,7 +1120,7 @@ export async function prepareToolExecutionContextForSpecificTools(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
-    extensionEventEmitter?: ExtensionEventEmitter;
+    extensionEvents?: ExtensionEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1127,7 +1133,7 @@ export async function prepareToolExecutionContextForSpecificTools(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEventEmitter: options?.extensionEventEmitter,
+      extensionEvents: options?.extensionEvents,
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
@@ -1144,7 +1150,7 @@ export async function prepareToolExecutionContextForModel(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
-    extensionEventEmitter?: ExtensionEventEmitter;
+    extensionEvents?: ExtensionEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1157,7 +1163,7 @@ export async function prepareToolExecutionContextForModel(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEventEmitter: options?.extensionEventEmitter,
+      extensionEvents: options?.extensionEvents,
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
@@ -1917,7 +1923,7 @@ function isToolStartArgs(value: unknown): value is ToolArgs {
 
 async function emitToolStartEvent(options: {
   args: ToolArgs;
-  eventEmitter?: ExtensionEventEmitter;
+  events?: ExtensionEvents;
   executionScope: RuntimeContextSnapshot;
   toolCallId?: string;
   toolName: string;
@@ -1931,7 +1937,7 @@ async function emitToolStartEvent(options: {
   };
 
   try {
-    await emitExtensionEvent(options.eventEmitter, "tool_start", event);
+    await emitExtensionEvent(options.events, "tool_start", event);
   } catch (error) {
     debugLog("extensions", "tool_start event failed", error);
     return options.args;
@@ -2170,7 +2176,7 @@ export async function executeTool(
     context?.externalExecutor ?? getExternalToolExecutor();
   const activeExtensionTools =
     context?.extensionTools ?? getAvailableExtensionToolsRegistry();
-  const extensionEventEmitter = context?.extensionEventEmitter;
+  const extensionEvents = context?.extensionEvents;
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
         workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
@@ -2195,7 +2201,7 @@ export async function executeTool(
     }
     const eventArgs = await emitToolStartEvent({
       args,
-      eventEmitter: extensionEventEmitter,
+      events: extensionEvents,
       executionScope,
       toolCallId: options?.toolCallId,
       toolName: name,
@@ -2219,7 +2225,7 @@ export async function executeTool(
   if (activeExternalTools.has(name)) {
     const eventArgs = await emitToolStartEvent({
       args,
-      eventEmitter: extensionEventEmitter,
+      events: extensionEvents,
       executionScope,
       toolCallId: options?.toolCallId,
       toolName: name,
@@ -2260,7 +2266,7 @@ export async function executeTool(
 
   args = await emitToolStartEvent({
     args,
-    eventEmitter: extensionEventEmitter,
+    events: extensionEvents,
     executionScope,
     toolCallId: options?.toolCallId,
     toolName: internalName,

@@ -210,7 +210,7 @@ describe("extension adapter", () => {
       expect(adapter.getSnapshot().registry.sources).toEqual([]);
 
       await adapter.reload();
-      const result = await adapter.emitEvent("conversation_open", {
+      const result = await adapter.events.emit("conversation_open", {
         agentId: "agent-1",
         agentName: "Amelia",
         conversationId: "conversation-1",
@@ -284,6 +284,15 @@ describe("extension adapter", () => {
       });
       expect(adapter.getSnapshot()).toBe(adapter.getSnapshot());
 
+      const loadingResult = await adapter.events.emit("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "startup",
+      });
+      expect(loadingResult.handlerCount).toBe(0);
+      expect(testGlobal.__lettaAdapterEvents).toEqual([]);
+
       await adapter.reload();
       adapter.updateContext(createExtensionContext("Updated Agent"));
 
@@ -293,7 +302,7 @@ describe("extension adapter", () => {
       });
       expect(adapter.getSnapshot().registry.loadedPaths).toHaveLength(1);
 
-      await adapter.emitEvent("conversation_open", {
+      await adapter.events.emit("conversation_open", {
         agentId: "agent-1",
         agentName: "Updated Agent",
         conversationId: "conversation-1",

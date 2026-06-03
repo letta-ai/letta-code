@@ -1,4 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { delimiter, isAbsolute, join } from "node:path";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
@@ -391,6 +393,73 @@ function buildExecLaunchers(args: ExecCommandArgs): string[][] {
   });
 }
 
+function pathEnvValue(env: NodeJS.ProcessEnv): string {
+  return env.PATH ?? env.Path ?? env.path ?? "";
+}
+
+function pathExtValue(env: NodeJS.ProcessEnv): string {
+  return env.PATHEXT ?? env.PathExt ?? ".COM;.EXE;.BAT;.CMD";
+}
+
+function hasPathSeparator(executable: string): boolean {
+  return executable.includes("/") || executable.includes("\\");
+}
+
+function hasFileExtension(executable: string): boolean {
+  const basename = executable.split(/[\\/]/).pop() ?? executable;
+  return /\.[^.]+$/.test(basename);
+}
+
+function resolveExecutablePath(
+  executable: string,
+  env: NodeJS.ProcessEnv,
+): string | null {
+  if (isAbsolute(executable) || hasPathSeparator(executable)) {
+    return existsSync(executable) ? executable : null;
+  }
+
+  const pathDelimiter = process.platform === "win32" ? ";" : delimiter;
+  const pathEntries = pathEnvValue(env).split(pathDelimiter).filter(Boolean);
+  const executableNames = [executable];
+  if (process.platform === "win32" && !hasFileExtension(executable)) {
+    for (const extension of pathExtValue(env).split(";").filter(Boolean)) {
+      executableNames.push(`${executable}${extension}`);
+    }
+  }
+
+  for (const entry of pathEntries) {
+    for (const name of executableNames) {
+      const candidate = join(entry, name);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+function selectExecLauncher(
+  launchers: string[][],
+  env: NodeJS.ProcessEnv,
+): string[] | undefined {
+  if (process.platform !== "win32") {
+    return launchers[0];
+  }
+
+  for (const launcher of launchers) {
+    const executable = launcher[0];
+    if (!executable) continue;
+
+    const resolvedExecutable = resolveExecutablePath(executable, env);
+    if (resolvedExecutable) {
+      return [resolvedExecutable, ...launcher.slice(1)];
+    }
+  }
+
+  return launchers.at(-1);
+}
+
 function buildPtyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   const ptyEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
@@ -644,7 +713,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
   const launchers = buildExecLaunchers(args);
-  const launcher = launchers[0];
+  const launcher = selectExecLauncher(launchers, env);
   if (!launcher) {
     throw new Error("Command must be a non-empty string");
   }

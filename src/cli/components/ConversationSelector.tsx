@@ -7,10 +7,15 @@ import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Backend, getBackend } from "@/backend";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/use-terminal-width";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
+import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { Text } from "./Text";
 
 // Horizontal line character (matches approval dialogs)
@@ -27,7 +32,7 @@ interface ConversationSelectorProps {
       messageCount: number;
     },
   ) => void;
-  onNewConversation: () => void;
+  onNewConversation?: () => void;
   onCancel: () => void;
 }
 
@@ -41,12 +46,29 @@ interface PreviewLine {
 interface EnrichedConversation {
   conversation: Conversation;
   previewLines: PreviewLine[] | null; // null = not yet loaded
+  searchPreview?: string;
   lastActiveAt: string | null; // Falls back to updated_at until enriched
   messageCount: number; // -1 = unknown/loading
   enriched: boolean; // Whether message data has been fetched
+  isPinned: boolean;
+  isPinnedLocal: boolean;
 }
 
-const DISPLAY_PAGE_SIZE = 3;
+function isPinShortcut(
+  input: string,
+  key: { ctrl?: boolean; meta?: boolean },
+): boolean {
+  if (key.ctrl) return false;
+
+  // macOS Option+P can arrive as literal glyphs when Option isn't Meta.
+  if (input === "π" || input === "∏") return true;
+
+  if (!key.meta) return false;
+  const normalizedInput = input.replaceAll("\u001b", "");
+  return normalizedInput === "p" || normalizedInput === "P";
+}
+
+const MAX_DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
 const ENRICH_MESSAGE_LIMIT = 20; // Same as original fetch limit
 
@@ -268,7 +290,24 @@ export function buildDefaultConversationEntry(
     lastActiveAt: stats.lastActiveAt,
     messageCount: stats.messageCount,
     enriched: true,
+    isPinned: false,
+    isPinnedLocal: false,
   };
+}
+
+export function mergePinnedConversationRecords(
+  listedConversations: Conversation[],
+  pinnedConversations: Conversation[],
+): Conversation[] {
+  const listedIds = new Set(
+    listedConversations.map((conversation) => conversation.id),
+  );
+  return [
+    ...pinnedConversations.filter(
+      (conversation) => !listedIds.has(conversation.id),
+    ),
+    ...listedConversations,
+  ];
 }
 
 export function ConversationSelector({
@@ -276,7 +315,6 @@ export function ConversationSelector({
   agentName,
   currentConversationId,
   onSelect,
-  onNewConversation,
   onCancel,
 }: ConversationSelectorProps) {
   const backendRef = useRef<Backend | null>(null);
@@ -295,11 +333,15 @@ export function ConversationSelector({
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [enriching, setEnriching] = useState(false);
+  const [, setEnriching] = useState(false);
 
   // Selection state
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [page, setPage] = useState(0);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    EnrichedConversation[] | null
+  >(null);
+  const [searching, setSearching] = useState(false);
 
   // Enrich a single conversation with message data, updating state in-place
   const enrichConversation = useCallback(
@@ -326,6 +368,20 @@ export function ConversationSelector({
               : c,
           ),
         );
+        setSearchResults(
+          (prev) =>
+            prev?.map((c) =>
+              c.conversation.id === convId
+                ? {
+                    ...c,
+                    previewLines: stats.previewLines,
+                    lastActiveAt: stats.lastActiveAt || c.lastActiveAt,
+                    messageCount: stats.messageCount,
+                    enriched: true,
+                  }
+                : c,
+            ) ?? null,
+        );
         return stats.messageCount;
       } catch {
         // Mark as enriched even on error so we don't retry
@@ -335,6 +391,14 @@ export function ConversationSelector({
               ? { ...c, previewLines: [], enriched: true }
               : c,
           ),
+        );
+        setSearchResults(
+          (prev) =>
+            prev?.map((c) =>
+              c.conversation.id === convId
+                ? { ...c, previewLines: [], enriched: true }
+                : c,
+            ) ?? null,
         );
         return -1;
       }
@@ -355,6 +419,14 @@ export function ConversationSelector({
 
       try {
         const backend = selectorBackend();
+
+        const pinnedRefs = !afterCursor
+          ? settingsManager.getMergedPinnedConversations(agentId)
+          : [];
+        const pinnedIdSet = new Set(pinnedRefs.map((p) => p.conversationId));
+        const localPinnedIdSet = new Set(
+          pinnedRefs.filter((p) => p.isLocal).map((p) => p.conversationId),
+        );
 
         // Phase 1: Fetch conversation list + default messages in parallel
         const conversationListPromise = backend.listConversations({
@@ -400,14 +472,54 @@ export function ConversationSelector({
           defaultPromise,
         ]);
 
+        const pinnedConversations = !afterCursor
+          ? (
+              await Promise.all(
+                pinnedRefs
+                  .filter(
+                    (pin) =>
+                      pin.conversationId !== "default" &&
+                      !result.some(
+                        (conversation) =>
+                          conversation.id === pin.conversationId,
+                      ),
+                  )
+                  .map(async (pin) => {
+                    try {
+                      const conversation = await backend.retrieveConversation(
+                        pin.conversationId,
+                      );
+                      return conversation.agent_id === agentId
+                        ? conversation
+                        : null;
+                    } catch {
+                      return null;
+                    }
+                  }),
+              )
+            ).filter(
+              (conversation): conversation is Conversation =>
+                conversation !== null,
+            )
+          : [];
+
+        const conversationRecords = mergePinnedConversationRecords(
+          result,
+          pinnedConversations,
+        );
+
         // Build unenriched conversation list using data already on the object
-        const unenrichedList: EnrichedConversation[] = result.map((conv) => ({
-          conversation: conv,
-          previewLines: null, // Not loaded yet
-          lastActiveAt: conv.updated_at ?? conv.created_at ?? null,
-          messageCount: -1, // Unknown until enriched
-          enriched: false,
-        }));
+        const unenrichedList: EnrichedConversation[] = conversationRecords.map(
+          (conv) => ({
+            conversation: conv,
+            previewLines: null, // Not loaded yet
+            lastActiveAt: conv.updated_at ?? conv.created_at ?? null,
+            messageCount: -1, // Unknown until enriched
+            enriched: false,
+            isPinned: pinnedIdSet.has(conv.id),
+            isPinnedLocal: localPinnedIdSet.has(conv.id),
+          }),
+        );
 
         // Don't filter yet — we'll remove empties after enrichment confirms messageCount
         const nonEmptyList = unenrichedList;
@@ -421,11 +533,38 @@ export function ConversationSelector({
         if (isLoadingMore) {
           setConversations((prev) => [...prev, ...nonEmptyList]);
         } else {
-          const allConversations = defaultConversation
-            ? [defaultConversation, ...nonEmptyList]
+          const initialConversations = defaultConversation
+            ? [
+                {
+                  ...defaultConversation,
+                  isPinned: pinnedIdSet.has("default"),
+                  isPinnedLocal: localPinnedIdSet.has("default"),
+                },
+                ...nonEmptyList,
+              ]
             : nonEmptyList;
+          const byId = new Map(
+            initialConversations.map((item) => [item.conversation.id, item]),
+          );
+          const defaultItem = byId.get("default");
+          const pinnedOrdered = pinnedRefs
+            .map((p) => byId.get(p.conversationId))
+            .filter(
+              (item): item is EnrichedConversation =>
+                item !== undefined && item.conversation.id !== "default",
+            );
+          const prioritizedIds = new Set([
+            ...(defaultItem ? [defaultItem.conversation.id] : []),
+            ...pinnedOrdered.map((item) => item.conversation.id),
+          ]);
+          const allConversations = [
+            ...(defaultItem ? [defaultItem] : []),
+            ...pinnedOrdered,
+            ...initialConversations.filter(
+              (item) => !prioritizedIds.has(item.conversation.id),
+            ),
+          ];
           setConversations(allConversations);
-          setPage(0);
           setSelectedIndex(0);
         }
         setCursor(newCursor);
@@ -439,10 +578,10 @@ export function ConversationSelector({
         }
 
         // Phase 2: enrich visible page first, then rest in background
-        setEnriching(true);
         const toEnrich = nonEmptyList.filter((c) => !c.enriched);
-        const firstPageItems = toEnrich.slice(0, DISPLAY_PAGE_SIZE);
-        const restItems = toEnrich.slice(DISPLAY_PAGE_SIZE);
+        setEnriching(toEnrich.length > 0);
+        const firstPageItems = toEnrich.slice(0, MAX_DISPLAY_PAGE_SIZE);
+        const restItems = toEnrich.slice(MAX_DISPLAY_PAGE_SIZE);
 
         // Enrich first page in parallel
         const firstPageResults = await Promise.all(
@@ -478,6 +617,7 @@ export function ConversationSelector({
         setError(err instanceof Error ? err.message : String(err));
         setLoading(false);
         setLoadingMore(false);
+        setEnriching(false);
       }
     },
     [agentId, enrichConversation, selectorBackend],
@@ -488,37 +628,173 @@ export function ConversationSelector({
     loadConversations();
   }, [loadConversations]);
 
-  // Re-enrich when page changes (prioritize newly visible unenriched items)
+  const terminalRows = useTerminalRows();
+  const listPageSize = Math.max(
+    1,
+    Math.min(MAX_DISPLAY_PAGE_SIZE, Math.floor((terminalRows - 11) / 4)),
+  );
+
+  useEffect(() => {
+    const query = searchInput.trim();
+    if (!query) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timeout = setTimeout(() => {
+      (async () => {
+        const backend = backendRef.current ?? selectorBackend();
+        backendRef.current = backend;
+        setSearching(true);
+        try {
+          const page = await backend.listConversations({
+            agent_id: agentId,
+            limit: 20,
+            order: "desc",
+            order_by: "last_run_completion",
+            summary_search: query,
+          });
+          const results = paginatedItems<Conversation>(page);
+          const seenConversationIds = new Set<string>();
+          const dedupedResults = results.filter((conversation) => {
+            const conversationId = conversation.id;
+            if (seenConversationIds.has(conversationId)) return false;
+            seenConversationIds.add(conversationId);
+            return true;
+          });
+          if (cancelled) return;
+          setSearchResults(
+            dedupedResults.map((conversation) => ({
+              conversation,
+              preview: null,
+              previewLines: null,
+              searchPreview: conversation.summary || undefined,
+              lastActiveAt:
+                conversation.updated_at ?? conversation.created_at ?? null,
+              messageCount: -1,
+              enriched: false,
+              isPinned: settingsManager
+                .getMergedPinnedConversations(agentId)
+                .some((pinned) => pinned.conversationId === conversation.id),
+              isPinnedLocal: settingsManager
+                .getLocalPinnedConversations(agentId)
+                .includes(conversation.id),
+            })),
+          );
+        } catch {
+          if (!cancelled) {
+            setSearchResults(null);
+          }
+        } finally {
+          if (!cancelled) {
+            setSearching(false);
+          }
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [agentId, searchInput, selectorBackend]);
+
+  const normalizedSearch = searchInput.trim().toLowerCase();
+  const locallyFilteredConversations = normalizedSearch
+    ? conversations.filter((item) => {
+        const summary = item.conversation.summary?.toLowerCase() ?? "";
+        const searchPreview = item.searchPreview?.toLowerCase() ?? "";
+        const id = item.conversation.id.toLowerCase();
+        return (
+          summary.includes(normalizedSearch) ||
+          searchPreview.includes(normalizedSearch) ||
+          id.includes(normalizedSearch)
+        );
+      })
+    : conversations;
+  const filteredConversations = normalizedSearch
+    ? (() => {
+        const merged: EnrichedConversation[] = [];
+        const seenConversationIds = new Set<string>();
+        for (const item of searchResults ?? []) {
+          merged.push(item);
+          seenConversationIds.add(item.conversation.id);
+        }
+        for (const item of locallyFilteredConversations) {
+          if (!seenConversationIds.has(item.conversation.id)) {
+            merged.push(item);
+          }
+        }
+        return merged;
+      })()
+    : conversations;
+
+  // Sliding window calculations (same interaction model as /search).
+  const startIndex = Math.max(
+    0,
+    Math.min(
+      selectedIndex - Math.floor(listPageSize / 2),
+      filteredConversations.length - listPageSize,
+    ),
+  );
+  const visibleConversations = filteredConversations.slice(
+    startIndex,
+    startIndex + listPageSize,
+  );
+
+  // Re-enrich when visible conversations change (including search results).
   useEffect(() => {
     const backend = backendRef.current;
     if (!backend || loading) return;
 
-    const visibleItems = conversations.slice(
-      page * DISPLAY_PAGE_SIZE,
-      (page + 1) * DISPLAY_PAGE_SIZE,
-    );
-    const unenriched = visibleItems.filter((c) => !c.enriched);
+    const unenriched = visibleConversations.filter((c) => !c.enriched);
     if (unenriched.length === 0) return;
 
     for (const item of unenriched) {
       enrichConversation(backend, item.conversation.id);
     }
-  }, [page, loading, conversations, enrichConversation]);
-
-  // Pagination calculations
-  const totalPages = Math.ceil(conversations.length / DISPLAY_PAGE_SIZE);
-  const startIndex = page * DISPLAY_PAGE_SIZE;
-  const pageConversations = conversations.slice(
-    startIndex,
-    startIndex + DISPLAY_PAGE_SIZE,
-  );
-  const canGoNext = page < totalPages - 1 || hasMore;
+  }, [loading, visibleConversations, enrichConversation]);
 
   // Fetch more when needed
   const fetchMore = useCallback(async () => {
     if (loadingMore || !hasMore || !cursor) return;
     await loadConversations(cursor);
   }, [loadingMore, hasMore, cursor, loadConversations]);
+
+  const togglePinnedConversation = useCallback(
+    (selected: EnrichedConversation | undefined) => {
+      if (!selected?.conversation.id) return;
+      const conversationId = selected.conversation.id;
+      if (selected.isPinned) {
+        settingsManager.unpinConversationBoth(agentId, conversationId);
+      } else {
+        settingsManager.pinConversationGlobal(agentId, conversationId);
+      }
+      const updatePinState = (item: EnrichedConversation) =>
+        item.conversation.id === conversationId
+          ? {
+              ...item,
+              isPinned: !selected.isPinned,
+              isPinnedLocal: false,
+            }
+          : item;
+      const sortPinnedFirst = (
+        a: EnrichedConversation,
+        b: EnrichedConversation,
+      ) => {
+        if (a.conversation.id === "default") return -1;
+        if (b.conversation.id === "default") return 1;
+        return Number(b.isPinned) - Number(a.isPinned);
+      };
+      setConversations((prev) =>
+        prev.map(updatePinState).sort(sortPinnedFirst),
+      );
+      setSearchResults((prev) => prev?.map(updatePinState) ?? null);
+    },
+    [agentId],
+  );
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -533,10 +809,17 @@ export function ConversationSelector({
       setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
       setSelectedIndex((prev) =>
-        Math.min(pageConversations.length - 1, prev + 1),
+        Math.max(0, Math.min(filteredConversations.length - 1, prev + 1)),
       );
+      if (
+        !normalizedSearch &&
+        hasMore &&
+        selectedIndex >= filteredConversations.length - 2
+      ) {
+        fetchMore();
+      }
     } else if (key.return) {
-      const selected = pageConversations[selectedIndex];
+      const selected = filteredConversations[selectedIndex];
       if (selected?.conversation.id) {
         onSelect(selected.conversation.id, {
           summary: selected.conversation.summary ?? undefined,
@@ -544,31 +827,16 @@ export function ConversationSelector({
         });
       }
     } else if (key.escape) {
+      if (searchInput) {
+        setSearchInput("");
+        return;
+      }
       onCancel();
-    } else if (input === "n" || input === "N") {
-      // New conversation
-      onNewConversation();
-    } else if (key.leftArrow) {
-      // Previous page
-      if (page > 0) {
-        setPage((prev) => prev - 1);
-        setSelectedIndex(0);
-      }
-    } else if (key.rightArrow) {
-      // Next page
-      if (canGoNext) {
-        const nextPageIndex = page + 1;
-        const nextStartIndex = nextPageIndex * DISPLAY_PAGE_SIZE;
-
-        if (nextStartIndex >= conversations.length && hasMore) {
-          fetchMore();
-        }
-
-        if (nextStartIndex < conversations.length) {
-          setPage(nextPageIndex);
-          setSelectedIndex(0);
-        }
-      }
+    } else if (isPinShortcut(input, key)) {
+      togglePinnedConversation(filteredConversations[selectedIndex]);
+    } else if (key.leftArrow || key.rightArrow) {
+      // Let the search input own horizontal cursor movement.
+      return;
     }
   });
 
@@ -585,6 +853,7 @@ export function ConversationSelector({
       messageCount,
     } = enrichedConv;
     const isCurrent = conv.id === currentConversationId;
+    const isPinned = enrichedConv.isPinned;
 
     const timestampText = formatConversationTimestampText({
       lastActiveAt,
@@ -599,6 +868,16 @@ export function ConversationSelector({
 
       // Still loading message data
       if (previewLines === null) {
+        if (enrichedConv.searchPreview) {
+          return (
+            <Box flexDirection="row" marginLeft={2}>
+              {bracket}
+              <Text dimColor italic>
+                {enrichedConv.searchPreview}
+              </Text>
+            </Box>
+          );
+        }
         return (
           <Box flexDirection="row" marginLeft={2}>
             {bracket}
@@ -666,6 +945,7 @@ export function ConversationSelector({
             {isSelected ? ">" : " "}
           </Text>
           <Text> </Text>
+          {isPinned && <Text>📌 </Text>}
           <Text
             bold={isSelected}
             color={isSelected ? colors.selector.itemHighlighted : undefined}
@@ -709,6 +989,18 @@ export function ConversationSelector({
         </Text>
       </Box>
 
+      <Box marginBottom={1}>
+        <Text dimColor>Search: </Text>
+        <PasteAwareTextInput
+          value={searchInput}
+          onChange={(value) => {
+            setSearchInput(value.replace(/[π∏]/g, ""));
+            setSelectedIndex(0);
+          }}
+          placeholder="search conversation titles"
+        />
+      </Box>
+
       {/* Error state */}
       {error && (
         <Box flexDirection="column">
@@ -724,30 +1016,36 @@ export function ConversationSelector({
         </Box>
       )}
 
-      {/* Enriching indicator */}
-      {!loading && enriching && (
+      {/* Search indicator */}
+      {!loading && searching && (
         <Box marginBottom={1}>
           <Text dimColor italic>
-            Loading previews...
+            Searching conversations...
           </Text>
         </Box>
       )}
 
       {/* Empty state */}
-      {!loading && !error && conversations.length === 0 && (
+      {!loading && !error && filteredConversations.length === 0 && (
         <Box flexDirection="column">
           <Text dimColor>
-            No conversations for {agentName || agentId.slice(0, 12)}
+            {searchInput
+              ? "No matching conversations"
+              : `No conversations for ${agentName || agentId.slice(0, 12)}`}
           </Text>
-          <Text dimColor>Press N to start a new conversation</Text>
+          <Text dimColor>Press Esc to cancel</Text>
         </Box>
       )}
 
       {/* Conversation list */}
-      {!loading && !error && conversations.length > 0 && (
+      {!loading && !error && filteredConversations.length > 0 && (
         <Box flexDirection="column">
-          {pageConversations.map((conv, index) =>
-            renderConversationItem(conv, index, index === selectedIndex),
+          {visibleConversations.map((conv, index) =>
+            renderConversationItem(
+              conv,
+              index,
+              startIndex + index === selectedIndex,
+            ),
           )}
         </Box>
       )}
@@ -755,12 +1053,12 @@ export function ConversationSelector({
       {/* Footer */}
       {!loading &&
         !error &&
-        conversations.length > 0 &&
+        filteredConversations.length > 0 &&
         (() => {
           const footerWidth = Math.max(0, terminalWidth - 2);
-          const pageText = `Page ${page + 1}${hasMore ? "+" : `/${totalPages || 1}`}${loadingMore ? " (loading...)" : ""}`;
+          const pageText = `Showing ${startIndex + 1}-${Math.min(startIndex + visibleConversations.length, filteredConversations.length)} of ${filteredConversations.length}${!normalizedSearch && hasMore ? "+" : ""}${loadingMore ? " (loading...)" : ""}`;
           const hintsText =
-            "Enter select · ↑↓ navigate · ←→ page · N new · Esc cancel";
+            "Enter select · ↑↓ navigate · Alt+P pin/unpin · Esc clear/cancel";
 
           return (
             <Box flexDirection="column">

@@ -53,6 +53,10 @@ function getPackageNodeModulesDir(): string | undefined {
   }
 }
 
+function shellPathDelimiter(): string {
+  return process.platform === "win32" ? ";" : path.delimiter;
+}
+
 interface LettaInvocation {
   command: string;
   args: string[];
@@ -319,8 +323,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (pathPrefixes.length > 0) {
     const existingPath = env[pathKey] || "";
     env[pathKey] = existingPath
-      ? `${pathPrefixes.join(path.delimiter)}${path.delimiter}${existingPath}`
-      : pathPrefixes.join(path.delimiter);
+      ? `${pathPrefixes.join(shellPathDelimiter())}${shellPathDelimiter()}${existingPath}`
+      : pathPrefixes.join(shellPathDelimiter());
   }
 
   env.USER_CWD = getCurrentWorkingDirectory();
@@ -429,7 +433,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (nodeModulesDir) {
     const currentNodePath = env.NODE_PATH || "";
     env.NODE_PATH = currentNodePath
-      ? `${nodeModulesDir}${path.delimiter}${currentNodePath}`
+      ? `${nodeModulesDir}${shellPathDelimiter()}${currentNodePath}`
       : nodeModulesDir;
   }
 

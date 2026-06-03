@@ -1637,7 +1637,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.emitEvent("conversation_open", {
+            void extensionAdapter.events.emit("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -1735,7 +1735,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.emitEvent("conversation_open", {
+            void extensionAdapter.events.emit("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: forked.id,
@@ -1851,7 +1851,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.emitEvent("conversation_open", {
+            void extensionAdapter.events.emit("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -2378,6 +2378,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         const profileCommandResult = await handleProfileCommand(msg, trimmed, {
           agentId,
           agentName,
+          conversationId,
           buffersRef,
           commandRunner,
           handleAgentSelect,
@@ -2938,6 +2939,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               onCompletionMessage: (completionMessage) => {
                 appendTaskNotificationEvents([completionMessage]);
               },
+              feedbackContext: {
+                parentAgentName: agentName,
+                parentAgentDescription: agentDescription,
+                surface: "letta_code_tui",
+                model: currentModelId,
+              },
             });
 
             if (!result.launched) {
@@ -3362,6 +3369,12 @@ ${SYSTEM_REMINDER_CLOSE}
             queuedSystemPromptRecompileByConversationRef.current,
           onCompletionMessage: (completionMessage) => {
             appendTaskNotificationEvents([completionMessage]);
+          },
+          feedbackContext: {
+            parentAgentName: agentName,
+            parentAgentDescription: agentDescription,
+            surface: "letta_code_tui",
+            model: currentModelId,
           },
         });
         return result.launched;

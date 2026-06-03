@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation.js";
 
 interface ApplyPatchArgs {
@@ -77,7 +78,7 @@ export async function apply_patch(
       }
 
       const content = op.contentLines.map((line) => `${line}\n`).join("");
-      await fs.writeFile(targetPath, content, "utf8");
+      await writeUtf8Text(targetPath, content);
       affected.added.push(op.path);
       continue;
     }
@@ -108,7 +109,7 @@ export async function apply_patch(
       }
 
       try {
-        await fs.writeFile(destinationPath, newContents, "utf8");
+        await writeUtf8Text(destinationPath, newContents);
       } catch {
         throw new Error(`Failed to write file ${op.toPath}`);
       }
@@ -122,7 +123,7 @@ export async function apply_patch(
       affected.modified.push(op.toPath);
     } else {
       try {
-        await fs.writeFile(sourcePath, newContents, "utf8");
+        await writeUtf8Text(sourcePath, newContents);
       } catch {
         throw new Error(`Failed to write file ${op.fromPath}`);
       }
@@ -415,7 +416,7 @@ async function deriveNewContentsFromChunks(
 ): Promise<string> {
   let originalContents = "";
   try {
-    originalContents = await fs.readFile(absolutePath, "utf8");
+    originalContents = await readUtf8TextStrict(absolutePath);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
