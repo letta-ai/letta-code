@@ -191,9 +191,7 @@ export async function emitHeadlessConversationOpen(options: {
   reason: ExtensionConversationOpenReason;
   adapter: ExtensionAdapter;
 }): Promise<void> {
-  if (!options.adapter.getSnapshot().hasExtensionSources) return;
-
-  await options.adapter.emitEvent("conversation_open", {
+  await options.adapter.events.emit("conversation_open", {
     agentId: options.agent.id,
     agentName: options.agent.name ?? null,
     conversationId: options.conversationId,
@@ -207,9 +205,7 @@ export async function emitHeadlessConversationClose(options: {
   durationMs: number | null;
   adapter: ExtensionAdapter;
 }): Promise<void> {
-  if (!options.adapter.getSnapshot().hasExtensionSources) return;
-
-  await options.adapter.emitEvent("conversation_close", {
+  await options.adapter.events.emit("conversation_close", {
     agentId: options.agent.id,
     conversationId: options.conversationId,
     durationMs: options.durationMs,

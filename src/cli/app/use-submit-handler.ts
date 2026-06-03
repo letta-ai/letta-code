@@ -1635,7 +1635,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.emitEvent("conversation_open", {
+            void extensionAdapter.events.emit("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -1733,7 +1733,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.emitEvent("conversation_open", {
+            void extensionAdapter.events.emit("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: forked.id,
@@ -1849,7 +1849,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.emitEvent("conversation_open", {
+            void extensionAdapter.events.emit("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,

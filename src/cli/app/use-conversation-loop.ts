@@ -630,11 +630,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       }
       processingConversationRef.current += 1;
 
-      if (
-        hasUserMessageInput(currentInput) &&
-        extensionAdapter.hasExtensionSources &&
-        !extensionAdapter.isLoading
-      ) {
+      if (hasUserMessageInput(currentInput)) {
         const originalInput = currentInput;
         try {
           const turnStartEvent = {
@@ -642,7 +638,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             conversationId: conversationIdRef.current ?? null,
             input: currentInput,
           };
-          await extensionAdapter.emitEvent("turn_start", turnStartEvent);
+          await extensionAdapter.events.emit("turn_start", turnStartEvent);
           currentInput = isTurnInputArray(turnStartEvent.input)
             ? turnStartEvent.input
             : originalInput;
