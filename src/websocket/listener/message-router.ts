@@ -588,7 +588,9 @@ export function createListenerMessageHandler(
         runDetachedListenerTask("execute_command", async () => {
           await handleExecuteCommand(parsed, socket, scopedRuntime, {
             onStatusChange: opts.onStatusChange,
+            onLog: opts.onLog,
             connectionId: opts.connectionId,
+            connectionName: opts.connectionName,
           });
         });
         return;
