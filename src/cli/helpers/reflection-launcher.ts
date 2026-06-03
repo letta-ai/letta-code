@@ -15,6 +15,9 @@ import { debugLog, debugWarn } from "@/utils/debug";
 
 export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
+/** Max background wait for the reflection subagent's agent ID before emitting `reflection_start` (previously 1s inline, timed out ~100% of the time). */
+export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
+
 export type ReflectionLaunchTriggerSource =
   | "manual"
   | Exclude<ReflectionTrigger, "off">;
@@ -143,6 +146,17 @@ export async function launchReflectionSubagent(
 
     const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
       await import("@/tools/impl/task");
+
+    // Defer `reflection_start` until the agent ID resolves (background, bounded by REFLECTION_AGENT_ID_WAIT_MS).
+    const emitReflectionStart = (resolvedAgentId: string | null) => {
+      telemetry.trackReflectionStart(triggerSource, {
+        subagentId: resolvedAgentId ?? undefined,
+        conversationId,
+        startMessageId: autoPayload.startMessageId,
+        endMessageId: autoPayload.endMessageId,
+      });
+    };
+
     const { subagentId } = spawnBackgroundSubagentTask({
       subagentType: "reflection",
       prompt: reflectionPrompt,
@@ -188,23 +202,30 @@ export async function launchReflectionSubagent(
         });
       },
     });
-    const reflectionAgentId = await waitForBackgroundSubagentAgentId(
+    // Fire-and-forget: emit `reflection_start` when the agent ID resolves or after timeout.
+    void waitForBackgroundSubagentAgentId(
       subagentId,
-      1000,
-    );
-    telemetry.trackReflectionStart(triggerSource, {
-      subagentId: reflectionAgentId ?? undefined,
-      conversationId,
-      startMessageId: autoPayload.startMessageId,
-      endMessageId: autoPayload.endMessageId,
-    });
+      REFLECTION_AGENT_ID_WAIT_MS,
+    )
+      .then((resolvedAgentId) => {
+        emitReflectionStart(resolvedAgentId);
+      })
+      .catch((err) => {
+        // Worst case — still emit with no subagent_id so we don't lose the event.
+        debugWarn(
+          "memory",
+          `Failed waiting for reflection agent ID: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        emitReflectionStart(null);
+      });
 
     debugLog("memory", `Launched reflection subagent (${triggerSource})`);
     return {
       launched: true,
       payloadPath: autoPayload.payloadPath,
       subagentId,
-      reflectionAgentId: reflectionAgentId ?? undefined,
       startMessageId: autoPayload.startMessageId,
       endMessageId: autoPayload.endMessageId,
     };
