@@ -18,7 +18,7 @@ export const releaseNotes: Record<string, string> = {
   // Add release notes for new versions here.
   // Keep concise - 3-4 bullet points max.
   // Use → for bullets to match the command hints below.
-  "0.27.0": `🧠 **Updated system prompt available**
+  "0.27.0": `🧠 **Updated default system prompt available**
 → Improves Letta Code's understanding of time and memory retrieval
 → Run **/system** to upgrade your agent to the latest prompt`,
   "0.25.7": `🔐 **Permissions update in Letta Code 0.25.7**
