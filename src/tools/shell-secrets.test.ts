@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bash } from "@/tools/impl/bash";
 import { run_shell_command } from "@/tools/impl/run-shell-command-gemini";
 import { shell_command } from "@/tools/impl/shell-command.js";
-import { buildPowerShellCommand } from "@/tools/impl/shell-launchers";
+import {
+  buildPowerShellCommand,
+  POWERSHELL_UTF8_OUTPUT_PREFIX,
+} from "@/tools/impl/shell-launchers";
 import {
   executeTool,
   prepareToolExecutionContextForSpecificTools,
@@ -122,6 +125,7 @@ describe("shell secret execution", () => {
 
     expect(command).toContain("$API_KEY = $env:API_KEY");
     expect(command).not.toContain("BAD;Write-Output pwned");
+    expect(command.startsWith(POWERSHELL_UTF8_OUTPUT_PREFIX)).toBe(true);
     expect(command.endsWith("Write-Output $API_KEY")).toBe(true);
   });
 
