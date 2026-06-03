@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import {
+  buildConversationSelectorHints,
   buildDefaultConversationEntry,
   formatConversationTimestampText,
   isConversationPinned,
@@ -75,6 +76,15 @@ describe("ConversationSelector timestamps", () => {
 });
 
 describe("ConversationSelector pinned conversations", () => {
+  test("hides the pin shortcut hint when default conversation is selected", () => {
+    expect(
+      buildConversationSelectorHints({ isSelectedDefaultConversation: true }),
+    ).not.toContain("Alt+P");
+    expect(
+      buildConversationSelectorHints({ isSelectedDefaultConversation: false }),
+    ).toContain("Alt+P pin/unpin");
+  });
+
   test("treats the default conversation as permanently pinned", () => {
     expect(
       isConversationPinned({
