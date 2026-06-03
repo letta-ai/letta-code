@@ -87,6 +87,41 @@ describe("drainStream stop reason", () => {
     ]);
   });
 
+  test("end_turn removes orphaned tool calls entirely (tool_call_message without approval_request or tool_return)", async () => {
+    // Simulate: server sends tool_call_message, then decides to end turn without
+    // sending approval_request_message or tool_return_message. This can happen if
+    // the model hits token limits or decides to stop mid-tool-call.
+    const fakeStream = {
+      controller: new AbortController(),
+      async *[Symbol.asyncIterator]() {
+        yield {
+          message_type: "tool_call_message",
+          id: "msg-orphan",
+          tool_call: {
+            tool_call_id: "tc-orphan",
+            name: "Bash",
+            arguments: '{"command":"ls"',
+          },
+        } as LettaStreamingResponse;
+        // Args incomplete, no approval_request, no tool_return — just end_turn
+        yield {
+          message_type: "stop_reason",
+          stop_reason: "end_turn",
+        } as LettaStreamingResponse;
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+
+    const buffers = createBuffers("agent-test");
+    const result = await drainStream(fakeStream, buffers, () => {});
+
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.sawStopReasonChunk).toBe(true);
+
+    // Tool call should be removed entirely, not shown as cancelled
+    expect(buffers.byId.has("tc-orphan")).toBe(false);
+    expect(buffers.order).not.toContain("tc-orphan");
+  });
+
   test("stream error cancels in-progress tool calls by default (skipCancelToolsOnError=false)", async () => {
     const buffers = createBuffers("agent-test");
     await drainStream(makeStreamWithToolCall("tc-1"), buffers, () => {});
