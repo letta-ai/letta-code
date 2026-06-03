@@ -77,6 +77,19 @@ const RESUME_PREVIEW_MESSAGE_TYPES: MessageType[] = [
   "assistant_message",
 ];
 
+export function isDefaultConversationId(conversationId: string): boolean {
+  return conversationId === "default";
+}
+
+export function isConversationPinned(params: {
+  conversationId: string;
+  pinnedIds: Set<string>;
+}): boolean {
+  return isDefaultConversationId(params.conversationId)
+    ? true
+    : params.pinnedIds.has(params.conversationId);
+}
+
 function paginatedItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
   return Array.isArray(value) ? value : value.getPaginatedItems();
 }
@@ -516,7 +529,10 @@ export function ConversationSelector({
             lastActiveAt: conv.updated_at ?? conv.created_at ?? null,
             messageCount: -1, // Unknown until enriched
             enriched: false,
-            isPinned: pinnedIdSet.has(conv.id),
+            isPinned: isConversationPinned({
+              conversationId: conv.id,
+              pinnedIds: pinnedIdSet,
+            }),
             isPinnedLocal: localPinnedIdSet.has(conv.id),
           }),
         );
@@ -537,7 +553,7 @@ export function ConversationSelector({
             ? [
                 {
                   ...defaultConversation,
-                  isPinned: pinnedIdSet.has("default"),
+                  isPinned: true,
                   isPinnedLocal: localPinnedIdSet.has("default"),
                 },
                 ...nonEmptyList,
@@ -675,9 +691,14 @@ export function ConversationSelector({
                 conversation.updated_at ?? conversation.created_at ?? null,
               messageCount: -1,
               enriched: false,
-              isPinned: settingsManager
-                .getMergedPinnedConversations(agentId)
-                .some((pinned) => pinned.conversationId === conversation.id),
+              isPinned: isConversationPinned({
+                conversationId: conversation.id,
+                pinnedIds: new Set(
+                  settingsManager
+                    .getMergedPinnedConversations(agentId)
+                    .map((pinned) => pinned.conversationId),
+                ),
+              }),
               isPinnedLocal: settingsManager
                 .getLocalPinnedConversations(agentId)
                 .includes(conversation.id),
@@ -767,6 +788,7 @@ export function ConversationSelector({
     (selected: EnrichedConversation | undefined) => {
       if (!selected?.conversation.id) return;
       const conversationId = selected.conversation.id;
+      if (isDefaultConversationId(conversationId)) return;
       if (selected.isPinned) {
         settingsManager.unpinConversationBoth(agentId, conversationId);
       } else {

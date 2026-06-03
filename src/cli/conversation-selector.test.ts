@@ -3,6 +3,7 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import {
   buildDefaultConversationEntry,
   formatConversationTimestampText,
+  isConversationPinned,
   mergePinnedConversationRecords,
 } from "@/cli/components/ConversationSelector";
 
@@ -74,6 +75,26 @@ describe("ConversationSelector timestamps", () => {
 });
 
 describe("ConversationSelector pinned conversations", () => {
+  test("treats the default conversation as permanently pinned", () => {
+    expect(
+      isConversationPinned({
+        conversationId: "default",
+        pinnedIds: new Set(),
+      }),
+    ).toBe(true);
+  });
+
+  test("uses stored pin state for non-default conversations", () => {
+    const pinnedIds = new Set(["conv-pinned"]);
+
+    expect(
+      isConversationPinned({ conversationId: "conv-pinned", pinnedIds }),
+    ).toBe(true);
+    expect(
+      isConversationPinned({ conversationId: "conv-unpinned", pinnedIds }),
+    ).toBe(false);
+  });
+
   test("includes pinned conversations missing from the recent page", () => {
     const listed = [{ id: "recent-1" }, { id: "recent-2" }] as Conversation[];
     const pinned = [{ id: "old-pinned" }] as Conversation[];
