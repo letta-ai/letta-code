@@ -20,7 +20,7 @@ export const releaseNotes: Record<string, string> = {
   // Use → for bullets to match the command hints below.
   "0.27.0": `🧠 **Updated default system prompt available**
 → Improves Letta Code's understanding of time and memory retrieval
-→ Run **/system** to upgrade your agent to the latest prompt`,
+→ Run **/system** and select "Default" to upgrade your agent to the latest prompt`,
   "0.25.7": `🔐 **Permissions update in Letta Code 0.25.7**
 → The default permission mode is now **unrestricted**, so Letta Code starts without approval prompts unless you change it
 → Run **/permissions** and choose **standard** if you want the old request-approval behavior back
