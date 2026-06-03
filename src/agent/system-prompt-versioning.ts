@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents";
 import { getBackend } from "@/backend";
-import { type SystemPromptRecipe, settingsManager } from "@/settings-manager";
+import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getVersion } from "@/version";
 import {
@@ -13,16 +13,21 @@ import {
 
 const SYSTEM_PROMPT_HASH_PREFIX = "sha256:";
 
+type ManagedPrompt = {
+  preset: string;
+  hash: string;
+  version: string;
+};
+
 type SystemPromptUpdateDecision =
   | { kind: "noop"; reason: string }
-  | { kind: "adopt"; recipe: SystemPromptRecipe }
+  | { kind: "track"; prompt: ManagedPrompt }
   | { kind: "custom"; reason: string }
   | { kind: "clear"; reason: string }
   | {
       kind: "update";
-      preset: string;
       nextSystemPrompt: string;
-      nextRecipe: SystemPromptRecipe;
+      prompt: ManagedPrompt;
       reason: string;
     };
 
@@ -37,18 +42,31 @@ export function hashSystemPrompt(content: string): string {
   return `${SYSTEM_PROMPT_HASH_PREFIX}${digest}`;
 }
 
-export function createSystemPromptRecipe(
+function managedPrompt(
   preset: string,
   memoryMode: MemoryPromptMode,
   content: string = buildSystemPrompt(preset, memoryMode),
-): SystemPromptRecipe {
+): ManagedPrompt {
   return {
     preset,
-    lettaCodeVersion: getVersion(),
-    contentHash: hashSystemPrompt(content),
-    memoryMode,
-    updatedAt: new Date().toISOString(),
+    hash: hashSystemPrompt(content),
+    version: getVersion(),
   };
+}
+
+export function recordManagedSystemPrompt(
+  agentId: string,
+  preset: string,
+  memoryMode: MemoryPromptMode,
+  content?: string,
+): void {
+  if (!settingsManager.isReady) {
+    return;
+  }
+  settingsManager.setManagedSystemPrompt(
+    agentId,
+    managedPrompt(preset, memoryMode, content),
+  );
 }
 
 export function getMemoryPromptModeForAgent(agentId: string): MemoryPromptMode {
@@ -78,68 +96,24 @@ function findMatchingCurrentPreset(
   return undefined;
 }
 
-function isValidRecipe(recipe: SystemPromptRecipe | undefined): boolean {
-  return (
-    !!recipe &&
-    typeof recipe.preset === "string" &&
-    typeof recipe.contentHash === "string" &&
-    recipe.contentHash.startsWith(SYSTEM_PROMPT_HASH_PREFIX) &&
-    isKnownPreset(recipe.preset)
-  );
+function isValidHash(hash: string | undefined): hash is string {
+  return !!hash && hash.startsWith(SYSTEM_PROMPT_HASH_PREFIX);
 }
 
 export function decideManagedSystemPromptUpdate(input: {
   agent: AgentState;
   memoryMode: MemoryPromptMode;
   storedPreset?: string;
-  storedRecipe?: SystemPromptRecipe;
+  storedHash?: string;
+  storedVersion?: string;
 }): SystemPromptUpdateDecision {
-  const { agent, memoryMode, storedPreset, storedRecipe } = input;
+  const { agent, memoryMode, storedPreset, storedHash, storedVersion } = input;
   const currentSystemPrompt = agent.system ?? "";
   const currentHash = hashSystemPrompt(currentSystemPrompt);
+  const currentVersion = getVersion();
 
   if (storedPreset === "custom") {
     return { kind: "noop", reason: "system prompt is marked custom" };
-  }
-
-  if (storedRecipe) {
-    if (!isValidRecipe(storedRecipe)) {
-      return { kind: "clear", reason: "stored recipe is invalid or stale" };
-    }
-
-    if (currentHash !== storedRecipe.contentHash) {
-      return {
-        kind: "custom",
-        reason: "agent prompt differs from stored managed prompt hash",
-      };
-    }
-
-    const nextSystemPrompt = buildSystemPrompt(storedRecipe.preset, memoryMode);
-    const nextRecipe = createSystemPromptRecipe(
-      storedRecipe.preset,
-      memoryMode,
-      nextSystemPrompt,
-    );
-
-    if (
-      nextRecipe.contentHash === storedRecipe.contentHash &&
-      nextRecipe.memoryMode === storedRecipe.memoryMode &&
-      nextRecipe.lettaCodeVersion === storedRecipe.lettaCodeVersion
-    ) {
-      return { kind: "noop", reason: "managed prompt is current" };
-    }
-
-    if (nextRecipe.contentHash === storedRecipe.contentHash) {
-      return { kind: "adopt", recipe: nextRecipe };
-    }
-
-    return {
-      kind: "update",
-      preset: storedRecipe.preset,
-      nextSystemPrompt,
-      nextRecipe,
-      reason: "managed prompt content changed for current Letta Code version",
-    };
   }
 
   if (storedPreset) {
@@ -147,15 +121,49 @@ export function decideManagedSystemPromptUpdate(input: {
       return { kind: "clear", reason: "stored preset is no longer known" };
     }
 
+    if (storedHash) {
+      if (!isValidHash(storedHash)) {
+        return { kind: "clear", reason: "stored prompt hash is invalid" };
+      }
+
+      if (currentHash !== storedHash) {
+        return {
+          kind: "custom",
+          reason: "agent prompt differs from stored managed prompt hash",
+        };
+      }
+
+      const nextSystemPrompt = buildSystemPrompt(storedPreset, memoryMode);
+      const nextPrompt = managedPrompt(
+        storedPreset,
+        memoryMode,
+        nextSystemPrompt,
+      );
+
+      if (nextPrompt.hash !== storedHash) {
+        return {
+          kind: "update",
+          nextSystemPrompt,
+          prompt: nextPrompt,
+          reason:
+            "managed prompt content changed for current Letta Code version",
+        };
+      }
+
+      if (storedVersion !== currentVersion) {
+        return { kind: "track", prompt: nextPrompt };
+      }
+
+      return { kind: "noop", reason: "managed prompt is current" };
+    }
+
+    // Legacy preset-only settings cannot prove the prompt is still managed, so
+    // only start tracking them when they exactly match the current bundled text.
     const expectedCurrentPrompt = buildSystemPrompt(storedPreset, memoryMode);
     if (currentSystemPrompt === expectedCurrentPrompt) {
       return {
-        kind: "adopt",
-        recipe: createSystemPromptRecipe(
-          storedPreset,
-          memoryMode,
-          expectedCurrentPrompt,
-        ),
+        kind: "track",
+        prompt: managedPrompt(storedPreset, memoryMode, currentSystemPrompt),
       };
     }
 
@@ -181,12 +189,8 @@ export function decideManagedSystemPromptUpdate(input: {
   }
 
   return {
-    kind: "adopt",
-    recipe: createSystemPromptRecipe(
-      matchingPreset,
-      memoryMode,
-      currentSystemPrompt,
-    ),
+    kind: "track",
+    prompt: managedPrompt(matchingPreset, memoryMode, currentSystemPrompt),
   };
 }
 
@@ -203,7 +207,8 @@ export function scheduleManagedSystemPromptUpdate({
     agent,
     memoryMode,
     storedPreset: settingsManager.getSystemPromptPreset(agent.id),
-    storedRecipe: settingsManager.getSystemPromptRecipe(agent.id),
+    storedHash: settingsManager.getSystemPromptHash(agent.id),
+    storedVersion: settingsManager.getSystemPromptVersion(agent.id),
   });
 
   if (decision.kind === "noop") {
@@ -211,11 +216,11 @@ export function scheduleManagedSystemPromptUpdate({
     return;
   }
 
-  if (decision.kind === "adopt") {
-    settingsManager.setSystemPromptRecipe(agent.id, decision.recipe);
+  if (decision.kind === "track") {
+    settingsManager.setManagedSystemPrompt(agent.id, decision.prompt);
     debugLog(
       "startup",
-      `Recorded system prompt recipe ${decision.recipe.preset}@${decision.recipe.lettaCodeVersion}`,
+      `Tracking managed system prompt ${decision.prompt.preset}@${decision.prompt.version}`,
     );
     return;
   }
@@ -228,7 +233,7 @@ export function scheduleManagedSystemPromptUpdate({
 
   if (decision.kind === "clear") {
     settingsManager.clearSystemPromptPreset(agent.id);
-    debugLog("startup", `Cleared system prompt recipe: ${decision.reason}`);
+    debugLog("startup", `Cleared system prompt metadata: ${decision.reason}`);
     return;
   }
 
@@ -237,10 +242,10 @@ export function scheduleManagedSystemPromptUpdate({
       system: decision.nextSystemPrompt,
     })
     .then(async () => {
-      settingsManager.setSystemPromptRecipe(agent.id, decision.nextRecipe);
+      settingsManager.setManagedSystemPrompt(agent.id, decision.prompt);
       debugLog(
         "startup",
-        `Updated managed system prompt ${decision.preset}@${decision.nextRecipe.lettaCodeVersion}: ${decision.reason}`,
+        `Updated managed system prompt ${decision.prompt.preset}@${decision.prompt.version}: ${decision.reason}`,
       );
       if (onUpdated) {
         const updatedAgent = await getBackend().retrieveAgent(agent.id, {

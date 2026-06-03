@@ -57,15 +57,8 @@ export interface AgentSettings {
     | "gemini_snake"
     | "none"; // toolset mode for this agent (manual override or auto)
   systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
-  systemPromptRecipe?: SystemPromptRecipe; // reproducible managed prompt provenance
-}
-
-export interface SystemPromptRecipe {
-  preset: string;
-  lettaCodeVersion: string;
-  contentHash: string;
-  memoryMode: "standard" | "memfs" | "local-memfs";
-  updatedAt: string;
+  systemPromptHash?: string; // hash of the managed prompt content last written by Letta Code
+  systemPromptVersion?: string; // Letta Code version that wrote systemPromptHash
 }
 
 export interface ConversationGoal {
@@ -2277,9 +2270,13 @@ class SettingsManager {
   private upsertAgentSettings(
     agentId: string,
     updates: Partial<
-      Omit<AgentSettings, "agentId" | "baseUrl" | "systemPromptRecipe">
+      Omit<
+        AgentSettings,
+        "agentId" | "baseUrl" | "systemPromptHash" | "systemPromptVersion"
+      >
     > & {
-      systemPromptRecipe?: SystemPromptRecipe | null;
+      systemPromptHash?: string | null;
+      systemPromptVersion?: string | null;
     },
     serverKeyOverride?: string,
   ): void {
@@ -2312,10 +2309,14 @@ class SettingsManager {
           updates.systemPromptPreset !== undefined
             ? updates.systemPromptPreset
             : existing.systemPromptPreset,
-        systemPromptRecipe:
-          updates.systemPromptRecipe !== undefined
-            ? (updates.systemPromptRecipe ?? undefined)
-            : existing.systemPromptRecipe,
+        systemPromptHash:
+          updates.systemPromptHash !== undefined
+            ? (updates.systemPromptHash ?? undefined)
+            : existing.systemPromptHash,
+        systemPromptVersion:
+          updates.systemPromptVersion !== undefined
+            ? (updates.systemPromptVersion ?? undefined)
+            : existing.systemPromptVersion,
       };
       // Clean up undefined/false values
       if (!updated.pinned) delete updated.pinned;
@@ -2323,7 +2324,8 @@ class SettingsManager {
       if (!updated.toolset || updated.toolset === "auto")
         delete updated.toolset;
       if (!updated.systemPromptPreset) delete updated.systemPromptPreset;
-      if (!updated.systemPromptRecipe) delete updated.systemPromptRecipe;
+      if (!updated.systemPromptHash) delete updated.systemPromptHash;
+      if (!updated.systemPromptVersion) delete updated.systemPromptVersion;
       if (!updated.baseUrl) delete updated.baseUrl;
       agents[idx] = updated;
     } else {
@@ -2332,7 +2334,8 @@ class SettingsManager {
         agentId,
         baseUrl: normalizedBaseUrl,
         ...updates,
-        systemPromptRecipe: updates.systemPromptRecipe ?? undefined,
+        systemPromptHash: updates.systemPromptHash ?? undefined,
+        systemPromptVersion: updates.systemPromptVersion ?? undefined,
       };
       // Clean up undefined/false values
       if (!newAgent.pinned) delete newAgent.pinned;
@@ -2340,7 +2343,8 @@ class SettingsManager {
       if (!newAgent.toolset || newAgent.toolset === "auto")
         delete newAgent.toolset;
       if (!newAgent.systemPromptPreset) delete newAgent.systemPromptPreset;
-      if (!newAgent.systemPromptRecipe) delete newAgent.systemPromptRecipe;
+      if (!newAgent.systemPromptHash) delete newAgent.systemPromptHash;
+      if (!newAgent.systemPromptVersion) delete newAgent.systemPromptVersion;
       if (!newAgent.baseUrl) delete newAgent.baseUrl;
       agents.push(newAgent);
     }
@@ -2408,10 +2412,17 @@ class SettingsManager {
   }
 
   /**
-   * Get the stored managed system prompt recipe for an agent on the current server.
+   * Get the stored hash for the managed system prompt on the current server.
    */
-  getSystemPromptRecipe(agentId: string): SystemPromptRecipe | undefined {
-    return this.getAgentSettings(agentId)?.systemPromptRecipe;
+  getSystemPromptHash(agentId: string): string | undefined {
+    return this.getAgentSettings(agentId)?.systemPromptHash;
+  }
+
+  /**
+   * Get the Letta Code version that last wrote the managed system prompt hash.
+   */
+  getSystemPromptVersion(agentId: string): string | undefined {
+    return this.getAgentSettings(agentId)?.systemPromptVersion;
   }
 
   /**
@@ -2420,27 +2431,37 @@ class SettingsManager {
   setSystemPromptPreset(agentId: string, preset: string): void {
     this.upsertAgentSettings(agentId, {
       systemPromptPreset: preset,
-      systemPromptRecipe: null,
+      systemPromptHash: null,
+      systemPromptVersion: null,
     });
   }
 
   /**
-   * Store the managed system prompt recipe for an agent on the current server.
+   * Store the managed system prompt metadata for an agent on the current server.
    */
-  setSystemPromptRecipe(agentId: string, recipe: SystemPromptRecipe): void {
+  setManagedSystemPrompt(
+    agentId: string,
+    prompt: {
+      preset: string;
+      hash: string;
+      version: string;
+    },
+  ): void {
     this.upsertAgentSettings(agentId, {
-      systemPromptPreset: recipe.preset,
-      systemPromptRecipe: recipe,
+      systemPromptPreset: prompt.preset,
+      systemPromptHash: prompt.hash,
+      systemPromptVersion: prompt.version,
     });
   }
 
   /**
-   * Mark an agent's system prompt as custom and clear any managed recipe.
+   * Mark an agent's system prompt as custom and clear managed prompt metadata.
    */
   setSystemPromptCustom(agentId: string): void {
     this.upsertAgentSettings(agentId, {
       systemPromptPreset: "custom",
-      systemPromptRecipe: null,
+      systemPromptHash: null,
+      systemPromptVersion: null,
     });
   }
 
@@ -2451,7 +2472,8 @@ class SettingsManager {
     // Setting to empty string triggers the cleanup `if (!updated.systemPromptPreset) delete ...`
     this.upsertAgentSettings(agentId, {
       systemPromptPreset: "",
-      systemPromptRecipe: null,
+      systemPromptHash: null,
+      systemPromptVersion: null,
     });
   }
 

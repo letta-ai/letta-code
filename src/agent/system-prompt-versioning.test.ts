@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents";
 import { buildSystemPrompt } from "@/agent/prompt-assets";
 import {
-  createSystemPromptRecipe,
   decideManagedSystemPromptUpdate,
   hashSystemPrompt,
 } from "@/agent/system-prompt-versioning";
@@ -27,17 +26,13 @@ describe("system prompt versioning", () => {
 
   test("updates a managed prompt when the active memory mode has different bundled content", () => {
     const storedPrompt = buildSystemPrompt("default", "standard");
-    const storedRecipe = createSystemPromptRecipe(
-      "default",
-      "standard",
-      storedPrompt,
-    );
 
     const decision = decideManagedSystemPromptUpdate({
       agent: agent(storedPrompt),
       memoryMode: "memfs",
       storedPreset: "default",
-      storedRecipe,
+      storedHash: hashSystemPrompt(storedPrompt),
+      storedVersion: "old-version",
     });
 
     expect(decision.kind).toBe("update");
@@ -45,33 +40,28 @@ describe("system prompt versioning", () => {
       expect(decision.nextSystemPrompt).toBe(
         buildSystemPrompt("default", "memfs"),
       );
-      expect(decision.nextRecipe.contentHash).toBe(
+      expect(decision.prompt.hash).toBe(
         hashSystemPrompt(decision.nextSystemPrompt),
       );
-      expect(decision.nextRecipe.memoryMode).toBe("memfs");
     }
   });
 
   test("does not update when the agent prompt no longer matches the stored managed hash", () => {
     const storedPrompt = buildSystemPrompt("default", "standard");
-    const storedRecipe = createSystemPromptRecipe(
-      "default",
-      "standard",
-      storedPrompt,
-    );
     const modifiedPrompt = `${storedPrompt}\n\nUser customization.`;
 
     const decision = decideManagedSystemPromptUpdate({
       agent: agent(modifiedPrompt),
       memoryMode: "memfs",
       storedPreset: "default",
-      storedRecipe,
+      storedHash: hashSystemPrompt(storedPrompt),
+      storedVersion: "old-version",
     });
 
     expect(decision.kind).toBe("custom");
   });
 
-  test("adopts legacy Letta Code agents only when their prompt matches a current preset", () => {
+  test("tracks legacy Letta Code agents only when their prompt matches a current preset", () => {
     const currentPrompt = buildSystemPrompt("default", "standard");
 
     const decision = decideManagedSystemPromptUpdate({
@@ -79,10 +69,10 @@ describe("system prompt versioning", () => {
       memoryMode: "standard",
     });
 
-    expect(decision.kind).toBe("adopt");
-    if (decision.kind === "adopt") {
-      expect(decision.recipe.preset).toBe("default");
-      expect(decision.recipe.contentHash).toBe(hashSystemPrompt(currentPrompt));
+    expect(decision.kind).toBe("track");
+    if (decision.kind === "track") {
+      expect(decision.prompt.preset).toBe("default");
+      expect(decision.prompt.hash).toBe(hashSystemPrompt(currentPrompt));
     }
   });
 

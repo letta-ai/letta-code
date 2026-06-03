@@ -439,7 +439,7 @@ export async function updateAgentSystemPrompt(
     const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
       "@/agent/prompt-assets"
     );
-    const { createSystemPromptRecipe } = await import(
+    const { recordManagedSystemPrompt } = await import(
       "@/agent/system-prompt-versioning"
     );
     const { settingsManager } = await import("@/settings-manager");
@@ -473,13 +473,11 @@ export async function updateAgentSystemPrompt(
     // Persist preset for known presets; clear stale preset for subagent/unknown
     if (settingsManager.isReady) {
       if (isKnownPreset(systemPromptId)) {
-        settingsManager.setSystemPromptRecipe(
+        recordManagedSystemPrompt(
           agentId,
-          createSystemPromptRecipe(
-            systemPromptId,
-            memoryMode,
-            systemPromptContent,
-          ),
+          systemPromptId,
+          memoryMode,
+          systemPromptContent,
         );
       } else {
         settingsManager.clearSystemPromptPreset(agentId);
@@ -508,7 +506,7 @@ export async function updateAgentSystemPrompt(
 
 /**
  * Updates an agent's system prompt to swap between full prompt variants when
- * the stored prompt recipe is known. Custom prompts are already complete and
+ * the stored managed prompt hash is known. Custom prompts are already complete and
  * are left unchanged.
  *
  * @param agentId - The agent ID to update
@@ -524,7 +522,7 @@ export async function updateAgentSystemPromptMemfs(
     const { isKnownPreset, buildSystemPrompt } = await import(
       "@/agent/prompt-assets"
     );
-    const { createSystemPromptRecipe, hashSystemPrompt } = await import(
+    const { hashSystemPrompt, recordManagedSystemPrompt } = await import(
       "@/agent/system-prompt-versioning"
     );
 
@@ -536,18 +534,15 @@ export async function updateAgentSystemPromptMemfs(
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
-    const storedRecipe = settingsManager.isReady
-      ? settingsManager.getSystemPromptRecipe(agentId)
+    const storedHash = settingsManager.isReady
+      ? settingsManager.getSystemPromptHash(agentId)
       : undefined;
 
     let nextSystemPrompt: string;
     if (storedPreset && isKnownPreset(storedPreset)) {
       const agent = await getBackend().retrieveAgent(agentId);
       const currentSystemPrompt = agent.system || "";
-      if (
-        storedRecipe &&
-        hashSystemPrompt(currentSystemPrompt) !== storedRecipe.contentHash
-      ) {
+      if (storedHash && hashSystemPrompt(currentSystemPrompt) !== storedHash) {
         if (settingsManager.isReady) {
           settingsManager.setSystemPromptCustom(agentId);
         }
@@ -557,7 +552,7 @@ export async function updateAgentSystemPromptMemfs(
         };
       }
 
-      if (!storedRecipe && settingsManager.isReady) {
+      if (!storedHash && settingsManager.isReady) {
         const currentMode = settingsManager.isMemfsEnabled(agentId)
           ? getBackend().capabilities.localMemfs
             ? "local-memfs"
@@ -584,14 +579,12 @@ export async function updateAgentSystemPromptMemfs(
       system: nextSystemPrompt,
     });
 
-    if (
-      storedPreset &&
-      isKnownPreset(storedPreset) &&
-      settingsManager.isReady
-    ) {
-      settingsManager.setSystemPromptRecipe(
+    if (storedPreset && isKnownPreset(storedPreset)) {
+      recordManagedSystemPrompt(
         agentId,
-        createSystemPromptRecipe(storedPreset, newMode, nextSystemPrompt),
+        storedPreset,
+        newMode,
+        nextSystemPrompt,
       );
     }
 

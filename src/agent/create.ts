@@ -26,7 +26,7 @@ import {
   resolveAndBuildSystemPrompt,
   SLEEPTIME_MEMORY_PERSONA,
 } from "./prompt-assets";
-import { createSystemPromptRecipe } from "./system-prompt-versioning";
+import { recordManagedSystemPrompt } from "./system-prompt-versioning";
 
 /**
  * Describes where a memory block came from
@@ -417,16 +417,14 @@ export async function createAgent(
     if (options.systemPromptCustom) {
       settingsManager.setSystemPromptCustom(fullAgent.id);
     } else if (isKnownPreset(options.systemPromptPreset ?? "default")) {
-      settingsManager.setSystemPromptRecipe(
+      recordManagedSystemPrompt(
         fullAgent.id,
-        createSystemPromptRecipe(
-          options.systemPromptPreset ?? "default",
-          memMode,
-          systemPromptContent,
-        ),
+        options.systemPromptPreset ?? "default",
+        memMode,
+        systemPromptContent,
       );
     }
-    // Subagent names: don't persist (no reproducible recipe)
+    // Subagent names: don't persist (no stable managed prompt metadata)
   }
 
   // Build provenance info
