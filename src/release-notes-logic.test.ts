@@ -8,12 +8,14 @@ import {
 describe("release notes logic", () => {
   test("shows only the current version note when there is no seen checkpoint", () => {
     expect(getPendingReleaseNoteVersions("0.25.7")).toEqual(["0.25.7"]);
+    expect(getPendingReleaseNoteVersions("0.27.0")).toEqual(["0.27.0"]);
     expect(getPendingReleaseNoteVersions("0.25.8")).toEqual([]);
   });
 
   test("backfills skipped notes across a version range", () => {
-    expect(getPendingReleaseNoteVersions("0.25.9", "0.25.4")).toEqual([
+    expect(getPendingReleaseNoteVersions("0.27.0", "0.25.4")).toEqual([
       "0.25.7",
+      "0.27.0",
     ]);
   });
 
