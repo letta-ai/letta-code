@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import {
+  buildConversationSelectorHints,
   buildDefaultConversationEntry,
   formatConversationTimestampText,
+  isConversationPinned,
+  mergePinnedConversationRecords,
 } from "@/cli/components/ConversationSelector";
 
 describe("ConversationSelector timestamps", () => {
@@ -68,5 +72,54 @@ describe("ConversationSelector timestamps", () => {
 
     expect(text).toContain("Active 2 hours ago");
     expect(text).toContain("Created 1 week ago");
+  });
+});
+
+describe("ConversationSelector pinned conversations", () => {
+  test("hides the pin shortcut hint when default conversation is selected", () => {
+    expect(
+      buildConversationSelectorHints({ isSelectedDefaultConversation: true }),
+    ).not.toContain("Alt+P");
+    expect(
+      buildConversationSelectorHints({ isSelectedDefaultConversation: false }),
+    ).toContain("Alt+P pin/unpin");
+  });
+
+  test("treats the default conversation as permanently pinned", () => {
+    expect(
+      isConversationPinned({
+        conversationId: "default",
+        pinnedIds: new Set(),
+      }),
+    ).toBe(true);
+  });
+
+  test("uses stored pin state for non-default conversations", () => {
+    const pinnedIds = new Set(["conv-pinned"]);
+
+    expect(
+      isConversationPinned({ conversationId: "conv-pinned", pinnedIds }),
+    ).toBe(true);
+    expect(
+      isConversationPinned({ conversationId: "conv-unpinned", pinnedIds }),
+    ).toBe(false);
+  });
+
+  test("includes pinned conversations missing from the recent page", () => {
+    const listed = [{ id: "recent-1" }, { id: "recent-2" }] as Conversation[];
+    const pinned = [{ id: "old-pinned" }] as Conversation[];
+
+    expect(
+      mergePinnedConversationRecords(listed, pinned).map((c) => c.id),
+    ).toEqual(["old-pinned", "recent-1", "recent-2"]);
+  });
+
+  test("does not duplicate pinned conversations already in the recent page", () => {
+    const listed = [{ id: "recent-1" }, { id: "old-pinned" }] as Conversation[];
+    const pinned = [{ id: "old-pinned" }] as Conversation[];
+
+    expect(
+      mergePinnedConversationRecords(listed, pinned).map((c) => c.id),
+    ).toEqual(["recent-1", "old-pinned"]);
   });
 });

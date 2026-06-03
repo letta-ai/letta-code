@@ -127,38 +127,6 @@ export interface ExtensionConversationHandle {
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
-export interface ExtensionAdapterBackendForkConversationOptions
-  extends ExtensionConversationForkOptions {
-  agentId?: string;
-}
-
-export interface ExtensionAdapterBackendSendMessageOptions
-  extends ExtensionConversationSendMessageOptions {
-  agentId?: string;
-}
-
-export interface ExtensionAdapterBackendHistoryOptions
-  extends ExtensionConversationHistoryOptions {
-  agentId?: string | null;
-}
-
-export interface ExtensionAdapterBackendApi {
-  forkConversation: (
-    conversationId: string,
-    options?: ExtensionAdapterBackendForkConversationOptions,
-  ) => Promise<{ id: string }>;
-  getConversationHistory: (
-    conversationId: string,
-    options?: ExtensionAdapterBackendHistoryOptions,
-  ) => Promise<Message[]>;
-  sendMessageStream: (
-    conversationId: string,
-    messages: ExtensionConversationMessage[],
-    options?: ExtensionAdapterBackendSendMessageOptions,
-    requestOptions?: ExtensionConversationSendMessageRequestOptions,
-  ) => Promise<AsyncIterable<LettaStreamingResponse>>;
-}
-
 export type ExtensionSourceScope = "global" | "project" | "bundled";
 
 export interface ExtensionOwner {
@@ -450,12 +418,7 @@ export interface ExtensionToolRunContext {
   agent: {
     id: string | null;
   };
-  conversation: {
-    id: string | null;
-    getHistory: (
-      options?: ExtensionConversationHistoryOptions,
-    ) => Promise<Message[]>;
-  };
+  conversation: ExtensionConversationHandle;
   getContext: () => ExtensionContext;
 }
 

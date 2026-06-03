@@ -1,12 +1,34 @@
 import type Letta from "@letta-ai/letta-client";
 import { forkConversation } from "@/backend/api/conversations";
 import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import { settingsManager } from "@/settings-manager";
 import { isDebugEnabled } from "@/utils/debug";
 
 /**
  * Maximum characters allowed for an auto-generated conversation title.
  */
 export const CONVERSATION_TITLE_MAX_LENGTH = 100;
+
+export interface ConversationTitleSettingsSnapshot {
+  enabled: boolean;
+}
+
+export function getConversationTitleSettings(): ConversationTitleSettingsSnapshot {
+  try {
+    return {
+      enabled: settingsManager.getSettings().autoConversationTitles !== false,
+    };
+  } catch {
+    return { enabled: true };
+  }
+}
+
+export function setConversationTitleSettings(
+  enabled: boolean,
+): ConversationTitleSettingsSnapshot {
+  settingsManager.updateSettings({ autoConversationTitles: enabled });
+  return getConversationTitleSettings();
+}
 
 /**
  * Hard timeout on the fork-and-generate flow. Title generation is best-effort

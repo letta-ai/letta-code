@@ -118,9 +118,10 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  * Check permission for a tool execution.
  *
  * Decision logic:
- * 0. Cross-agent guard (unbypassable) → DENY any tool call targeting
- *    another agent's memory dir unless it targets the current agent, targets
- *    an explicit parent agent for a subagent process, or the parent process
+ * 0. Cross-agent guard (enabled by default for headless + subagents,
+ *    unbypassable when enabled) → DENY any tool call targeting another
+ *    agent's memory dir unless it targets the current agent, targets an
+ *    explicit parent agent for a subagent process, or the parent process
  *    passed --disable-memory-guard.
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
@@ -270,9 +271,9 @@ function checkPermissionForEngine(
   const workingDirectoryTools =
     engine === "v2" ? WORKING_DIRECTORY_TOOLS_V2 : WORKING_DIRECTORY_TOOLS_V1;
 
-  // Cross-agent guard — denies any tool call targeting another agent's
-  // memory unless that agent is in the allowed set. Unbypassable by any
-  // mode, rule, or flag.
+  // Cross-agent guard — when enabled, denies any tool call targeting another
+  // agent's memory unless that agent is in the allowed set. Unbypassable by
+  // any mode, rule, or flag.
   const guardResult = evaluateCrossAgentGuard(
     toolName,
     toolArgs,

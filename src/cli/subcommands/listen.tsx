@@ -685,6 +685,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(`status: ${status}`);
             console.log(`[${formatTimestamp()}] status: ${status}`);
           },
+          onLog: (message) => {
+            sessionLog.log(message);
+            console.log(`[${formatTimestamp()}] ${message}`);
+          },
           onConnected: () => {
             sessionLog.log("Connected. Awaiting instructions.");
             console.log(
@@ -774,6 +778,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(`status: ${status}`);
             clearRetryStatusCallback?.();
             updateStatusCallback?.(status);
+          },
+          onLog: (message) => {
+            sessionLog.log(message);
+            console.log(`[${formatTimestamp()}] ${message}`);
           },
           onConnected: () => {
             sessionLog.log("Connected. Awaiting instructions.");

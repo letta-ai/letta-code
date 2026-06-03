@@ -80,6 +80,7 @@ import {
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import type { WindowTitleData } from "@/cli/helpers/window-title-config";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -319,6 +320,9 @@ type AppViewProps = {
   staticRenderEpoch: number;
   statusLinePayload: StatusLinePayload;
   statusLinePrompt: string;
+  terminalTitleData: WindowTitleData;
+  onTitlePreview: (title: string | null) => void;
+  onTitlePreviewEnd: () => void;
   extensionAdapter: LocalExtensionAdapter;
   fileAutocompleteFdPath?: string | null;
   streaming: boolean;
@@ -352,7 +356,6 @@ export function AppView(props: AppViewProps) {
     contextTrackerRef,
     continueSession,
     conversationId,
-    conversationSummary,
     projectDirectory,
     currentApproval,
     currentApprovalContext,
@@ -465,6 +468,9 @@ export function AppView(props: AppViewProps) {
     staticRenderEpoch,
     statusLinePayload,
     statusLinePrompt,
+    terminalTitleData,
+    onTitlePreview,
+    onTitlePreviewEnd,
     extensionAdapter,
     streaming,
     stubDescriptions,
@@ -842,9 +848,10 @@ export function AppView(props: AppViewProps) {
             {/* Window Title Configurator - for customizing terminal title */}
             {activeOverlay === "window-title" && (
               <WindowTitlePicker
-                agentName={agentName ?? null}
                 projectDirectory={projectDirectory}
-                conversationSummary={conversationSummary}
+                titleData={terminalTitleData}
+                onTitlePreview={onTitlePreview}
+                onTitlePreviewEnd={onTitlePreviewEnd}
                 onClose={closeOverlay}
               />
             )}

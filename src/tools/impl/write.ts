@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation.js";
 
 interface WriteArgs {
@@ -29,7 +30,7 @@ export async function write(args: WriteArgs): Promise<WriteResult> {
       const err = error as NodeJS.ErrnoException;
       if (err.code !== "ENOENT") throw err;
     }
-    await fs.writeFile(resolvedPath, content, "utf-8");
+    await writeUtf8Text(resolvedPath, content);
     return {
       message: `Successfully wrote ${content.length} characters to ${resolvedPath}`,
     };

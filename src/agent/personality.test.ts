@@ -102,26 +102,62 @@ describe("personality helpers", () => {
     }
   });
 
-  test("tutorial, linus, and kawaii include onboarding memory by default", async () => {
-    expect(ONBOARDING_PERSONALITIES).toEqual(["tutorial", "linus", "kawaii"]);
+  test("tutorial includes onboarding memory by default", async () => {
+    expect(ONBOARDING_PERSONALITIES).toEqual(["tutorial"]);
 
-    for (const personality of ["tutorial", "linus", "kawaii"] as const) {
-      const options = await buildCreateAgentOptionsForPersonality({
-        personalityId: personality,
-      });
-      const onboardingBlock = options.memoryBlocks?.find(
-        (block): block is { label: string; value: string } =>
-          "label" in block && block.label === "onboarding",
-      );
+    const options = await buildCreateAgentOptionsForPersonality({
+      personalityId: "tutorial",
+    });
+    const onboardingBlock = options.memoryBlocks?.find(
+      (block): block is { label: string; value: string } =>
+        "label" in block && block.label === "onboarding",
+    );
 
-      expect(onboardingBlock?.value).toContain(
-        "The person you are working with is new to Letta Code.",
-      );
-    }
+    expect(onboardingBlock?.value).toContain(
+      "The person you are working with is new to Letta Code.",
+    );
   });
 
-  test("standard Letta Code and vanilla source personalities do not include onboarding", async () => {
-    for (const personality of ["memo", "claude", "codex"] as const) {
+  test("tutorial persona body drives proactive onboarding progression", () => {
+    const body = getPersonalityContent("tutorial");
+    expect(body).not.toContain("The skill owns the tutorial flow");
+    expect(body).not.toContain("letta-help");
+    expect(body).toContain("I never leave someone standing in an open field");
+    expect(body).toContain("Every turn ends with a clear next step");
+    expect(body).toContain("Progress through the onboarding naturally");
+    expect(body).toContain("what should I call you");
+  });
+
+  test("onboarding block sets proactive, ordered checklist rules", async () => {
+    const options = await buildCreateAgentOptionsForPersonality({
+      personalityId: "tutorial",
+    });
+    const onboardingBlock = options.memoryBlocks?.find(
+      (block): block is { label: string; value: string } =>
+        "label" in block && block.label === "onboarding",
+    );
+
+    expect(onboardingBlock?.value).toContain(
+      "Explain each of these concepts to the user",
+    );
+    // Declines are generalized, not hard-coded to "skip".
+    expect(onboardingBlock?.value).toMatch(
+      /"skip", "pass", "next", "no thanks", "rather not"/,
+    );
+    // Checklist completion syntax is unambiguous.
+    expect(onboardingBlock?.value).toContain("Mark an item `[x]`");
+    expect(onboardingBlock?.value).toContain("Connect to a channel");
+  });
+
+  test("non-tutorial personalities do not include onboarding", async () => {
+    for (const personality of [
+      "memo",
+      "blank",
+      "linus",
+      "kawaii",
+      "claude",
+      "codex",
+    ] as const) {
       const options = await buildCreateAgentOptionsForPersonality({
         personalityId: personality,
       });

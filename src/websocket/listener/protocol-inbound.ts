@@ -33,6 +33,7 @@ import type {
   CronGetCommand,
   CronListCommand,
   CronRunsCommand,
+  CronTriggerCommand,
   DeleteMemoryFileCommand,
   EditFileCommand,
   EnableMemfsCommand,
@@ -44,6 +45,7 @@ import type {
   GetTreeCommand,
   GrepInFilesCommand,
   InputCommand,
+  ListConversationPinsCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
   ListModelsCommand,
@@ -58,6 +60,7 @@ import type {
   SearchFilesCommand,
   SecretApplyCommand,
   SecretListCommand,
+  SetConversationPinCommand,
   SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -804,6 +807,22 @@ export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
   );
 }
 
+export function isCronTriggerCommand(
+  value: unknown,
+): value is CronTriggerCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    task_id?: unknown;
+  };
+  return (
+    c.type === "cron_trigger" &&
+    typeof c.request_id === "string" &&
+    typeof c.task_id === "string"
+  );
+}
+
 export function isCronDeleteCommand(
   value: unknown,
 ): value is CronDeleteCommand {
@@ -889,6 +908,47 @@ export function isCreateAgentCommand(
       c.personality === "kawaii") &&
     (c.model === undefined || typeof c.model === "string") &&
     (c.pin_global === undefined || typeof c.pin_global === "boolean")
+  );
+}
+
+export function isListConversationPinsCommand(
+  value: unknown,
+): value is ListConversationPinsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+  };
+  return (
+    c.type === "list_conversation_pins" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime)
+  );
+}
+
+export function isSetConversationPinCommand(
+  value: unknown,
+): value is SetConversationPinCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+    conversation_id?: unknown;
+    action?: unknown;
+    scope?: unknown;
+  };
+  return (
+    c.type === "set_conversation_pin" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime) &&
+    typeof c.conversation_id === "string" &&
+    (c.action === "pin" || c.action === "unpin" || c.action === "toggle") &&
+    (c.scope === undefined ||
+      c.scope === "global" ||
+      c.scope === "local_project" ||
+      c.scope === "both")
   );
 }
 
@@ -1632,6 +1692,7 @@ export function parseServerMessage(
       isCronAddCommand(parsed) ||
       isCronGetCommand(parsed) ||
       isCronRunsCommand(parsed) ||
+      isCronTriggerCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
@@ -1640,6 +1701,8 @@ export function parseServerMessage(
       isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||
+      isListConversationPinsCommand(parsed) ||
+      isSetConversationPinCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||

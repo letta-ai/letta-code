@@ -40,6 +40,7 @@ export interface StartListenerOptions {
     status: "idle" | "receiving" | "processing",
     connectionId: string,
   ) => void;
+  onLog?: (message: string) => void;
   onRetrying?: (
     attempt: number,
     maxAttempts: number,

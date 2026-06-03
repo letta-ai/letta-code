@@ -1,30 +1,33 @@
 // Window title configuration picker.
 // Wraps MultiSelectPicker with window-title-specific logic.
 
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import {
-  renderWindowTitle,
+  normalizeWindowTitleItems,
+  previewLineForWindowTitleItems,
   resolveWindowTitleConfig,
   WINDOW_TITLE_FIELD_INFO,
   WINDOW_TITLE_FIELDS,
+  type WindowTitleData,
   type WindowTitleField,
 } from "@/cli/helpers/window-title-config";
 import { settingsManager } from "@/settings-manager";
-import { getVersion } from "@/version";
 import { MultiSelectPicker } from "./MultiSelectPicker";
 import { OverlayShell } from "./OverlayShell";
 
 interface WindowTitlePickerProps {
-  agentName: string | null;
   projectDirectory: string;
-  conversationSummary: string | null;
+  titleData: WindowTitleData;
+  onTitlePreview: (title: string | null) => void;
+  onTitlePreviewEnd: () => void;
   onClose: () => void;
 }
 
 export const WindowTitlePicker = memo(function WindowTitlePicker({
-  agentName,
   projectDirectory,
-  conversationSummary,
+  titleData,
+  onTitlePreview,
+  onTitlePreviewEnd,
   onClose,
 }: WindowTitlePickerProps) {
   const currentItems = useMemo(
@@ -32,55 +35,66 @@ export const WindowTitlePicker = memo(function WindowTitlePicker({
     [projectDirectory],
   );
 
-  const [selectedKeys, setSelectedKeys] = useState<string[]>(currentItems);
+  const [selectedKeys, setSelectedKeys] =
+    useState<WindowTitleField[]>(currentItems);
+  const hasHandledInitialSelectionChangeRef = useRef(false);
 
-  const items = useMemo(
-    () =>
-      WINDOW_TITLE_FIELDS.map((key) => ({
-        key,
-        label: WINDOW_TITLE_FIELD_INFO[key].label,
-        description: WINDOW_TITLE_FIELD_INFO[key].description,
-      })),
-    [],
+  const items = useMemo(() => {
+    const selected = uniqueWindowTitleItems(currentItems);
+    const selectedSet = new Set(selected);
+    const ordered = [
+      ...selected,
+      ...WINDOW_TITLE_FIELDS.filter((key) => !selectedSet.has(key)),
+    ];
+
+    return ordered.map((key) => ({
+      key,
+      label: WINDOW_TITLE_FIELD_INFO[key].label,
+      description: WINDOW_TITLE_FIELD_INFO[key].description,
+    }));
+  }, [currentItems]);
+
+  const preview = useMemo(
+    () => previewLineForWindowTitleItems(selectedKeys, titleData),
+    [selectedKeys, titleData],
   );
 
-  const titleData = useMemo(
-    () => ({
-      agentName,
-      appName: "Letta Code",
-      version: getVersion(),
-      conversationSummary,
-    }),
-    [agentName, conversationSummary],
+  const applyTitlePreview = useCallback(
+    (keys: WindowTitleField[]) => {
+      const title = previewLineForWindowTitleItems(keys, titleData);
+      onTitlePreview(title);
+    },
+    [onTitlePreview, titleData],
   );
 
   const handleSelectionChange = useCallback(
     (keys: string[]) => {
-      setSelectedKeys(keys);
-      // Update terminal title live so the user sees the effect immediately
-      const title = renderWindowTitle(keys as WindowTitleField[], titleData);
-      process.stdout.write(`\x1b]0;${title}\x07`);
+      const normalized = normalizeWindowTitleItems(keys);
+      setSelectedKeys(normalized);
+      if (!hasHandledInitialSelectionChangeRef.current) {
+        hasHandledInitialSelectionChangeRef.current = true;
+        return;
+      }
+      applyTitlePreview(normalized);
     },
-    [titleData],
+    [applyTitlePreview],
   );
 
   const handleConfirm = useCallback(
     (keys: string[]) => {
       settingsManager.updateSettings({
-        windowTitle: { items: keys },
+        windowTitle: { items: normalizeWindowTitleItems(keys) },
       });
+      onTitlePreviewEnd();
       onClose();
     },
-    [onClose],
+    [onClose, onTitlePreviewEnd],
   );
 
   const handleCancel = useCallback(() => {
-    // Revert terminal title to the persisted config
-    const savedItems = resolveWindowTitleConfig(projectDirectory);
-    const title = renderWindowTitle(savedItems, titleData);
-    process.stdout.write(`\x1b]0;${title}\x07`);
+    onTitlePreviewEnd();
     onClose();
-  }, [projectDirectory, titleData, onClose]);
+  }, [onTitlePreviewEnd, onClose]);
 
   return (
     <OverlayShell command="/title" title="Configure Terminal Title">
@@ -90,7 +104,22 @@ export const WindowTitlePicker = memo(function WindowTitlePicker({
         onConfirm={handleConfirm}
         onCancel={handleCancel}
         onSelectionChange={handleSelectionChange}
+        preview={preview ?? undefined}
+        enableOrdering
       />
     </OverlayShell>
   );
 });
+
+function uniqueWindowTitleItems(
+  items: readonly WindowTitleField[],
+): WindowTitleField[] {
+  const seen = new Set<WindowTitleField>();
+  const unique: WindowTitleField[] = [];
+  for (const item of items) {
+    if (seen.has(item)) continue;
+    seen.add(item);
+    unique.push(item);
+  }
+  return unique;
+}

@@ -2265,7 +2265,7 @@ describe("listen-client channels command handling", () => {
 
     __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
       ...actualChannelsService,
-      createChannelAccountLiveWithSecrets: async () => ({
+      createChannelAccountLive: () => ({
         channelId: "telegram" as const,
         accountId: "bot-1",
         displayName: "@docsbot",
@@ -2621,7 +2621,7 @@ describe("listen-client experiment command handling", () => {
     const originalGetSettings = settingsManager.getSettings;
     const originalUpdateSettings = settingsManager.updateSettings;
     const originalNodeFlag = process.env.LETTA_NODE;
-    const globalSettings = {} as Settings;
+    const globalSettings = { autoConversationTitles: true } as Settings;
 
     try {
       delete process.env.LETTA_NODE;
@@ -2663,6 +2663,10 @@ describe("listen-client experiment command handling", () => {
             id: "node",
             enabled: false,
             source: "default",
+          }),
+          expect.objectContaining({
+            id: "conversation_titles",
+            enabled: true,
           }),
         ]),
       });
@@ -2706,6 +2710,33 @@ describe("listen-client experiment command handling", () => {
           ]),
         },
       });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleExperimentCommand(
+        {
+          type: "set_experiment",
+          request_id: "conversation-titles-set-1",
+          experiment_id: "conversation_titles",
+          enabled: false,
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const titleSetResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(titleSetResponse).toMatchObject({
+        type: "set_experiment_response",
+        request_id: "conversation-titles-set-1",
+        success: true,
+        experiments: expect.arrayContaining([
+          expect.objectContaining({
+            id: "conversation_titles",
+            enabled: false,
+          }),
+        ]),
+      });
+      expect(globalSettings.autoConversationTitles).toBe(false);
     } finally {
       if (originalNodeFlag === undefined) {
         delete process.env.LETTA_NODE;

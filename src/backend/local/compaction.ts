@@ -288,9 +288,11 @@ function localMessagesToSummaryOpenAIDicts(
       continue;
     }
 
-    const content = textFromUserContent(message);
-    if (content !== undefined) {
-      result.push({ role: "user", content });
+    if (message.role === "user") {
+      const content = textFromUserContent(message);
+      if (content !== undefined) {
+        result.push({ role: "user", content });
+      }
     }
   }
   return result;

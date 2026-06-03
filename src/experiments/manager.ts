@@ -1,3 +1,7 @@
+import {
+  getConversationTitleSettings,
+  setConversationTitleSettings,
+} from "@/cli/helpers/conversation-title";
 import { settingsManager } from "@/settings-manager";
 import type {
   ExperimentDefinition,
@@ -11,8 +15,7 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
   {
     id: "conversation_titles",
     label: "conversation titles",
-    description:
-      "Generate conversation titles from the transcript with letta/auto (uses your credits).",
+    description: "Generate AI conversation titles automatically when possible.",
   },
   {
     id: "desktop_conversation_bootstrap",
@@ -72,6 +75,16 @@ class ExperimentManager {
 
   getSnapshot(id: ExperimentId): ExperimentSnapshot {
     const definition = getExperimentDefinition(id);
+
+    if (id === "conversation_titles") {
+      return {
+        ...definition,
+        enabled: getConversationTitleSettings().enabled,
+        source: "default",
+        override: null,
+      };
+    }
+
     const override = this.getStoredOverrides()[id];
 
     if (typeof override === "boolean") {
@@ -100,6 +113,11 @@ class ExperimentManager {
   }
 
   set(id: ExperimentId, enabled: boolean): ExperimentSnapshot {
+    if (id === "conversation_titles") {
+      setConversationTitleSettings(enabled);
+      return this.getSnapshot(id);
+    }
+
     const settings = settingsManager.getSettings();
     settingsManager.updateSettings({
       experiments: {

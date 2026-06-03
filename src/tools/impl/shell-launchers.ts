@@ -7,6 +7,8 @@ type ShellLaunchOptions = {
 
 export const STRICT_SHELL_ENV_VAR = "LETTA_BASH_STRICT";
 export const STRICT_SHELL_PRELUDE = "set -euo pipefail";
+export const POWERSHELL_UTF8_OUTPUT_PREFIX =
+  "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
 
 const POWERSHELL_ENV_ALIASES = [
   "MEMORY_DIR",
@@ -18,6 +20,10 @@ const POWERSHELL_ENV_ALIASES = [
   "LETTA_CONVERSATION_ID",
   "USER_CWD",
 ];
+
+const WINDOWS_PWSH_FALLBACK_PATH = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
+const WINDOWS_POWERSHELL_FALLBACK_PATH =
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 
 function isValidEnvAlias(name: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
@@ -60,18 +66,40 @@ function normalizePowerShellCommand(command: string): string {
   return trimmed;
 }
 
+function prefixPowerShellCommandWithUtf8Output(command: string): string {
+  const trimmed = command.trimStart();
+  if (trimmed.startsWith(POWERSHELL_UTF8_OUTPUT_PREFIX)) {
+    return command;
+  }
+  return `${POWERSHELL_UTF8_OUTPUT_PREFIX}${command}`;
+}
+
+function stripPowerShellUtf8OutputPrefix(command: string): string {
+  const trimmed = command.trimStart();
+  if (!trimmed.startsWith(POWERSHELL_UTF8_OUTPUT_PREFIX)) {
+    return command;
+  }
+
+  const leadingWhitespace = command.slice(0, command.length - trimmed.length);
+  return `${leadingWhitespace}${trimmed.slice(POWERSHELL_UTF8_OUTPUT_PREFIX.length)}`;
+}
+
 export function buildPowerShellCommand(
   command: string,
   envAliases: string[] = [],
 ): string {
-  const powerShellCommand = normalizePowerShellCommand(command);
+  const powerShellCommand = stripPowerShellUtf8OutputPrefix(
+    normalizePowerShellCommand(command),
+  );
   const aliases = [
     ...new Set([...POWERSHELL_ENV_ALIASES, ...envAliases]),
   ].filter(isValidEnvAlias);
   const aliasPrelude = aliases
     .map((name) => `$${name} = $env:${name}`)
     .join("; ");
-  return `${aliasPrelude}; ${powerShellCommand}`;
+  return prefixPowerShellCommandWithUtf8Output(
+    `${aliasPrelude}; ${powerShellCommand}`,
+  );
 }
 
 function windowsLaunchers(
@@ -84,28 +112,34 @@ function windowsLaunchers(
   const seen = new Set<string>();
   const powerShellCommand = buildPowerShellCommand(trimmed, envAliases);
 
-  // Default to PowerShell on Windows (same as Gemini CLI and Codex CLI)
-  // This ensures better PATH compatibility since many tools are configured
-  // in PowerShell profiles rather than system-wide cmd.exe PATH
-  pushUnique(launchers, seen, [
-    "powershell.exe",
-    "-NoProfile",
-    "-Command",
-    powerShellCommand,
-  ]);
+  // Match Codex's PowerShell order: prefer PowerShell Core (`pwsh`) when
+  // available, then fall back to Windows PowerShell.
   pushUnique(launchers, seen, [
     "pwsh",
     "-NoProfile",
     "-Command",
     powerShellCommand,
   ]);
+  pushUnique(launchers, seen, [
+    WINDOWS_PWSH_FALLBACK_PATH,
+    "-NoProfile",
+    "-Command",
+    powerShellCommand,
+  ]);
+  pushUnique(launchers, seen, [
+    "powershell",
+    "-NoProfile",
+    "-Command",
+    powerShellCommand,
+  ]);
+  pushUnique(launchers, seen, [
+    WINDOWS_POWERSHELL_FALLBACK_PATH,
+    "-NoProfile",
+    "-Command",
+    powerShellCommand,
+  ]);
 
-  // Fall back to cmd.exe if PowerShell fails
-  const envComSpecRaw = process.env.ComSpec || process.env.COMSPEC;
-  const envComSpec = envComSpecRaw?.trim();
-  if (envComSpec) {
-    pushUnique(launchers, seen, [envComSpec, "/d", "/s", "/c", trimmed]);
-  }
+  // Fall back to cmd.exe if PowerShell fails.
   pushUnique(launchers, seen, ["cmd.exe", "/d", "/s", "/c", trimmed]);
 
   return launchers;

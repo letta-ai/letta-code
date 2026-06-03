@@ -4,7 +4,7 @@
   "properties": {
     "path": {
       "type": "string",
-      "description": "Local filesystem path to an image file"
+      "description": "Local filesystem path to an image file."
     }
   },
   "required": ["path"],

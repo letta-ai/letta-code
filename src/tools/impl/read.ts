@@ -8,6 +8,7 @@ import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { debugLog } from "@/utils/debug.js";
 import { resizeImageIfNeeded } from "@/utils/image-resize.js";
+import { getUtf16Bom, readUtf8TextStrict } from "@/utils/text-files";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
@@ -98,6 +99,7 @@ async function isBinaryFile(filePath: string): Promise<boolean> {
       const buffer = Buffer.alloc(bufferSize);
       const { bytesRead } = await fd.read(buffer, 0, bufferSize, 0);
       if (bytesRead === 0) return false;
+      if (getUtf16Bom(buffer.subarray(0, bytesRead))) return false;
 
       // Check for null bytes (definite binary indicator)
       for (let i = 0; i < bytesRead; i++) {
@@ -237,7 +239,7 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
       );
     if (await isBinaryFile(resolvedPath))
       throw new Error(`Cannot read binary file: ${resolvedPath}`);
-    const content = await fs.readFile(resolvedPath, "utf-8");
+    const content = await readUtf8TextStrict(resolvedPath);
     if (content.trim() === "") {
       return {
         content: `${SYSTEM_REMINDER_OPEN}\nThe file ${resolvedPath} exists but has empty contents.\n${SYSTEM_REMINDER_CLOSE}`,

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { accessSync, constants, realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { getVersion } from "@/version";
@@ -32,6 +32,7 @@ const DEFAULT_UPDATE_REGISTRY_BASE_URL = "https://registry.npmjs.org";
 const UPDATE_PACKAGE_NAME_ENV = "LETTA_UPDATE_PACKAGE_NAME";
 const UPDATE_REGISTRY_BASE_URL_ENV = "LETTA_UPDATE_REGISTRY_BASE_URL";
 const UPDATE_INSTALL_REGISTRY_URL_ENV = "LETTA_UPDATE_INSTALL_REGISTRY_URL";
+const DESKTOP_MANAGED_ENV = "LETTA_CODE_DESKTOP_MANAGED";
 
 const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
   npm: ["install", "-g"],
@@ -41,6 +42,14 @@ const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
 
 const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
 type FetchImpl = typeof fetch;
+
+export interface SelfUpdateStatus {
+  supported: boolean;
+  writable: boolean;
+  reason?: string;
+  install_path?: string;
+  manual_command: string;
+}
 
 function normalizeUpdatePackageName(raw: string | undefined): string | null {
   if (!raw) return null;
@@ -107,6 +116,80 @@ export function buildInstallCommand(
   return `${pm} ${buildInstallArgs(pm, env).join(" ")}`;
 }
 
+function getResolvedEntrypoint(): string {
+  const argv = process.argv[1] || "";
+  try {
+    return realpathSync(argv);
+  } catch {
+    return argv;
+  }
+}
+
+function findInstalledPackagePath(resolvedPath: string): string | null {
+  const marker = `${join("node_modules", "@letta-ai", "letta-code")}`;
+  const index = resolvedPath.lastIndexOf(marker);
+  if (index === -1) {
+    return null;
+  }
+  return resolvedPath.slice(0, index + marker.length);
+}
+
+function canWritePath(path: string): boolean {
+  try {
+    accessSync(path, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isDesktopManagedRuntime(resolvedEntrypoint: string): boolean {
+  return (
+    process.env[DESKTOP_MANAGED_ENV] === "1" ||
+    resolvedEntrypoint.includes("app.asar.unpacked")
+  );
+}
+
+export function getSelfUpdateStatus(): SelfUpdateStatus {
+  const pm = detectPackageManager();
+  const manualCommand = buildInstallCommand(pm);
+  const resolvedEntrypoint = getResolvedEntrypoint();
+
+  if (isDesktopManagedRuntime(resolvedEntrypoint)) {
+    return {
+      supported: false,
+      writable: false,
+      reason:
+        "Self-update is disabled because this Letta Code runtime is managed by Letta Code Desktop.",
+      manual_command:
+        "Update Letta Code Desktop to upgrade the bundled Letta Code runtime.",
+    };
+  }
+
+  const installPath = findInstalledPackagePath(resolvedEntrypoint);
+
+  if (!installPath) {
+    return {
+      supported: false,
+      writable: false,
+      reason: "Self-update is disabled for development/source checkouts.",
+      manual_command: manualCommand,
+    };
+  }
+
+  const packageParentPath = dirname(installPath);
+  const writable = canWritePath(installPath) && canWritePath(packageParentPath);
+  return {
+    supported: true,
+    writable,
+    reason: writable
+      ? undefined
+      : `Self-update requires write access to ${packageParentPath}. Run ${manualCommand} manually or reinstall Letta Code in a user-writable npm prefix.`,
+    install_path: installPath,
+    manual_command: manualCommand,
+  };
+}
+
 export function buildInstallArgs(
   pm: PackageManager,
   env: NodeJS.ProcessEnv = process.env,
@@ -136,13 +219,7 @@ export function detectPackageManager(): PackageManager {
     );
   }
 
-  const argv = process.argv[1] || "";
-  let resolvedPath = argv;
-  try {
-    resolvedPath = realpathSync(argv);
-  } catch {
-    // If realpath fails, use original path
-  }
+  const resolvedPath = getResolvedEntrypoint();
 
   if (/[/\\]\.bun[/\\]/.test(resolvedPath)) {
     debugLog("Detected package manager from path: bun");
@@ -163,16 +240,7 @@ function isAutoUpdateEnabled(): boolean {
 
 function isRunningLocally(): boolean {
   const argv = process.argv[1] || "";
-
-  // Resolve symlinks to get the real path
-  // npm creates symlinks in /bin/ that point to /lib/node_modules/
-  // Without resolving, argv would be like ~/.nvm/.../bin/letta (no node_modules)
-  let resolvedPath = argv;
-  try {
-    resolvedPath = realpathSync(argv);
-  } catch {
-    // If realpath fails (file doesn't exist), use original path
-  }
+  const resolvedPath = getResolvedEntrypoint();
 
   debugLog("argv[1]:", argv);
   debugLog("resolved path:", resolvedPath);
@@ -278,7 +346,7 @@ async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
   }
 }
 
-async function performUpdate(): Promise<{
+async function performUpdate(progressLog?: (message: string) => void): Promise<{
   success: boolean;
   error?: string;
   enotemptyFailed?: boolean;
@@ -301,10 +369,14 @@ async function performUpdate(): Promise<{
 
   try {
     debugLog(`Running ${installCmd}...`);
+    progressLog?.(`Running update command: ${installCmd}`);
     await execFileAsync(pm, installArgs, { timeout: 60000 });
     debugLog("Update completed successfully");
+    progressLog?.("Update command completed successfully.");
     return { success: true };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    progressLog?.(`Update command failed: ${message}`);
     trackBoundaryError({
       errorType: "auto_update_install_failed",
       error,
@@ -436,7 +508,9 @@ export async function checkAndAutoUpdate(): Promise<
   return undefined;
 }
 
-export async function manualUpdate(): Promise<{
+export async function manualUpdate(options?: {
+  progressLog?: (message: string) => void;
+}): Promise<{
   success: boolean;
   message: string;
 }> {
@@ -463,11 +537,12 @@ export async function manualUpdate(): Promise<{
     };
   }
 
-  console.log(
+  const progressLog = options?.progressLog ?? console.log;
+  progressLog(
     `Updating from ${result.currentVersion} to ${result.latestVersion}...`,
   );
 
-  const updateResult = await performUpdate();
+  const updateResult = await performUpdate(progressLog);
 
   if (updateResult.success) {
     return {

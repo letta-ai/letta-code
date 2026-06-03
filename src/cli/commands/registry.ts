@@ -231,7 +231,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent globally, or use -l for local only",
+    desc: "Pin current agent or conversation (/pin [name]|agent [name]|convo)",
     order: 22,
     handler: () => {
       // Handled specially in App.tsx

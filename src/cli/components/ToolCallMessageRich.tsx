@@ -20,11 +20,13 @@ import {
   isSearchTool,
   isShellOutputTool,
   isShellTool,
+  isTaskCrudTool,
   isTaskTool,
   isTodoTool,
 } from "@/cli/helpers/tool-name-mapping.js";
 import { formatUnifiedExecOutputForTui } from "@/cli/helpers/unified-exec-output.js";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { listTasks } from "@/tools/impl/tasks/store.js";
 import { clipToolReturn } from "@/tools/manager.js";
 import { isRecord } from "@/utils/type-guards";
 import { Text } from "./Text";
@@ -465,6 +467,28 @@ export const ToolCallMessage = memo(
             }
           } catch {
             // If parsing fails, fall through to regular handling
+          }
+        }
+
+        // Task CRUD family: after any TaskCreate/TaskUpdate/TaskList call,
+        // snapshot the current task store and render as a todo list so users
+        // see the live task state instead of raw JSON.
+        if (isTaskCrudTool(rawName) && line.resultOk !== false) {
+          try {
+            const tasks = listTasks();
+            if (tasks.length > 0) {
+              const safeTodos = tasks.map((t) => ({
+                content: t.subject,
+                status: (t.status === "deleted" ? "completed" : t.status) as
+                  | "pending"
+                  | "in_progress"
+                  | "completed",
+                id: t.taskId,
+              }));
+              return <TodoRenderer todos={safeTodos} />;
+            }
+          } catch {
+            // Fall through to regular rendering if store access fails
           }
         }
 

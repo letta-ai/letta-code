@@ -20,6 +20,7 @@ import {
   type LocalAssistantMessage,
   type LocalMessage,
 } from "@/backend/local/local-message";
+import { removeOrphanLocalToolResults } from "@/backend/local/local-message-projection";
 import type { ClientTool } from "@/tools/manager";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
@@ -251,7 +252,8 @@ function toPiMessage(message: LocalMessage): Message | undefined {
 }
 
 function toPiMessages(messages: LocalMessage[]): Message[] {
-  let normalized = messages.flatMap((message) => {
+  const providerSafeMessages = removeOrphanLocalToolResults(messages).messages;
+  let normalized = providerSafeMessages.flatMap((message) => {
     const piMessage = toPiMessage(message);
     return piMessage ? [piMessage] : [];
   });
@@ -308,6 +310,31 @@ function withOpenAIResponsesReplayIdSanitizer(
     const sanitized = stripOpenAIResponsesReplayItemIds(next);
     if (sanitized !== undefined) return sanitized;
     return upstreamChanged ? next : undefined;
+  };
+}
+
+function withMidConversationSystemPrompt(
+  existing: SimpleStreamOptions["onPayload"] | undefined,
+  systemPrompt: string | undefined,
+): SimpleStreamOptions["onPayload"] {
+  if (!systemPrompt) return existing;
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+    if (model.id !== "claude-opus-4-8" || !isRecord(next)) {
+      return upstreamChanged ? next : undefined;
+    }
+    const messages = Array.isArray(next.messages) ? next.messages : undefined;
+    if (!messages) return upstreamChanged ? next : undefined;
+    return {
+      ...next,
+      messages: [...messages, { role: "system", content: systemPrompt }],
+    };
   };
 }
 
@@ -509,6 +536,12 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       // request uses store:false, so remove them and replay the full item bodies.
       options.onPayload = withOpenAIResponsesReplayIdSanitizer(
         options.onPayload,
+      );
+    }
+    if (resolved.model.api === "anthropic-messages") {
+      options.onPayload = withMidConversationSystemPrompt(
+        options.onPayload,
+        input.midConversationSystemPrompt,
       );
     }
 

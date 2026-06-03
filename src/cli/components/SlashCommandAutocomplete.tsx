@@ -11,7 +11,9 @@ import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
-const MAX_VISIBLE_COMMANDS = 12; // Maximum commands visible at once
+// Match Codex's slash-command popup behavior: a small hard cap that can shrink
+// on short terminals, but never expands just because the terminal is tall.
+const MAX_POPUP_ROWS = 8;
 const CMD_COL_WIDTH = 14;
 
 const BUILTIN_SKILL_ALIASES = new Set([
@@ -21,7 +23,6 @@ const BUILTIN_SKILL_ALIASES = new Set([
   "creating-skills",
   "customizing-statusline",
   "initializing-memory",
-  "letta-help",
   "migrating-memory",
   "syncing-memory-filesystem",
 ]);
@@ -288,10 +289,8 @@ export function SlashCommandAutocomplete({
   }
 
   // Calculate visible window based on selected index, bounded by viewport.
-  const visibleCommandCount = Math.max(
-    3,
-    Math.min(MAX_VISIBLE_COMMANDS, terminalRows - 8),
-  );
+  const availablePopupRows = Math.max(1, terminalRows - 8);
+  const visibleCommandCount = Math.min(MAX_POPUP_ROWS, availablePopupRows);
   const totalMatches = matches.length;
   const needsScrolling = totalMatches > visibleCommandCount;
 

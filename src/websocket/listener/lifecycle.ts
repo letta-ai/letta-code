@@ -602,6 +602,9 @@ export async function wireChannelIngress(
       recompileByConversation: listener.systemPromptRecompileByConversation,
       recompileQueuedByConversation:
         listener.queuedSystemPromptRecompileByConversation,
+      feedbackContext: {
+        surface: getListenerTelemetrySurface(),
+      },
       onCompletionMessage: async (completionMessage) => {
         const conversationRuntime = getOrCreateConversationRuntime(
           listener,

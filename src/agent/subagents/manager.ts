@@ -90,6 +90,8 @@ export interface SubagentResult {
   success: boolean;
   error?: string;
   totalTokens?: number;
+  stepCount?: number;
+  durationMs?: number;
 }
 
 /**
@@ -100,7 +102,11 @@ interface ExecutionState {
   conversationId: string | null;
   finalResult: string | null;
   finalError: string | null;
-  resultStats: { durationMs: number; totalTokens: number } | null;
+  resultStats: {
+    durationMs: number;
+    totalTokens: number;
+    stepCount?: number;
+  } | null;
   displayedToolCalls: Set<string>;
   pendingToolCalls: Map<string, { name: string; args: string }>;
 }
@@ -406,7 +412,8 @@ function handleResultEvent(
     result?: string;
     is_error?: boolean;
     duration_ms?: number;
-    usage?: { total_tokens?: number };
+    usage?: { total_tokens?: number; step_count?: number };
+    num_turns?: number;
   },
   state: ExecutionState,
   subagentId: string,
@@ -415,6 +422,10 @@ function handleResultEvent(
   state.resultStats = {
     durationMs: event.duration_ms || 0,
     totalTokens: event.usage?.total_tokens || 0,
+    stepCount:
+      typeof event.usage?.step_count === "number"
+        ? event.usage.step_count
+        : undefined,
   };
 
   if (event.is_error) {
@@ -514,6 +525,14 @@ function parseResultFromStdout(
         report: result.result || "",
         success: !result.is_error,
         error: result.is_error ? result.result || "Unknown error" : undefined,
+        stepCount:
+          typeof result.usage?.step_count === "number"
+            ? result.usage.step_count
+            : undefined,
+        durationMs:
+          typeof result.duration_ms === "number"
+            ? result.duration_ms
+            : undefined,
       };
     }
 
@@ -1241,6 +1260,8 @@ async function executeSubagent(
         success: !state.finalError,
         error: state.finalError || undefined,
         totalTokens: state.resultStats?.totalTokens,
+        stepCount: state.resultStats?.stepCount,
+        durationMs: state.resultStats?.durationMs,
       };
     }
 
@@ -1258,6 +1279,8 @@ async function executeSubagent(
         success: false,
         error: state.finalError,
         totalTokens: state.resultStats?.totalTokens,
+        stepCount: state.resultStats?.stepCount,
+        durationMs: state.resultStats?.durationMs,
       };
     }
 

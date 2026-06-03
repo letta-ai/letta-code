@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   __clearExecSessionsForTests,
   exec_command,
@@ -49,6 +51,40 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(result.output).toContain("Original token count:");
     expect(result.output).toContain("Output:\nhello");
     expect(result.output).not.toContain("Process running with session ID");
+  });
+
+  test("falls back to available Windows PowerShell when pwsh is unavailable", async () => {
+    const tempDir = fs.mkdtempSync(join(tmpdir(), "letta-exec-win-shell-"));
+    const fakePowerShell = join(tempDir, "powershell");
+    fs.writeFileSync(fakePowerShell, "#!/bin/sh\nprintf fake-powershell\n");
+    fs.chmodSync(fakePowerShell, 0o755);
+
+    const originalPlatform = Object.getOwnPropertyDescriptor(
+      process,
+      "platform",
+    );
+    const originalPath = process.env.PATH;
+    const originalPathext = process.env.PATHEXT;
+
+    Object.defineProperty(process, "platform", { value: "win32" });
+    process.env.PATH = tempDir;
+    delete process.env.PATHEXT;
+
+    try {
+      const result = await exec_command({ cmd: "ignored" });
+
+      expect(result.output).toContain("Process exited with code 0");
+      expect(result.output).toContain("Output:\nfake-powershell");
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalPathext === undefined) delete process.env.PATHEXT;
+      else process.env.PATHEXT = originalPathext;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("returns session id for running command and write_stdin polls it", async () => {

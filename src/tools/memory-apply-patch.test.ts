@@ -8,7 +8,7 @@ import {
   test,
 } from "bun:test";
 import { execFile as execFileCb } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,6 +98,13 @@ function runScopedMemoryApplyPatch(
   return runWithRuntimeContext({ agentId: TEST_AGENT_ID }, () =>
     memory_apply_patch(args),
   );
+}
+
+function utf16leWithBom(content: string): Buffer {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(content, "utf16le"),
+  ]);
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
@@ -459,6 +466,36 @@ describe("memory_apply_patch tool", () => {
         ].join("\n"),
       }),
     ).rejects.toThrow(/read_only/i);
+  });
+
+  test("rejects UTF-16LE memory files without modifying them", async () => {
+    mkdirSync(join(memoryDir, "system"), { recursive: true });
+    const filePath = join(memoryDir, "system", "utf16.md");
+    const original = utf16leWithBom(
+      ["---", "description: UTF16", "---", "old"].join("\n"),
+    );
+    writeFileSync(filePath, original);
+    await runGit(memoryDir, ["add", "system/utf16.md"]);
+    await runGit(memoryDir, ["commit", "-m", "seed utf16 memory"]);
+    await runGit(memoryDir, ["push", "origin", "main"]);
+
+    await expect(
+      runScopedMemoryApplyPatch({
+        reason: "attempt edit utf16",
+        input: [
+          "*** Begin Patch",
+          "*** Update File: system/utf16.md",
+          "@@",
+          "-old",
+          "+new",
+          "*** End Patch",
+        ].join("\n"),
+      }),
+    ).rejects.toThrow(
+      /memory_apply_patch: failed to read system\/utf16\.md: File is not valid UTF-8 text: .*Detected UTF-16LE BOM; convert the file to UTF-8 and retry\./,
+    );
+
+    expect(Buffer.compare(readFileSync(filePath), original)).toBe(0);
   });
 
   test("returns error when push fails but keeps local commit", async () => {

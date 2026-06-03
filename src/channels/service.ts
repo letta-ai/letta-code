@@ -13,7 +13,7 @@ import {
   LEGACY_CHANNEL_ACCOUNT_ID,
   listChannelAccounts,
   listChannelAccountsWithSecrets,
-  removeChannelAccountWithSecrets,
+  removeChannelAccount,
   upsertChannelAccount,
   upsertChannelAccountWithSecrets,
 } from "./accounts";
@@ -1512,14 +1512,39 @@ export async function startChannelAccountLive(
   }
 
   if (!existing.enabled) {
-    await upsertChannelAccountWithSecrets(channelId, {
+    upsertChannelAccount(channelId, {
       ...existing,
       enabled: true,
       updatedAt: new Date().toISOString(),
     });
   }
 
-  await ensureChannelRegistry().startChannelAccount(channelId, accountId);
+  let startupTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      ensureChannelRegistry().startChannelAccount(channelId, accountId),
+      new Promise<never>((_, reject) => {
+        startupTimeout = setTimeout(() => {
+          reject(
+            new Error(
+              `Timed out starting ${channelId} account "${accountId}". Check the credentials and try again.`,
+            ),
+          );
+        }, 10_000);
+      }),
+    ]);
+  } catch (error) {
+    upsertChannelAccount(channelId, {
+      ...existing,
+      enabled: false,
+      updatedAt: new Date().toISOString(),
+    });
+    throw error;
+  } finally {
+    if (startupTimeout) {
+      clearTimeout(startupTimeout);
+    }
+  }
   const snapshot = await refreshChannelAccountDisplayNameLive(
     channelId,
     accountId,
@@ -1561,7 +1586,7 @@ export async function removeChannelAccountLive(
   accountId: string,
 ): Promise<boolean> {
   assertSupportedChannelId(channelId);
-  const existing = await getChannelAccountWithSecrets(channelId, accountId);
+  const existing = getChannelAccount(channelId, accountId);
   if (!existing) {
     return false;
   }
@@ -1573,7 +1598,7 @@ export async function removeChannelAccountLive(
   removeRoutesForAccount(channelId, accountId);
   removeChannelTargetsForAccount(channelId, accountId);
   removePairingStateForAccount(channelId, accountId);
-  const removed = await removeChannelAccountWithSecrets(channelId, accountId);
+  const removed = removeChannelAccount(channelId, accountId);
   await refreshLoadedMessageChannelTool();
   return removed;
 }
@@ -1730,14 +1755,28 @@ export function updateChannelRouteLive(
   loadRoutes(channelId);
 
   const existingRoute = getSelectedRouteByChatId(channelId, chatId, accountId);
-  if (!existingRoute) {
-    throw new Error(`Route "${channelId}:${chatId}" was not found.`);
+  const selectedAccount = existingRoute
+    ? null
+    : getSelectedChannelAccount(channelId, accountId);
+  if (!existingRoute && !selectedAccount) {
+    throw new Error(
+      accountId
+        ? `Channel account "${accountId}" was not found for ${channelId}.`
+        : `Channel "${channelId}" is not configured. Configure it first.`,
+    );
   }
 
-  const resolvedAccountId = existingRoute.accountId ?? accountId;
+  const resolvedAccountId =
+    existingRoute?.accountId ?? selectedAccount?.accountId ?? accountId;
   const existingAccount = resolvedAccountId
     ? getChannelAccount(channelId, resolvedAccountId)
     : null;
+
+  if (!existingRoute && !existingAccount) {
+    throw new Error(
+      `Channel account "${resolvedAccountId}" was not found for ${channelId}.`,
+    );
+  }
 
   if (existingAccount && isTelegramChannelAccount(existingAccount)) {
     upsertChannelAccount(channelId, {
@@ -1751,7 +1790,12 @@ export function updateChannelRouteLive(
   }
 
   const updatedRoute: ChannelRoute = {
-    ...existingRoute,
+    ...(existingRoute ?? {
+      accountId: resolvedAccountId,
+      chatId,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    }),
     agentId,
     conversationId,
     updatedAt: new Date().toISOString(),
@@ -1764,9 +1808,11 @@ export function updateChannelRouteLive(
       channelId,
       chatId,
       resolvedAccountId,
-      existingRoute.threadId,
+      existingRoute?.threadId,
     );
-    setRouteInMemory(channelId, existingRoute);
+    if (existingRoute) {
+      setRouteInMemory(channelId, existingRoute);
+    }
 
     if (existingAccount && isTelegramChannelAccount(existingAccount)) {
       try {
