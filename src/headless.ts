@@ -1138,7 +1138,7 @@ export async function handleHeadlessCommand(
     // Mark imported agents as "custom" to prevent legacy auto-migration
     // from overwriting their system prompt on resume.
     if (settingsManager.isReady) {
-      settingsManager.setSystemPromptPreset(agent.id, "custom");
+      settingsManager.setSystemPromptCustom(agent.id);
     }
 
     // Display extracted skills summary
@@ -1495,40 +1495,16 @@ export async function handleHeadlessCommand(
     agent = result.agent;
   }
 
-  // Auto-heal system prompt drift (rebuild from stored recipe).
-  // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+  // Maintain managed system prompt versions without blocking startup.
+  // This updates only agents whose current prompt still matches the stored
+  // managed prompt hash, so custom edits are preserved.
   if (isResumingAgent && !systemPromptPreset) {
-    let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
-
-    // Adopt legacy agents (created before recipe tracking) as "custom"
-    // so their prompts are left untouched by auto-heal.
-    if (
-      !storedPreset &&
-      agent.tags?.includes("origin:letta-code") &&
-      !agent.tags?.includes("role:subagent")
-    ) {
-      storedPreset = "custom";
-      settingsManager.setSystemPromptPreset(agent.id, storedPreset);
-    }
-
-    if (storedPreset && storedPreset !== "custom") {
-      const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
-        await import("@/agent/prompt-assets");
-      if (isKnown(storedPreset)) {
-        const memoryMode = settingsManager.isMemfsEnabled(agent.id)
-          ? "memfs"
-          : "standard";
-        const expected = rebuildPrompt(storedPreset, memoryMode);
-        if (agent.system !== expected) {
-          await backend.updateAgent(agent.id, { system: expected });
-          agent = await backend.retrieveAgent(agent.id, {
-            include: ["agent.secrets", "agent.tools", "agent.tags"],
-          });
-        }
-      } else {
-        settingsManager.clearSystemPromptPreset(agent.id);
-      }
-    }
+    const { getMemoryPromptModeForAgent, scheduleManagedSystemPromptUpdate } =
+      await import("@/agent/system-prompt-versioning");
+    scheduleManagedSystemPromptUpdate({
+      agent,
+      memoryMode: getMemoryPromptModeForAgent(agent.id),
+    });
   }
 
   const startupAgentId = agent.id;
