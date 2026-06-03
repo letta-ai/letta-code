@@ -439,6 +439,9 @@ export async function updateAgentSystemPrompt(
     const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
       "@/agent/prompt-assets"
     );
+    const { createSystemPromptRecipe } = await import(
+      "@/agent/system-prompt-versioning"
+    );
     const { settingsManager } = await import("@/settings-manager");
 
     const backend = getBackend();
@@ -470,7 +473,14 @@ export async function updateAgentSystemPrompt(
     // Persist preset for known presets; clear stale preset for subagent/unknown
     if (settingsManager.isReady) {
       if (isKnownPreset(systemPromptId)) {
-        settingsManager.setSystemPromptPreset(agentId, systemPromptId);
+        settingsManager.setSystemPromptRecipe(
+          agentId,
+          createSystemPromptRecipe(
+            systemPromptId,
+            memoryMode,
+            systemPromptContent,
+          ),
+        );
       } else {
         settingsManager.clearSystemPromptPreset(agentId);
       }
@@ -514,6 +524,9 @@ export async function updateAgentSystemPromptMemfs(
     const { isKnownPreset, buildSystemPrompt } = await import(
       "@/agent/prompt-assets"
     );
+    const { createSystemPromptRecipe, hashSystemPrompt } = await import(
+      "@/agent/system-prompt-versioning"
+    );
 
     const newMode = enableMemfs
       ? getBackend().capabilities.localMemfs
@@ -523,9 +536,44 @@ export async function updateAgentSystemPromptMemfs(
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
+    const storedRecipe = settingsManager.isReady
+      ? settingsManager.getSystemPromptRecipe(agentId)
+      : undefined;
 
     let nextSystemPrompt: string;
     if (storedPreset && isKnownPreset(storedPreset)) {
+      const agent = await getBackend().retrieveAgent(agentId);
+      const currentSystemPrompt = agent.system || "";
+      if (
+        storedRecipe &&
+        hashSystemPrompt(currentSystemPrompt) !== storedRecipe.contentHash
+      ) {
+        if (settingsManager.isReady) {
+          settingsManager.setSystemPromptCustom(agentId);
+        }
+        return {
+          success: true,
+          message: "Custom system prompt left unchanged for memory mode",
+        };
+      }
+
+      if (!storedRecipe && settingsManager.isReady) {
+        const currentMode = settingsManager.isMemfsEnabled(agentId)
+          ? getBackend().capabilities.localMemfs
+            ? "local-memfs"
+            : "memfs"
+          : "standard";
+        if (
+          currentSystemPrompt !== buildSystemPrompt(storedPreset, currentMode)
+        ) {
+          settingsManager.setSystemPromptCustom(agentId);
+          return {
+            success: true,
+            message: "Custom system prompt left unchanged for memory mode",
+          };
+        }
+      }
+
       nextSystemPrompt = buildSystemPrompt(storedPreset, newMode);
     } else {
       const agent = await getBackend().retrieveAgent(agentId);
@@ -535,6 +583,17 @@ export async function updateAgentSystemPromptMemfs(
     await getBackend().updateAgent(agentId, {
       system: nextSystemPrompt,
     });
+
+    if (
+      storedPreset &&
+      isKnownPreset(storedPreset) &&
+      settingsManager.isReady
+    ) {
+      settingsManager.setSystemPromptRecipe(
+        agentId,
+        createSystemPromptRecipe(storedPreset, newMode, nextSystemPrompt),
+      );
+    }
 
     return {
       success: true,

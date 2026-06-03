@@ -57,6 +57,15 @@ export interface AgentSettings {
     | "gemini_snake"
     | "none"; // toolset mode for this agent (manual override or auto)
   systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
+  systemPromptRecipe?: SystemPromptRecipe; // reproducible managed prompt provenance
+}
+
+export interface SystemPromptRecipe {
+  preset: string;
+  lettaCodeVersion: string;
+  contentHash: string;
+  memoryMode: "standard" | "memfs" | "local-memfs";
+  updatedAt: string;
 }
 
 export interface ConversationGoal {
@@ -2267,7 +2276,11 @@ class SettingsManager {
    */
   private upsertAgentSettings(
     agentId: string,
-    updates: Partial<Omit<AgentSettings, "agentId" | "baseUrl">>,
+    updates: Partial<
+      Omit<AgentSettings, "agentId" | "baseUrl" | "systemPromptRecipe">
+    > & {
+      systemPromptRecipe?: SystemPromptRecipe | null;
+    },
     serverKeyOverride?: string,
   ): void {
     const settings = this.getSettings();
@@ -2299,6 +2312,10 @@ class SettingsManager {
           updates.systemPromptPreset !== undefined
             ? updates.systemPromptPreset
             : existing.systemPromptPreset,
+        systemPromptRecipe:
+          updates.systemPromptRecipe !== undefined
+            ? (updates.systemPromptRecipe ?? undefined)
+            : existing.systemPromptRecipe,
       };
       // Clean up undefined/false values
       if (!updated.pinned) delete updated.pinned;
@@ -2306,6 +2323,7 @@ class SettingsManager {
       if (!updated.toolset || updated.toolset === "auto")
         delete updated.toolset;
       if (!updated.systemPromptPreset) delete updated.systemPromptPreset;
+      if (!updated.systemPromptRecipe) delete updated.systemPromptRecipe;
       if (!updated.baseUrl) delete updated.baseUrl;
       agents[idx] = updated;
     } else {
@@ -2314,6 +2332,7 @@ class SettingsManager {
         agentId,
         baseUrl: normalizedBaseUrl,
         ...updates,
+        systemPromptRecipe: updates.systemPromptRecipe ?? undefined,
       };
       // Clean up undefined/false values
       if (!newAgent.pinned) delete newAgent.pinned;
@@ -2321,6 +2340,7 @@ class SettingsManager {
       if (!newAgent.toolset || newAgent.toolset === "auto")
         delete newAgent.toolset;
       if (!newAgent.systemPromptPreset) delete newAgent.systemPromptPreset;
+      if (!newAgent.systemPromptRecipe) delete newAgent.systemPromptRecipe;
       if (!newAgent.baseUrl) delete newAgent.baseUrl;
       agents.push(newAgent);
     }
@@ -2388,10 +2408,40 @@ class SettingsManager {
   }
 
   /**
+   * Get the stored managed system prompt recipe for an agent on the current server.
+   */
+  getSystemPromptRecipe(agentId: string): SystemPromptRecipe | undefined {
+    return this.getAgentSettings(agentId)?.systemPromptRecipe;
+  }
+
+  /**
    * Set the system prompt preset for an agent on the current server.
    */
   setSystemPromptPreset(agentId: string, preset: string): void {
-    this.upsertAgentSettings(agentId, { systemPromptPreset: preset });
+    this.upsertAgentSettings(agentId, {
+      systemPromptPreset: preset,
+      systemPromptRecipe: null,
+    });
+  }
+
+  /**
+   * Store the managed system prompt recipe for an agent on the current server.
+   */
+  setSystemPromptRecipe(agentId: string, recipe: SystemPromptRecipe): void {
+    this.upsertAgentSettings(agentId, {
+      systemPromptPreset: recipe.preset,
+      systemPromptRecipe: recipe,
+    });
+  }
+
+  /**
+   * Mark an agent's system prompt as custom and clear any managed recipe.
+   */
+  setSystemPromptCustom(agentId: string): void {
+    this.upsertAgentSettings(agentId, {
+      systemPromptPreset: "custom",
+      systemPromptRecipe: null,
+    });
   }
 
   /**
@@ -2399,7 +2449,10 @@ class SettingsManager {
    */
   clearSystemPromptPreset(agentId: string): void {
     // Setting to empty string triggers the cleanup `if (!updated.systemPromptPreset) delete ...`
-    this.upsertAgentSettings(agentId, { systemPromptPreset: "" });
+    this.upsertAgentSettings(agentId, {
+      systemPromptPreset: "",
+      systemPromptRecipe: null,
+    });
   }
 
   /**
