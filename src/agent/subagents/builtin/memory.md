@@ -26,7 +26,7 @@ You achieve this by:
 
 ## Directory Structure
 
-The memory directory is at `~/.letta/agents/$LETTA_AGENT_ID/memory/`:
+The memory directory is provided by `$MEMORY_DIR`:
 
 ```
 memory/
@@ -63,12 +63,10 @@ Do **not** edit:
 
 ### Phase 0: Setup
 
-The memory directory is at:
-`~/.letta/agents/$LETTA_AGENT_ID/memory/`
+The memory directory is provided by `$MEMORY_DIR`. Use a sibling worktree directory by appending `-worktrees` to it.
 
 ```bash
-MEMORY_DIR=~/.letta/agents/$LETTA_AGENT_ID/memory
-WORKTREE_DIR=~/.letta/agents/$LETTA_AGENT_ID/memory-worktrees
+WORKTREE_DIR="$MEMORY_DIR-worktrees"
 ```
 
 The memory directory should already be a git repo
@@ -179,9 +177,7 @@ For each edited file: before/after chars, delta, what was fixed
 ### Phase 5: Merge and Clean Up (MANDATORY)
 
 Your defrag has two completion states:
-- **Complete**: merged to main with a clean working tree. The harness
-  automatically pushes clean committed memory changes after the turn for
-  remote MemFS agents.
+- **Complete**: merged to main with a clean working tree.
 - **Needs attention**: merged to main but the memory repo is dirty or in a
   merge/rebase conflict. Report the issue clearly so the next turn can fix it.
 
@@ -191,8 +187,7 @@ step. Without at least a merge to main, your work is lost.
 **Step 5a: Commit in worktree**
 
 ```bash
-MEMORY_DIR=~/.letta/agents/$LETTA_AGENT_ID/memory
-WORKTREE_DIR=~/.letta/agents/$LETTA_AGENT_ID/memory-worktrees
+WORKTREE_DIR="$MEMORY_DIR-worktrees"
 cd $WORKTREE_DIR/$BRANCH
 git add -A
 ```
@@ -207,7 +202,7 @@ If there are changes, commit:
 git commit -m "chore(defrag): <summary>"
 ```
 
-**Step 5b: Pull + merge to main**
+**Step 5b: Merge to main**
 
 ```bash
 cd $MEMORY_DIR
@@ -219,24 +214,7 @@ index), wait and retry up to 3 times with backoff (sleep 2,
 5, 10 seconds). Never delete `.git/index.lock` manually.
 If still busy after retries, go to Error Handling.
 
-Pull from remote:
-
-```bash
-git pull --ff-only
-```
-
-If `--ff-only` fails (remote has diverged), fall back:
-
-```bash
-git pull --rebase
-```
-
-If rebase has conflicts, resolve them autonomously to
-stabilize local `main` against remote `main` first. In this
-step, prefer **remote main** content for conflicting files,
-then run `git rebase --continue`.
-
-Now merge the defrag branch:
+Merge the defrag branch:
 
 ```bash
 git merge $BRANCH --no-edit
@@ -290,9 +268,9 @@ If anything goes wrong at any phase:
    - Whether main has uncommitted/dirty state
    - Concrete resume commands, e.g.:
      ```bash
-     cd ~/.letta/agents/$LETTA_AGENT_ID/memory
+     cd "$MEMORY_DIR"
      git merge <branch-name> --no-edit
-     git worktree remove ../memory-worktrees/<branch-name>
+     git worktree remove "$MEMORY_DIR-worktrees/<branch-name>"
      git branch -d <branch-name>
      ```
 

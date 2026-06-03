@@ -22,12 +22,9 @@ import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
 import initAgentMd from "./builtin/init.md";
-import initLocalMemfsAgentMd from "./builtin/init_local_memfs.md";
 import memoryAgentMd from "./builtin/memory.md";
-import memoryLocalMemfsAgentMd from "./builtin/memory_local_memfs.md";
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
-import reflectionLocalMemfsAgentMd from "./builtin/reflection_local_memfs.md";
 
 const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
@@ -43,10 +40,10 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
   historyAnalyzerAgentMd,
-  initLocalMemfsAgentMd,
-  memoryLocalMemfsAgentMd,
+  initAgentMd,
+  memoryAgentMd,
   recallAgentMd,
-  reflectionLocalMemfsAgentMd,
+  reflectionAgentMd,
 ];
 
 // Re-export for convenience
