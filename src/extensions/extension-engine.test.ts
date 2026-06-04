@@ -648,7 +648,10 @@ describe("extension engine", () => {
       // Both handlers ran
       expect(result.handlerCount).toBe(2);
       // Denial result is collected
-      expect(result.results).toContainEqual({ deny: true, reason: "Destructive command blocked." });
+      expect(result.results).toContainEqual({
+        deny: true,
+        reason: "Destructive command blocked.",
+      });
       // Side-effect handler still ran (args were mutated)
       expect(event.args).toMatchObject({ _sideEffect: true });
 
