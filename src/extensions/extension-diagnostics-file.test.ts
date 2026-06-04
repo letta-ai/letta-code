@@ -6,7 +6,6 @@ import {
   createExtensionDiagnosticsFile,
   getDefaultExtensionDiagnosticsRoot,
   getExtensionDiagnosticsLatestFilePath,
-  readExtensionDiagnosticsLatestFile,
   writeExtensionDiagnosticsLatestFile,
 } from "@/extensions/extension-diagnostics-file";
 import type { ExtensionDiagnostic, ExtensionOwner } from "@/extensions/types";
@@ -89,11 +88,10 @@ describe("extension diagnostics file", () => {
       text: `Extension diagnostics: 1 error, 0 warnings
 - [error] activate /tmp/example.ts
   message: activation failed`,
-      version: 1,
     });
   });
 
-  test("writes and reads latest diagnostics files", () => {
+  test("writes latest diagnostics files", () => {
     const rootDirectory = createTempDir();
     try {
       const options = {
@@ -111,7 +109,6 @@ describe("extension diagnostics file", () => {
       expect(readFileSync(filePath, "utf-8")).toBe(
         `${JSON.stringify(written, null, 2)}\n`,
       );
-      expect(readExtensionDiagnosticsLatestFile(options)).toEqual(written);
     } finally {
       rmSync(rootDirectory, { force: true, recursive: true });
     }
@@ -133,23 +130,7 @@ describe("extension diagnostics file", () => {
         report: { diagnostics: [], errorCount: 0, warningCount: 0 },
         sessionId: "conv-1",
         text: "No extension diagnostics recorded.",
-        version: 1,
       });
-      expect(readExtensionDiagnosticsLatestFile(options)).toEqual(written);
-    } finally {
-      rmSync(rootDirectory, { force: true, recursive: true });
-    }
-  });
-
-  test("returns null when no latest diagnostics file exists", () => {
-    const rootDirectory = createTempDir();
-    try {
-      expect(
-        readExtensionDiagnosticsLatestFile({
-          rootDirectory,
-          sessionId: "conv-1",
-        }),
-      ).toBeNull();
     } finally {
       rmSync(rootDirectory, { force: true, recursive: true });
     }

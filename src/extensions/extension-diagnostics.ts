@@ -10,7 +10,7 @@ export interface ExtensionDiagnosticCollector {
   diagnostics: ExtensionDiagnostic[];
 }
 
-export interface ExtensionDiagnosticAgentEntry {
+export interface ExtensionDiagnosticReportEntry {
   capability?: ExtensionDiagnostic["capability"];
   errorName: string;
   extension: ExtensionOwner;
@@ -22,13 +22,13 @@ export interface ExtensionDiagnosticAgentEntry {
   timestamp: number;
 }
 
-export interface ExtensionDiagnosticsAgentReport {
-  diagnostics: ExtensionDiagnosticAgentEntry[];
+export interface ExtensionDiagnosticsReport {
+  diagnostics: ExtensionDiagnosticReportEntry[];
   errorCount: number;
   warningCount: number;
 }
 
-export interface ExtensionDiagnosticsAgentReportOptions {
+export interface ExtensionDiagnosticsReportOptions {
   includeStack?: boolean;
 }
 
@@ -61,10 +61,10 @@ export function getExtensionErrorDiagnostics(
   return diagnostics.filter(isExtensionDiagnosticError);
 }
 
-export function createExtensionDiagnosticsAgentReport(
+export function createExtensionDiagnosticsReport(
   diagnostics: readonly ExtensionDiagnostic[],
-  options: ExtensionDiagnosticsAgentReportOptions = {},
-): ExtensionDiagnosticsAgentReport {
+  options: ExtensionDiagnosticsReportOptions = {},
+): ExtensionDiagnosticsReport {
   let errorCount = 0;
   let warningCount = 0;
 
@@ -90,7 +90,7 @@ export function createExtensionDiagnosticsAgentReport(
         ? { stack: diagnostic.error.stack }
         : {}),
       timestamp: diagnostic.timestamp,
-    } satisfies ExtensionDiagnosticAgentEntry;
+    } satisfies ExtensionDiagnosticReportEntry;
   });
 
   return {
@@ -110,9 +110,9 @@ function formatDiagnosticMessage(message: string): string {
 
 export function formatExtensionDiagnosticsForAgent(
   diagnostics: readonly ExtensionDiagnostic[],
-  options: ExtensionDiagnosticsAgentReportOptions = {},
+  options: ExtensionDiagnosticsReportOptions = {},
 ): string {
-  const report = createExtensionDiagnosticsAgentReport(diagnostics, options);
+  const report = createExtensionDiagnosticsReport(diagnostics, options);
   if (report.diagnostics.length === 0) {
     return "No extension diagnostics recorded.";
   }

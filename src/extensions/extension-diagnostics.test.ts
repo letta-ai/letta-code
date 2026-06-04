@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  createExtensionDiagnosticsAgentReport,
+  createExtensionDiagnosticsReport,
   type ExtensionDiagnosticCollector,
   formatExtensionDiagnosticsForAgent,
   getExtensionDiagnosticSeverity,
@@ -77,7 +77,7 @@ describe("extension diagnostics", () => {
       timestamp: 200,
     };
 
-    expect(createExtensionDiagnosticsAgentReport([warning, error])).toEqual({
+    expect(createExtensionDiagnosticsReport([warning, error])).toEqual({
       diagnostics: [
         {
           capability: { id: "reload", kind: "command" },
@@ -113,10 +113,10 @@ describe("extension diagnostics", () => {
     };
 
     expect(
-      createExtensionDiagnosticsAgentReport([diagnostic]).diagnostics[0],
+      createExtensionDiagnosticsReport([diagnostic]).diagnostics[0],
     ).not.toHaveProperty("stack");
     expect(
-      createExtensionDiagnosticsAgentReport([diagnostic], {
+      createExtensionDiagnosticsReport([diagnostic], {
         includeStack: true,
       }).diagnostics[0],
     ).toMatchObject({
