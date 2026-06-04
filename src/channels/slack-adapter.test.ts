@@ -1042,6 +1042,47 @@ test("slack adapter forwards reaction events into the routed Slack thread", asyn
   );
 });
 
+test("slack adapter ignores reactions authored by its own bot user", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const reactionAddedHandler = app?.eventHandlers.get("reaction_added");
+  const reactionRemovedHandler = app?.eventHandlers.get("reaction_removed");
+  if (!reactionAddedHandler || !reactionRemovedHandler) {
+    throw new Error("Expected Slack reaction handlers");
+  }
+
+  const event = {
+    user: "U0AS42PTEAX",
+    item_user: "U123",
+    reaction: "x",
+    event_ts: "1712800001.000200",
+    item: {
+      type: "message",
+      channel: "C123",
+      ts: "1712800000.000100",
+    },
+  };
+
+  await reactionAddedHandler({ event });
+  await reactionRemovedHandler({ event });
+
+  expect(onMessage).not.toHaveBeenCalled();
+});
+
 test("slack adapter can add reactions to messages", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
