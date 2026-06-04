@@ -27,11 +27,11 @@ describe("/reload command", () => {
     );
     expect(source).toContain("refreshCustomCommands()");
     expect(source).toContain(
-      'await extensionAdapter.events.emit("conversation_close"',
+      'void extensionAdapter.events.emit("conversation_close"',
     );
     expect(source).toContain("await extensionAdapter.reload()");
     expect(source).toContain(
-      'await extensionAdapter.events.emit("conversation_open"',
+      'void extensionAdapter.events.emit("conversation_open"',
     );
     expect(source).toContain('reason: "reload"');
   });

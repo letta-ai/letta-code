@@ -2545,7 +2545,7 @@ export function App({
     }
 
     const durationMs = Date.now() - sessionStartTimeRef.current;
-    await extensionAdapter.events.emit("conversation_close", {
+    void extensionAdapter.events.emit("conversation_close", {
       agentId,
       conversationId: conversationIdRef.current ?? null,
       durationMs,
@@ -2554,7 +2554,7 @@ export function App({
       toolCallCount: telemetry.getToolCallCount(),
     });
     await extensionAdapter.reload();
-    await extensionAdapter.events.emit("conversation_open", {
+    void extensionAdapter.events.emit("conversation_open", {
       agentId,
       agentName: agentName ?? null,
       conversationId: conversationIdRef.current ?? null,
