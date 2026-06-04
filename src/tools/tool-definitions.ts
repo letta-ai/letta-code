@@ -149,10 +149,24 @@ const WINDOWS_UNIFIED_EXEC_GUIDANCE = `Windows safety rules:
 - Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.
 - When using \`Start-Process\` to launch a background helper or service, pass \`-WindowStyle Hidden\` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.`;
 
+const WINDOWS_BASH_GUIDANCE = `Windows shell rules:
+- On Windows, the Bash tool executes commands through PowerShell (preferring \`pwsh\`, then Windows PowerShell) and only falls back to \`cmd.exe\` if PowerShell is unavailable. It is not a Unix bash shell.
+- Write Windows-compatible PowerShell commands. Do not use Unix-only utilities or bash syntax such as \`head\`, \`cat <<EOF\`, \`grep\`, \`sed\`, \`awk\`, \`&&\`, \`||\`, or POSIX \`if\`/redirection patterns unless you first verify they are available in the current shell.
+- For sequential commands in Windows PowerShell, prefer separate Bash tool calls or PowerShell statements separated with semicolons and explicit checks, for example \`git status; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git diff\`.
+- Use PowerShell-native equivalents: \`Get-Content -TotalCount\` instead of \`head\`, \`Select-String\` instead of \`grep\`, \`Invoke-RestMethod\` / \`Invoke-WebRequest\` with hashtable headers instead of curl-style header strings, and \`Test-Path\` before reading files.
+- For complex multi-line logic on Windows, write a temporary \`.ps1\` script with the Write tool and run it, rather than embedding fragile quoting in a one-line command.`;
+
 function execCommandDescription(): string {
   const baseDescription = ExecCommandDescription.trim();
   return process.platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_UNIFIED_EXEC_GUIDANCE}`
+    : baseDescription;
+}
+
+function bashDescription(): string {
+  const baseDescription = BashDescription.trim();
+  return process.platform === "win32"
+    ? `${baseDescription}\n\n${WINDOWS_BASH_GUIDANCE}`
     : baseDescription;
 }
 
@@ -164,7 +178,7 @@ const toolDefinitions = {
   }),
   Bash: defineTool({
     schema: BashSchema,
-    description: BashDescription.trim(),
+    description: bashDescription(),
     impl: bash,
   }),
   BashOutput: defineTool({

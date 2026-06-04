@@ -25,6 +25,38 @@ import { validateRequiredParams } from "./validation.js";
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
 
+const WINDOWS_SHELL_FAILURE_HINT = [
+  "",
+  "Windows shell note: Bash runs through PowerShell on Windows, not Unix bash.",
+  "Use PowerShell-compatible syntax or separate tool calls. Common fixes: use `;` plus explicit `$LASTEXITCODE` checks instead of `&&` / `||`, `Get-Content -TotalCount` instead of `head`, `Select-String` instead of `grep`, PowerShell hashtables for HTTP headers, and a temporary `.ps1` script for complex quoting.",
+].join("\n");
+
+const WINDOWS_SHELL_ERROR_PATTERNS = [
+  /The token '&&' is not a valid statement separator/i,
+  /The token '\|\|' is not a valid statement separator/i,
+  /\b(head|grep|sed|awk|cat) : The term '\1' is not recognized/i,
+  /The string is missing the terminator/i,
+  /Cannot bind parameter 'Headers'/i,
+  /Missing '\(' after 'if' in if statement/i,
+  /& was unexpected at this time/i,
+  /The '<' operator is reserved for future use/i,
+  /Missing property name after reference operator/i,
+  /Missing argument in parameter list/i,
+  /Unexpected token/i,
+];
+
+export function appendWindowsShellFailureHint(
+  text: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== "win32") return text;
+  if (text.includes("Windows shell note:")) return text;
+  if (!WINDOWS_SHELL_ERROR_PATTERNS.some((pattern) => pattern.test(text))) {
+    return text;
+  }
+  return `${text.trimEnd()}${WINDOWS_SHELL_FAILURE_HINT}`;
+}
+
 function rebuildCachedLauncher(
   command: string,
   secretEnv?: Record<string, string>,
@@ -344,7 +376,9 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         content: [
           {
             type: "text",
-            text: `Exit code: ${exitCode}\n${truncatedOutput}`,
+            text: appendWindowsShellFailureHint(
+              `Exit code: ${exitCode}\n${truncatedOutput}`,
+            ),
           },
         ],
         status: "error",
@@ -392,7 +426,9 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     );
 
     return {
-      content: [{ type: "text", text: truncatedError }],
+      content: [
+        { type: "text", text: appendWindowsShellFailureHint(truncatedError) },
+      ],
       status: "error",
     };
   }

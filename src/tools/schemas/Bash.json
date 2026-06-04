@@ -3,7 +3,7 @@
   "properties": {
     "command": {
       "type": "string",
-      "description": "The command to execute"
+      "description": "The command to execute. On Windows this tool runs through PowerShell, not Unix bash; use PowerShell-compatible syntax and avoid bash-only operators/utilities such as &&, ||, head, cat <<EOF, grep, sed, and awk unless you have verified they are available."
     },
     "timeout": {
       "type": "number",

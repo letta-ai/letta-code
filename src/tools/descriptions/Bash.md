@@ -36,7 +36,7 @@ Usage notes:
     - Communication: Output text directly (NOT echo/printf)
   - When issuing multiple commands:
     - If the commands are independent and can run in parallel, make multiple Bash tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two Bash tool calls in parallel.
-    - If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together (e.g., `git add . && git commit -m "message" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, Write before Bash for git operations, or git add before git commit), run these operations sequentially instead.
+    - If the commands depend on each other and must run sequentially, use shell-appropriate sequencing. On Unix shells, a single Bash call with '&&' is usually appropriate (e.g., `git add . && git commit -m "message" && git push`). On Windows, this tool runs through PowerShell, so prefer separate tool calls or PowerShell-compatible sequencing with `;` and explicit `$LASTEXITCODE` checks instead of assuming `&&` / `||` work.
     - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail
     - DO NOT use newlines to separate commands (newlines are ok in quoted strings)
   - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of `cd`. You may use `cd` if the User explicitly requests it.

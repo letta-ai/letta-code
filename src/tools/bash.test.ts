@@ -3,8 +3,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { bash } from "@/tools/impl/bash";
+import { appendWindowsShellFailureHint, bash } from "@/tools/impl/bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
+import BashSchema from "@/tools/schemas/Bash.json";
 
 async function runBashInTemp(
   command: string,
@@ -25,6 +26,33 @@ async function runBashInTemp(
 }
 
 describe("Bash tool", () => {
+  test("command schema warns Windows agents that Bash is PowerShell", () => {
+    expect(BashSchema.properties.command.description).toContain(
+      "On Windows this tool runs through PowerShell",
+    );
+    expect(BashSchema.properties.command.description).toContain("&&");
+  });
+
+  test("adds Windows shell guidance for common PowerShell syntax failures", () => {
+    const output = appendWindowsShellFailureHint(
+      "Exit code: 1\nAt line:1 char:339\nThe token '&&' is not a valid statement separator in this version.",
+      "win32",
+    );
+
+    expect(output).toContain("Windows shell note");
+    expect(output).toContain("PowerShell-compatible syntax");
+    expect(output).toContain("instead of `&&` / `||`");
+  });
+
+  test("does not add Windows shell guidance on non-Windows platforms", () => {
+    const output = appendWindowsShellFailureHint(
+      "Exit code: 1\nThe token '&&' is not a valid statement separator",
+      "darwin",
+    );
+
+    expect(output).not.toContain("Windows shell note");
+  });
+
   test("executes simple command", async () => {
     const result = await bash({
       command: "echo 'Hello, World!'",
