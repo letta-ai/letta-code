@@ -78,6 +78,7 @@ import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
+  isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
@@ -526,6 +527,15 @@ export function AppView(props: AppViewProps) {
                       (ln.toolCallId === currentApproval?.toolCallId ||
                         pendingIds.has(ln.toolCallId) ||
                         queuedIds.has(ln.toolCallId));
+                    if (
+                      ln.kind === "tool_call" &&
+                      ln.name &&
+                      isShellTool(ln.name) &&
+                      !isApprovalTracked &&
+                      (ln.phase === "streaming" || ln.phase === "ready")
+                    ) {
+                      return null;
+                    }
                     if (isFileTool && !isApprovalTracked) {
                       return null;
                     }
