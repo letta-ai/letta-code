@@ -473,6 +473,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         allowReentry?: boolean;
         submissionGeneration?: number;
         transcriptStartLineIndex?: number | null;
+        allowResponseStateReuse?: boolean;
       },
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
@@ -846,6 +847,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 agentId: agentIdRef.current,
                 overrideModel: tempModelOverrideRef.current ?? undefined,
                 preparedToolContext: preparedToolContext.preparedToolContext,
+                allowResponseStateReuse:
+                  options?.allowResponseStateReuse === true,
               },
             );
             stream = nextStream;
@@ -2200,7 +2203,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       otid: randomUUID(),
                     },
                   ],
-                  { allowReentry: true },
+                  {
+                    allowReentry: true,
+                    allowResponseStateReuse: true,
+                  },
                 );
                 toolResultsInFlightRef.current = false;
                 return;
