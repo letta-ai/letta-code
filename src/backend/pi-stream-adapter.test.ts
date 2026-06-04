@@ -544,19 +544,11 @@ describe("PiStreamAdapter", () => {
     expect(events.some((event) => event.type === "local-message")).toBe(true);
   });
 
-  test("retries empty local provider responses before persisting model output", async () => {
+  test("accepts empty successful local provider responses like pi agent loop", async () => {
     let calls = 0;
     const stream: PiStreamFunction = () => {
       calls += 1;
-      if (calls === 1) {
-        const empty = { ...assistantMessage(), content: [] };
-        return streamFromEvents(
-          [{ type: "done", reason: "stop", message: empty }],
-          empty,
-        );
-      }
-
-      const finalMessage = assistantMessage();
+      const finalMessage = { ...assistantMessage(), content: [] };
       return streamFromEvents(
         [{ type: "done", reason: "stop", message: finalMessage }],
         finalMessage,
@@ -569,7 +561,7 @@ describe("PiStreamAdapter", () => {
       events.push(event);
     }
 
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
     expect(
       events.some((event) => {
         if (event.type !== "letta-chunk") return false;
@@ -581,12 +573,36 @@ describe("PiStreamAdapter", () => {
           chunk.message_type === "event_message" && chunk.event_type === "retry"
         );
       }),
-    ).toBe(true);
+    ).toBe(false);
     const localMessages = events.filter(
       (event) => event.type === "local-message",
     );
     expect(localMessages).toHaveLength(1);
-    expect(JSON.stringify(localMessages[0])).toContain("ok");
+    expect(JSON.stringify(localMessages[0])).toContain('"content":[]');
+  });
+
+  test("accepts reasoning-only successful local provider responses like pi agent loop", async () => {
+    const finalMessage = {
+      ...assistantMessage(),
+      content: [{ type: "thinking", thinking: "done thinking" }],
+    } satisfies AssistantMessage;
+    const stream: PiStreamFunction = () =>
+      streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+
+    const adapter = new PiStreamAdapter({ stream });
+    const events: ProviderStreamEvent[] = [];
+    for await (const event of adapter.stream(input())) {
+      events.push(event);
+    }
+
+    const localMessages = events.filter(
+      (event) => event.type === "local-message",
+    );
+    expect(localMessages).toHaveLength(1);
+    expect(JSON.stringify(localMessages[0])).toContain("done thinking");
   });
 
   test("maps local ChatGPT priority service tier to pi-ai serviceTier", async () => {
