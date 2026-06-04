@@ -322,7 +322,7 @@ type SubmitHandlerContext = {
     keepRunning?: boolean,
   ) => void;
   userCancelledRef: MutableRefObject<boolean>;
-  onReload?: (agentId: string, conversationId: string) => Promise<void>;
+  onReload?: () => Promise<void>;
 };
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
@@ -978,30 +978,23 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           if (onReload) {
             const cmd = commandRunner.start(
               "/reload",
-              "Reloading settings and restarting TUI effects...",
+              "Reloading settings and local extensions...",
             );
-            cmd.finish("Reloading...", true);
-            try {
-              const { refreshCustomCommands } = await import(
-                "@/cli/commands/custom.js"
-              );
-              refreshCustomCommands();
-            } catch (error) {
-              debugLog(
-                "commands",
-                "refreshCustomCommands failed during /reload: %s",
-                error instanceof Error ? error.message : String(error),
-              );
-            }
+            setCommandRunning(true);
             // Defer the reload to let the command UI render first
-            setTimeout(
-              () =>
-                onReload(
-                  agentIdRef.current,
-                  conversationIdRef.current ?? "default",
-                ),
-              0,
-            );
+            setTimeout(() => {
+              void (async () => {
+                try {
+                  await onReload();
+                  cmd.finish("Reloaded settings and local extensions", true);
+                } catch (error) {
+                  const errorDetails = formatErrorDetails(error, agentId);
+                  cmd.fail(`Failed: ${errorDetails}`);
+                } finally {
+                  setCommandRunning(false);
+                }
+              })();
+            }, 0);
           } else {
             const cmd = commandRunner.start("/reload", "Reload not available");
             cmd.fail("Reload is not available in this context");

@@ -48,6 +48,7 @@ import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
 } from "@/cli/commands/connect-command-state";
+import { refreshCustomCommands } from "@/cli/commands/custom";
 import {
   type CommandFinishedEvent,
   type CommandHandle,
@@ -335,7 +336,6 @@ export function App({
   updateNotification = null,
   systemInfoReminderEnabled = true,
   extensionsDisabled = false,
-  onReload,
 }: AppProps) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -988,6 +988,8 @@ export function App({
   // Show compaction messages preference (can be toggled at runtime)
   const [showCompactionsEnabled, _setShowCompactionsEnabled] =
     useState(showCompactions);
+  const [terminalTitleConfigRefreshEpoch, setTerminalTitleConfigRefreshEpoch] =
+    useState(0);
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
@@ -2521,6 +2523,46 @@ export function App({
     commitEligibleLines(b);
   }, [commitEligibleLines]);
   refreshDerivedRef.current = refreshDerived;
+
+  const handleReload = useCallback(async () => {
+    settingsManager.clearCaches();
+    await settingsManager.loadProjectSettings();
+    await settingsManager.loadLocalProjectSettings();
+
+    const settings = settingsManager.getSettings();
+    setTokenStreamingEnabled(settings.tokenStreaming);
+    _setReasoningTabCycleEnabled(settings.reasoningTabCycleEnabled === true);
+    _setShowCompactionsEnabled(settings.showCompactions === true);
+
+    try {
+      refreshCustomCommands();
+    } catch (error) {
+      debugLog(
+        "commands",
+        "refreshCustomCommands failed during /reload: %s",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    const durationMs = Date.now() - sessionStartTimeRef.current;
+    void extensionAdapter.events.emit("conversation_close", {
+      agentId,
+      conversationId: conversationIdRef.current ?? null,
+      durationMs,
+      messageCount: telemetry.getMessageCount(),
+      reason: "reload",
+      toolCallCount: telemetry.getToolCallCount(),
+    });
+    await extensionAdapter.reload();
+    void extensionAdapter.events.emit("conversation_open", {
+      agentId,
+      agentName: agentName ?? null,
+      conversationId: conversationIdRef.current ?? null,
+      reason: "reload",
+    });
+    setTerminalTitleConfigRefreshEpoch((epoch) => epoch + 1);
+    refreshDerived();
+  }, [agentId, agentName, extensionAdapter, refreshDerived]);
 
   const recordCommandReminder = useCallback((event: CommandFinishedEvent) => {
     let input = event.input.trim();
@@ -4103,7 +4145,7 @@ export function App({
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
-    onReload,
+    onReload: handleReload,
   });
 
   const onSubmitRef = useRef(onSubmit);
@@ -4814,7 +4856,7 @@ export function App({
     <>
       <TerminalTitleWriter
         projectDirectory={projectDirectory}
-        configRefreshKey={activeOverlay}
+        configRefreshKey={`${activeOverlay ?? ""}:${terminalTitleConfigRefreshEpoch}`}
         titleData={terminalTitleData}
         shouldAnimate={shouldAnimate}
         hasActiveProgress={terminalTitleTaskRunning}

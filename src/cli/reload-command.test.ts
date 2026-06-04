@@ -10,18 +10,30 @@ describe("/reload command", () => {
     const source = readFileSync(registryPath, "utf-8");
 
     expect(source).toContain('"/reload"');
-    expect(source).toContain("Reload settings and restart TUI effects");
+    expect(source).toContain("Reload settings and local extensions");
   });
 
-  test("AppProps includes onReload callback", () => {
-    const typesPath = fileURLToPath(
-      new URL("../cli/app/types.ts", import.meta.url),
+  test("AppCoordinator owns the in-place reload callback", () => {
+    const appCoordinatorPath = fileURLToPath(
+      new URL("../cli/app/AppCoordinator.tsx", import.meta.url),
     );
-    const source = readFileSync(typesPath, "utf-8");
+    const source = readFileSync(appCoordinatorPath, "utf-8");
 
+    expect(source).toContain("const handleReload = useCallback(async () =>");
+    expect(source).toContain("settingsManager.clearCaches()");
+    expect(source).toContain("await settingsManager.loadProjectSettings()");
     expect(source).toContain(
-      "onReload?: (agentId: string, conversationId: string) => Promise<void>",
+      "await settingsManager.loadLocalProjectSettings()",
     );
+    expect(source).toContain("refreshCustomCommands()");
+    expect(source).toContain(
+      'void extensionAdapter.events.emit("conversation_close"',
+    );
+    expect(source).toContain("await extensionAdapter.reload()");
+    expect(source).toContain(
+      'void extensionAdapter.events.emit("conversation_open"',
+    );
+    expect(source).toContain('reason: "reload"');
   });
 
   test("useSubmitHandler handles /reload command", () => {
@@ -31,7 +43,8 @@ describe("/reload command", () => {
     const source = readFileSync(submitHandlerPath, "utf-8");
 
     expect(source).toContain('trimmed === "/reload"');
-    expect(source).toContain("onReload(");
+    expect(source).toContain("await onReload()");
+    expect(source).toContain("Reloaded settings and local extensions");
   });
 
   test("/reload has a busy guard", () => {
@@ -52,13 +65,16 @@ describe("/reload command", () => {
     expect(source).toContain('"/reload"');
   });
 
-  test("LoadingApp passes onReload and key to App", () => {
+  test("/reload does not remount App through startup state", () => {
     const indexPath = fileURLToPath(new URL("../index.ts", import.meta.url));
     const source = readFileSync(indexPath, "utf-8");
-    expect(source).toContain("onReload: handleReload");
+    expect(source).not.toContain("appReloadEpoch");
+    expect(source).not.toContain("setAppReloadEpoch");
+    expect(source).not.toContain("onReload: handleReload");
+    expect(source).not.toContain("setResumeData(null)");
     expect(source).toContain(
       // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting source contains literal template string syntax
-      "key: `${agentId}:${conversationId}:${appReloadEpoch}`",
+      "key: `${agentId}:${conversationId}`",
     );
   });
 });
