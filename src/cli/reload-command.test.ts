@@ -36,7 +36,8 @@ describe("/reload command", () => {
     const source = readFileSync(submitHandlerPath, "utf-8");
 
     expect(source).toContain('trimmed === "/reload"');
-    expect(source).toContain("void onReload()");
+    expect(source).toContain("await onReload()");
+    expect(source).toContain("Reloaded settings and local extensions");
   });
 
   test("/reload has a busy guard", () => {

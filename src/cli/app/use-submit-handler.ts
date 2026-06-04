@@ -980,9 +980,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "/reload",
               "Reloading settings and local extensions...",
             );
-            cmd.finish("Reloading...", true);
+            setCommandRunning(true);
             // Defer the reload to let the command UI render first
-            setTimeout(() => void onReload(), 0);
+            setTimeout(() => {
+              void (async () => {
+                try {
+                  await onReload();
+                  cmd.finish("Reloaded settings and local extensions", true);
+                } catch (error) {
+                  const errorDetails = formatErrorDetails(error, agentId);
+                  cmd.fail(`Failed: ${errorDetails}`);
+                } finally {
+                  setCommandRunning(false);
+                }
+              })();
+            }, 0);
           } else {
             const cmd = commandRunner.start("/reload", "Reload not available");
             cmd.fail("Reload is not available in this context");
