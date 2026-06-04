@@ -190,24 +190,29 @@ These can be installed via the GitHub URL forms above, or manually cloned and co
 The CLI handles downloading, placing the skill in the agent's memory, and committing the change:
 
 ```bash
-letta skills install <source> [--agent <id> | -n <agent-name>] [--force]
+letta skills install <source> --agent $AGENT_ID [--force]
+```
+
+Your agent ID is always available as `$AGENT_ID` in the environment. Pass it explicitly with `--agent` to install into your own memfs:
+
+```bash
+letta skills install official/finance/stocks --agent $AGENT_ID
+letta skills install clawhub/nano-banana-pro --agent $AGENT_ID
 ```
 
 | Flag | Purpose |
 |------|---------|
-| `--agent <id>` | Install into a specific agent's memfs |
+| `--agent <id>` | Install into a specific agent's memfs (use `$AGENT_ID` for yourself) |
 | `-n <name>` | Resolve agent by name instead of id |
 | `--force` | Replace an existing skill with the same name |
 
-If no agent is specified, the command uses `LETTA_AGENT_ID` / `AGENT_ID` from the environment, or prompts interactively.
-
-Also available as a top-level alias: `letta install <source>`.
+Also available as a top-level alias: `letta install <source> --agent $AGENT_ID`.
 
 **Managing installed skills:**
 
 ```bash
-letta skills list [--agent <id>]
-letta skills delete <skill-name> --agent <id>
+letta skills list --agent $AGENT_ID
+letta skills delete <skill-name> --agent $AGENT_ID
 ```
 
 ## Installation Locations
@@ -256,7 +261,7 @@ User asks: "Can you help me track stock prices?"
 2. **Ask user**: "Hermes has an official stocks skill that covers quotes, history, search, and crypto via Yahoo. Want me to install it?"
 3. **If user agrees, install**:
    ```bash
-   letta skills install official/finance/stocks
+   letta skills install official/finance/stocks --agent $AGENT_ID
    ```
 4. **Invoke**: `Skill(skill: "stocks")`
 5. **Use**: Follow the skill's instructions for the user's task
@@ -267,6 +272,6 @@ User asks: "Can you generate images with Nano Banana Pro?"
 2. **Ask user**: "There's a nano-banana-pro skill on ClawHub. Want me to install it?"
 3. **Install**:
    ```bash
-   letta skills install clawhub/nano-banana-pro
+   letta skills install clawhub/nano-banana-pro --agent $AGENT_ID
    ```
 4. **Invoke**: `Skill(skill: "nano-banana-pro")`
