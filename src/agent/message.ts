@@ -57,7 +57,6 @@ type ResponseStateHeaderPayload = {
   v: 1;
   cache_scope: typeof RESPONSE_STATE_CACHE_SCOPE;
   previous_response_id?: string;
-  client_tool_context_id?: string;
 };
 
 function buildResponseStateScope(
@@ -374,19 +373,17 @@ export async function sendMessageStreamWithBackend(
   extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
     v: 1,
     cache_scope: RESPONSE_STATE_CACHE_SCOPE,
-    client_tool_context_id: contextId,
     ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
   });
   if (previousResponseId) {
     responseStateIdsByScope.delete(responseStateScope);
     debugLog(
       "response-state",
-      "sending previous_response_id=%s cache_scope=%s conversation_id=%s agent_id=%s tool_context_id=%s",
+      "sending previous_response_id=%s cache_scope=%s conversation_id=%s agent_id=%s",
       previousResponseId,
       RESPONSE_STATE_CACHE_SCOPE,
       resolvedConversationId,
       opts.agentId ?? "none",
-      contextId,
     );
   } else if (!isApprovalContinuation) {
     responseStateIdsByScope.delete(responseStateScope);
