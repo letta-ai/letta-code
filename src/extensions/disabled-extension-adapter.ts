@@ -7,30 +7,15 @@ import {
   type ExtensionEvents,
   emptyEventEmissionResult,
 } from "@/extensions/event-emitter";
-import { writeExtensionDiagnosticsLatestFile } from "@/extensions/extension-diagnostics-file";
 import type {
   ExtensionEngine,
   LocalExtensionRegistry,
 } from "@/extensions/extension-engine";
 import { clearExtensionTools } from "@/extensions/tool-registry";
 import type { ExtensionContext } from "@/extensions/types";
-import { debugLog } from "@/utils/debug";
 
 interface CreateDisabledExtensionAdapterOptions {
-  diagnosticsRootDirectory?: string;
   initialContext: ExtensionContext;
-}
-
-function writeEmptyDiagnosticsLatestFile(rootDirectory?: string): void {
-  try {
-    writeExtensionDiagnosticsLatestFile([], { rootDirectory });
-  } catch (error) {
-    debugLog(
-      "extensions",
-      "failed to write extension diagnostics: %s",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
 }
 
 function createDisabledExtensionRegistry(): LocalExtensionRegistry {
@@ -110,7 +95,6 @@ export function createDisabledExtensionAdapter(
     },
     engine,
     reload() {
-      writeEmptyDiagnosticsLatestFile(options.diagnosticsRootDirectory);
       return Promise.resolve();
     },
     subscribe(_listener: () => void) {

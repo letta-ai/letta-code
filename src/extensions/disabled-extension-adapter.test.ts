@@ -1,7 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import {
   clearRegisteredPiProviders,
   listRegisteredPiProviders,
@@ -10,7 +7,6 @@ import {
 import { DISABLED_EXTENSION_CAPABILITIES } from "@/extensions/capabilities";
 import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
 import { createDisabledExtensionAdapter } from "@/extensions/disabled-extension-adapter";
-import { getExtensionDiagnosticsLatestFilePath } from "@/extensions/extension-diagnostics-file";
 import {
   clearExtensionTools,
   getExtensionToolDefinition,
@@ -24,14 +20,6 @@ function createExtensionContext(agentName = "Amelia"): ExtensionContext {
     cwd: "/tmp/project",
     sessionId: "conversation-1",
   } as ExtensionContext;
-}
-
-function createTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "letta-disabled-extensions-"));
-}
-
-function readJsonFile(filePath: string): unknown {
-  return JSON.parse(readFileSync(filePath, "utf-8")) as unknown;
 }
 
 function registerTestExtensionTool(name: string): void {
@@ -77,7 +65,6 @@ function registerTestPiProvider(name: string): void {
 describe("disabled extension adapter", () => {
   test("clears extension registries and exposes no-op adapter surfaces", async () => {
     const originalDisableEnv = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
-    const diagnosticsRoot = createTempDir();
 
     try {
       delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
@@ -88,7 +75,6 @@ describe("disabled extension adapter", () => {
       expect(listRegisteredPiProviders()).toHaveLength(1);
 
       const adapter = createDisabledExtensionAdapter({
-        diagnosticsRootDirectory: diagnosticsRoot,
         initialContext: createExtensionContext(),
       });
 
@@ -119,11 +105,6 @@ describe("disabled extension adapter", () => {
       await adapter.reload();
       unsubscribe();
       expect(notifications).toBe(0);
-      expect(
-        readJsonFile(getExtensionDiagnosticsLatestFilePath(diagnosticsRoot)),
-      ).toMatchObject({
-        report: { diagnostics: [], errorCount: 0, warningCount: 0 },
-      });
 
       const result = await adapter.events.emit("conversation_open", {
         agentId: "agent-1",
@@ -139,7 +120,6 @@ describe("disabled extension adapter", () => {
 
       adapter.dispose();
     } finally {
-      rmSync(diagnosticsRoot, { force: true, recursive: true });
       clearExtensionTools();
       clearRegisteredPiProviders();
       if (originalDisableEnv === undefined) {

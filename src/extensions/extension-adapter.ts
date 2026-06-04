@@ -73,10 +73,7 @@ export function createExtensionAdapter(
     if (!alreadyDisabled) {
       disableExtensionsForProcess();
     }
-    return createDisabledExtensionAdapter({
-      diagnosticsRootDirectory,
-      initialContext,
-    });
+    return createDisabledExtensionAdapter({ initialContext });
   }
 
   let context = initialContext;
@@ -143,16 +140,18 @@ export function createExtensionAdapter(
     if (disposed) return;
 
     const nextRegistry = engine.getSnapshot();
-    try {
-      writeExtensionDiagnosticsLatestFile(nextRegistry.diagnostics, {
-        rootDirectory: diagnosticsRootDirectory,
-      });
-    } catch (error) {
-      debugLog(
-        "extensions",
-        "failed to write extension diagnostics: %s",
-        error instanceof Error ? error.message : String(error),
-      );
+    if (nextRegistry.sources.some((source) => source.files.length > 0)) {
+      try {
+        writeExtensionDiagnosticsLatestFile(nextRegistry.diagnostics, {
+          rootDirectory: diagnosticsRootDirectory,
+        });
+      } catch (error) {
+        debugLog(
+          "extensions",
+          "failed to write extension diagnostics: %s",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
 
     debugLog(

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -169,6 +170,32 @@ describe("extension adapter", () => {
       expect(readJsonFile(diagnosticsPath)).toMatchObject({
         report: { diagnostics: [], errorCount: 0, warningCount: 0 },
       });
+
+      adapter.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("reload does not create diagnostics files when no extensions exist", async () => {
+    const root = createTempDir();
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const diagnosticsRoot = path.join(root, "diagnostics");
+      const adapter = createExtensionAdapter({
+        cacheDirectory: path.join(root, "extension-cache"),
+        diagnosticsRootDirectory: diagnosticsRoot,
+        getClient: async () => ({}) as unknown as Letta,
+        globalExtensionsDirectory: extensionDir,
+        initialContext: createExtensionContext(),
+      });
+
+      await adapter.reload();
+
+      expect(
+        existsSync(getExtensionDiagnosticsLatestFilePath(diagnosticsRoot)),
+      ).toBe(false);
 
       adapter.dispose();
     } finally {
