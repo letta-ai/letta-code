@@ -230,6 +230,7 @@ export interface CreateExtensionEngineOptions
   getBackend?: () => Backend | undefined;
   builtinCommandIds?: Iterable<string>;
   capabilities?: ExtensionCapabilities;
+  onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void;
   reservedToolNames?: Iterable<string>;
 }
 
@@ -1339,7 +1340,7 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
 export function createExtensionEngine(
   options: CreateExtensionEngineOptions,
 ): ExtensionEngine {
-  const { getBackend, ...extensionOptions } = options;
+  const { getBackend, onDiagnostic, ...extensionOptions } = options;
   let generation = 0;
   let disposed = false;
   const capabilities = resolveExtensionCapabilities(
@@ -1394,6 +1395,7 @@ export function createExtensionEngine(
         if (loadingRegistry && loadGeneration === generation) {
           activeRegistry = loadingRegistry;
           publish();
+          onDiagnostic?.(diagnostic);
           return;
         }
         // Stale handles from a prior generation report through their old
@@ -1401,6 +1403,7 @@ export function createExtensionEngine(
         // snapshot without reviving the old registry.
         appendExtensionDiagnostic(activeRegistry, diagnostic);
         publish();
+        onDiagnostic?.(diagnostic);
       },
     });
     loadingRegistry = nextRegistry;
@@ -1438,6 +1441,7 @@ export function createExtensionEngine(
         payload,
         getContext,
         invocationBackend,
+        onDiagnostic,
       );
       if (result.diagnostics.length > 0) {
         publish();
