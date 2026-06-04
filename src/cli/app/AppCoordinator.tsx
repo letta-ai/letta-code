@@ -4522,6 +4522,13 @@ export function App({
           // Only show Task tools that are awaiting approval (not running/finished)
           return ln.phase === "ready" || ln.phase === "streaming";
         }
+        // Shell tools: don't show during streaming phase — wait until running
+        // so the header and streaming output appear together instead of the
+        // bare "• Run cd ..." header flashing before output starts.
+        // Still show during "ready" phase for approval requests.
+        if (ln.name && isShellTool(ln.name) && ln.phase === "streaming") {
+          return false;
+        }
         // Always show other tool calls in progress
         return (
           ln.phase !== "finished" ||
