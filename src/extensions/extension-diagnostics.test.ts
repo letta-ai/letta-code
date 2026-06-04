@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createExtensionDiagnosticsReport,
   type ExtensionDiagnosticCollector,
   getExtensionDiagnosticSeverity,
   getExtensionErrorDiagnostics,
@@ -14,6 +15,12 @@ function createOwner(): ExtensionOwner {
     path: "/tmp/example.ts",
     scope: "global",
   };
+}
+
+function createError(message: string): Error {
+  const error = new Error(message);
+  error.stack = `Error: ${message}\n    at extension.ts:1:1`;
+  return error;
 }
 
 describe("extension diagnostics", () => {
@@ -51,5 +58,48 @@ describe("extension diagnostics", () => {
     expect(seen).toEqual([warning]);
     expect(warning.timestamp).toEqual(expect.any(Number));
     expect(error.timestamp).toEqual(expect.any(Number));
+  });
+
+  test("creates compact agent reports from diagnostics", () => {
+    const owner = createOwner();
+    const warning: ExtensionDiagnostic = {
+      capability: { id: "reload", kind: "command" },
+      error: createError("command override"),
+      owner,
+      phase: "command_override",
+      timestamp: 100,
+    };
+    const error: ExtensionDiagnostic = {
+      error: createError("activation failed"),
+      owner,
+      phase: "activate",
+      timestamp: 200,
+    };
+
+    expect(createExtensionDiagnosticsReport([warning, error])).toEqual({
+      diagnostics: [
+        {
+          capability: { id: "reload", kind: "command" },
+          errorName: "Error",
+          extension: owner,
+          message: "command override",
+          phase: "command_override",
+          severity: "warning",
+          stack: "Error: command override\n    at extension.ts:1:1",
+          timestamp: 100,
+        },
+        {
+          errorName: "Error",
+          extension: owner,
+          message: "activation failed",
+          phase: "activate",
+          severity: "error",
+          stack: "Error: activation failed\n    at extension.ts:1:1",
+          timestamp: 200,
+        },
+      ],
+      errorCount: 1,
+      warningCount: 1,
+    });
   });
 });

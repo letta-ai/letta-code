@@ -10,6 +10,23 @@ export interface ExtensionDiagnosticCollector {
   diagnostics: ExtensionDiagnostic[];
 }
 
+export interface ExtensionDiagnosticReportEntry {
+  capability?: ExtensionDiagnostic["capability"];
+  errorName: string;
+  extension: ExtensionOwner;
+  message: string;
+  phase: ExtensionDiagnosticPhase;
+  severity: ExtensionDiagnosticSeverity;
+  stack?: string;
+  timestamp: number;
+}
+
+export interface ExtensionDiagnosticsReport {
+  diagnostics: ExtensionDiagnosticReportEntry[];
+  errorCount: number;
+  warningCount: number;
+}
+
 export function getExtensionDiagnosticSeverity(
   phase: ExtensionDiagnosticPhase,
 ): ExtensionDiagnosticSeverity {
@@ -37,6 +54,41 @@ export function getExtensionErrorDiagnostics(
   diagnostics: readonly ExtensionDiagnostic[],
 ): ExtensionDiagnostic[] {
   return diagnostics.filter(isExtensionDiagnosticError);
+}
+
+export function createExtensionDiagnosticsReport(
+  diagnostics: readonly ExtensionDiagnostic[],
+): ExtensionDiagnosticsReport {
+  let errorCount = 0;
+  let warningCount = 0;
+
+  const entries = diagnostics.map((diagnostic) => {
+    const severity = getExtensionDiagnosticSeverity(diagnostic.phase);
+    if (severity === "error") {
+      errorCount += 1;
+    } else {
+      warningCount += 1;
+    }
+
+    return {
+      ...(diagnostic.capability
+        ? { capability: { ...diagnostic.capability } }
+        : {}),
+      errorName: diagnostic.error.name,
+      extension: { ...diagnostic.owner },
+      message: diagnostic.error.message,
+      phase: diagnostic.phase,
+      severity,
+      ...(diagnostic.error.stack ? { stack: diagnostic.error.stack } : {}),
+      timestamp: diagnostic.timestamp,
+    } satisfies ExtensionDiagnosticReportEntry;
+  });
+
+  return {
+    diagnostics: entries,
+    errorCount,
+    warningCount,
+  };
 }
 
 export function appendExtensionDiagnostic(
