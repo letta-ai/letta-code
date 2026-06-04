@@ -4,6 +4,10 @@ import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { isDebugEnabled } from "@/utils/debug";
 
+type ConversationTitleCreateBody = Parameters<
+  Letta["conversations"]["messages"]["create"]
+>[1] & { llm_call_type: "chat_summary" };
+
 /**
  * Maximum characters allowed for an auto-generated conversation title.
  */
@@ -149,7 +153,8 @@ export async function generateConversationTitleFromFork(
         streaming: true,
         stream_tokens: false,
         include_pings: false,
-      },
+        llm_call_type: "chat_summary",
+      } as ConversationTitleCreateBody,
       { signal: abortController.signal },
     );
 

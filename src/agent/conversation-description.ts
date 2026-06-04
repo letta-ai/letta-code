@@ -9,6 +9,10 @@ import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import { isDebugEnabled } from "@/utils/debug";
 
+type ConversationDescriptionCreateBody = Parameters<
+  Letta["conversations"]["messages"]["create"]
+>[1] & { llm_call_type: "chat_summary" };
+
 const CONVERSATION_DESCRIPTION_MAX_WORDS = 40;
 
 /**
@@ -110,7 +114,8 @@ export async function generateConversationDescriptionFromFork(
         streaming: true,
         stream_tokens: false,
         include_pings: false,
-      },
+        llm_call_type: "chat_summary",
+      } as ConversationDescriptionCreateBody,
       { signal: abortController.signal },
     );
 
