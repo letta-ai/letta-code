@@ -3,13 +3,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { getBackend } from "@/backend";
-import { settingsManager } from "@/settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import {
   commitAndSyncMemoryWrite,
-  GIT_MEMORY_ENABLED_TAG,
   getMemoryRepoDir,
   pullMemory,
 } from "./memory-git";
@@ -461,32 +459,6 @@ export async function buildCreateAgentOptionsForPersonality(params: {
   };
 }
 
-export async function enableMemfsForCreatedAgent(params: {
-  agentId: string;
-  agentTags?: string[] | null;
-}): Promise<void> {
-  const { agentId, agentTags } = params;
-  const backend = getBackend();
-
-  if (!backend.capabilities.remoteMemfs) {
-    return;
-  }
-
-  try {
-    const { getClient } = await import("@/backend/api/client");
-    const client = await getClient();
-    const tags = agentTags || [];
-    if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
-      await client.agents.update(agentId, {
-        tags: [...tags, GIT_MEMORY_ENABLED_TAG],
-      });
-    }
-    settingsManager.setMemfsEnabled(agentId, true);
-  } catch {
-    // Self-hosted or memfs not available - skip silently
-  }
-}
-
 export async function createAgentForPersonality(params: {
   personalityId: PersonalityId;
   name?: string;
@@ -500,11 +472,6 @@ export async function createAgentForPersonality(params: {
   const result = await createAgent(
     await buildCreateAgentOptionsForPersonality(params),
   );
-
-  await enableMemfsForCreatedAgent({
-    agentId: result.agent.id,
-    agentTags: result.agent.tags,
-  });
 
   return result;
 }

@@ -4,7 +4,6 @@ import { type CreateAgentOptions, createAgent } from "@/agent/create";
 import {
   buildCreateAgentOptionsForPersonality,
   createAgentForPersonality,
-  enableMemfsForCreatedAgent,
   resolvePersonalityId,
 } from "@/agent/personality";
 import { getBackend } from "@/backend";
@@ -164,13 +163,6 @@ async function runCreateAction(
         })
       : await createAgent(options);
     const agentId = result.agent.id;
-
-    if (!personality) {
-      await enableMemfsForCreatedAgent({
-        agentId,
-        agentTags: result.agent.tags,
-      });
-    }
 
     if (values.pinned) {
       settingsManager.pinGlobal(agentId);

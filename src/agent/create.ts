@@ -13,6 +13,7 @@ import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { getModelContextWindow } from "./available-models";
 import { getDefaultMemoryBlocks } from "./memory";
+import { GIT_MEMORY_ENABLED_TAG } from "./memory-git";
 import {
   formatAvailableModels,
   getDefaultModel,
@@ -82,6 +83,34 @@ export async function addBaseToolsToServer(): Promise<boolean> {
       `Failed to call /v1/tools/add-base-tools: ${err instanceof Error ? err.message : String(err)}`,
     );
     return false;
+  }
+}
+
+export async function enableMemfsForCreatedAgent(params: {
+  agentId: string;
+  agentTags?: string[] | null;
+}): Promise<void> {
+  const { agentId, agentTags } = params;
+
+  try {
+    // Only sync memfs to Letta API if backend is set to 'api'
+    // Otherwise this will cause a hang on terminal if we create
+    // the agent with '--backend local' flag due to an attempt
+    // to call Letta API which is not intended behavior for local
+    // backend.
+    if (getBackend().capabilities.remoteMemfs) {
+      const { getClient } = await import("@/backend/api/client");
+      const client = await getClient();
+      const tags = agentTags || [];
+      if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
+        await client.agents.update(agentId, {
+          tags: [...tags, GIT_MEMORY_ENABLED_TAG],
+        });
+      }
+    }
+    settingsManager.setMemfsEnabled(agentId, true);
+  } catch {
+    // Self-hosted or memfs not available - skip silently
   }
 }
 
@@ -426,6 +455,11 @@ export async function createAgent(
     }
     // Subagent names: don't persist (no stable managed prompt metadata)
   }
+
+  await enableMemfsForCreatedAgent({
+    agentId: agent.id,
+    agentTags: agent.tags,
+  });
 
   // Build provenance info
   const provenance: AgentProvenance = {

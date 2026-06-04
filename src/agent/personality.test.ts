@@ -3,7 +3,6 @@ import {
   buildCreateAgentOptionsForPersonality,
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   detectPersonalityFromPersonaFile,
-  enableMemfsForCreatedAgent,
   getDefaultHumanContent,
   getPersonalityBlockDefinitions,
   getPersonalityBlockValues,
@@ -16,6 +15,7 @@ import {
 } from "@/agent/personality";
 import { configureBackendMode } from "@/backend";
 import { __testOverrideGetClient } from "@/backend/api/client";
+import { enableMemfsForCreatedAgent } from "./create";
 
 const VALID_FRONTMATTER = "---\ndescription: Persona\nlimit: 20000\n---\n\n";
 
