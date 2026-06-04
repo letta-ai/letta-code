@@ -943,6 +943,30 @@ export interface ListConnectProvidersCommand {
   target: ConnectProviderStorageTarget;
 }
 
+export interface ConnectProviderCommand {
+  type: "connect_provider";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Provider store to write. MVP supports local provider storage. */
+  target: ConnectProviderStorageTarget;
+  /** Provider id from list_connect_providers. */
+  provider_id: string;
+  /** Optional auth method id for providers with multiple auth methods. */
+  auth_method_id?: string;
+  /** User-provided connection fields keyed by field id. */
+  fields: Record<string, string>;
+}
+
+export interface DisconnectProviderCommand {
+  type: "disconnect_provider";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Provider store to write. MVP supports local provider storage. */
+  target: ConnectProviderStorageTarget;
+  /** Provider id from list_connect_providers. */
+  provider_id: string;
+}
+
 export interface ConnectProviderField {
   key: string;
   label: string;
@@ -990,6 +1014,26 @@ export interface ListConnectProvidersResponseMessage {
   success: boolean;
   target: ConnectProviderStorageTarget;
   providers: ConnectProviderEntry[];
+  error?: string;
+}
+
+export interface ConnectProviderResponseMessage {
+  type: "connect_provider_response";
+  request_id: string;
+  success: boolean;
+  target: ConnectProviderStorageTarget;
+  providers: ConnectProviderEntry[];
+  models_may_have_changed: boolean;
+  error?: string;
+}
+
+export interface DisconnectProviderResponseMessage {
+  type: "disconnect_provider_response";
+  request_id: string;
+  success: boolean;
+  target: ConnectProviderStorageTarget;
+  providers: ConnectProviderEntry[];
+  models_may_have_changed: boolean;
   error?: string;
 }
 
@@ -1919,6 +1963,8 @@ export type WsProtocolCommand =
   | EnableMemfsCommand
   | ListModelsCommand
   | ListConnectProvidersCommand
+  | ConnectProviderCommand
+  | DisconnectProviderCommand
   | UpdateModelCommand
   | UpdateToolsetCommand
   | CronListCommand
@@ -1973,6 +2019,8 @@ export type WsProtocolMessage =
   | SubagentStateUpdateMessage
   | ListModelsResponseMessage
   | ListConnectProvidersResponseMessage
+  | ConnectProviderResponseMessage
+  | DisconnectProviderResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
   | GetExperimentsResponseMessage

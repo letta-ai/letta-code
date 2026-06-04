@@ -763,6 +763,73 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed).toBeNull();
   });
 
+  test("parses connect_provider command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "connect_provider",
+          request_id: "connect-provider-1",
+          target: "local",
+          provider_id: "anthropic",
+          fields: { apiKey: "sk-test" },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("connect_provider");
+  });
+
+  test("parses connect_provider command with auth method", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "connect_provider",
+          request_id: "connect-provider-2",
+          target: "local",
+          provider_id: "amazon-bedrock",
+          auth_method_id: "profile",
+          fields: { profile: "default", region: "us-east-1" },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("connect_provider");
+  });
+
+  test("rejects connect_provider command with non-string fields", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "connect_provider",
+          request_id: "connect-provider-3",
+          target: "local",
+          provider_id: "anthropic",
+          fields: { apiKey: 123 },
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
+  test("parses disconnect_provider command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "disconnect_provider",
+          request_id: "disconnect-provider-1",
+          target: "local",
+          provider_id: "anthropic",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("disconnect_provider");
+  });
+
   test("parses update_model command with model_id", () => {
     const parsed = parseServerMessage(
       Buffer.from(
