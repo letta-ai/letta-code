@@ -32,8 +32,10 @@ import {
   isExtensionToolParallelSafe,
   runExtensionTool,
 } from "@/extensions/tool-registry";
-import type { ExtensionToolRunContext } from "@/extensions/types";
-import type { ExtensionEventEmissionResult } from "@/extensions/types";
+import type {
+  ExtensionEventEmissionResult,
+  ExtensionToolRunContext,
+} from "@/extensions/types";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -1954,8 +1956,14 @@ async function emitToolStartEvent(options: {
       typeof r === "object" && r !== null && r.deny === true,
   );
   if (firstDenial) {
-    debugLog("extensions", `tool_start denied: ${firstDenial.reason ?? "no reason given"}`);
-    return { args: isToolStartArgs(event.args) ? event.args : options.args, denied: { reason: firstDenial.reason } };
+    debugLog(
+      "extensions",
+      `tool_start denied: ${firstDenial.reason ?? "no reason given"}`,
+    );
+    return {
+      args: isToolStartArgs(event.args) ? event.args : options.args,
+      denied: { reason: firstDenial.reason },
+    };
   }
 
   return { args: isToolStartArgs(event.args) ? event.args : options.args };
