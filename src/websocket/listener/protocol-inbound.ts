@@ -45,6 +45,7 @@ import type {
   GetTreeCommand,
   GrepInFilesCommand,
   InputCommand,
+  ListConnectProvidersCommand,
   ListConversationPinsCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
@@ -667,6 +668,22 @@ export function isListModelsCommand(
     request_id?: unknown;
   };
   return c.type === "list_models" && typeof c.request_id === "string";
+}
+
+export function isListConnectProvidersCommand(
+  value: unknown,
+): value is ListConnectProvidersCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    target?: unknown;
+  };
+  return (
+    c.type === "list_connect_providers" &&
+    typeof c.request_id === "string" &&
+    c.target === "local"
+  );
 }
 
 export function isUpdateModelCommand(
@@ -1686,6 +1703,7 @@ export function parseServerMessage(
       isDeleteMemoryFileCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
+      isListConnectProvidersCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
       isUpdateToolsetCommand(parsed) ||
       isCronListCommand(parsed) ||

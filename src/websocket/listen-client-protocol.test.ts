@@ -734,6 +734,35 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("list_models");
   });
 
+  test("parses list_connect_providers command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "list_connect_providers",
+          request_id: "connect-providers-1",
+          target: "local",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("list_connect_providers");
+  });
+
+  test("rejects list_connect_providers command for non-local target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "list_connect_providers",
+          request_id: "connect-providers-2",
+          target: "api",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
   test("parses update_model command with model_id", () => {
     const parsed = parseServerMessage(
       Buffer.from(

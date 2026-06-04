@@ -933,6 +933,66 @@ export interface ListModelsCommand {
   request_id: string;
 }
 
+export type ConnectProviderStorageTarget = "local";
+
+export interface ListConnectProvidersCommand {
+  type: "list_connect_providers";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Provider store to inspect. MVP supports local provider storage. */
+  target: ConnectProviderStorageTarget;
+}
+
+export interface ConnectProviderField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean;
+  required?: boolean;
+}
+
+export interface ConnectProviderAuthMethod {
+  id: string;
+  label: string;
+  description: string;
+  fields: ConnectProviderField[];
+}
+
+export interface ConnectProviderConnectionState {
+  is_connected: boolean;
+  id?: string;
+  provider_name?: string;
+  provider_type?: string;
+  auth_type?: "api" | "oauth";
+  base_url?: string;
+  timeout?: number | false;
+  region?: string;
+}
+
+export interface ConnectProviderEntry {
+  id: string;
+  display_name: string;
+  description: string;
+  provider_type: string;
+  provider_name: string;
+  provider_names: string[];
+  is_oauth?: boolean;
+  oauth_provider_id?: string;
+  requires_api_key: boolean;
+  fields?: ConnectProviderField[];
+  auth_methods?: ConnectProviderAuthMethod[];
+  connected: ConnectProviderConnectionState;
+}
+
+export interface ListConnectProvidersResponseMessage {
+  type: "list_connect_providers_response";
+  request_id: string;
+  success: boolean;
+  target: ConnectProviderStorageTarget;
+  providers: ConnectProviderEntry[];
+  error?: string;
+}
+
 export interface UpdateModelPayload {
   /** Preferred model identifier from models.json (e.g. "sonnet") */
   model_id?: string;
@@ -1858,6 +1918,7 @@ export type WsProtocolCommand =
   | DeleteMemoryFileCommand
   | EnableMemfsCommand
   | ListModelsCommand
+  | ListConnectProvidersCommand
   | UpdateModelCommand
   | UpdateToolsetCommand
   | CronListCommand
@@ -1911,6 +1972,7 @@ export type WsProtocolMessage =
   | StreamDeltaMessage
   | SubagentStateUpdateMessage
   | ListModelsResponseMessage
+  | ListConnectProvidersResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
   | GetExperimentsResponseMessage
