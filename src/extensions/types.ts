@@ -226,8 +226,7 @@ export interface ExtensionEventRegistration<
 > {
   handler: ExtensionEventHandler<TName>;
   name: TName;
-  owner?: ExtensionOwner;
-  path: string;
+  owner: ExtensionOwner;
 }
 
 export interface ExtensionEventEmissionResult<
@@ -271,8 +270,7 @@ export interface ExtensionDiagnostic {
     kind: ExtensionCapabilityKind;
   };
   error: Error;
-  owner?: ExtensionOwner;
-  path?: string;
+  owner: ExtensionOwner;
   phase: ExtensionDiagnosticPhase;
   timestamp: number;
 }

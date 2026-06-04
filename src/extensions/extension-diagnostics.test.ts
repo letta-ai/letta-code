@@ -36,7 +36,6 @@ describe("extension diagnostics", () => {
         capability: { id: "reload", kind: "command" },
         error: new Error("command override"),
         owner,
-        path: owner.path,
         phase: "command_override",
       },
       (diagnostic) => seen.push(diagnostic),
@@ -44,7 +43,6 @@ describe("extension diagnostics", () => {
     const error = recordExtensionDiagnostic(registry, {
       error: new Error("activation failed"),
       owner,
-      path: owner.path,
       phase: "activate",
     });
 

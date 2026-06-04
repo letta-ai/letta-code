@@ -153,8 +153,7 @@ export interface LettaExtensionApi {
 export interface LocalExtensionDisposer {
   abortController?: AbortController;
   dispose: LettaExtensionDisposer;
-  owner?: ExtensionOwner;
-  path: string;
+  owner: ExtensionOwner;
 }
 
 export interface LocalExtensionUiRegistry {
@@ -901,7 +900,6 @@ function createLettaExtensionApi(
         handler: handler as unknown as ExtensionEventHandler,
         name,
         owner,
-        path: owner.path,
       },
     ];
     onChange();
@@ -936,7 +934,6 @@ function createLettaExtensionApi(
                 `Extension command '${normalized.id}' overrides a built-in command`,
               ),
               owner,
-              path: owner.path,
               phase: "command_override",
             },
             onDiagnostic,
@@ -1153,7 +1150,6 @@ export async function loadLocalExtensions(
             abortController,
             dispose,
             owner,
-            path: extensionPath,
           });
         }
         registry.loadedPaths.push(extensionPath);
@@ -1166,7 +1162,6 @@ export async function loadLocalExtensions(
           {
             error: error instanceof Error ? error : new Error(String(error)),
             owner,
-            path: extensionPath,
             phase: failurePhase,
           },
           options.onDiagnostic,
@@ -1291,8 +1286,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
         {
           capability: { id: name, kind: "event" },
           error: error instanceof Error ? error : new Error(String(error)),
-          ...(registration.owner ? { owner: registration.owner } : {}),
-          path: registration.path,
+          owner: registration.owner,
           phase: "event",
         },
         onDiagnostic,
@@ -1312,14 +1306,13 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   const disposers = [...registry.disposers].reverse();
   registry.disposers = [];
 
-  for (const { dispose, owner, path: extensionPath } of disposers) {
+  for (const { dispose, owner } of disposers) {
     try {
       dispose();
     } catch (error) {
       recordExtensionDiagnostic(registry, {
         error: error instanceof Error ? error : new Error(String(error)),
-        ...(owner ? { owner } : {}),
-        path: extensionPath,
+        owner,
         phase: "dispose",
       });
     }

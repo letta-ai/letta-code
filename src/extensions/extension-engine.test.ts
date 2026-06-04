@@ -8,10 +8,7 @@ import {
   clearRegisteredPiProviders,
   getRegisteredPiProvider,
 } from "@/backend/dev/pi-provider-extension-registry";
-import {
-  getExtensionDiagnosticPath,
-  getExtensionErrorDiagnostics,
-} from "@/extensions/extension-diagnostics";
+import { getExtensionErrorDiagnostics } from "@/extensions/extension-diagnostics";
 import {
   createExtensionEngine,
   type ExtensionEngine,
@@ -843,10 +840,7 @@ describe("extension engine", () => {
       expect(
         Object.fromEntries(
           getExtensionErrorDiagnostics(engine.getSnapshot().diagnostics).map(
-            (entry) => [
-              path.basename(getExtensionDiagnosticPath(entry)),
-              entry.phase,
-            ],
+            (entry) => [path.basename(entry.owner.path), entry.phase],
           ),
         ),
       ).toEqual({

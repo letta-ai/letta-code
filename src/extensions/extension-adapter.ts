@@ -8,10 +8,7 @@ import {
   type ExtensionEvents,
   emptyEventEmissionResult,
 } from "@/extensions/event-emitter";
-import {
-  getExtensionDiagnosticPath,
-  getExtensionErrorDiagnostics,
-} from "@/extensions/extension-diagnostics";
+import { getExtensionErrorDiagnostics } from "@/extensions/extension-diagnostics";
 import {
   type CreateExtensionEngineOptions,
   createExtensionEngine,
@@ -154,7 +151,7 @@ export function createExtensionAdapter(
       debugLog(
         "extensions",
         "failed to load %s: %s",
-        getExtensionDiagnosticPath(diagnostic),
+        diagnostic.owner.path,
         diagnostic.error.message,
       );
     }

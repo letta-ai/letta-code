@@ -18,10 +18,7 @@ import {
   resolveLocalExtensionSources,
 } from "@/cli/extensions/local-extension-loader";
 import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
-import {
-  getExtensionDiagnosticPath,
-  getExtensionErrorDiagnostics,
-} from "@/extensions/extension-diagnostics";
+import { getExtensionErrorDiagnostics } from "@/extensions/extension-diagnostics";
 import { clearExtensionTools } from "@/extensions/tool-registry";
 
 function createTempDir(): string {
@@ -281,7 +278,7 @@ describe("local extension loader", () => {
       expect(errorDiagnostics).toHaveLength(1);
       const [errorDiagnostic] = errorDiagnostics;
       if (!errorDiagnostic) throw new Error("Expected extension diagnostic");
-      expect(getExtensionDiagnosticPath(errorDiagnostic)).toBe(
+      expect(errorDiagnostic.owner.path).toBe(
         path.join(extensionDir, "broken.ts"),
       );
       expect(errorDiagnostic.error.message).toContain("Extension must export");
@@ -522,7 +519,7 @@ describe("local extension loader", () => {
       const errorDiagnostics = getExtensionErrorDiagnostics(
         registry.diagnostics,
       );
-      expect(errorDiagnostics.map(getExtensionDiagnosticPath).sort()).toEqual([
+      expect(errorDiagnostics.map((entry) => entry.owner.path).sort()).toEqual([
         path.join(extensionDir, "b.ts"),
         path.join(extensionDir, "d.ts"),
       ]);
@@ -537,7 +534,9 @@ describe("local extension loader", () => {
             error: expect.objectContaining({
               message: expect.stringContaining("overrides a built-in command"),
             }),
-            path: path.join(extensionDir, "c.ts"),
+            owner: expect.objectContaining({
+              path: path.join(extensionDir, "c.ts"),
+            }),
             phase: "command_override",
           }),
         ]),

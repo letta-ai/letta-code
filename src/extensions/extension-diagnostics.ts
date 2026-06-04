@@ -39,12 +39,6 @@ export function getExtensionErrorDiagnostics(
   return diagnostics.filter(isExtensionDiagnosticError);
 }
 
-export function getExtensionDiagnosticPath(
-  diagnostic: Pick<ExtensionDiagnostic, "owner" | "path">,
-): string {
-  return diagnostic.path ?? diagnostic.owner?.path ?? "";
-}
-
 export function appendExtensionDiagnostic(
   collector: ExtensionDiagnosticCollector,
   diagnostic: ExtensionDiagnostic,
@@ -80,7 +74,6 @@ export function recordStaleHandleUse(
         `Ignored stale extension handle for ${capability?.kind ?? "capability"}${capability?.id ? ` '${capability.id}'` : ""}`,
       ),
       owner,
-      path: owner.path,
       phase: "stale_handle",
     },
     onDiagnostic,
