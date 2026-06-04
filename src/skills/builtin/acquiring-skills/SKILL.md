@@ -58,25 +58,52 @@ Only proceed with skill acquisition if the user agrees.
 
 ### 1. Hermes Skills Hub (NousResearch)
 
-The Hermes Agent project ships a catalog of official optional skills in the `NousResearch/hermes-agent` repo under `optional-skills/`. These cover categories like blockchain, finance, mlops, research, security, devops, creative, productivity, and more.
+Hermes has a full Skills Hub with 88k+ skills across multiple registries. It includes official optional skills shipped with the project, plus community skills from skills.sh, well-known endpoints, GitHub repos, ClawHub, LobeHub, and browse.sh.
 
 **Searching Hermes skills:**
 
+The Hermes CLI has built-in search and browse:
+
 ```bash
-# Browse the full catalog online
+hermes skills browse                              # Browse all hub skills (official first)
+hermes skills browse --source official            # Browse only official optional skills
+hermes skills search kubernetes                   # Search all sources
+hermes skills search react --source skills-sh     # Search the skills.sh directory
+hermes skills search https://mintlify.com/docs --source well-known
+hermes skills inspect openai/skills/k8s           # Preview before installing
+```
+
+The web catalog is at https://hermes-agent.nousresearch.com/docs/skills.
+
+Hermes hub sources:
+
+| Source | Example identifier | Notes |
+|--------|--------------------|-------|
+| `official` | `official/security/1password` | Optional skills shipped with Hermes |
+| `skills-sh` | `skills-sh/vercel-labs/agent-skills/vercel-react-best-practices` | skills.sh directory |
+| `well-known` | `well-known:https://mintlify.com/docs/.well-known/skills/mintlify` | Skills hosted at `/.well-known/skills/` |
+| `url` | `https://sharethis.chat/SKILL.md` | Direct URL to a single SKILL.md |
+| `github` | `openai/skills/k8s` | GitHub repo/path |
+| `clawhub` | ClawHub registry skills | ClawHub marketplace |
+| `lobehub` | LobeHub registry skills | LobeHub marketplace |
+| `browse-sh` | `browse-sh/airbnb.com/search-listings-ddgioa` | browse.sh crawled skills |
+
+If Hermes is not installed, you can browse the official optional skills directly:
+
+```bash
+# Browse the catalog on GitHub
 # https://github.com/NousResearch/hermes-agent/tree/main/optional-skills
+# Categories: autonomous-ai-agents, blockchain, creative, devops, finance,
+#             health, mcp, mlops, productivity, research, security, ...
 
 # Or clone and browse locally
 git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-browse
 ls /tmp/hermes-browse/optional-skills/
-# Categories: autonomous-ai-agents, blockchain, creative, devops, finance,
-#             health, mcp, mlops, productivity, research, security, software-development, ...
 ls /tmp/hermes-browse/optional-skills/finance/
-# Skills: 3-statement-model, comps-analysis, dcf-model, excel-author, stocks, ...
 rm -rf /tmp/hermes-browse
 ```
 
-**Installing Hermes skills** uses the `official/` prefix:
+**Installing Hermes skills** into Letta uses the `official/` prefix (for official optional skills):
 
 ```bash
 letta skills install official/finance/stocks
@@ -87,6 +114,8 @@ letta skills install official/creative/meme-generation
 ```
 
 The `official/<category>/<skill>` form clones `NousResearch/hermes-agent` and copies from `optional-skills/<category>/<skill>`.
+
+For non-official Hermes hub skills, use the GitHub URL or shorthand form to install into Letta (e.g., `letta skills install openai/skills/k8s`).
 
 ### 2. ClawHub (OpenClaw)
 
@@ -203,7 +232,7 @@ After installing (via CLI or manual copy), skills are automatically discovered o
 
 When looking for a skill to solve a user's problem:
 
-1. **Check Hermes catalog first** — the official optional-skills cover a wide range (finance, mlops, blockchain, devops, research, creative, security). Browse `optional-skills/` categories or grep SKILL.md descriptions.
+1. **Search Hermes Skills Hub first** — `hermes skills search <query>` searches 88k+ skills across all registries. If Hermes CLI isn't available, browse the official optional-skills on GitHub (finance, mlops, blockchain, devops, research, creative, security, etc.).
 2. **Search ClawHub** — community registry with versioning. Use `clawhub search` or the web UI.
 3. **Search GitHub** — look for repos with `SKILL.md` files. Try `github.com/letta-ai/skills` and `github.com/anthropics/skills` first.
 4. **Ask the user** — they may know of a specific skill repo or have preferences about sources.
