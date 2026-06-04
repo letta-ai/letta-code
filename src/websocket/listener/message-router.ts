@@ -23,6 +23,7 @@ import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
 } from "./commands/channels";
+import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import { handleMemoryProtocolCommand } from "./commands/memory";
@@ -489,6 +490,16 @@ export function createListenerMessageHandler(
           safeSocketSend,
           runDetachedListenerTask,
           getOrCreateScopedRuntime,
+        })
+      ) {
+        return;
+      }
+
+      if (
+        handleConnectProvidersCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
         })
       ) {
         return;
