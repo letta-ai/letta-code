@@ -153,7 +153,8 @@ export type ExtensionConversationCloseReason =
   | "quit"
   | "new"
   | "resume"
-  | "fork";
+  | "fork"
+  | "reload";
 
 export interface ExtensionConversationOpenEvent {
   agentId: string | null;

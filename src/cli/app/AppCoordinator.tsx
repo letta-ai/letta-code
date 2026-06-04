@@ -2544,6 +2544,15 @@ export function App({
       );
     }
 
+    const durationMs = Date.now() - sessionStartTimeRef.current;
+    await extensionAdapter.events.emit("conversation_close", {
+      agentId,
+      conversationId: conversationIdRef.current ?? null,
+      durationMs,
+      messageCount: telemetry.getMessageCount(),
+      reason: "reload",
+      toolCallCount: telemetry.getToolCallCount(),
+    });
     await extensionAdapter.reload();
     await extensionAdapter.events.emit("conversation_open", {
       agentId,

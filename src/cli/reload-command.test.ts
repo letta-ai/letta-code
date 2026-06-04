@@ -26,6 +26,9 @@ describe("/reload command", () => {
       "await settingsManager.loadLocalProjectSettings()",
     );
     expect(source).toContain("refreshCustomCommands()");
+    expect(source).toContain(
+      'await extensionAdapter.events.emit("conversation_close"',
+    );
     expect(source).toContain("await extensionAdapter.reload()");
     expect(source).toContain(
       'await extensionAdapter.events.emit("conversation_open"',
