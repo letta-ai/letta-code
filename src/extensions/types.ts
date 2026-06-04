@@ -260,11 +260,10 @@ export type ExtensionDiagnosticPhase =
   | "transpile"
   | "import"
   | "activate"
-  | "command.override"
+  | "command_override"
   | "dispose"
   | "event"
-  | "stale_handle"
-  | "status.evaluate";
+  | "stale_handle";
 
 export interface ExtensionDiagnostic {
   capability?: {

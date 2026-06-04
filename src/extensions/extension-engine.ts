@@ -157,13 +157,6 @@ export interface LocalExtensionDisposer {
   path: string;
 }
 
-export interface LocalExtensionLoadError {
-  error: Error;
-  owner?: ExtensionOwner;
-  path: string;
-  phase?: ExtensionDiagnostic["phase"];
-}
-
 export interface LocalExtensionUiRegistry {
   panels: Record<string, ExtensionPanel>;
   statuslineRenderer: StatuslineRenderer | null;
@@ -181,7 +174,6 @@ export interface LocalExtensionRegistry {
   commands: Record<string, ExtensionCommand>;
   diagnostics: ExtensionDiagnostic[];
   disposers: LocalExtensionDisposer[];
-  errors: LocalExtensionLoadError[];
   events: LocalExtensionEventsRegistry;
   generation: number;
   loadedPaths: string[];
@@ -281,7 +273,6 @@ function createEmptyExtensionRegistry(
     commands: {},
     diagnostics: [],
     disposers: [],
-    errors: [],
     events: {},
     generation,
     loadedPaths: [],
@@ -327,7 +318,6 @@ function snapshotRegistryForReaders(
     capabilities: cloneExtensionCapabilities(registry.capabilities),
     diagnostics: [...registry.diagnostics],
     disposers: [...registry.disposers],
-    errors: [...registry.errors],
     events: Object.fromEntries(
       Object.entries(registry.events).map(([name, handlers]) => [
         name,
@@ -947,7 +937,7 @@ function createLettaExtensionApi(
               ),
               owner,
               path: owner.path,
-              phase: "command.override",
+              phase: "command_override",
             },
             onDiagnostic,
           );

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  type ExtensionDiagnosticSink,
+  type ExtensionDiagnosticCollector,
   getExtensionDiagnosticSeverity,
+  getExtensionErrorDiagnostics,
   recordExtensionDiagnostic,
 } from "@/extensions/extension-diagnostics";
 import type { ExtensionDiagnostic, ExtensionOwner } from "@/extensions/types";
@@ -17,14 +18,15 @@ function createOwner(): ExtensionOwner {
 
 describe("extension diagnostics", () => {
   test("classifies diagnostic phases for future surfacing", () => {
-    expect(getExtensionDiagnosticSeverity("command.override")).toBe("warning");
-    expect(getExtensionDiagnosticSeverity("status.evaluate")).toBe("warning");
+    expect(getExtensionDiagnosticSeverity("command_override")).toBe("warning");
     expect(getExtensionDiagnosticSeverity("activate")).toBe("error");
     expect(getExtensionDiagnosticSeverity("event")).toBe("error");
   });
 
-  test("records diagnostics and only mirrors error phases into errors", () => {
-    const registry: ExtensionDiagnosticSink = { diagnostics: [], errors: [] };
+  test("records diagnostics and derives error diagnostics", () => {
+    const registry: ExtensionDiagnosticCollector = {
+      diagnostics: [],
+    };
     const owner = createOwner();
     const seen: ExtensionDiagnostic[] = [];
 
@@ -35,7 +37,7 @@ describe("extension diagnostics", () => {
         error: new Error("command override"),
         owner,
         path: owner.path,
-        phase: "command.override",
+        phase: "command_override",
       },
       (diagnostic) => seen.push(diagnostic),
     );
@@ -47,14 +49,7 @@ describe("extension diagnostics", () => {
     });
 
     expect(registry.diagnostics).toEqual([warning, error]);
-    expect(registry.errors).toEqual([
-      {
-        error: error.error,
-        owner,
-        path: owner.path,
-        phase: "activate",
-      },
-    ]);
+    expect(getExtensionErrorDiagnostics(registry.diagnostics)).toEqual([error]);
     expect(seen).toEqual([warning]);
     expect(warning.timestamp).toEqual(expect.any(Number));
     expect(error.timestamp).toEqual(expect.any(Number));

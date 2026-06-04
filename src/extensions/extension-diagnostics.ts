@@ -6,22 +6,15 @@ import type {
 
 export type ExtensionDiagnosticSeverity = "error" | "warning";
 
-export interface ExtensionDiagnosticSink {
+export interface ExtensionDiagnosticCollector {
   diagnostics: ExtensionDiagnostic[];
-  errors: Array<{
-    error: Error;
-    owner?: ExtensionOwner;
-    path: string;
-    phase?: ExtensionDiagnosticPhase;
-  }>;
 }
 
 export function getExtensionDiagnosticSeverity(
   phase: ExtensionDiagnosticPhase,
 ): ExtensionDiagnosticSeverity {
   switch (phase) {
-    case "command.override":
-    case "status.evaluate":
+    case "command_override":
       return "warning";
     default:
       return "error";
@@ -34,23 +27,33 @@ export function isExtensionDiagnosticErrorPhase(
   return getExtensionDiagnosticSeverity(phase) === "error";
 }
 
+export function isExtensionDiagnosticError(
+  diagnostic: Pick<ExtensionDiagnostic, "phase">,
+): boolean {
+  return isExtensionDiagnosticErrorPhase(diagnostic.phase);
+}
+
+export function getExtensionErrorDiagnostics(
+  diagnostics: readonly ExtensionDiagnostic[],
+): ExtensionDiagnostic[] {
+  return diagnostics.filter(isExtensionDiagnosticError);
+}
+
+export function getExtensionDiagnosticPath(
+  diagnostic: Pick<ExtensionDiagnostic, "owner" | "path">,
+): string {
+  return diagnostic.path ?? diagnostic.owner?.path ?? "";
+}
+
 export function appendExtensionDiagnostic(
-  registry: ExtensionDiagnosticSink,
+  collector: ExtensionDiagnosticCollector,
   diagnostic: ExtensionDiagnostic,
 ): void {
-  registry.diagnostics.push(diagnostic);
-  if (isExtensionDiagnosticErrorPhase(diagnostic.phase)) {
-    registry.errors.push({
-      error: diagnostic.error,
-      ...(diagnostic.owner ? { owner: diagnostic.owner } : {}),
-      path: diagnostic.path ?? diagnostic.owner?.path ?? "",
-      phase: diagnostic.phase,
-    });
-  }
+  collector.diagnostics.push(diagnostic);
 }
 
 export function recordExtensionDiagnostic(
-  registry: ExtensionDiagnosticSink,
+  collector: ExtensionDiagnosticCollector,
   diagnostic: Omit<ExtensionDiagnostic, "timestamp">,
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
 ): ExtensionDiagnostic {
@@ -58,19 +61,19 @@ export function recordExtensionDiagnostic(
     ...diagnostic,
     timestamp: Date.now(),
   };
-  appendExtensionDiagnostic(registry, completeDiagnostic);
+  appendExtensionDiagnostic(collector, completeDiagnostic);
   onDiagnostic?.(completeDiagnostic);
   return completeDiagnostic;
 }
 
 export function recordStaleHandleUse(
-  registry: ExtensionDiagnosticSink,
+  collector: ExtensionDiagnosticCollector,
   owner: ExtensionOwner,
   capability: ExtensionDiagnostic["capability"],
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
 ): ExtensionDiagnostic {
   return recordExtensionDiagnostic(
-    registry,
+    collector,
     {
       capability,
       error: new Error(

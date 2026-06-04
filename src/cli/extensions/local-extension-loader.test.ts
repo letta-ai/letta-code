@@ -18,6 +18,10 @@ import {
   resolveLocalExtensionSources,
 } from "@/cli/extensions/local-extension-loader";
 import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
+import {
+  getExtensionDiagnosticPath,
+  getExtensionErrorDiagnostics,
+} from "@/extensions/extension-diagnostics";
 import { clearExtensionTools } from "@/extensions/tool-registry";
 
 function createTempDir(): string {
@@ -109,7 +113,7 @@ describe("local extension loader", () => {
       const registry = await loadLocalExtensions(options);
 
       expect(registry.loadedPaths).toEqual([]);
-      expect(registry.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(registry.diagnostics)).toEqual([]);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -135,7 +139,7 @@ describe("local extension loader", () => {
 
       const registry = await loadLocalExtensions(options);
 
-      expect(registry.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(registry.diagnostics)).toEqual([]);
       expect(
         evaluateLocalExtensionStatuses(registry, createStatuslineContext()),
       ).toEqual({ mode: "fast" });
@@ -161,7 +165,9 @@ describe("local extension loader", () => {
       );
 
       const firstRegistry = await loadLocalExtensions(options);
-      expect(firstRegistry.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(firstRegistry.diagnostics)).toEqual(
+        [],
+      );
       expect(firstRegistry.loadedPaths).toEqual([extensionPath]);
       expect(
         evaluateLocalExtensionStatuses(
@@ -188,7 +194,9 @@ describe("local extension loader", () => {
       );
 
       const secondRegistry = await loadLocalExtensions(options);
-      expect(secondRegistry.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(secondRegistry.diagnostics)).toEqual(
+        [],
+      );
       expect(
         evaluateLocalExtensionStatuses(
           secondRegistry,
@@ -226,7 +234,7 @@ describe("local extension loader", () => {
 
       const registry = await loadLocalExtensions(options);
 
-      expect(registry.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(registry.diagnostics)).toEqual([]);
       expect(registry.loadedPaths).toEqual([extensionPath]);
       const cacheFiles = readdirSync(options.cacheDirectory).filter((entry) =>
         entry.startsWith(".letta-extension-statusline-"),
@@ -267,13 +275,16 @@ describe("local extension loader", () => {
       expect(
         evaluateLocalExtensionStatuses(registry, createStatuslineContext()),
       ).toEqual({ ok: "true" });
-      expect(registry.errors).toHaveLength(1);
-      expect(registry.errors[0]?.path).toBe(
+      const errorDiagnostics = getExtensionErrorDiagnostics(
+        registry.diagnostics,
+      );
+      expect(errorDiagnostics).toHaveLength(1);
+      const [errorDiagnostic] = errorDiagnostics;
+      if (!errorDiagnostic) throw new Error("Expected extension diagnostic");
+      expect(getExtensionDiagnosticPath(errorDiagnostic)).toBe(
         path.join(extensionDir, "broken.ts"),
       );
-      expect(registry.errors[0]?.error.message).toContain(
-        "Extension must export",
-      );
+      expect(errorDiagnostic.error.message).toContain("Extension must export");
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -305,7 +316,7 @@ describe("local extension loader", () => {
 
       const registry = await loadLocalExtensions(options);
 
-      expect(registry.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(registry.diagnostics)).toEqual([]);
       expect(registry.commands["review-pr"]?.description).toBe(
         "Review a GitHub PR",
       );
@@ -365,7 +376,7 @@ describe("local extension loader", () => {
 
       const registry = await loadLocalExtensions(options);
 
-      expect(registry.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(registry.diagnostics)).toEqual([]);
       await expect(
         Promise.resolve(
           registry.commands["client-check"]?.run({
@@ -414,7 +425,7 @@ describe("local extension loader", () => {
 
       const registry = await loadLocalExtensions(options);
 
-      expect(registry.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(registry.diagnostics)).toEqual([]);
       expect(Object.values(registry.ui.panels)[0]).toMatchObject({
         content: ["answer"],
         id: "btw",
@@ -448,7 +459,7 @@ describe("local extension loader", () => {
 
       const registry = await loadLocalExtensions(options);
 
-      expect(registry.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(registry.diagnostics)).toEqual([]);
       expect(
         Object.values(registry.ui.panels).map((panel) => panel.content),
       ).toEqual([["from a"], ["from b"]]);
@@ -508,11 +519,14 @@ describe("local extension loader", () => {
 
       expect(Object.keys(registry.commands)).toEqual(["dupe", "reload"]);
       expect(registry.commands.reload?.description).toBe("Built-in conflict");
-      expect(registry.errors.map((entry) => entry.path).sort()).toEqual([
+      const errorDiagnostics = getExtensionErrorDiagnostics(
+        registry.diagnostics,
+      );
+      expect(errorDiagnostics.map(getExtensionDiagnosticPath).sort()).toEqual([
         path.join(extensionDir, "b.ts"),
         path.join(extensionDir, "d.ts"),
       ]);
-      expect(registry.errors.map((entry) => entry.error.message)).toEqual([
+      expect(errorDiagnostics.map((entry) => entry.error.message)).toEqual([
         expect.stringContaining("already registered"),
         expect.stringContaining("must not start"),
       ]);
@@ -524,7 +538,7 @@ describe("local extension loader", () => {
               message: expect.stringContaining("overrides a built-in command"),
             }),
             path: path.join(extensionDir, "c.ts"),
-            phase: "command.override",
+            phase: "command_override",
           }),
         ]),
       );
@@ -553,8 +567,11 @@ describe("local extension loader", () => {
       const registry = await loadLocalExtensions(options);
 
       expect(registry.tools).toEqual({});
-      expect(registry.errors).toHaveLength(1);
-      expect(registry.errors[0]?.error.message).toContain("built-in tool");
+      const errorDiagnostics = getExtensionErrorDiagnostics(
+        registry.diagnostics,
+      );
+      expect(errorDiagnostics).toHaveLength(1);
+      expect(errorDiagnostics[0]?.error.message).toContain("built-in tool");
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
