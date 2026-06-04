@@ -49,7 +49,7 @@ describe("sendMessageStream acting-user header propagation (contract)", () => {
     expect(source).toMatch(/headers:\s*\{[\s\S]*?\.\.\.extraHeaders[\s\S]*?\}/);
   });
 
-  test("response-state header carries previous id only for approval continuations", () => {
+  test("response-state header carries previous id only for unrestricted approval continuations", () => {
     expect(source).toContain(
       'const RESPONSE_STATE_HEADER = "X-Letta-Response-State"',
     );
@@ -58,6 +58,12 @@ describe("sendMessageStream acting-user header propagation (contract)", () => {
     );
     expect(source).toContain(
       "isApprovalContinuationRequest(normalizedMessages)",
+    );
+    expect(source).toContain(
+      "opts.permissionModeState?.mode ?? permissionMode.getMode()",
+    );
+    expect(source).toContain(
+      'isApprovalContinuation && effectivePermissionMode === "unrestricted"',
     );
     expect(source).toMatch(
       /if \(previousResponseId\) \{[\s\S]*?extraHeaders\[RESPONSE_STATE_HEADER\] = encodeResponseStateHeader/,

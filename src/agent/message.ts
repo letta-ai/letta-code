@@ -11,6 +11,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import { type Backend, getBackend } from "@/backend";
+import { permissionMode } from "@/permissions/mode";
 import {
   type ClientTool,
   type PermissionModeState,
@@ -325,7 +326,14 @@ export async function sendMessageStreamWithBackend(
   );
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
-  const previousResponseId = isApprovalContinuation
+  const effectivePermissionMode =
+    opts.permissionModeState?.mode ?? permissionMode.getMode();
+  // Only reuse cached response state for the unrestricted auto-approval path.
+  // Manual approval modes can pause long enough for user-visible state to change,
+  // so they should keep using the full server-side context preparation path.
+  const canUsePreviousResponseState =
+    isApprovalContinuation && effectivePermissionMode === "unrestricted";
+  const previousResponseId = canUsePreviousResponseState
     ? responseStateIdsByScope.get(responseStateScope)
     : undefined;
   const requestBody = buildConversationMessagesCreateRequestBody(
@@ -385,7 +393,7 @@ export async function sendMessageStreamWithBackend(
       resolvedConversationId,
       opts.agentId ?? "none",
     );
-  } else if (!isApprovalContinuation) {
+  } else if (!canUsePreviousResponseState) {
     responseStateIdsByScope.delete(responseStateScope);
   }
   // Echo the cloud user id back to cloud-api so it can re-attribute
