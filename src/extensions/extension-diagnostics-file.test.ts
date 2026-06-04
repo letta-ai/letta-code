@@ -3,7 +3,6 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
-  createExtensionDiagnosticsFile,
   getDefaultExtensionDiagnosticsRoot,
   getExtensionDiagnosticsLatestFilePath,
   writeExtensionDiagnosticsLatestFile,
@@ -39,40 +38,12 @@ describe("extension diagnostics file", () => {
     expect(getDefaultExtensionDiagnosticsRoot("/home/test")).toBe(
       path.join("/home/test", ".letta", "extensions", "diagnostics"),
     );
-    expect(
-      getExtensionDiagnosticsLatestFilePath({
-        rootDirectory: "/tmp/root",
-      }),
-    ).toBe(path.join("/tmp/root", "latest.json"));
+    expect(getExtensionDiagnosticsLatestFilePath("/tmp/root")).toBe(
+      path.join("/tmp/root", "latest.json"),
+    );
   });
 
-  test("creates a latest diagnostics file payload", () => {
-    expect(
-      createExtensionDiagnosticsFile([createDiagnostic()], {
-        generatedAt: 200,
-      }),
-    ).toMatchObject({
-      generatedAt: 200,
-      report: {
-        diagnostics: [
-          {
-            extension: createOwner(),
-            message: "activation failed",
-            phase: "activate",
-            severity: "error",
-            source: "host",
-          },
-        ],
-        errorCount: 1,
-        warningCount: 0,
-      },
-      text: `Extension diagnostics: 1 error, 0 warnings
-- [error] activate /tmp/example.ts
-  message: activation failed`,
-    });
-  });
-
-  test("writes latest diagnostics files", () => {
+  test("writes latest diagnostics files and overwrites stale results", () => {
     const rootDirectory = createTempDir();
     try {
       const options = {
@@ -80,35 +51,40 @@ describe("extension diagnostics file", () => {
         rootDirectory,
       };
 
-      const written = writeExtensionDiagnosticsLatestFile(
+      const firstWritten = writeExtensionDiagnosticsLatestFile(
         [createDiagnostic()],
         options,
       );
-      const filePath = getExtensionDiagnosticsLatestFilePath(options);
+      const filePath = getExtensionDiagnosticsLatestFilePath(rootDirectory);
 
-      expect(readFileSync(filePath, "utf-8")).toBe(
-        `${JSON.stringify(written, null, 2)}\n`,
-      );
-    } finally {
-      rmSync(rootDirectory, { force: true, recursive: true });
-    }
-  });
-
-  test("writes empty latest diagnostics files to avoid stale results", () => {
-    const rootDirectory = createTempDir();
-    try {
-      const options = {
+      expect(firstWritten).toMatchObject({
         generatedAt: 200,
-        rootDirectory,
-      };
+        report: {
+          diagnostics: [
+            {
+              extension: createOwner(),
+              message: "activation failed",
+              phase: "activate",
+              severity: "error",
+            },
+          ],
+          errorCount: 1,
+          warningCount: 0,
+        },
+      });
+      expect(readFileSync(filePath, "utf-8")).toBe(
+        `${JSON.stringify(firstWritten, null, 2)}\n`,
+      );
 
-      const written = writeExtensionDiagnosticsLatestFile([], options);
+      const emptyWritten = writeExtensionDiagnosticsLatestFile([], options);
 
-      expect(written).toEqual({
+      expect(emptyWritten).toEqual({
         generatedAt: 200,
         report: { diagnostics: [], errorCount: 0, warningCount: 0 },
-        text: "No extension diagnostics recorded.",
       });
+      expect(readFileSync(filePath, "utf-8")).toBe(
+        `${JSON.stringify(emptyWritten, null, 2)}\n`,
+      );
     } finally {
       rmSync(rootDirectory, { force: true, recursive: true });
     }

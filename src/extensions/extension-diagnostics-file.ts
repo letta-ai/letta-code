@@ -4,25 +4,12 @@ import path from "node:path";
 import {
   createExtensionDiagnosticsReport,
   type ExtensionDiagnosticsReport,
-  type ExtensionDiagnosticsReportOptions,
-  formatExtensionDiagnosticsForAgent,
 } from "@/extensions/extension-diagnostics";
 import type { ExtensionDiagnostic } from "@/extensions/types";
-
-export interface ExtensionDiagnosticsFileOptions {
-  rootDirectory?: string;
-}
 
 export interface ExtensionDiagnosticsFile {
   generatedAt: number;
   report: ExtensionDiagnosticsReport;
-  text: string;
-}
-
-export interface WriteExtensionDiagnosticsFileOptions
-  extends ExtensionDiagnosticsFileOptions,
-    ExtensionDiagnosticsReportOptions {
-  generatedAt?: number;
 }
 
 export function getDefaultExtensionDiagnosticsRoot(
@@ -32,30 +19,27 @@ export function getDefaultExtensionDiagnosticsRoot(
 }
 
 export function getExtensionDiagnosticsLatestFilePath(
-  options: ExtensionDiagnosticsFileOptions = {},
+  rootDirectory = getDefaultExtensionDiagnosticsRoot(),
 ): string {
-  const rootDirectory =
-    options.rootDirectory ?? getDefaultExtensionDiagnosticsRoot();
   return path.join(rootDirectory, "latest.json");
 }
 
-export function createExtensionDiagnosticsFile(
+function createExtensionDiagnosticsFile(
   diagnostics: readonly ExtensionDiagnostic[],
-  options: WriteExtensionDiagnosticsFileOptions,
+  generatedAt = Date.now(),
 ): ExtensionDiagnosticsFile {
   return {
-    generatedAt: options.generatedAt ?? Date.now(),
-    report: createExtensionDiagnosticsReport(diagnostics, options),
-    text: formatExtensionDiagnosticsForAgent(diagnostics, options),
+    generatedAt,
+    report: createExtensionDiagnosticsReport(diagnostics),
   };
 }
 
 export function writeExtensionDiagnosticsLatestFile(
   diagnostics: readonly ExtensionDiagnostic[],
-  options: WriteExtensionDiagnosticsFileOptions,
+  options: { generatedAt?: number; rootDirectory?: string } = {},
 ): ExtensionDiagnosticsFile {
-  const file = createExtensionDiagnosticsFile(diagnostics, options);
-  const filePath = getExtensionDiagnosticsLatestFilePath(options);
+  const file = createExtensionDiagnosticsFile(diagnostics, options.generatedAt);
+  const filePath = getExtensionDiagnosticsLatestFilePath(options.rootDirectory);
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(file, null, 2)}\n`, "utf-8");
   return file;

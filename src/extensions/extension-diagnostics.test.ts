@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   createExtensionDiagnosticsReport,
   type ExtensionDiagnosticCollector,
-  formatExtensionDiagnosticsForAgent,
   getExtensionDiagnosticSeverity,
   getExtensionErrorDiagnostics,
   recordExtensionDiagnostic,
@@ -86,7 +85,7 @@ describe("extension diagnostics", () => {
           message: "command override",
           phase: "command_override",
           severity: "warning",
-          source: "host",
+          stack: "Error: command override\n    at extension.ts:1:1",
           timestamp: 100,
         },
         {
@@ -95,78 +94,12 @@ describe("extension diagnostics", () => {
           message: "activation failed",
           phase: "activate",
           severity: "error",
-          source: "host",
+          stack: "Error: activation failed\n    at extension.ts:1:1",
           timestamp: 200,
         },
       ],
       errorCount: 1,
       warningCount: 1,
     });
-  });
-
-  test("includes stacks in agent reports only when requested", () => {
-    const diagnostic: ExtensionDiagnostic = {
-      error: createError("activation failed"),
-      owner: createOwner(),
-      phase: "activate",
-      timestamp: 100,
-    };
-
-    expect(
-      createExtensionDiagnosticsReport([diagnostic]).diagnostics[0],
-    ).not.toHaveProperty("stack");
-    expect(
-      createExtensionDiagnosticsReport([diagnostic], {
-        includeStack: true,
-      }).diagnostics[0],
-    ).toMatchObject({
-      stack: "Error: activation failed\n    at extension.ts:1:1",
-    });
-  });
-
-  test("formats diagnostics for agent context", () => {
-    const owner = createOwner();
-    const warning: ExtensionDiagnostic = {
-      capability: { id: "reload", kind: "command" },
-      error: createError("command override"),
-      owner,
-      phase: "command_override",
-      timestamp: 100,
-    };
-    const error: ExtensionDiagnostic = {
-      error: createError("activation failed\ncheck default export"),
-      owner,
-      phase: "activate",
-      timestamp: 200,
-    };
-
-    expect(formatExtensionDiagnosticsForAgent([])).toBe(
-      "No extension diagnostics recorded.",
-    );
-    expect(formatExtensionDiagnosticsForAgent([warning, error])).toBe(
-      `Extension diagnostics: 1 error, 1 warning
-- [warning] command_override command:reload /tmp/example.ts
-  message: command override
-- [error] activate /tmp/example.ts
-  message: activation failed check default export`,
-    );
-  });
-
-  test("formats stacks for agent context when requested", () => {
-    const diagnostic: ExtensionDiagnostic = {
-      error: createError("activation failed"),
-      owner: createOwner(),
-      phase: "activate",
-      timestamp: 100,
-    };
-
-    expect(
-      formatExtensionDiagnosticsForAgent([diagnostic], { includeStack: true }),
-    ).toBe(`Extension diagnostics: 1 error, 0 warnings
-- [error] activate /tmp/example.ts
-  message: activation failed
-  stack:
-    Error: activation failed
-        at extension.ts:1:1`);
   });
 });

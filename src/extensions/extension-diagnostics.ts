@@ -17,7 +17,6 @@ export interface ExtensionDiagnosticReportEntry {
   message: string;
   phase: ExtensionDiagnosticPhase;
   severity: ExtensionDiagnosticSeverity;
-  source: "host";
   stack?: string;
   timestamp: number;
 }
@@ -26,10 +25,6 @@ export interface ExtensionDiagnosticsReport {
   diagnostics: ExtensionDiagnosticReportEntry[];
   errorCount: number;
   warningCount: number;
-}
-
-export interface ExtensionDiagnosticsReportOptions {
-  includeStack?: boolean;
 }
 
 export function getExtensionDiagnosticSeverity(
@@ -63,7 +58,6 @@ export function getExtensionErrorDiagnostics(
 
 export function createExtensionDiagnosticsReport(
   diagnostics: readonly ExtensionDiagnostic[],
-  options: ExtensionDiagnosticsReportOptions = {},
 ): ExtensionDiagnosticsReport {
   let errorCount = 0;
   let warningCount = 0;
@@ -85,10 +79,7 @@ export function createExtensionDiagnosticsReport(
       message: diagnostic.error.message,
       phase: diagnostic.phase,
       severity,
-      source: "host",
-      ...(options.includeStack && diagnostic.error.stack
-        ? { stack: diagnostic.error.stack }
-        : {}),
+      ...(diagnostic.error.stack ? { stack: diagnostic.error.stack } : {}),
       timestamp: diagnostic.timestamp,
     } satisfies ExtensionDiagnosticReportEntry;
   });
@@ -98,46 +89,6 @@ export function createExtensionDiagnosticsReport(
     errorCount,
     warningCount,
   };
-}
-
-function formatDiagnosticCount(count: number, label: string): string {
-  return `${count} ${label}${count === 1 ? "" : "s"}`;
-}
-
-function formatDiagnosticMessage(message: string): string {
-  return message.replace(/\s+/g, " ").trim();
-}
-
-export function formatExtensionDiagnosticsForAgent(
-  diagnostics: readonly ExtensionDiagnostic[],
-  options: ExtensionDiagnosticsReportOptions = {},
-): string {
-  const report = createExtensionDiagnosticsReport(diagnostics, options);
-  if (report.diagnostics.length === 0) {
-    return "No extension diagnostics recorded.";
-  }
-
-  const lines = [
-    `Extension diagnostics: ${formatDiagnosticCount(report.errorCount, "error")}, ${formatDiagnosticCount(report.warningCount, "warning")}`,
-  ];
-
-  for (const diagnostic of report.diagnostics) {
-    const capability = diagnostic.capability
-      ? ` ${diagnostic.capability.kind}:${diagnostic.capability.id}`
-      : "";
-    lines.push(
-      `- [${diagnostic.severity}] ${diagnostic.phase}${capability} ${diagnostic.extension.path}`,
-      `  message: ${formatDiagnosticMessage(diagnostic.message)}`,
-    );
-    if (diagnostic.stack) {
-      lines.push(
-        "  stack:",
-        ...diagnostic.stack.split("\n").map((line) => `    ${line}`),
-      );
-    }
-  }
-
-  return lines.join("\n");
 }
 
 export function appendExtensionDiagnostic(
