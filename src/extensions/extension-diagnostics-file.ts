@@ -11,13 +11,11 @@ import type { ExtensionDiagnostic } from "@/extensions/types";
 
 export interface ExtensionDiagnosticsFileOptions {
   rootDirectory?: string;
-  sessionId: string;
 }
 
 export interface ExtensionDiagnosticsFile {
   generatedAt: number;
   report: ExtensionDiagnosticsReport;
-  sessionId: string;
   text: string;
 }
 
@@ -33,24 +31,12 @@ export function getDefaultExtensionDiagnosticsRoot(
   return path.join(homeDirectory, ".letta", "extensions", "diagnostics");
 }
 
-function encodeExtensionDiagnosticsPathSegment(segment: string): string {
-  if (!segment.trim()) {
-    throw new Error("Extension diagnostics session id must not be empty");
-  }
-  return encodeURIComponent(segment).replace(/\./g, "%2E");
-}
-
 export function getExtensionDiagnosticsLatestFilePath(
-  options: ExtensionDiagnosticsFileOptions,
+  options: ExtensionDiagnosticsFileOptions = {},
 ): string {
   const rootDirectory =
     options.rootDirectory ?? getDefaultExtensionDiagnosticsRoot();
-  return path.join(
-    rootDirectory,
-    "sessions",
-    encodeExtensionDiagnosticsPathSegment(options.sessionId),
-    "latest.json",
-  );
+  return path.join(rootDirectory, "latest.json");
 }
 
 export function createExtensionDiagnosticsFile(
@@ -60,7 +46,6 @@ export function createExtensionDiagnosticsFile(
   return {
     generatedAt: options.generatedAt ?? Date.now(),
     report: createExtensionDiagnosticsReport(diagnostics, options),
-    sessionId: options.sessionId,
     text: formatExtensionDiagnosticsForAgent(diagnostics, options),
   };
 }

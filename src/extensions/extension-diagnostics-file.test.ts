@@ -42,32 +42,14 @@ describe("extension diagnostics file", () => {
     expect(
       getExtensionDiagnosticsLatestFilePath({
         rootDirectory: "/tmp/root",
-        sessionId: "../conv/with/slash",
       }),
-    ).toBe(
-      path.join(
-        "/tmp/root",
-        "sessions",
-        "%2E%2E%2Fconv%2Fwith%2Fslash",
-        "latest.json",
-      ),
-    );
-  });
-
-  test("rejects empty diagnostics session ids", () => {
-    expect(() =>
-      getExtensionDiagnosticsLatestFilePath({
-        rootDirectory: "/tmp/root",
-        sessionId: "",
-      }),
-    ).toThrow("Extension diagnostics session id must not be empty");
+    ).toBe(path.join("/tmp/root", "latest.json"));
   });
 
   test("creates a latest diagnostics file payload", () => {
     expect(
       createExtensionDiagnosticsFile([createDiagnostic()], {
         generatedAt: 200,
-        sessionId: "conv-1",
       }),
     ).toMatchObject({
       generatedAt: 200,
@@ -84,7 +66,6 @@ describe("extension diagnostics file", () => {
         errorCount: 1,
         warningCount: 0,
       },
-      sessionId: "conv-1",
       text: `Extension diagnostics: 1 error, 0 warnings
 - [error] activate /tmp/example.ts
   message: activation failed`,
@@ -97,7 +78,6 @@ describe("extension diagnostics file", () => {
       const options = {
         generatedAt: 200,
         rootDirectory,
-        sessionId: "conv-1",
       };
 
       const written = writeExtensionDiagnosticsLatestFile(
@@ -120,7 +100,6 @@ describe("extension diagnostics file", () => {
       const options = {
         generatedAt: 200,
         rootDirectory,
-        sessionId: "conv-1",
       };
 
       const written = writeExtensionDiagnosticsLatestFile([], options);
@@ -128,7 +107,6 @@ describe("extension diagnostics file", () => {
       expect(written).toEqual({
         generatedAt: 200,
         report: { diagnostics: [], errorCount: 0, warningCount: 0 },
-        sessionId: "conv-1",
         text: "No extension diagnostics recorded.",
       });
     } finally {
