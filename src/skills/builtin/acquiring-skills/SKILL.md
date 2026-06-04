@@ -133,7 +133,7 @@ clawhub search "screenshot"
 clawhub explore
 
 # Or search via the API directly
-curl -s "https://clawhub.ai/api/v1/skills?q=calendar" | jq '.[].slug'
+curl -s "https://clawhub.ai/api/v1/skills?q=calendar" | jq '.items[].slug'
 ```
 
 **Installing ClawHub skills** uses the `clawhub/` or `clawhub:` prefix:
