@@ -483,9 +483,12 @@ export async function enableMemfsForCreatedAgent(params: {
       }
     }
     const tags = Array.from(new Set([...currentTags, LETTA_CODE_ORIGIN_TAG]));
-    if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
+    if (
+      !tags.includes(GIT_MEMORY_ENABLED_TAG) ||
+      !currentTags.includes(LETTA_CODE_ORIGIN_TAG)
+    ) {
       await client.agents.update(agentId, {
-        tags: [...tags, GIT_MEMORY_ENABLED_TAG],
+        tags: Array.from(new Set([...tags, GIT_MEMORY_ENABLED_TAG])),
       });
     }
     settingsManager.setMemfsEnabled(agentId, true);
