@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
@@ -7,6 +13,7 @@ import type { Backend } from "@/backend";
 import { DISABLED_EXTENSION_CAPABILITIES } from "@/extensions/capabilities";
 import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
 import { createExtensionAdapter } from "@/extensions/extension-adapter";
+import { getExtensionDiagnosticsLatestFilePath } from "@/extensions/extension-diagnostics-file";
 import type { ExtensionContext } from "@/extensions/types";
 
 type ExtensionAdapterTestGlobal = typeof globalThis & {
@@ -61,6 +68,10 @@ function createExtensionContext(agentName = "Amelia"): ExtensionContext {
   };
 }
 
+function readJsonFile(filePath: string): unknown {
+  return JSON.parse(readFileSync(filePath, "utf-8")) as unknown;
+}
+
 describe("extension adapter", () => {
   test("LETTA_DISABLE_EXTENSIONS disables the adapter", () => {
     const original = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
@@ -107,6 +118,61 @@ describe("extension adapter", () => {
       } else {
         process.env[LETTA_DISABLE_EXTENSIONS_ENV] = original;
       }
+    }
+  });
+
+  test("reload writes latest diagnostics and clears stale failures", async () => {
+    const root = createTempDir();
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const diagnosticsRoot = path.join(root, "diagnostics");
+      const extensionPath = path.join(extensionDir, "diagnostic.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function() {
+          throw new Error("activation failed");
+        }`,
+      );
+
+      const adapter = createExtensionAdapter({
+        cacheDirectory: path.join(root, "extension-cache"),
+        diagnosticsRootDirectory: diagnosticsRoot,
+        getClient: async () => ({}) as unknown as Letta,
+        globalExtensionsDirectory: extensionDir,
+        initialContext: createExtensionContext(),
+      });
+
+      await adapter.reload();
+
+      const diagnosticsPath =
+        getExtensionDiagnosticsLatestFilePath(diagnosticsRoot);
+      expect(readJsonFile(diagnosticsPath)).toMatchObject({
+        report: {
+          diagnostics: [
+            {
+              extension: expect.objectContaining({ path: extensionPath }),
+              message: "activation failed",
+              phase: "activate",
+              severity: "error",
+            },
+          ],
+          errorCount: 1,
+          warningCount: 0,
+        },
+      });
+
+      writeFileSync(extensionPath, "export default function() {}");
+      await adapter.reload();
+
+      expect(readJsonFile(diagnosticsPath)).toMatchObject({
+        report: { diagnostics: [], errorCount: 0, warningCount: 0 },
+      });
+
+      adapter.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
     }
   });
 
