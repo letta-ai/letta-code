@@ -257,14 +257,15 @@ When looking for a skill to solve a user's problem:
 
 User asks: "Can you help me track stock prices?"
 
-1. **Recognize opportunity**: Stock/finance data - Hermes has a stocks skill
+1. **Recognize opportunity**: Stock/finance data — Hermes has a stocks skill
 2. **Ask user**: "Hermes has an official stocks skill that covers quotes, history, search, and crypto via Yahoo. Want me to install it?"
 3. **If user agrees, install**:
    ```bash
    letta skills install official/finance/stocks --agent $AGENT_ID
    ```
-4. **Invoke**: `Skill(skill: "stocks")`
-5. **Use**: Follow the skill's instructions for the user's task
+4. **Review for compatibility**: Read the installed SKILL.md. Check for harness-specific commands, paths, or tools that need adaptation (see Cross-Harness Compatibility above). Confirm the skill's instructions make sense in Letta before using it.
+5. **Invoke**: `Skill(skill: "stocks")`
+6. **Use**: Follow the skill's instructions, adapting any harness-specific details as needed
 
 User asks: "Can you generate images with Nano Banana Pro?"
 
@@ -274,4 +275,5 @@ User asks: "Can you generate images with Nano Banana Pro?"
    ```bash
    letta skills install clawhub/nano-banana-pro --agent $AGENT_ID
    ```
-4. **Invoke**: `Skill(skill: "nano-banana-pro")`
+4. **Review for compatibility**: Read the SKILL.md, check for any OpenClaw-specific commands or setup, adapt as needed.
+5. **Invoke**: `Skill(skill: "nano-banana-pro")`
