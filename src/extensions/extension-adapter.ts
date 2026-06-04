@@ -133,8 +133,8 @@ export function createExtensionAdapter(
   function scheduleDiagnosticsWrite(): void {
     if (disposed || loadState.isLoading || !loadState.hasExtensionSources)
       return;
+    if (diagnosticsWriteTimer) return;
 
-    clearPendingDiagnosticsWrite();
     diagnosticsWriteTimer = setTimeout(() => {
       diagnosticsWriteTimer = null;
       writeLatestDiagnostics();

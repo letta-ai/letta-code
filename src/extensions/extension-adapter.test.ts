@@ -207,7 +207,7 @@ describe("extension adapter", () => {
     }
   });
 
-  test("runtime diagnostics writes are debounced", async () => {
+  test("runtime diagnostics writes are coalesced", async () => {
     const root = createTempDir();
 
     try {
@@ -263,6 +263,76 @@ describe("extension adapter", () => {
           diagnostics: [
             { message: "runtime failed", phase: "event", severity: "error" },
             { message: "runtime failed", phase: "event", severity: "error" },
+          ],
+          errorCount: 2,
+          warningCount: 0,
+        },
+      });
+
+      adapter.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("runtime diagnostics writes are not starved by continuous diagnostics", async () => {
+    const root = createTempDir();
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const diagnosticsRoot = path.join(root, "diagnostics");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "events.ts"),
+        `export default function(letta) {
+          letta.events.on("conversation_open", (event) => {
+            throw new Error("runtime failed " + event.reason);
+          });
+        }`,
+      );
+
+      const adapter = createExtensionAdapter({
+        cacheDirectory: path.join(root, "extension-cache"),
+        diagnosticsRootDirectory: diagnosticsRoot,
+        diagnosticsWriteDelayMs: 20,
+        getClient: async () => ({}) as unknown as Letta,
+        globalExtensionsDirectory: extensionDir,
+        initialContext: createExtensionContext(),
+      });
+
+      await adapter.reload();
+      const diagnosticsPath =
+        getExtensionDiagnosticsLatestFilePath(diagnosticsRoot);
+
+      await adapter.events.emit("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "startup",
+      });
+      await sleep(10);
+      await adapter.events.emit("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "resume",
+      });
+
+      await sleep(15);
+
+      expect(readJsonFile(diagnosticsPath)).toMatchObject({
+        report: {
+          diagnostics: [
+            {
+              message: "runtime failed startup",
+              phase: "event",
+              severity: "error",
+            },
+            {
+              message: "runtime failed resume",
+              phase: "event",
+              severity: "error",
+            },
           ],
           errorCount: 2,
           warningCount: 0,
