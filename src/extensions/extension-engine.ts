@@ -35,6 +35,11 @@ import {
 } from "@/extensions/capabilities";
 import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import {
+  appendExtensionDiagnostic,
+  recordExtensionDiagnostic,
+  recordStaleHandleUse,
+} from "@/extensions/extension-diagnostics";
+import {
   getExtensionToolDefinition,
   registerExtensionTool,
   unregisterExtensionTool,
@@ -311,51 +316,6 @@ function isOwnerLive(
   owner: ExtensionOwner,
 ): boolean {
   return registry.owners[owner.id]?.generation === owner.generation;
-}
-
-function recordExtensionDiagnostic(
-  registry: LocalExtensionRegistry,
-  diagnostic: Omit<ExtensionDiagnostic, "timestamp">,
-  onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
-): void {
-  const completeDiagnostic: ExtensionDiagnostic = {
-    ...diagnostic,
-    timestamp: Date.now(),
-  };
-  registry.diagnostics.push(completeDiagnostic);
-  if (
-    completeDiagnostic.phase !== "status.evaluate" &&
-    completeDiagnostic.phase !== "command.override"
-  ) {
-    registry.errors.push({
-      error: completeDiagnostic.error,
-      ...(completeDiagnostic.owner ? { owner: completeDiagnostic.owner } : {}),
-      path: completeDiagnostic.path ?? completeDiagnostic.owner?.path ?? "",
-      phase: completeDiagnostic.phase,
-    });
-  }
-  onDiagnostic?.(completeDiagnostic);
-}
-
-function recordStaleHandleUse(
-  registry: LocalExtensionRegistry,
-  owner: ExtensionOwner,
-  capability: ExtensionDiagnostic["capability"],
-  onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
-): void {
-  recordExtensionDiagnostic(
-    registry,
-    {
-      capability,
-      error: new Error(
-        `Ignored stale extension handle for ${capability?.kind ?? "capability"}${capability?.id ? ` '${capability.id}'` : ""}`,
-      ),
-      owner,
-      path: owner.path,
-      phase: "stale_handle",
-    },
-    onDiagnostic,
-  );
 }
 
 function snapshotRegistryForReaders(
@@ -1336,7 +1296,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       if (toolStartEvent && toolStartArgsBeforeHandler) {
         toolStartEvent.args = toolStartArgsBeforeHandler;
       }
-      recordExtensionDiagnostic(
+      const diagnostic = recordExtensionDiagnostic(
         registry,
         {
           capability: { id: name, kind: "event" },
@@ -1347,8 +1307,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
         },
         onDiagnostic,
       );
-      const diagnostic = registry.diagnostics.at(-1);
-      if (diagnostic) diagnostics.push(diagnostic);
+      diagnostics.push(diagnostic);
     }
   }
 
@@ -1457,18 +1416,7 @@ export function createExtensionEngine(
         // Stale handles from a prior generation report through their old
         // activation callback. Preserve the diagnostic on the current engine
         // snapshot without reviving the old registry.
-        activeRegistry.diagnostics.push(diagnostic);
-        if (
-          diagnostic.phase !== "status.evaluate" &&
-          diagnostic.phase !== "command.override"
-        ) {
-          activeRegistry.errors.push({
-            error: diagnostic.error,
-            ...(diagnostic.owner ? { owner: diagnostic.owner } : {}),
-            path: diagnostic.path ?? diagnostic.owner?.path ?? "",
-            phase: diagnostic.phase,
-          });
-        }
+        appendExtensionDiagnostic(activeRegistry, diagnostic);
         publish();
       },
     });
