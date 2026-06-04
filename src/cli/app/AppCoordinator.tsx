@@ -77,7 +77,8 @@ import {
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
 import {
-  generateConversationTitleFromFork,
+  type ConversationTitleMessage,
+  generateConversationTitleFromSummary,
   getConversationTitleSettings,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
@@ -1227,10 +1228,20 @@ export function App({
     }
 
     try {
-      const client = await getClient();
-      const aiTitle = await generateConversationTitleFromFork(
-        client,
+      const messages: ConversationTitleMessage[] = [];
+      for (const lineId of buffersRef.current.order) {
+        const line = buffersRef.current.byId.get(lineId);
+        if (line?.kind === "user" || line?.kind === "assistant") {
+          const content = line.text.trim();
+          if (content) {
+            messages.push({ role: line.kind, content });
+          }
+        }
+      }
+
+      const aiTitle = await generateConversationTitleFromSummary(
         conversationId,
+        messages,
       );
       return aiTitle ?? fallback;
     } catch (err) {

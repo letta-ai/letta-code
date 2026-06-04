@@ -9,6 +9,15 @@ export type ConversationDescriptionUpdateBody = Record<string, unknown> & {
   description: string | null;
 };
 
+export type SummarizeConversationBody = Record<string, unknown> & {
+  prompt: string;
+  messages: Array<{
+    role: "user" | "assistant" | "system";
+    content: string;
+  }>;
+  model?: string;
+};
+
 export async function forkConversation(
   conversationId: string,
   options: ForkConversationOptions = {},
@@ -34,5 +43,18 @@ export async function updateConversationDescription(
     "PATCH",
     `/v1/conversations/${encodeURIComponent(conversationId)}`,
     body,
+  );
+}
+
+export async function summarizeConversation(
+  conversationId: string,
+  body: SummarizeConversationBody,
+  options: { signal?: AbortSignal } = {},
+): Promise<{ summary: string }> {
+  return apiRequest<{ summary: string }>(
+    "POST",
+    `/v1/conversations/${encodeURIComponent(conversationId)}/summarize`,
+    body,
+    options,
   );
 }
