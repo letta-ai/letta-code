@@ -24,7 +24,6 @@ function createDisabledExtensionRegistry(): LocalExtensionRegistry {
     commands: {},
     diagnostics: [],
     disposers: [],
-    errors: [],
     events: {},
     generation: 0,
     loadedPaths: [],

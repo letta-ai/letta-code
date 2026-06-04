@@ -93,7 +93,6 @@ export type {
   LettaExtensionFactory,
   LoadLocalExtensionsOptions,
   LocalExtensionDisposer,
-  LocalExtensionLoadError,
   LocalExtensionRegistry,
   LocalExtensionSource,
   LocalExtensionUiRegistry,

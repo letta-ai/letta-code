@@ -35,6 +35,11 @@ import {
 } from "@/extensions/capabilities";
 import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import {
+  appendExtensionDiagnostic,
+  recordExtensionDiagnostic,
+  recordStaleHandleUse,
+} from "@/extensions/extension-diagnostics";
+import {
   getExtensionToolDefinition,
   registerExtensionTool,
   unregisterExtensionTool,
@@ -148,15 +153,7 @@ export interface LettaExtensionApi {
 export interface LocalExtensionDisposer {
   abortController?: AbortController;
   dispose: LettaExtensionDisposer;
-  owner?: ExtensionOwner;
-  path: string;
-}
-
-export interface LocalExtensionLoadError {
-  error: Error;
-  owner?: ExtensionOwner;
-  path: string;
-  phase?: ExtensionDiagnostic["phase"];
+  owner: ExtensionOwner;
 }
 
 export interface LocalExtensionUiRegistry {
@@ -176,7 +173,6 @@ export interface LocalExtensionRegistry {
   commands: Record<string, ExtensionCommand>;
   diagnostics: ExtensionDiagnostic[];
   disposers: LocalExtensionDisposer[];
-  errors: LocalExtensionLoadError[];
   events: LocalExtensionEventsRegistry;
   generation: number;
   loadedPaths: string[];
@@ -276,7 +272,6 @@ function createEmptyExtensionRegistry(
     commands: {},
     diagnostics: [],
     disposers: [],
-    errors: [],
     events: {},
     generation,
     loadedPaths: [],
@@ -313,51 +308,6 @@ function isOwnerLive(
   return registry.owners[owner.id]?.generation === owner.generation;
 }
 
-function recordExtensionDiagnostic(
-  registry: LocalExtensionRegistry,
-  diagnostic: Omit<ExtensionDiagnostic, "timestamp">,
-  onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
-): void {
-  const completeDiagnostic: ExtensionDiagnostic = {
-    ...diagnostic,
-    timestamp: Date.now(),
-  };
-  registry.diagnostics.push(completeDiagnostic);
-  if (
-    completeDiagnostic.phase !== "status.evaluate" &&
-    completeDiagnostic.phase !== "command.override"
-  ) {
-    registry.errors.push({
-      error: completeDiagnostic.error,
-      ...(completeDiagnostic.owner ? { owner: completeDiagnostic.owner } : {}),
-      path: completeDiagnostic.path ?? completeDiagnostic.owner?.path ?? "",
-      phase: completeDiagnostic.phase,
-    });
-  }
-  onDiagnostic?.(completeDiagnostic);
-}
-
-function recordStaleHandleUse(
-  registry: LocalExtensionRegistry,
-  owner: ExtensionOwner,
-  capability: ExtensionDiagnostic["capability"],
-  onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
-): void {
-  recordExtensionDiagnostic(
-    registry,
-    {
-      capability,
-      error: new Error(
-        `Ignored stale extension handle for ${capability?.kind ?? "capability"}${capability?.id ? ` '${capability.id}'` : ""}`,
-      ),
-      owner,
-      path: owner.path,
-      phase: "stale_handle",
-    },
-    onDiagnostic,
-  );
-}
-
 function snapshotRegistryForReaders(
   registry: LocalExtensionRegistry,
 ): LocalExtensionRegistry {
@@ -367,7 +317,6 @@ function snapshotRegistryForReaders(
     capabilities: cloneExtensionCapabilities(registry.capabilities),
     diagnostics: [...registry.diagnostics],
     disposers: [...registry.disposers],
-    errors: [...registry.errors],
     events: Object.fromEntries(
       Object.entries(registry.events).map(([name, handlers]) => [
         name,
@@ -951,7 +900,6 @@ function createLettaExtensionApi(
         handler: handler as unknown as ExtensionEventHandler,
         name,
         owner,
-        path: owner.path,
       },
     ];
     onChange();
@@ -986,8 +934,7 @@ function createLettaExtensionApi(
                 `Extension command '${normalized.id}' overrides a built-in command`,
               ),
               owner,
-              path: owner.path,
-              phase: "command.override",
+              phase: "command_override",
             },
             onDiagnostic,
           );
@@ -1203,7 +1150,6 @@ export async function loadLocalExtensions(
             abortController,
             dispose,
             owner,
-            path: extensionPath,
           });
         }
         registry.loadedPaths.push(extensionPath);
@@ -1216,7 +1162,6 @@ export async function loadLocalExtensions(
           {
             error: error instanceof Error ? error : new Error(String(error)),
             owner,
-            path: extensionPath,
             phase: failurePhase,
           },
           options.onDiagnostic,
@@ -1336,19 +1281,17 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       if (toolStartEvent && toolStartArgsBeforeHandler) {
         toolStartEvent.args = toolStartArgsBeforeHandler;
       }
-      recordExtensionDiagnostic(
+      const diagnostic = recordExtensionDiagnostic(
         registry,
         {
           capability: { id: name, kind: "event" },
           error: error instanceof Error ? error : new Error(String(error)),
-          ...(registration.owner ? { owner: registration.owner } : {}),
-          path: registration.path,
+          owner: registration.owner,
           phase: "event",
         },
         onDiagnostic,
       );
-      const diagnostic = registry.diagnostics.at(-1);
-      if (diagnostic) diagnostics.push(diagnostic);
+      diagnostics.push(diagnostic);
     }
   }
 
@@ -1363,14 +1306,13 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   const disposers = [...registry.disposers].reverse();
   registry.disposers = [];
 
-  for (const { dispose, owner, path: extensionPath } of disposers) {
+  for (const { dispose, owner } of disposers) {
     try {
       dispose();
     } catch (error) {
       recordExtensionDiagnostic(registry, {
         error: error instanceof Error ? error : new Error(String(error)),
-        ...(owner ? { owner } : {}),
-        path: extensionPath,
+        owner,
         phase: "dispose",
       });
     }
@@ -1457,18 +1399,7 @@ export function createExtensionEngine(
         // Stale handles from a prior generation report through their old
         // activation callback. Preserve the diagnostic on the current engine
         // snapshot without reviving the old registry.
-        activeRegistry.diagnostics.push(diagnostic);
-        if (
-          diagnostic.phase !== "status.evaluate" &&
-          diagnostic.phase !== "command.override"
-        ) {
-          activeRegistry.errors.push({
-            error: diagnostic.error,
-            ...(diagnostic.owner ? { owner: diagnostic.owner } : {}),
-            path: diagnostic.path ?? diagnostic.owner?.path ?? "",
-            phase: diagnostic.phase,
-          });
-        }
+        appendExtensionDiagnostic(activeRegistry, diagnostic);
         publish();
       },
     });

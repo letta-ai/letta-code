@@ -230,8 +230,7 @@ export interface ExtensionEventRegistration<
 > {
   handler: ExtensionEventHandler<TName>;
   name: TName;
-  owner?: ExtensionOwner;
-  path: string;
+  owner: ExtensionOwner;
 }
 
 export interface ExtensionEventEmissionResult<
@@ -264,11 +263,10 @@ export type ExtensionDiagnosticPhase =
   | "transpile"
   | "import"
   | "activate"
-  | "command.override"
+  | "command_override"
   | "dispose"
   | "event"
-  | "stale_handle"
-  | "status.evaluate";
+  | "stale_handle";
 
 export interface ExtensionDiagnostic {
   capability?: {
@@ -276,8 +274,7 @@ export interface ExtensionDiagnostic {
     kind: ExtensionCapabilityKind;
   };
   error: Error;
-  owner?: ExtensionOwner;
-  path?: string;
+  owner: ExtensionOwner;
   phase: ExtensionDiagnosticPhase;
   timestamp: number;
 }

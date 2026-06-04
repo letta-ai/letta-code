@@ -8,6 +8,7 @@ import {
   clearRegisteredPiProviders,
   getRegisteredPiProvider,
 } from "@/backend/dev/pi-provider-extension-registry";
+import { getExtensionErrorDiagnostics } from "@/extensions/extension-diagnostics";
 import {
   createExtensionEngine,
   type ExtensionEngine,
@@ -255,7 +256,9 @@ describe("extension engine", () => {
       expect(forkResult).toMatchObject({
         id: "conv-1:agent-1:hidden",
       });
-      expect(engine.getSnapshot().errors).toEqual([]);
+      expect(
+        getExtensionErrorDiagnostics(engine.getSnapshot().diagnostics),
+      ).toEqual([]);
     } finally {
       delete testGlobal.__lettaExtensionBackend;
       delete testGlobal.__lettaExtensionForkResult;
@@ -422,7 +425,7 @@ describe("extension engine", () => {
       await engine.reload();
       const snapshot = engine.getSnapshot();
 
-      expect(snapshot.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
       expect(snapshot.commands).toEqual({});
       expect(snapshot.events).toEqual({});
       expect(snapshot.ui.panels).toEqual({});
@@ -481,7 +484,9 @@ describe("extension engine", () => {
         "startup:agent-1:Amelia:conversation-1",
       ]);
       expect(snapshot.ui.statusValues.lifecycle).toBe("startup");
-      expect(snapshot.errors.at(-1)).toMatchObject({
+      expect(
+        getExtensionErrorDiagnostics(snapshot.diagnostics).at(-1),
+      ).toMatchObject({
         phase: "event",
         error: expect.objectContaining({ message: "event failed" }),
       });
@@ -928,9 +933,9 @@ describe("extension engine", () => {
 
       expect(
         Object.fromEntries(
-          engine
-            .getSnapshot()
-            .errors.map((entry) => [path.basename(entry.path), entry.phase]),
+          getExtensionErrorDiagnostics(engine.getSnapshot().diagnostics).map(
+            (entry) => [path.basename(entry.owner.path), entry.phase],
+          ),
         ),
       ).toEqual({
         "phase-activate.js": "activate",
@@ -972,7 +977,7 @@ describe("extension engine", () => {
       await engine.reload();
       const snapshot = engine.getSnapshot();
 
-      expect(snapshot.errors).toEqual([]);
+      expect(getExtensionErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
       expect(snapshot.tools.local_weather).toMatchObject({
         description: "Get local weather",
         owner: {

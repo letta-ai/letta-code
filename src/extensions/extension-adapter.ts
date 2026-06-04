@@ -8,6 +8,7 @@ import {
   type ExtensionEvents,
   emptyEventEmissionResult,
 } from "@/extensions/event-emitter";
+import { getExtensionErrorDiagnostics } from "@/extensions/extension-diagnostics";
 import {
   type CreateExtensionEngineOptions,
   createExtensionEngine,
@@ -144,17 +145,19 @@ export function createExtensionAdapter(
       nextRegistry.ui.statuslineRenderer?.id ?? "(none)",
     );
 
-    for (const loadError of nextRegistry.errors) {
+    for (const diagnostic of getExtensionErrorDiagnostics(
+      nextRegistry.diagnostics,
+    )) {
       debugLog(
         "extensions",
         "failed to load %s: %s",
-        loadError.path,
-        loadError.error.message,
+        diagnostic.owner.path,
+        diagnostic.error.message,
       );
     }
 
     for (const diagnostic of nextRegistry.diagnostics) {
-      if (diagnostic.phase === "command.override") {
+      if (diagnostic.phase === "command_override") {
         debugLog("extensions", "%s", diagnostic.error.message);
       }
     }
