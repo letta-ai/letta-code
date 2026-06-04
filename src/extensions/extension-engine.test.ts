@@ -613,6 +613,100 @@ describe("extension engine", () => {
     }
   });
 
+  test("tool_start denial: all handlers run, first denial reason wins", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "deny.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName === "Bash" && String(event.args.command).includes("rm -rf")) {
+              return { deny: true, reason: "First denial reason." };
+            }
+          });
+          letta.events.on("tool_start", (event) => {
+            // Second denial handler — reason should not override first
+            if (event.toolName === "Bash") {
+              return { deny: true, reason: "Second denial reason." };
+            }
+          });
+          letta.events.on("tool_start", (event) => {
+            // Non-denial handler still runs for side effects
+            event.args = { ...event.args, _sideEffect: true };
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        args: { command: "rm -rf /" },
+      };
+
+      const result = await engine.emitEvent("tool_start", event);
+
+      // All three handlers ran
+      expect(result.handlerCount).toBe(3);
+      // Both denial results are collected
+      expect(result.results).toContainEqual({
+        deny: true,
+        reason: "First denial reason.",
+      });
+      expect(result.results).toContainEqual({
+        deny: true,
+        reason: "Second denial reason.",
+      });
+      // Side-effect handler still ran (args were mutated)
+      expect(event.args).toMatchObject({ _sideEffect: true });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("tool_start denial: no denial when handler returns undefined", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "no-deny.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_start", (event) => {
+            // Only deny Bash, let everything else through
+            if (event.toolName !== "Bash") return;
+            return { deny: true, reason: "Bash blocked." };
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+
+      // Edit should not be denied
+      const editEvent = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-2",
+        toolName: "Edit",
+        args: { file_path: "/tmp/test.txt" },
+      };
+      const editResult = await engine.emitEvent("tool_start", editEvent);
+      expect(editResult.results).toHaveLength(0);
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("reload aborts old activations and ignores stale handles", async () => {
     const root = createTempDir();
     const testGlobal = globalThis as ExtensionTestGlobal;
