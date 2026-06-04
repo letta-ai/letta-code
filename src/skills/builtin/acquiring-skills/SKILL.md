@@ -1,6 +1,6 @@
 ---
 name: acquiring-skills
-description: Guide for safely discovering and installing skills from external repositories. Use when a user asks for something where a specialized skill likely exists (browser testing, PDF processing, document generation, etc.) and you want to bootstrap your understanding rather than starting from scratch.
+description: Discover and install skills from Hermes, ClawHub, GitHub, and other registries. Load this skill whenever a user asks for a capability you don't already have — image generation, social media, email, calendar, finance, DevOps, search, browser automation, etc.
 ---
 
 # Acquiring New Skills
