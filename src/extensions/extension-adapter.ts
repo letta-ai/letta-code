@@ -9,6 +9,7 @@ import {
   emptyEventEmissionResult,
 } from "@/extensions/event-emitter";
 import { getExtensionErrorDiagnostics } from "@/extensions/extension-diagnostics";
+import { writeExtensionDiagnosticsLatestFile } from "@/extensions/extension-diagnostics-file";
 import {
   type CreateExtensionEngineOptions,
   createExtensionEngine,
@@ -31,6 +32,7 @@ export interface ExtensionAdapterSnapshot extends ExtensionAdapterLoadState {
 
 export interface CreateExtensionAdapterOptions
   extends Omit<CreateExtensionEngineOptions, "getContext"> {
+  diagnosticsRootDirectory?: string;
   disabled?: boolean;
   initialContext: ExtensionContext;
 }
@@ -59,6 +61,7 @@ export function createExtensionAdapter(
   options: CreateExtensionAdapterOptions,
 ): ExtensionAdapter {
   const {
+    diagnosticsRootDirectory,
     disabled,
     getBackend: resolveBackend,
     initialContext,
@@ -137,6 +140,20 @@ export function createExtensionAdapter(
     if (disposed) return;
 
     const nextRegistry = engine.getSnapshot();
+    if (nextRegistry.sources.some((source) => source.files.length > 0)) {
+      try {
+        writeExtensionDiagnosticsLatestFile(nextRegistry.diagnostics, {
+          rootDirectory: diagnosticsRootDirectory,
+        });
+      } catch (error) {
+        debugLog(
+          "extensions",
+          "failed to write extension diagnostics: %s",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
     debugLog(
       "extensions",
       "loaded %s extension(s) from %s source(s); renderer=%s",
