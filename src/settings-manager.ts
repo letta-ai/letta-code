@@ -57,6 +57,8 @@ export interface AgentSettings {
     | "gemini_snake"
     | "none"; // toolset mode for this agent (manual override or auto)
   systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
+  systemPromptHash?: string; // hash of the managed prompt content last written by Letta Code
+  systemPromptVersion?: string; // Letta Code version that wrote systemPromptHash
 }
 
 export interface ConversationGoal {
@@ -79,6 +81,7 @@ export interface Settings {
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   autoConversationTitles: boolean; // Generate AI conversation titles when possible
+  autoConversationTitlesRollbackApplied?: boolean; // One-time rollback marker for the default-on title experiment
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
   includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
@@ -165,7 +168,8 @@ const DEFAULT_SETTINGS: Settings = {
   enableSleeptime: false,
   conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
-  autoConversationTitles: true,
+  autoConversationTitles: false,
+  autoConversationTitlesRollbackApplied: true,
   autoSwapOnQuotaLimit: true,
   includeWorktreeTool: true,
   recentModels: [],
@@ -417,6 +421,7 @@ class SettingsManager {
     if (this.initialized) return;
 
     const settingsPath = this.getSettingsPath();
+    let shouldRollbackAutoConversationTitles = false;
 
     try {
       // Check if settings file exists
@@ -443,6 +448,16 @@ class SettingsManager {
           // Mark for deletion on next persist; keep startup backward-compatible.
           this.markDirty("reflectionBehavior");
         }
+        shouldRollbackAutoConversationTitles =
+          loadedSettingsRaw.autoConversationTitlesRollbackApplied !== true;
+        if (shouldRollbackAutoConversationTitles) {
+          loadedSettingsRaw.autoConversationTitles = false;
+          loadedSettingsRaw.autoConversationTitlesRollbackApplied = true;
+          this.markDirty(
+            "autoConversationTitles",
+            "autoConversationTitlesRollbackApplied",
+          );
+        }
         // Merge with defaults in case new fields were added
         this.settings = {
           ...DEFAULT_SETTINGS,
@@ -454,6 +469,14 @@ class SettingsManager {
       }
 
       this.initialized = true;
+
+      if (shouldRollbackAutoConversationTitles) {
+        try {
+          await this.persistSettings();
+        } catch {
+          // Best-effort cleanup only; do not fail the load path.
+        }
+      }
 
       // Check secrets availability and warn if not available
       await this.checkSecretsSupport();
@@ -2267,7 +2290,15 @@ class SettingsManager {
    */
   private upsertAgentSettings(
     agentId: string,
-    updates: Partial<Omit<AgentSettings, "agentId" | "baseUrl">>,
+    updates: Partial<
+      Omit<
+        AgentSettings,
+        "agentId" | "baseUrl" | "systemPromptHash" | "systemPromptVersion"
+      >
+    > & {
+      systemPromptHash?: string | null;
+      systemPromptVersion?: string | null;
+    },
     serverKeyOverride?: string,
   ): void {
     const settings = this.getSettings();
@@ -2299,6 +2330,14 @@ class SettingsManager {
           updates.systemPromptPreset !== undefined
             ? updates.systemPromptPreset
             : existing.systemPromptPreset,
+        systemPromptHash:
+          updates.systemPromptHash !== undefined
+            ? (updates.systemPromptHash ?? undefined)
+            : existing.systemPromptHash,
+        systemPromptVersion:
+          updates.systemPromptVersion !== undefined
+            ? (updates.systemPromptVersion ?? undefined)
+            : existing.systemPromptVersion,
       };
       // Clean up undefined/false values
       if (!updated.pinned) delete updated.pinned;
@@ -2306,6 +2345,8 @@ class SettingsManager {
       if (!updated.toolset || updated.toolset === "auto")
         delete updated.toolset;
       if (!updated.systemPromptPreset) delete updated.systemPromptPreset;
+      if (!updated.systemPromptHash) delete updated.systemPromptHash;
+      if (!updated.systemPromptVersion) delete updated.systemPromptVersion;
       if (!updated.baseUrl) delete updated.baseUrl;
       agents[idx] = updated;
     } else {
@@ -2314,6 +2355,8 @@ class SettingsManager {
         agentId,
         baseUrl: normalizedBaseUrl,
         ...updates,
+        systemPromptHash: updates.systemPromptHash ?? undefined,
+        systemPromptVersion: updates.systemPromptVersion ?? undefined,
       };
       // Clean up undefined/false values
       if (!newAgent.pinned) delete newAgent.pinned;
@@ -2321,6 +2364,8 @@ class SettingsManager {
       if (!newAgent.toolset || newAgent.toolset === "auto")
         delete newAgent.toolset;
       if (!newAgent.systemPromptPreset) delete newAgent.systemPromptPreset;
+      if (!newAgent.systemPromptHash) delete newAgent.systemPromptHash;
+      if (!newAgent.systemPromptVersion) delete newAgent.systemPromptVersion;
       if (!newAgent.baseUrl) delete newAgent.baseUrl;
       agents.push(newAgent);
     }
@@ -2388,10 +2433,57 @@ class SettingsManager {
   }
 
   /**
+   * Get the stored hash for the managed system prompt on the current server.
+   */
+  getSystemPromptHash(agentId: string): string | undefined {
+    return this.getAgentSettings(agentId)?.systemPromptHash;
+  }
+
+  /**
+   * Get the Letta Code version that last wrote the managed system prompt hash.
+   */
+  getSystemPromptVersion(agentId: string): string | undefined {
+    return this.getAgentSettings(agentId)?.systemPromptVersion;
+  }
+
+  /**
    * Set the system prompt preset for an agent on the current server.
    */
   setSystemPromptPreset(agentId: string, preset: string): void {
-    this.upsertAgentSettings(agentId, { systemPromptPreset: preset });
+    this.upsertAgentSettings(agentId, {
+      systemPromptPreset: preset,
+      systemPromptHash: null,
+      systemPromptVersion: null,
+    });
+  }
+
+  /**
+   * Store the managed system prompt metadata for an agent on the current server.
+   */
+  setManagedSystemPrompt(
+    agentId: string,
+    prompt: {
+      preset: string;
+      hash: string;
+      version: string;
+    },
+  ): void {
+    this.upsertAgentSettings(agentId, {
+      systemPromptPreset: prompt.preset,
+      systemPromptHash: prompt.hash,
+      systemPromptVersion: prompt.version,
+    });
+  }
+
+  /**
+   * Mark an agent's system prompt as custom and clear managed prompt metadata.
+   */
+  setSystemPromptCustom(agentId: string): void {
+    this.upsertAgentSettings(agentId, {
+      systemPromptPreset: "custom",
+      systemPromptHash: null,
+      systemPromptVersion: null,
+    });
   }
 
   /**
@@ -2399,7 +2491,11 @@ class SettingsManager {
    */
   clearSystemPromptPreset(agentId: string): void {
     // Setting to empty string triggers the cleanup `if (!updated.systemPromptPreset) delete ...`
-    this.upsertAgentSettings(agentId, { systemPromptPreset: "" });
+    this.upsertAgentSettings(agentId, {
+      systemPromptPreset: "",
+      systemPromptHash: null,
+      systemPromptVersion: null,
+    });
   }
 
   /**

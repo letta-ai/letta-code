@@ -10,6 +10,18 @@ function readSource(relativePath: string): string {
   );
 }
 
+function expectManagedPromptUpdatesViaBackend(source: string): void {
+  const systemPromptVersioningSource = readSource(
+    "./agent/system-prompt-versioning.ts",
+  );
+
+  expect(source).toContain("scheduleManagedSystemPromptUpdate(");
+  expect(systemPromptVersioningSource).toMatch(
+    /getBackend\(\)\s*\.\s*updateAgent\(/,
+  );
+  expect(systemPromptVersioningSource).not.toContain("client.agents.");
+}
+
 describe("headless backend lifecycle wiring", () => {
   test("headless startup and approval recovery route lifecycle SDK calls through Backend", () => {
     const source = readSource("./headless.ts");
@@ -26,7 +38,7 @@ describe("headless backend lifecycle wiring", () => {
     expect(source).toContain("backend.retrieveAgent(");
     expect(source).toContain("backend.retrieveConversation(");
     expect(source).toContain("backend.createConversation(");
-    expect(source).toContain("backend.updateAgent(");
+    expectManagedPromptUpdatesViaBackend(source);
 
     expect(source).not.toContain("client.agents.");
     expect(source).not.toContain("client.conversations.");
@@ -52,7 +64,7 @@ describe("headless backend lifecycle wiring", () => {
     expect(source).toContain("backend.retrieveAgent(");
     expect(source).toContain("backend.retrieveConversation(");
     expect(source).toContain("backend.createConversation(");
-    expect(source).toContain("backend.updateAgent(");
+    expectManagedPromptUpdatesViaBackend(source);
     expect(source).toContain("getResumeDataFromBackend(");
 
     expect(source).not.toContain("getClient");

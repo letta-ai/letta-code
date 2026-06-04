@@ -77,6 +77,27 @@ const RESUME_PREVIEW_MESSAGE_TYPES: MessageType[] = [
   "assistant_message",
 ];
 
+export function isDefaultConversationId(conversationId: string): boolean {
+  return conversationId === "default";
+}
+
+export function isConversationPinned(params: {
+  conversationId: string;
+  pinnedIds: Set<string>;
+}): boolean {
+  return isDefaultConversationId(params.conversationId)
+    ? true
+    : params.pinnedIds.has(params.conversationId);
+}
+
+export function buildConversationSelectorHints(params: {
+  isSelectedDefaultConversation: boolean;
+}): string {
+  return params.isSelectedDefaultConversation
+    ? "Enter select · ↑↓ navigate · Esc clear/cancel"
+    : "Enter select · ↑↓ navigate · Alt+P pin/unpin · Esc clear/cancel";
+}
+
 function paginatedItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
   return Array.isArray(value) ? value : value.getPaginatedItems();
 }
@@ -342,6 +363,16 @@ export function ConversationSelector({
     EnrichedConversation[] | null
   >(null);
   const [searching, setSearching] = useState(false);
+  const [pinNotice, setPinNotice] = useState<string | null>(null);
+  const pinNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pinNoticeTimerRef.current) {
+        clearTimeout(pinNoticeTimerRef.current);
+      }
+    };
+  }, []);
 
   // Enrich a single conversation with message data, updating state in-place
   const enrichConversation = useCallback(
@@ -516,7 +547,10 @@ export function ConversationSelector({
             lastActiveAt: conv.updated_at ?? conv.created_at ?? null,
             messageCount: -1, // Unknown until enriched
             enriched: false,
-            isPinned: pinnedIdSet.has(conv.id),
+            isPinned: isConversationPinned({
+              conversationId: conv.id,
+              pinnedIds: pinnedIdSet,
+            }),
             isPinnedLocal: localPinnedIdSet.has(conv.id),
           }),
         );
@@ -537,7 +571,7 @@ export function ConversationSelector({
             ? [
                 {
                   ...defaultConversation,
-                  isPinned: pinnedIdSet.has("default"),
+                  isPinned: true,
                   isPinnedLocal: localPinnedIdSet.has("default"),
                 },
                 ...nonEmptyList,
@@ -675,9 +709,14 @@ export function ConversationSelector({
                 conversation.updated_at ?? conversation.created_at ?? null,
               messageCount: -1,
               enriched: false,
-              isPinned: settingsManager
-                .getMergedPinnedConversations(agentId)
-                .some((pinned) => pinned.conversationId === conversation.id),
+              isPinned: isConversationPinned({
+                conversationId: conversation.id,
+                pinnedIds: new Set(
+                  settingsManager
+                    .getMergedPinnedConversations(agentId)
+                    .map((pinned) => pinned.conversationId),
+                ),
+              }),
               isPinnedLocal: settingsManager
                 .getLocalPinnedConversations(agentId)
                 .includes(conversation.id),
@@ -767,6 +806,18 @@ export function ConversationSelector({
     (selected: EnrichedConversation | undefined) => {
       if (!selected?.conversation.id) return;
       const conversationId = selected.conversation.id;
+      if (isDefaultConversationId(conversationId)) {
+        if (pinNoticeTimerRef.current) {
+          clearTimeout(pinNoticeTimerRef.current);
+        }
+        setPinNotice("Default conversation is always pinned.");
+        pinNoticeTimerRef.current = setTimeout(() => {
+          pinNoticeTimerRef.current = null;
+          setPinNotice(null);
+        }, 2000);
+        return;
+      }
+      setPinNotice(null);
       if (selected.isPinned) {
         settingsManager.unpinConversationBoth(agentId, conversationId);
       } else {
@@ -973,6 +1024,10 @@ export function ConversationSelector({
 
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
+  const selectedConversation = filteredConversations[selectedIndex];
+  const isSelectedDefaultConversation = selectedConversation
+    ? isDefaultConversationId(selectedConversation.conversation.id)
+    : false;
 
   return (
     <Box flexDirection="column">
@@ -1057,8 +1112,9 @@ export function ConversationSelector({
         (() => {
           const footerWidth = Math.max(0, terminalWidth - 2);
           const pageText = `Showing ${startIndex + 1}-${Math.min(startIndex + visibleConversations.length, filteredConversations.length)} of ${filteredConversations.length}${!normalizedSearch && hasMore ? "+" : ""}${loadingMore ? " (loading...)" : ""}`;
-          const hintsText =
-            "Enter select · ↑↓ navigate · Alt+P pin/unpin · Esc clear/cancel";
+          const hintsText = buildConversationSelectorHints({
+            isSelectedDefaultConversation,
+          });
 
           return (
             <Box flexDirection="column">
@@ -1074,6 +1130,14 @@ export function ConversationSelector({
                   <MarkdownDisplay text={hintsText} dimColor />
                 </Box>
               </Box>
+              {pinNotice && (
+                <Box flexDirection="row">
+                  <Box width={2} flexShrink={0} />
+                  <Box flexGrow={1} width={footerWidth}>
+                    <Text color="yellow">{pinNotice}</Text>
+                  </Box>
+                </Box>
+              )}
             </Box>
           );
         })()}

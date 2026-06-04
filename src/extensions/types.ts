@@ -127,38 +127,6 @@ export interface ExtensionConversationHandle {
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
-export interface ExtensionAdapterBackendForkConversationOptions
-  extends ExtensionConversationForkOptions {
-  agentId?: string;
-}
-
-export interface ExtensionAdapterBackendSendMessageOptions
-  extends ExtensionConversationSendMessageOptions {
-  agentId?: string;
-}
-
-export interface ExtensionAdapterBackendHistoryOptions
-  extends ExtensionConversationHistoryOptions {
-  agentId?: string | null;
-}
-
-export interface ExtensionAdapterBackendApi {
-  forkConversation: (
-    conversationId: string,
-    options?: ExtensionAdapterBackendForkConversationOptions,
-  ) => Promise<{ id: string }>;
-  getConversationHistory: (
-    conversationId: string,
-    options?: ExtensionAdapterBackendHistoryOptions,
-  ) => Promise<Message[]>;
-  sendMessageStream: (
-    conversationId: string,
-    messages: ExtensionConversationMessage[],
-    options?: ExtensionAdapterBackendSendMessageOptions,
-    requestOptions?: ExtensionConversationSendMessageRequestOptions,
-  ) => Promise<AsyncIterable<LettaStreamingResponse>>;
-}
-
 export type ExtensionSourceScope = "global" | "project" | "bundled";
 
 export interface ExtensionOwner {
@@ -223,6 +191,10 @@ export interface ExtensionToolStartEvent {
 
 export interface ExtensionToolStartResult {
   args?: Record<string, unknown>;
+  /** If true, the tool execution is denied. All handlers still run, but any denial blocks the tool. */
+  deny?: boolean;
+  /** Human-readable reason for the denial. Shown to the model as the tool error message. */
+  reason?: string;
 }
 
 export interface ExtensionEventMap {
@@ -450,12 +422,7 @@ export interface ExtensionToolRunContext {
   agent: {
     id: string | null;
   };
-  conversation: {
-    id: string | null;
-    getHistory: (
-      options?: ExtensionConversationHistoryOptions,
-    ) => Promise<Message[]>;
-  };
+  conversation: ExtensionConversationHandle;
   getContext: () => ExtensionContext;
 }
 

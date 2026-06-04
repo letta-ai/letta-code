@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
-import { sendMessageStreamWithBackend } from "@/agent/message";
-import { type Backend, getBackend } from "@/backend";
+import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
-import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
-import type { ExtensionAdapterBackendApi } from "@/extensions/types";
 import {
   createExtensionAdapter,
   type ExtensionAdapter,
@@ -13,7 +10,7 @@ import type { ExtensionContext } from "./types";
 
 export interface LocalExtensionAdapter {
   events: ExtensionAdapter["events"];
-  getBackendApi: () => ExtensionAdapterBackendApi | undefined;
+  getBackend: ExtensionAdapter["getBackend"];
   getContext: () => ExtensionContext;
   hadStatuslineRenderer: boolean; // Used to prevent flicker on reload
   hasExtensionSources: boolean;
@@ -22,35 +19,6 @@ export interface LocalExtensionAdapter {
   registry: ExtensionAdapterSnapshot["registry"];
   reload: () => Promise<void>;
   updateContext: (context: ExtensionContext) => void;
-}
-
-function createExtensionBackendApi(
-  backend: Backend,
-): ExtensionAdapterBackendApi {
-  return {
-    forkConversation(conversationId, options) {
-      return backend.forkConversation(conversationId, options);
-    },
-    getConversationHistory(conversationId, options) {
-      return loadExtensionConversationHistoryFromBackend(
-        backend,
-        {
-          agentId: options?.agentId,
-          conversationId,
-        },
-        options,
-      );
-    },
-    sendMessageStream(conversationId, messages, options, requestOptions) {
-      return sendMessageStreamWithBackend(
-        backend,
-        conversationId,
-        messages,
-        options,
-        requestOptions,
-      );
-    },
-  };
 }
 
 export function useLocalExtensionAdapter(
@@ -62,7 +30,7 @@ export function useLocalExtensionAdapter(
     () =>
       createExtensionAdapter({
         disabled: options.disabled,
-        getBackendApi: () => createExtensionBackendApi(getBackend()),
+        getBackend,
         getClient,
         initialContext,
       }),
@@ -90,7 +58,7 @@ export function useLocalExtensionAdapter(
   return useMemo(
     () => ({
       events: adapter.events,
-      getBackendApi: adapter.getBackendApi,
+      getBackend: adapter.getBackend,
       getContext: adapter.getContext,
       hadStatuslineRenderer: snapshot.hadStatuslineRenderer,
       hasExtensionSources: snapshot.hasExtensionSources,

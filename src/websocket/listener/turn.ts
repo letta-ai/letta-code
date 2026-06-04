@@ -29,7 +29,12 @@ import {
   refreshInputOtidsForNewRequest,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
-import { createBuffers, toLines } from "@/cli/helpers/accumulator";
+import {
+  type Buffers,
+  createBuffers,
+  type Line,
+  toLines,
+} from "@/cli/helpers/accumulator";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
@@ -147,8 +152,61 @@ function trackListenerUserInput(
   }
 }
 
+function buildInboundUserTranscriptLines(
+  messages: Array<MessageCreate | ApprovalCreate>,
+): Line[] {
+  const lines: Line[] = [];
+
+  for (const message of messages) {
+    if (!("role" in message) || message.role !== "user") {
+      continue;
+    }
+    if (!("content" in message)) {
+      continue;
+    }
+
+    const text = extractTelemetryInputText(message.content);
+    if (text.length === 0) {
+      continue;
+    }
+
+    const otid =
+      "otid" in message && typeof message.otid === "string"
+        ? message.otid
+        : undefined;
+    const id = otid ? `user-${otid}` : `user-${crypto.randomUUID()}`;
+
+    lines.push({
+      kind: "user",
+      id,
+      text,
+      otid,
+    });
+  }
+
+  return lines;
+}
+
+function seedInboundUserTranscriptLines(buffers: Buffers, lines: Line[]): void {
+  for (const line of lines) {
+    if (line.kind !== "user") {
+      continue;
+    }
+    if (buffers.byId.has(line.id)) {
+      continue;
+    }
+    buffers.byId.set(line.id, line);
+    buffers.order.push(line.id);
+    if (line.otid) {
+      buffers.userLineIdByOtid.set(line.otid, line.id);
+    }
+  }
+}
+
 export const __listenerTurnTestUtils = {
   trackListenerUserInput,
+  buildInboundUserTranscriptLines,
+  seedInboundUserTranscriptLines,
   maybeLaunchPostTurnChannelReflection,
 };
 
@@ -448,6 +506,8 @@ export async function handleIncomingMessage(
           : m,
       ),
     );
+    const inboundUserTranscriptLines =
+      buildInboundUserTranscriptLines(messagesToSend);
 
     const firstMessage = normalizedMessages[0];
     const isApprovalMessage =
@@ -618,6 +678,7 @@ export async function handleIncomingMessage(
     let runIdSent = false;
     let runId: string | undefined;
     const buffers = createBuffers(agentId);
+    seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
 
     // eslint-disable-next-line no-constant-condition
     while (true) {

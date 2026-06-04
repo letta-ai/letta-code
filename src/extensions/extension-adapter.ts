@@ -1,13 +1,9 @@
-import type Letta from "@letta-ai/letta-client";
-import { clearRegisteredPiProviders } from "@/backend/dev/pi-provider-extension-registry";
-import {
-  cloneExtensionCapabilities,
-  DISABLED_EXTENSION_CAPABILITIES,
-} from "@/extensions/capabilities";
+import type { Backend } from "@/backend";
 import {
   areExtensionsDisabled,
   disableExtensionsForProcess,
 } from "@/extensions/disable";
+import { createDisabledExtensionAdapter } from "@/extensions/disabled-extension-adapter";
 import {
   type ExtensionEvents,
   emptyEventEmissionResult,
@@ -16,14 +12,10 @@ import {
   type CreateExtensionEngineOptions,
   createExtensionEngine,
   type ExtensionEngine,
-  type LocalExtensionRegistry,
+  type ResolveLocalExtensionSourcesOptions,
   resolveLocalExtensionSources,
 } from "@/extensions/extension-engine";
-import { clearExtensionTools } from "@/extensions/tool-registry";
-import type {
-  ExtensionAdapterBackendApi,
-  ExtensionContext,
-} from "@/extensions/types";
+import type { ExtensionContext } from "@/extensions/types";
 import { debugLog } from "@/utils/debug";
 
 export interface ExtensionAdapterLoadState {
@@ -37,106 +29,15 @@ export interface ExtensionAdapterSnapshot extends ExtensionAdapterLoadState {
 }
 
 export interface CreateExtensionAdapterOptions
-  extends Omit<CreateExtensionEngineOptions, "backend" | "getContext"> {
+  extends Omit<CreateExtensionEngineOptions, "getContext"> {
   disabled?: boolean;
-  getBackendApi?: () => ExtensionAdapterBackendApi | undefined;
-  getClient: () => Promise<Letta>;
   initialContext: ExtensionContext;
-}
-
-function createDisabledExtensionRegistry(): LocalExtensionRegistry {
-  return {
-    capabilities: cloneExtensionCapabilities(DISABLED_EXTENSION_CAPABILITIES),
-    commands: {},
-    diagnostics: [],
-    disposers: [],
-    errors: [],
-    events: {},
-    generation: 0,
-    loadedPaths: [],
-    ownerAbortControllers: {},
-    owners: {},
-    sources: [],
-    tools: {},
-    ui: {
-      panels: {},
-      statuslineRenderer: null,
-      statusOwners: {},
-      statusValues: {},
-    },
-  };
-}
-
-function createDisabledExtensionEngine(
-  registry: LocalExtensionRegistry,
-): ExtensionEngine {
-  return {
-    dispose() {},
-    emitEvent(name) {
-      return Promise.resolve(emptyEventEmissionResult(name));
-    },
-    getSnapshot() {
-      return registry;
-    },
-    reload() {
-      return Promise.resolve();
-    },
-    subscribe() {
-      return () => undefined;
-    },
-  };
-}
-
-function createDisabledExtensionAdapter(
-  options: CreateExtensionAdapterOptions,
-): ExtensionAdapter {
-  clearExtensionTools();
-  clearRegisteredPiProviders();
-
-  let context = options.initialContext;
-  const registry = createDisabledExtensionRegistry();
-  const engine = createDisabledExtensionEngine(registry);
-  const snapshot: ExtensionAdapterSnapshot = {
-    hadStatuslineRenderer: false,
-    hasExtensionSources: false,
-    isLoading: false,
-    registry,
-  };
-  const events: ExtensionEvents = {
-    emit(name) {
-      return Promise.resolve(emptyEventEmissionResult(name));
-    },
-  };
-
-  return {
-    dispose() {},
-    events,
-    getBackendApi() {
-      return undefined;
-    },
-    getContext() {
-      return context;
-    },
-    getSnapshot() {
-      return snapshot;
-    },
-    engine,
-    reload() {
-      return Promise.resolve();
-    },
-    subscribe() {
-      return () => undefined;
-    },
-    updateContext(nextContext) {
-      context = nextContext;
-    },
-  };
 }
 
 export interface ExtensionAdapter {
   dispose: () => void;
   events: ExtensionEvents;
-  getBackendApi: () => ExtensionAdapterBackendApi | undefined;
+  getBackend: () => Backend | undefined;
   getContext: () => ExtensionContext;
   getSnapshot: () => ExtensionAdapterSnapshot;
   engine: ExtensionEngine;
@@ -146,61 +47,31 @@ export interface ExtensionAdapter {
 }
 
 function hasExtensionSources(
-  options: Pick<
-    CreateExtensionAdapterOptions,
-    "cacheDirectory" | "globalExtensionsDirectory"
-  >,
+  options: ResolveLocalExtensionSourcesOptions,
 ): boolean {
   return resolveLocalExtensionSources(options).some(
     (source) => source.files.length > 0,
   );
 }
 
-function createLazyAdapterBackendApi(
-  getBackendApi: () => ExtensionAdapterBackendApi | undefined,
-): ExtensionAdapterBackendApi {
-  const requireBackend = () => {
-    const backend = getBackendApi();
-    if (!backend) {
-      throw new Error("Extension backend is not available");
-    }
-    return backend;
-  };
-
-  return {
-    forkConversation(conversationId, options) {
-      return requireBackend().forkConversation(conversationId, options);
-    },
-    getConversationHistory(conversationId, options) {
-      return requireBackend().getConversationHistory(conversationId, options);
-    },
-    sendMessageStream(conversationId, messages, options, requestOptions) {
-      return requireBackend().sendMessageStream(
-        conversationId,
-        messages,
-        options,
-        requestOptions,
-      );
-    },
-  };
-}
-
 export function createExtensionAdapter(
   options: CreateExtensionAdapterOptions,
 ): ExtensionAdapter {
-  if (options.disabled) {
-    disableExtensionsForProcess();
-  }
-
-  if (options.disabled || areExtensionsDisabled()) {
-    return createDisabledExtensionAdapter(options);
-  }
-
   const {
-    getBackendApi: resolveBackendApi,
+    disabled,
+    getBackend: resolveBackend,
     initialContext,
     ...engineOptions
   } = options;
+
+  const alreadyDisabled = areExtensionsDisabled();
+  if (disabled || alreadyDisabled) {
+    if (!alreadyDisabled) {
+      disableExtensionsForProcess();
+    }
+    return createDisabledExtensionAdapter({ initialContext });
+  }
+
   let context = initialContext;
   let disposed = false;
   const initialHasExtensionSources = hasExtensionSources(engineOptions);
@@ -211,24 +82,23 @@ export function createExtensionAdapter(
   };
   const listeners = new Set<() => void>();
 
-  const getBackendApi = () => resolveBackendApi?.();
+  const getBackend = () => resolveBackend?.();
   const getContext = () => context;
-  const backend = resolveBackendApi
-    ? createLazyAdapterBackendApi(getBackendApi)
-    : undefined;
 
   const engine = createExtensionEngine({
     ...engineOptions,
-    ...(backend ? { backend } : {}),
+    getBackend,
     getContext,
   });
 
   const events: ExtensionEvents = {
     emit(name, event) {
       if (loadState.isLoading || !loadState.hasExtensionSources) {
+        // Events are best-effort hooks; do not deliver them while the extension
+        // registry is unavailable or in flux.
         return Promise.resolve(emptyEventEmissionResult(name));
       }
-      return engine.emitEvent(name, event, getBackendApi());
+      return engine.emitEvent(name, event);
     },
   };
 
@@ -284,8 +154,9 @@ export function createExtensionAdapter(
     }
 
     for (const diagnostic of nextRegistry.diagnostics) {
-      if (diagnostic.phase !== "command.override") continue;
-      debugLog("extensions", "%s", diagnostic.error.message);
+      if (diagnostic.phase === "command.override") {
+        debugLog("extensions", "%s", diagnostic.error.message);
+      }
     }
 
     loadState = {
@@ -307,7 +178,7 @@ export function createExtensionAdapter(
       listeners.clear();
     },
     events,
-    getBackendApi,
+    getBackend,
     getContext,
     getSnapshot,
     engine,

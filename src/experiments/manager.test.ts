@@ -78,12 +78,12 @@ describe("experimentManager", () => {
   test("maps conversation title experiment controls to the persistent setting", async () => {
     expect(experimentManager.getSnapshot("conversation_titles")).toMatchObject({
       id: "conversation_titles",
-      enabled: true,
+      enabled: false,
     });
 
-    expect(experimentManager.set("conversation_titles", false)).toMatchObject({
+    expect(experimentManager.set("conversation_titles", true)).toMatchObject({
       id: "conversation_titles",
-      enabled: false,
+      enabled: true,
     });
     await settingsManager.flush();
 
@@ -92,7 +92,7 @@ describe("experimentManager", () => {
 
     expect(experimentManager.getSnapshot("conversation_titles")).toMatchObject({
       id: "conversation_titles",
-      enabled: false,
+      enabled: true,
     });
   });
 });

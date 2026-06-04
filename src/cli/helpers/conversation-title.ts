@@ -16,10 +16,10 @@ export interface ConversationTitleSettingsSnapshot {
 export function getConversationTitleSettings(): ConversationTitleSettingsSnapshot {
   try {
     return {
-      enabled: settingsManager.getSettings().autoConversationTitles !== false,
+      enabled: settingsManager.getSettings().autoConversationTitles === true,
     };
   } catch {
-    return { enabled: true };
+    return { enabled: false };
   }
 }
 

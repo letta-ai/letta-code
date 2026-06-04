@@ -556,6 +556,10 @@ export function markIncompleteToolsAsCancelled(
   let anyToolsCancelled = false;
   for (const [id, line] of b.byId.entries()) {
     if (line.kind === "tool_call" && line.phase !== "finished") {
+      debugLog(
+        "accumulator",
+        `[ORPHANED_TOOL] name=${line.name ?? "?"} phase=${line.phase} diagnosis=${diagnoseOrphanedTool(line, b)} reason=${reason}`,
+      );
       const updatedLine = {
         ...line,
         phase: "finished" as const,
@@ -573,6 +577,48 @@ export function markIncompleteToolsAsCancelled(
     markCurrentLineAsFinished(b);
   }
   return anyToolsCancelled;
+}
+
+/**
+ * Remove incomplete tool calls from the buffer entirely.
+ * Used at end_turn to clean up orphaned tool calls without showing "Cancelled".
+ * Returns true if any tools were removed.
+ */
+export function removeIncompleteTools(b: Buffers): boolean {
+  let anyToolsRemoved = false;
+  for (const [id, line] of b.byId.entries()) {
+    if (line.kind === "tool_call" && line.phase !== "finished") {
+      debugLog(
+        "accumulator",
+        `[REMOVED_ORPHANED_TOOL] name=${line.name ?? "?"} phase=${line.phase} diagnosis=${diagnoseOrphanedTool(line, b)} toolCallId=${line.toolCallId ?? "?"}`,
+      );
+      b.byId.delete(id);
+      b.order = b.order.filter((oid) => oid !== id);
+      if (line.toolCallId) {
+        b.toolCallIdToLineId.delete(line.toolCallId);
+        b.serverToolCalls.delete(line.toolCallId);
+      }
+      anyToolsRemoved = true;
+    }
+  }
+  return anyToolsRemoved;
+}
+
+function diagnoseOrphanedTool(
+  line: Extract<Line, { kind: "tool_call" }>,
+  b: Buffers,
+): string {
+  const isTrackedAsServerTool = line.toolCallId
+    ? b.serverToolCalls.has(line.toolCallId)
+    : false;
+  if (line.phase === "streaming") {
+    return isTrackedAsServerTool
+      ? "server_tool_missing_return"
+      : "client_tool_missing_approval_request";
+  }
+  if (line.phase === "ready") return "approval_pending_at_stream_end";
+  if (line.phase === "running") return "execution_incomplete_at_stream_end";
+  return "unknown_phase";
 }
 
 type ToolCallLine = Extract<Line, { kind: "tool_call" }>;
