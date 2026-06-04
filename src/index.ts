@@ -1530,7 +1530,7 @@ async function main(): Promise<void> {
   markMilestone("REACT_IMPORT_DONE");
   await terminalPreflightPromise;
   markMilestone("TERMINAL_PREFLIGHT_DONE");
-  const { useState, useEffect, useCallback, useRef } = React;
+  const { useState, useEffect, useRef } = React;
   const App = AppModule.App;
 
   function LoadingApp({
@@ -1578,8 +1578,6 @@ async function main(): Promise<void> {
     const [isResumingSession, setIsResumingSession] = useState(false);
     const [resumedExistingConversation, setResumedExistingConversation] =
       useState(false);
-    // Epoch counter: incrementing forces App to remount via React key
-    const [appReloadEpoch, setAppReloadEpoch] = useState(0);
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
@@ -2073,29 +2071,6 @@ async function main(): Promise<void> {
 
     // Main initialization effect - runs after profile selection
     const initStartedRef = React.useRef(false);
-
-    // Reload handler: re-triggers the startup path for the current agent/conversation,
-    // then remounts AppCoordinator via key change so all effects re-fire.
-    const handleReload = useCallback(
-      async (currentAgentId: string, currentConversationId: string) => {
-        // Clear cached settings and re-populate local project settings
-        // BEFORE triggering state updates. React components read local
-        // project settings synchronously during render (e.g. getConversationGoal),
-        // so the cache must be warm before the re-render cycle starts.
-        settingsManager.clearCaches();
-        await settingsManager.loadLocalProjectSettings();
-        initStartedRef.current = false;
-        setResumeData(null);
-        setAgentState(null);
-        setValidatedAgent(null);
-        setSelectedGlobalAgentId(currentAgentId);
-        setSelectedConversationId(currentConversationId);
-        setResumedExistingConversation(true);
-        setLoadingState("assembling");
-        setAppReloadEpoch((x) => x + 1);
-      },
-      [],
-    );
 
     useEffect(() => {
       if (loadingState !== "assembling") {
@@ -2839,7 +2814,7 @@ async function main(): Promise<void> {
     }
 
     return React.createElement(App, {
-      key: `${agentId}:${conversationId}:${appReloadEpoch}`,
+      key: `${agentId}:${conversationId}`,
       agentId,
       agentState,
       conversationId,
@@ -2860,7 +2835,6 @@ async function main(): Promise<void> {
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
       extensionsDisabled,
       fileAutocompleteFdPath,
-      onReload: handleReload,
     });
   }
 

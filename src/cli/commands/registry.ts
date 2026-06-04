@@ -289,11 +289,11 @@ export const commands: Record<string, Command> = {
     },
   },
   "/reload": {
-    desc: "Reload settings and restart TUI effects",
+    desc: "Reload settings and local extensions",
     order: 27.2,
     noArgs: true,
     handler: () => {
-      // Handled specially in AppCoordinator to trigger a soft restart
+      // Handled specially in AppCoordinator to reload runtime surfaces in-place
       return "Reloading...";
     },
   },
