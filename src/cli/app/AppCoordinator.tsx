@@ -2545,9 +2545,15 @@ export function App({
     }
 
     await extensionAdapter.reload();
+    await extensionAdapter.events.emit("conversation_open", {
+      agentId,
+      agentName: agentName ?? null,
+      conversationId: conversationIdRef.current ?? null,
+      reason: "reload",
+    });
     setTerminalTitleConfigRefreshEpoch((epoch) => epoch + 1);
     refreshDerived();
-  }, [extensionAdapter, refreshDerived]);
+  }, [agentId, agentName, extensionAdapter, refreshDerived]);
 
   const recordCommandReminder = useCallback((event: CommandFinishedEvent) => {
     let input = event.input.trim();

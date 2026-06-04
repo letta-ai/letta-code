@@ -146,7 +146,8 @@ export type ExtensionConversationOpenReason =
   | "startup"
   | "new"
   | "resume"
-  | "fork";
+  | "fork"
+  | "reload";
 
 export type ExtensionConversationCloseReason =
   | "quit"
