@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ProviderResponse } from "@/backend/api/providers";
 import type { ByokProvider } from "@/providers/byok-providers";
-import { buildConnectProviderEntries } from "@/providers/connect-provider-service";
+import {
+  buildConnectProviderEntries,
+  resolveProviderConnectionFields,
+} from "@/providers/connect-provider-service";
 
 describe("connect provider service", () => {
   test("serializes simple providers with safe default API key fields", () => {
@@ -131,5 +134,117 @@ describe("connect provider service", () => {
         ],
       },
     ]);
+  });
+
+  test("resolves simple API key fields for saving", () => {
+    const provider: ByokProvider = {
+      id: "anthropic",
+      displayName: "Claude API",
+      description: "Connect Claude API",
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+    };
+
+    expect(
+      resolveProviderConnectionFields(provider, {
+        fields: { apiKey: " sk-test ", baseUrl: " https://example.test " },
+      }),
+    ).toEqual({
+      apiKey: "sk-test",
+      options: { baseURL: "https://example.test" },
+    });
+  });
+
+  test("uses provider defaults for API-key-optional providers", () => {
+    const provider: ByokProvider = {
+      id: "ollama",
+      displayName: "Ollama",
+      description: "Connect Ollama",
+      providerType: "ollama",
+      providerName: "ollama",
+      requiresApiKey: false,
+      defaultApiKey: "not-needed",
+    };
+
+    expect(resolveProviderConnectionFields(provider, { fields: {} })).toEqual({
+      apiKey: "not-needed",
+      options: {},
+    });
+  });
+
+  test("resolves selected auth method fields", () => {
+    const provider: ByokProvider = {
+      id: "bedrock",
+      displayName: "AWS Bedrock",
+      description: "Connect Bedrock",
+      providerType: "bedrock",
+      providerName: "lc-bedrock",
+      authMethods: [
+        {
+          id: "profile",
+          label: "AWS Profile",
+          description: "Use an AWS profile",
+          fields: [
+            { key: "profile", label: "Profile Name" },
+            { key: "region", label: "AWS Region" },
+          ],
+        },
+      ],
+    };
+
+    expect(
+      resolveProviderConnectionFields(provider, {
+        authMethodId: "profile",
+        fields: { profile: " default ", region: " us-east-1 " },
+      }),
+    ).toEqual({
+      apiKey: "",
+      profile: "default",
+      region: "us-east-1",
+      options: {},
+    });
+  });
+
+  test("rejects unsupported OAuth save path", () => {
+    const provider: ByokProvider = {
+      id: "codex",
+      displayName: "ChatGPT / Codex plan",
+      description: "Connect ChatGPT",
+      providerType: "chatgpt_oauth",
+      providerName: "chatgpt-plus-pro",
+      isOAuth: true,
+    };
+
+    expect(() =>
+      resolveProviderConnectionFields(provider, { fields: {} }),
+    ).toThrow("uses OAuth");
+  });
+
+  test("requires all selected auth method fields", () => {
+    const provider: ByokProvider = {
+      id: "bedrock",
+      displayName: "AWS Bedrock",
+      description: "Connect Bedrock",
+      providerType: "bedrock",
+      providerName: "lc-bedrock",
+      authMethods: [
+        {
+          id: "profile",
+          label: "AWS Profile",
+          description: "Use an AWS profile",
+          fields: [
+            { key: "profile", label: "Profile Name" },
+            { key: "region", label: "AWS Region" },
+          ],
+        },
+      ],
+    };
+
+    expect(() =>
+      resolveProviderConnectionFields(provider, {
+        authMethodId: "profile",
+        fields: { profile: "default" },
+      }),
+    ).toThrow("Missing AWS Region");
   });
 });

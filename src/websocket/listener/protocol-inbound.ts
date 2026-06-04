@@ -26,6 +26,7 @@ import type {
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
   CheckoutBranchCommand,
+  ConnectProviderCommand,
   CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
@@ -35,6 +36,7 @@ import type {
   CronRunsCommand,
   CronTriggerCommand,
   DeleteMemoryFileCommand,
+  DisconnectProviderCommand,
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
@@ -101,6 +103,15 @@ export type ServerLifecycleMessage = {
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.values(value).every((item) => typeof item === "string")
   );
 }
 
@@ -683,6 +694,46 @@ export function isListConnectProvidersCommand(
     c.type === "list_connect_providers" &&
     typeof c.request_id === "string" &&
     c.target === "local"
+  );
+}
+
+export function isConnectProviderCommand(
+  value: unknown,
+): value is ConnectProviderCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    target?: unknown;
+    provider_id?: unknown;
+    auth_method_id?: unknown;
+    fields?: unknown;
+  };
+  return (
+    c.type === "connect_provider" &&
+    typeof c.request_id === "string" &&
+    c.target === "local" &&
+    typeof c.provider_id === "string" &&
+    (c.auth_method_id === undefined || typeof c.auth_method_id === "string") &&
+    isStringRecord(c.fields)
+  );
+}
+
+export function isDisconnectProviderCommand(
+  value: unknown,
+): value is DisconnectProviderCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    target?: unknown;
+    provider_id?: unknown;
+  };
+  return (
+    c.type === "disconnect_provider" &&
+    typeof c.request_id === "string" &&
+    c.target === "local" &&
+    typeof c.provider_id === "string"
   );
 }
 
@@ -1704,6 +1755,8 @@ export function parseServerMessage(
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isListConnectProvidersCommand(parsed) ||
+      isConnectProviderCommand(parsed) ||
+      isDisconnectProviderCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
       isUpdateToolsetCommand(parsed) ||
       isCronListCommand(parsed) ||
