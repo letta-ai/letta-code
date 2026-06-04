@@ -466,6 +466,11 @@ export async function enableMemfsForCreatedAgent(params: {
   agentTags?: string[] | null;
 }): Promise<void> {
   const { agentId, agentTags } = params;
+  const backend = getBackend();
+
+  if (!backend.capabilities.remoteMemfs) {
+    return;
+  }
 
   try {
     const { getClient } = await import("@/backend/api/client");
