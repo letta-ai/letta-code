@@ -133,6 +133,11 @@ import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
+import {
+  buildByokProviderAliases,
+  isByokHandleForSelector,
+  listProviders,
+} from "@/providers/byok-providers";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   type MessageQueueItem,
@@ -1239,10 +1244,27 @@ export function App({
         }
       }
 
-      const summaryModel =
-        currentModelLabel && !currentModelLabel.startsWith("letta/auto")
-          ? currentModelLabel
-          : undefined;
+      let summaryModel: string | undefined;
+      if (currentModelLabel) {
+        try {
+          const providers = await listProviders();
+          const byokProviderAliases = buildByokProviderAliases(providers);
+          summaryModel = isByokHandleForSelector(
+            currentModelLabel,
+            byokProviderAliases,
+          )
+            ? currentModelLabel
+            : undefined;
+        } catch {
+          const byokProviderAliases = buildByokProviderAliases([]);
+          summaryModel = isByokHandleForSelector(
+            currentModelLabel,
+            byokProviderAliases,
+          )
+            ? currentModelLabel
+            : undefined;
+        }
+      }
       const aiTitle = await generateConversationTitleFromSummary(
         conversationId,
         messages,
