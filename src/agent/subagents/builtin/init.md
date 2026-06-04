@@ -49,7 +49,7 @@ If you created a file at a new path that replaces an existing file at a differen
 
 ### 5. Commit (1 bash call)
 
-Stage and commit in a single Bash call. The harness automatically pushes clean committed memory changes after the turn for remote MemFS agents:
+Stage and commit in a single Bash call:
 ```bash
 cd "$MEMORY_DIR" && git add -A && git commit -m "..."
 ```
