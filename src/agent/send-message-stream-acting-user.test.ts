@@ -59,8 +59,8 @@ describe("sendMessageStream acting-user header propagation (contract)", () => {
     expect(source).toContain(
       "isApprovalContinuationRequest(normalizedMessages)",
     );
-    expect(source).toContain(
-      "extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader",
+    expect(source).toMatch(
+      /if \(previousResponseId\) \{[\s\S]*?extraHeaders\[RESPONSE_STATE_HEADER\] = encodeResponseStateHeader/,
     );
     expect(source).not.toContain("client_tool_context_id");
     expect(source).toContain("previous_response_id: previousResponseId");

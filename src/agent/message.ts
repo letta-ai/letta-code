@@ -370,12 +370,12 @@ export async function sendMessageStreamWithBackend(
   if (process.env.LETTA_RESPONSES_WS === "1") {
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
   }
-  extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
-    v: 1,
-    cache_scope: RESPONSE_STATE_CACHE_SCOPE,
-    ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
-  });
   if (previousResponseId) {
+    extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
+      v: 1,
+      cache_scope: RESPONSE_STATE_CACHE_SCOPE,
+      previous_response_id: previousResponseId,
+    });
     responseStateIdsByScope.delete(responseStateScope);
     debugLog(
       "response-state",
