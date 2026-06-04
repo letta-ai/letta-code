@@ -524,10 +524,30 @@ export async function handleIncomingMessage(
         );
         if (agentId) {
           try {
-            cachedAgent = (await getBackend().retrieveAgent(
-              agentId,
-            )) as AgentState;
-          } catch {
+            cachedAgent = (await getBackend().retrieveAgent(agentId, {
+              include: ["agent.tags"],
+            })) as AgentState;
+
+            const {
+              ensureLettaCodeOriginTag,
+              getMemoryPromptModeForAgent,
+              scheduleManagedSystemPromptUpdate,
+            } = await import("@/agent/system-prompt-versioning");
+            cachedAgent = await ensureLettaCodeOriginTag(cachedAgent);
+            scheduleManagedSystemPromptUpdate({
+              agent: cachedAgent,
+              memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
+              onUpdated: (updatedAgent) => {
+                cachedAgent = updatedAgent;
+              },
+            });
+          } catch (error) {
+            debugWarn(
+              "listen",
+              `Failed to ensure Letta Code agent metadata for ${agentId}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
             // Best-effort only. If the fetch fails, reminder and tool prep
             // will fall back to the existing null/placeholder behavior.
           }

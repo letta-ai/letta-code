@@ -382,7 +382,7 @@ export async function createAgent(
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
   const fullAgent = await backend.retrieveAgent(agent.id, {
-    include: ["agent.managed_group"],
+    include: ["agent.managed_group", "agent.tags"],
   });
 
   // Update persona block for sleeptime agent

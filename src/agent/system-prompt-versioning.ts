@@ -12,6 +12,8 @@ import {
 } from "./prompt-assets";
 
 const SYSTEM_PROMPT_HASH_PREFIX = "sha256:";
+export const LETTA_CODE_ORIGIN_TAG = "origin:letta-code";
+export const LETTA_CODE_SUBAGENT_TAG = "role:subagent";
 
 type ManagedPrompt = {
   preset: string;
@@ -81,7 +83,10 @@ export function getMemoryPromptModeForAgent(agentId: string): MemoryPromptMode {
 
 function isLettaCodePrimaryAgent(agent: AgentState): boolean {
   const tags = agent.tags ?? [];
-  return tags.includes("origin:letta-code") && !tags.includes("role:subagent");
+  return (
+    tags.includes(LETTA_CODE_ORIGIN_TAG) &&
+    !tags.includes(LETTA_CODE_SUBAGENT_TAG)
+  );
 }
 
 function findMatchingCurrentPreset(
@@ -192,6 +197,29 @@ export function decideManagedSystemPromptUpdate(input: {
     kind: "track",
     prompt: managedPrompt(matchingPreset, memoryMode, currentSystemPrompt),
   };
+}
+
+export async function ensureLettaCodeOriginTag(
+  agent: AgentState,
+): Promise<AgentState> {
+  const backend = getBackend();
+  const agentWithTags = agent.tags
+    ? agent
+    : await backend.retrieveAgent(agent.id, { include: ["agent.tags"] });
+  const tags = agentWithTags.tags ?? [];
+
+  if (tags.includes(LETTA_CODE_ORIGIN_TAG)) {
+    return agentWithTags;
+  }
+
+  const nextTags = [...tags, LETTA_CODE_ORIGIN_TAG];
+  const updatedAgent = await backend.updateAgent(agent.id, { tags: nextTags });
+
+  return {
+    ...agentWithTags,
+    ...updatedAgent,
+    tags: updatedAgent.tags ?? nextTags,
+  } as AgentState;
 }
 
 export function scheduleManagedSystemPromptUpdate({

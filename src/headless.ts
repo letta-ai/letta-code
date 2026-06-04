@@ -1499,8 +1499,21 @@ export async function handleHeadlessCommand(
   // This updates only agents whose current prompt still matches the stored
   // managed prompt hash, so custom edits are preserved.
   if (isResumingAgent && !systemPromptPreset) {
-    const { getMemoryPromptModeForAgent, scheduleManagedSystemPromptUpdate } =
-      await import("@/agent/system-prompt-versioning");
+    const {
+      ensureLettaCodeOriginTag,
+      getMemoryPromptModeForAgent,
+      scheduleManagedSystemPromptUpdate,
+    } = await import("@/agent/system-prompt-versioning");
+    try {
+      agent = await ensureLettaCodeOriginTag(agent);
+    } catch (error) {
+      debugWarn(
+        "headless startup",
+        `Failed to ensure Letta Code origin tag for ${agent.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
     scheduleManagedSystemPromptUpdate({
       agent,
       memoryMode: getMemoryPromptModeForAgent(agent.id),

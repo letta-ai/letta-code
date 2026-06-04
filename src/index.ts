@@ -2694,16 +2694,32 @@ async function main(): Promise<void> {
         // stored managed prompt hash, so custom edits are preserved.
         if (resuming && !systemPromptPreset) {
           const {
+            ensureLettaCodeOriginTag,
             getMemoryPromptModeForAgent,
             scheduleManagedSystemPromptUpdate,
           } = await import("@/agent/system-prompt-versioning");
-          scheduleManagedSystemPromptUpdate({
-            agent,
-            memoryMode: getMemoryPromptModeForAgent(agent.id),
-            onUpdated: (updatedAgent) => {
-              setAgentState(updatedAgent);
-            },
-          });
+          void ensureLettaCodeOriginTag(agent)
+            .catch((error) => {
+              import("@/utils/debug").then(({ debugWarn }) =>
+                debugWarn(
+                  "startup",
+                  `Failed to ensure Letta Code origin tag for ${agent.id}: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                ),
+              );
+              return agent;
+            })
+            .then((taggedAgent) => {
+              setAgentState(taggedAgent);
+              scheduleManagedSystemPromptUpdate({
+                agent: taggedAgent,
+                memoryMode: getMemoryPromptModeForAgent(taggedAgent.id),
+                onUpdated: (updatedAgent) => {
+                  setAgentState(updatedAgent);
+                },
+              });
+            });
         }
       }
 
