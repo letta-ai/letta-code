@@ -1239,9 +1239,14 @@ export function App({
         }
       }
 
+      const summaryModel =
+        currentModelLabel && !currentModelLabel.startsWith("letta/auto")
+          ? currentModelLabel
+          : undefined;
       const aiTitle = await generateConversationTitleFromSummary(
         conversationId,
         messages,
+        summaryModel,
       );
       return aiTitle ?? fallback;
     } catch (err) {
@@ -1250,7 +1255,7 @@ export function App({
       }
       return fallback;
     }
-  }, [deriveAutoConversationTitle]);
+  }, [deriveAutoConversationTitle, currentModelLabel]);
   const generateConversationDescription = useCallback(
     async (options?: { force?: boolean }) => {
       if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {

@@ -1,5 +1,5 @@
 import { summarizeConversation } from "@/backend/api/conversations";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import { DEFAULT_TITLE_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { isDebugEnabled } from "@/utils/debug";
 
@@ -78,6 +78,7 @@ export function normalizeConversationTitle(value: string): string | null {
 export async function generateConversationTitleFromSummary(
   conversationId: string,
   messages: ConversationTitleMessage[],
+  model: string = DEFAULT_TITLE_SUMMARIZATION_MODEL,
 ): Promise<string | null> {
   if (messages.length === 0) {
     return null;
@@ -95,7 +96,7 @@ export async function generateConversationTitleFromSummary(
       {
         prompt: CONVERSATION_TITLE_SYSTEM_PROMPT,
         messages,
-        model: DEFAULT_SUMMARIZATION_MODEL,
+        model,
       },
       {
         signal: abortController.signal,
