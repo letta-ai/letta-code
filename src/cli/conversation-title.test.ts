@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -79,15 +79,46 @@ describe("normalizeConversationTitle", () => {
 });
 
 describe("conversation title settings", () => {
-  test("defaults on and persists explicit opt-out", async () => {
-    expect(getConversationTitleSettings()).toEqual({ enabled: true });
+  test("defaults off and persists explicit opt-in", async () => {
+    expect(getConversationTitleSettings()).toEqual({ enabled: false });
 
-    expect(setConversationTitleSettings(false)).toEqual({ enabled: false });
+    expect(setConversationTitleSettings(true)).toEqual({ enabled: true });
     await settingsManager.flush();
 
     await settingsManager.reset();
     await settingsManager.initialize();
 
+    expect(getConversationTitleSettings()).toEqual({ enabled: true });
+  });
+
+  test("rolls back legacy opt-ins once before allowing re-enable", async () => {
+    await settingsManager.reset();
+    const settingsDir = join(testHomeDir, ".letta");
+    const settingsPath = join(settingsDir, "settings.json");
+    await mkdir(settingsDir, { recursive: true });
+    await writeFile(
+      settingsPath,
+      JSON.stringify({ autoConversationTitles: true }, null, 2),
+    );
+
+    await settingsManager.initialize();
+
     expect(getConversationTitleSettings()).toEqual({ enabled: false });
+    await settingsManager.flush();
+
+    const migrated = JSON.parse(await readFile(settingsPath, "utf-8")) as {
+      autoConversationTitles?: boolean;
+      autoConversationTitlesRollbackApplied?: boolean;
+    };
+    expect(migrated.autoConversationTitles).toBe(false);
+    expect(migrated.autoConversationTitlesRollbackApplied).toBe(true);
+
+    expect(setConversationTitleSettings(true)).toEqual({ enabled: true });
+    await settingsManager.flush();
+
+    await settingsManager.reset();
+    await settingsManager.initialize();
+
+    expect(getConversationTitleSettings()).toEqual({ enabled: true });
   });
 });

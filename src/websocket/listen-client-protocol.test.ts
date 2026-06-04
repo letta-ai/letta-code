@@ -2621,7 +2621,7 @@ describe("listen-client experiment command handling", () => {
     const originalGetSettings = settingsManager.getSettings;
     const originalUpdateSettings = settingsManager.updateSettings;
     const originalNodeFlag = process.env.LETTA_NODE;
-    const globalSettings = { autoConversationTitles: true } as Settings;
+    const globalSettings = { autoConversationTitles: false } as Settings;
 
     try {
       delete process.env.LETTA_NODE;
@@ -2666,7 +2666,7 @@ describe("listen-client experiment command handling", () => {
           }),
           expect.objectContaining({
             id: "conversation_titles",
-            enabled: true,
+            enabled: false,
           }),
         ]),
       });
@@ -2718,7 +2718,7 @@ describe("listen-client experiment command handling", () => {
           type: "set_experiment",
           request_id: "conversation-titles-set-1",
           experiment_id: "conversation_titles",
-          enabled: false,
+          enabled: true,
         },
         socket as unknown as WebSocket,
         listener,
@@ -2732,11 +2732,11 @@ describe("listen-client experiment command handling", () => {
         experiments: expect.arrayContaining([
           expect.objectContaining({
             id: "conversation_titles",
-            enabled: false,
+            enabled: true,
           }),
         ]),
       });
-      expect(globalSettings.autoConversationTitles).toBe(false);
+      expect(globalSettings.autoConversationTitles).toBe(true);
     } finally {
       if (originalNodeFlag === undefined) {
         delete process.env.LETTA_NODE;
