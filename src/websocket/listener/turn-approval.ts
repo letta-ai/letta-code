@@ -217,6 +217,7 @@ export async function handleApprovalStop(params: {
       permissionModeState: turnPermissionModeState,
       agentId,
     });
+  const continuationWasFullyAutoHandled = needsUserInput.length === 0;
 
   let pendingNeedsUserInput = [...needsUserInput];
   let lastNeedsUserInputToolCallIds = pendingNeedsUserInput.map(
@@ -556,7 +557,12 @@ export async function handleApprovalStop(params: {
     stream = await sendApprovalContinuationWithRetry(
       conversationId,
       nextInputWithSkillContent,
-      buildSendOptions(),
+      {
+        ...buildSendOptions(),
+        ...(continuationWasFullyAutoHandled
+          ? { allowResponseStateReuse: true }
+          : {}),
+      },
       socket,
       runtime,
       abortController.signal,

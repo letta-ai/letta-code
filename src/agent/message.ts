@@ -11,7 +11,6 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import { type Backend, getBackend } from "@/backend";
-import { permissionMode } from "@/permissions/mode";
 import {
   type ClientTool,
   type PermissionModeState,
@@ -197,6 +196,12 @@ export type SendMessageStreamOptions = {
   overrideModel?: string;
   /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
+  /**
+   * Allow sending a cached previous response id for this request. Callers should
+   * set this only for approval continuations that were fully auto-handled by
+   * the client, with no human approval/denial in the loop.
+   */
+  allowResponseStateReuse?: boolean;
   /** Skip shared image normalization when the caller already did it. */
   skipImageNormalization?: boolean;
   /**
@@ -326,13 +331,11 @@ export async function sendMessageStreamWithBackend(
   );
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
-  const effectivePermissionMode =
-    opts.permissionModeState?.mode ?? permissionMode.getMode();
-  // Only reuse cached response state for the unrestricted auto-approval path.
-  // Manual approval modes can pause long enough for user-visible state to change,
-  // so they should keep using the full server-side context preparation path.
+  // Only reuse cached response state when the approval continuation was fully
+  // auto-handled by the client. If a human reviewed any approval, the pause can
+  // allow visible agent/conversation state to change, so use the full server path.
   const canUsePreviousResponseState =
-    isApprovalContinuation && effectivePermissionMode === "unrestricted";
+    isApprovalContinuation && opts.allowResponseStateReuse === true;
   const previousResponseId = canUsePreviousResponseState
     ? responseStateIdsByScope.get(responseStateScope)
     : undefined;
