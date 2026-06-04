@@ -613,7 +613,7 @@ describe("extension engine", () => {
     }
   });
 
-  test("tool_start denial: all handlers run, first denial wins", async () => {
+  test("tool_start denial: all handlers run, first denial reason wins", async () => {
     const root = createTempDir();
     try {
       const extensionDir = path.join(root, "global-extensions");
@@ -623,11 +623,17 @@ describe("extension engine", () => {
         `export default function(letta) {
           letta.events.on("tool_start", (event) => {
             if (event.toolName === "Bash" && String(event.args.command).includes("rm -rf")) {
-              return { deny: true, reason: "Destructive command blocked." };
+              return { deny: true, reason: "First denial reason." };
             }
           });
           letta.events.on("tool_start", (event) => {
-            // This handler still runs even when another handler denies
+            // Second denial handler — reason should not override first
+            if (event.toolName === "Bash") {
+              return { deny: true, reason: "Second denial reason." };
+            }
+          });
+          letta.events.on("tool_start", (event) => {
+            // Non-denial handler still runs for side effects
             event.args = { ...event.args, _sideEffect: true };
           });
         }`,
@@ -645,12 +651,16 @@ describe("extension engine", () => {
 
       const result = await engine.emitEvent("tool_start", event);
 
-      // Both handlers ran
-      expect(result.handlerCount).toBe(2);
-      // Denial result is collected
+      // All three handlers ran
+      expect(result.handlerCount).toBe(3);
+      // Both denial results are collected
       expect(result.results).toContainEqual({
         deny: true,
-        reason: "Destructive command blocked.",
+        reason: "First denial reason.",
+      });
+      expect(result.results).toContainEqual({
+        deny: true,
+        reason: "Second denial reason.",
       });
       // Side-effect handler still ran (args were mutated)
       expect(event.args).toMatchObject({ _sideEffect: true });

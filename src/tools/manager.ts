@@ -1923,6 +1923,15 @@ function cloneToolArgsForExtensionEvent(args: ToolArgs): ToolArgs {
   }
 }
 
+function createExtensionDenialToolResult(denial: {
+  reason?: string;
+}): ToolExecutionResult {
+  return {
+    toolReturn: `Error: Tool execution denied by extension. ${denial.reason ?? "No reason given."}`,
+    status: "error",
+  };
+}
+
 function isToolStartArgs(value: unknown): value is ToolArgs {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -2229,10 +2238,7 @@ export async function executeTool(
       toolName: name,
     });
     if (extDenial) {
-      return {
-        toolReturn: `Error: Tool execution denied by extension. ${extDenial.reason ?? "No reason given."}`,
-        status: "error",
-      };
+      return createExtensionDenialToolResult(extDenial);
     }
     return executeExtensionTool(
       name,
@@ -2259,10 +2265,7 @@ export async function executeTool(
       toolName: name,
     });
     if (extDenial) {
-      return {
-        toolReturn: `Error: Tool execution denied by extension. ${extDenial.reason ?? "No reason given."}`,
-        status: "error",
-      };
+      return createExtensionDenialToolResult(extDenial);
     }
     return executeExternalTool(
       options?.toolCallId ?? `ext-${Date.now()}`,
@@ -2307,10 +2310,7 @@ export async function executeTool(
   });
   args = eventArgs;
   if (extDenial) {
-    return {
-      toolReturn: `Error: Tool execution denied by extension. ${extDenial.reason ?? "No reason given."}`,
-      status: "error",
-    };
+    return createExtensionDenialToolResult(extDenial);
   }
   const startTime = Date.now();
 
