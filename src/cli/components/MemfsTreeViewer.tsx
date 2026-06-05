@@ -113,6 +113,12 @@ export function MemfsTreeViewer({
 
   // Handle input
   useInput((input, key) => {
+    // Cmd+M: toggle memory viewer closed (desktop shortcut parity)
+    if (key.meta && input.toLowerCase() === "m") {
+      onClose();
+      return;
+    }
+
     // CTRL-C: immediately close
     if (key.ctrl && input === "c") {
       onClose();
