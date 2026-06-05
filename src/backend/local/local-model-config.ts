@@ -5,12 +5,7 @@ import {
 import {
   getRegisteredPiProvider,
   listRegisteredPiProviders,
-  type PiProviderConnection,
-  type PiProviderModelRegistration,
-  type RegisteredPiProvider,
-  resolveRegisteredPiProviderApiKey,
   resolveRegisteredPiProviderFromModelHandle,
-  resolveRegisteredPiProviderHeaders,
   stripRegisteredProviderHandlePrefix,
 } from "@/backend/dev/pi-provider-extension-registry";
 import {
@@ -25,7 +20,11 @@ import {
   stripProviderHandlePrefix,
 } from "@/backend/dev/pi-provider-registry";
 import {
-  getLocalOAuthApiKey,
+  isRegisteredPiProviderConfigured,
+  listRegisteredPiProviderModels,
+  resolveRegisteredPiProviderListModelsConnection,
+} from "@/backend/dev/registered-pi-provider-runtime";
+import {
   type LocalProviderRecord,
   listLocalProviderRecords,
   localProviderApiKeyFromRecord,
@@ -235,77 +234,11 @@ async function discoverModelIdsForProvider(
   }
 }
 
-function registeredProviderLocalNames(
-  provider: RegisteredPiProvider,
-): readonly string[] {
-  return isPiProviderForLocalModelHandle(provider.providerName)
-    ? getPiProviderSpec(provider.providerName).localProviderNames
-    : [provider.providerName];
-}
-
-function registeredProviderRecordFor(
-  provider: RegisteredPiProvider,
-  records: readonly LocalProviderRecord[],
-): LocalProviderRecord | undefined {
-  const providerNames = registeredProviderLocalNames(provider);
-  return records.find((record) => providerNames.includes(record.name));
-}
-
-async function registeredProviderConnection(
-  provider: RegisteredPiProvider,
-  records: readonly LocalProviderRecord[],
-  storageDir?: string,
-): Promise<PiProviderConnection> {
-  const record = registeredProviderRecordFor(provider, records);
-  const oauth =
-    record?.auth.type === "oauth" && provider.config.oauth
-      ? await getLocalOAuthApiKey({
-          providerId: provider.providerName,
-          providerNames: registeredProviderLocalNames(provider),
-          storageDir,
-        })
-      : undefined;
-  return {
-    id: provider.providerName,
-    providerName: provider.providerName,
-    baseUrl: record?.base_url ?? provider.config.baseUrl,
-    apiKey:
-      oauth?.apiKey ??
-      localProviderApiKeyFromRecord(record) ??
-      resolveRegisteredPiProviderApiKey(provider.config.apiKey),
-    headers: resolveRegisteredPiProviderHeaders(provider.config.headers),
-  };
-}
-
-function isRegisteredProviderConfigured(
-  provider: RegisteredPiProvider,
-  records: readonly LocalProviderRecord[],
-): boolean {
-  return Boolean(
-    registeredProviderRecordFor(provider, records) ||
-      (provider.config.apiKey
-        ? process.env[provider.config.apiKey]
-        : undefined) ||
-      provider.config.connect === false,
-  );
-}
-
-async function listRegisteredProviderModels(
-  provider: RegisteredPiProvider,
-  records: readonly LocalProviderRecord[],
-  storageDir?: string,
-): Promise<PiProviderModelRegistration[]> {
-  const listed = await provider.config.listModels?.(
-    await registeredProviderConnection(provider, records, storageDir),
-  );
-  return listed ?? provider.config.models ?? [];
-}
-
 export function resolveLocalProvider(storageDir?: string): PiProvider {
   const records = listLocalProviderRecords(storageDir);
   const registeredProvider = listRegisteredPiProviders().find(
     (provider) =>
-      isRegisteredProviderConfigured(provider, records) &&
+      isRegisteredPiProviderConfigured(provider, records) &&
       (provider.config.models?.length ?? 0) > 0,
   );
   if (registeredProvider) return registeredProvider.providerName as PiProvider;
@@ -429,12 +362,14 @@ export async function listLocalModels(
   };
 
   for (const provider of registeredProviders) {
-    if (!isRegisteredProviderConfigured(provider, records)) continue;
+    if (!isRegisteredPiProviderConfigured(provider, records)) continue;
     try {
-      for (const model of await listRegisteredProviderModels(
+      for (const model of await listRegisteredPiProviderModels(
         provider,
-        records,
-        storageDir,
+        await resolveRegisteredPiProviderListModelsConnection(provider, {
+          records,
+          storageDir,
+        }),
       )) {
         addModel(provider.providerName, model.id, {
           handle: `${provider.providerName}/${model.id}`,
