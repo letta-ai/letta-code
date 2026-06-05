@@ -2,6 +2,7 @@ import { execFile as execFileCb } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { LETTA_CODE_ORIGIN_TAG } from "@/agent/system-prompt-versioning";
 import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import type { CreateAgentOptions } from "./create";
@@ -470,10 +471,24 @@ export async function enableMemfsForCreatedAgent(params: {
   try {
     const { getClient } = await import("@/backend/api/client");
     const client = await getClient();
-    const tags = agentTags || [];
-    if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
+    let currentTags = agentTags;
+    if (!currentTags) {
+      try {
+        const agent = await client.agents.retrieve(agentId, {
+          include: ["agent.tags"],
+        });
+        currentTags = agent.tags ?? [];
+      } catch {
+        currentTags = [];
+      }
+    }
+    const tags = Array.from(new Set([...currentTags, LETTA_CODE_ORIGIN_TAG]));
+    if (
+      !tags.includes(GIT_MEMORY_ENABLED_TAG) ||
+      !currentTags.includes(LETTA_CODE_ORIGIN_TAG)
+    ) {
       await client.agents.update(agentId, {
-        tags: [...tags, GIT_MEMORY_ENABLED_TAG],
+        tags: Array.from(new Set([...tags, GIT_MEMORY_ENABLED_TAG])),
       });
     }
     settingsManager.setMemfsEnabled(agentId, true);

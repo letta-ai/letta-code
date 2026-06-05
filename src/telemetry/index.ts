@@ -792,7 +792,7 @@ class TelemetryManager {
         },
         { signal: AbortSignal.timeout(5000) },
       );
-    } catch (error) {
+    } catch (_error) {
       // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);
     }
