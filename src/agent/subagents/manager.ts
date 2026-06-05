@@ -201,6 +201,10 @@ function swapProviderPrefix(
   return `${parentProvider}/${modelPortion}`;
 }
 
+function isInheritModel(model: string | null | undefined): boolean {
+  return model?.trim().toLowerCase() === "inherit";
+}
+
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
@@ -213,8 +217,12 @@ export async function resolveSubagentModel(options: {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
   const isFreeTier = billingTier?.toLowerCase() === "free";
+  const userRequestedInheritance = isInheritModel(userModel);
+  const effectiveRecommendedModel = userRequestedInheritance
+    ? "inherit"
+    : recommendedModel;
 
-  if (userModel) return userModel;
+  if (userModel && !userRequestedInheritance) return userModel;
 
   // Local backend has no server-side auto router. If the parent agent is
   // already running successfully on a local model, spawned subagents should use
@@ -225,8 +233,11 @@ export async function resolveSubagentModel(options: {
   }
 
   if (options.subagentType === "reflection") {
-    if (recommendedModel && recommendedModel !== "inherit") {
-      const recommendedHandle = resolveModel(recommendedModel);
+    if (
+      effectiveRecommendedModel &&
+      !isInheritModel(effectiveRecommendedModel)
+    ) {
+      const recommendedHandle = resolveModel(effectiveRecommendedModel);
       if (recommendedHandle) {
         return recommendedHandle;
       }
@@ -236,8 +247,8 @@ export async function resolveSubagentModel(options: {
   }
 
   let recommendedHandle: string | null = null;
-  if (recommendedModel && recommendedModel !== "inherit") {
-    recommendedHandle = resolveModel(recommendedModel);
+  if (effectiveRecommendedModel && !isInheritModel(effectiveRecommendedModel)) {
+    recommendedHandle = resolveModel(effectiveRecommendedModel);
   }
 
   let availableHandles: Set<string> | null = options.availableHandles ?? null;
