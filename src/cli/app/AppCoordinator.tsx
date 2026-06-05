@@ -78,7 +78,8 @@ import {
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
 import {
-  generateConversationTitleFromFork,
+  type ConversationTitleMessage,
+  generateConversationTitleFromSummary,
   getConversationTitleSettings,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
@@ -133,6 +134,11 @@ import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
+import {
+  buildByokProviderAliases,
+  isByokHandleForSelector,
+  listProviders,
+} from "@/providers/byok-providers";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   type MessageQueueItem,
@@ -1178,6 +1184,9 @@ export function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
+  const autoConversationTitleStartIndexRef = useRef<number | null>(
+    !resumedExistingConversation ? 0 : null,
+  );
   const shouldAutoGenerateConversationDescriptionRef = useRef(
     !resumedExistingConversation,
   );
@@ -1187,6 +1196,9 @@ export function App({
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
+      autoConversationTitleStartIndexRef.current = enabled
+        ? buffersRef.current.order.length
+        : null;
       shouldAutoGenerateConversationDescriptionRef.current = enabled;
       isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
@@ -1229,10 +1241,46 @@ export function App({
     }
 
     try {
-      const client = await getClient();
-      const aiTitle = await generateConversationTitleFromFork(
-        client,
+      const messages: ConversationTitleMessage[] = [];
+      const startIndex = autoConversationTitleStartIndexRef.current ?? 0;
+      const titleLineIds = buffersRef.current.order.slice(
+        Math.min(startIndex, buffersRef.current.order.length),
+      );
+      for (const lineId of titleLineIds) {
+        const line = buffersRef.current.byId.get(lineId);
+        if (line?.kind === "user" || line?.kind === "assistant") {
+          const content = line.text.trim();
+          if (content) {
+            messages.push({ role: line.kind, content });
+          }
+        }
+      }
+
+      let summaryModel: string | undefined;
+      if (currentModelLabel) {
+        try {
+          const providers = await listProviders();
+          const byokProviderAliases = buildByokProviderAliases(providers);
+          summaryModel = isByokHandleForSelector(
+            currentModelLabel,
+            byokProviderAliases,
+          )
+            ? currentModelLabel
+            : undefined;
+        } catch {
+          const byokProviderAliases = buildByokProviderAliases([]);
+          summaryModel = isByokHandleForSelector(
+            currentModelLabel,
+            byokProviderAliases,
+          )
+            ? currentModelLabel
+            : undefined;
+        }
+      }
+      const aiTitle = await generateConversationTitleFromSummary(
         conversationId,
+        messages,
+        summaryModel,
       );
       return aiTitle ?? fallback;
     } catch (err) {
@@ -1241,7 +1289,7 @@ export function App({
       }
       return fallback;
     }
-  }, [deriveAutoConversationTitle]);
+  }, [deriveAutoConversationTitle, currentModelLabel]);
   const generateConversationDescription = useCallback(
     async (options?: { force?: boolean }) => {
       if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {

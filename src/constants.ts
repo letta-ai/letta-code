@@ -13,6 +13,11 @@ export const DEFAULT_MODEL_ID = "auto";
 export const DEFAULT_SUMMARIZATION_MODEL = "letta/auto";
 
 /**
+ * Default model handle for lightweight conversation title generation.
+ */
+export const DEFAULT_TITLE_SUMMARIZATION_MODEL = "letta/auto-fast";
+
+/**
  * Default agent name when creating a new agent
  */
 export const DEFAULT_AGENT_NAME = "Letta Code";

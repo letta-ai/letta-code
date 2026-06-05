@@ -1659,12 +1659,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               conversationIdRef.current !== "default"
             ) {
               isAutoConversationTitleInFlightRef.current = true;
+              const titleConversationId = conversationIdRef.current;
               const conversationTitle = await generateConversationTitle();
               if (!conversationTitle) {
                 isAutoConversationTitleInFlightRef.current = false;
+              } else if (
+                !shouldAutoGenerateConversationTitleRef.current ||
+                conversationIdRef.current !== titleConversationId
+              ) {
+                isAutoConversationTitleInFlightRef.current = false;
               } else {
                 void getBackend()
-                  .updateConversation(conversationIdRef.current, {
+                  .updateConversation(titleConversationId, {
                     summary: conversationTitle,
                   })
                   .then(() => {
