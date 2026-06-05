@@ -13,14 +13,16 @@ describe("local-first setup wiring", () => {
     expect(source).toContain(
       'const AUTH_LOGIN_LABEL = "Login to Constellation"',
     );
-    expect(source).toContain('initialMode === "device-code" ? 0 : 1');
+    expect(source).toContain(
+      'initialMode === "device-code" || localModeDisabled ? 0 : 1',
+    );
     expect(source).toContain('configureBackendMode("local")');
     expect(source).toContain(
       'settingsManager.updateSettings({ preferredBackendMode: "local" })',
     );
     expect(source).toContain("letta setup");
     expect(source).toContain("letta backend api");
-    expect(source).toContain("Agents you create are local to this");
+    expect(source).toContain("Agents you create are local to");
     expect(source).toContain("chat.letta.com");
     expect(source).toContain("Welcome to Letta Code");
     expect(source).not.toContain("Welcome to Letta Code.");
@@ -55,7 +57,9 @@ describe("local-first setup wiring", () => {
       "LETTA_API_KEY is set in your environment, so OAuth login cannot replace the credential Letta Code is using.",
     );
 
-    expect(setupSource).toContain('initialMode === "device-code" ? 0 : 1');
+    expect(setupSource).toContain(
+      'initialMode === "device-code" || localModeDisabled ? 0 : 1',
+    );
     expect(setupSource).toContain('onCancel={() => setMode("menu")}');
     expect(setupRunnerSource).toContain("initialMode?: SetupInitialMode");
     expect(setupRunnerSource).toContain("Promise<SetupResult>");
@@ -77,6 +81,33 @@ describe("local-first setup wiring", () => {
     expect(indexSource).toContain("const shouldValidateCredentials =");
     expect(indexSource).toContain(
       "baseURL === LETTA_CLOUD_API_URL || Boolean(apiKey)",
+    );
+  });
+
+  test("explicit cloud agent setup disables local mode to avoid restart loops", () => {
+    const setupSource = readSource("../auth/setup-ui.tsx");
+    const setupRunnerSource = readSource("../auth/setup.ts");
+    const indexSource = readSource("../index.ts");
+
+    expect(setupSource).toContain("localModeDisabledReason?: string");
+    expect(setupSource).toContain(
+      "const localModeDisabled = Boolean(localModeDisabledReason)",
+    );
+    expect(setupSource).toContain("localModeDisabled ? [0, 2] : [0, 1, 2]");
+    expect(setupSource).toContain("Proceed locally");
+    expect(setupSource).toContain("(unavailable)");
+    expect(setupSource).toContain("selectedOption === 1 && !localModeDisabled");
+    expect(setupRunnerSource).toContain("localModeDisabledReason?: string");
+    expect(setupRunnerSource).toContain(
+      "localModeDisabledReason: options.localModeDisabledReason",
+    );
+
+    expect(indexSource).toContain("const setupLocalModeDisabledReason =");
+    expect(indexSource).toContain('inferredBackendModeFromAgentId === "api"');
+    expect(indexSource).toContain("is a Constellation agent");
+    expect(indexSource).toContain("rerun without --agent to start locally");
+    expect(indexSource).toContain(
+      "localModeDisabledReason: setupLocalModeDisabledReason",
     );
   });
 

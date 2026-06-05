@@ -844,6 +844,12 @@ async function main(): Promise<void> {
   if (!explicitBackendMode && inferredBackendModeFromAgentId) {
     configureBackendMode(inferredBackendModeFromAgentId);
   }
+  const setupLocalModeDisabledReason =
+    !explicitBackendMode &&
+    specifiedAgentId &&
+    inferredBackendModeFromAgentId === "api"
+      ? `Agent ${specifiedAgentId} is a Constellation agent. Sign in to access it, or rerun without --agent to start locally.`
+      : undefined;
   const specifiedModel = values.model ?? undefined;
   const systemPromptPreset = values.system ?? undefined;
   const systemCustom = values["system-custom"] ?? undefined;
@@ -1279,7 +1285,9 @@ async function main(): Promise<void> {
       // For interactive mode, show setup flow
       await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
-      const setupResult = await runSetup();
+      const setupResult = await runSetup({
+        localModeDisabledReason: setupLocalModeDisabledReason,
+      });
       if (setupResult.kind === "cancelled") {
         process.exit(0);
       }
@@ -1302,7 +1310,9 @@ async function main(): Promise<void> {
       console.log("No credentials found. Let's get you set up!\n");
       await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
-      const setupResult = await runSetup();
+      const setupResult = await runSetup({
+        localModeDisabledReason: setupLocalModeDisabledReason,
+      });
       if (setupResult.kind === "cancelled") {
         process.exit(0);
       }
@@ -1431,6 +1441,7 @@ async function main(): Promise<void> {
         const { runSetup } = await import("@/auth/setup");
         const setupResult = await runSetup({
           initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu",
+          localModeDisabledReason: setupLocalModeDisabledReason,
         });
         if (setupResult.kind === "cancelled") {
           process.exit(0);
