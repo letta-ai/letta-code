@@ -45,6 +45,7 @@ import {
   handleExecuteCommand,
   SUPPORTED_REMOTE_COMMANDS,
 } from "@/websocket/listener/commands";
+import { ensureListenerExtensionAdapter } from "@/websocket/listener/extension-adapter";
 import { isEditFileCommand } from "@/websocket/listener/protocol-inbound";
 import {
   DESKTOP_DEBUG_PANEL_INFO_PREFIX,
@@ -1325,6 +1326,12 @@ describe("listen-client parseServerMessage", () => {
 
   test("runs remote reload execute_command", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
+    const adapter = ensureListenerExtensionAdapter(listener);
+    const originalReload = adapter.reload;
+    let reloadCalls = 0;
+    adapter.reload = async () => {
+      reloadCalls += 1;
+    };
     const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
       listener,
       "agent-reload",
@@ -1332,18 +1339,25 @@ describe("listen-client parseServerMessage", () => {
     );
     const socket = new MockSocket(WebSocket.OPEN);
 
-    await handleExecuteCommand(
-      {
-        type: "execute_command",
-        command_id: "reload",
-        request_id: "reload-run-1",
-        runtime: { agent_id: "agent-reload", conversation_id: "default" },
-      },
-      socket as unknown as WebSocket,
-      runtime,
-      {},
-    );
+    try {
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "reload",
+          request_id: "reload-run-1",
+          runtime: { agent_id: "agent-reload", conversation_id: "default" },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+    } finally {
+      adapter.reload = originalReload;
+      adapter.dispose();
+      listener.extensionAdapter = undefined;
+    }
 
+    expect(reloadCalls).toBe(1);
     expect(socket.sentPayloads.join("\n")).toContain(
       "Reloaded settings and local extensions",
     );
