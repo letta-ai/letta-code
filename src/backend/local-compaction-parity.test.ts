@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   estimateProviderProjectedLocalMessageTokens,
   formatLocalMessagesForSummary,
+  LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
   type LocalCompactionStats,
   packageLocalSummaryMessage,
 } from "@/backend/local/compaction";
@@ -111,6 +112,30 @@ describe("local compaction API parity", () => {
 
     expect(transcript).toBe(
       ' \n[assistant] -> ShellCommand({"command":"cat huge.log"})\n[tool] xxxxxxxxxx... [truncated 5 chars]\n \n. Generate the summary.',
+    );
+  });
+
+  test("clips tool returns by default in summary transcripts", () => {
+    const transcript = formatLocalMessagesForSummary([
+      assistant("assistant-tool", [
+        {
+          type: "toolCall",
+          id: "call-big",
+          name: "ShellCommand",
+          arguments: { command: "cat huge.log" },
+        },
+      ]),
+      toolResult("tool-big", [
+        {
+          type: "text",
+          text: `${"x".repeat(LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS + 100)}END`,
+        },
+      ]),
+    ]);
+
+    expect(transcript).toContain("[truncated 103 chars]");
+    expect(transcript).not.toContain(
+      `${"x".repeat(LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS + 100)}END`,
     );
   });
 

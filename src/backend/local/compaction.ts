@@ -20,7 +20,7 @@ import type { LocalAgentRecord } from "./local-types";
 const ALL_WORD_LIMIT = 500;
 const SLIDING_WORD_LIMIT = 300;
 const SUMMARY_TRUNCATION_SUFFIX = "... [summary truncated to fit]";
-const TOOL_RETURN_TRUNCATION_CHARS = 5000;
+export const LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS = 2_000;
 const TRANSCRIPT_FALLBACK_MAX_CHARS = 120000;
 const TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS = [
   TRANSCRIPT_FALLBACK_MAX_CHARS,
@@ -337,7 +337,8 @@ export function formatLocalMessagesForSummary(
 ): string {
   const transcript = simpleFormatter(
     localMessagesToSummaryOpenAIDicts(messages, {
-      toolReturnTruncationChars: options.truncationChars,
+      toolReturnTruncationChars:
+        options.truncationChars ?? LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
     }),
   );
   return options.maxChars
@@ -408,7 +409,9 @@ async function summarizeLocalMessagesWithPrompt(
   defaultPrompt: string,
 ): Promise<string> {
   if (input.messages.length === 0) return "No prior conversation messages.";
-  const primaryTranscript = formatLocalMessagesForSummary(input.messages);
+  const primaryTranscript = formatLocalMessagesForSummary(input.messages, {
+    truncationChars: LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
+  });
   let result: { text: string } | undefined;
   try {
     result = await runGenerateText(input, primaryTranscript, defaultPrompt);
@@ -418,7 +421,7 @@ async function summarizeLocalMessagesWithPrompt(
     let previousTranscript: string | undefined;
     for (const maxChars of TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS) {
       const fallbackTranscript = formatLocalMessagesForSummary(input.messages, {
-        truncationChars: TOOL_RETURN_TRUNCATION_CHARS,
+        truncationChars: LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
         maxChars,
       });
       if (fallbackTranscript === previousTranscript) continue;
