@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { commands } from "@/cli/commands/registry";
 import {
+  fieldValuesFromProviderPlaceholders,
   filterProviderConfigs,
   hasConstellationProviderStoreCredentials,
   isProviderTargetLoading,
@@ -171,6 +172,34 @@ describe("ProviderSelector provider filtering", () => {
     expect(filterProviderConfigs(providers, "   ").length).toBe(
       providers.length,
     );
+  });
+});
+
+describe("ProviderSelector multi-field defaults", () => {
+  test("prefills non-secret provider placeholders", () => {
+    expect(
+      fieldValuesFromProviderPlaceholders([
+        { key: "apiKey", label: "API Key", secret: true },
+        {
+          key: "baseUrl",
+          label: "Base URL",
+          placeholder: "https://api.example.test/v1",
+        },
+      ]),
+    ).toEqual({ baseUrl: "https://api.example.test/v1" });
+  });
+
+  test("does not prefill secret placeholders", () => {
+    expect(
+      fieldValuesFromProviderPlaceholders([
+        {
+          key: "apiKey",
+          label: "API Key",
+          placeholder: "sk-...",
+          secret: true,
+        },
+      ]),
+    ).toEqual({});
   });
 });
 

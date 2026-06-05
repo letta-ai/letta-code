@@ -114,6 +114,18 @@ export function providerSelectionFlow(
   return "input";
 }
 
+export function fieldValuesFromProviderPlaceholders(
+  fields: readonly ProviderField[] | undefined,
+): Record<string, string> {
+  if (!fields) return {};
+
+  return Object.fromEntries(
+    fields
+      .filter((field) => !field.secret && field.placeholder)
+      .map((field) => [field.key, field.placeholder as string]),
+  );
+}
+
 export function isProviderTargetLoading(input: {
   selectedTarget: ProviderStorageTarget;
   connectedProvidersByTarget: ConnectedProvidersByTarget;
@@ -401,7 +413,7 @@ export function ProviderSelector({
       } else if (flow === "multiInput") {
         // Multi-field provider - show multi-input view
         setViewState({ type: "multiInput", provider });
-        setFieldValues({});
+        setFieldValues(fieldValuesFromProviderPlaceholders(provider.fields));
         setFocusedFieldIndex(0);
         setValidationState("idle");
         setValidationError(null);
