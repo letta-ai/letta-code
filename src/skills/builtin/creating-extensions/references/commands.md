@@ -4,6 +4,15 @@ Use commands when the human explicitly invokes `/foo`.
 
 For complex command-driven extensions with panels, timers, local state, or background model work, also read `architecture.md`.
 
+## Contents
+
+- Decide command vs skill vs tool
+- Command IDs
+- Prompt command
+- Output-only command
+- Panel command
+- Busy-safe conversation command
+
 ## Decide command vs skill vs tool
 
 | Need | Use |

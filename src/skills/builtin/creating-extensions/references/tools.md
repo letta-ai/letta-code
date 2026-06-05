@@ -4,6 +4,13 @@ Use tools when the agent/model should call a local capability autonomously.
 
 For tools that are part of a larger extension with commands, UI, local state, or events, also read `architecture.md`.
 
+## Contents
+
+- Defaults
+- Read-only shell tool
+- Tool with arguments
+- Mutating or risky tool
+
 ## Defaults
 
 - Name: lowercase/underscore tool name, e.g. `branch_summary`.
