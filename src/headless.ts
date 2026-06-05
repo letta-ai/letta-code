@@ -1123,6 +1123,7 @@ export async function handleHeadlessCommand(
         modelOverride: model,
         stripMessages: true,
         stripSkills: false,
+        enableMemfs: noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
       });
     } else {
       // Import from local file
@@ -1132,6 +1133,7 @@ export async function handleHeadlessCommand(
         modelOverride: model,
         stripMessages: true,
         stripSkills: false,
+        enableMemfs: noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
       });
     }
 

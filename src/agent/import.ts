@@ -7,6 +7,10 @@ import { dirname, resolve } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
+import {
+  buildCreatedAgentTags,
+  resolveCreatedAgentMemfsConfig,
+} from "./create";
 import { getModelUpdateArgs } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 
@@ -15,6 +19,7 @@ export interface ImportAgentOptions {
   modelOverride?: string;
   stripMessages?: boolean;
   stripSkills?: boolean;
+  enableMemfs?: boolean;
 }
 
 export interface ImportFromRegistryOptions {
@@ -22,11 +27,57 @@ export interface ImportFromRegistryOptions {
   modelOverride?: string;
   stripMessages?: boolean;
   stripSkills?: boolean;
+  enableMemfs?: boolean;
 }
 
 export interface ImportAgentResult {
   agent: AgentState;
   skills?: string[];
+}
+
+function tagsEqual(left: string[], right: string[]): boolean {
+  return (
+    left.length === right.length && left.every((tag, i) => tag === right[i])
+  );
+}
+
+async function resolveImportedAgentMemfsEnabled(
+  requestedEnableMemfs: boolean | undefined,
+): Promise<boolean> {
+  const backend = getBackend();
+  const isLettaCloud =
+    backend.capabilities.remoteMemfs && !backend.capabilities.localMemfs
+      ? await import("./memory-filesystem").then((module) =>
+          module.isLettaCloud(),
+        )
+      : false;
+  return resolveCreatedAgentMemfsConfig({
+    capabilities: backend.capabilities,
+    enableMemfs: requestedEnableMemfs,
+    requestedMemoryPromptMode:
+      requestedEnableMemfs === false ? "standard" : undefined,
+    isLettaCloud,
+  }).enableMemfs;
+}
+
+async function ensureImportedAgentCreationTags(
+  agent: AgentState,
+  enableMemfs: boolean,
+): Promise<AgentState> {
+  const tags = buildCreatedAgentTags({
+    tags: agent.tags,
+    enableMemfs,
+  });
+  if (tagsEqual(agent.tags ?? [], tags)) {
+    return agent;
+  }
+
+  const updatedAgent = await getBackend().updateAgent(agent.id, { tags });
+  return {
+    ...agent,
+    ...updatedAgent,
+    tags: updatedAgent.tags ?? tags,
+  } as AgentState;
 }
 
 export async function importAgentFromFile(
@@ -59,7 +110,9 @@ export async function importAgentFromFile(
   }
 
   const agentId = importResponse.agent_ids[0] as string;
-  let agent = await client.agents.retrieve(agentId);
+  let agent = await client.agents.retrieve(agentId, {
+    include: ["agent.tags"],
+  });
 
   // Override model if specified
   if (options.modelOverride) {
@@ -68,8 +121,13 @@ export async function importAgentFromFile(
     // Ensure the correct memory tool is attached for the new model
     const { ensureCorrectMemoryTool } = await import("@/tools/toolset");
     await ensureCorrectMemoryTool(agentId, options.modelOverride);
-    agent = await client.agents.retrieve(agentId);
+    agent = await client.agents.retrieve(agentId, { include: ["agent.tags"] });
   }
+
+  agent = await ensureImportedAgentCreationTags(
+    agent,
+    await resolveImportedAgentMemfsEnabled(options.enableMemfs),
+  );
 
   // Extract skills from .af file if present (unless stripSkills=true)
   let skills: string[] | undefined;
@@ -308,6 +366,7 @@ export async function importAgentFromRegistry(
       modelOverride: options.modelOverride,
       stripMessages: options.stripMessages ?? true,
       stripSkills: options.stripSkills ?? false,
+      enableMemfs: options.enableMemfs,
     });
 
     return result;
