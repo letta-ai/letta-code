@@ -255,6 +255,47 @@ describe("tool execution context snapshot", () => {
     expect(asText(result.toolReturn)).toContain("mutated path blocked");
   });
 
+  test("reports execution-phase ask decisions as blocked approval requests", async () => {
+    await loadSpecificTools(["Read"]);
+    registerExtensionPermission({
+      id: "execution-ask",
+      description: "Ask before execution",
+      path: "/tmp/execution-ask.ts",
+      owner: {
+        id: "global:/tmp/execution-ask.ts",
+        path: "/tmp/execution-ask.ts",
+        scope: "global",
+        generation: 1,
+      },
+      activationSignal: new AbortController().signal,
+      getContext: () => {
+        throw new Error("unused");
+      },
+      isAvailable: () => true,
+      check(event) {
+        if (event.phase === "execution" && event.toolName === "Read") {
+          return { decision: "ask" };
+        }
+        return undefined;
+      },
+    });
+
+    const prepared = await prepareCurrentToolExecutionContext();
+    const result = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    const text = asText(result.toolReturn);
+    expect(result.status).toBe("error");
+    expect(text).toContain("blocked by extension permission:execution-ask");
+    expect(text).toContain(
+      "Approval requested but cannot reopen during execution.",
+    );
+    expect(text).not.toContain("denied by extension permission:execution-ask");
+  });
+
   test("prepares explicit tool snapshots without reading the global registry", async () => {
     await loadSpecificTools(["Edit"]);
 

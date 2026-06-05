@@ -1993,8 +1993,13 @@ function createExtensionDenialToolResult(denial: {
 function createExtensionPermissionToolResult(
   decision: ExtensionPermissionDecisionResult,
 ): ToolExecutionResult {
+  const isApprovalRequest = decision.decision === "ask";
+  const action = isApprovalRequest ? "blocked" : "denied";
+  const fallbackReason = isApprovalRequest
+    ? "Approval requested but cannot reopen during execution."
+    : "No reason given.";
   return {
-    toolReturn: `Error: Tool execution denied by ${decision.matchedRule}. ${decision.reason ?? "No reason given."}`,
+    toolReturn: `Error: Tool execution ${action} by ${decision.matchedRule}. ${decision.reason ?? fallbackReason}`,
     status: "error",
   };
 }
