@@ -627,7 +627,7 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Write a file into MemFS (durable agent memory write + commit + push) ─
+  // ── Write a file into MemFS (durable agent memory write + commit) ───────
   if (isWriteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("write_memory_file", async () => {
       const encoding = parsed.encoding ?? "utf8";
@@ -653,7 +653,7 @@ export function handleMemoryProtocolCommand(
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
-        const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+        const { commitMemoryWrite } = await import("@/agent/memory-git");
         const { writeFile, mkdir } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { dirname, isAbsolute, join, normalize, relative, sep } =
@@ -725,13 +725,13 @@ export function handleMemoryProtocolCommand(
           // Best-effort — fall back to agent id as the author name.
         }
 
-        // ── Commit + push (with replay-on-conflict from helper) ────────
+        // ── Commit locally; post-turn harness sync handles remote push ─
         // Use posix separators in the pathspec — git expects forward slashes
         // even on Windows.
         const pathspec = rel.split(sep).join("/");
         const reason =
           parsed.commit_message?.trim() || `Update memory file ${pathspec}`;
-        const commitResult = await commitAndSyncMemoryWrite({
+        const commitResult = await commitMemoryWrite({
           memoryDir: memoryRoot,
           pathspecs: [pathspec],
           reason,
@@ -741,12 +741,6 @@ export function handleMemoryProtocolCommand(
             authorEmail: `${parsed.agent_id}@letta.com`,
           },
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
-          replay: async () => {
-            // Re-write the same bytes on top of the latest remote state.
-            await mkdir(dirname(absolutePath), { recursive: true });
-            await writeFile(absolutePath, buffer);
-            return [pathspec];
-          },
         });
 
         // ── Notify UI so the memory view auto-refreshes ────────────────
@@ -794,7 +788,7 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Delete a file from MemFS (durable agent memory delete + commit + push) ─
+  // ── Delete a file from MemFS (durable agent memory delete + commit) ──────
   if (isDeleteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("delete_memory_file", async () => {
       const sendFailure = (error: string): void => {
@@ -819,7 +813,7 @@ export function handleMemoryProtocolCommand(
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
-        const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+        const { commitMemoryWrite } = await import("@/agent/memory-git");
         const { unlink } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { isAbsolute, join, normalize, relative, sep } = await import(
@@ -910,10 +904,10 @@ export function handleMemoryProtocolCommand(
           // Best-effort — fall back to agent id as the author name.
         }
 
-        // ── Commit + push (replay re-deletes after rebase) ─────────────
+        // ── Commit locally; post-turn harness sync handles remote push ─
         const reason =
           parsed.commit_message?.trim() || `Delete memory file ${pathspec}`;
-        const commitResult = await commitAndSyncMemoryWrite({
+        const commitResult = await commitMemoryWrite({
           memoryDir: memoryRoot,
           pathspecs: [pathspec],
           reason,
@@ -923,12 +917,6 @@ export function handleMemoryProtocolCommand(
             authorEmail: `${parsed.agent_id}@letta.com`,
           },
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
-          replay: async () => {
-            // Re-delete on top of the latest remote state in case the
-            // remote restored the file between our commit and push.
-            await removeIfPresent();
-            return [pathspec];
-          },
         });
 
         if (commitResult.committed) {

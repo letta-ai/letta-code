@@ -57,7 +57,9 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
+import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
+  enqueueMemoryGitSyncReminder,
   type SharedReminderState,
   syncReminderStateFromContextTracker,
 } from "@/reminders/state";
@@ -1309,6 +1311,17 @@ export async function handleIncomingMessage(
       agent_id: agentId || null,
       conversation_id: conversationId,
     });
+
+    if (agentId) {
+      await runPostTurnMemorySync({
+        agentId,
+        isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+        debugLabel: "Post-turn listener memory sync",
+        enqueueReminder: (text) => {
+          enqueueMemoryGitSyncReminder(runtime.reminderState, { text });
+        },
+      });
+    }
 
     try {
       const currentConversationId = getConversationId();

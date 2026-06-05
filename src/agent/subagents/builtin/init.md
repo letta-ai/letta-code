@@ -47,11 +47,11 @@ Create directories and write all memory files **in parallel in a single turn**. 
 
 If you created a file at a new path that replaces an existing file at a different path, **delete the old file**. Include any `rm` commands in the bash call in step 5.
 
-### 5. Commit and push (1 bash call)
+### 5. Commit (1 bash call)
 
-Stage, commit, and push in a single Bash call:
+Stage and commit in a single Bash call:
 ```bash
-cd "$MEMORY_DIR" && git add -A && git commit -m "..." && git push
+cd "$MEMORY_DIR" && git add -A && git commit -m "..."
 ```
 
 ## Memory hierarchy

@@ -1,4 +1,4 @@
-Apply a codex-style patch to memory files in `$MEMORY_DIR`, then automatically commit and push the change.
+Apply a codex-style patch to memory files in `$MEMORY_DIR`, then automatically commit the change. The harness pushes clean committed memory changes after the turn for remote MemFS agents.
 
 This is similar to `apply_patch`, but scoped to the memory filesystem and with memory-aware guardrails.
 
@@ -30,7 +30,7 @@ Git behavior:
 - Stages changed memory paths
 - Commits with `reason`
 - Uses agent identity author (`<agent_id>@letta.com`)
-- Pushes to remote
+- Remote MemFS push is handled by the harness after the turn
 
 Example:
 ```python

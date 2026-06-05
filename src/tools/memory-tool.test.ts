@@ -8,7 +8,7 @@ import {
   test,
 } from "bun:test";
 import { execFile as execFileCb } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,15 +120,6 @@ async function initTrackedMemoryRepo(
   await runGit(repoDir, ["push", "-u", "origin", "main"]);
 }
 
-async function listRescueRefs(cwd: string): Promise<string[]> {
-  const output = await runGit(cwd, [
-    "for-each-ref",
-    "--format=%(refname)",
-    "refs/letta-conflicts",
-  ]);
-  return output ? output.split("\n").filter(Boolean) : [];
-}
-
 describe("memory tool", () => {
   let tempRoot: string;
   let memoryDir: string;
@@ -215,7 +206,14 @@ describe("memory tool", () => {
       ["--git-dir", remoteDir, "log", "-1", "--pretty=format:%s", "main"],
       {},
     ).then((r) => String(r.stdout ?? "").trim());
-    expect(remoteSubject).toBe(reason);
+    expect(remoteSubject).toBe("initial");
+
+    const aheadCount = await runGit(memoryDir, [
+      "rev-list",
+      "--count",
+      "@{u}..HEAD",
+    ]);
+    expect(aheadCount).toBe("1");
   });
 
   test("prefers scoped agent memory over stale MEMORY_DIR env", async () => {
@@ -244,7 +242,7 @@ describe("memory tool", () => {
     expect(staleStatus).not.toContain("scoped.md");
   });
 
-  test("returns error when push fails but keeps local commit", async () => {
+  test("commits without pushing even when remote is unavailable", async () => {
     await runScopedMemory({
       command: "create",
       reason: "Seed notes",
@@ -261,16 +259,15 @@ describe("memory tool", () => {
     ]);
 
     const reason = "Update notes after remote failure";
+    const result = await runScopedMemory({
+      command: "str_replace",
+      reason,
+      file_path: "reference/history/notes.md",
+      old_string: "old value",
+      new_string: "new value",
+    });
 
-    await expect(
-      runScopedMemory({
-        command: "str_replace",
-        reason,
-        file_path: "reference/history/notes.md",
-        old_string: "old value",
-        new_string: "new value",
-      }),
-    ).rejects.toThrow(/committed .* but push failed/i);
+    expect(result.message).toContain("harness will sync after the turn");
 
     const subject = await runGit(memoryDir, [
       "log",
@@ -280,10 +277,10 @@ describe("memory tool", () => {
     expect(subject).toBe(reason);
   });
 
-  test("replays str_replace on top of newer remote memory", async () => {
+  test("commits local changes when remote memory has advanced", async () => {
     await runScopedMemory({
       command: "create",
-      reason: "Seed replay notes",
+      reason: "Seed diverged notes",
       file_path: "reference/history/notes.md",
       description: "Notes block",
       file_text: "old value\nlocal line",
@@ -291,6 +288,9 @@ describe("memory tool", () => {
 
     const remoteCloneDir = join(tempRoot, "remote-clone");
     await cloneRemoteRepo(remoteDir, remoteCloneDir);
+    mkdirSync(join(remoteCloneDir, "reference", "history"), {
+      recursive: true,
+    });
     writeFileSync(
       join(remoteCloneDir, "reference", "history", "notes.md"),
       [
@@ -309,22 +309,20 @@ describe("memory tool", () => {
 
     const result = await runScopedMemory({
       command: "str_replace",
-      reason: "Replay local replacement",
+      reason: "Commit local replacement",
       file_path: "reference/history/notes.md",
       old_string: "old value",
       new_string: "new value",
     });
 
-    expect(result.message).toContain(
-      "reapplied on top of newer remote memory and pushed",
-    );
+    expect(result.message).toContain("harness will sync after the turn");
 
     const content = await runGit(memoryDir, [
       "show",
       "HEAD:reference/history/notes.md",
     ]);
     expect(content).toContain("new value");
-    expect(content).toContain("remote line");
+    expect(content).not.toContain("remote line");
 
     const divergence = await runGit(memoryDir, [
       "rev-list",
@@ -332,62 +330,7 @@ describe("memory tool", () => {
       "--count",
       "@{u}...HEAD",
     ]);
-    expect(divergence).toBe("0\t0");
-  });
-
-  test("fails closed when replay cannot be applied safely", async () => {
-    await runScopedMemory({
-      command: "create",
-      reason: "Seed conflicting notes",
-      file_path: "reference/history/notes.md",
-      description: "Notes block",
-      file_text: "old value",
-    });
-
-    const remoteCloneDir = join(tempRoot, "remote-conflict-clone");
-    await cloneRemoteRepo(remoteDir, remoteCloneDir);
-    writeFileSync(
-      join(remoteCloneDir, "reference", "history", "notes.md"),
-      ["---", "description: Notes block", "---", "remote value"].join("\n"),
-      "utf8",
-    );
-    await runGit(remoteCloneDir, ["add", "reference/history/notes.md"]);
-    await runGit(remoteCloneDir, ["commit", "-m", "Remote conflicting update"]);
-    await runGit(remoteCloneDir, ["push", "origin", "main"]);
-
-    await expect(
-      runScopedMemory({
-        command: "str_replace",
-        reason: "Attempt conflicting replacement",
-        file_path: "reference/history/notes.md",
-        old_string: "old value",
-        new_string: "new value",
-      }),
-    ).rejects.toThrow(/could not be replayed safely/i);
-
-    const divergence = await runGit(memoryDir, [
-      "rev-list",
-      "--left-right",
-      "--count",
-      "@{u}...HEAD",
-    ]);
-    expect(divergence).toBe("0\t0");
-
-    const content = await runGit(memoryDir, [
-      "show",
-      "HEAD:reference/history/notes.md",
-    ]);
-    expect(content).toContain("remote value");
-    expect(content).not.toContain("new value");
-
-    const rescueRefs = await listRescueRefs(memoryDir);
-    expect(rescueRefs.length).toBeGreaterThan(0);
-
-    const rescuedContent = await runGit(memoryDir, [
-      "show",
-      `${rescueRefs[0]}:reference/history/notes.md`,
-    ]);
-    expect(rescuedContent).toContain("new value");
+    expect(divergence).toBe("0\t2");
   });
 
   test("falls back to context agent id when AGENT_ID env is missing", async () => {

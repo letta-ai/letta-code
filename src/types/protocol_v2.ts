@@ -871,7 +871,7 @@ export interface ReadMemoryFileCommand {
 }
 
 /**
- * Write a file into the agent's MemFS and commit + push.
+ * Write a file into the agent's MemFS and commit.
  *
  * Use for agent memory writes (e.g. profile images). Path is
  * relative to the memory root and is rejected if it escapes the root.

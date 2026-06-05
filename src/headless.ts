@@ -123,8 +123,10 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "./reminders/engine";
+import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
 import {
   createSharedReminderState,
+  enqueueMemoryGitSyncReminder,
   syncReminderStateFromContextTracker,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
@@ -2974,6 +2976,17 @@ ${SYSTEM_REMINDER_CLOSE}
     await exitHeadless(1, "headless_runtime_exception");
   }
 
+  await runPostTurnMemorySync({
+    agentId: agent.id,
+    isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+    debugLabel: "Post-turn headless memory sync",
+    emitWarning: (text) => {
+      if (outputFormat !== "stream-json") {
+        console.error(text);
+      }
+    },
+  });
+
   // Update stats with final usage data from buffers
   sessionStats.updateUsageFromBuffers(buffers);
 
@@ -4505,6 +4518,17 @@ async function runBidirectionalMode(
         };
         writeWireMessage(errorResultMsg);
       } finally {
+        await runPostTurnMemorySync({
+          agentId: agent.id,
+          isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+          debugLabel: "Post-turn headless memory sync",
+          enqueueReminder: (text) => {
+            enqueueMemoryGitSyncReminder(sharedReminderState, { text });
+          },
+          emitWarning: (text) => {
+            debugWarn("memfs-git", text);
+          },
+        });
         turnInProgress = false;
         blockedEmittedThisTurn = false;
         currentAbortController = null;

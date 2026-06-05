@@ -132,18 +132,16 @@ async function resolveBackendSpecificToolDescription(
   if (!isLocalMemfs) return description;
 
   if (name === "memory_apply_patch") {
-    return description
-      .replace(
-        "then automatically commit and push the change.",
-        "then automatically commit the change locally.",
-      )
-      .replace("- Pushes to remote", "- Does not push to a Letta remote");
+    return description.replace(
+      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
+      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
+    );
   }
 
   if (name === "memory") {
     return description.replace(
-      "automatically commits and pushes changes.",
-      "automatically commits changes locally.",
+      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
+      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
     );
   }
 

@@ -117,7 +117,9 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "@/reminders/engine";
+import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
+  enqueueMemoryGitSyncReminder,
   type SharedReminderState,
   syncReminderStateFromContextTracker,
 } from "@/reminders/state";
@@ -3321,8 +3323,8 @@ ${SYSTEM_REMINDER_CLOSE}
         const memoryDir = getScopedMemoryFilesystemRoot(agentId);
         const localMemfs = isLocalMemfsActive();
         const syncInstructions = localMemfs
-          ? `Commit when convenient by running these commands:\n\`\`\`bash\ncd ${JSON.stringify(memoryDir)}\ngit add system/\ngit commit -m "<type>: <what changed>"\n\`\`\``
-          : `Sync when convenient by running these commands:\n\`\`\`bash\ncd ${JSON.stringify(memoryDir)}\ngit add system/\ngit commit -m "<type>: <what changed>"\ngit push\n\`\`\``;
+          ? `Commit memory changes locally when appropriate. Inspect with:\n\`\`\`bash\ngit -C ${JSON.stringify(memoryDir)} status\n\`\`\``
+          : `Inspect and fix the memory repository when appropriate. Commit any intended memory changes locally; the harness pushes clean committed memory changes automatically after turns.\n\`\`\`bash\ngit -C ${JSON.stringify(memoryDir)} status\n\`\`\``;
         memoryGitReminder = `${SYSTEM_REMINDER_OPEN}
 ${localMemfs ? "MEMORY COMMIT" : "MEMORY SYNC"}: Your memory directory has uncommitted changes${localMemfs ? "." : " or is ahead of the remote."}
 
@@ -3506,6 +3508,17 @@ ${SYSTEM_REMINDER_CLOSE}
       await processConversation(initialInput, {
         submissionGeneration,
         transcriptStartLineIndex,
+      });
+
+      await runPostTurnMemorySync({
+        agentId,
+        isEnabled: isActiveMemfsEnabled,
+        debugLabel: "Post-turn memory sync",
+        enqueueReminder: (text) => {
+          enqueueMemoryGitSyncReminder(sharedReminderStateRef.current, {
+            text,
+          });
+        },
       });
 
       // Clean up placeholders after submission
