@@ -582,6 +582,15 @@ function isBackendNotFoundError(error: unknown): boolean {
   );
 }
 
+function isLocalBackendTranscriptStartupError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.name === "LocalTranscriptMigrationRequiredError" ||
+    error.name === "LocalTranscriptRepairRequiredError" ||
+    error.message.includes("Unsupported local transcript format")
+  );
+}
+
 async function getLocalBackendStartupFallbackSession(
   backend: Backend,
 ): Promise<LocalStartupFallbackSession | null> {
@@ -893,12 +902,35 @@ async function main(): Promise<void> {
         }
       })()
     : Promise.resolve(undefined);
+  const ensureTerminalPreflightComplete = async () => {
+    await terminalPreflightPromise;
+  };
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
+  const tryConfigureStartupLocalBackend = async (): Promise<boolean> => {
+    try {
+      configureBackendMode("local");
+      return true;
+    } catch (error) {
+      if (!isLocalBackendTranscriptStartupError(error)) {
+        throw error;
+      }
+      console.warn(
+        `Local backend data needs migration before it can be used: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      console.warn(
+        "Continuing to setup/login so local transcript migration does not block account access.",
+      );
+      configureBackendMode("api");
+      settingsManager.updateSettings({ preferredBackendMode: "api" });
+      await settingsManager.flush();
+      return false;
+    }
+  };
 
   if (
     !explicitBackendMode &&
@@ -906,7 +938,7 @@ async function main(): Promise<void> {
     settings.preferredBackendMode === "local" &&
     baseURL === LETTA_CLOUD_API_URL
   ) {
-    configureBackendMode("local");
+    await tryConfigureStartupLocalBackend();
   }
 
   // Local-first new-user flow: if the user has no Letta Cloud credentials and
@@ -921,9 +953,10 @@ async function main(): Promise<void> {
     !settings.refreshToken &&
     !apiKey
   ) {
-    configureBackendMode("local");
-    settingsManager.updateSettings({ preferredBackendMode: "local" });
-    await settingsManager.flush();
+    if (await tryConfigureStartupLocalBackend()) {
+      settingsManager.updateSettings({ preferredBackendMode: "local" });
+      await settingsManager.flush();
+    }
   }
 
   const startupTargetLookupOrder = getStartupTargetLookupOrderForCredentials({
@@ -1244,6 +1277,7 @@ async function main(): Promise<void> {
       !apiKey
     ) {
       // For interactive mode, show setup flow
+      await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
       const setupResult = await runSetup();
       if (setupResult.kind === "cancelled") {
@@ -1266,6 +1300,7 @@ async function main(): Promise<void> {
     if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
       // For interactive mode, show setup flow
       console.log("No credentials found. Let's get you set up!\n");
+      await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
       const setupResult = await runSetup();
       if (setupResult.kind === "cancelled") {
@@ -1392,6 +1427,7 @@ async function main(): Promise<void> {
         }
 
         console.log("Let's reauthenticate your setup.\n");
+        await ensureTerminalPreflightComplete();
         const { runSetup } = await import("@/auth/setup");
         const setupResult = await runSetup({
           initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu",
