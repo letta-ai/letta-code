@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@letta-ai/letta-client": "^1.10.2",
-    "@earendil-works/pi-ai": "^0.77.0",
+    "@earendil-works/pi-ai": "^0.78.1",
     "@pierre/diffs": "1.2.2",
     "glob": "^13.0.0",
     "ink-link": "^5.0.0",
