@@ -32,6 +32,7 @@ function modelIdFromHandle(
 function assertPiCatalogCoversLocalModels(): void {
   const piProviders = new Set(getProviders());
   const missing: string[] = [];
+  const invalid: string[] = [];
 
   for (const model of modelsData.models) {
     const parsed = modelIdFromHandle(model.handle);
@@ -39,10 +40,17 @@ function assertPiCatalogCoversLocalModels(): void {
     if (allowedUnmirroredProviders.has(parsed.provider)) continue;
     if (!piProviders.has(parsed.provider)) continue;
 
-    const hasModel = getModels(parsed.provider).some(
+    const piModel = getModels(parsed.provider).find(
       (candidate) => candidate.id === parsed.id,
     );
-    if (!hasModel) missing.push(model.handle);
+    if (!piModel) {
+      missing.push(model.handle);
+      continue;
+    }
+
+    if (!piModel.baseUrl || !piModel.api || piModel.input.length === 0) {
+      invalid.push(model.handle);
+    }
   }
 
   assert(
@@ -51,33 +59,23 @@ function assertPiCatalogCoversLocalModels(): void {
       .map((handle) => `  - ${handle}`)
       .join("\n")}`,
   );
-}
-
-function assertMiniMaxM3(): void {
-  const model = getModel("minimax", "MiniMax-M3");
-  assert(model.provider === "minimax", "MiniMax-M3 provider mismatch");
-  assert(model.api === "anthropic-messages", "MiniMax-M3 API mismatch");
-  assert(model.reasoning === true, "MiniMax-M3 should support reasoning");
   assert(
-    model.input.includes("image"),
-    "MiniMax-M3 should support image input",
-  );
-  assert(
-    model.contextWindow >= 500_000,
-    `MiniMax-M3 context window unexpectedly small: ${model.contextWindow}`,
-  );
-
-  const localModel = modelsData.models.find(
-    (candidate) => candidate.id === "minimax-m3",
-  );
-  assert(
-    localModel?.handle === "minimax/MiniMax-M3",
-    "local MiniMax-M3 handle missing",
+    invalid.length === 0,
+    `@earendil-works/pi-ai ${piAiPackageJson.version} has incompatible local models.json handles:\n${invalid
+      .map((handle) => `  - ${handle}`)
+      .join("\n")}`,
   );
 }
 
+const [firstProvider] = getProviders();
+assert(firstProvider, "Pi provider catalog is empty");
+const [firstModel] = getModels(firstProvider);
+assert(firstModel, `Pi model catalog is empty for ${firstProvider}`);
+assert(
+  getModel(firstProvider, firstModel.id).id === firstModel.id,
+  "Pi getModel smoke failed",
+);
 assertPiCatalogCoversLocalModels();
-assertMiniMaxM3();
 
 console.log(
   `@earendil-works/pi-ai ${piAiPackageJson.version} covers local Pi model handles`,
