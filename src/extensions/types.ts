@@ -79,6 +79,7 @@ export interface ExtensionCapabilities {
   tools: boolean;
   commands: boolean;
   events: ExtensionEventCapabilities;
+  permissions: boolean;
   providers: boolean;
   ui: ExtensionUiCapabilities;
 }
@@ -247,6 +248,7 @@ export interface ExtensionEventEmissionResult<
 export type ExtensionCapabilityKind =
   | "command"
   | "event"
+  | "permission"
   | "provider"
   | "tool"
   | "panel"
@@ -457,4 +459,51 @@ export interface ExtensionTool {
   parallelSafe: boolean;
   isEnabled?: ExtensionToolRegistration["isEnabled"];
   run: ExtensionToolRegistration["run"];
+}
+
+export type ExtensionPermissionDecision = "allow" | "ask" | "deny";
+
+export type ExtensionPermissionCheckPhase = "approval" | "execution";
+
+export interface ExtensionPermissionCheckEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  toolCallId: string | null;
+  toolName: string;
+  args: Record<string, unknown>;
+  cwd: string;
+  workingDirectory: string;
+  permissionMode: string | null;
+  phase: ExtensionPermissionCheckPhase;
+}
+
+export type ExtensionPermissionCheckResult =
+  | {
+      decision: ExtensionPermissionDecision;
+      reason?: string;
+    }
+  | undefined;
+
+export interface ExtensionPermissionCheckContext {
+  getContext: () => ExtensionContext;
+  signal: AbortSignal;
+}
+
+export interface ExtensionPermissionRegistration {
+  id: string;
+  description?: string;
+  isEnabled?: (context: ExtensionContext) => boolean;
+  check: (
+    event: ExtensionPermissionCheckEvent,
+    context: ExtensionPermissionCheckContext,
+  ) => ExtensionPermissionCheckResult | Promise<ExtensionPermissionCheckResult>;
+}
+
+export interface ExtensionPermission {
+  id: string;
+  description?: string;
+  owner?: ExtensionOwner;
+  path: string;
+  isEnabled?: ExtensionPermissionRegistration["isEnabled"];
+  check: ExtensionPermissionRegistration["check"];
 }

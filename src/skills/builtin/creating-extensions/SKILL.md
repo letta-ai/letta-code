@@ -26,6 +26,7 @@ Capabilities vary by surface. TUI/headless may load tools, commands, events, UI,
 | Show transient output above input | Panel, usually from a command |
 | Show small persistent state | Status value |
 | React to app/session lifecycle or transform outbound turns | Event |
+| Enforce dynamic allow/ask/deny policy for tool calls | Permission overlay |
 | Add a custom model/API provider for local agents | Provider extension (local agents only) |
 | Change the bottom statusline appearance | Use `customizing-statusline`, not this skill |
 
@@ -40,6 +41,7 @@ Default to a **tool** when the model should decide when to use the capability. D
    - commands: `references/commands.md`
    - local custom providers: `references/providers.md`
    - events: `references/events.md`
+   - permissions: `references/permissions.md`
    - panels/status/capabilities: `references/ui.md`
    - busy side-question pattern: `references/btw-command.md`
 4. For multi-capability or stateful extensions, also read `references/architecture.md`.
@@ -76,6 +78,7 @@ letta.capabilities.commands
 letta.capabilities.events.lifecycle
 letta.capabilities.events.tools
 letta.capabilities.events.turns
+letta.capabilities.permissions
 letta.capabilities.providers
 letta.capabilities.ui.panels
 letta.capabilities.ui.statusValues
@@ -140,6 +143,7 @@ Before finishing, verify:
 | `references/commands.md` | The human should invoke `/foo` |
 | `references/providers.md` | Adding a custom model/API provider for local agents |
 | `references/events.md` | Reacting to lifecycle/tool/turn events or transforming turns/tools |
+| `references/permissions.md` | Enforcing dynamic tool allow/ask/deny policy before approval/execution |
 | `references/ui.md` | Panels, status values, or statusline capability guards are involved |
 | `references/btw-command.md` | Building a busy-safe side-question command with a forked conversation |
 | `references/architecture.md` | Multiple capabilities, local state, cleanup, background model work, or non-trivial composition |

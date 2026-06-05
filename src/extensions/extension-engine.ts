@@ -40,6 +40,12 @@ import {
   recordStaleHandleUse,
 } from "@/extensions/extension-diagnostics";
 import {
+  getExtensionPermissionDefinition,
+  registerExtensionPermission,
+  unregisterExtensionPermission,
+  unregisterExtensionPermissionsForOwner,
+} from "@/extensions/permission-registry";
+import {
   getExtensionToolDefinition,
   registerExtensionTool,
   unregisterExtensionTool,
@@ -66,6 +72,8 @@ import type {
   ExtensionPanelHandle,
   ExtensionPanelOptions,
   ExtensionPanelUpdate,
+  ExtensionPermission,
+  ExtensionPermissionRegistration,
   ExtensionTool,
   ExtensionToolRegistration,
   ExtensionToolStartEvent,
@@ -141,6 +149,12 @@ export interface LettaExtensionApi {
       handler: ExtensionEventHandler<TName>,
     ) => LettaExtensionDisposer;
   };
+  permissions: {
+    register: (
+      permission: ExtensionPermissionRegistration,
+    ) => LettaExtensionDisposer;
+    unregister: (id: string) => void;
+  };
   diagnostics: {
     report: (diagnostic: ExtensionDiagnosticReportOptions) => void;
   };
@@ -183,6 +197,7 @@ export interface LocalExtensionRegistry {
   loadedPaths: string[];
   ownerAbortControllers: Record<string, AbortController>;
   owners: Record<string, ExtensionOwner>;
+  permissions: Record<string, ExtensionPermission>;
   sources: LocalExtensionSource[];
   tools: Record<string, ExtensionTool>;
   ui: LocalExtensionUiRegistry;
@@ -283,6 +298,7 @@ function createEmptyExtensionRegistry(
     loadedPaths: [],
     ownerAbortControllers: {},
     owners: {},
+    permissions: {},
     sources,
     tools: {},
     ui: {
@@ -332,6 +348,7 @@ function snapshotRegistryForReaders(
     loadedPaths: [...registry.loadedPaths],
     ownerAbortControllers: { ...registry.ownerAbortControllers },
     owners: { ...registry.owners },
+    permissions: { ...registry.permissions },
     sources: registry.sources.map((source) => ({
       ...source,
       files: [...source.files],
@@ -681,6 +698,35 @@ function normalizeExtensionCommand(
   };
 }
 
+function validateExtensionPermissionId(id: string): void {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
+    throw new Error(
+      "Extension permission id must be a lowercase slug using letters, numbers, and hyphens",
+    );
+  }
+}
+
+function normalizeExtensionPermission(
+  permission: ExtensionPermissionRegistration,
+  owner: ExtensionOwner,
+): ExtensionPermission {
+  validateExtensionPermissionId(permission.id);
+  if (typeof permission.check !== "function") {
+    throw new Error(
+      `Extension permission '${permission.id}' must include check()`,
+    );
+  }
+
+  return {
+    id: permission.id,
+    ...(permission.description ? { description: permission.description } : {}),
+    owner,
+    path: owner.path,
+    ...(permission.isEnabled ? { isEnabled: permission.isEnabled } : {}),
+    check: permission.check,
+  };
+}
+
 function validateExtensionToolName(name: string): void {
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) {
     throw new Error(
@@ -830,6 +876,18 @@ function createLettaExtensionApi(
     const existing = registry.commands[id];
     if (existing?.owner?.id === owner.id) {
       delete registry.commands[id];
+      onChange();
+    }
+  };
+
+  const unregisterPermission = (id: string) => {
+    if (!capabilities.permissions) return;
+    validateExtensionPermissionId(id);
+    if (!guardLive({ id, kind: "permission" })) return;
+    const existing = registry.permissions[id];
+    if (existing?.owner?.id === owner.id) {
+      delete registry.permissions[id];
+      unregisterExtensionPermission(id, owner);
       onChange();
     }
   };
@@ -1052,6 +1110,40 @@ function createLettaExtensionApi(
     events: {
       off: unregisterEvent,
       on: onEvent,
+    },
+    permissions: {
+      register(permission) {
+        if (!capabilities.permissions) {
+          return () => undefined;
+        }
+        if (!guardLive({ id: permission.id, kind: "permission" })) {
+          return () => undefined;
+        }
+
+        const normalized = normalizeExtensionPermission(permission, owner);
+        const existing = registry.permissions[normalized.id];
+        const existingGlobal = getExtensionPermissionDefinition(normalized.id);
+        if (existing || existingGlobal) {
+          throw new Error(
+            `Extension permission '${normalized.id}' is already registered by ${existing?.path ?? existingGlobal?.path}`,
+          );
+        }
+
+        registry.permissions[normalized.id] = normalized;
+        registerExtensionPermission({
+          ...normalized,
+          activationSignal: signal,
+          getContext,
+          isAvailable: () => {
+            if (signal.aborted) return false;
+            return normalized.isEnabled?.(getContext()) ?? true;
+          },
+        });
+        onChange();
+
+        return () => unregisterPermission(normalized.id);
+      },
+      unregister: unregisterPermission,
     },
     diagnostics: {
       report: reportDiagnostic,
@@ -1372,6 +1464,7 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
 
   for (const owner of Object.values(registry.owners)) {
     unregisterPiProvidersForOwner(owner.id);
+    unregisterExtensionPermissionsForOwner(owner);
     unregisterExtensionToolsForOwner(owner);
   }
   clearAvailableModelsCache();
@@ -1380,6 +1473,7 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   registry.events = {};
   registry.ownerAbortControllers = {};
   registry.owners = {};
+  registry.permissions = {};
   registry.tools = {};
   registry.ui.panels = {};
   registry.ui.statusOwners = {};

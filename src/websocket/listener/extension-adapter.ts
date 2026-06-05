@@ -20,6 +20,7 @@ export const LISTENER_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
     tools: false,
     turns: false,
   },
+  permissions: false,
   providers: true,
   ui: {
     panels: false,
