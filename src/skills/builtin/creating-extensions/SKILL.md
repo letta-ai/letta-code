@@ -1,6 +1,6 @@
 ---
 name: creating-extensions
-description: Creates and edits trusted local Letta Code extensions, including extension tools, slash commands, lifecycle/turn events, scoped conversation helpers, panels, status values, and capability-gated behavior. Use when the user asks to make an extension, add a tool the agent can call, add a slash command, transform turns, react to app events, or add lightweight extension UI outside the dedicated /statusline flow.
+description: Creates and edits trusted local Letta Code extensions, including tools, slash commands, local-only model providers, lifecycle/turn events, scoped conversation helpers, panels, status values, and capability-gated behavior. Use when asked to make an extension, add an agent-callable tool, add a slash command, add a local provider/model adapter, transform turns, react to app events, or add lightweight extension UI outside the dedicated /statusline flow.
 ---
 
 # Creating Extensions
@@ -13,6 +13,8 @@ Use this skill to create or update trusted global Letta Code extensions in:
 
 Extensions are trusted local apps for Letta Code. They add small composable capabilities through extension APIs, not by importing app internals. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`, `letta.getContext()`) and guard optional UI with `letta.capabilities`.
 
+Capabilities vary by surface. TUI/headless may load tools, commands, events, UI, and providers; the desktop listener loads provider-only extensions for local provider discovery. Always guard optional capabilities.
+
 ## Choose the right capability
 
 | User wants | Build |
@@ -24,6 +26,7 @@ Extensions are trusted local apps for Letta Code. They add small composable capa
 | Show transient output above input | Panel, usually from a command |
 | Show small persistent state | Status value |
 | React to app/session lifecycle or transform outbound turns | Event |
+| Add a custom model/API provider for local agents | Provider extension (local agents only) |
 | Change the bottom statusline appearance | Use `customizing-statusline`, not this skill |
 
 Default to a **tool** when the model should decide when to use the capability. Default to a **command** when the human explicitly invokes it. Compose capabilities when the UX needs it, e.g. command + panel + scoped conversation fork.
@@ -32,17 +35,16 @@ Default to a **tool** when the model should decide when to use the capability. D
 
 1. Inspect `~/.letta/extensions/` for related files.
 2. Preserve unrelated extension code. Prefer a focused new file if merging would be messy.
-3. Choose the extension shape:
-   - simple tool/command/event: read the specific recipe below
-   - multi-capability or stateful extension: also read `references/architecture.md`
-4. Load only the needed recipe:
+3. Choose the extension shape and load only the needed recipe:
    - tools: `references/tools.md`
    - commands: `references/commands.md`
+   - local custom providers: `references/providers.md`
    - events: `references/events.md`
    - panels/status/capabilities: `references/ui.md`
    - busy side-question pattern: `references/btw-command.md`
+4. For multi-capability or stateful extensions, also read `references/architecture.md`.
 5. Write a single-file extension unless the user asks for something larger.
-6. Return disposers for registered commands/tools/events, timers, subscriptions, and panels that should close on reload.
+6. Return disposers for registered providers/commands/tools/events, timers, subscriptions, and panels that should close on reload.
 7. Do a basic review: valid names, descriptions present, schemas are object schemas, optional capabilities guarded, scoped APIs used, cleanup returned.
 8. Tell the user the absolute file path changed and to run `/reload`. If an extension breaks startup or command handling, recover with `letta --no-extensions` or `LETTA_DISABLE_EXTENSIONS=1 letta`.
 
@@ -74,6 +76,7 @@ letta.capabilities.commands
 letta.capabilities.events.lifecycle
 letta.capabilities.events.tools
 letta.capabilities.events.turns
+letta.capabilities.providers
 letta.capabilities.ui.panels
 letta.capabilities.ui.statusValues
 letta.capabilities.ui.customStatuslineRenderer
@@ -102,6 +105,8 @@ Agents can inspect local extension diagnostics at:
 ## Rules
 
 - Global trusted code only for now. Do not create project extensions.
+- Custom provider extensions are local-backend/local-agent only. They do not add providers for Constellation/cloud agents.
+- Provider extensions may run in a provider-only listener context; keep provider registration independent from commands/tools/UI and guard everything else.
 - Do not assume extra npm packages are available.
 - Do not do surprising side effects on startup; extensions activate on app start and `/reload`.
 - Keep user-facing output short and intentional.
@@ -120,6 +125,7 @@ Before finishing, verify:
 - Tool descriptions explain when the model should call them.
 - JSON schemas are object schemas with useful descriptions.
 - Optional UI/event/statusline APIs are capability-guarded.
+- Provider extensions are capability-guarded and clearly documented as local-agent only.
 - Timers, intervals, event registrations, and panels are cleaned up in a disposer.
 - Busy commands return `{ type: "handled" }` quickly and avoid main-conversation sends.
 - Conversation work uses `ctx.conversation` or forked handles, not app internals.
@@ -128,9 +134,12 @@ Before finishing, verify:
 
 ## References
 
-- `references/architecture.md` - composition, state, cleanup, scoped conversation, and review checklist for complex extensions
-- `references/tools.md` - extension tools the model can call
-- `references/commands.md` - slash commands, command results, and skill-backed commands
-- `references/events.md` - lifecycle and turn event handlers
-- `references/ui.md` - panels, status values, capability guards
-- `references/btw-command.md` - advanced busy-safe side-question command using scoped conversation helpers
+| Reference | Load when |
+| --- | --- |
+| `references/tools.md` | The model should autonomously call a local capability |
+| `references/commands.md` | The human should invoke `/foo` |
+| `references/providers.md` | Adding a custom model/API provider for local agents |
+| `references/events.md` | Reacting to lifecycle/tool/turn events or transforming turns/tools |
+| `references/ui.md` | Panels, status values, or statusline capability guards are involved |
+| `references/btw-command.md` | Building a busy-safe side-question command with a forked conversation |
+| `references/architecture.md` | Multiple capabilities, local state, cleanup, background model work, or non-trivial composition |

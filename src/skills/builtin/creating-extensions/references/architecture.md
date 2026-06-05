@@ -2,6 +2,16 @@
 
 Use this reference for non-trivial extensions: multiple capabilities, local state, timers, background model work, or UI.
 
+## Contents
+
+- Mental model
+- Capability composition patterns
+- Local state
+- Timers and subscriptions
+- Scoped conversation handles
+- Error handling
+- Final review checklist
+
 ## Mental model
 
 An extension is trusted local code that registers capabilities during activation and cleans them up on reload/shutdown. Keep the public surface small:
@@ -12,6 +22,8 @@ An extension is trusted local code that registers capabilities during activation
 - cleanup is returned from activation
 
 Do not import Letta Code internals. If the extension API does not expose a capability yet, avoid reaching around it.
+
+Capabilities vary by host surface. Keep each registration behind the matching `letta.capabilities` guard so one file can run in TUI, headless, and provider-only listener contexts.
 
 ## Capability composition patterns
 

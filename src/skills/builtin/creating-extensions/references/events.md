@@ -2,6 +2,16 @@
 
 Use events when trusted local code should react to app/session changes or transform outbound turns without the human explicitly invoking a command. For event-driven extensions with state, timers, panels, or background model work, also read `architecture.md`.
 
+## Contents
+
+- Capabilities
+- Supported events
+- Tool argument transforms and denial
+- Turn input transforms
+- Event handler context
+- Conversation status example
+- Rules
+
 This is the first slice of the hooks-v2 direction. The long-term goal is for typed extension events to replace settings-based hooks. Existing hooks still own blocking decisions and model feedback injection until each event has a typed return contract.
 
 ## Capabilities
