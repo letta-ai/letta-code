@@ -89,6 +89,16 @@ letta.capabilities.ui.customStatuslineRenderer
 - Use `letta.client` only for server-specific Letta API calls; do not use it as a substitute for scoped conversation helpers.
 - Do not import `@/backend`, `@/cli`, or other Letta Code internals from extension files.
 
+## Diagnostics
+
+Use `letta.diagnostics.report({ message, severity })` sparingly as a debug utility for extension setup/runtime problems an agent should inspect, such as missing required environment variables or failed local configuration. Default severity is `"error"`; use `severity: "warning"` only for optional/degraded behavior. Keep messages short and actionable, and do not dump routine logs or large state.
+
+Agents can inspect local extension diagnostics at:
+
+```text
+~/.letta/extensions/diagnostics/latest.json
+```
+
 ## Rules
 
 - Global trusted code only for now. Do not create project extensions.
