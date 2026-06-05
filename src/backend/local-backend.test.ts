@@ -1634,6 +1634,18 @@ describe("local backend pi transcript", () => {
     );
     expect(providerText?.endsWith("TAIL")).toBe(true);
     expect(await readFile(messagesPath, "utf8")).toContain(hugeToolOutput);
+
+    await reloadedBackend.updateConversation(conversation.id, {
+      summary: "updated summary",
+    } as never);
+    const persistedAfterConversationUpdate = await readFile(
+      messagesPath,
+      "utf8",
+    );
+    expect(persistedAfterConversationUpdate).toContain(hugeToolOutput);
+    expect(persistedAfterConversationUpdate).not.toContain(
+      "Tool result truncated during local transcript repair",
+    );
   });
 
   test("defers unversioned transcript migration errors until transcript read", async () => {
