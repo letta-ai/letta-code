@@ -11,6 +11,7 @@ import type {
   ExtensionEngine,
   LocalExtensionRegistry,
 } from "@/extensions/extension-engine";
+import { clearExtensionPermissions } from "@/extensions/permission-registry";
 import { clearExtensionTools } from "@/extensions/tool-registry";
 import type { ExtensionContext } from "@/extensions/types";
 
@@ -29,6 +30,7 @@ function createDisabledExtensionRegistry(): LocalExtensionRegistry {
     loadedPaths: [],
     ownerAbortControllers: {},
     owners: {},
+    permissions: {},
     sources: [],
     tools: {},
     ui: {
@@ -63,6 +65,7 @@ function createDisabledExtensionEngine(
 export function createDisabledExtensionAdapter(
   options: CreateDisabledExtensionAdapterOptions,
 ) {
+  clearExtensionPermissions();
   clearExtensionTools();
   clearRegisteredPiProviders();
 

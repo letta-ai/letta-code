@@ -3,6 +3,11 @@
 
 import { resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
+import {
+  checkExtensionPermissions,
+  type ExtensionPermissionDefinition,
+  getAvailableExtensionPermissionsRegistry,
+} from "@/extensions/permission-registry";
 import { extensionToolRequiresApproval } from "@/extensions/tool-registry";
 import { runPermissionRequestHooks } from "@/hooks";
 import type { PermissionModeState } from "@/tools/manager";
@@ -91,6 +96,12 @@ const FILE_TOOLS_V1 = [
 ];
 
 type ToolArgs = Record<string, unknown>;
+
+interface ExtensionPermissionCheckOptions {
+  conversationId?: string | null;
+  phase?: "approval" | "execution";
+  toolCallId?: string | null;
+}
 
 function envFlagEnabled(name: string): boolean {
   const value = process.env[name];
@@ -818,9 +829,14 @@ export async function checkPermissionWithHooks(
   workingDirectory: string = process.cwd(),
   modeState?: PermissionModeState,
   agentId?: string,
+  extensionPermissions: Map<
+    string,
+    ExtensionPermissionDefinition
+  > = getAvailableExtensionPermissionsRegistry(),
+  extensionPermissionOptions: ExtensionPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
-  const result = checkPermission(
+  let result = checkPermission(
     toolName,
     toolArgs,
     permissions,
@@ -828,6 +844,32 @@ export async function checkPermissionWithHooks(
     modeState,
     agentId,
   );
+
+  if (result.decision !== "deny") {
+    const extensionDecision = await checkExtensionPermissions(
+      {
+        agentId: agentId ?? null,
+        conversationId: extensionPermissionOptions.conversationId ?? null,
+        toolCallId: extensionPermissionOptions.toolCallId ?? null,
+        toolName,
+        args: toolArgs,
+        cwd: workingDirectory,
+        workingDirectory,
+        permissionMode: modeState?.mode ?? permissionMode.getMode(),
+        phase: extensionPermissionOptions.phase ?? "approval",
+      },
+      extensionPermissions,
+    );
+    if (extensionDecision) {
+      result = {
+        decision: extensionDecision.decision,
+        matchedRule: extensionDecision.matchedRule,
+        reason:
+          extensionDecision.reason ??
+          `Matched ${extensionDecision.matchedRule}`,
+      };
+    }
+  }
 
   // If decision is "ask", run PermissionRequest hooks to see if they auto-allow/deny
   if (result.decision === "ask") {

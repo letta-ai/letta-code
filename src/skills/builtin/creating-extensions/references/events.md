@@ -6,7 +6,7 @@ Use events when trusted local code should react to app/session changes or transf
 
 - Capabilities
 - Supported events
-- Tool argument transforms and denial
+- Tool argument transforms
 - Turn input transforms
 - Event handler context
 - Conversation status example
@@ -44,7 +44,7 @@ letta.events.on("event_name", (event, ctx) => {
 });
 ```
 
-Tool events use this same API. Existing settings-based hooks still own blocking decisions and model feedback injection until those contracts are explicitly added to extension events.
+Tool events use this same API. Use `letta.permissions.register` for allow/ask/deny policy; use `tool_start` for last-mile argument transforms and lifecycle reactions.
 
 ```ts
 letta.events.on("tool_start", (event, ctx) => {
@@ -115,7 +115,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 }
 ```
 
-`tool_start` fires immediately before a client-side tool executes. This includes built-in tools, extension tools, and external tools executed through the local tool manager. It runs after permission/approval classification and before `PreToolUse` hooks, so trusted local extensions can change the actual executed arguments after the approval UI has already classified the original request.
+`tool_start` fires immediately before a client-side tool executes. This includes built-in tools, extension tools, and external tools executed through the local tool manager. It runs after permission/approval classification and before `PreToolUse` hooks, so trusted local extensions can change the actual executed arguments after the approval UI has already classified the original request. Extension permission overlays are rechecked after `tool_start` on the final args.
 
 Handlers can inspect `event.args`, mutate it directly, or return replacement args:
 

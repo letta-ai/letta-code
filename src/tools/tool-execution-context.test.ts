@@ -28,9 +28,14 @@ import {
 } from "@/channels/routing";
 import type { ChannelAdapter } from "@/channels/types";
 import {
+  clearExtensionPermissions,
+  registerExtensionPermission,
+} from "@/extensions/permission-registry";
+import {
   clearExtensionTools,
   registerExtensionTool,
 } from "@/extensions/tool-registry";
+import type { ExtensionToolStartEvent } from "@/extensions/types";
 import {
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
   runWithRuntimeContext,
@@ -123,6 +128,7 @@ describe("tool execution context snapshot", () => {
     clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
     clearExternalTools();
+    clearExtensionPermissions();
     clearExtensionTools();
     clearAllRoutes();
     __testOverrideLoadRoutes(null);
@@ -141,6 +147,7 @@ describe("tool execution context snapshot", () => {
 
   afterAll(async () => {
     clearExternalTools();
+    clearExtensionPermissions();
     clearExtensionTools();
     if (initialTools.length > 0) {
       await loadSpecificTools(initialTools);
@@ -189,6 +196,104 @@ describe("tool execution context snapshot", () => {
       { toolContextId: contextId },
     );
     expect(withContext.status).toBe("success");
+  });
+
+  test("rechecks extension permission overlays after tool_start arg transforms", async () => {
+    await loadSpecificTools(["Read"]);
+    registerExtensionPermission({
+      id: "execution-gate",
+      description: "Deny mutated reads",
+      path: "/tmp/execution-gate.ts",
+      owner: {
+        id: "global:/tmp/execution-gate.ts",
+        path: "/tmp/execution-gate.ts",
+        scope: "global",
+        generation: 1,
+      },
+      activationSignal: new AbortController().signal,
+      getContext: () => {
+        throw new Error("unused");
+      },
+      isAvailable: () => true,
+      check(event) {
+        if (
+          event.phase === "execution" &&
+          event.toolName === "Read" &&
+          event.args.file_path === "package.json"
+        ) {
+          return { decision: "deny", reason: "mutated path blocked" };
+        }
+        return undefined;
+      },
+    });
+
+    const prepared = await prepareCurrentToolExecutionContext({
+      extensionEvents: {
+        async emit(name, event) {
+          if (name === "tool_start") {
+            const toolStartEvent = event as ExtensionToolStartEvent;
+            toolStartEvent.args = {
+              ...toolStartEvent.args,
+              file_path: "package.json",
+            };
+          }
+          return { diagnostics: [], handlerCount: 0, name, results: [] };
+        },
+      },
+    });
+
+    const result = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("error");
+    expect(asText(result.toolReturn)).toContain(
+      "extension permission:execution-gate",
+    );
+    expect(asText(result.toolReturn)).toContain("mutated path blocked");
+  });
+
+  test("reports execution-phase ask decisions as blocked approval requests", async () => {
+    await loadSpecificTools(["Read"]);
+    registerExtensionPermission({
+      id: "execution-ask",
+      description: "Ask before execution",
+      path: "/tmp/execution-ask.ts",
+      owner: {
+        id: "global:/tmp/execution-ask.ts",
+        path: "/tmp/execution-ask.ts",
+        scope: "global",
+        generation: 1,
+      },
+      activationSignal: new AbortController().signal,
+      getContext: () => {
+        throw new Error("unused");
+      },
+      isAvailable: () => true,
+      check(event) {
+        if (event.phase === "execution" && event.toolName === "Read") {
+          return { decision: "ask" };
+        }
+        return undefined;
+      },
+    });
+
+    const prepared = await prepareCurrentToolExecutionContext();
+    const result = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    const text = asText(result.toolReturn);
+    expect(result.status).toBe("error");
+    expect(text).toContain("blocked by extension permission:execution-ask");
+    expect(text).toContain(
+      "Approval requested but cannot reopen during execution.",
+    );
+    expect(text).not.toContain("denied by extension permission:execution-ask");
   });
 
   test("prepares explicit tool snapshots without reading the global registry", async () => {

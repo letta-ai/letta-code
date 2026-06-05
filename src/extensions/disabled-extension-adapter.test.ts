@@ -8,6 +8,11 @@ import { DISABLED_EXTENSION_CAPABILITIES } from "@/extensions/capabilities";
 import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
 import { createDisabledExtensionAdapter } from "@/extensions/disabled-extension-adapter";
 import {
+  clearExtensionPermissions,
+  getExtensionPermissionDefinition,
+  registerExtensionPermission,
+} from "@/extensions/permission-registry";
+import {
   clearExtensionTools,
   getExtensionToolDefinition,
   registerExtensionTool,
@@ -43,6 +48,23 @@ function registerTestExtensionTool(name: string): void {
   });
 }
 
+function registerTestExtensionPermission(id: string): void {
+  registerExtensionPermission({
+    activationSignal: new AbortController().signal,
+    check: () => undefined,
+    getContext: () => createExtensionContext(),
+    id,
+    isAvailable: () => true,
+    owner: {
+      generation: 0,
+      id: `test:${id}`,
+      path: `${id}.ts`,
+      scope: "global",
+    },
+    path: `${id}.ts`,
+  });
+}
+
 function registerTestPiProvider(name: string): void {
   registerPiProvider(name, {
     api: "openai-completions",
@@ -68,9 +90,13 @@ describe("disabled extension adapter", () => {
 
     try {
       delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+      registerTestExtensionPermission("stale-permission");
       registerTestExtensionTool("stale_extension_tool");
       registerTestPiProvider("stale-provider");
 
+      expect(
+        getExtensionPermissionDefinition("stale-permission"),
+      ).toBeDefined();
       expect(getExtensionToolDefinition("stale_extension_tool")).toBeDefined();
       expect(listRegisteredPiProviders()).toHaveLength(1);
 
@@ -89,10 +115,14 @@ describe("disabled extension adapter", () => {
       expect(adapter.getSnapshot().registry.sources).toEqual([]);
       expect(adapter.getSnapshot().registry.loadedPaths).toEqual([]);
       expect(adapter.getSnapshot().registry.commands).toEqual({});
+      expect(adapter.getSnapshot().registry.permissions).toEqual({});
       expect(adapter.getSnapshot().registry.tools).toEqual({});
       expect(adapter.getSnapshot().registry.ui.panels).toEqual({});
       expect(adapter.getSnapshot().registry.ui.statuslineRenderer).toBeNull();
       expect(adapter.getBackend()).toBeUndefined();
+      expect(
+        getExtensionPermissionDefinition("stale-permission"),
+      ).toBeUndefined();
       expect(
         getExtensionToolDefinition("stale_extension_tool"),
       ).toBeUndefined();
@@ -120,6 +150,7 @@ describe("disabled extension adapter", () => {
 
       adapter.dispose();
     } finally {
+      clearExtensionPermissions();
       clearExtensionTools();
       clearRegisteredPiProviders();
       if (originalDisableEnv === undefined) {
