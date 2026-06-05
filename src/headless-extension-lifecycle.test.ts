@@ -45,6 +45,7 @@ describe("headless extension adapter", () => {
         tools: true,
         turns: true,
       },
+      permissions: true,
       providers: true,
       ui: {
         panels: false,

@@ -37,6 +37,7 @@ describe("listener extension adapter", () => {
         tools: false,
         turns: false,
       },
+      permissions: false,
       providers: true,
       ui: {
         panels: false,

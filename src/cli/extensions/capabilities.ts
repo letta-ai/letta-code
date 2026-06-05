@@ -8,6 +8,7 @@ export const TUI_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
     tools: true,
     turns: true,
   },
+  permissions: true,
   providers: true,
   ui: {
     panels: true,

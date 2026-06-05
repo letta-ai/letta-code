@@ -1918,6 +1918,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 alwaysRequiresUserInput,
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
+                toolContextId: approvalToolContextIdRef.current,
               });
 
             // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)

@@ -804,6 +804,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             const permission = await checkToolPermission(
               approval.toolName,
               parsedArgs,
+              undefined,
+              undefined,
+              undefined,
+              approvalToolContextIdRef.current,
+              approval.toolCallId,
             );
             return { approval, permission };
           }),
@@ -976,6 +981,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       setIsExecutingTool,
       setPendingApprovals,
       setThinkingMessage,
+      approvalToolContextIdRef,
     ],
   );
 

@@ -14,6 +14,10 @@ import {
   type ExtensionEngine,
 } from "@/extensions/extension-engine";
 import {
+  clearExtensionPermissions,
+  getExtensionPermissionDefinition,
+} from "@/extensions/permission-registry";
+import {
   clearExtensionTools,
   getExtensionToolDefinition,
 } from "@/extensions/tool-registry";
@@ -104,6 +108,7 @@ const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
   tools: true,
   commands: false,
   events: { lifecycle: false, tools: false, turns: false },
+  permissions: false,
   providers: false,
   ui: {
     panels: false,
@@ -114,6 +119,7 @@ const TOOL_ONLY_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
 
 describe("extension engine", () => {
   afterEach(() => {
+    clearExtensionPermissions();
     clearExtensionTools();
     clearRegisteredPiProviders();
   });
@@ -941,6 +947,49 @@ describe("extension engine", () => {
 
       engine.dispose();
       expect(getExtensionToolDefinition("local_weather")).toBeUndefined();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads extension-provided permission overlays with owner metadata", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const extensionPath = path.join(extensionDir, "permissions.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        extensionPath,
+        `export default function(letta) {
+          return letta.permissions.register({
+            id: "plan-mode",
+            description: "Allow reads and plan-file writes while planning",
+            check(event) {
+              if (event.toolName === "Write") {
+                return { decision: "deny", reason: "write blocked while planning" };
+              }
+            },
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(getExtensionErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+      expect(snapshot.permissions["plan-mode"]).toMatchObject({
+        description: "Allow reads and plan-file writes while planning",
+        owner: {
+          generation: 1,
+          id: `global:${extensionPath}`,
+          path: extensionPath,
+        },
+      });
+      expect(getExtensionPermissionDefinition("plan-mode")).toBeDefined();
+
+      engine.dispose();
+      expect(getExtensionPermissionDefinition("plan-mode")).toBeUndefined();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
