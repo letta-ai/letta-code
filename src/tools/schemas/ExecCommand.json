@@ -12,7 +12,7 @@
     },
     "max_output_tokens": {
       "type": "number",
-      "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+      "description": "Output token budget. Defaults to 10000 tokens; larger requests are capped by the exec inline output limit."
     },
     "shell": {
       "type": "string",
