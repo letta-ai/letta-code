@@ -1182,6 +1182,9 @@ export function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
+  const autoConversationTitleStartIndexRef = useRef<number | null>(
+    !resumedExistingConversation ? 0 : null,
+  );
   const shouldAutoGenerateConversationDescriptionRef = useRef(
     !resumedExistingConversation,
   );
@@ -1191,6 +1194,9 @@ export function App({
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
+      autoConversationTitleStartIndexRef.current = enabled
+        ? buffersRef.current.order.length
+        : null;
       shouldAutoGenerateConversationDescriptionRef.current = enabled;
       isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
@@ -1234,7 +1240,11 @@ export function App({
 
     try {
       const messages: ConversationTitleMessage[] = [];
-      for (const lineId of buffersRef.current.order) {
+      const startIndex = autoConversationTitleStartIndexRef.current ?? 0;
+      const titleLineIds = buffersRef.current.order.slice(
+        Math.min(startIndex, buffersRef.current.order.length),
+      );
+      for (const lineId of titleLineIds) {
         const line = buffersRef.current.byId.get(lineId);
         if (line?.kind === "user" || line?.kind === "assistant") {
           const content = line.text.trim();
