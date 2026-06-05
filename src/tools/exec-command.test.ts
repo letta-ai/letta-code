@@ -14,6 +14,17 @@ import {
 
 const isWindows = process.platform === "win32";
 
+function deleteOverflowFiles(output: string): void {
+  for (const match of output.matchAll(
+    /\[Full output written to: (.+?\.txt)\]/g,
+  )) {
+    const filePath = match[1];
+    if (filePath && fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  }
+}
+
 describe.skipIf(isWindows)("Codex unified exec tools", () => {
   beforeEach(() => {
     __resetBackgroundRetentionConfigForTests();
@@ -51,6 +62,35 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(result.output).toContain("Original token count:");
     expect(result.output).toContain("Output:\nhello");
     expect(result.output).not.toContain("Process running with session ID");
+  });
+
+  test("caps exec_command inline output when max_output_tokens is too large", async () => {
+    const result = await exec_command({
+      cmd: "node -e \"process.stdout.write('x'.repeat(50000))\"",
+      max_output_tokens: 80_000,
+    });
+
+    try {
+      expect(result.output).toContain("Process exited with code 0");
+      expect(result.output).toContain(
+        "[Output truncated: showing 30,000 of 50,000 characters.]",
+      );
+      expect(result.output).toContain("[Full output written to:");
+      expect(result.output.length).toBeLessThan(35_000);
+
+      const match = result.output.match(
+        /\[Full output written to: (.+?\.txt)\]/,
+      );
+      expect(match?.[1]).toBeDefined();
+      const overflowPath = match?.[1];
+      if (!overflowPath) {
+        throw new Error("expected overflow path");
+      }
+      expect(fs.existsSync(overflowPath)).toBe(true);
+      expect(fs.readFileSync(overflowPath, "utf-8")).toBe("x".repeat(50_000));
+    } finally {
+      deleteOverflowFiles(result.output);
+    }
   });
 
   test("falls back to available Windows PowerShell when pwsh is unavailable", async () => {
@@ -112,6 +152,38 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
         chars: "",
       }),
     ).rejects.toThrow("Unknown process id");
+  });
+
+  test("caps write_stdin inline output when max_output_tokens is too large", async () => {
+    const first = await exec_command({
+      cmd: "sleep 0.3; node -e \"process.stdout.write('y'.repeat(50000))\"",
+      yield_time_ms: 250,
+    });
+
+    let second: Awaited<ReturnType<typeof write_stdin>> | undefined;
+    try {
+      const match = first.output.match(/Process running with session ID (\d+)/);
+      expect(match?.[1]).toBeDefined();
+
+      second = await write_stdin({
+        session_id: Number(match?.[1]),
+        chars: "",
+        yield_time_ms: 1000,
+        max_output_tokens: 80_000,
+      });
+
+      expect(second.output).toContain("Process exited with code 0");
+      expect(second.output).toContain(
+        "[Output truncated: showing 30,000 of 50,000 characters.]",
+      );
+      expect(second.output).toContain("[Full output written to:");
+      expect(second.output.length).toBeLessThan(35_000);
+    } finally {
+      deleteOverflowFiles(first.output);
+      if (second) {
+        deleteOverflowFiles(second.output);
+      }
+    }
   });
 
   test("empty write_stdin polls wait like Codex background terminal polls", async () => {
