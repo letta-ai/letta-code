@@ -949,6 +949,49 @@ describe("extension engine", () => {
     }
   });
 
+  test("lets extensions report diagnostics intentionally", async () => {
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "reports.ts"),
+        `export default function(letta) {
+          letta.diagnostics.report({ message: "missing optional env" });
+          letta.diagnostics.report({ message: "configuration failed", severity: "error" });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const diagnostics = engine.getSnapshot().diagnostics;
+
+      expect(diagnostics).toMatchObject([
+        {
+          error: expect.objectContaining({
+            message: "missing optional env",
+            name: "ExtensionDiagnosticReport",
+          }),
+          phase: "report",
+          severity: "error",
+        },
+        {
+          error: expect.objectContaining({
+            message: "configuration failed",
+            name: "ExtensionDiagnosticReport",
+          }),
+          phase: "report",
+          severity: "error",
+        },
+      ]);
+      expect(getExtensionErrorDiagnostics(diagnostics)).toHaveLength(2);
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("loads extension-provided tools with owner metadata", async () => {
     const root = createTempDir();
     try {

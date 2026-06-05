@@ -26,6 +26,9 @@ function createError(message: string): Error {
 describe("extension diagnostics", () => {
   test("classifies diagnostic phases for future surfacing", () => {
     expect(getExtensionDiagnosticSeverity("command_override")).toBe("warning");
+    expect(getExtensionDiagnosticSeverity("report")).toBe("error");
+    expect(getExtensionDiagnosticSeverity("report", "warning")).toBe("warning");
+    expect(getExtensionDiagnosticSeverity("report", "error")).toBe("error");
     expect(getExtensionDiagnosticSeverity("activate")).toBe("error");
     expect(getExtensionDiagnosticSeverity("event")).toBe("error");
   });
@@ -75,8 +78,16 @@ describe("extension diagnostics", () => {
       phase: "activate",
       timestamp: 200,
     };
+    const reportError = new Error("missing optional env");
+    reportError.stack = undefined;
+    const report: ExtensionDiagnostic = {
+      error: reportError,
+      owner,
+      phase: "report",
+      timestamp: 300,
+    };
 
-    expect(createExtensionDiagnosticsReport([warning, error])).toEqual({
+    expect(createExtensionDiagnosticsReport([warning, error, report])).toEqual({
       diagnostics: [
         {
           capability: { id: "reload", kind: "command" },
@@ -97,8 +108,16 @@ describe("extension diagnostics", () => {
           stack: "Error: activation failed\n    at extension.ts:1:1",
           timestamp: 200,
         },
+        {
+          errorName: "Error",
+          extension: owner,
+          message: "missing optional env",
+          phase: "report",
+          severity: "error",
+          timestamp: 300,
+        },
       ],
-      errorCount: 1,
+      errorCount: 2,
       warningCount: 1,
     });
   });

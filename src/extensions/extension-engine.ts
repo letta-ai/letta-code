@@ -51,6 +51,8 @@ import type {
   ExtensionCommandRegistration,
   ExtensionContext,
   ExtensionDiagnostic,
+  ExtensionDiagnosticReportOptions,
+  ExtensionDiagnosticSeverity,
   ExtensionEventContext,
   ExtensionEventEmissionResult,
   ExtensionEventHandler,
@@ -138,6 +140,9 @@ export interface LettaExtensionApi {
       name: TName,
       handler: ExtensionEventHandler<TName>,
     ) => LettaExtensionDisposer;
+  };
+  diagnostics: {
+    report: (diagnostic: ExtensionDiagnosticReportOptions) => void;
   };
   ui: {
     clearPanel: (id: string) => void;
@@ -880,6 +885,49 @@ function createLettaExtensionApi(
     return () => unregisterProvider(name);
   };
 
+  const normalizeReportedDiagnostic = (
+    diagnostic: ExtensionDiagnosticReportOptions,
+  ): { message: string; severity: ExtensionDiagnosticSeverity } => {
+    if (!diagnostic || typeof diagnostic !== "object") {
+      throw new Error("Extension diagnostic report must be an object");
+    }
+    if (typeof diagnostic.message !== "string") {
+      throw new Error("Extension diagnostic report must include a message");
+    }
+    const message = diagnostic.message.trim();
+    if (message.length === 0) {
+      throw new Error("Extension diagnostic report message cannot be empty");
+    }
+    if (
+      diagnostic.severity !== undefined &&
+      diagnostic.severity !== "error" &&
+      diagnostic.severity !== "warning"
+    ) {
+      throw new Error(
+        "Extension diagnostic severity must be 'error' or 'warning'",
+      );
+    }
+    return { message, severity: diagnostic.severity ?? "error" };
+  };
+
+  const reportDiagnostic = (diagnostic: ExtensionDiagnosticReportOptions) => {
+    if (!guardLive(undefined)) return;
+    const normalized = normalizeReportedDiagnostic(diagnostic);
+    const error = new Error(normalized.message);
+    error.name = "ExtensionDiagnosticReport";
+    error.stack = undefined;
+    recordExtensionDiagnostic(
+      registry,
+      {
+        error,
+        owner,
+        phase: "report",
+        severity: normalized.severity,
+      },
+      onDiagnostic,
+    );
+  };
+
   const onEvent = <TName extends ExtensionEventName>(
     name: TName,
     handler: ExtensionEventHandler<TName>,
@@ -1004,6 +1052,9 @@ function createLettaExtensionApi(
     events: {
       off: unregisterEvent,
       on: onEvent,
+    },
+    diagnostics: {
+      report: reportDiagnostic,
     },
     ui: {
       clearPanel,
