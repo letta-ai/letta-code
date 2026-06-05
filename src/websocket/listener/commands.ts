@@ -42,6 +42,7 @@ import type {
   StreamDelta,
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
+import { reloadListenerExtensionAdapter } from "./extension-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -52,7 +53,11 @@ import {
 } from "./protocol-outbound";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import { handleIncomingMessage } from "./turn";
-import type { ConversationRuntime, StartListenerOptions } from "./types";
+import type {
+  ConversationRuntime,
+  ListenerRuntime,
+  StartListenerOptions,
+} from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 
@@ -136,7 +141,7 @@ export async function handleExecuteCommand(
         break;
 
       case "reload":
-        output = await handleReloadCommand();
+        output = await handleReloadCommand(conversationRuntime.listener);
         break;
 
       case "context-limit":
@@ -197,7 +202,7 @@ export async function handleExecuteCommand(
   }
 }
 
-async function handleReloadCommand(): Promise<string> {
+async function handleReloadCommand(listener: ListenerRuntime): Promise<string> {
   settingsManager.clearCaches();
   await settingsManager.loadProjectSettings();
   await settingsManager.loadLocalProjectSettings();
@@ -211,6 +216,8 @@ async function handleReloadCommand(): Promise<string> {
       error instanceof Error ? error.message : String(error),
     );
   }
+
+  await reloadListenerExtensionAdapter(listener);
 
   return "Reloaded settings and local extensions";
 }
