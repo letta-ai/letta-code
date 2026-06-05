@@ -544,6 +544,132 @@ describe("PiStreamAdapter", () => {
     expect(events.some((event) => event.type === "local-message")).toBe(true);
   });
 
+  test("compacts before provider call when estimated context enters reserve", async () => {
+    let calls = 0;
+    let compactionCalls = 0;
+    let capturedContext: Context | undefined;
+    const stream: PiStreamFunction = (
+      _model: Model<string>,
+      context: Context,
+    ) => {
+      calls += 1;
+      capturedContext = context;
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({
+      stream,
+      onContextUsage: async (_input, usage) => {
+        if (usage.totalTokens === 0) return null;
+        compactionCalls += 1;
+        expect(usage.totalTokens).toBeGreaterThan(900);
+        return {
+          uiMessages: [
+            {
+              id: "ui-msg-summary",
+              role: "user",
+              content: "compacted summary",
+              timestamp: Date.now(),
+            },
+          ],
+          summary: "compacted summary",
+          stats: { trigger: "context_window_limit" },
+        };
+      },
+    });
+
+    const baseInput = input();
+    const events: ProviderStreamEvent[] = [];
+    for await (const event of adapter.stream({
+      ...baseInput,
+      agent: {
+        ...baseInput.agent,
+        model_settings: {
+          ...baseInput.agent.model_settings,
+          context_window_limit: 1000,
+        },
+      },
+      uiMessages: [
+        {
+          id: "ui-msg-large",
+          role: "user",
+          content: "x".repeat(6000),
+          timestamp: Date.now(),
+        },
+      ],
+    })) {
+      events.push(event);
+    }
+
+    expect(compactionCalls).toBe(1);
+    expect(calls).toBe(1);
+    expect(capturedContext?.messages).toEqual([
+      {
+        role: "user",
+        content: "compacted summary",
+        timestamp: expect.any(Number),
+      },
+    ]);
+    expect(events[0]).toMatchObject({
+      type: "letta-chunk",
+      chunk: { message_type: "event_message", event_type: "compaction" },
+    });
+    expect(events.some((event) => event.type === "local-message")).toBe(true);
+  });
+
+  test("compacts and retries exact Codex context_length_exceeded errors", async () => {
+    let calls = 0;
+    let overflowCompactions = 0;
+    const codexOverflow = assistantErrorMessage(
+      'Codex error:\n{"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Your input exceeds\nthe context window of this model. Please adjust your input and try again.","param":"input"},"sequence_number":2}',
+    );
+
+    const stream: PiStreamFunction = () => {
+      calls += 1;
+      if (calls === 1) {
+        return streamFromEvents(
+          [{ type: "error", reason: "error", error: codexOverflow }],
+          codexOverflow,
+        );
+      }
+
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({
+      stream,
+      onContextWindowOverflow: async (turnInput) => {
+        overflowCompactions += 1;
+        return {
+          uiMessages: turnInput.uiMessages,
+          summary: "compacted after overflow",
+          stats: { trigger: "context_window_overflow" },
+        };
+      },
+    });
+
+    const events: ProviderStreamEvent[] = [];
+    for await (const event of adapter.stream(input())) {
+      events.push(event);
+    }
+
+    expect(calls).toBe(2);
+    expect(overflowCompactions).toBe(1);
+    expect(events[0]).toMatchObject({
+      type: "letta-chunk",
+      chunk: { message_type: "event_message", event_type: "compaction" },
+    });
+    expect(events.some((event) => event.type === "local-message")).toBe(true);
+  });
+
   test("retries empty local provider responses before persisting model output", async () => {
     let calls = 0;
     const stream: PiStreamFunction = () => {

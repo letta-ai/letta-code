@@ -39,6 +39,8 @@ import type {
   ProviderTurnInput,
 } from "./provider-turn-executor";
 import {
+  contextCompactionThreshold,
+  estimateProviderContextTokens,
   providerLettaChunk,
   providerLocalMessage,
   providerStreamPart,
@@ -437,9 +439,24 @@ function isModelOutputEvent(event: ProviderStreamEvent): boolean {
 
 function isOverflowError(error: unknown, contextWindow?: number): boolean {
   if (error instanceof PiProviderError) {
-    return isContextOverflow(error.assistant, contextWindow);
+    return (
+      isContextOverflow(error.assistant, contextWindow) ||
+      isContextWindowOverflowError(error) ||
+      isContextWindowOverflowError(error.assistant)
+    );
   }
   return isContextWindowOverflowError(error);
+}
+
+function usageFromContextEstimate(contextTokens: number): Usage {
+  return {
+    input: contextTokens,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: contextTokens,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
 }
 
 function defaultStream(
@@ -483,6 +500,31 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       summary: compaction.summary,
       ...(compaction.stats ? { compaction_stats: compaction.stats } : {}),
     } as never);
+  }
+
+  private async compactBeforeProviderCall(input: ProviderTurnInput): Promise<{
+    uiMessages: LocalMessage[];
+    summary: string;
+    stats?: LocalCompactionStats;
+  } | null> {
+    if (!this.onContextUsage) return null;
+
+    const contextTokens = estimateProviderContextTokens(input);
+    const resolved = await resolvePiModelForAgent(
+      input.agent.model,
+      input.agent.model_settings,
+      { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
+    );
+    const threshold = contextCompactionThreshold(resolved.model.contextWindow);
+    if (
+      contextTokens === undefined ||
+      threshold === undefined ||
+      contextTokens <= threshold
+    ) {
+      return null;
+    }
+
+    return this.onContextUsage(input, usageFromContextEstimate(contextTokens));
   }
 
   private async *streamOnce(
@@ -567,6 +609,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         }
         if (part.type === "done") {
+          if (isContextOverflow(part.message, resolved.model.contextWindow)) {
+            streamError = new PiProviderError(part.message);
+            break;
+          }
           assertAssistantHasOutputContent(part.message);
           finalMessage = part.message;
           yield providerLocalMessage(
@@ -578,6 +624,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       if (streamError) throw streamError;
       finalMessage ??= await result.result();
+      if (isContextOverflow(finalMessage, resolved.model.contextWindow)) {
+        throw new PiProviderError(finalMessage);
+      }
       assertAssistantHasOutputContent(finalMessage);
       if (
         finalMessage.stopReason === "error" ||
@@ -598,10 +647,21 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
   async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
     let activeInput = input;
+    let preflightCompactionChecked = false;
     let contextOverflowCompactions = 0;
     let transientRetries = 0;
 
     while (true) {
+      if (!preflightCompactionChecked) {
+        preflightCompactionChecked = true;
+        const compaction = await this.compactBeforeProviderCall(activeInput);
+        if (compaction) {
+          activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+          yield* this.emitCompactionChunks(compaction, "context_window_limit");
+          continue;
+        }
+      }
+
       let emittedModelOutput = false;
       try {
         for await (const event of this.streamOnce(activeInput)) {

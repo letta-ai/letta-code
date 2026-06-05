@@ -38,6 +38,8 @@ export type ProviderStreamEvent =
   | { type: "letta-chunk"; chunk: LettaStreamingResponse }
   | { type: "error"; error: unknown };
 
+const LOCAL_CONTEXT_COMPACTION_RESERVE_TOKENS = 16_384;
+
 export function providerStreamPart(
   part: ProviderStreamPart,
 ): ProviderStreamEvent {
@@ -181,6 +183,38 @@ export function estimateProviderContextTokens(
   const toolTokens = estimateSerializedTokens(input.clientTools);
   const total = systemPromptTokens + messageTokens + toolTokens;
   return total > 0 ? total : undefined;
+}
+
+export function contextCompactionThreshold(
+  contextWindow: number | undefined,
+): number | undefined {
+  if (
+    typeof contextWindow !== "number" ||
+    !Number.isFinite(contextWindow) ||
+    contextWindow <= 0
+  ) {
+    return undefined;
+  }
+
+  // Match pi-tui's default 16k generation reserve for large-context models,
+  // but cap the reserve on small local models so they do not compact every turn.
+  const reserveTokens = Math.min(
+    LOCAL_CONTEXT_COMPACTION_RESERVE_TOKENS,
+    Math.max(1, Math.floor(contextWindow * 0.2)),
+  );
+  return Math.max(0, contextWindow - reserveTokens);
+}
+
+export function shouldCompactForContextUsage(input: {
+  contextTokens: number | undefined;
+  contextWindow: number | undefined;
+}): boolean {
+  const threshold = contextCompactionThreshold(input.contextWindow);
+  return (
+    input.contextTokens !== undefined &&
+    threshold !== undefined &&
+    input.contextTokens > threshold
+  );
 }
 
 function createUsageStatisticsChunk(

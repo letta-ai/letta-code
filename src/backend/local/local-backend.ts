@@ -28,6 +28,7 @@ import {
   contextTokensFromUsage,
   estimateProviderContextTokens,
   ProviderTurnExecutor,
+  shouldCompactForContextUsage,
 } from "@/backend/dev/provider-turn-executor";
 import { isRecord } from "@/utils/type-guards";
 import {
@@ -516,11 +517,7 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
     );
-    if (
-      contextTokens === undefined ||
-      contextWindow === undefined ||
-      contextTokens <= contextWindow
-    ) {
+    if (!shouldCompactForContextUsage({ contextTokens, contextWindow })) {
       return null;
     }
 
