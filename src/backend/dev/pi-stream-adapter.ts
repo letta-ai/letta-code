@@ -251,7 +251,7 @@ function toPiMessage(message: LocalMessage): Message | undefined {
   } satisfies Message;
 }
 
-function toPiMessages(messages: LocalMessage[]): Message[] {
+function toPiMessages(messages: readonly LocalMessage[]): Message[] {
   const providerSafeMessages = removeOrphanLocalToolResults(messages).messages;
   let normalized = providerSafeMessages.flatMap((message) => {
     const piMessage = toPiMessage(message);

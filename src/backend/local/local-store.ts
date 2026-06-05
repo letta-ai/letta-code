@@ -42,6 +42,7 @@ import {
   type LocalUserMessage,
 } from "./local-message";
 import {
+  clipOversizedLocalToolResults,
   cloneLocalMessage,
   isLocalToolCallContent,
   mergeSnapshotContentWithExistingToolCalls,
@@ -1102,6 +1103,7 @@ export class LocalStore {
     LocalMessage[]
   >();
   private readonly loadedConversationKeys = new Set<string>();
+  private readonly loadRepairedConversationKeys = new Set<string>();
   private readonly transcriptMetadataByConversationKey = new Map<
     string,
     LocalConversationTranscriptMetadata
@@ -1222,6 +1224,7 @@ export class LocalStore {
         this.conversations.delete(key);
         this.localMessagesByConversationKey.delete(key);
         this.loadedConversationKeys.delete(key);
+        this.loadRepairedConversationKeys.delete(key);
         this.transcriptMetadataByConversationKey.delete(key);
         this.sessionEntryIdsByConversationKey.delete(key);
         this.sessionEntryIdByMessageIdByConversationKey.delete(key);
@@ -2632,7 +2635,15 @@ export class LocalStore {
       metadata.timing,
     );
     const toolResultRepair = removeOrphanLocalToolResults(loadedMessages);
-    const localMessages = toolResultRepair.messages;
+    const toolResultClip = clipOversizedLocalToolResults(
+      toolResultRepair.messages,
+    );
+    const localMessages = toolResultClip.messages;
+    if (toolResultClip.clippedToolResultIds.length > 0) {
+      this.loadRepairedConversationKeys.add(key);
+    } else {
+      this.loadRepairedConversationKeys.delete(key);
+    }
     if (conversation) {
       let repairedConversation = repairSyntheticConversationTimestamps(
         conversation,
@@ -3038,6 +3049,13 @@ export class LocalStore {
     options: LocalTranscriptPersistOptions,
   ): void {
     if (options.transcript === "skip") return;
+    if (
+      options.transcript === undefined &&
+      this.loadRepairedConversationKeys.has(key) &&
+      existsSync(messagesPath)
+    ) {
+      return;
+    }
     const messages = this.localMessagesByConversationKey.get(key) ?? [];
     let activeMessageFormat = messageFormat;
     if (messageFormat === LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT) {
@@ -3099,6 +3117,7 @@ export class LocalStore {
         messagesPath,
         messages,
       );
+      this.loadRepairedConversationKeys.delete(key);
     }
   }
 
