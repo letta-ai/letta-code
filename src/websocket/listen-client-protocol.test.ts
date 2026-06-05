@@ -1048,6 +1048,7 @@ describe("listen-client parseServerMessage", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("reload");
 
     const command = parseServerMessage(
       Buffer.from(
@@ -1320,6 +1321,32 @@ describe("listen-client parseServerMessage", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+
+  test("runs remote reload execute_command", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-reload",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    await handleExecuteCommand(
+      {
+        type: "execute_command",
+        command_id: "reload",
+        request_id: "reload-run-1",
+        runtime: { agent_id: "agent-reload", conversation_id: "default" },
+      },
+      socket as unknown as WebSocket,
+      runtime,
+      {},
+    );
+
+    expect(socket.sentPayloads.join("\n")).toContain(
+      "Reloaded settings and local extensions",
+    );
   });
 
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {

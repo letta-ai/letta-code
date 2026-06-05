@@ -10,6 +10,7 @@ import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
+import { refreshCustomCommands } from "@/cli/commands/custom";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildGoalContinuationPrompt,
@@ -40,6 +41,7 @@ import type {
   SlashCommandStartMessage,
   StreamDelta,
 } from "@/types/protocol_v2";
+import { debugLog } from "@/utils/debug";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -133,6 +135,10 @@ export async function handleExecuteCommand(
         output = await handleCompactCommand(conversationRuntime, trimmedArgs);
         break;
 
+      case "reload":
+        output = await handleReloadCommand();
+        break;
+
       case "context-limit":
       case "set-max-context":
         output = await handleSetMaxContextCommand(
@@ -189,6 +195,24 @@ export async function handleExecuteCommand(
     // "interrupt_in_progress"). Reset it so subsequent user messages drain.
     conversationRuntime.cancelRequested = false;
   }
+}
+
+async function handleReloadCommand(): Promise<string> {
+  settingsManager.clearCaches();
+  await settingsManager.loadProjectSettings();
+  await settingsManager.loadLocalProjectSettings();
+
+  try {
+    refreshCustomCommands();
+  } catch (error) {
+    debugLog(
+      "commands",
+      "refreshCustomCommands failed during /reload:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  return "Reloaded settings and local extensions";
 }
 
 async function handleUpgradeLettaCodeCommand(opts: {

@@ -5,7 +5,6 @@ import {
   estimateSystemPromptTokensFromMemoryDir,
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning";
-import { settingsManager } from "@/settings-manager";
 import type {
   AbortMessageCommand,
   ApprovalResponseBody,
