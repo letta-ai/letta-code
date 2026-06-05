@@ -5,6 +5,17 @@ import {
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
 } from "@/channels/accounts";
+import {
+  __setActiveChannelCredentialsStoreModeForTests,
+  __setChannelSecretStoreOverrideForTests,
+  getActiveChannelCredentialsStoreMode,
+} from "@/channels/credential-store";
+import {
+  __testOverrideLoadRoutes,
+  __testOverrideSaveRoutes,
+  clearAllRoutes,
+  getRoute,
+} from "@/channels/routing";
 import { __listenClientTestUtils } from "@/websocket/listener/client";
 
 class MockSocket {
@@ -22,9 +33,68 @@ const actualChannelsService = await import("@/channels/service");
 afterEach(() => {
   __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
   clearChannelAccountStores();
+  clearAllRoutes();
   __testOverrideLoadChannelAccounts(null);
   __testOverrideSaveChannelAccounts(null);
+  __testOverrideLoadRoutes(null);
+  __testOverrideSaveRoutes(null);
+  __setActiveChannelCredentialsStoreModeForTests(null);
+  __setChannelSecretStoreOverrideForTests(null);
 });
+
+type ChannelsCommand = Parameters<
+  typeof __listenClientTestUtils.handleChannelsProtocolCommand
+>[0];
+
+function setupInMemoryChannelStores(): void {
+  clearChannelAccountStores();
+  clearAllRoutes();
+  __testOverrideLoadChannelAccounts(() => []);
+  __testOverrideSaveChannelAccounts(() => {});
+  __testOverrideLoadRoutes(() => null);
+  __testOverrideSaveRoutes(() => {});
+}
+
+async function sendChannelCommand(
+  command: ChannelsCommand,
+  socket: MockSocket,
+  runtime: ReturnType<typeof __listenClientTestUtils.createListenerRuntime>,
+): Promise<void> {
+  await __listenClientTestUtils.handleChannelsProtocolCommand(
+    command,
+    socket as unknown as WebSocket,
+    runtime,
+    {
+      onStatusChange: undefined,
+      connectionId: "conn-test",
+    },
+    async () => {},
+  );
+}
+
+function parseMessages(socket: MockSocket): Array<Record<string, unknown>> {
+  return socket.sentPayloads.map((payload) => JSON.parse(payload as string));
+}
+
+function findMessage(
+  socket: MockSocket,
+  type: string,
+): Record<string, unknown> | undefined {
+  return parseMessages(socket).find((message) => message.type === type);
+}
+
+async function expectCommandCompletesWithoutSecretFlush(
+  commandPromise: Promise<void>,
+): Promise<void> {
+  const result = await Promise.race([
+    commandPromise.then(() => "completed" as const),
+    new Promise<"timed-out">((resolve) => {
+      setTimeout(() => resolve("timed-out"), 250);
+    }),
+  ]);
+
+  expect(result).toBe("completed");
+}
 
 describe("channel account list responses", () => {
   test("creates custom app accounts on the built-in custom channel", async () => {
@@ -270,9 +340,7 @@ describe("channel account list responses", () => {
   });
 
   test("round-trips plugin config through create, update, list, and get", async () => {
-    clearChannelAccountStores();
-    __testOverrideLoadChannelAccounts(() => []);
-    __testOverrideSaveChannelAccounts(() => {});
+    setupInMemoryChannelStores();
 
     const socket = new MockSocket(WebSocket.OPEN);
     const runtime = __listenClientTestUtils.createListenerRuntime();
@@ -417,6 +485,372 @@ describe("channel account list responses", () => {
           },
         },
       });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
+  test("Telegram account protocol commands complete while keyring writes are pending", async () => {
+    setupInMemoryChannelStores();
+
+    const pendingSecretOperations: Array<() => void> = [];
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    __setChannelSecretStoreOverrideForTests({
+      get: async () => {
+        throw new Error("Secret hydration should not run for LCD commands");
+      },
+      set: async () =>
+        new Promise<void>((resolve) => {
+          pendingSecretOperations.push(resolve);
+        }),
+      delete: async () =>
+        new Promise<boolean>((resolve) => {
+          pendingSecretOperations.push(() => resolve(true));
+        }),
+    });
+    await getActiveChannelCredentialsStoreMode();
+
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const commandPromises: Array<Promise<void>> = [];
+
+    try {
+      const createPromise = sendChannelCommand(
+        {
+          type: "channel_account_create",
+          request_id: "telegram-create-keyring-pending",
+          channel_id: "telegram",
+          account: {
+            account_id: "telegram-bot",
+            display_name: "Telegram Bot",
+            enabled: false,
+            dm_policy: "pairing",
+            config: {
+              token: "telegram-token-1",
+              transcribe_voice: true,
+            },
+          },
+        },
+        socket,
+        runtime,
+      );
+      commandPromises.push(createPromise);
+      await expectCommandCompletesWithoutSecretFlush(createPromise);
+
+      expect(
+        findMessage(socket, "channel_account_create_response"),
+      ).toMatchObject({
+        type: "channel_account_create_response",
+        success: true,
+        channel_id: "telegram",
+        account: {
+          channel_id: "telegram",
+          account_id: "telegram-bot",
+          display_name: "Telegram Bot",
+          configured: true,
+          running: false,
+          dm_policy: "pairing",
+          config: {
+            has_token: true,
+            transcribe_voice: true,
+            binding: {
+              agent_id: null,
+              conversation_id: null,
+            },
+          },
+        },
+      });
+      expect(pendingSecretOperations).toHaveLength(1);
+
+      const updatePromise = sendChannelCommand(
+        {
+          type: "channel_account_update",
+          request_id: "telegram-update-keyring-pending",
+          channel_id: "telegram",
+          account_id: "telegram-bot",
+          patch: {
+            display_name: "Telegram Bot Updated",
+            dm_policy: "allowlist",
+            allowed_users: ["8450770457"],
+            config: {
+              token: "telegram-token-2",
+              transcribe_voice: false,
+            },
+          },
+        },
+        socket,
+        runtime,
+      );
+      commandPromises.push(updatePromise);
+      await expectCommandCompletesWithoutSecretFlush(updatePromise);
+
+      expect(
+        findMessage(socket, "channel_account_update_response"),
+      ).toMatchObject({
+        type: "channel_account_update_response",
+        success: true,
+        channel_id: "telegram",
+        account: {
+          account_id: "telegram-bot",
+          display_name: "Telegram Bot Updated",
+          dm_policy: "allowlist",
+          allowed_users: ["8450770457"],
+          config: {
+            has_token: true,
+            transcribe_voice: false,
+          },
+        },
+      });
+      expect(pendingSecretOperations).toHaveLength(2);
+
+      const deletePromise = sendChannelCommand(
+        {
+          type: "channel_account_delete",
+          request_id: "telegram-delete-keyring-pending",
+          channel_id: "telegram",
+          account_id: "telegram-bot",
+        },
+        socket,
+        runtime,
+      );
+      commandPromises.push(deletePromise);
+      await expectCommandCompletesWithoutSecretFlush(deletePromise);
+
+      expect(
+        findMessage(socket, "channel_account_delete_response"),
+      ).toMatchObject({
+        type: "channel_account_delete_response",
+        success: true,
+        channel_id: "telegram",
+        account_id: "telegram-bot",
+        deleted: true,
+      });
+      // Delete is intentionally non-hydrating for the LCD command path, so it
+      // should not enqueue another keyring operation before responding.
+      expect(pendingSecretOperations).toHaveLength(2);
+    } finally {
+      for (const resolveSecretOperation of pendingSecretOperations.splice(0)) {
+        resolveSecretOperation();
+      }
+      await Promise.allSettled(commandPromises);
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
+  test("Telegram route update creates a route and binds the account through the protocol", async () => {
+    setupInMemoryChannelStores();
+
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    try {
+      await sendChannelCommand(
+        {
+          type: "channel_account_create",
+          request_id: "telegram-create-for-route",
+          channel_id: "telegram",
+          account: {
+            account_id: "telegram-bot",
+            display_name: "Telegram Bot",
+            enabled: false,
+            dm_policy: "open",
+            config: {
+              token: "telegram-token",
+            },
+          },
+        },
+        socket,
+        runtime,
+      );
+
+      await sendChannelCommand(
+        {
+          type: "channel_route_update",
+          request_id: "telegram-route-create",
+          channel_id: "telegram",
+          account_id: "telegram-bot",
+          chat_id: "8450770457",
+          runtime: {
+            agent_id: "agent-telegram",
+            conversation_id: "default",
+          },
+        },
+        socket,
+        runtime,
+      );
+
+      await sendChannelCommand(
+        {
+          type: "channel_get_config",
+          request_id: "telegram-get-bound-config",
+          channel_id: "telegram",
+          account_id: "telegram-bot",
+        },
+        socket,
+        runtime,
+      );
+
+      expect(
+        findMessage(socket, "channel_route_update_response"),
+      ).toMatchObject({
+        type: "channel_route_update_response",
+        request_id: "telegram-route-create",
+        success: true,
+        channel_id: "telegram",
+        chat_id: "8450770457",
+        route: {
+          channel_id: "telegram",
+          account_id: "telegram-bot",
+          chat_id: "8450770457",
+          agent_id: "agent-telegram",
+          conversation_id: "default",
+          enabled: true,
+        },
+      });
+      expect(getRoute("telegram", "8450770457", "telegram-bot")).toEqual(
+        expect.objectContaining({
+          accountId: "telegram-bot",
+          agentId: "agent-telegram",
+          conversationId: "default",
+        }),
+      );
+      expect(findMessage(socket, "channel_get_config_response")).toMatchObject({
+        type: "channel_get_config_response",
+        request_id: "telegram-get-bound-config",
+        success: true,
+        config: {
+          channel_id: "telegram",
+          account_id: "telegram-bot",
+          config: {
+            has_token: true,
+            binding: {
+              agent_id: "agent-telegram",
+              conversation_id: "default",
+            },
+          },
+        },
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
+  test("Telegram channel_set_config manages and modifies channel config through the protocol", async () => {
+    setupInMemoryChannelStores();
+    __setActiveChannelCredentialsStoreModeForTests("file");
+
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    try {
+      await sendChannelCommand(
+        {
+          type: "channel_account_create",
+          request_id: "telegram-manage-create",
+          channel_id: "telegram",
+          account: {
+            account_id: "telegram-managed-bot",
+            display_name: "Telegram Managed Bot",
+            enabled: false,
+            dm_policy: "pairing",
+            config: {
+              token: "telegram-token",
+              group_mode: "open",
+              transcribe_voice: false,
+              inbound_debounce_ms: 100,
+            },
+          },
+        },
+        socket,
+        runtime,
+      );
+
+      await sendChannelCommand(
+        {
+          type: "channel_set_config",
+          request_id: "telegram-manage-set-config",
+          channel_id: "telegram",
+          account_id: "telegram-managed-bot",
+          config: {
+            dm_policy: "allowlist",
+            allowed_users: ["8450770457"],
+            plugin_config: {
+              group_mode: "mention-only",
+              transcribe_voice: true,
+              inbound_debounce_ms: 750,
+            },
+          },
+        },
+        socket,
+        runtime,
+      );
+
+      await sendChannelCommand(
+        {
+          type: "channel_get_config",
+          request_id: "telegram-manage-get-config",
+          channel_id: "telegram",
+          account_id: "telegram-managed-bot",
+        },
+        socket,
+        runtime,
+      );
+
+      const messages = parseMessages(socket);
+      expect(findMessage(socket, "channel_set_config_response")).toMatchObject({
+        type: "channel_set_config_response",
+        request_id: "telegram-manage-set-config",
+        success: true,
+        config: {
+          channel_id: "telegram",
+          account_id: "telegram-managed-bot",
+          display_name: "Telegram Managed Bot",
+          enabled: false,
+          dm_policy: "allowlist",
+          allowed_users: ["8450770457"],
+          config: {
+            has_token: true,
+            group_mode: "mention-only",
+            transcribe_voice: true,
+            inbound_debounce_ms: 750,
+          },
+        },
+      });
+      expect(findMessage(socket, "channel_get_config_response")).toMatchObject({
+        type: "channel_get_config_response",
+        request_id: "telegram-manage-get-config",
+        success: true,
+        config: {
+          channel_id: "telegram",
+          account_id: "telegram-managed-bot",
+          display_name: "Telegram Managed Bot",
+          dm_policy: "allowlist",
+          allowed_users: ["8450770457"],
+          config: {
+            has_token: true,
+            group_mode: "mention-only",
+            transcribe_voice: true,
+            inbound_debounce_ms: 750,
+          },
+        },
+      });
+      expect(
+        messages.filter(
+          (message) => message.type === "channel_accounts_updated",
+        ),
+      ).toContainEqual(
+        expect.objectContaining({
+          channel_id: "telegram",
+          account_id: "telegram-managed-bot",
+        }),
+      );
+      expect(
+        messages.filter((message) => message.type === "channels_updated"),
+      ).toContainEqual(
+        expect.objectContaining({
+          channel_id: "telegram",
+        }),
+      );
     } finally {
       __listenClientTestUtils.stopRuntime(runtime, true);
     }
