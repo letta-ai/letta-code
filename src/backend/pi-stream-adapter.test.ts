@@ -18,6 +18,7 @@ import type {
   ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
 import { emptyLocalUsage } from "@/backend/local/local-message";
+import { LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import {
   createOrUpdateLocalProvider,
   LOCAL_CHATGPT_PROVIDER_NAME,
@@ -493,6 +494,93 @@ describe("PiStreamAdapter", () => {
     expect(
       messages.filter((message) => message.role === "toolResult"),
     ).toHaveLength(1);
+  });
+
+  test("clips oversized tool results only in provider context", async () => {
+    let capturedContext: Context | undefined;
+    const stream: PiStreamFunction = (
+      _model: Model<string>,
+      context: Context,
+    ) => {
+      capturedContext = context;
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({ stream });
+    const hugeToolOutput = `${"x".repeat(60_000)}TAIL`;
+    const turnInput: ProviderTurnInput = {
+      ...input(),
+      uiMessages: [
+        {
+          id: "ui-msg-1",
+          role: "user",
+          content: "run command",
+          timestamp: Date.now(),
+        },
+        {
+          id: "ui-msg-2",
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "call-huge",
+              name: "ShellCommand",
+              arguments: { command: "cat huge.log" },
+            },
+          ],
+          api: "openai-responses" as never,
+          provider: "openai" as never,
+          model: "gpt-5.5",
+          usage: emptyLocalUsage(),
+          stopReason: "toolUse",
+          timestamp: Date.now(),
+        },
+        {
+          id: "ui-msg-3",
+          role: "toolResult",
+          toolCallId: "call-huge",
+          toolName: "ShellCommand",
+          content: [{ type: "text", text: hugeToolOutput }],
+          isError: false,
+          timestamp: Date.now(),
+        },
+      ],
+    };
+
+    for await (const _event of adapter.stream(turnInput)) {
+      // drain
+    }
+
+    expect(capturedContext).toBeDefined();
+    const providerToolResult = capturedContext?.messages.find(
+      (message) => message.role === "toolResult",
+    );
+    if (!providerToolResult || providerToolResult.role !== "toolResult") {
+      throw new Error("Expected provider tool result");
+    }
+    const providerText = providerToolResult.content.find(
+      (content) => content.type === "text",
+    )?.text;
+    expect(providerText?.length).toBeLessThanOrEqual(
+      LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS,
+    );
+    expect(providerText).toContain("Tool result truncated for provider prompt");
+    expect(providerText?.endsWith("TAIL")).toBe(true);
+
+    const storedText = turnInput.uiMessages.find(
+      (message) => message.role === "toolResult",
+    );
+    expect(storedText?.role).toBe("toolResult");
+    if (storedText?.role === "toolResult") {
+      expect(storedText.content[0]?.type).toBe("text");
+      if (storedText.content[0]?.type === "text") {
+        expect(storedText.content[0].text).toBe(hugeToolOutput);
+      }
+    }
   });
 
   test("retries retryable Codex transport errors before model output", async () => {

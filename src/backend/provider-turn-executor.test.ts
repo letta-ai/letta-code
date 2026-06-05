@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { HeadlessTurnExecutorInput } from "@/backend/dev/headless-turn-executor";
 import {
+  buildProviderTurnInput,
+  estimateProviderContextTokens,
   type ProviderStreamAdapter,
   ProviderTurnExecutor,
   providerLocalMessage,
@@ -11,6 +13,7 @@ import {
   emptyLocalUsage,
   type LocalMessage,
 } from "@/backend/local/local-message";
+import { LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import {
   getAttachedLocalMessage,
   isLocalStateChunkOnly,
@@ -246,6 +249,47 @@ describe("ProviderTurnExecutor", () => {
 
     expect(usage?.total_tokens).toBe(0);
     expect(usage?.context_tokens).toBeGreaterThan(0);
+  });
+
+  test("estimates context tokens from provider-projected tool results", () => {
+    const turnInput = input();
+    turnInput.uiMessages = [
+      {
+        id: "local-assistant-tool",
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call-huge",
+            name: "ShellCommand",
+            arguments: { command: "cat huge.log" },
+          },
+        ],
+        api: "openai-responses" as never,
+        provider: "openai" as never,
+        model: "gpt-5.5",
+        usage: emptyLocalUsage(),
+        stopReason: "toolUse",
+        timestamp: Date.now(),
+      },
+      {
+        id: "local-tool-huge",
+        role: "toolResult",
+        toolCallId: "call-huge",
+        toolName: "ShellCommand",
+        content: [{ type: "text", text: "x".repeat(120_000) }],
+        isError: false,
+        timestamp: Date.now(),
+      },
+    ];
+
+    const estimate = estimateProviderContextTokens(
+      buildProviderTurnInput(turnInput),
+    );
+    expect(estimate).toBeDefined();
+    expect(estimate).toBeLessThan(
+      Math.ceil((LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS + 10_000) / 4),
+    );
   });
 
   test("uses latest total_tokens for context_tokens when provider reports usage", async () => {

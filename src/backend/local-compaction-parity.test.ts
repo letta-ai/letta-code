@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  estimateProviderProjectedLocalMessageTokens,
   formatLocalMessagesForSummary,
   type LocalCompactionStats,
   packageLocalSummaryMessage,
@@ -8,6 +9,7 @@ import {
   emptyLocalUsage,
   type LocalMessage,
 } from "@/backend/local/local-message";
+import { LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 
 function user(
   id: string,
@@ -109,6 +111,26 @@ describe("local compaction API parity", () => {
 
     expect(transcript).toBe(
       ' \n[assistant] -> ShellCommand({"command":"cat huge.log"})\n[tool] xxxxxxxxxx... [truncated 5 chars]\n \n. Generate the summary.',
+    );
+  });
+
+  test("estimates compacted context using provider-projected tool results", () => {
+    const projectedTokens = estimateProviderProjectedLocalMessageTokens([
+      assistant("assistant-tool", [
+        {
+          type: "toolCall",
+          id: "call-big",
+          name: "ShellCommand",
+          arguments: { command: "cat huge.log" },
+        },
+      ]),
+      toolResult("tool-big", [
+        { type: "text", text: `${"x".repeat(100_000)}TAIL` },
+      ]),
+    ]);
+
+    expect(projectedTokens).toBeLessThan(
+      Math.ceil((LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS + 10_000) / 4),
     );
   });
 

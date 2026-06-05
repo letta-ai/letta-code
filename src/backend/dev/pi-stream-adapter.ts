@@ -20,7 +20,7 @@ import {
   type LocalAssistantMessage,
   type LocalMessage,
 } from "@/backend/local/local-message";
-import { removeOrphanLocalToolResults } from "@/backend/local/local-message-projection";
+import { projectLocalMessagesForProvider } from "@/backend/local/local-message-projection";
 import type { ClientTool } from "@/tools/manager";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
@@ -251,8 +251,9 @@ function toPiMessage(message: LocalMessage): Message | undefined {
   } satisfies Message;
 }
 
-function toPiMessages(messages: LocalMessage[]): Message[] {
-  const providerSafeMessages = removeOrphanLocalToolResults(messages).messages;
+function toPiMessages(messages: readonly LocalMessage[]): Message[] {
+  const providerSafeMessages =
+    projectLocalMessagesForProvider(messages).messages;
   let normalized = providerSafeMessages.flatMap((message) => {
     const piMessage = toPiMessage(message);
     return piMessage ? [piMessage] : [];

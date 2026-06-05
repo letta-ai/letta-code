@@ -14,6 +14,7 @@ import {
 } from "@/backend/dev/pi-model-factory";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
+import { projectLocalMessagesForProvider } from "./local-message-projection";
 import type { LocalAgentRecord } from "./local-types";
 
 const ALL_WORD_LIMIT = 500;
@@ -527,7 +528,8 @@ export function planLocalSlidingWindowCompaction(
     if (cutoffIndex === undefined) continue;
 
     const messagesToKeep = messages.slice(cutoffIndex);
-    approxTokenCount = estimateLocalMessageTokens(messagesToKeep);
+    approxTokenCount =
+      estimateProviderProjectedLocalMessageTokens(messagesToKeep);
   }
 
   if (cutoffIndex === undefined || evictionPercentage >= 1.0) {
@@ -577,6 +579,17 @@ export async function summarizeLocalMessagesSlidingWindow(
 
 export function estimateLocalMessageTokens(messages: LocalMessage[]): number {
   const chars = messages.reduce(
+    (total, message) => total + JSON.stringify(message).length,
+    0,
+  );
+  return Math.ceil(chars / 4);
+}
+
+export function estimateProviderProjectedLocalMessageTokens(
+  messages: LocalMessage[],
+): number {
+  const projectedMessages = projectLocalMessagesForProvider(messages).messages;
+  const chars = projectedMessages.reduce(
     (total, message) => total + JSON.stringify(message).length,
     0,
   );

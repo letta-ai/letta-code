@@ -11,6 +11,8 @@ import type {
 } from "./local-message";
 import type { StoredMessage } from "./local-types";
 
+export const LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS = 40_000;
+
 type AssistantContent = LocalAssistantMessage["content"][number];
 
 export function isLocalToolCallContent(
@@ -401,6 +403,92 @@ export function removeOrphanLocalToolResults(
   return {
     messages: removedMessageIds.length > 0 ? repaired : [...messages],
     removedMessageIds,
+  };
+}
+
+function truncateProviderToolResultText(
+  text: string,
+  maxChars: number,
+): string {
+  if (text.length <= maxChars) return text;
+
+  const markerPrefix = "\n[Tool result truncated for provider prompt: omitted ";
+  const markerSuffix = " chars]\n";
+  let marker = `${markerPrefix}${text.length - maxChars}${markerSuffix}`;
+  let keepChars = Math.max(0, maxChars - marker.length);
+  let headChars = Math.ceil(keepChars / 2);
+  let tailChars = keepChars - headChars;
+  let omittedChars = text.length - headChars - tailChars;
+
+  marker = `${markerPrefix}${omittedChars}${markerSuffix}`;
+  keepChars = Math.max(0, maxChars - marker.length);
+  headChars = Math.ceil(keepChars / 2);
+  tailChars = keepChars - headChars;
+  omittedChars = text.length - headChars - tailChars;
+  marker = `${markerPrefix}${omittedChars}${markerSuffix}`;
+
+  return `${text.slice(0, headChars)}${marker}${
+    tailChars > 0 ? text.slice(-tailChars) : ""
+  }`;
+}
+
+export interface LocalProviderMessageProjectionResult {
+  messages: readonly LocalMessage[];
+  removedMessageIds: string[];
+  clippedToolResultIds: string[];
+}
+
+export function projectLocalMessagesForProvider(
+  messages: readonly LocalMessage[],
+  options: { maxToolResultTextChars?: number } = {},
+): LocalProviderMessageProjectionResult {
+  const orphanRepair = removeOrphanLocalToolResults(messages);
+  const maxToolResultTextChars =
+    options.maxToolResultTextChars ?? LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS;
+  let projectedMessages: LocalMessage[] | undefined;
+  const clippedToolResultIds: string[] = [];
+
+  const sourceMessages = orphanRepair.messages;
+  for (const [messageIndex, message] of sourceMessages.entries()) {
+    if (message.role !== "toolResult") continue;
+
+    let projectedContent: LocalToolResultMessage["content"] | undefined;
+    for (
+      let contentIndex = 0;
+      contentIndex < message.content.length;
+      contentIndex++
+    ) {
+      const content = message.content[contentIndex];
+      if (
+        content?.type !== "text" ||
+        content.text.length <= maxToolResultTextChars
+      ) {
+        continue;
+      }
+
+      if (!projectedContent) projectedContent = [...message.content];
+      projectedContent[contentIndex] = {
+        ...content,
+        text: truncateProviderToolResultText(
+          content.text,
+          maxToolResultTextChars,
+        ),
+      };
+    }
+
+    if (!projectedContent) continue;
+    projectedMessages ??= [...sourceMessages];
+    projectedMessages[messageIndex] = {
+      ...message,
+      content: projectedContent,
+    };
+    clippedToolResultIds.push(message.id);
+  }
+
+  return {
+    messages: projectedMessages ?? sourceMessages,
+    removedMessageIds: orphanRepair.removedMessageIds,
+    clippedToolResultIds,
   };
 }
 
