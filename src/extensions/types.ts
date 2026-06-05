@@ -194,10 +194,6 @@ export interface ExtensionToolStartEvent {
 
 export interface ExtensionToolStartResult {
   args?: Record<string, unknown>;
-  /** If true, the tool execution is denied. All handlers still run, but any denial blocks the tool. */
-  deny?: boolean;
-  /** Human-readable reason for the denial. Shown to the model as the tool error message. */
-  reason?: string;
 }
 
 export interface ExtensionEventMap {

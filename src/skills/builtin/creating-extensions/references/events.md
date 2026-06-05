@@ -138,20 +138,6 @@ Handlers run in registration order. Later handlers see the current args after ea
 
 `tool_start` is intentionally a trusted local extension point: it can rewrite commands, file paths, and other tool inputs before execution. Keep transforms focused and unsurprising.
 
-### Denying tool execution
-
-Handlers can deny a tool by returning `{ deny: true, reason?: "..." }`. All handlers still run (for side effects like logging or state updates), but if any handler denies, the tool is blocked. The first denial reason is shown to the model as the tool error message.
-
-```ts
-letta.events.on("tool_start", (event) => {
-  if (event.toolName === "Bash" && String(event.args.command).includes("rm -rf")) {
-    return { deny: true, reason: "Destructive command blocked." };
-  }
-});
-```
-
-Denial runs before `PreToolUse` hooks. If an extension denies a tool, hooks are not invoked for that tool call.
-
 `turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns.
 
 Handlers can mutate `event.input` directly or return replacement input:
