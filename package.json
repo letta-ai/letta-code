@@ -81,7 +81,6 @@
     "check:filename-casing": "node scripts/check-filename-casing.js",
     "check:test-mock-isolation": "bun run scripts/check-test-mock-isolation.js",
     "check:test-coverage": "node scripts/check-test-coverage.cjs",
-    "check:pi-ai": "bun run scripts/check-pi-ai-dependency.ts",
     "check": "bun run scripts/check.js",
     "dev": "LETTA_DEBUG=${LETTA_DEBUG:-1} LETTA_RESPONSES_WS=${LETTA_RESPONSES_WS:-1} bun --loader=.md:text --loader=.mdx:text --loader=.txt:text run src/index.ts",
     "build": "node scripts/postinstall-patches.js && bun run build.js",

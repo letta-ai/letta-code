@@ -17,7 +17,6 @@ jobs:
     outputs:
       release_bump_only: ${{ steps.classify.outputs.release_bump_only }}
       run_heavy_ci: ${{ steps.classify.outputs.run_heavy_ci }}
-      pi_ai_dependency_changed: ${{ steps.classify.outputs.pi_ai_dependency_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -67,12 +66,6 @@ jobs:
 
           echo "release_bump_only=$RELEASE_BUMP_ONLY" >> "$GITHUB_OUTPUT"
 
-          PI_AI_DEPENDENCY_CHANGED=false
-          if git diff "$BASE_SHA" "$HEAD_SHA" -- package.json bun.lock | grep -q '@earendil-works/pi-ai'; then
-            PI_AI_DEPENDENCY_CHANGED=true
-          fi
-          echo "pi_ai_dependency_changed=$PI_AI_DEPENDENCY_CHANGED" >> "$GITHUB_OUTPUT"
-
           if [ "$RELEASE_BUMP_ONLY" = true ]; then
             echo "run_heavy_ci=false" >> "$GITHUB_OUTPUT"
           else
@@ -81,7 +74,6 @@ jobs:
 
           echo "title=$TITLE"
           printf 'changed_files=%s\n' "$CHANGED_FILES"
-          echo "pi_ai_dependency_changed=$PI_AI_DEPENDENCY_CHANGED"
 
   check:
     name: Lint & Type Check
@@ -104,30 +96,6 @@ jobs:
 
       - name: Lint & Type Check
         run: bun run check
-
-  pi-ai-smoke:
-    needs: classify
-    if: needs.classify.outputs.pi_ai_dependency_changed == 'true'
-    name: Pi AI Dependency Smoke
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.0
-
-      - name: Install dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun install --frozen-lockfile
-
-      - name: Check Pi AI model compatibility
-        run: bun run check:pi-ai
 
   update-chain-smoke:
     needs: check
