@@ -325,7 +325,6 @@ export function App({
   startupApprovals = [],
   messageHistory = [],
   resumedExistingConversation = false,
-  tokenStreaming = false,
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
   agentProvenance = null,
@@ -975,10 +974,6 @@ export function App({
       }
     })();
   }, []);
-
-  // Token streaming preference (can be toggled at runtime)
-  const [tokenStreamingEnabled, setTokenStreamingEnabled] =
-    useState(tokenStreaming);
 
   // Reasoning tier Tab cycling preference (opt-in only, persisted globally)
   const [reasoningTabCycleEnabled, _setReasoningTabCycleEnabled] = useState(
@@ -2230,10 +2225,10 @@ export function App({
   // Track whether we've already backfilled history (should only happen once)
   const hasBackfilledRef = useRef(false);
 
-  // Keep buffers in sync with tokenStreamingEnabled state for aggressive static promotion
+  // Keep buffers in continuous rendering mode for aggressive static promotion.
   useEffect(() => {
-    buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
-  }, [tokenStreamingEnabled]);
+    buffersRef.current.tokenStreamingEnabled = true;
+  }, []);
 
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
@@ -2530,7 +2525,6 @@ export function App({
     await settingsManager.loadLocalProjectSettings();
 
     const settings = settingsManager.getSettings();
-    setTokenStreamingEnabled(settings.tokenStreaming);
     _setReasoningTabCycleEnabled(settings.reasoningTabCycleEnabled === true);
     _setShowCompactionsEnabled(settings.showCompactions === true);
 
@@ -4128,7 +4122,6 @@ export function App({
     setStaticRenderEpoch,
     setStreaming,
     setThinkingMessage,
-    setTokenStreamingEnabled,
     setTrajectoryTokenBase,
     setUiPermissionMode,
     setUiGoalLoopActive,
@@ -4138,7 +4131,6 @@ export function App({
     systemInfoReminderEnabled,
     systemPromptRecompileByConversationRef:
       _systemPromptRecompileByConversationRef,
-    tokenStreamingEnabled,
     trajectoryRunTokenStartRef,
     trajectoryTokenDisplayRef,
     tuiQueueRef,
@@ -4576,16 +4568,9 @@ export function App({
           return false;
         return ln.phase === "running";
       }
-      if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
       return ln.phase === "streaming";
     });
-  }, [
-    lines,
-    tokenStreamingEnabled,
-    showCompactionsEnabled,
-    staticItems.length,
-    deferredCommitAt,
-  ]);
+  }, [lines, showCompactionsEnabled, staticItems.length, deferredCommitAt]);
 
   // Subscribe to subagent state for reactive overflow detection
   const { agents: subagents } = useSyncExternalStore(

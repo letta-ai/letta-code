@@ -8,7 +8,7 @@ import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 
 export interface Settings {
   lastAgent: string | null;
-  tokenStreaming: boolean;
+  tokenStreaming: boolean; // Backwards-compatible setting; continuous rendering is always enabled.
   globalSharedBlockIds: Record<string, string>; // label -> blockId mapping (persona, human; style moved to project settings)
   permissions?: PermissionRules;
   env?: Record<string, string>;
@@ -27,9 +27,13 @@ export interface ProjectSettings {
 
 const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
-  tokenStreaming: false,
+  tokenStreaming: true,
   globalSharedBlockIds: {},
 };
+
+function normalizeSettings(settings: Partial<Settings>): Settings {
+  return { ...DEFAULT_SETTINGS, ...settings, tokenStreaming: true };
+}
 
 function getSettingsPath(): string {
   return join(homedir(), ".letta", "settings.json");
@@ -46,8 +50,9 @@ export async function loadSettings(): Promise<Settings> {
     // Check if settings file exists
     if (!exists(settingsPath)) {
       // Create default settings file
-      await saveSettings(DEFAULT_SETTINGS);
-      return DEFAULT_SETTINGS;
+      const defaultSettings = normalizeSettings({});
+      await saveSettings(defaultSettings);
+      return defaultSettings;
     }
 
     // Read and parse settings
@@ -55,10 +60,10 @@ export async function loadSettings(): Promise<Settings> {
     const settings = JSON.parse(content) as Settings;
 
     // Merge with defaults in case new fields were added
-    return { ...DEFAULT_SETTINGS, ...settings };
+    return normalizeSettings(settings);
   } catch (error) {
     console.error("Error loading settings, using defaults:", error);
-    return DEFAULT_SETTINGS;
+    return normalizeSettings({});
   }
 }
 
@@ -69,7 +74,10 @@ export async function saveSettings(settings: Settings): Promise<void> {
   const settingsPath = getSettingsPath();
 
   try {
-    await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+    await writeFile(
+      settingsPath,
+      JSON.stringify(normalizeSettings(settings), null, 2),
+    );
   } catch (error) {
     console.error("Error saving settings:", error);
     throw error;
@@ -83,7 +91,7 @@ export async function updateSettings(
   updates: Partial<Settings>,
 ): Promise<Settings> {
   const currentSettings = await loadSettings();
-  const newSettings = { ...currentSettings, ...updates };
+  const newSettings = normalizeSettings({ ...currentSettings, ...updates });
   await saveSettings(newSettings);
   return newSettings;
 }

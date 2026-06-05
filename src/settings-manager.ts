@@ -75,7 +75,7 @@ export interface ConversationGoal {
 export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
-  tokenStreaming: boolean;
+  tokenStreaming: boolean; // Backwards-compatible setting; continuous rendering is always enabled.
   reasoningTabCycleEnabled: boolean; // Tab cycles reasoning tiers only when explicitly enabled
   showCompactions?: boolean;
   enableSleeptime: boolean;
@@ -162,7 +162,7 @@ export interface LocalProjectSettings {
 
 const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
-  tokenStreaming: false,
+  tokenStreaming: true,
   reasoningTabCycleEnabled: false,
   showCompactions: false,
   enableSleeptime: false,
@@ -351,7 +351,10 @@ class SettingsManager {
   private normalizeSettingsRecord(
     raw: Record<string, unknown>,
   ): Record<string, unknown> {
-    const normalized = { ...raw };
+    const normalized: Record<string, unknown> = {
+      ...raw,
+      tokenStreaming: true,
+    };
     delete normalized.reflectionBehavior;
     return normalized;
   }
@@ -421,6 +424,7 @@ class SettingsManager {
     if (this.initialized) return;
 
     const settingsPath = this.getSettingsPath();
+    let shouldPersistSettingsMigration = false;
     let shouldRollbackAutoConversationTitles = false;
 
     try {
@@ -448,6 +452,11 @@ class SettingsManager {
           // Mark for deletion on next persist; keep startup backward-compatible.
           this.markDirty("reflectionBehavior");
         }
+        if (loadedSettingsRaw.tokenStreaming !== true) {
+          loadedSettingsRaw.tokenStreaming = true;
+          shouldPersistSettingsMigration = true;
+          this.markDirty("tokenStreaming");
+        }
         shouldRollbackAutoConversationTitles =
           loadedSettingsRaw.autoConversationTitlesRollbackApplied !== true;
         if (shouldRollbackAutoConversationTitles) {
@@ -470,7 +479,10 @@ class SettingsManager {
 
       this.initialized = true;
 
-      if (shouldRollbackAutoConversationTitles) {
+      if (
+        shouldPersistSettingsMigration ||
+        shouldRollbackAutoConversationTitles
+      ) {
         try {
           await this.persistSettings();
         } catch {
@@ -750,7 +762,11 @@ class SettingsManager {
     }
 
     // Extract secure tokens from updates
-    const { env, refreshToken, ...otherUpdates } = updates;
+    const { env, refreshToken, ...rawOtherUpdates } = updates;
+    const otherUpdates = { ...rawOtherUpdates };
+    if (Object.hasOwn(otherUpdates, "tokenStreaming")) {
+      otherUpdates.tokenStreaming = true;
+    }
     let apiKey: string | undefined;
     let updatedEnv = env;
 

@@ -299,7 +299,6 @@ type SubmitHandlerContext = {
   setStaticRenderEpoch: Dispatch<SetStateAction<number>>;
   setStreaming: (value: boolean) => void;
   setThinkingMessage: Dispatch<SetStateAction<string>>;
-  setTokenStreamingEnabled: Dispatch<SetStateAction<boolean>>;
   setTrajectoryTokenBase: Dispatch<SetStateAction<number>>;
   setUiPermissionMode: (mode: PermissionMode) => void;
   setUiGoalLoopActive: Dispatch<SetStateAction<boolean>>;
@@ -311,7 +310,6 @@ type SubmitHandlerContext = {
   systemPromptRecompileByConversationRef: MutableRefObject<
     Map<string, Promise<void>>
   >;
-  tokenStreamingEnabled: boolean;
   trajectoryRunTokenStartRef: MutableRefObject<number>;
   trajectoryTokenDisplayRef: MutableRefObject<number>;
   tuiQueueRef: MutableRefObject<QueueRuntime | null>;
@@ -417,7 +415,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setStaticRenderEpoch,
     setStreaming,
     setThinkingMessage,
-    setTokenStreamingEnabled,
     setTrajectoryTokenBase,
     setUiPermissionMode,
     setUiGoalLoopActive,
@@ -427,7 +424,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     streaming,
     systemInfoReminderEnabled,
     systemPromptRecompileByConversationRef,
-    tokenStreamingEnabled,
     trajectoryRunTokenStartRef,
     trajectoryTokenDisplayRef,
     tuiQueueRef,
@@ -1473,37 +1469,24 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /stream command - toggle and save
+        // Legacy /stream command: continuous rendering is always enabled.
         if (msg.trim() === "/stream") {
-          const newValue = !tokenStreamingEnabled;
-
-          // Immediately add command to transcript with "running" phase and loading message
           const cmd = commandRunner.start(
             msg.trim(),
-            `${newValue ? "Enabling" : "Disabling"} token streaming...`,
+            "Ensuring token streaming stays enabled...",
           );
 
-          // Lock input during async operation
           setCommandRunning(true);
 
           try {
-            setTokenStreamingEnabled(newValue);
-
-            // Save to settings
             const { settingsManager } = await import("@/settings-manager");
-            settingsManager.updateSettings({ tokenStreaming: newValue });
+            settingsManager.updateSettings({ tokenStreaming: true });
 
-            // Update the same command with final result
-            cmd.finish(
-              `Token streaming ${newValue ? "enabled" : "disabled"}`,
-              true,
-            );
+            cmd.finish("Continuous rendering is always enabled.", true);
           } catch (error) {
-            // Mark command as failed
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed: ${errorDetails}`);
           } finally {
-            // Unlock input
             setCommandRunning(false);
           }
           return { submitted: true };
@@ -3549,7 +3532,6 @@ ${SYSTEM_REMINDER_CLOSE}
       profileConfirmPending,
       handleAgentSelect,
       openOverlay,
-      tokenStreamingEnabled,
       isAgentBusy,
       setStreaming,
       setCommandRunning,

@@ -557,12 +557,12 @@ export const commands: Record<string, Command> = {
 
   // === Hidden commands (not shown in autocomplete) ===
   "/stream": {
-    desc: "Toggle token streaming on/off",
+    desc: "Token streaming is always enabled",
     hidden: true,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx for live toggling
-      return "Toggling token streaming...";
+      // Handled specially in the submit handler for legacy compatibility
+      return "Token streaming is always enabled.";
     },
   },
   "/compact": {

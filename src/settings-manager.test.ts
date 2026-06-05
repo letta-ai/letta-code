@@ -110,6 +110,30 @@ describe("Settings Manager - Initialization", () => {
     expect(settings.lastAgent).toBe("agent-123");
   });
 
+  test("Initialize migrates disabled token streaming to enabled", async () => {
+    const { writeFile, readFile, mkdir } = await import("@/utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+    const settingsPath = join(settingsDir, "settings.json");
+
+    await writeFile(
+      settingsPath,
+      JSON.stringify({ tokenStreaming: false, lastAgent: "agent-legacy" }),
+    );
+
+    await settingsManager.initialize();
+
+    const settings = settingsManager.getSettings();
+    expect(settings.tokenStreaming).toBe(true);
+    expect(settings.lastAgent).toBe("agent-legacy");
+
+    const persisted = JSON.parse(await readFile(settingsPath)) as Record<
+      string,
+      unknown
+    >;
+    expect(persisted.tokenStreaming).toBe(true);
+  });
+
   test("Initialize only runs once", async () => {
     await settingsManager.initialize();
     const settings1 = settingsManager.getSettings();
@@ -226,6 +250,13 @@ describe("Settings Manager - Global Settings", () => {
     const settings = settingsManager.getSettings();
     expect(settings.tokenStreaming).toBe(true);
     expect(settings.lastAgent).toBe(initialLastAgent); // Other settings unchanged
+  });
+
+  test("Update settings cannot disable token streaming", () => {
+    settingsManager.updateSettings({ tokenStreaming: false });
+
+    const settings = settingsManager.getSettings();
+    expect(settings.tokenStreaming).toBe(true);
   });
 
   test("Update multiple settings", () => {

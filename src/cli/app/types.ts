@@ -39,7 +39,6 @@ export type AppProps = {
   startupApprovals?: ApprovalRequest[];
   messageHistory?: Message[];
   resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
-  tokenStreaming?: boolean;
   reasoningTabCycleEnabled?: boolean;
   showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
