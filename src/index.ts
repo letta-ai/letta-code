@@ -893,6 +893,9 @@ async function main(): Promise<void> {
         }
       })()
     : Promise.resolve(undefined);
+  const ensureTerminalPreflightComplete = async () => {
+    await terminalPreflightPromise;
+  };
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   const baseURL =
@@ -1244,6 +1247,7 @@ async function main(): Promise<void> {
       !apiKey
     ) {
       // For interactive mode, show setup flow
+      await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
       const setupResult = await runSetup();
       if (setupResult.kind === "cancelled") {
@@ -1266,6 +1270,7 @@ async function main(): Promise<void> {
     if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
       // For interactive mode, show setup flow
       console.log("No credentials found. Let's get you set up!\n");
+      await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
       const setupResult = await runSetup();
       if (setupResult.kind === "cancelled") {
@@ -1392,6 +1397,7 @@ async function main(): Promise<void> {
         }
 
         console.log("Let's reauthenticate your setup.\n");
+        await ensureTerminalPreflightComplete();
         const { runSetup } = await import("@/auth/setup");
         const setupResult = await runSetup({
           initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu",

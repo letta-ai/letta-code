@@ -80,6 +80,18 @@ describe("local-first setup wiring", () => {
     );
   });
 
+  test("startup completes terminal preflight before rendering setup UI", () => {
+    const source = readSource("../index.ts");
+    const setupCalls = [...source.matchAll(/runSetup\(/g)];
+
+    expect(source).toContain("const ensureTerminalPreflightComplete");
+    expect(setupCalls.length).toBeGreaterThanOrEqual(3);
+    for (const match of setupCalls) {
+      const prefix = source.slice(Math.max(0, match.index - 220), match.index);
+      expect(prefix).toContain("await ensureTerminalPreflightComplete();");
+    }
+  });
+
   test("startup auto-enters local mode for credentialless new users while honoring saved local preference", () => {
     const source = readSource("../index.ts");
     const start = source.indexOf('settings.preferredBackendMode === "local"');
