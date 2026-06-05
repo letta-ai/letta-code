@@ -31,7 +31,7 @@ import {
 } from "@/backend/dev/provider-turn-executor";
 import { isRecord } from "@/utils/type-guards";
 import {
-  estimateProviderProjectedLocalMessageTokens,
+  estimateLocalMessageTokens,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
@@ -700,8 +700,7 @@ export class LocalBackend extends HeadlessBackend {
     stats: LocalCompactionStats;
   }> {
     const messages = this.store.listLocalMessages(conversationId, agentId);
-    const contextTokensBefore =
-      estimateProviderProjectedLocalMessageTokens(messages);
+    const contextTokensBefore = estimateLocalMessageTokens(messages);
     const plan = planLocalAllCompaction(messages);
     const summary = await summarizeLocalMessagesAll({
       agent,
@@ -716,7 +715,7 @@ export class LocalBackend extends HeadlessBackend {
       context_tokens_before: contextTokensBefore,
       context_tokens_after:
         Math.ceil(summary.length / 4) +
-        estimateProviderProjectedLocalMessageTokens(plan.messagesToKeep),
+        estimateLocalMessageTokens(plan.messagesToKeep),
       context_window: this.effectiveContextWindow(conversationId, agentId),
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
@@ -765,11 +764,10 @@ export class LocalBackend extends HeadlessBackend {
     });
     const contextTokensAfter =
       Math.ceil(summary.length / 4) +
-      estimateProviderProjectedLocalMessageTokens(plan.messagesToKeep);
+      estimateLocalMessageTokens(plan.messagesToKeep);
     const stats: LocalCompactionStats = {
       trigger,
-      context_tokens_before:
-        estimateProviderProjectedLocalMessageTokens(messages),
+      context_tokens_before: estimateLocalMessageTokens(messages),
       context_tokens_after: contextTokensAfter,
       context_window: contextWindow,
       messages_count_before: messages.length,

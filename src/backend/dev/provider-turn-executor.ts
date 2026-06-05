@@ -3,7 +3,6 @@ import type { AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LocalMessage } from "@/backend/local/local-message";
-import { projectLocalMessagesForProvider } from "@/backend/local/local-message-projection";
 import type {
   LocalAgentRecord,
   StoredMessage,
@@ -178,10 +177,7 @@ export function estimateProviderContextTokens(
   const systemPromptTokens = estimateSerializedTokens(
     input.systemPrompt ?? input.agent.system,
   );
-  const providerMessages = projectLocalMessagesForProvider(
-    input.uiMessages,
-  ).messages;
-  const messageTokens = estimateSerializedTokens(providerMessages);
+  const messageTokens = estimateSerializedTokens(input.uiMessages);
   const toolTokens = estimateSerializedTokens(input.clientTools);
   const total = systemPromptTokens + messageTokens + toolTokens;
   return total > 0 ? total : undefined;

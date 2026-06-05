@@ -31,6 +31,7 @@ import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
 import { emptyLocalUsage } from "@/backend/local/local-message";
+import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import { listLocalModels } from "@/backend/local/local-model-config";
 import {
   LocalTranscriptMigrationRequiredError,
@@ -1475,6 +1476,164 @@ describe("local backend pi transcript", () => {
     expect(messagesAfterNextTurn.map((message) => message.id)).toContain(
       "ui-msg-10000",
     );
+  });
+
+  test("clips oversized tool results when loading local transcript context", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-large-tool-result-"),
+    );
+    const contexts: Context[] = [];
+    const stream: PiStreamFunction = (
+      _model: Model<string>,
+      context: Context,
+    ) => {
+      contexts.push(context);
+      const finalMessage = assistantMessage({
+        responseId: "response-done",
+        stopReason: "stop",
+        content: [{ type: "text", text: "done" }],
+      });
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+    const backend = new LocalBackend({
+      storageDir,
+      stream,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "hello" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const messagesPath = join(conversationDir, "messages.jsonl");
+    const conversationPath = join(conversationDir, "conversation.json");
+    const rows = (await readFile(messagesPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const parentId = rows.at(-1)?.id;
+    if (typeof parentId !== "string") {
+      throw new Error("Expected a parent entry id");
+    }
+    const timestamp = new Date().toISOString();
+    const assistantToolMessage = {
+      id: "ui-msg-9998",
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "call-huge",
+          name: "ShellCommand",
+          arguments: { command: "cat huge.log" },
+        },
+      ],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.5",
+      usage: emptyLocalUsage(),
+      stopReason: "toolUse",
+      timestamp: Date.now(),
+      metadata: {
+        created_at: timestamp,
+        updated_at: timestamp,
+        agent_id: agent.id,
+        conversation_id: conversation.id,
+      },
+    };
+    const hugeToolOutput = `${"x".repeat(
+      LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS + 20_000,
+    )}TAIL`;
+    const toolResultMessage = {
+      id: "ui-msg-9999",
+      role: "toolResult",
+      toolCallId: "call-huge",
+      toolName: "ShellCommand",
+      content: [{ type: "text", text: hugeToolOutput }],
+      isError: false,
+      timestamp: Date.now(),
+      metadata: {
+        created_at: timestamp,
+        updated_at: timestamp,
+        agent_id: agent.id,
+        conversation_id: conversation.id,
+      },
+    };
+    await appendFile(
+      messagesPath,
+      `${JSON.stringify({
+        type: "message",
+        id: "assistant-tool-entry",
+        parentId,
+        timestamp,
+        message: assistantToolMessage,
+      })}\n${JSON.stringify({
+        type: "message",
+        id: "large-tool-result-entry",
+        parentId: "assistant-tool-entry",
+        timestamp,
+        message: toolResultMessage,
+      })}\n`,
+    );
+    const persistedConversation = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as { in_context_message_ids?: string[] };
+    await writeFile(
+      conversationPath,
+      `${JSON.stringify(
+        {
+          ...persistedConversation,
+          in_context_message_ids: [
+            ...(persistedConversation.in_context_message_ids ?? []),
+            assistantToolMessage.id,
+            toolResultMessage.id,
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const reloadedBackend = new LocalBackend({
+      storageDir,
+      stream,
+      memfsEnabled: false,
+    });
+    await drain(
+      await reloadedBackend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "next" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const reloadedContext = contexts.at(-1);
+    expect(reloadedContext).toBeDefined();
+    const providerToolResult = reloadedContext?.messages.find(
+      (message) => message.role === "toolResult",
+    );
+    if (!providerToolResult || providerToolResult.role !== "toolResult") {
+      throw new Error("Expected provider tool result");
+    }
+    const providerText = providerToolResult.content.find(
+      (content) => content.type === "text",
+    )?.text;
+    expect(providerText?.length).toBeLessThanOrEqual(
+      LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS,
+    );
+    expect(providerText).toContain(
+      "Tool result truncated during local transcript repair",
+    );
+    expect(providerText?.endsWith("TAIL")).toBe(true);
+    expect(await readFile(messagesPath, "utf8")).toContain(hugeToolOutput);
   });
 
   test("defers unversioned transcript migration errors until transcript read", async () => {

@@ -11,7 +11,7 @@ import type {
 } from "./local-message";
 import type { StoredMessage } from "./local-types";
 
-export const LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS = 40_000;
+export const LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS = 40_000;
 
 type AssistantContent = LocalAssistantMessage["content"][number];
 
@@ -406,13 +406,14 @@ export function removeOrphanLocalToolResults(
   };
 }
 
-function truncateProviderToolResultText(
+function truncateLocalToolResultTextForRepair(
   text: string,
   maxChars: number,
 ): string {
   if (text.length <= maxChars) return text;
 
-  const markerPrefix = "\n[Tool result truncated for provider prompt: omitted ";
+  const markerPrefix =
+    "\n[Tool result truncated during local transcript repair: omitted ";
   const markerSuffix = " chars]\n";
   let marker = `${markerPrefix}${text.length - maxChars}${markerSuffix}`;
   let keepChars = Math.max(0, maxChars - marker.length);
@@ -432,23 +433,21 @@ function truncateProviderToolResultText(
   }`;
 }
 
-export interface LocalProviderMessageProjectionResult {
-  messages: readonly LocalMessage[];
-  removedMessageIds: string[];
+export interface LocalToolResultClipResult {
+  messages: LocalMessage[];
   clippedToolResultIds: string[];
 }
 
-export function projectLocalMessagesForProvider(
+export function clipOversizedLocalToolResults(
   messages: readonly LocalMessage[],
   options: { maxToolResultTextChars?: number } = {},
-): LocalProviderMessageProjectionResult {
-  const orphanRepair = removeOrphanLocalToolResults(messages);
+): LocalToolResultClipResult {
   const maxToolResultTextChars =
-    options.maxToolResultTextChars ?? LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS;
+    options.maxToolResultTextChars ?? LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS;
   let projectedMessages: LocalMessage[] | undefined;
   const clippedToolResultIds: string[] = [];
 
-  const sourceMessages = orphanRepair.messages;
+  const sourceMessages = messages;
   for (const [messageIndex, message] of sourceMessages.entries()) {
     if (message.role !== "toolResult") continue;
 
@@ -469,7 +468,7 @@ export function projectLocalMessagesForProvider(
       if (!projectedContent) projectedContent = [...message.content];
       projectedContent[contentIndex] = {
         ...content,
-        text: truncateProviderToolResultText(
+        text: truncateLocalToolResultTextForRepair(
           content.text,
           maxToolResultTextChars,
         ),
@@ -486,8 +485,7 @@ export function projectLocalMessagesForProvider(
   }
 
   return {
-    messages: projectedMessages ?? sourceMessages,
-    removedMessageIds: orphanRepair.removedMessageIds,
+    messages: projectedMessages ?? [...messages],
     clippedToolResultIds,
   };
 }

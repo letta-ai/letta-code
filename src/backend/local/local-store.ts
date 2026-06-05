@@ -42,6 +42,7 @@ import {
   type LocalUserMessage,
 } from "./local-message";
 import {
+  clipOversizedLocalToolResults,
   cloneLocalMessage,
   isLocalToolCallContent,
   mergeSnapshotContentWithExistingToolCalls,
@@ -2632,7 +2633,10 @@ export class LocalStore {
       metadata.timing,
     );
     const toolResultRepair = removeOrphanLocalToolResults(loadedMessages);
-    const localMessages = toolResultRepair.messages;
+    const toolResultClip = clipOversizedLocalToolResults(
+      toolResultRepair.messages,
+    );
+    const localMessages = toolResultClip.messages;
     if (conversation) {
       let repairedConversation = repairSyntheticConversationTimestamps(
         conversation,

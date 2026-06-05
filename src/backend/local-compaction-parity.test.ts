@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  estimateProviderProjectedLocalMessageTokens,
   formatLocalMessagesForSummary,
   LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
   type LocalCompactionStats,
@@ -10,7 +9,6 @@ import {
   emptyLocalUsage,
   type LocalMessage,
 } from "@/backend/local/local-message";
-import { LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 
 function user(
   id: string,
@@ -136,26 +134,6 @@ describe("local compaction API parity", () => {
     expect(transcript).toContain("[truncated 103 chars]");
     expect(transcript).not.toContain(
       `${"x".repeat(LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS + 100)}END`,
-    );
-  });
-
-  test("estimates compacted context using provider-projected tool results", () => {
-    const projectedTokens = estimateProviderProjectedLocalMessageTokens([
-      assistant("assistant-tool", [
-        {
-          type: "toolCall",
-          id: "call-big",
-          name: "ShellCommand",
-          arguments: { command: "cat huge.log" },
-        },
-      ]),
-      toolResult("tool-big", [
-        { type: "text", text: `${"x".repeat(100_000)}TAIL` },
-      ]),
-    ]);
-
-    expect(projectedTokens).toBeLessThan(
-      Math.ceil((LOCAL_PROVIDER_TOOL_RESULT_TEXT_MAX_CHARS + 10_000) / 4),
     );
   });
 
