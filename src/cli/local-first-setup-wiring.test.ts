@@ -95,7 +95,10 @@ describe("local-first setup wiring", () => {
   test("startup auto-enters local mode for credentialless new users while honoring saved local preference", () => {
     const source = readSource("../index.ts");
     const start = source.indexOf('settings.preferredBackendMode === "local"');
-    const end = source.indexOf('configureBackendMode("local")', start);
+    const end = source.indexOf(
+      "await tryConfigureStartupLocalBackend()",
+      start,
+    );
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
@@ -111,7 +114,7 @@ describe("local-first setup wiring", () => {
       "Local-first new-user flow: if the user has no Letta Cloud credentials",
     );
     const setupEnd = source.indexOf(
-      "await settingsManager.flush();",
+      "const startupTargetLookupOrder",
       setupStart,
     );
     expect(setupStart).toBeGreaterThan(-1);
@@ -124,13 +127,25 @@ describe("local-first setup wiring", () => {
     expect(setupSegment).toContain("!isHeadless");
     expect(setupSegment).toContain("!settings.refreshToken");
     expect(setupSegment).toContain("!apiKey");
-    expect(setupSegment).toContain('configureBackendMode("local")');
+    expect(setupSegment).toContain("await tryConfigureStartupLocalBackend()");
     expect(setupSegment).toContain(
       'settingsManager.updateSettings({ preferredBackendMode: "local" })',
     );
     expect(setupSegment).toContain("await settingsManager.flush();");
     expect(source).toContain("isCredentiallessLocalStartup");
     expect(source).toContain(".filter((entry) => entry.isLocal)");
+  });
+
+  test("local transcript migration errors do not block setup login fallback", () => {
+    const source = readSource("../index.ts");
+
+    expect(source).toContain("isLocalBackendTranscriptStartupError");
+    expect(source).toContain("LocalTranscriptMigrationRequiredError");
+    expect(source).toContain("Unsupported local transcript format");
+    expect(source).toContain("const tryConfigureStartupLocalBackend");
+    expect(source).toContain("Continuing to setup/login");
+    expect(source).toContain('configureBackendMode("api")');
+    expect(source).toContain('preferredBackendMode: "api"');
   });
 
   test("backend and setup subcommands expose default backend controls", () => {
