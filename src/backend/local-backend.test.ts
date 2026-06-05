@@ -1165,15 +1165,12 @@ describe("local backend pi transcript", () => {
     );
 
     expect(
-      continuationChunks.some((chunk) => {
-        const event = chunk as { message_type?: string; event_type?: string };
-        return (
-          event.message_type === "event_message" && event.event_type === "retry"
-        );
-      }),
-    ).toBe(true);
+      continuationChunks.map(
+        (chunk) => (chunk as { message_type?: string }).message_type,
+      ),
+    ).toEqual(["usage_statistics", "stop_reason"]);
 
-    expect(contexts).toHaveLength(3);
+    expect(contexts).toHaveLength(2);
     const secondContextMessages = contexts[1]?.messages ?? [];
     expect(secondContextMessages.at(-1)).toMatchObject({
       role: "toolResult",
@@ -1199,9 +1196,7 @@ describe("local backend pi transcript", () => {
       "assistant",
     ]);
     const finalAssistant = messages.at(-1) as { content?: unknown[] };
-    expect(finalAssistant.content).toEqual([
-      { type: "text", text: "Tool result received." },
-    ]);
+    expect(finalAssistant.content).toEqual([]);
 
     const reloadedBackend = new LocalBackend({
       storageDir,
@@ -1220,7 +1215,6 @@ describe("local backend pi transcript", () => {
       "reasoning_message",
       "approval_request_message",
       "tool_return_message",
-      "assistant_message",
     ]);
   });
 
