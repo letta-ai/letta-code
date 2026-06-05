@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  appendExtensionDiagnostic,
   createExtensionDiagnosticsReport,
+  EXTENSION_DIAGNOSTICS_MAX_COUNT,
+  EXTENSION_DIAGNOSTICS_RESET_COUNT,
   type ExtensionDiagnosticCollector,
   getExtensionDiagnosticSeverity,
   getExtensionErrorDiagnostics,
@@ -61,6 +64,40 @@ describe("extension diagnostics", () => {
     expect(seen).toEqual([warning]);
     expect(warning.timestamp).toEqual(expect.any(Number));
     expect(error.timestamp).toEqual(expect.any(Number));
+  });
+
+  test("caps diagnostics on append with hysteresis", () => {
+    const registry: ExtensionDiagnosticCollector = {
+      diagnostics: [],
+    };
+    const owner = createOwner();
+
+    for (let index = 0; index <= EXTENSION_DIAGNOSTICS_MAX_COUNT; index += 1) {
+      appendExtensionDiagnostic(registry, {
+        error: new Error(`diagnostic ${index}`),
+        owner,
+        phase: "event",
+        timestamp: index,
+      });
+    }
+
+    expect(registry.diagnostics).toHaveLength(
+      EXTENSION_DIAGNOSTICS_RESET_COUNT,
+    );
+    expect(registry.diagnostics[0]?.error.message).toBe("diagnostic 151");
+    expect(registry.diagnostics.at(-1)?.error.message).toBe("diagnostic 200");
+
+    appendExtensionDiagnostic(registry, {
+      error: new Error("diagnostic 201"),
+      owner,
+      phase: "event",
+      timestamp: 201,
+    });
+
+    expect(registry.diagnostics).toHaveLength(
+      EXTENSION_DIAGNOSTICS_RESET_COUNT + 1,
+    );
+    expect(registry.diagnostics.at(-1)?.error.message).toBe("diagnostic 201");
   });
 
   test("creates compact agent reports from diagnostics", () => {

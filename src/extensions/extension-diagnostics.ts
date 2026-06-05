@@ -7,6 +7,9 @@ import type {
 
 export type { ExtensionDiagnosticSeverity } from "@/extensions/types";
 
+export const EXTENSION_DIAGNOSTICS_MAX_COUNT = 200;
+export const EXTENSION_DIAGNOSTICS_RESET_COUNT = 50;
+
 export interface ExtensionDiagnosticCollector {
   diagnostics: ExtensionDiagnostic[];
 }
@@ -106,6 +109,12 @@ export function appendExtensionDiagnostic(
   diagnostic: ExtensionDiagnostic,
 ): void {
   collector.diagnostics.push(diagnostic);
+  if (collector.diagnostics.length > EXTENSION_DIAGNOSTICS_MAX_COUNT) {
+    collector.diagnostics.splice(
+      0,
+      collector.diagnostics.length - EXTENSION_DIAGNOSTICS_RESET_COUNT,
+    );
+  }
 }
 
 export function recordExtensionDiagnostic(
