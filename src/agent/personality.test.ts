@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   buildCreateAgentOptionsForPersonality,
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   detectPersonalityFromPersonaFile,
+  enableMemfsForCreatedAgent,
   getDefaultHumanContent,
   getPersonalityBlockDefinitions,
   getPersonalityBlockValues,
@@ -13,8 +14,19 @@ import {
   replaceBodyPreservingFrontmatter,
   resolvePersonalityId,
 } from "@/agent/personality";
+import { configureBackendMode } from "@/backend";
+import { __testOverrideGetClient } from "@/backend/api/client";
+import { settingsManager } from "@/settings-manager";
 
 const VALID_FRONTMATTER = "---\ndescription: Persona\nlimit: 20000\n---\n\n";
+const originalSetMemfsEnabled =
+  settingsManager.setMemfsEnabled.bind(settingsManager);
+
+afterEach(() => {
+  __testOverrideGetClient(null);
+  settingsManager.setMemfsEnabled = originalSetMemfsEnabled;
+  configureBackendMode("api");
+});
 
 describe("personality helpers", () => {
   test("replaceBodyPreservingFrontmatter swaps body and keeps frontmatter", () => {
@@ -176,6 +188,33 @@ describe("personality helpers", () => {
     });
 
     expect(options.tags).toEqual(["desktop", "favorite"]);
+  });
+
+  test("enableMemfsForCreatedAgent skips remote API calls on local backend", async () => {
+    configureBackendMode("local");
+    let getClientCalls = 0;
+    let enabledAgentId: string | undefined;
+    __testOverrideGetClient(async () => {
+      getClientCalls += 1;
+      return {
+        agents: {
+          update: async () => undefined,
+        },
+      };
+    });
+    settingsManager.setMemfsEnabled = (agentId, enabled) => {
+      if (enabled) {
+        enabledAgentId = agentId;
+      }
+    };
+
+    await enableMemfsForCreatedAgent({
+      agentId: "agent-local-test",
+      agentTags: [],
+    });
+
+    expect(getClientCalls).toBe(0);
+    expect(enabledAgentId).toBe("agent-local-test");
   });
 
   test("kawaii block definitions carry personality-specific descriptions", () => {
