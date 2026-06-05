@@ -268,7 +268,15 @@ export type ExtensionDiagnosticPhase =
   | "command_override"
   | "dispose"
   | "event"
+  | "report"
   | "stale_handle";
+
+export type ExtensionDiagnosticSeverity = "error" | "warning";
+
+export interface ExtensionDiagnosticReportOptions {
+  message: string;
+  severity?: ExtensionDiagnosticSeverity;
+}
 
 export interface ExtensionDiagnostic {
   capability?: {
@@ -278,6 +286,7 @@ export interface ExtensionDiagnostic {
   error: Error;
   owner: ExtensionOwner;
   phase: ExtensionDiagnosticPhase;
+  severity?: ExtensionDiagnosticSeverity;
   timestamp: number;
 }
 

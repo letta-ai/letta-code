@@ -400,6 +400,63 @@ describe("extension adapter", () => {
     }
   });
 
+  test("runtime diagnostic reports are written", async () => {
+    const root = createTempDir();
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const diagnosticsRoot = path.join(root, "diagnostics");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "events.ts"),
+        `export default function(letta) {
+          letta.events.on("conversation_open", () => {
+            letta.diagnostics.report({ message: "missing optional env" });
+          });
+        }`,
+      );
+
+      const adapter = createExtensionAdapter({
+        cacheDirectory: path.join(root, "extension-cache"),
+        diagnosticsRootDirectory: diagnosticsRoot,
+        diagnosticsWriteDelayMs: 5,
+        getClient: async () => ({}) as unknown as Letta,
+        globalExtensionsDirectory: extensionDir,
+        initialContext: createExtensionContext(),
+      });
+
+      await adapter.reload();
+      await adapter.events.emit("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "startup",
+      });
+      await sleep(20);
+
+      expect(
+        readJsonFile(getExtensionDiagnosticsLatestFilePath(diagnosticsRoot)),
+      ).toMatchObject({
+        report: {
+          diagnostics: [
+            {
+              errorName: "ExtensionDiagnosticReport",
+              message: "missing optional env",
+              phase: "report",
+              severity: "error",
+            },
+          ],
+          errorCount: 1,
+          warningCount: 0,
+        },
+      });
+
+      adapter.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("loads extensions and dispatches events with fresh context and backend", async () => {
     const root = createTempDir();
     const testGlobal = globalThis as ExtensionAdapterTestGlobal;

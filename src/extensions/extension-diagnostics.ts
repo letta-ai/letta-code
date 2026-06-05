@@ -1,10 +1,11 @@
 import type {
   ExtensionDiagnostic,
   ExtensionDiagnosticPhase,
+  ExtensionDiagnosticSeverity,
   ExtensionOwner,
 } from "@/extensions/types";
 
-export type ExtensionDiagnosticSeverity = "error" | "warning";
+export type { ExtensionDiagnosticSeverity } from "@/extensions/types";
 
 export interface ExtensionDiagnosticCollector {
   diagnostics: ExtensionDiagnostic[];
@@ -29,10 +30,13 @@ export interface ExtensionDiagnosticsReport {
 
 export function getExtensionDiagnosticSeverity(
   phase: ExtensionDiagnosticPhase,
+  severity?: ExtensionDiagnosticSeverity,
 ): ExtensionDiagnosticSeverity {
   switch (phase) {
     case "command_override":
       return "warning";
+    case "report":
+      return severity ?? "error";
     default:
       return "error";
   }
@@ -45,9 +49,12 @@ export function isExtensionDiagnosticErrorPhase(
 }
 
 export function isExtensionDiagnosticError(
-  diagnostic: Pick<ExtensionDiagnostic, "phase">,
+  diagnostic: Pick<ExtensionDiagnostic, "phase" | "severity">,
 ): boolean {
-  return isExtensionDiagnosticErrorPhase(diagnostic.phase);
+  return (
+    getExtensionDiagnosticSeverity(diagnostic.phase, diagnostic.severity) ===
+    "error"
+  );
 }
 
 export function getExtensionErrorDiagnostics(
@@ -63,7 +70,10 @@ export function createExtensionDiagnosticsReport(
   let warningCount = 0;
 
   const entries = diagnostics.map((diagnostic) => {
-    const severity = getExtensionDiagnosticSeverity(diagnostic.phase);
+    const severity = getExtensionDiagnosticSeverity(
+      diagnostic.phase,
+      diagnostic.severity,
+    );
     if (severity === "error") {
       errorCount += 1;
     } else {
