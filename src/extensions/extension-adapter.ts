@@ -20,6 +20,8 @@ import {
 import type { ExtensionContext } from "@/extensions/types";
 import { debugLog } from "@/utils/debug";
 
+const RUNTIME_DIAGNOSTICS_WRITE_DELAY_MS = 30_000;
+
 export interface ExtensionAdapterLoadState {
   hadStatuslineRenderer: boolean;
   hasExtensionSources: boolean;
@@ -33,6 +35,7 @@ export interface ExtensionAdapterSnapshot extends ExtensionAdapterLoadState {
 export interface CreateExtensionAdapterOptions
   extends Omit<CreateExtensionEngineOptions, "getContext"> {
   diagnosticsRootDirectory?: string;
+  diagnosticsWriteDelayMs?: number;
   disabled?: boolean;
   initialContext: ExtensionContext;
 }
@@ -62,6 +65,7 @@ export function createExtensionAdapter(
 ): ExtensionAdapter {
   const {
     diagnosticsRootDirectory,
+    diagnosticsWriteDelayMs = RUNTIME_DIAGNOSTICS_WRITE_DELAY_MS,
     disabled,
     getBackend: resolveBackend,
     initialContext,
@@ -85,6 +89,7 @@ export function createExtensionAdapter(
     isLoading: initialHasExtensionSources,
   };
   const listeners = new Set<() => void>();
+  let diagnosticsWriteTimer: ReturnType<typeof setTimeout> | null = null;
 
   const getBackend = () => resolveBackend?.();
   const getContext = () => context;
@@ -93,16 +98,62 @@ export function createExtensionAdapter(
     ...engineOptions,
     getBackend,
     getContext,
+    onDiagnostic: () => scheduleDiagnosticsWrite(),
   });
 
+  function clearPendingDiagnosticsWrite(): void {
+    if (!diagnosticsWriteTimer) return;
+    clearTimeout(diagnosticsWriteTimer);
+    diagnosticsWriteTimer = null;
+  }
+
+  function writeLatestDiagnostics(): void {
+    const registry = engine.getSnapshot();
+    if (!registry.sources.some((source) => source.files.length > 0)) return;
+
+    try {
+      writeExtensionDiagnosticsLatestFile(registry.diagnostics, {
+        rootDirectory: diagnosticsRootDirectory,
+      });
+    } catch (error) {
+      debugLog(
+        "extensions",
+        "failed to write extension diagnostics: %s",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  function flushPendingDiagnosticsWrite(): void {
+    if (!diagnosticsWriteTimer) return;
+    clearPendingDiagnosticsWrite();
+    writeLatestDiagnostics();
+  }
+
+  function scheduleDiagnosticsWrite(): void {
+    if (disposed || loadState.isLoading || !loadState.hasExtensionSources)
+      return;
+    if (diagnosticsWriteTimer) return;
+
+    diagnosticsWriteTimer = setTimeout(() => {
+      diagnosticsWriteTimer = null;
+      writeLatestDiagnostics();
+    }, diagnosticsWriteDelayMs);
+    const timerWithUnref = diagnosticsWriteTimer as ReturnType<
+      typeof setTimeout
+    > & { unref?: () => void };
+    timerWithUnref.unref?.();
+  }
+
   const events: ExtensionEvents = {
-    emit(name, event) {
+    async emit(name, event) {
       if (loadState.isLoading || !loadState.hasExtensionSources) {
         // Events are best-effort hooks; do not deliver them while the extension
         // registry is unavailable or in flux.
-        return Promise.resolve(emptyEventEmissionResult(name));
+        return emptyEventEmissionResult(name);
       }
-      return engine.emitEvent(name, event);
+      const result = await engine.emitEvent(name, event);
+      return result;
     },
   };
 
@@ -124,6 +175,7 @@ export function createExtensionAdapter(
 
   const reload = async () => {
     if (disposed) return;
+    clearPendingDiagnosticsWrite();
 
     const previousSnapshot = engine.getSnapshot();
     const previousHadStatuslineRenderer =
@@ -140,19 +192,7 @@ export function createExtensionAdapter(
     if (disposed) return;
 
     const nextRegistry = engine.getSnapshot();
-    if (nextRegistry.sources.some((source) => source.files.length > 0)) {
-      try {
-        writeExtensionDiagnosticsLatestFile(nextRegistry.diagnostics, {
-          rootDirectory: diagnosticsRootDirectory,
-        });
-      } catch (error) {
-        debugLog(
-          "extensions",
-          "failed to write extension diagnostics: %s",
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
+    writeLatestDiagnostics();
 
     debugLog(
       "extensions",
@@ -192,6 +232,7 @@ export function createExtensionAdapter(
   return {
     dispose() {
       if (disposed) return;
+      flushPendingDiagnosticsWrite();
       disposed = true;
       engine.dispose();
       unsubscribeEngine();

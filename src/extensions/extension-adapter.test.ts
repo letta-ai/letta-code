@@ -73,6 +73,10 @@ function readJsonFile(filePath: string): unknown {
   return JSON.parse(readFileSync(filePath, "utf-8")) as unknown;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe("extension adapter", () => {
   test("LETTA_DISABLE_EXTENSIONS disables the adapter", () => {
     const original = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
@@ -198,6 +202,199 @@ describe("extension adapter", () => {
       ).toBe(false);
 
       adapter.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("runtime diagnostics writes are coalesced", async () => {
+    const root = createTempDir();
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const diagnosticsRoot = path.join(root, "diagnostics");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "events.ts"),
+        `export default function(letta) {
+          letta.events.on("conversation_open", () => {
+            throw new Error("runtime failed");
+          });
+        }`,
+      );
+
+      const adapter = createExtensionAdapter({
+        cacheDirectory: path.join(root, "extension-cache"),
+        diagnosticsRootDirectory: diagnosticsRoot,
+        diagnosticsWriteDelayMs: 5,
+        getClient: async () => ({}) as unknown as Letta,
+        globalExtensionsDirectory: extensionDir,
+        initialContext: createExtensionContext(),
+      });
+
+      await adapter.reload();
+      const diagnosticsPath =
+        getExtensionDiagnosticsLatestFilePath(diagnosticsRoot);
+      expect(readJsonFile(diagnosticsPath)).toMatchObject({
+        report: { diagnostics: [], errorCount: 0, warningCount: 0 },
+      });
+
+      await adapter.events.emit("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "startup",
+      });
+      await adapter.events.emit("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "resume",
+      });
+
+      expect(readJsonFile(diagnosticsPath)).toMatchObject({
+        report: { diagnostics: [], errorCount: 0, warningCount: 0 },
+      });
+
+      await sleep(20);
+
+      expect(readJsonFile(diagnosticsPath)).toMatchObject({
+        report: {
+          diagnostics: [
+            { message: "runtime failed", phase: "event", severity: "error" },
+            { message: "runtime failed", phase: "event", severity: "error" },
+          ],
+          errorCount: 2,
+          warningCount: 0,
+        },
+      });
+
+      adapter.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("runtime diagnostics writes are not starved by continuous diagnostics", async () => {
+    const root = createTempDir();
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const diagnosticsRoot = path.join(root, "diagnostics");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "events.ts"),
+        `export default function(letta) {
+          letta.events.on("conversation_open", (event) => {
+            throw new Error("runtime failed " + event.reason);
+          });
+        }`,
+      );
+
+      const adapter = createExtensionAdapter({
+        cacheDirectory: path.join(root, "extension-cache"),
+        diagnosticsRootDirectory: diagnosticsRoot,
+        diagnosticsWriteDelayMs: 20,
+        getClient: async () => ({}) as unknown as Letta,
+        globalExtensionsDirectory: extensionDir,
+        initialContext: createExtensionContext(),
+      });
+
+      await adapter.reload();
+      const diagnosticsPath =
+        getExtensionDiagnosticsLatestFilePath(diagnosticsRoot);
+
+      await adapter.events.emit("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "startup",
+      });
+      await sleep(10);
+      await adapter.events.emit("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "resume",
+      });
+
+      await sleep(15);
+
+      expect(readJsonFile(diagnosticsPath)).toMatchObject({
+        report: {
+          diagnostics: [
+            {
+              message: "runtime failed startup",
+              phase: "event",
+              severity: "error",
+            },
+            {
+              message: "runtime failed resume",
+              phase: "event",
+              severity: "error",
+            },
+          ],
+          errorCount: 2,
+          warningCount: 0,
+        },
+      });
+
+      adapter.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("dispose flushes pending runtime diagnostics writes", async () => {
+    const root = createTempDir();
+
+    try {
+      const extensionDir = path.join(root, "global-extensions");
+      const diagnosticsRoot = path.join(root, "diagnostics");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(
+        path.join(extensionDir, "events.ts"),
+        `export default function(letta) {
+          letta.events.on("conversation_open", () => {
+            throw new Error("runtime failed");
+          });
+        }`,
+      );
+
+      const adapter = createExtensionAdapter({
+        cacheDirectory: path.join(root, "extension-cache"),
+        diagnosticsRootDirectory: diagnosticsRoot,
+        diagnosticsWriteDelayMs: 30_000,
+        getClient: async () => ({}) as unknown as Letta,
+        globalExtensionsDirectory: extensionDir,
+        initialContext: createExtensionContext(),
+      });
+
+      await adapter.reload();
+      await adapter.events.emit("conversation_open", {
+        agentId: "agent-1",
+        agentName: "Amelia",
+        conversationId: "conversation-1",
+        reason: "startup",
+      });
+
+      const diagnosticsPath =
+        getExtensionDiagnosticsLatestFilePath(diagnosticsRoot);
+      expect(readJsonFile(diagnosticsPath)).toMatchObject({
+        report: { diagnostics: [], errorCount: 0, warningCount: 0 },
+      });
+
+      adapter.dispose();
+
+      expect(readJsonFile(diagnosticsPath)).toMatchObject({
+        report: {
+          diagnostics: [
+            { message: "runtime failed", phase: "event", severity: "error" },
+          ],
+          errorCount: 1,
+          warningCount: 0,
+        },
+      });
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
