@@ -125,4 +125,4 @@ const stream = await forked.sendMessageStream([
 
 Do not send directly to the active conversation from a busy command; fork first unless the user explicitly asked to affect the main conversation later.
 
-For a complete side-question example, see `btw-command.md`.
+For a worked multi-capability extension that combines commands, tools, events, permissions, and local state, see `plan-mode.md`.

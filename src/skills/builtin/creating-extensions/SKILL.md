@@ -43,7 +43,7 @@ Default to a **tool** when the model should decide when to use the capability. D
    - events: `references/events.md`
    - permissions: `references/permissions.md`
    - panels/status/capabilities: `references/ui.md`
-   - busy side-question pattern: `references/btw-command.md`
+   - complex plan-mode composition: `references/plan-mode.md`
 4. For multi-capability or stateful extensions, also read `references/architecture.md`.
 5. Write a single-file extension unless the user asks for something larger.
 6. Return disposers for registered providers/commands/tools/events, timers, subscriptions, and panels that should close on reload.
@@ -145,5 +145,5 @@ Before finishing, verify:
 | `references/events.md` | Reacting to lifecycle/tool/turn events or transforming turns/tools |
 | `references/permissions.md` | Enforcing dynamic tool allow/ask/deny policy before approval/execution |
 | `references/ui.md` | Panels, status values, or statusline capability guards are involved |
-| `references/btw-command.md` | Building a busy-safe side-question command with a forked conversation |
+| `references/plan-mode.md` | Recreating plan mode with commands, tools, events, permissions, and local state |
 | `references/architecture.md` | Multiple capabilities, local state, cleanup, background model work, or non-trivial composition |

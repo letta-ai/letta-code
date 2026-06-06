@@ -86,3 +86,5 @@ During execution, `ask` cannot reopen approval yet, so use `deny` for execution-
 - Prefer path-scoped allow rules over broad allow rules.
 - Do not mutate `event.args`; use `tool_start` for argument transforms.
 - For policy decisions, prefer this API over `tool_start` denial.
+
+For a complete worked example that uses permission overlays for plan-mode enforcement, see `plan-mode.md`.
