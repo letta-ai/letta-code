@@ -285,6 +285,27 @@ describe("listen subcommand auth resolution", () => {
     expect(pollForTokenMock).not.toHaveBeenCalled();
   });
 
+  test("uses desktop proxy registration for local backend desktop listener without channels", async () => {
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_BASE_URL = "http://localhost:54321";
+
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: {},
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    const result = await __listenSubcommandTestUtils.resolveListenerStartupMode(
+      [],
+    );
+
+    expect(result).toEqual({
+      kind: "remote",
+      serverUrl: "http://localhost:54321",
+    });
+    expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+    expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
   test("rejects self-hosted listener startup without channels", async () => {
     process.env.LETTA_BASE_URL = "http://localhost:8283";
 
