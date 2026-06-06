@@ -6,10 +6,7 @@ import { join, resolve } from "node:path";
 import type { CommandHookConfig, HookCommand } from "@/hooks/types";
 import { runWithRuntimeContext } from "@/runtime-context";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
-import {
-  readPreferredBackendModeSync,
-  settingsManager,
-} from "@/settings-manager";
+import { settingsManager } from "@/settings-manager";
 
 // Type-safe helper to extract command from a hook (tests only use command hooks)
 function asCommand(
@@ -2055,33 +2052,33 @@ describe("readPreferredBackendModeSync", () => {
   }
 
   test("returns undefined when settings file does not exist", () => {
-    expect(readPreferredBackendModeSync()).toBeUndefined();
+    expect(settingsManager.readPreferredBackendModeSync()).toBeUndefined();
   });
 
   test("returns undefined when preferredBackendMode is not set", () => {
     writeSettings({});
-    expect(readPreferredBackendModeSync()).toBeUndefined();
+    expect(settingsManager.readPreferredBackendModeSync()).toBeUndefined();
   });
 
   test("reads 'local' from settings file", () => {
     writeSettings({ preferredBackendMode: "local" });
-    expect(readPreferredBackendModeSync()).toBe("local");
+    expect(settingsManager.readPreferredBackendModeSync()).toBe("local");
   });
 
   test("reads 'api' from settings file", () => {
     writeSettings({ preferredBackendMode: "api" });
-    expect(readPreferredBackendModeSync()).toBe("api");
+    expect(settingsManager.readPreferredBackendModeSync()).toBe("api");
   });
 
   test("returns undefined for invalid preferredBackendMode value", () => {
     writeSettings({ preferredBackendMode: "invalid" });
-    expect(readPreferredBackendModeSync()).toBeUndefined();
+    expect(settingsManager.readPreferredBackendModeSync()).toBeUndefined();
   });
 
   test("returns undefined for malformed JSON", () => {
     const dir = join(tmpHome, ".letta");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "settings.json"), "not json{{{");
-    expect(readPreferredBackendModeSync()).toBeUndefined();
+    expect(settingsManager.readPreferredBackendModeSync()).toBeUndefined();
   });
 });

@@ -84,7 +84,6 @@ import {
 } from "./permissions/mode";
 import {
   type Settings,
-  readPreferredBackendModeSync,
   settingsManager,
   shouldPersistSessionState,
 } from "./settings-manager";
@@ -701,7 +700,7 @@ async function main(): Promise<void> {
   // triggering full SettingsManager initialization (default creation,
   // dirty-key tracking, rollback writes, etc.).
   if (!explicitBackendMode) {
-    const saved = readPreferredBackendModeSync();
+    const saved = settingsManager.readPreferredBackendModeSync();
     if (saved) {
       configureBackendMode(saved);
     }
