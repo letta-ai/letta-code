@@ -5,7 +5,7 @@ description: Creates, edits, and enables Letta Code extension-provided slash com
 
 # Customizing Commands
 
-Use this as the command-specific entrypoint for local extension slash commands. For broader extension work, recipes live in `../creating-extensions/references/commands.md`, `../creating-extensions/references/architecture.md`, `../creating-extensions/references/ui.md`, and `../creating-extensions/references/btw-command.md`.
+Use this as the command-specific entrypoint for local extension slash commands. For broader extension work, recipes live in `../creating-extensions/references/commands.md`, `../creating-extensions/references/architecture.md`, `../creating-extensions/references/ui.md`, and `../creating-extensions/references/plan-mode.md`.
 
 Extension files live in:
 
@@ -87,4 +87,4 @@ type ExtensionCommandResult =
 - Simple output command, panel command, busy-safe conversation command: `../creating-extensions/references/commands.md`
 - Complex command architecture, state, cleanup: `../creating-extensions/references/architecture.md`
 - Panel/status UI patterns: `../creating-extensions/references/ui.md`
-- Complete `/btw` side-question recipe: `../creating-extensions/references/btw-command.md`
+- Worked plan-mode command/tool composition: `../creating-extensions/references/plan-mode.md`
