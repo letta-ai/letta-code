@@ -2720,6 +2720,28 @@ class SettingsManager {
   }
 }
 
+/**
+ * Read `preferredBackendMode` directly from the settings file without
+ * initializing the SettingsManager.  Used by the CLI subcommand path where
+ * full initialization (default creation, dirty-key tracking, rollback
+ * writes, etc.) is unnecessary and potentially unwanted.
+ */
+export function readPreferredBackendModeSync(): Settings["preferredBackendMode"] {
+  const home = process.env.HOME || homedir();
+  const settingsPath = join(home, ".letta", "settings.json");
+  try {
+    if (!exists(settingsPath)) return undefined;
+    const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    const mode = raw.preferredBackendMode;
+    return mode === "api" || mode === "local" ? mode : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Singleton instance - use globalThis to ensure only one instance across the entire bundle
 declare global {
   var __lettaSettingsManager: SettingsManager | undefined;

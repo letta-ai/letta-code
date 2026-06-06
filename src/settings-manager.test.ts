@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CommandHookConfig, HookCommand } from "@/hooks/types";
 import { runWithRuntimeContext } from "@/runtime-context";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
-import { settingsManager } from "@/settings-manager";
+import {
+  readPreferredBackendModeSync,
+  settingsManager,
+} from "@/settings-manager";
 
 // Type-safe helper to extract command from a hook (tests only use command hooks)
 function asCommand(
@@ -2027,5 +2031,57 @@ describe("Settings Manager - Conversation Pins", () => {
     expect(
       settingsManager.getGlobalPinnedConversations("local-agent-1"),
     ).toEqual([]);
+  });
+});
+
+describe("readPreferredBackendModeSync", () => {
+  let tmpHome: string;
+  const savedHome = process.env.HOME;
+
+  beforeEach(async () => {
+    tmpHome = await mkdtemp(join(tmpdir(), "letta-read-backend-"));
+    process.env.HOME = tmpHome;
+  });
+
+  afterEach(async () => {
+    process.env.HOME = savedHome;
+    await rm(tmpHome, { recursive: true, force: true });
+  });
+
+  function writeSettings(data: Record<string, unknown>): void {
+    const dir = join(tmpHome, ".letta");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "settings.json"), JSON.stringify(data));
+  }
+
+  test("returns undefined when settings file does not exist", () => {
+    expect(readPreferredBackendModeSync()).toBeUndefined();
+  });
+
+  test("returns undefined when preferredBackendMode is not set", () => {
+    writeSettings({});
+    expect(readPreferredBackendModeSync()).toBeUndefined();
+  });
+
+  test("reads 'local' from settings file", () => {
+    writeSettings({ preferredBackendMode: "local" });
+    expect(readPreferredBackendModeSync()).toBe("local");
+  });
+
+  test("reads 'api' from settings file", () => {
+    writeSettings({ preferredBackendMode: "api" });
+    expect(readPreferredBackendModeSync()).toBe("api");
+  });
+
+  test("returns undefined for invalid preferredBackendMode value", () => {
+    writeSettings({ preferredBackendMode: "invalid" });
+    expect(readPreferredBackendModeSync()).toBeUndefined();
+  });
+
+  test("returns undefined for malformed JSON", () => {
+    const dir = join(tmpHome, ".letta");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "settings.json"), "not json{{{");
+    expect(readPreferredBackendModeSync()).toBeUndefined();
   });
 });

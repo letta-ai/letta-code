@@ -84,6 +84,7 @@ import {
 } from "./permissions/mode";
 import {
   type Settings,
+  readPreferredBackendModeSync,
   settingsManager,
   shouldPersistSessionState,
 } from "./settings-manager";
@@ -690,6 +691,20 @@ async function main(): Promise<void> {
       error instanceof Error ? `Error: ${error.message}` : String(error),
     );
     process.exit(1);
+  }
+
+  // Configure backend from saved preference before routing subcommands.
+  // Without this, subcommands like `connect` that depend on
+  // defaultProviderStorageTarget() would always see "api" when no
+  // explicit --backend flag is given, even if the user previously ran
+  // `letta backend local`.  Uses a lightweight file read to avoid
+  // triggering full SettingsManager initialization (default creation,
+  // dirty-key tracking, rollback writes, etc.).
+  if (!explicitBackendMode) {
+    const saved = readPreferredBackendModeSync();
+    if (saved) {
+      configureBackendMode(saved);
+    }
   }
 
   // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
