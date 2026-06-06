@@ -110,6 +110,54 @@ describe("connect subcommand", () => {
     );
   });
 
+  test("initializes settings before validating API key provider", async () => {
+    const { deps } = createIoDeps();
+    const callOrder: string[] = [];
+    deps.ensureSettingsReady = mock(() => {
+      callOrder.push("settings");
+      return Promise.resolve();
+    });
+    deps.checkProviderApiKey = mock(() => {
+      callOrder.push("check");
+      return Promise.resolve();
+    });
+
+    const exitCode = await runConnectSubcommand(
+      ["anthropic", "sk-ant-123"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).toHaveBeenCalledTimes(1);
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "anthropic",
+      "sk-ant-123",
+    );
+    expect(callOrder).toEqual(["settings", "check"]);
+  });
+
+  test("connects API key provider in local target without initializing settings", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+
+    const exitCode = await runConnectSubcommand(
+      ["openai", "sk-local-123"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).not.toHaveBeenCalled();
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "openai",
+      "sk-local-123",
+    );
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "openai",
+      "openai",
+      "sk-local-123",
+    );
+  });
+
   test("returns error for missing key in non-TTY mode", async () => {
     const { stderr, deps } = createIoDeps();
     const nonTtyDeps = { ...deps, isTTY: () => false };
@@ -143,6 +191,7 @@ describe("connect subcommand", () => {
     );
 
     expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).not.toHaveBeenCalled();
     expect(deps.promptSecret).not.toHaveBeenCalled();
     expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
       "ollama",
@@ -251,5 +300,44 @@ describe("connect subcommand", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.join("\n")).toContain("Missing IAM fields");
+  });
+
+  test("initializes settings before validating bedrock credentials", async () => {
+    const { deps } = createIoDeps();
+    const callOrder: string[] = [];
+    deps.ensureSettingsReady = mock(() => {
+      callOrder.push("settings");
+      return Promise.resolve();
+    });
+    deps.checkProviderApiKey = mock(() => {
+      callOrder.push("check");
+      return Promise.resolve();
+    });
+
+    const exitCode = await runConnectSubcommand(
+      [
+        "bedrock",
+        "--method",
+        "iam",
+        "--access-key",
+        "AKIA123",
+        "--secret-key",
+        "secret123",
+        "--region",
+        "us-east-1",
+      ],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.ensureSettingsReady).toHaveBeenCalledTimes(1);
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "bedrock",
+      "secret123",
+      "AKIA123",
+      "us-east-1",
+      undefined,
+    );
+    expect(callOrder).toEqual(["settings", "check"]);
   });
 });
