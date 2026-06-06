@@ -1,4 +1,7 @@
-import { execFile } from "node:child_process";
+import {
+  type ExecFileOptionsWithStringEncoding,
+  execFile,
+} from "node:child_process";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -114,6 +117,17 @@ export function buildInstallCommand(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   return `${pm} ${buildInstallArgs(pm, env).join(" ")}`;
+}
+
+export function buildUpdateExecOptions(
+  timeout: number,
+  platform: NodeJS.Platform = process.platform,
+): ExecFileOptionsWithStringEncoding {
+  return {
+    timeout,
+    encoding: "utf8",
+    shell: platform === "win32",
+  };
 }
 
 function getResolvedEntrypoint(): string {
@@ -316,9 +330,11 @@ export async function checkForUpdate(
  */
 async function getNpmGlobalPath(): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("npm", ["prefix", "-g"], {
-      timeout: 5000,
-    });
+    const { stdout } = await execFileAsync(
+      "npm",
+      ["prefix", "-g"],
+      buildUpdateExecOptions(5000),
+    );
     return stdout.trim();
   } catch {
     return null;
@@ -370,7 +386,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
   try {
     debugLog(`Running ${installCmd}...`);
     progressLog?.(`Running update command: ${installCmd}`);
-    await execFileAsync(pm, installArgs, { timeout: 60000 });
+    await execFileAsync(pm, installArgs, buildUpdateExecOptions(60000));
     debugLog("Update completed successfully");
     progressLog?.("Update command completed successfully.");
     return { success: true };
@@ -390,7 +406,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
       await cleanupOrphanedDirs(globalPath);
 
       try {
-        await execFileAsync(pm, installArgs, { timeout: 60000 });
+        await execFileAsync(pm, installArgs, buildUpdateExecOptions(60000));
         debugLog("Update succeeded after cleanup retry");
         return { success: true };
       } catch (retryError) {
@@ -429,7 +445,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
         await cleanupOrphanedDirs(globalPath);
       }
       try {
-        await execFileAsync(pm, installArgs, { timeout: 60000 });
+        await execFileAsync(pm, installArgs, buildUpdateExecOptions(60000));
         debugLog("Update succeeded after race condition retry");
         return { success: true };
       } catch (retryError) {
