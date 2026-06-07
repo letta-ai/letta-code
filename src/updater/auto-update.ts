@@ -44,6 +44,8 @@ const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
 };
 
 const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
+const NPM_PREFIX_TIMEOUT_MS = 5000;
+const UPDATE_INSTALL_TIMEOUT_MS = 60_000;
 type FetchImpl = typeof fetch;
 
 export interface SelfUpdateStatus {
@@ -126,8 +128,18 @@ export function buildUpdateExecOptions(
   return {
     timeout,
     encoding: "utf8",
+    // Match Codex's updater behavior: route package-manager commands through
+    // the Windows shell so npm/pnpm/bun .cmd shims resolve via PATHEXT.
     shell: platform === "win32",
   };
+}
+
+async function runUpdateCommand(
+  command: string,
+  args: string[],
+  timeout: number,
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync(command, args, buildUpdateExecOptions(timeout));
 }
 
 function getResolvedEntrypoint(): string {
@@ -330,10 +342,10 @@ export async function checkForUpdate(
  */
 async function getNpmGlobalPath(): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await runUpdateCommand(
       "npm",
       ["prefix", "-g"],
-      buildUpdateExecOptions(5000),
+      NPM_PREFIX_TIMEOUT_MS,
     );
     return stdout.trim();
   } catch {
@@ -386,7 +398,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
   try {
     debugLog(`Running ${installCmd}...`);
     progressLog?.(`Running update command: ${installCmd}`);
-    await execFileAsync(pm, installArgs, buildUpdateExecOptions(60000));
+    await runUpdateCommand(pm, installArgs, UPDATE_INSTALL_TIMEOUT_MS);
     debugLog("Update completed successfully");
     progressLog?.("Update command completed successfully.");
     return { success: true };
@@ -406,7 +418,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
       await cleanupOrphanedDirs(globalPath);
 
       try {
-        await execFileAsync(pm, installArgs, buildUpdateExecOptions(60000));
+        await runUpdateCommand(pm, installArgs, UPDATE_INSTALL_TIMEOUT_MS);
         debugLog("Update succeeded after cleanup retry");
         return { success: true };
       } catch (retryError) {
@@ -445,7 +457,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
         await cleanupOrphanedDirs(globalPath);
       }
       try {
-        await execFileAsync(pm, installArgs, buildUpdateExecOptions(60000));
+        await runUpdateCommand(pm, installArgs, UPDATE_INSTALL_TIMEOUT_MS);
         debugLog("Update succeeded after race condition retry");
         return { success: true };
       } catch (retryError) {
