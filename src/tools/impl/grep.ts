@@ -1,26 +1,12 @@
 import { execFile } from "node:child_process";
-import { createRequire } from "node:module";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { ensureRipgrep } from "./ripgrep-manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 const execFileAsync = promisify(execFile);
-
-function getRipgrepPath(): string {
-  try {
-    const __filename = fileURLToPath(import.meta.url);
-    const require = createRequire(__filename);
-    const rgPackage = require("@vscode/ripgrep");
-    return rgPackage.rgPath;
-  } catch (_error) {
-    return "rg";
-  }
-}
-
-const rgPath = getRipgrepPath();
 
 function applyOffsetAndLimit<T>(
   items: T[],
@@ -75,6 +61,13 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
   } = args;
 
   const userCwd = getCurrentWorkingDirectory();
+  const rgPath = await ensureRipgrep(true);
+  if (!rgPath) {
+    throw new Error(
+      "Grep failed: ripgrep (rg) is not available and could not be downloaded",
+    );
+  }
+
   const rgArgs: string[] = [];
   if (output_mode === "files_with_matches") rgArgs.push("-l");
   else if (output_mode === "count") rgArgs.push("-c");
