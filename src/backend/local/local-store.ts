@@ -1518,7 +1518,11 @@ export class LocalStore {
         body,
         currentIsoTimestamp(),
       );
-      const projected = this.applyConversationModelDefaults(updated, body);
+      const projected = this.applyConversationModelDefaults(
+        updated,
+        body,
+        created,
+      );
       this.conversations.set(
         this.conversationKey(conversationId, created.agent_id),
         projected,
@@ -1529,6 +1533,7 @@ export class LocalStore {
     const updated = this.applyConversationModelDefaults(
       updateLocalConversationRecord(current, body, currentIsoTimestamp()),
       body,
+      current,
     );
     this.conversations.set(
       this.conversationKey(conversationId, current.agent_id),
@@ -1541,9 +1546,11 @@ export class LocalStore {
   private applyConversationModelDefaults(
     conversation: StoredConversation,
     body: ConversationUpdateBody,
+    previousConversation: StoredConversation,
   ): StoredConversation {
     const requestedModel = (body as Record<string, unknown>).model;
     if (typeof requestedModel !== "string") return conversation;
+    if (previousConversation.model === requestedModel) return conversation;
     const defaults = this.modelSettingsDefaultsForModel(requestedModel);
     if (!defaults || Object.keys(defaults).length === 0) return conversation;
     const existingSettings = isRecord(conversation.model_settings)

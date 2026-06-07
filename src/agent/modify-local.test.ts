@@ -83,6 +83,27 @@ describe("local model updates", () => {
         expect(conversationModelSettings?.max_tokens).toBe(kimi?.maxTokens);
         expect(conversationModelSettings?.max_output_tokens).toBeUndefined();
 
+        const customizedConversation = await backend.updateConversation(
+          conversation.id,
+          {
+            model: "openrouter/moonshotai/kimi-k2.6",
+            model_settings: {
+              provider_type: "openrouter",
+              context_window_limit: 12345,
+              max_tokens: 1234,
+              parallel_tool_calls: false,
+            },
+          } as never,
+        );
+        const customizedConversationModelSettings =
+          customizedConversation.model_settings as
+            | Record<string, unknown>
+            | undefined;
+        expect(customizedConversationModelSettings?.context_window_limit).toBe(
+          12345,
+        );
+        expect(customizedConversationModelSettings?.max_tokens).toBe(1234);
+
         const updated = await updateAgentLLMConfig(
           agent.id,
           "openrouter/moonshotai/kimi-k2.6",
