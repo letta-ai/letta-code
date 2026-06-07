@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -43,9 +43,17 @@ describe("startup setup PTY", () => {
         },
       );
 
-      expect(result.status).toBe(0);
-      expect(result.signal).toBeNull();
-      expect(result.stderr).toBe("");
+      if (result.status !== 0 || result.signal !== null || result.stderr) {
+        throw new Error(
+          [
+            `PTY setup runner failed with status ${result.status} signal ${result.signal}`,
+            result.stdout ? `stdout:\n${result.stdout}` : null,
+            result.stderr ? `stderr:\n${result.stderr}` : null,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        );
+      }
     },
     { timeout: 35000 },
   );
