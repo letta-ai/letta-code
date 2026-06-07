@@ -1953,6 +1953,15 @@ async function main(): Promise<void> {
           process.cwd(),
         );
         const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
+        const localPinnedAgentIds = settingsManager
+          .getLocalPinnedAgents(process.cwd())
+          .filter((agentId) =>
+            isAgentIdCompatibleWithBackend(agentId, startupBackendMode),
+          );
+        const localPinnedAgentId =
+          localPinnedAgentIds.length === 1
+            ? (localPinnedAgentIds[0] ?? null)
+            : null;
         const localAgentId =
           startupBackendMode === "local" &&
           rawLocalAgentId &&
@@ -1966,52 +1975,44 @@ async function main(): Promise<void> {
             ? rawGlobalAgentId
             : null;
 
-        // Fetch local + global LRU agents in parallel
+        // Fetch local pin + LRU agents in parallel, de-duping shared IDs.
+        const agentIdsToValidate = [
+          ...new Set(
+            [localPinnedAgentId, localAgentId, globalAgentId].filter(
+              (agentId): agentId is string => Boolean(agentId),
+            ),
+          ),
+        ];
+        const validationResults = await Promise.allSettled(
+          agentIdsToValidate.map(async (agentId) => ({
+            agentId,
+            agent: await backend.retrieveAgent(agentId, {
+              include: ["agent.tags"],
+            }),
+          })),
+        );
+        const cachedAgents = new Map<string, AgentState>();
+        for (const result of validationResults) {
+          if (result.status === "fulfilled") {
+            cachedAgents.set(result.value.agentId, result.value.agent);
+          }
+        }
+
+        const localPinnedAgentExists = localPinnedAgentId
+          ? cachedAgents.has(localPinnedAgentId)
+          : false;
         let localAgentExists = false;
         let globalAgentExists = false;
-        let cachedAgent: AgentState | null = null;
-
-        if (globalAgentId && globalAgentId === localAgentId) {
-          // Same agent — only need one fetch
-          if (localAgentId) {
-            try {
-              cachedAgent = await backend.retrieveAgent(localAgentId, {
-                include: ["agent.tags"],
-              });
-              localAgentExists = true;
-            } catch {
-              setFailedAgentMessage(
-                `Unable to locate recently used agent ${localAgentId}`,
-              );
-            }
-          }
-          globalAgentExists = localAgentExists;
-        } else {
-          // Different agents — fetch in parallel
-          const [localResult, globalResult] = await Promise.allSettled([
-            localAgentId
-              ? backend.retrieveAgent(localAgentId, { include: ["agent.tags"] })
-              : Promise.reject(new Error("no local")),
-            globalAgentId
-              ? backend.retrieveAgent(globalAgentId, {
-                  include: ["agent.tags"],
-                })
-              : Promise.reject(new Error("no global")),
-          ]);
-
-          if (localResult.status === "fulfilled") {
-            localAgentExists = true;
-            cachedAgent = localResult.value;
-          } else if (localAgentId) {
+        if (localAgentId) {
+          localAgentExists = cachedAgents.has(localAgentId);
+          if (!localAgentExists) {
             setFailedAgentMessage(
               `Unable to locate recently used agent ${localAgentId}`,
             );
           }
-
-          if (globalResult.status === "fulfilled") {
-            globalAgentExists = true;
-            cachedAgent = globalResult.value;
-          }
+        }
+        if (globalAgentId) {
+          globalAgentExists = cachedAgents.has(globalAgentId);
         }
         markMilestone("STARTUP_LRU_FETCH_DONE");
 
@@ -2032,6 +2033,9 @@ async function main(): Promise<void> {
         );
         const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
+          localPinnedAgentId,
+          localPinnedAgentExists,
+          localPinnedCount: localPinnedAgentIds.length,
           localAgentId,
           localConversationId: localSession?.conversationId ?? null,
           localAgentExists,
@@ -2046,9 +2050,10 @@ async function main(): Promise<void> {
         markMilestone(`STARTUP_TARGET_${target.action.toUpperCase()}`);
 
         switch (target.action) {
-          case "resume":
+          case "resume": {
             setSelectedGlobalAgentId(target.agentId);
-            if (cachedAgent && cachedAgent.id === target.agentId) {
+            const cachedAgent = cachedAgents.get(target.agentId);
+            if (cachedAgent) {
               setValidatedAgent(cachedAgent);
             }
             if (target.conversationId && !forceNewConversation) {
@@ -2056,6 +2061,7 @@ async function main(): Promise<void> {
             }
             setLoadingState("assembling");
             return;
+          }
           case "select":
             setLoadingState("selecting_global");
             return;
