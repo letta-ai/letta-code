@@ -5,6 +5,7 @@ import * as path from "node:path";
 import {
   buildInstallCommand,
   buildLatestVersionUrl,
+  buildUpdateExecOptions,
   checkForUpdate,
   detectPackageManager,
   getSelfUpdateStatus,
@@ -271,6 +272,22 @@ describe("getSelfUpdateStatus", () => {
 });
 
 describe("update config resolution", () => {
+  test("buildUpdateExecOptions enables shell on Windows for npm.cmd shims", () => {
+    expect(buildUpdateExecOptions(5000, "win32")).toEqual({
+      timeout: 5000,
+      encoding: "utf8",
+      shell: true,
+    });
+  });
+
+  test("buildUpdateExecOptions keeps direct execFile behavior off Windows", () => {
+    expect(buildUpdateExecOptions(60000, "darwin")).toEqual({
+      timeout: 60000,
+      encoding: "utf8",
+      shell: false,
+    });
+  });
+
   test("resolveUpdatePackageName uses default when unset", () => {
     expect(resolveUpdatePackageName({} as NodeJS.ProcessEnv)).toBe(
       "@letta-ai/letta-code",
