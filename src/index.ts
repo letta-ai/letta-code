@@ -77,11 +77,7 @@ import {
   disableExtensionsForProcess,
   shouldDisableExtensions,
 } from "./extensions/disable";
-import {
-  migratePermissionMode,
-  permissionMode,
-  VALID_PERMISSION_MODES,
-} from "./permissions/mode";
+import { applyStartupPermissionMode } from "./permissions/startup";
 import {
   type Settings,
   settingsManager,
@@ -1504,24 +1500,18 @@ async function main(): Promise<void> {
   }
 
   // Set permission mode if provided (or via --yolo alias)
-  const permissionModeValue = values["permission-mode"];
+  const permissionModeValue =
+    typeof values["permission-mode"] === "string"
+      ? values["permission-mode"]
+      : undefined;
   const yoloMode = values.yolo;
-
-  if (yoloMode || permissionModeValue) {
-    if (yoloMode) {
-      // --yolo is an alias for --permission-mode unrestricted
-      permissionMode.setMode("unrestricted");
-    } else if (permissionModeValue) {
-      const migrated = migratePermissionMode(permissionModeValue);
-      if (migrated) {
-        permissionMode.setMode(migrated);
-      } else {
-        console.error(
-          `Invalid permission mode: ${permissionModeValue}. Valid modes: ${VALID_PERMISSION_MODES.join(", ")}`,
-        );
-        process.exit(1);
-      }
-    }
+  const startupPermissionMode = await applyStartupPermissionMode({
+    permissionModeValue,
+    yoloMode,
+  });
+  if (!startupPermissionMode.ok) {
+    console.error(startupPermissionMode.message);
+    process.exit(1);
   }
 
   if (isHeadless) {

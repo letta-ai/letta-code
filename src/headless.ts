@@ -114,6 +114,7 @@ import {
 } from "./headless-extension-adapter";
 import { computeDiffPreviews } from "./helpers/diff-preview";
 import { formatPermissionDenial } from "./permissions/format-denial";
+import { applyStartupPermissionMode } from "./permissions/startup";
 import { QueueRuntime } from "./queue/queue-runtime";
 import {
   mergeQueuedTurnInput,
@@ -564,19 +565,18 @@ export async function handleHeadlessCommand(
   cliPermissions.setMemoryGuardDisabled(false);
 
   // Set permission mode if provided (or via --yolo alias)
-  const permissionModeValue = values["permission-mode"];
+  const permissionModeValue =
+    typeof values["permission-mode"] === "string"
+      ? values["permission-mode"]
+      : undefined;
   const yoloMode = values.yolo;
-  if (yoloMode || permissionModeValue) {
-    const { permissionMode } = await import("@/permissions/mode");
-    if (yoloMode) {
-      permissionMode.setMode("unrestricted");
-    } else if (permissionModeValue) {
-      const { migratePermissionMode } = await import("@/permissions/mode");
-      const migrated = migratePermissionMode(permissionModeValue);
-      if (migrated) {
-        permissionMode.setMode(migrated);
-      }
-    }
+  const startupPermissionMode = await applyStartupPermissionMode({
+    permissionModeValue,
+    yoloMode,
+  });
+  if (!startupPermissionMode.ok) {
+    console.error(startupPermissionMode.message);
+    process.exit(1);
   }
 
   // Set CLI permission overrides if provided
@@ -1658,11 +1658,7 @@ export async function handleHeadlessCommand(
   }
 
   const sessionStats = new SessionStats();
-  const headlessPermissionMode = yoloMode
-    ? "unrestricted"
-    : typeof permissionModeValue === "string"
-      ? permissionModeValue
-      : null;
+  const headlessPermissionMode = startupPermissionMode.mode;
   const headlessExtensionAdapter = createHeadlessExtensionAdapter({
     agent,
     backend,
