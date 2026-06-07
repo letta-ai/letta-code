@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   getUserSettingsPaths,
+  loadPermissionMode,
   loadPermissions,
   resetPermissionLoaderCacheForTests,
   savePermissionRule,
@@ -74,6 +75,52 @@ test("Load permissions from local settings", async () => {
 
   // Should include local rule (may also include user settings from real home dir)
   expect(permissions.allow).toContain("Bash(git push:*)");
+});
+
+test("Load permissions migrates legacy permission mode", async () => {
+  const projectDir = join(testDir, "project-mode-legacy");
+  await Bun.write(
+    join(projectDir, ".letta", "settings.json"),
+    JSON.stringify({
+      permissions: {
+        mode: "bypassPermissions",
+        allow: ["Bash"],
+      },
+    }),
+  );
+
+  const permissions = await loadPermissions(projectDir);
+  const mode = await loadPermissionMode(projectDir);
+
+  expect(permissions.mode).toBe("unrestricted");
+  expect(mode).toBe("unrestricted");
+  expect(permissions.allow).toContain("Bash");
+});
+
+test("Load permissions uses highest-precedence permission mode", async () => {
+  const projectDir = join(testDir, "project-mode-precedence");
+  await Bun.write(
+    join(projectDir, ".letta", "settings.json"),
+    JSON.stringify({
+      permissions: {
+        mode: "standard",
+      },
+    }),
+  );
+  await Bun.write(
+    join(projectDir, ".letta", "settings.local.json"),
+    JSON.stringify({
+      permissions: {
+        mode: "acceptEdits",
+      },
+    }),
+  );
+
+  const permissions = await loadPermissions(projectDir);
+  const mode = await loadPermissionMode(projectDir);
+
+  expect(permissions.mode).toBe("acceptEdits");
+  expect(mode).toBe("acceptEdits");
 });
 
 test("Load permissions picks up external project settings edits without restart", async () => {

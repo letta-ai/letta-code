@@ -17,6 +17,7 @@ import {
 } from "@/auth/oauth";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
@@ -370,6 +371,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   }
 
   await settingsManager.initialize();
+  await applyStartupPermissionMode({});
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
