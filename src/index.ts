@@ -2285,6 +2285,8 @@ async function main(): Promise<void> {
               modelOverride: model,
               stripMessages: true,
               stripSkills: false,
+              enableMemfs:
+                noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
             });
           } else {
             // Import from local file
@@ -2294,6 +2296,8 @@ async function main(): Promise<void> {
               modelOverride: model,
               stripMessages: true,
               stripSkills: false,
+              enableMemfs:
+                noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
             });
           }
 

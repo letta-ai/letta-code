@@ -6,13 +6,14 @@ import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import { getBackend } from "@/backend";
+import { type BackendCapabilities, getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
 import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { getModelContextWindow } from "./available-models";
 import { getDefaultMemoryBlocks } from "./memory";
+import { GIT_MEMORY_ENABLED_TAG } from "./memory-git";
 import {
   formatAvailableModels,
   getDefaultModel,
@@ -26,7 +27,11 @@ import {
   resolveAndBuildSystemPrompt,
   SLEEPTIME_MEMORY_PERSONA,
 } from "./prompt-assets";
-import { recordManagedSystemPrompt } from "./system-prompt-versioning";
+import {
+  LETTA_CODE_ORIGIN_TAG,
+  LETTA_CODE_SUBAGENT_TAG,
+  recordManagedSystemPrompt,
+} from "./system-prompt-versioning";
 
 /**
  * Describes where a memory block came from
@@ -121,6 +126,73 @@ export async function createAgentWithBaseToolsRecovery(
   }
 }
 
+type MemfsCreateCapabilities = Pick<
+  BackendCapabilities,
+  "localMemfs" | "remoteMemfs"
+>;
+
+export interface CreatedAgentMemfsConfigOptions {
+  capabilities: MemfsCreateCapabilities;
+  requestedMemoryPromptMode?: MemoryPromptMode;
+  enableMemfs?: boolean;
+  isLettaCloud: boolean;
+}
+
+export interface CreatedAgentMemfsConfig {
+  enableMemfs: boolean;
+  memoryPromptMode: MemoryPromptMode;
+}
+
+export function resolveCreatedAgentMemfsConfig(
+  options: CreatedAgentMemfsConfigOptions,
+): CreatedAgentMemfsConfig {
+  const explicitDisable =
+    options.enableMemfs === false ||
+    (options.enableMemfs === undefined &&
+      options.requestedMemoryPromptMode === "standard");
+  const explicitEnable =
+    options.enableMemfs === true ||
+    options.requestedMemoryPromptMode === "memfs" ||
+    options.requestedMemoryPromptMode === "local-memfs";
+  const supportedByDefault =
+    options.capabilities.localMemfs ||
+    (options.capabilities.remoteMemfs && options.isLettaCloud);
+  const enableMemfs = explicitDisable
+    ? false
+    : explicitEnable || supportedByDefault;
+  const memoryPromptMode =
+    options.requestedMemoryPromptMode ??
+    (enableMemfs
+      ? options.capabilities.localMemfs
+        ? "local-memfs"
+        : "memfs"
+      : "standard");
+
+  return { enableMemfs, memoryPromptMode };
+}
+
+export interface BuildCreatedAgentTagsOptions {
+  tags?: string[] | null;
+  isSubagent?: boolean;
+  enableMemfs?: boolean;
+}
+
+export function buildCreatedAgentTags(
+  options: BuildCreatedAgentTagsOptions = {},
+): string[] {
+  const tags = [LETTA_CODE_ORIGIN_TAG];
+  if (options.isSubagent) {
+    tags.push(LETTA_CODE_SUBAGENT_TAG);
+  }
+  if (options.enableMemfs) {
+    tags.push(GIT_MEMORY_ENABLED_TAG);
+  }
+  if (options.tags && Array.isArray(options.tags)) {
+    tags.push(...options.tags);
+  }
+  return Array.from(new Set(tags));
+}
+
 export interface CreateAgentOptions {
   name?: string;
   /** Agent description shown in /agents selector */
@@ -149,6 +221,8 @@ export interface CreateAgentOptions {
   blockValues?: Record<string, string>;
   /** Tags to organize and categorize the agent */
   tags?: string[];
+  /** Whether to enable git-backed MemFS for the created agent (defaults to true when supported). */
+  enableMemfs?: boolean;
 }
 
 export async function createAgent(
@@ -205,6 +279,18 @@ export async function createAgent(
   }
 
   const backend = getBackend();
+  const isLettaCloud =
+    backend.capabilities.remoteMemfs && !backend.capabilities.localMemfs
+      ? await import("./memory-filesystem").then((module) =>
+          module.isLettaCloud(),
+        )
+      : false;
+  const memfsConfig = resolveCreatedAgentMemfsConfig({
+    capabilities: backend.capabilities,
+    requestedMemoryPromptMode: options.memoryPromptMode,
+    enableMemfs: options.enableMemfs,
+    isLettaCloud,
+  });
 
   // Only attach server-side tools to the agent.
   // Client-side tools (Read, Write, Bash, etc.) are passed via client_tools at runtime,
@@ -309,7 +395,7 @@ export async function createAgent(
     (await getModelContextWindow(modelHandle));
 
   // Resolve system prompt content
-  const memMode: MemoryPromptMode = options.memoryPromptMode ?? "standard";
+  const memMode: MemoryPromptMode = memfsConfig.memoryPromptMode;
   const systemPromptContent = options.systemPromptCustom
     ? options.systemPromptCustom
     : await resolveAndBuildSystemPrompt(options.systemPromptPreset, memMode);
@@ -318,13 +404,11 @@ export async function createAgent(
   // - memory_blocks: new blocks to create inline
   // - block_ids: references to existing blocks (for shared memory)
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-  const tags = ["origin:letta-code"];
-  if (isSubagent) {
-    tags.push("role:subagent");
-  }
-  if (options.tags && Array.isArray(options.tags)) {
-    tags.push(...options.tags);
-  }
+  const tags = buildCreatedAgentTags({
+    tags: options.tags,
+    isSubagent,
+    enableMemfs: memfsConfig.enableMemfs,
+  });
 
   const agentDescription =
     options.description ?? `Letta Code agent created in ${process.cwd()}`;
