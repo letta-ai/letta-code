@@ -184,6 +184,26 @@ function conversationModelSettings(
   return optionalRecordOrNull(value);
 }
 
+function supportedConversationModelSettingsFromBody(
+  bodyRecord: Record<string, unknown>,
+): Record<string, unknown> | null | undefined {
+  const modelSettings = conversationModelSettings(bodyRecord.model_settings);
+  if (modelSettings === null) return null;
+
+  const next = modelSettings ?? {};
+  if (typeof bodyRecord.context_window_limit === "number") {
+    next.context_window_limit = bodyRecord.context_window_limit;
+  }
+  if (
+    typeof bodyRecord.max_tokens === "number" ||
+    bodyRecord.max_tokens === null
+  ) {
+    next.max_tokens = bodyRecord.max_tokens;
+  }
+
+  return Object.keys(next).length > 0 ? next : modelSettings;
+}
+
 function createLocalConversationRecord(
   conversationId: string,
   agentId: string,
@@ -192,7 +212,7 @@ function createLocalConversationRecord(
 ): StoredConversation {
   const bodyRecord = body as Record<string, unknown>;
   const now = currentIsoTimestamp();
-  const modelSettings = conversationModelSettings(bodyRecord.model_settings);
+  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
   return {
     id: conversationId,
     agent_id: agentId,
@@ -245,7 +265,7 @@ function updateLocalConversationRecord(
   if (typeof bodyRecord.model === "string" || bodyRecord.model === null) {
     next.model = bodyRecord.model;
   }
-  const modelSettings = conversationModelSettings(bodyRecord.model_settings);
+  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
   if (modelSettings !== undefined) {
     next.model_settings = modelSettings as StoredConversation["model_settings"];
   }
@@ -1288,13 +1308,6 @@ export class LocalStore {
     const systemChanged =
       nextSystem !== undefined && nextSystem !== existingRecord.system;
     const requestedModel = bodyRecord.model;
-    const nextModelSettings = {
-      ...existingRecord.model_settings,
-      ...(shouldUseDefaultLocalModel(requestedModel)
-        ? this.defaultAgentModelSettings
-        : {}),
-      ...supportedModelSettingsFromBody(bodyRecord),
-    };
     const nextModel =
       typeof requestedModel === "string" &&
       !shouldUseDefaultLocalModel(requestedModel)
@@ -1302,6 +1315,16 @@ export class LocalStore {
         : typeof requestedModel === "string" && this.defaultAgentModel
           ? this.defaultAgentModel
           : undefined;
+    const modelChanged =
+      nextModel !== undefined && nextModel !== existingRecord.model;
+    const nextModelDefaults = nextModel
+      ? this.modelSettingsDefaultsForModel(nextModel)
+      : undefined;
+    const nextModelSettings = {
+      ...(modelChanged ? {} : existingRecord.model_settings),
+      ...supportedModelSettingsFromBody(bodyRecord),
+      ...(modelChanged ? (nextModelDefaults ?? {}) : {}),
+    };
     const updated = {
       ...existingRecord,
       ...(typeof bodyRecord.name === "string" && { name: bodyRecord.name }),
@@ -1495,17 +1518,17 @@ export class LocalStore {
         body,
         currentIsoTimestamp(),
       );
+      const projected = this.applyConversationModelDefaults(updated, body);
       this.conversations.set(
         this.conversationKey(conversationId, created.agent_id),
-        updated,
+        projected,
       );
       this.persistConversationState(conversationId, created.agent_id);
-      return updated;
+      return projected;
     }
-    const updated = updateLocalConversationRecord(
-      current,
+    const updated = this.applyConversationModelDefaults(
+      updateLocalConversationRecord(current, body, currentIsoTimestamp()),
       body,
-      currentIsoTimestamp(),
     );
     this.conversations.set(
       this.conversationKey(conversationId, current.agent_id),
@@ -1513,6 +1536,26 @@ export class LocalStore {
     );
     this.persistConversationState(conversationId, current.agent_id);
     return updated;
+  }
+
+  private applyConversationModelDefaults(
+    conversation: StoredConversation,
+    body: ConversationUpdateBody,
+  ): StoredConversation {
+    const requestedModel = (body as Record<string, unknown>).model;
+    if (typeof requestedModel !== "string") return conversation;
+    const defaults = this.modelSettingsDefaultsForModel(requestedModel);
+    if (!defaults || Object.keys(defaults).length === 0) return conversation;
+    const existingSettings = isRecord(conversation.model_settings)
+      ? conversation.model_settings
+      : {};
+    return {
+      ...conversation,
+      model_settings: {
+        ...existingSettings,
+        ...defaults,
+      },
+    };
   }
 
   forkConversation(
