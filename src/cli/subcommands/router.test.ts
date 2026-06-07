@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { runSubcommand } from "@/cli/subcommands/router";
+import {
+  runSubcommand,
+  subcommandNeedsEarlyBackendMode,
+} from "@/cli/subcommands/router";
 
 describe("subcommand router", () => {
   test("routes version subcommand before TUI startup", async () => {
@@ -23,5 +26,14 @@ describe("subcommand router", () => {
   test("routes connect subcommand", async () => {
     const exitCode = await runSubcommand(["connect", "help"]);
     expect(exitCode).toBe(0);
+  });
+
+  test("identifies backend-aware subcommands for early backend selection", () => {
+    expect(subcommandNeedsEarlyBackendMode("connect")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("server")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("memory")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("version")).toBe(false);
+    expect(subcommandNeedsEarlyBackendMode("backend")).toBe(false);
+    expect(subcommandNeedsEarlyBackendMode(undefined)).toBe(false);
   });
 });

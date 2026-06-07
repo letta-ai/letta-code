@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -2027,5 +2028,69 @@ describe("Settings Manager - Conversation Pins", () => {
     expect(
       settingsManager.getGlobalPinnedConversations("local-agent-1"),
     ).toEqual([]);
+  });
+});
+
+describe("readStartupBackendSettingsSync", () => {
+  let tmpHome: string;
+  const savedHome = process.env.HOME;
+
+  beforeEach(async () => {
+    tmpHome = await mkdtemp(join(tmpdir(), "letta-startup-backend-"));
+    process.env.HOME = tmpHome;
+  });
+
+  afterEach(async () => {
+    if (savedHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = savedHome;
+    }
+    await rm(tmpHome, { recursive: true, force: true });
+  });
+
+  function writeSettings(data: Record<string, unknown>): void {
+    const dir = join(tmpHome, ".letta");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "settings.json"), JSON.stringify(data));
+  }
+
+  test("returns empty settings when settings file does not exist", () => {
+    expect(settingsManager.readStartupBackendSettingsSync()).toEqual({
+      preferredBackendMode: undefined,
+      envBaseUrl: undefined,
+    });
+  });
+
+  test("reads valid backend preference and configured base URL", () => {
+    writeSettings({
+      preferredBackendMode: "local",
+      env: { LETTA_BASE_URL: "http://localhost:8283" },
+    });
+
+    expect(settingsManager.readStartupBackendSettingsSync()).toEqual({
+      preferredBackendMode: "local",
+      envBaseUrl: "http://localhost:8283",
+    });
+  });
+
+  test("ignores invalid backend preference and malformed env", () => {
+    writeSettings({ preferredBackendMode: "other", env: "not-an-object" });
+
+    expect(settingsManager.readStartupBackendSettingsSync()).toEqual({
+      preferredBackendMode: undefined,
+      envBaseUrl: undefined,
+    });
+  });
+
+  test("returns empty settings for malformed JSON", () => {
+    const dir = join(tmpHome, ".letta");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "settings.json"), "not json{{{");
+
+    expect(settingsManager.readStartupBackendSettingsSync()).toEqual({
+      preferredBackendMode: undefined,
+      envBaseUrl: undefined,
+    });
   });
 });

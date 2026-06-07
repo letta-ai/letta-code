@@ -128,6 +128,11 @@ export interface Settings {
   };
 }
 
+export interface StartupBackendSettings {
+  preferredBackendMode?: Settings["preferredBackendMode"];
+  envBaseUrl?: string;
+}
+
 export interface ProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   windowTitle?: WindowTitleConfig; // Project-specific terminal window title
@@ -2717,6 +2722,26 @@ class SettingsManager {
     this.managedKeys.clear();
     this.dirtyKeys.clear();
     this.clearSecureTokensCache();
+  }
+
+  /**
+   * Read the small subset of settings needed before CLI subcommand routing.
+   * This intentionally avoids full SettingsManager initialization, which can
+   * create defaults, mark dirty keys, and perform migrations/writes.
+   */
+  readStartupBackendSettingsSync(): StartupBackendSettings {
+    const raw = this.readJsonObjectSync(this.getSettingsPath());
+    const mode = raw.preferredBackendMode;
+    const env = raw.env;
+    const envBaseUrl =
+      env && typeof env === "object" && !Array.isArray(env)
+        ? (env as Record<string, unknown>).LETTA_BASE_URL
+        : undefined;
+    return {
+      preferredBackendMode:
+        mode === "api" || mode === "local" ? mode : undefined,
+      envBaseUrl: typeof envBaseUrl === "string" ? envBaseUrl : undefined,
+    };
   }
 }
 

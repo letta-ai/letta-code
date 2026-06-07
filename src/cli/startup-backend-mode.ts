@@ -16,3 +16,27 @@ export function getStartupBackendLookupOrder(
   if (explicitMode) return [explicitMode];
   return activeMode === "local" ? ["local", "api"] : ["api", "local"];
 }
+
+export interface SubcommandBackendModeInput {
+  explicitBackendMode?: StartupBackendMode;
+  envBackendMode?: StartupBackendMode;
+  savedBackendMode?: StartupBackendMode;
+  baseURL: string;
+  cloudBaseURL: string;
+}
+
+export function resolveSubcommandBackendMode({
+  explicitBackendMode,
+  envBackendMode,
+  savedBackendMode,
+  baseURL,
+  cloudBaseURL,
+}: SubcommandBackendModeInput): StartupBackendMode | undefined {
+  if (explicitBackendMode) return undefined;
+  if (envBackendMode) return envBackendMode;
+  if (!savedBackendMode) return undefined;
+  if (savedBackendMode === "local" && baseURL !== cloudBaseURL) {
+    return undefined;
+  }
+  return savedBackendMode;
+}
