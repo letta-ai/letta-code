@@ -23,6 +23,25 @@ async function runVersionSubcommand(): Promise<number> {
   return 0;
 }
 
+export function subcommandNeedsEarlyBackendMode(
+  command: string | undefined,
+): boolean {
+  switch (command) {
+    case "agents":
+    case "connect":
+    case "install":
+    case "memfs":
+    case "memory":
+    case "messages":
+    case "remote":
+    case "server":
+    case "skills":
+      return true;
+    default:
+      return false;
+  }
+}
+
 export async function runSubcommand(argv: string[]): Promise<number | null> {
   const [command, ...rest] = argv;
 

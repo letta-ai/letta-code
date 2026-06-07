@@ -42,6 +42,7 @@ import {
 import { getBillingTier } from "./backend/api/metadata";
 import {
   isLocalBackendNoMemfsEnvEnabled,
+  LOCAL_BACKEND_EXPERIMENTAL_ENV,
   LOCAL_BACKEND_NO_MEMFS_ENV,
 } from "./backend/local/paths";
 import {
@@ -66,13 +67,17 @@ import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   getStartupBackendLookupOrder,
   inferBackendModeFromAgentId,
+  resolveSubcommandBackendMode,
 } from "./cli/startup-backend-mode";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
-import { runSubcommand } from "./cli/subcommands/router";
+import {
+  runSubcommand,
+  subcommandNeedsEarlyBackendMode,
+} from "./cli/subcommands/router";
 import {
   disableExtensionsForProcess,
   shouldDisableExtensions,
@@ -686,6 +691,32 @@ async function main(): Promise<void> {
       error instanceof Error ? `Error: ${error.message}` : String(error),
     );
     process.exit(1);
+  }
+
+  if (subcommandNeedsEarlyBackendMode(subcommandArgs[0])) {
+    const savedBackendSettings =
+      settingsManager.readStartupBackendSettingsSync();
+    const localBackendEnvValue = process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV];
+    const envBackendMode =
+      localBackendEnvValue === undefined
+        ? undefined
+        : localBackendEnvValue === "1" ||
+            localBackendEnvValue.toLowerCase() === "true"
+          ? "local"
+          : "api";
+    const backendMode = resolveSubcommandBackendMode({
+      explicitBackendMode,
+      envBackendMode,
+      savedBackendMode: savedBackendSettings.preferredBackendMode,
+      baseURL:
+        process.env.LETTA_BASE_URL ||
+        savedBackendSettings.envBaseUrl ||
+        LETTA_CLOUD_API_URL,
+      cloudBaseURL: LETTA_CLOUD_API_URL,
+    });
+    if (backendMode) {
+      configureBackendMode(backendMode);
+    }
   }
 
   // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
