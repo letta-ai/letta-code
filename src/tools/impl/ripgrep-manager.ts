@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { arch, homedir, platform } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
@@ -58,8 +58,8 @@ const RIPGREP_CONFIG: ToolConfig = {
   },
 };
 
-function isOfflineModeEnabled(): boolean {
-  const value = process.env[OFFLINE_ENV];
+function isOfflineModeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env[OFFLINE_ENV];
   if (!value) return false;
   return (
     value === "1" ||
@@ -68,17 +68,22 @@ function isOfflineModeEnabled(): boolean {
   );
 }
 
-export function getManagedToolsDir(): string {
-  return process.env[TOOLS_DIR_ENV] || join(homedir(), ".letta", "bin");
+export function getManagedToolsDir(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return env[TOOLS_DIR_ENV] || join(homedir(), ".letta", "bin");
 }
 
 function binaryName(config: ToolConfig): string {
   return config.binaryName + (platform() === "win32" ? ".exe" : "");
 }
 
-function commandWorks(command: string): boolean {
+function commandWorks(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
   try {
-    const result = spawnSync(command, ["--version"], { stdio: "pipe" });
+    const result = spawnSync(command, ["--version"], { env, stdio: "pipe" });
     return !result.error && result.status === 0;
   } catch {
     return false;
@@ -96,22 +101,33 @@ function getBundledRipgrepPath(): string | null {
   }
 }
 
-export function getRipgrepPath(): string | null {
+interface RipgrepPathOptions {
+  env?: NodeJS.ProcessEnv;
+}
+
+export function getRipgrepPath(
+  options: RipgrepPathOptions = {},
+): string | null {
+  const env = options.env ?? process.env;
   const config = RIPGREP_CONFIG;
-  const managedPath = join(getManagedToolsDir(), binaryName(config));
-  if (existsSync(managedPath) && commandWorks(managedPath)) {
+  const managedPath = join(getManagedToolsDir(env), binaryName(config));
+  if (existsSync(managedPath) && commandWorks(managedPath, env)) {
     return managedPath;
   }
 
   const systemBinaryNames = config.systemBinaryNames ?? [config.binaryName];
   for (const systemBinaryName of systemBinaryNames) {
-    if (commandWorks(systemBinaryName)) {
+    if (commandWorks(systemBinaryName, env)) {
       return systemBinaryName;
     }
   }
 
   const bundledPath = getBundledRipgrepPath();
-  if (bundledPath && existsSync(bundledPath) && commandWorks(bundledPath)) {
+  if (
+    bundledPath &&
+    existsSync(bundledPath) &&
+    commandWorks(bundledPath, env)
+  ) {
     return bundledPath;
   }
 
@@ -401,7 +417,10 @@ export async function ensureRipgrep(
   }
 }
 
-export function getRipgrepBinDir(): string | undefined {
-  const rgPath = getRipgrepPath();
-  return rgPath ? dirname(rgPath) : undefined;
+export function getRipgrepBinDir(
+  options: RipgrepPathOptions = {},
+): string | undefined {
+  const rgPath = getRipgrepPath(options);
+  if (!rgPath || !isAbsolute(rgPath)) return undefined;
+  return dirname(rgPath);
 }

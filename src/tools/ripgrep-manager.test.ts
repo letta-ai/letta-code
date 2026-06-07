@@ -2,38 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getRipgrepPath } from "@/tools/impl/ripgrep-manager";
+import { getRipgrepBinDir, getRipgrepPath } from "@/tools/impl/ripgrep-manager";
 
 const TOOLS_DIR_ENV = "LETTA_CODE_TOOLS_DIR";
-
-function withTemporaryEnv<T>(
-  updates: Record<string, string | undefined>,
-  fn: () => T,
-): T {
-  const original = Object.fromEntries(
-    Object.keys(updates).map((key) => [key, process.env[key]]),
-  ) as Record<string, string | undefined>;
-
-  for (const [key, value] of Object.entries(updates)) {
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
-  }
-
-  try {
-    return fn();
-  } finally {
-    for (const [key, value] of Object.entries(original)) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-  }
-}
 
 function writeFakeRg(dir: string, name: string, body: string): string {
   const filePath = join(dir, name);
@@ -74,15 +45,15 @@ describe("ripgrep manager", () => {
       );
       writeFakeRg(systemDir, binaryName, "echo ripgrep system");
 
-      withTemporaryEnv(
-        {
-          [TOOLS_DIR_ENV]: toolsDir,
-          PATH: systemDir,
-        },
-        () => {
-          expect(getRipgrepPath()).toBe(managedRg);
-        },
-      );
+      expect(
+        getRipgrepPath({
+          env: {
+            ...process.env,
+            [TOOLS_DIR_ENV]: toolsDir,
+            PATH: systemDir,
+          },
+        }),
+      ).toBe(managedRg);
     },
   );
 
@@ -95,15 +66,35 @@ describe("ripgrep manager", () => {
       writeFakeRg(toolsDir, binaryName, "exit 1");
       writeFakeRg(systemDir, binaryName, "echo ripgrep system");
 
-      withTemporaryEnv(
-        {
-          [TOOLS_DIR_ENV]: toolsDir,
-          PATH: systemDir,
-        },
-        () => {
-          expect(getRipgrepPath()).toBe(binaryName);
-        },
-      );
+      expect(
+        getRipgrepPath({
+          env: {
+            ...process.env,
+            [TOOLS_DIR_ENV]: toolsDir,
+            PATH: systemDir,
+          },
+        }),
+      ).toBe(binaryName);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "does not expose current directory when rg is resolved from PATH",
+    () => {
+      const toolsDir = makeTempDir();
+      const systemDir = makeTempDir();
+      const binaryName = process.platform === "win32" ? "rg.exe" : "rg";
+      writeFakeRg(systemDir, binaryName, "echo ripgrep system");
+
+      expect(
+        getRipgrepBinDir({
+          env: {
+            ...process.env,
+            [TOOLS_DIR_ENV]: toolsDir,
+            PATH: systemDir,
+          },
+        }),
+      ).toBeUndefined();
     },
   );
 });
