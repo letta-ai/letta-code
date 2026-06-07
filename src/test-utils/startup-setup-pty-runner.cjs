@@ -74,7 +74,10 @@ async function main() {
     let exited = false;
     terminal = pty.spawn(
       "node",
-      [cliPath, "--agent", "agent-4140c4b5-f32e-475c-9573-bcfd9446ca7b"],
+      // Force API startup so the no-credentials setup menu renders. The test
+      // is about PTY raw input after terminal preflight, not explicit cloud
+      // agent handling; cloud-agent setup intentionally disables local mode.
+      [cliPath, "--backend", "api"],
       {
         cols: 120,
         cwd: projectRoot,
