@@ -191,9 +191,6 @@ function supportedConversationModelSettingsFromBody(
   if (modelSettings === null) return null;
 
   const next = modelSettings ?? {};
-  if (typeof bodyRecord.context_window_limit === "number") {
-    next.context_window_limit = bodyRecord.context_window_limit;
-  }
   if (
     typeof bodyRecord.max_tokens === "number" ||
     bodyRecord.max_tokens === null
