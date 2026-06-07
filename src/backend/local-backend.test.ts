@@ -19,6 +19,7 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
@@ -685,6 +686,25 @@ describe("local backend pi transcript", () => {
     expect(handles).toContain("zai/glm-5.1");
   });
 
+  test("lists pi catalog context windows for configured OpenRouter models", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-openrouter-context-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "openrouter",
+      providerName: "lc-openrouter",
+      apiKey: "dummy",
+      storageDir,
+    });
+
+    const kimi = (await listLocalModels(storageDir)).find(
+      (model) => model.handle === "openrouter/moonshotai/kimi-k2.6",
+    );
+    expect(kimi?.max_context_window).toBe(
+      getModel("openrouter", "moonshotai/kimi-k2.6")?.contextWindow,
+    );
+  });
+
   test("does not list unconfigured local provider model guesses", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-unconfigured-local-"),
@@ -822,6 +842,52 @@ describe("local backend pi transcript", () => {
       (agent as { llm_config?: { max_tokens?: number } }).llm_config
         ?.max_tokens,
     ).toBe(8192);
+  });
+
+  test("resets persisted output-token settings when switching local models", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-model-token-reset-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "openrouter",
+      providerName: "lc-openrouter",
+      apiKey: "dummy",
+      storageDir,
+    });
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.createAgent({
+      name: "Local",
+      model: "openrouter/deepseek/deepseek-v4-pro",
+      model_settings: {
+        provider_type: "openrouter",
+        max_output_tokens: 384000,
+      },
+      max_tokens: 384000,
+      context_window_limit: 1048576,
+    } as never);
+
+    const updated = await backend.updateAgent(agent.id, {
+      model: "openrouter/moonshotai/kimi-k2.6",
+      model_settings: {
+        provider_type: "openrouter",
+        parallel_tool_calls: true,
+      },
+    } as never);
+
+    const kimi = getModel("openrouter", "moonshotai/kimi-k2.6");
+    expect(updated.model).toBe("openrouter/moonshotai/kimi-k2.6");
+    expect(
+      (updated as { llm_config?: { max_tokens?: number } }).llm_config
+        ?.max_tokens,
+    ).toBe(kimi?.maxTokens);
+    expect(
+      (updated as { llm_config?: { context_window?: number } }).llm_config
+        ?.context_window,
+    ).toBe(kimi?.contextWindow);
+    expect(
+      (updated.model_settings as Record<string, unknown>).max_output_tokens,
+    ).toBeUndefined();
   });
 
   test("projects legacy local 128k defaults through registered model metadata", async () => {
