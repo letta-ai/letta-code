@@ -40,6 +40,16 @@ describe("getModelInfo", () => {
       parallel_tool_calls: true,
     });
   });
+
+  test("resolves OpenRouter MiniMax M3 registry metadata", () => {
+    const info = getModelInfo("openrouter-minimax-m3");
+    expect(info?.handle).toBe("openrouter/minimax/minimax-m3");
+    expect(info?.label).toBe("MiniMax M3");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 500000,
+      parallel_tool_calls: true,
+    });
+  });
 });
 
 describe("getModelInfoForLlmConfig", () => {

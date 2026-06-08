@@ -1491,6 +1491,16 @@
       }
     },
     {
+      "id": "openrouter-minimax-m3",
+      "handle": "openrouter/minimax/minimax-m3",
+      "label": "MiniMax M3",
+      "description": "MiniMax M3 through OpenRouter",
+      "updateArgs": {
+        "context_window": 500000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "minimax-m2.7",
       "handle": "minimax/MiniMax-M2.7",
       "label": "MiniMax 2.7",
