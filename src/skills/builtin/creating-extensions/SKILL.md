@@ -13,6 +13,8 @@ Use this skill to create or update trusted global Letta Code extensions in:
 
 Extensions are trusted local apps for Letta Code. They add small composable capabilities through extension APIs, not by importing app internals. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`, `letta.getContext()`) and guard optional UI with `letta.capabilities`.
 
+For isolated experiments, set `LETTA_EXTENSIONS_DIR=/path/to/extensions` before launching Letta Code. This overrides the default `~/.letta/extensions/` load directory without copying candidate files into the real trusted extension folder.
+
 Capabilities vary by surface. TUI/headless may load tools, commands, events, UI, and providers; the desktop listener loads provider-only extensions for local provider discovery. Always guard optional capabilities.
 
 ## Choose the right capability

@@ -12,6 +12,8 @@ import { getExtensionErrorDiagnostics } from "@/extensions/extension-diagnostics
 import {
   createExtensionEngine,
   type ExtensionEngine,
+  LETTA_EXTENSIONS_DIR_ENV,
+  resolveLocalExtensionSources,
 } from "@/extensions/extension-engine";
 import {
   clearExtensionPermissions,
@@ -163,6 +165,30 @@ describe("extension engine", () => {
       unsubscribe();
       engine.dispose();
     } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("resolves extension directory from environment when not explicitly configured", () => {
+    const original = process.env[LETTA_EXTENSIONS_DIR_ENV];
+    const root = createTempDir();
+    try {
+      const extensionDir = path.join(root, "env-extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      process.env[LETTA_EXTENSIONS_DIR_ENV] = extensionDir;
+
+      expect(resolveLocalExtensionSources()[0]?.root).toBe(extensionDir);
+      expect(
+        resolveLocalExtensionSources({
+          globalExtensionsDirectory: path.join(root, "explicit"),
+        })[0]?.root,
+      ).toBe(path.join(root, "explicit"));
+    } finally {
+      if (original === undefined) {
+        delete process.env[LETTA_EXTENSIONS_DIR_ENV];
+      } else {
+        process.env[LETTA_EXTENSIONS_DIR_ENV] = original;
+      }
       rmSync(root, { force: true, recursive: true });
     }
   });

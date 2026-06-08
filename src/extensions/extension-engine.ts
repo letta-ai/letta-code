@@ -85,6 +85,7 @@ export const GLOBAL_EXTENSIONS_DIRECTORY = path.join(
   ".letta",
   "extensions",
 );
+export const LETTA_EXTENSIONS_DIR_ENV = "LETTA_EXTENSIONS_DIR";
 export const EXTENSION_CACHE_DIRECTORY = path.join(
   homedir(),
   ".letta",
@@ -267,11 +268,18 @@ function listExtensionFiles(directory: string): string[] {
     .sort((a, b) => a.localeCompare(b));
 }
 
+function getEnvironmentExtensionsDirectory(): string | undefined {
+  const value = process.env[LETTA_EXTENSIONS_DIR_ENV]?.trim();
+  return value ? value : undefined;
+}
+
 export function resolveLocalExtensionSources(
   options: ResolveLocalExtensionSourcesOptions = {},
 ): LocalExtensionSource[] {
   const globalExtensionsDirectory =
-    options.globalExtensionsDirectory ?? GLOBAL_EXTENSIONS_DIRECTORY;
+    options.globalExtensionsDirectory ??
+    getEnvironmentExtensionsDirectory() ??
+    GLOBAL_EXTENSIONS_DIRECTORY;
 
   return [
     {
