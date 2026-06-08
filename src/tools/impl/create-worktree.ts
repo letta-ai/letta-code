@@ -16,6 +16,7 @@ interface CreateWorktreeArgs {
   name: string;
   branch_name?: string;
   base_ref?: string;
+  repo_path?: string;
   refresh_base?: boolean;
   switch_cwd?: boolean;
   _executionContextId?: string;
@@ -200,6 +201,30 @@ async function resolveRepoRoot(cwd: string): Promise<string> {
   return await gitStdout(["rev-parse", "--show-toplevel"], cwd);
 }
 
+async function resolveWorktreeSourceRoot(params: {
+  currentCwd: string;
+  requestedRepoPath?: string;
+}): Promise<string> {
+  const sourcePath = params.requestedRepoPath
+    ? path.resolve(params.currentCwd, params.requestedRepoPath)
+    : params.currentCwd;
+
+  try {
+    return await resolveRepoRoot(sourcePath);
+  } catch (error) {
+    if (params.requestedRepoPath) {
+      throw error;
+    }
+    throw new Error(
+      [
+        `Current working directory is not inside a git repository: ${params.currentCwd}`,
+        "Pass `repo_path` to CreateWorktree or start the session from inside the target repo.",
+        formatGitFailure(error),
+      ].join("\n"),
+    );
+  }
+}
+
 async function resolvePrimaryWorktreeRoot(repoRoot: string): Promise<string> {
   const commonDir = await gitStdout(
     ["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -361,7 +386,10 @@ export async function create_worktree(
     const runtimeContext = getRuntimeContext();
     const currentCwd =
       runtimeContext?.workingDirectory || process.env.USER_CWD || process.cwd();
-    const repoRoot = await resolveRepoRoot(currentCwd);
+    const repoRoot = await resolveWorktreeSourceRoot({
+      currentCwd,
+      requestedRepoPath: getStringArg(args, "repo_path"),
+    });
     const primaryRoot = await resolvePrimaryWorktreeRoot(repoRoot);
     const worktreesDir = path.join(primaryRoot, ".letta", "worktrees");
     const slug = slugifyName(name);
