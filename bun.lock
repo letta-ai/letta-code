@@ -16,6 +16,7 @@
         "shiki": "^4.0.2",
         "strip-ansi": "^7.2.0",
         "ws": "^8.19.0",
+        "yaml": "^2.8.1",
       },
       "devDependencies": {
         "@slack/bolt": "^4.7.0",
