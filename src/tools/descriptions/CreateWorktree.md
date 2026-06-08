@@ -9,8 +9,9 @@ Prefer this tool over manually running `git worktree add` with Bash because it c
 Do not use this tool for read-only tasks, code review, answering questions, continuing work already in the correct checkout, or when the user explicitly asks not to use worktrees.
 
 Behavior:
-- Verifies the current cwd is inside a git repository.
-- Creates the worktree under `.letta/worktrees/` for the repository.
+- Uses the current cwd as the target git repository by default, or `repo_path` when provided.
+- If the current cwd is not inside a git repository, pass `repo_path` instead of falling back to manual `git worktree` commands.
+- Creates the worktree under `.letta/worktrees/` for the target repository.
 - Creates a new branch from the default base ref unless `branch_name` or `base_ref` is provided.
 - By default, switches the active conversation/session cwd to the new worktree.
 - Does not copy uncommitted changes from the current checkout.
