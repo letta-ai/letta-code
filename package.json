@@ -46,7 +46,8 @@
     "sharp": "^0.34.5",
     "shiki": "^4.0.2",
     "strip-ansi": "^7.2.0",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "yaml": "^2.8.1"
   },
   "optionalDependencies": {
     "@vscode/ripgrep": "^1.17.0"
