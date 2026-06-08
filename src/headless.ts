@@ -3371,6 +3371,11 @@ async function runBidirectionalMode(
   };
 
   let turnInProgress = false;
+  // Set when a turn ends interrupted (aborted mid-flight). A cancel during a
+  // tool's approval gate leaves the agent in `requires_approval` with a
+  // dangling approval; the next user turn must clear it before sending or the
+  // run errors on stale state (surfaces downstream as a bare "refusal").
+  let priorTurnInterrupted = false;
 
   const msgQueueRuntime = new QueueRuntime({
     callbacks: {
@@ -4203,6 +4208,28 @@ async function runBidirectionalMode(
           adapter: headlessExtensionAdapter,
         });
 
+        // If the previous turn was interrupted mid-tool-call, the agent may be
+        // left in `requires_approval` with a dangling approval. Sending this
+        // fresh turn against that stale state makes the run error (a silent
+        // "refusal" downstream). Clear it first, reusing the same recovery the
+        // resume path uses. Best-effort: a recovery failure must not abort the
+        // new turn. (PR #2631 — handle interrupts.)
+        if (priorTurnInterrupted) {
+          priorTurnInterrupted = false;
+          try {
+            await resolveAllPendingApprovals();
+          } catch (recoveryError) {
+            debugWarn(
+              "approval",
+              `Post-interrupt approval recovery failed: ${
+                recoveryError instanceof Error
+                  ? recoveryError.message
+                  : String(recoveryError)
+              }`,
+            );
+          }
+        }
+
         // Approval handling loop - continue until end_turn or error
         while (true) {
           numTurns++;
@@ -4686,6 +4713,9 @@ async function runBidirectionalMode(
         });
         turnInProgress = false;
         blockedEmittedThisTurn = false;
+        // Remember whether this turn was interrupted so the next user turn can
+        // clear any dangling approval before sending (see priorTurnInterrupted).
+        priorTurnInterrupted = currentAbortController?.signal.aborted === true;
         currentAbortController = null;
       }
       continue;
