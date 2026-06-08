@@ -26,32 +26,45 @@ interface SetupUIProps {
   onComplete: (result: SetupResult) => void;
   onCancel: () => void;
   initialMode?: SetupInitialMode;
+  localModeDisabledReason?: string;
 }
 
 export function SetupUI({
   onComplete,
   onCancel,
   initialMode = "menu",
+  localModeDisabledReason,
 }: SetupUIProps) {
+  const localModeDisabled = Boolean(localModeDisabledReason);
   const [mode, setMode] = useState<SetupMode>(initialMode);
   const [selectedOption, setSelectedOption] = useState(
-    initialMode === "device-code" ? 0 : 1,
+    initialMode === "device-code" || localModeDisabled ? 0 : 1,
   );
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState("Starting Letta Code...");
+  const selectNextOption = (current: number, delta: 1 | -1): number => {
+    const options = localModeDisabled ? [0, 2] : [0, 1, 2];
+    const currentIndex = options.indexOf(current);
+    const nextIndex = Math.min(
+      options.length - 1,
+      Math.max(0, currentIndex + delta),
+    );
+    return options[nextIndex] ?? current;
+  };
+
   // Handle menu navigation
   useInput(
     (_input, key) => {
       if (mode === "menu") {
         if (key.upArrow) {
-          setSelectedOption((prev) => Math.max(0, prev - 1));
+          setSelectedOption((prev) => selectNextOption(prev, -1));
         } else if (key.downArrow) {
-          setSelectedOption((prev) => Math.min(2, prev + 1));
+          setSelectedOption((prev) => selectNextOption(prev, 1));
         } else if (key.return) {
           if (selectedOption === 0) {
             // Login to Constellation - start device code flow
             setMode("device-code");
-          } else if (selectedOption === 1) {
+          } else if (selectedOption === 1 && !localModeDisabled) {
             proceedLocally();
           } else if (selectedOption === 2) {
             onCancel();
@@ -144,18 +157,25 @@ export function SetupUI({
       <Box>
         <Text
           color={
-            selectedOption === 1 ? colors.selector.itemHighlighted : undefined
+            selectedOption === 1 && !localModeDisabled
+              ? colors.selector.itemHighlighted
+              : undefined
           }
+          dimColor={localModeDisabled}
         >
           {selectedOption === 1 ? "> " : "  "}
-          {LOCAL_MODE_LABEL} (default)
+          {LOCAL_MODE_LABEL} {localModeDisabled ? "(unavailable)" : "(default)"}
         </Text>
       </Box>
       <Box paddingLeft={2}>
-        <Text dimColor>
-          Store agent state on this device. Agents you create are local to this
-          machine.
-        </Text>
+        {localModeDisabledReason ? (
+          <Text dimColor>{localModeDisabledReason}</Text>
+        ) : (
+          <Text dimColor>
+            Store agent state on this device. Agents you create are local to
+            this machine.
+          </Text>
+        )}
       </Box>
       <Box>
         <Text

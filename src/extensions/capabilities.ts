@@ -8,6 +8,7 @@ export const DEFAULT_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
     tools: true,
     turns: true,
   },
+  permissions: true,
   providers: true,
   ui: {
     panels: true,
@@ -24,6 +25,7 @@ export const DISABLED_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
     tools: false,
     turns: false,
   },
+  permissions: false,
   providers: false,
   ui: {
     panels: false,
@@ -43,6 +45,7 @@ export function cloneExtensionCapabilities(
       tools: capabilities.events.tools,
       turns: capabilities.events.turns,
     },
+    permissions: capabilities.permissions,
     providers: capabilities.providers,
     ui: {
       panels: capabilities.ui.panels,

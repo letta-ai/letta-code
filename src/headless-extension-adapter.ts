@@ -1,21 +1,18 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import { sendMessageStreamWithBackend } from "@/agent/message";
 import { getModelInfo } from "@/agent/model";
 import type { SessionStats } from "@/agent/stats";
 import type { Backend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
-import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
 import {
-  createExtensionRuntime,
-  type ExtensionRuntime,
-} from "@/extensions/extension-runtime";
+  createExtensionAdapter,
+  type ExtensionAdapter,
+} from "@/extensions/extension-adapter";
 import type {
   ExtensionCapabilities,
   ExtensionContext,
   ExtensionConversationOpenReason,
-  ExtensionRuntimeBackendApi,
 } from "@/extensions/types";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -30,6 +27,7 @@ export const HEADLESS_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
     tools: true,
     turns: true,
   },
+  permissions: true,
   providers: true,
   ui: {
     panels: false,
@@ -37,35 +35,6 @@ export const HEADLESS_EXTENSION_CAPABILITIES: ExtensionCapabilities = {
     customStatuslineRenderer: false,
   },
 };
-
-function createHeadlessExtensionBackendApi(
-  backend: Backend,
-): ExtensionRuntimeBackendApi {
-  return {
-    forkConversation(conversationId, options) {
-      return backend.forkConversation(conversationId, options);
-    },
-    getConversationHistory(conversationId, options) {
-      return loadExtensionConversationHistoryFromBackend(
-        backend,
-        {
-          agentId: options?.agentId,
-          conversationId,
-        },
-        options,
-      );
-    },
-    sendMessageStream(conversationId, messages, options, requestOptions) {
-      return sendMessageStreamWithBackend(
-        backend,
-        conversationId,
-        messages,
-        options,
-        requestOptions,
-      );
-    },
-  };
-}
 
 function isHeadlessMemfsEnabled(agentId: string): boolean {
   try {
@@ -159,7 +128,7 @@ export function createHeadlessExtensionContext(options: {
   };
 }
 
-export function createHeadlessExtensionRuntime(options: {
+export function createHeadlessExtensionAdapter(options: {
   agent: AgentState;
   backend: Backend;
   cacheDirectory?: string;
@@ -169,14 +138,14 @@ export function createHeadlessExtensionRuntime(options: {
   permissionMode?: string | null;
   reflectionSettings?: ReflectionSettings;
   sessionStats?: SessionStats | null;
-}): ExtensionRuntime {
-  return createExtensionRuntime({
+}): ExtensionAdapter {
+  return createExtensionAdapter({
     ...(options.cacheDirectory
       ? { cacheDirectory: options.cacheDirectory }
       : {}),
     capabilities: HEADLESS_EXTENSION_CAPABILITIES,
     disabled: options.disabled,
-    getBackendApi: () => createHeadlessExtensionBackendApi(options.backend),
+    getBackend: () => options.backend,
     getClient,
     ...(options.globalExtensionsDirectory
       ? { globalExtensionsDirectory: options.globalExtensionsDirectory }
@@ -189,11 +158,9 @@ export async function emitHeadlessConversationOpen(options: {
   agent: AgentState;
   conversationId: string;
   reason: ExtensionConversationOpenReason;
-  runtime: ExtensionRuntime;
+  adapter: ExtensionAdapter;
 }): Promise<void> {
-  if (!options.runtime.getSnapshot().hasExtensionSources) return;
-
-  await options.runtime.emitEvent("conversation_open", {
+  await options.adapter.events.emit("conversation_open", {
     agentId: options.agent.id,
     agentName: options.agent.name ?? null,
     conversationId: options.conversationId,
@@ -205,11 +172,9 @@ export async function emitHeadlessConversationClose(options: {
   agent: AgentState;
   conversationId: string;
   durationMs: number | null;
-  runtime: ExtensionRuntime;
+  adapter: ExtensionAdapter;
 }): Promise<void> {
-  if (!options.runtime.getSnapshot().hasExtensionSources) return;
-
-  await options.runtime.emitEvent("conversation_close", {
+  await options.adapter.events.emit("conversation_close", {
     agentId: options.agent.id,
     conversationId: options.conversationId,
     durationMs: options.durationMs,

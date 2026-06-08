@@ -1,6 +1,6 @@
-import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation.js";
 
 interface EditArgs {
@@ -149,7 +149,7 @@ export async function edit(args: EditArgs): Promise<EditResult> {
       "No changes to make: old_string and new_string are exactly the same.",
     );
   try {
-    const rawContent = await fs.readFile(resolvedPath, "utf-8");
+    const rawContent = await readUtf8TextStrict(resolvedPath);
     // Normalize line endings to LF for consistent matching (Windows uses CRLF)
     const content = rawContent.replace(/\r\n/g, "\n");
     let occurrences = countOccurrences(content, old_string);
@@ -208,7 +208,7 @@ export async function edit(args: EditArgs): Promise<EditResult> {
         content.substring(index + finalOldString.length);
       replacements = 1;
     }
-    await fs.writeFile(resolvedPath, newContent, "utf-8");
+    await writeUtf8Text(resolvedPath, newContent);
 
     return {
       message: `Successfully replaced ${replacements} occurrence${replacements !== 1 ? "s" : ""} in ${resolvedPath}`,

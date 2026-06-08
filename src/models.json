@@ -1480,10 +1480,21 @@
       }
     },
     {
+      "id": "minimax-m3",
+      "handle": "minimax/MiniMax-M3",
+      "label": "MiniMax M3",
+      "description": "MiniMax's frontier M-series model for agentic reasoning, tool use, coding, multimodal chat input, and long-context tasks",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 500000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "minimax-m2.7",
       "handle": "minimax/MiniMax-M2.7",
       "label": "MiniMax 2.7",
-      "description": "MiniMax's latest coding model",
+      "description": "MiniMax's M2.7 coding model",
       "isFeatured": true,
       "free": true,
       "updateArgs": {
@@ -1495,8 +1506,8 @@
     {
       "id": "minimax-m2",
       "handle": "openrouter/minimax/minimax-m2",
-      "label": "Minimax M2",
-      "description": "Minimax's latest model",
+      "label": "MiniMax M2",
+      "description": "MiniMax's M2 model",
       "updateArgs": {
         "context_window": 160000,
         "max_output_tokens": 64000,
@@ -1543,6 +1554,17 @@
       "label": "Gemini 3.5 Flash",
       "description": "Google's Gemini 3.5 Flash model",
       "isFeatured": true,
+      "updateArgs": {
+        "context_window": 1048576,
+        "temperature": 1.0,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gemini-3.1-flash-lite",
+      "handle": "google_ai/gemini-3.1-flash-lite",
+      "label": "Gemini 3.1 Flash-Lite",
+      "description": "Google's lightweight Gemini 3.1 Flash-Lite model",
       "updateArgs": {
         "context_window": 1048576,
         "temperature": 1.0,

@@ -10,6 +10,7 @@ import {
 } from "@/agent/context";
 import { getModelInfo } from "@/agent/model";
 import { getAllSubagentConfigs } from "@/agent/subagents";
+import { getBackend } from "@/backend";
 import {
   buildDynamicMessageChannelToolDefinition,
   getCachedDynamicMessageChannelToolDefinition,
@@ -18,11 +19,17 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { loadExtensionConversationHistoryFromBackend } from "@/extensions/conversation-history";
+import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import {
-  type ExtensionEventEmitter,
+  type ExtensionEvents,
   emitExtensionEvent,
 } from "@/extensions/event-emitter";
+import {
+  checkExtensionPermissions,
+  type ExtensionPermissionDecisionResult,
+  type ExtensionPermissionDefinition,
+  getAvailableExtensionPermissionsRegistry,
+} from "@/extensions/permission-registry";
 import {
   type ExtensionToolDefinition,
   extensionToolRequiresApproval,
@@ -128,18 +135,16 @@ async function resolveBackendSpecificToolDescription(
   if (!isLocalMemfs) return description;
 
   if (name === "memory_apply_patch") {
-    return description
-      .replace(
-        "then automatically commit and push the change.",
-        "then automatically commit the change locally.",
-      )
-      .replace("- Pushes to remote", "- Does not push to a Letta remote");
+    return description.replace(
+      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
+      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
+    );
   }
 
   if (name === "memory") {
     return description.replace(
-      "automatically commits and pushes changes.",
-      "automatically commits changes locally.",
+      "The harness pushes clean committed memory changes after the turn for remote MemFS agents.",
+      "Local backend MemFS has no Letta remote; memory changes are committed locally.",
     );
   }
 
@@ -363,7 +368,10 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Read",
   "Skill",
   "Task",
-  "TodoWrite",
+  "TaskCreate",
+  "TaskGet",
+  "TaskList",
+  "TaskUpdate",
   "Write",
 ];
 
@@ -454,6 +462,10 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   ReadLSP: { requiresApproval: false },
   Skill: { requiresApproval: false },
   Task: { requiresApproval: true },
+  TaskCreate: { requiresApproval: false },
+  TaskGet: { requiresApproval: false },
+  TaskList: { requiresApproval: false },
+  TaskUpdate: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
   shell_command: { requiresApproval: true },
@@ -582,7 +594,8 @@ type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
-  extensionEventEmitter?: ExtensionEventEmitter;
+  extensionEvents?: ExtensionEvents;
+  extensionPermissions: Map<string, ExtensionPermissionDefinition>;
   extensionTools: Map<string, ExtensionToolDefinition>;
   workingDirectory: string;
   runtimeContext: RuntimeContextSnapshot;
@@ -1005,14 +1018,15 @@ function capturePreparedToolExecutionContext(
     toolRegistry: ToolRegistry;
     externalTools: Map<string, ExternalToolDefinition>;
     externalExecutor?: ExternalToolExecutor;
-    extensionEventEmitter?: ExtensionEventEmitter;
+    extensionEvents?: ExtensionEvents;
+    extensionPermissions: Map<string, ExtensionPermissionDefinition>;
     extensionTools: Map<string, ExtensionToolDefinition>;
   },
   options?: {
     clientToolAllowlist?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
-    extensionEventEmitter?: ExtensionEventEmitter;
+    extensionEvents?: ExtensionEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
@@ -1032,8 +1046,8 @@ function capturePreparedToolExecutionContext(
       options?.clientToolAllowlist,
     ),
     externalExecutor: snapshot.externalExecutor,
-    extensionEventEmitter:
-      options?.extensionEventEmitter ?? snapshot.extensionEventEmitter,
+    extensionEvents: options?.extensionEvents ?? snapshot.extensionEvents,
+    extensionPermissions: snapshot.extensionPermissions,
     extensionTools: filterExtensionToolsByClientAllowlist(
       snapshot.extensionTools,
       options?.clientToolAllowlist,
@@ -1073,6 +1087,7 @@ export function captureToolExecutionContext(
       toolRegistry: new Map(toolRegistry),
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     {
@@ -1088,7 +1103,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: ChannelTurnSource[];
-  extensionEventEmitter?: ExtensionEventEmitter;
+  extensionEvents?: ExtensionEvents;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -1101,7 +1116,8 @@ export async function prepareCurrentToolExecutionContext(options?: {
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEventEmitter: options?.extensionEventEmitter,
+      extensionEvents: options?.extensionEvents,
+      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
@@ -1116,7 +1132,7 @@ export async function prepareToolExecutionContextForSpecificTools(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
-    extensionEventEmitter?: ExtensionEventEmitter;
+    extensionEvents?: ExtensionEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1129,7 +1145,8 @@ export async function prepareToolExecutionContextForSpecificTools(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEventEmitter: options?.extensionEventEmitter,
+      extensionEvents: options?.extensionEvents,
+      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
@@ -1146,7 +1163,7 @@ export async function prepareToolExecutionContextForModel(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
-    extensionEventEmitter?: ExtensionEventEmitter;
+    extensionEvents?: ExtensionEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1159,7 +1176,8 @@ export async function prepareToolExecutionContextForModel(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEventEmitter: options?.extensionEventEmitter,
+      extensionEvents: options?.extensionEvents,
+      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
       extensionTools: getAvailableExtensionToolsRegistry(),
     },
     options,
@@ -1190,6 +1208,34 @@ export function isExtensionToolParallelSafeForContext(
   );
 }
 
+async function checkExtensionPermissionForContext(options: {
+  args: ToolArgs;
+  context?: ToolExecutionContextSnapshot;
+  phase: "approval" | "execution";
+  toolCallId?: string | null;
+  toolName: string;
+  workingDirectory: string;
+}): Promise<ExtensionPermissionDecisionResult | undefined> {
+  const runtimeContext = options.context?.runtimeContext;
+  const permissionModeState = options.context?.permissionModeState;
+  return checkExtensionPermissions(
+    {
+      agentId: runtimeContext?.agentId ?? null,
+      conversationId: runtimeContext?.conversationId ?? null,
+      toolCallId: options.toolCallId ?? null,
+      toolName: options.toolName,
+      args: options.args,
+      cwd: options.workingDirectory,
+      workingDirectory: options.workingDirectory,
+      permissionMode:
+        permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
+      phase: options.phase,
+    },
+    options.context?.extensionPermissions ??
+      getAvailableExtensionPermissionsRegistry(),
+  );
+}
+
 /**
  * Check permission for a tool execution using the full permission system.
  * @param toolName - Name of the tool
@@ -1200,9 +1246,11 @@ export function isExtensionToolParallelSafeForContext(
 export async function checkToolPermission(
   toolName: string,
   toolArgs: ToolArgs,
-  workingDirectory: string = process.cwd(),
+  workingDirectory?: string,
   permissionModeStateArg?: PermissionModeState,
   agentIdArg?: string,
+  toolContextIdArg?: string | null,
+  toolCallIdArg?: string | null,
 ): Promise<{
   decision: "allow" | "deny" | "ask";
   matchedRule?: string;
@@ -1211,21 +1259,38 @@ export async function checkToolPermission(
   const { checkPermissionWithHooks } = await import("@/permissions/checker");
   const { loadPermissions } = await import("@/permissions/loader");
 
-  const permissions = await loadPermissions(workingDirectory);
+  const context = toolContextIdArg
+    ? getExecutionContextById(toolContextIdArg)
+    : undefined;
+  const effectiveWorkingDirectory =
+    workingDirectory ?? context?.workingDirectory ?? process.cwd();
+  const effectivePermissionModeState =
+    permissionModeStateArg ?? context?.permissionModeState;
+  const effectiveAgentId =
+    agentIdArg ?? context?.runtimeContext.agentId ?? undefined;
+
+  const permissions = await loadPermissions(effectiveWorkingDirectory);
   return runWithRuntimeContext(
     {
-      ...(agentIdArg ? { agentId: agentIdArg } : {}),
-      workingDirectory,
-      permissionMode: permissionModeStateArg?.mode,
+      ...(effectiveAgentId ? { agentId: effectiveAgentId } : {}),
+      workingDirectory: effectiveWorkingDirectory,
+      permissionMode: effectivePermissionModeState?.mode,
     },
     () =>
       checkPermissionWithHooks(
         toolName,
         toolArgs,
         permissions,
-        workingDirectory,
-        permissionModeStateArg,
-        agentIdArg,
+        effectiveWorkingDirectory,
+        effectivePermissionModeState,
+        effectiveAgentId,
+        context?.extensionPermissions ??
+          getAvailableExtensionPermissionsRegistry(),
+        {
+          conversationId: context?.runtimeContext.conversationId ?? null,
+          phase: "approval",
+          toolCallId: toolCallIdArg ?? null,
+        },
       ),
   );
 }
@@ -1913,17 +1978,31 @@ function cloneToolArgsForExtensionEvent(args: ToolArgs): ToolArgs {
   }
 }
 
+function createExtensionPermissionToolResult(
+  decision: ExtensionPermissionDecisionResult,
+): ToolExecutionResult {
+  const isApprovalRequest = decision.decision === "ask";
+  const action = isApprovalRequest ? "blocked" : "denied";
+  const fallbackReason = isApprovalRequest
+    ? "Approval requested but cannot reopen during execution."
+    : "No reason given.";
+  return {
+    toolReturn: `Error: Tool execution ${action} by ${decision.matchedRule}. ${decision.reason ?? fallbackReason}`,
+    status: "error",
+  };
+}
+
 function isToolStartArgs(value: unknown): value is ToolArgs {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function emitToolStartEvent(options: {
   args: ToolArgs;
-  eventEmitter?: ExtensionEventEmitter;
+  events?: ExtensionEvents;
   executionScope: RuntimeContextSnapshot;
   toolCallId?: string;
   toolName: string;
-}): Promise<ToolArgs> {
+}): Promise<{ args: ToolArgs }> {
   const event = {
     agentId: options.executionScope.agentId ?? null,
     conversationId: options.executionScope.conversationId ?? null,
@@ -1933,13 +2012,13 @@ async function emitToolStartEvent(options: {
   };
 
   try {
-    await emitExtensionEvent(options.eventEmitter, "tool_start", event);
+    await emitExtensionEvent(options.events, "tool_start", event);
   } catch (error) {
     debugLog("extensions", "tool_start event failed", error);
-    return options.args;
+    return { args: options.args };
   }
 
-  return isToolStartArgs(event.args) ? event.args : options.args;
+  return { args: isToolStartArgs(event.args) ? event.args : options.args };
 }
 
 async function executeExtensionTool(
@@ -1979,6 +2058,7 @@ async function executeExtensionTool(
     }
 
     try {
+      const backend = getBackend();
       const context: ExtensionToolRunContext = {
         args: args as Record<string, unknown>,
         cwd: options.workingDirectory,
@@ -1999,20 +2079,18 @@ async function executeExtensionTool(
           : {}),
         permissionMode: executionScope.permissionMode ?? null,
         agent: { id: executionScope.agentId ?? null },
-        conversation: {
-          id: executionScope.conversationId ?? null,
-          getHistory: async (historyOptions) => {
-            const { getBackend } = await import("@/backend");
-            return loadExtensionConversationHistoryFromBackend(
-              getBackend(),
-              {
-                agentId: executionScope.agentId,
-                conversationId: executionScope.conversationId,
-              },
-              historyOptions,
+        conversation: createExtensionConversationHandle({
+          agentId: executionScope.agentId,
+          backend,
+          conversationId: executionScope.conversationId,
+          sendMessageStream: async (...sendArgs) => {
+            const { sendMessageStreamWithBackend } = await import(
+              "@/agent/message"
             );
+            return sendMessageStreamWithBackend(...sendArgs);
           },
-        },
+          workingDirectory: options.workingDirectory,
+        }),
         getContext: tool.getContext,
       };
       const result = await runExtensionTool(tool, context);
@@ -2172,7 +2250,7 @@ export async function executeTool(
     context?.externalExecutor ?? getExternalToolExecutor();
   const activeExtensionTools =
     context?.extensionTools ?? getAvailableExtensionToolsRegistry();
-  const extensionEventEmitter = context?.extensionEventEmitter;
+  const extensionEvents = context?.extensionEvents;
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
         workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
@@ -2195,13 +2273,26 @@ export async function executeTool(
         status: "error",
       };
     }
-    const eventArgs = await emitToolStartEvent({
+    const { args: eventArgs } = await emitToolStartEvent({
       args,
-      eventEmitter: extensionEventEmitter,
+      events: extensionEvents,
       executionScope,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    const permissionDecision = await checkExtensionPermissionForContext({
+      args: eventArgs,
+      context,
+      phase: "execution",
+      toolCallId: options?.toolCallId,
+      toolName: name,
+      workingDirectory,
+    });
+    if (permissionDecision?.decision !== undefined) {
+      if (permissionDecision.decision !== "allow") {
+        return createExtensionPermissionToolResult(permissionDecision);
+      }
+    }
     return executeExtensionTool(
       name,
       extensionTool,
@@ -2219,13 +2310,26 @@ export async function executeTool(
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
-    const eventArgs = await emitToolStartEvent({
+    const { args: eventArgs } = await emitToolStartEvent({
       args,
-      eventEmitter: extensionEventEmitter,
+      events: extensionEvents,
       executionScope,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    const permissionDecision = await checkExtensionPermissionForContext({
+      args: eventArgs,
+      context,
+      phase: "execution",
+      toolCallId: options?.toolCallId,
+      toolName: name,
+      workingDirectory,
+    });
+    if (permissionDecision?.decision !== undefined) {
+      if (permissionDecision.decision !== "allow") {
+        return createExtensionPermissionToolResult(permissionDecision);
+      }
+    }
     return executeExternalTool(
       options?.toolCallId ?? `ext-${Date.now()}`,
       name,
@@ -2260,13 +2364,27 @@ export async function executeTool(
     };
   }
 
-  args = await emitToolStartEvent({
+  const { args: eventArgs } = await emitToolStartEvent({
     args,
-    eventEmitter: extensionEventEmitter,
+    events: extensionEvents,
     executionScope,
     toolCallId: options?.toolCallId,
     toolName: internalName,
   });
+  args = eventArgs;
+  const permissionDecision = await checkExtensionPermissionForContext({
+    args,
+    context,
+    phase: "execution",
+    toolCallId: options?.toolCallId,
+    toolName: internalName,
+    workingDirectory,
+  });
+  if (permissionDecision?.decision !== undefined) {
+    if (permissionDecision.decision !== "allow") {
+      return createExtensionPermissionToolResult(permissionDecision);
+    }
+  }
   const startTime = Date.now();
 
   const run = async (): Promise<ToolExecutionResult> => {

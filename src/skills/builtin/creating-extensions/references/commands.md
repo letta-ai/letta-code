@@ -4,6 +4,15 @@ Use commands when the human explicitly invokes `/foo`.
 
 For complex command-driven extensions with panels, timers, local state, or background model work, also read `architecture.md`.
 
+## Contents
+
+- Decide command vs skill vs tool
+- Command IDs
+- Prompt command
+- Output-only command
+- Panel command
+- Busy-safe conversation command
+
 ## Decide command vs skill vs tool
 
 | Need | Use |
@@ -20,7 +29,7 @@ If the command represents a durable agent workflow (for example `/goal`), put th
 
 - Do not include the leading slash. Use `id: "review"`, not `id: "/review"`.
 - Use a lowercase slug with letters, numbers, and hyphens only.
-- Built-in commands like `/reload`, `/model`, `/statusline`, etc. are reserved.
+- Built-in commands like `/reload`, `/model`, `/statusline`, etc. can be overridden by trusted local extensions. Do this intentionally and keep recovery in mind: start with `--no-extensions` or `LETTA_DISABLE_EXTENSIONS=1` if an override breaks command handling.
 - Duplicate extension command IDs fail unless `override: true` is intentional.
 
 ## Prompt command
@@ -116,4 +125,4 @@ const stream = await forked.sendMessageStream([
 
 Do not send directly to the active conversation from a busy command; fork first unless the user explicitly asked to affect the main conversation later.
 
-For a complete side-question example, see `btw-command.md`.
+For a worked multi-capability extension that combines commands, tools, events, permissions, and local state, see `plan-mode.md`.

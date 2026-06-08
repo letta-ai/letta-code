@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   readdir,
@@ -18,6 +19,7 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
@@ -30,6 +32,7 @@ import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
 import { emptyLocalUsage } from "@/backend/local/local-message";
+import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import { listLocalModels } from "@/backend/local/local-model-config";
 import {
   LocalTranscriptMigrationRequiredError,
@@ -435,7 +438,7 @@ describe("local backend pi transcript", () => {
     expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
   });
 
-  test("reuses cached compiled system prompt across turns until explicit recompile", async () => {
+  test("recompiles cached system prompt when committed memory changes", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-cache-"));
     const systemPrompts: string[] = [];
     const executor: HeadlessTurnExecutor = {
@@ -481,6 +484,64 @@ describe("local backend pi transcript", () => {
         messages: [{ role: "user", content: "first" }],
       } as ConversationMessageCreateBody),
     );
+
+    expect(systemPrompts).toHaveLength(1);
+    expect(systemPrompts[0]).toContain(
+      "Changed but not explicitly recompiled.",
+    );
+  });
+
+  test("uses mid-conversation system prompt for Opus 4.8 memory changes", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-opus-"));
+    const systemPrompts: string[] = [];
+    const midConversationPrompts: Array<string | undefined> = [];
+    const executor: HeadlessTurnExecutor = {
+      async execute(input) {
+        systemPrompts.push(input.systemPrompt ?? "");
+        midConversationPrompts.push(input.midConversationSystemPrompt);
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const backend = new LocalBackend({ storageDir, executor });
+    const agent = await backend.createAgent({
+      name: "Local",
+      model: "anthropic/claude-opus-4-8",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    const initialSystemPrompt = await backend.recompileConversation(
+      conversation.id,
+      { agent_id: agent.id } as never,
+    );
+    const memoryDir = join(storageDir, "memfs", agent.id, "memory");
+    await mkdir(join(memoryDir, "system"), { recursive: true });
+    await writeFile(
+      join(memoryDir, "system", "persona.md"),
+      "---\ndescription: Persona\n---\nEdited Opus persona.\n",
+      "utf8",
+    );
+    execFileSync("git", ["add", "system/persona.md"], { cwd: memoryDir });
+    execFileSync("git", ["commit", "-m", "test opus memory change"], {
+      cwd: memoryDir,
+    });
+
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
     await drain(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: agent.id,
@@ -488,26 +549,10 @@ describe("local backend pi transcript", () => {
       } as ConversationMessageCreateBody),
     );
 
-    expect(systemPrompts).toHaveLength(2);
-    expect(systemPrompts[1]).toBe(systemPrompts[0]);
-    expect(systemPrompts[1]).not.toContain(
-      "Changed but not explicitly recompiled.",
-    );
-
-    await backend.recompileConversation(conversation.id, {
-      agent_id: agent.id,
-    } as never);
-    await drain(
-      await backend.createConversationMessageStream(conversation.id, {
-        agent_id: agent.id,
-        messages: [{ role: "user", content: "third" }],
-      } as ConversationMessageCreateBody),
-    );
-
-    expect(systemPrompts[2]).toContain(
-      "Changed but not explicitly recompiled.",
-    );
-    expect(systemPrompts[2]).not.toBe(systemPrompts[1]);
+    expect(systemPrompts).toEqual([initialSystemPrompt, initialSystemPrompt]);
+    expect(midConversationPrompts[0]).toContain("<memory_update>");
+    expect(midConversationPrompts[0]).toContain("Edited Opus persona.");
+    expect(midConversationPrompts[1]).toBeUndefined();
   });
 
   test("recompiles cached system prompt after local compaction", async () => {
@@ -639,6 +684,25 @@ describe("local backend pi transcript", () => {
     );
     expect(handles).toContain("zai/glm-4.5-air");
     expect(handles).toContain("zai/glm-5.1");
+  });
+
+  test("lists pi catalog context windows for configured OpenRouter models", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-openrouter-context-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "openrouter",
+      providerName: "lc-openrouter",
+      apiKey: "dummy",
+      storageDir,
+    });
+
+    const kimi = (await listLocalModels(storageDir)).find(
+      (model) => model.handle === "openrouter/moonshotai/kimi-k2.6",
+    );
+    expect(kimi?.max_context_window).toBe(
+      getModel("openrouter", "moonshotai/kimi-k2.6")?.contextWindow,
+    );
   });
 
   test("does not list unconfigured local provider model guesses", async () => {
@@ -778,6 +842,52 @@ describe("local backend pi transcript", () => {
       (agent as { llm_config?: { max_tokens?: number } }).llm_config
         ?.max_tokens,
     ).toBe(8192);
+  });
+
+  test("resets persisted output-token settings when switching local models", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-model-token-reset-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "openrouter",
+      providerName: "lc-openrouter",
+      apiKey: "dummy",
+      storageDir,
+    });
+
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.createAgent({
+      name: "Local",
+      model: "openrouter/deepseek/deepseek-v4-pro",
+      model_settings: {
+        provider_type: "openrouter",
+        max_output_tokens: 384000,
+      },
+      max_tokens: 384000,
+      context_window_limit: 1048576,
+    } as never);
+
+    const updated = await backend.updateAgent(agent.id, {
+      model: "openrouter/moonshotai/kimi-k2.6",
+      model_settings: {
+        provider_type: "openrouter",
+        parallel_tool_calls: true,
+      },
+    } as never);
+
+    const kimi = getModel("openrouter", "moonshotai/kimi-k2.6");
+    expect(updated.model).toBe("openrouter/moonshotai/kimi-k2.6");
+    expect(
+      (updated as { llm_config?: { max_tokens?: number } }).llm_config
+        ?.max_tokens,
+    ).toBe(kimi?.maxTokens);
+    expect(
+      (updated as { llm_config?: { context_window?: number } }).llm_config
+        ?.context_window,
+    ).toBe(kimi?.contextWindow);
+    expect(
+      (updated.model_settings as Record<string, unknown>).max_output_tokens,
+    ).toBeUndefined();
   });
 
   test("projects legacy local 128k defaults through registered model metadata", async () => {
@@ -1121,15 +1231,12 @@ describe("local backend pi transcript", () => {
     );
 
     expect(
-      continuationChunks.some((chunk) => {
-        const event = chunk as { message_type?: string; event_type?: string };
-        return (
-          event.message_type === "event_message" && event.event_type === "retry"
-        );
-      }),
-    ).toBe(true);
+      continuationChunks.map(
+        (chunk) => (chunk as { message_type?: string }).message_type,
+      ),
+    ).toEqual(["usage_statistics", "stop_reason"]);
 
-    expect(contexts).toHaveLength(3);
+    expect(contexts).toHaveLength(2);
     const secondContextMessages = contexts[1]?.messages ?? [];
     expect(secondContextMessages.at(-1)).toMatchObject({
       role: "toolResult",
@@ -1155,9 +1262,7 @@ describe("local backend pi transcript", () => {
       "assistant",
     ]);
     const finalAssistant = messages.at(-1) as { content?: unknown[] };
-    expect(finalAssistant.content).toEqual([
-      { type: "text", text: "Tool result received." },
-    ]);
+    expect(finalAssistant.content).toEqual([]);
 
     const reloadedBackend = new LocalBackend({
       storageDir,
@@ -1176,8 +1281,431 @@ describe("local backend pi transcript", () => {
       "reasoning_message",
       "approval_request_message",
       "tool_return_message",
-      "assistant_message",
     ]);
+  });
+
+  test("persists updated assistant snapshots when tool calls are appended later", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-tool-update-"),
+    );
+    let calls = 0;
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        calls += 1;
+        if (calls === 1) {
+          return lettaStreamFromChunks([
+            {
+              message_type: "assistant_message",
+              content: [{ type: "text", text: "I will inspect that." }],
+            } as LettaStreamingResponse,
+            {
+              message_type: "stop_reason",
+              stop_reason: "end_turn",
+            } as LettaStreamingResponse,
+          ]);
+        }
+
+        return lettaStreamFromChunks([
+          {
+            message_type: "approval_request_message",
+            tool_call: {
+              tool_call_id: "call-readme",
+              name: "Read",
+              arguments: JSON.stringify({ path: "README.md" }),
+            },
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "requires_approval",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "inspect the readme" }],
+      } as ConversationMessageCreateBody),
+    );
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [],
+      } as never),
+    );
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const entries = (
+      await readFile(join(conversationDir, "messages.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const assistantMessages = entries
+      .filter((entry) => entry.type === "message")
+      .map((entry) => entry.message as Record<string, unknown>)
+      .filter((message) => message.role === "assistant");
+    expect(assistantMessages).toHaveLength(2);
+    expect(new Set(assistantMessages.map((message) => message.id)).size).toBe(
+      1,
+    );
+    expect(JSON.stringify(assistantMessages.at(-1))).toContain("call-readme");
+
+    const reloadedBackend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const reloadedMessages = pageItems(
+      await reloadedBackend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(reloadedMessages.map((message) => message.message_type)).toEqual([
+      "user_message",
+      "assistant_message",
+      "approval_request_message",
+    ]);
+
+    const conversationPath = join(conversationDir, "conversation.json");
+    const persistedConversation = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      conversationPath,
+      `${JSON.stringify(
+        { ...persistedConversation, in_context_message_ids: [] },
+        null,
+        2,
+      )}\n`,
+    );
+    const reloadedWithoutActiveIds = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const messagesWithoutActiveIds = pageItems(
+      await reloadedWithoutActiveIds.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(
+      messagesWithoutActiveIds.map((message) => message.message_type),
+    ).toEqual([
+      "user_message",
+      "assistant_message",
+      "approval_request_message",
+    ]);
+  });
+
+  test("repairs orphan tool results from active local transcript context", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-orphan-tool-result-"),
+    );
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "done" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "hello" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const messagesPath = join(conversationDir, "messages.jsonl");
+    const conversationPath = join(conversationDir, "conversation.json");
+    const rows = (await readFile(messagesPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const parentId = rows.at(-1)?.id;
+    if (typeof parentId !== "string") {
+      throw new Error("Expected a parent entry id");
+    }
+    const timestamp = new Date().toISOString();
+    const orphanMessage = {
+      id: "ui-msg-9999",
+      role: "toolResult",
+      toolCallId: "call-missing",
+      toolName: "Read",
+      content: [{ type: "text", text: "orphan output" }],
+      isError: false,
+      timestamp: Date.now(),
+      metadata: {
+        created_at: timestamp,
+        updated_at: timestamp,
+        agent_id: agent.id,
+        conversation_id: conversation.id,
+      },
+    };
+    await appendFile(
+      messagesPath,
+      `${JSON.stringify({
+        type: "message",
+        id: "orphan-entry",
+        parentId,
+        timestamp,
+        message: orphanMessage,
+      })}\n`,
+    );
+    const persistedConversation = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as { in_context_message_ids?: string[] };
+    await writeFile(
+      conversationPath,
+      `${JSON.stringify(
+        {
+          ...persistedConversation,
+          in_context_message_ids: [
+            ...(persistedConversation.in_context_message_ids ?? []),
+            orphanMessage.id,
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const reloadedBackend = new LocalBackend({
+      storageDir,
+      executor,
+      memfsEnabled: false,
+    });
+    const reloadedMessages = pageItems(
+      await reloadedBackend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(
+      reloadedMessages.map((message) => message.message_type),
+    ).not.toContain("tool_return_message");
+    const repairedConversation = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as { in_context_message_ids?: string[] };
+    expect(repairedConversation.in_context_message_ids).not.toContain(
+      orphanMessage.id,
+    );
+    expect(await readFile(messagesPath, "utf8")).toContain(orphanMessage.id);
+
+    await drain(
+      await reloadedBackend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "next" }],
+      } as ConversationMessageCreateBody),
+    );
+    const messagesAfterNextTurn = pageItems(
+      await reloadedBackend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+        order: "asc",
+      } as never),
+    );
+    expect(messagesAfterNextTurn.map((message) => message.id)).toContain(
+      "ui-msg-10000",
+    );
+  });
+
+  test("clips oversized tool results when loading local transcript context", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-large-tool-result-"),
+    );
+    const contexts: Context[] = [];
+    const stream: PiStreamFunction = (
+      _model: Model<string>,
+      context: Context,
+    ) => {
+      contexts.push(context);
+      const finalMessage = assistantMessage({
+        responseId: "response-done",
+        stopReason: "stop",
+        content: [{ type: "text", text: "done" }],
+      });
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+    const backend = new LocalBackend({
+      storageDir,
+      stream,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "hello" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const conversationDir = await firstConversationDir(storageDir);
+    const messagesPath = join(conversationDir, "messages.jsonl");
+    const conversationPath = join(conversationDir, "conversation.json");
+    const rows = (await readFile(messagesPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const parentId = rows.at(-1)?.id;
+    if (typeof parentId !== "string") {
+      throw new Error("Expected a parent entry id");
+    }
+    const timestamp = new Date().toISOString();
+    const assistantToolMessage = {
+      id: "ui-msg-9998",
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "call-huge",
+          name: "ShellCommand",
+          arguments: { command: "cat huge.log" },
+        },
+      ],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.5",
+      usage: emptyLocalUsage(),
+      stopReason: "toolUse",
+      timestamp: Date.now(),
+      metadata: {
+        created_at: timestamp,
+        updated_at: timestamp,
+        agent_id: agent.id,
+        conversation_id: conversation.id,
+      },
+    };
+    const hugeToolOutput = `${"x".repeat(
+      LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS + 20_000,
+    )}TAIL`;
+    const toolResultMessage = {
+      id: "ui-msg-9999",
+      role: "toolResult",
+      toolCallId: "call-huge",
+      toolName: "ShellCommand",
+      content: [{ type: "text", text: hugeToolOutput }],
+      isError: false,
+      timestamp: Date.now(),
+      metadata: {
+        created_at: timestamp,
+        updated_at: timestamp,
+        agent_id: agent.id,
+        conversation_id: conversation.id,
+      },
+    };
+    await appendFile(
+      messagesPath,
+      `${JSON.stringify({
+        type: "message",
+        id: "assistant-tool-entry",
+        parentId,
+        timestamp,
+        message: assistantToolMessage,
+      })}\n${JSON.stringify({
+        type: "message",
+        id: "large-tool-result-entry",
+        parentId: "assistant-tool-entry",
+        timestamp,
+        message: toolResultMessage,
+      })}\n`,
+    );
+    const persistedConversation = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as { in_context_message_ids?: string[] };
+    await writeFile(
+      conversationPath,
+      `${JSON.stringify(
+        {
+          ...persistedConversation,
+          in_context_message_ids: [
+            ...(persistedConversation.in_context_message_ids ?? []),
+            assistantToolMessage.id,
+            toolResultMessage.id,
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const reloadedBackend = new LocalBackend({
+      storageDir,
+      stream,
+      memfsEnabled: false,
+    });
+    await drain(
+      await reloadedBackend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "next" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const reloadedContext = contexts.at(-1);
+    expect(reloadedContext).toBeDefined();
+    const providerToolResult = reloadedContext?.messages.find(
+      (message) => message.role === "toolResult",
+    );
+    if (!providerToolResult || providerToolResult.role !== "toolResult") {
+      throw new Error("Expected provider tool result");
+    }
+    const providerText = providerToolResult.content.find(
+      (content) => content.type === "text",
+    )?.text;
+    expect(providerText?.length).toBeLessThanOrEqual(
+      LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS,
+    );
+    expect(providerText).toContain(
+      "Tool result truncated during local transcript repair",
+    );
+    expect(providerText?.endsWith("TAIL")).toBe(true);
+    expect(await readFile(messagesPath, "utf8")).toContain(hugeToolOutput);
+
+    await reloadedBackend.updateConversation(conversation.id, {
+      summary: "updated summary",
+    } as never);
+    const persistedAfterConversationUpdate = await readFile(
+      messagesPath,
+      "utf8",
+    );
+    expect(persistedAfterConversationUpdate).toContain(hugeToolOutput);
+    expect(persistedAfterConversationUpdate).not.toContain(
+      "Tool result truncated during local transcript repair",
+    );
   });
 
   test("defers unversioned transcript migration errors until transcript read", async () => {

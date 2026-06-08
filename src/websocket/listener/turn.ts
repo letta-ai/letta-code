@@ -29,7 +29,12 @@ import {
   refreshInputOtidsForNewRequest,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
-import { createBuffers, toLines } from "@/cli/helpers/accumulator";
+import {
+  type Buffers,
+  createBuffers,
+  type Line,
+  toLines,
+} from "@/cli/helpers/accumulator";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
@@ -52,12 +57,14 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
+import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
+  enqueueMemoryGitSyncReminder,
   type SharedReminderState,
   syncReminderStateFromContextTracker,
 } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
@@ -145,8 +152,61 @@ function trackListenerUserInput(
   }
 }
 
+function buildInboundUserTranscriptLines(
+  messages: Array<MessageCreate | ApprovalCreate>,
+): Line[] {
+  const lines: Line[] = [];
+
+  for (const message of messages) {
+    if (!("role" in message) || message.role !== "user") {
+      continue;
+    }
+    if (!("content" in message)) {
+      continue;
+    }
+
+    const text = extractTelemetryInputText(message.content);
+    if (text.length === 0) {
+      continue;
+    }
+
+    const otid =
+      "otid" in message && typeof message.otid === "string"
+        ? message.otid
+        : undefined;
+    const id = otid ? `user-${otid}` : `user-${crypto.randomUUID()}`;
+
+    lines.push({
+      kind: "user",
+      id,
+      text,
+      otid,
+    });
+  }
+
+  return lines;
+}
+
+function seedInboundUserTranscriptLines(buffers: Buffers, lines: Line[]): void {
+  for (const line of lines) {
+    if (line.kind !== "user") {
+      continue;
+    }
+    if (buffers.byId.has(line.id)) {
+      continue;
+    }
+    buffers.byId.set(line.id, line);
+    buffers.order.push(line.id);
+    if (line.otid) {
+      buffers.userLineIdByOtid.set(line.otid, line.id);
+    }
+  }
+}
+
 export const __listenerTurnTestUtils = {
   trackListenerUserInput,
+  buildInboundUserTranscriptLines,
+  seedInboundUserTranscriptLines,
   maybeLaunchPostTurnChannelReflection,
 };
 
@@ -182,6 +242,9 @@ function buildMaybeLaunchReflectionSubagent(params: {
         runtime.listener.systemPromptRecompileByConversation,
       recompileQueuedByConversation:
         runtime.listener.queuedSystemPromptRecompileByConversation,
+      feedbackContext: {
+        surface: getListenerTelemetrySurface(),
+      },
       onCompletionMessage: async (completionMessage) => {
         const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
           completionMessage,
@@ -443,6 +506,8 @@ export async function handleIncomingMessage(
           : m,
       ),
     );
+    const inboundUserTranscriptLines =
+      buildInboundUserTranscriptLines(messagesToSend);
 
     const firstMessage = normalizedMessages[0];
     const isApprovalMessage =
@@ -461,10 +526,30 @@ export async function handleIncomingMessage(
         );
         if (agentId) {
           try {
-            cachedAgent = (await getBackend().retrieveAgent(
-              agentId,
-            )) as AgentState;
-          } catch {
+            cachedAgent = (await getBackend().retrieveAgent(agentId, {
+              include: ["agent.tags"],
+            })) as AgentState;
+
+            const {
+              ensureLettaCodeOriginTag,
+              getMemoryPromptModeForAgent,
+              scheduleManagedSystemPromptUpdate,
+            } = await import("@/agent/system-prompt-versioning");
+            cachedAgent = await ensureLettaCodeOriginTag(cachedAgent);
+            scheduleManagedSystemPromptUpdate({
+              agent: cachedAgent,
+              memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
+              onUpdated: (updatedAgent) => {
+                cachedAgent = updatedAgent;
+              },
+            });
+          } catch (error) {
+            debugWarn(
+              "listen",
+              `Failed to ensure Letta Code agent metadata for ${agentId}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
             // Best-effort only. If the fetch fails, reminder and tool prep
             // will fall back to the existing null/placeholder behavior.
           }
@@ -613,6 +698,7 @@ export async function handleIncomingMessage(
     let runIdSent = false;
     let runId: string | undefined;
     const buffers = createBuffers(agentId);
+    seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -1225,6 +1311,17 @@ export async function handleIncomingMessage(
       agent_id: agentId || null,
       conversation_id: conversationId,
     });
+
+    if (agentId) {
+      await runPostTurnMemorySync({
+        agentId,
+        isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+        debugLabel: "Post-turn listener memory sync",
+        enqueueReminder: (text) => {
+          enqueueMemoryGitSyncReminder(runtime.reminderState, { text });
+        },
+      });
+    }
 
     try {
       const currentConversationId = getConversationId();

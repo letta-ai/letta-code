@@ -5,8 +5,10 @@ import * as path from "node:path";
 import {
   buildInstallCommand,
   buildLatestVersionUrl,
+  buildUpdateExecOptions,
   checkForUpdate,
   detectPackageManager,
+  getSelfUpdateStatus,
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
   resolveUpdateRegistryBaseUrl,
@@ -223,7 +225,69 @@ describe("detectPackageManager", () => {
   });
 });
 
+describe("getSelfUpdateStatus", () => {
+  let originalArgv1: string;
+  let originalDesktopManaged: string | undefined;
+
+  beforeEach(() => {
+    originalArgv1 = process.argv[1] || "";
+    originalDesktopManaged = process.env.LETTA_CODE_DESKTOP_MANAGED;
+    delete process.env.LETTA_CODE_DESKTOP_MANAGED;
+  });
+
+  afterEach(() => {
+    process.argv[1] = originalArgv1;
+    if (originalDesktopManaged !== undefined) {
+      process.env.LETTA_CODE_DESKTOP_MANAGED = originalDesktopManaged;
+    } else {
+      delete process.env.LETTA_CODE_DESKTOP_MANAGED;
+    }
+  });
+
+  test("disables self-update for packaged Desktop runtimes", () => {
+    process.argv[1] =
+      "/Applications/Letta.app/Contents/Resources/app.asar.unpacked/node_modules/@letta-ai/letta-code/letta.js";
+
+    const status = getSelfUpdateStatus();
+
+    expect(status.supported).toBe(false);
+    expect(status.writable).toBe(false);
+    expect(status.reason).toContain("managed by Letta Code Desktop");
+    expect(status.manual_command).toBe(
+      "Update Letta Code Desktop to upgrade the bundled Letta Code runtime.",
+    );
+  });
+
+  test("disables self-update when Desktop marks the runtime as managed", () => {
+    process.env.LETTA_CODE_DESKTOP_MANAGED = "1";
+    process.argv[1] =
+      "/Users/test/.nvm/versions/node/v20.10.0/lib/node_modules/@letta-ai/letta-code/dist/index.js";
+
+    const status = getSelfUpdateStatus();
+
+    expect(status.supported).toBe(false);
+    expect(status.writable).toBe(false);
+    expect(status.reason).toContain("managed by Letta Code Desktop");
+  });
+});
+
 describe("update config resolution", () => {
+  test("buildUpdateExecOptions enables shell on Windows for npm.cmd shims", () => {
+    expect(buildUpdateExecOptions(5000, "win32")).toEqual({
+      timeout: 5000,
+      encoding: "utf8",
+      shell: true,
+    });
+  });
+
+  test("buildUpdateExecOptions keeps direct execFile behavior off Windows", () => {
+    expect(buildUpdateExecOptions(60000, "darwin")).toEqual({
+      timeout: 60000,
+      encoding: "utf8",
+      shell: false,
+    });
+  });
+
   test("resolveUpdatePackageName uses default when unset", () => {
     expect(resolveUpdatePackageName({} as NodeJS.ProcessEnv)).toBe(
       "@letta-ai/letta-code",

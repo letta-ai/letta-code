@@ -57,7 +57,7 @@ import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
 import { WorktreeDiffSelector } from "@/cli/components/WorktreeDiffSelector";
 import { AnimationProvider } from "@/cli/contexts/AnimationContext";
-import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
@@ -78,8 +78,10 @@ import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
+  isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import type { WindowTitleData } from "@/cli/helpers/window-title-config";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -319,7 +321,10 @@ type AppViewProps = {
   staticRenderEpoch: number;
   statusLinePayload: StatusLinePayload;
   statusLinePrompt: string;
-  extensionRuntime: LocalExtensionRuntime;
+  terminalTitleData: WindowTitleData;
+  onTitlePreview: (title: string | null) => void;
+  onTitlePreviewEnd: () => void;
+  extensionAdapter: LocalExtensionAdapter;
   fileAutocompleteFdPath?: string | null;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
@@ -352,7 +357,6 @@ export function AppView(props: AppViewProps) {
     contextTrackerRef,
     continueSession,
     conversationId,
-    conversationSummary,
     projectDirectory,
     currentApproval,
     currentApprovalContext,
@@ -465,7 +469,10 @@ export function AppView(props: AppViewProps) {
     staticRenderEpoch,
     statusLinePayload,
     statusLinePrompt,
-    extensionRuntime,
+    terminalTitleData,
+    onTitlePreview,
+    onTitlePreviewEnd,
+    extensionAdapter,
     streaming,
     stubDescriptions,
     thinkingMessage,
@@ -520,6 +527,15 @@ export function AppView(props: AppViewProps) {
                       (ln.toolCallId === currentApproval?.toolCallId ||
                         pendingIds.has(ln.toolCallId) ||
                         queuedIds.has(ln.toolCallId));
+                    if (
+                      ln.kind === "tool_call" &&
+                      ln.name &&
+                      isShellTool(ln.name) &&
+                      !isApprovalTracked &&
+                      (ln.phase === "streaming" || ln.phase === "ready")
+                    ) {
+                      return null;
+                    }
                     if (isFileTool && !isApprovalTracked) {
                       return null;
                     }
@@ -746,7 +762,7 @@ export function AppView(props: AppViewProps) {
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
                 statusLinePayload={statusLinePayload}
-                extensionRuntime={extensionRuntime}
+                extensionAdapter={extensionAdapter}
                 statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
                 showInspirationalPromptHints={showInspirationalPromptHints}
@@ -842,9 +858,10 @@ export function AppView(props: AppViewProps) {
             {/* Window Title Configurator - for customizing terminal title */}
             {activeOverlay === "window-title" && (
               <WindowTitlePicker
-                agentName={agentName ?? null}
                 projectDirectory={projectDirectory}
-                conversationSummary={conversationSummary}
+                titleData={terminalTitleData}
+                onTitlePreview={onTitlePreview}
+                onTitlePreviewEnd={onTitlePreviewEnd}
                 onClose={closeOverlay}
               />
             )}

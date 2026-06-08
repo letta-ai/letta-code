@@ -19,6 +19,7 @@ export interface HeadlessTurnExecutorInput {
   agentId: string;
   agent: LocalAgentRecord;
   systemPrompt?: string;
+  midConversationSystemPrompt?: string;
   body: HeadlessTurnBody;
   history: StoredMessage[];
   uiMessages: LocalMessage[];

@@ -11,6 +11,8 @@ import type {
 } from "./local-message";
 import type { StoredMessage } from "./local-types";
 
+export const LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS = 40_000;
+
 type AssistantContent = LocalAssistantMessage["content"][number];
 
 export function isLocalToolCallContent(
@@ -330,6 +332,162 @@ export function cloneLocalMessage(message: LocalMessage): LocalMessage {
   } catch {
     return JSON.parse(JSON.stringify(message)) as LocalMessage;
   }
+}
+
+function toolCallIdLookupKeys(id: string): string[] {
+  const [baseId] = id.split("|");
+  return baseId && baseId !== id ? [id, baseId] : [id];
+}
+
+function addToolCallIdLookupKeys(ids: Set<string>, id: string): void {
+  for (const key of toolCallIdLookupKeys(id)) ids.add(key);
+}
+
+function hasToolCallIdLookupKey(ids: Set<string>, id: string): boolean {
+  return toolCallIdLookupKeys(id).some((key) => ids.has(key));
+}
+
+function assistantMessageCanContributeToolCalls(
+  message: LocalAssistantMessage,
+): boolean {
+  return message.stopReason !== "error" && message.stopReason !== "aborted";
+}
+
+export interface LocalToolResultRepairResult {
+  messages: LocalMessage[];
+  removedMessageIds: string[];
+}
+
+export function removeOrphanLocalToolResults(
+  messages: readonly LocalMessage[],
+): LocalToolResultRepairResult {
+  // Mirror pi-ai transformMessages() tool-flow boundaries: tool results only
+  // belong to the immediately pending assistant tool calls. A user or another
+  // assistant message closes that pending tool-result window.
+  let pendingToolCallIds = new Set<string>();
+  const repaired: LocalMessage[] = [];
+  const removedMessageIds: string[] = [];
+
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      pendingToolCallIds = new Set<string>();
+      if (assistantMessageCanContributeToolCalls(message)) {
+        for (const content of message.content) {
+          if (isLocalToolCallContent(content)) {
+            addToolCallIdLookupKeys(pendingToolCallIds, content.id);
+          }
+        }
+      }
+      repaired.push(message);
+      continue;
+    }
+
+    if (message.role === "user") {
+      pendingToolCallIds = new Set<string>();
+      repaired.push(message);
+      continue;
+    }
+
+    if (message.role === "toolResult") {
+      if (hasToolCallIdLookupKey(pendingToolCallIds, message.toolCallId)) {
+        repaired.push(message);
+      } else {
+        removedMessageIds.push(message.id);
+      }
+      continue;
+    }
+
+    repaired.push(message);
+  }
+
+  return {
+    messages: removedMessageIds.length > 0 ? repaired : [...messages],
+    removedMessageIds,
+  };
+}
+
+function truncateLocalToolResultTextForRepair(
+  text: string,
+  maxChars: number,
+): string {
+  if (text.length <= maxChars) return text;
+
+  const markerPrefix =
+    "\n[Tool result truncated during local transcript repair: omitted ";
+  const markerSuffix = " chars]\n";
+  let marker = `${markerPrefix}${text.length - maxChars}${markerSuffix}`;
+  let keepChars = Math.max(0, maxChars - marker.length);
+  let headChars = Math.ceil(keepChars / 2);
+  let tailChars = keepChars - headChars;
+  let omittedChars = text.length - headChars - tailChars;
+
+  marker = `${markerPrefix}${omittedChars}${markerSuffix}`;
+  keepChars = Math.max(0, maxChars - marker.length);
+  headChars = Math.ceil(keepChars / 2);
+  tailChars = keepChars - headChars;
+  omittedChars = text.length - headChars - tailChars;
+  marker = `${markerPrefix}${omittedChars}${markerSuffix}`;
+
+  return `${text.slice(0, headChars)}${marker}${
+    tailChars > 0 ? text.slice(-tailChars) : ""
+  }`;
+}
+
+export interface LocalToolResultClipResult {
+  messages: LocalMessage[];
+  clippedToolResultIds: string[];
+}
+
+export function clipOversizedLocalToolResults(
+  messages: readonly LocalMessage[],
+  options: { maxToolResultTextChars?: number } = {},
+): LocalToolResultClipResult {
+  const maxToolResultTextChars =
+    options.maxToolResultTextChars ?? LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS;
+  let projectedMessages: LocalMessage[] | undefined;
+  const clippedToolResultIds: string[] = [];
+
+  const sourceMessages = messages;
+  for (const [messageIndex, message] of sourceMessages.entries()) {
+    if (message.role !== "toolResult") continue;
+
+    let projectedContent: LocalToolResultMessage["content"] | undefined;
+    for (
+      let contentIndex = 0;
+      contentIndex < message.content.length;
+      contentIndex++
+    ) {
+      const content = message.content[contentIndex];
+      if (
+        content?.type !== "text" ||
+        content.text.length <= maxToolResultTextChars
+      ) {
+        continue;
+      }
+
+      if (!projectedContent) projectedContent = [...message.content];
+      projectedContent[contentIndex] = {
+        ...content,
+        text: truncateLocalToolResultTextForRepair(
+          content.text,
+          maxToolResultTextChars,
+        ),
+      };
+    }
+
+    if (!projectedContent) continue;
+    projectedMessages ??= [...sourceMessages];
+    projectedMessages[messageIndex] = {
+      ...message,
+      content: projectedContent,
+    };
+    clippedToolResultIds.push(message.id);
+  }
+
+  return {
+    messages: projectedMessages ?? [...messages],
+    clippedToolResultIds,
+  };
 }
 
 export function mergeSnapshotContentWithExistingToolCalls(

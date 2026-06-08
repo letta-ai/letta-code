@@ -90,6 +90,8 @@ export interface SubagentResult {
   success: boolean;
   error?: string;
   totalTokens?: number;
+  stepCount?: number;
+  durationMs?: number;
 }
 
 /**
@@ -100,7 +102,11 @@ interface ExecutionState {
   conversationId: string | null;
   finalResult: string | null;
   finalError: string | null;
-  resultStats: { durationMs: number; totalTokens: number } | null;
+  resultStats: {
+    durationMs: number;
+    totalTokens: number;
+    stepCount?: number;
+  } | null;
   displayedToolCalls: Set<string>;
   pendingToolCalls: Map<string, { name: string; args: string }>;
 }
@@ -195,6 +201,10 @@ function swapProviderPrefix(
   return `${parentProvider}/${modelPortion}`;
 }
 
+function isInheritModel(model: string | null | undefined): boolean {
+  return model?.trim().toLowerCase() === "inherit";
+}
+
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
@@ -207,8 +217,12 @@ export async function resolveSubagentModel(options: {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
   const isFreeTier = billingTier?.toLowerCase() === "free";
+  const userRequestedInheritance = isInheritModel(userModel);
+  const effectiveRecommendedModel = userRequestedInheritance
+    ? "inherit"
+    : recommendedModel;
 
-  if (userModel) return userModel;
+  if (userModel && !userRequestedInheritance) return userModel;
 
   // Local backend has no server-side auto router. If the parent agent is
   // already running successfully on a local model, spawned subagents should use
@@ -219,8 +233,11 @@ export async function resolveSubagentModel(options: {
   }
 
   if (options.subagentType === "reflection") {
-    if (recommendedModel && recommendedModel !== "inherit") {
-      const recommendedHandle = resolveModel(recommendedModel);
+    if (
+      effectiveRecommendedModel &&
+      !isInheritModel(effectiveRecommendedModel)
+    ) {
+      const recommendedHandle = resolveModel(effectiveRecommendedModel);
       if (recommendedHandle) {
         return recommendedHandle;
       }
@@ -230,8 +247,8 @@ export async function resolveSubagentModel(options: {
   }
 
   let recommendedHandle: string | null = null;
-  if (recommendedModel && recommendedModel !== "inherit") {
-    recommendedHandle = resolveModel(recommendedModel);
+  if (effectiveRecommendedModel && !isInheritModel(effectiveRecommendedModel)) {
+    recommendedHandle = resolveModel(effectiveRecommendedModel);
   }
 
   let availableHandles: Set<string> | null = options.availableHandles ?? null;
@@ -406,7 +423,8 @@ function handleResultEvent(
     result?: string;
     is_error?: boolean;
     duration_ms?: number;
-    usage?: { total_tokens?: number };
+    usage?: { total_tokens?: number; step_count?: number };
+    num_turns?: number;
   },
   state: ExecutionState,
   subagentId: string,
@@ -415,6 +433,10 @@ function handleResultEvent(
   state.resultStats = {
     durationMs: event.duration_ms || 0,
     totalTokens: event.usage?.total_tokens || 0,
+    stepCount:
+      typeof event.usage?.step_count === "number"
+        ? event.usage.step_count
+        : undefined,
   };
 
   if (event.is_error) {
@@ -514,6 +536,14 @@ function parseResultFromStdout(
         report: result.result || "",
         success: !result.is_error,
         error: result.is_error ? result.result || "Unknown error" : undefined,
+        stepCount:
+          typeof result.usage?.step_count === "number"
+            ? result.usage.step_count
+            : undefined,
+        durationMs:
+          typeof result.duration_ms === "number"
+            ? result.duration_ms
+            : undefined,
       };
     }
 
@@ -1241,6 +1271,8 @@ async function executeSubagent(
         success: !state.finalError,
         error: state.finalError || undefined,
         totalTokens: state.resultStats?.totalTokens,
+        stepCount: state.resultStats?.stepCount,
+        durationMs: state.resultStats?.durationMs,
       };
     }
 
@@ -1258,6 +1290,8 @@ async function executeSubagent(
         success: false,
         error: state.finalError,
         totalTokens: state.resultStats?.totalTokens,
+        stepCount: state.resultStats?.stepCount,
+        durationMs: state.resultStats?.durationMs,
       };
     }
 

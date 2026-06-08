@@ -17,6 +17,7 @@ import {
 } from "@/auth/oauth";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
@@ -370,6 +371,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   }
 
   await settingsManager.initialize();
+  await applyStartupPermissionMode({});
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
@@ -685,6 +687,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(`status: ${status}`);
             console.log(`[${formatTimestamp()}] status: ${status}`);
           },
+          onLog: (message) => {
+            sessionLog.log(message);
+            console.log(`[${formatTimestamp()}] ${message}`);
+          },
           onConnected: () => {
             sessionLog.log("Connected. Awaiting instructions.");
             console.log(
@@ -774,6 +780,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(`status: ${status}`);
             clearRetryStatusCallback?.();
             updateStatusCallback?.(status);
+          },
+          onLog: (message) => {
+            sessionLog.log(message);
+            console.log(`[${formatTimestamp()}] ${message}`);
           },
           onConnected: () => {
             sessionLog.log("Connected. Awaiting instructions.");

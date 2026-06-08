@@ -1,8 +1,17 @@
+import { existsSync } from "node:fs";
+import { delimiter, isAbsolute, join } from "node:path";
+
 const SEP = "\u0000";
 type ShellLaunchOptions = {
   login?: boolean;
+  env?: NodeJS.ProcessEnv;
   powershellEnvAliases?: string[];
 };
+
+export const STRICT_SHELL_ENV_VAR = "LETTA_BASH_STRICT";
+export const STRICT_SHELL_PRELUDE = "set -euo pipefail";
+export const POWERSHELL_UTF8_OUTPUT_PREFIX =
+  "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
 
 const POWERSHELL_ENV_ALIASES = [
   "MEMORY_DIR",
@@ -15,8 +24,25 @@ const POWERSHELL_ENV_ALIASES = [
   "USER_CWD",
 ];
 
+const WINDOWS_PWSH_FALLBACK_PATH = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
+const WINDOWS_POWERSHELL_FALLBACK_PATH =
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+
 function isValidEnvAlias(name: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+export function withStrictShellPrelude(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (process.platform === "win32") return command;
+  if (!isTruthyEnvValue(env[STRICT_SHELL_ENV_VAR])) return command;
+  return `${STRICT_SHELL_PRELUDE}\n${command}`;
 }
 
 function pushUnique(
@@ -43,18 +69,40 @@ function normalizePowerShellCommand(command: string): string {
   return trimmed;
 }
 
+function prefixPowerShellCommandWithUtf8Output(command: string): string {
+  const trimmed = command.trimStart();
+  if (trimmed.startsWith(POWERSHELL_UTF8_OUTPUT_PREFIX)) {
+    return command;
+  }
+  return `${POWERSHELL_UTF8_OUTPUT_PREFIX}${command}`;
+}
+
+function stripPowerShellUtf8OutputPrefix(command: string): string {
+  const trimmed = command.trimStart();
+  if (!trimmed.startsWith(POWERSHELL_UTF8_OUTPUT_PREFIX)) {
+    return command;
+  }
+
+  const leadingWhitespace = command.slice(0, command.length - trimmed.length);
+  return `${leadingWhitespace}${trimmed.slice(POWERSHELL_UTF8_OUTPUT_PREFIX.length)}`;
+}
+
 export function buildPowerShellCommand(
   command: string,
   envAliases: string[] = [],
 ): string {
-  const powerShellCommand = normalizePowerShellCommand(command);
+  const powerShellCommand = stripPowerShellUtf8OutputPrefix(
+    normalizePowerShellCommand(command),
+  );
   const aliases = [
     ...new Set([...POWERSHELL_ENV_ALIASES, ...envAliases]),
   ].filter(isValidEnvAlias);
   const aliasPrelude = aliases
     .map((name) => `$${name} = $env:${name}`)
     .join("; ");
-  return `${aliasPrelude}; ${powerShellCommand}`;
+  return prefixPowerShellCommandWithUtf8Output(
+    `${aliasPrelude}; ${powerShellCommand}`,
+  );
 }
 
 function windowsLaunchers(
@@ -67,28 +115,34 @@ function windowsLaunchers(
   const seen = new Set<string>();
   const powerShellCommand = buildPowerShellCommand(trimmed, envAliases);
 
-  // Default to PowerShell on Windows (same as Gemini CLI and Codex CLI)
-  // This ensures better PATH compatibility since many tools are configured
-  // in PowerShell profiles rather than system-wide cmd.exe PATH
-  pushUnique(launchers, seen, [
-    "powershell.exe",
-    "-NoProfile",
-    "-Command",
-    powerShellCommand,
-  ]);
+  // Match Codex's PowerShell order: prefer PowerShell Core (`pwsh`) when
+  // available, then fall back to Windows PowerShell.
   pushUnique(launchers, seen, [
     "pwsh",
     "-NoProfile",
     "-Command",
     powerShellCommand,
   ]);
+  pushUnique(launchers, seen, [
+    WINDOWS_PWSH_FALLBACK_PATH,
+    "-NoProfile",
+    "-Command",
+    powerShellCommand,
+  ]);
+  pushUnique(launchers, seen, [
+    "powershell",
+    "-NoProfile",
+    "-Command",
+    powerShellCommand,
+  ]);
+  pushUnique(launchers, seen, [
+    WINDOWS_POWERSHELL_FALLBACK_PATH,
+    "-NoProfile",
+    "-Command",
+    powerShellCommand,
+  ]);
 
-  // Fall back to cmd.exe if PowerShell fails
-  const envComSpecRaw = process.env.ComSpec || process.env.COMSPEC;
-  const envComSpec = envComSpecRaw?.trim();
-  if (envComSpec) {
-    pushUnique(launchers, seen, [envComSpec, "/d", "/s", "/c", trimmed]);
-  }
+  // Fall back to cmd.exe if PowerShell fails.
   pushUnique(launchers, seen, ["cmd.exe", "/d", "/s", "/c", trimmed]);
 
   return launchers;
@@ -101,6 +155,73 @@ function shellCommandFlag(shellName: string, login: boolean): string {
     return "-lc";
   }
   return "-c";
+}
+
+function pathEnvValue(env: NodeJS.ProcessEnv): string {
+  return env.PATH ?? env.Path ?? env.path ?? "";
+}
+
+function pathExtValue(env: NodeJS.ProcessEnv): string {
+  return env.PATHEXT ?? env.PathExt ?? ".COM;.EXE;.BAT;.CMD";
+}
+
+function hasPathSeparator(executable: string): boolean {
+  return executable.includes("/") || executable.includes("\\");
+}
+
+function hasFileExtension(executable: string): boolean {
+  const basename = executable.split(/[\\/]/).pop() ?? executable;
+  return /\.[^.]+$/.test(basename);
+}
+
+function resolveExecutablePath(
+  executable: string,
+  env: NodeJS.ProcessEnv,
+): string | null {
+  if (isAbsolute(executable) || hasPathSeparator(executable)) {
+    return existsSync(executable) ? executable : null;
+  }
+
+  const pathDelimiter = process.platform === "win32" ? ";" : delimiter;
+  const pathEntries = pathEnvValue(env).split(pathDelimiter).filter(Boolean);
+  const executableNames = [executable];
+  if (process.platform === "win32" && !hasFileExtension(executable)) {
+    for (const extension of pathExtValue(env).split(";").filter(Boolean)) {
+      executableNames.push(`${executable}${extension}`);
+    }
+  }
+
+  for (const entry of pathEntries) {
+    for (const name of executableNames) {
+      const candidate = join(entry, name);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+export function selectAvailableShellLauncher(
+  launchers: string[][],
+  env: NodeJS.ProcessEnv = process.env,
+): string[] | undefined {
+  if (process.platform !== "win32") {
+    return launchers[0];
+  }
+
+  for (const launcher of launchers) {
+    const executable = launcher[0];
+    if (!executable) continue;
+
+    const resolvedExecutable = resolveExecutablePath(executable, env);
+    if (resolvedExecutable) {
+      return [resolvedExecutable, ...launcher.slice(1)];
+    }
+  }
+
+  return launchers.at(-1);
 }
 
 function unixLaunchers(command: string, login: boolean): string[][] {
@@ -168,7 +289,8 @@ export function buildShellLaunchers(
   options?: ShellLaunchOptions,
 ): string[][] {
   const login = options?.login ?? false;
+  const commandToRun = withStrictShellPrelude(command, options?.env);
   return process.platform === "win32"
-    ? windowsLaunchers(command, options?.powershellEnvAliases)
-    : unixLaunchers(command, login);
+    ? windowsLaunchers(commandToRun, options?.powershellEnvAliases)
+    : unixLaunchers(commandToRun, login);
 }

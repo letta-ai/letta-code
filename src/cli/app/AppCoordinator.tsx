@@ -48,6 +48,7 @@ import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
 } from "@/cli/commands/connect-command-state";
+import { refreshCustomCommands } from "@/cli/commands/custom";
 import {
   type CommandFinishedEvent,
   type CommandHandle,
@@ -55,12 +56,13 @@ import {
 } from "@/cli/commands/runner";
 import type { BtwState } from "@/cli/components/BtwPane";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
+import { TerminalTitleWriter } from "@/cli/components/TerminalTitleWriter";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
 import {
-  type LocalExtensionRuntime,
-  useLocalExtensionRuntime,
-} from "@/cli/extensions/use-local-extension-runtime";
+  type LocalExtensionAdapter,
+  useLocalExtensionAdapter,
+} from "@/cli/extensions/use-local-extension-adapter";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -76,7 +78,9 @@ import {
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
 import {
-  generateConversationTitleFromFork,
+  type ConversationTitleMessage,
+  generateConversationTitleFromSummary,
+  getConversationTitleSettings,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
@@ -109,10 +113,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
-import {
-  renderWindowTitle,
-  resolveWindowTitleConfig,
-} from "@/cli/helpers/window-title-config";
+import type { WindowTitleData } from "@/cli/helpers/window-title-config";
 import { useSyncedState } from "@/cli/hooks/use-synced-state";
 import {
   useTerminalRows,
@@ -133,6 +134,11 @@ import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
+import {
+  buildByokProviderAliases,
+  isByokHandleForSelector,
+  listProviders,
+} from "@/providers/byok-providers";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   type MessageQueueItem,
@@ -336,7 +342,6 @@ export function App({
   updateNotification = null,
   systemInfoReminderEnabled = true,
   extensionsDisabled = false,
-  onReload,
 }: AppProps) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -915,18 +920,6 @@ export function App({
     startupModelDisplayOverride,
   ]);
 
-  // Set terminal title from window title config
-  useEffect(() => {
-    const items = resolveWindowTitleConfig(projectDirectory);
-    const title = renderWindowTitle(items, {
-      agentName: agentState?.name ?? null,
-      appName: "Letta Code",
-      version: getVersion(),
-      conversationSummary,
-    });
-    process.stdout.write(`\x1b]0;${title}\x07`);
-  }, [agentState?.name, conversationSummary, projectDirectory]);
-
   const currentModelProvider = llmConfig?.provider_name ?? null;
   const isLocalBackend = isLocalBackendEnabled();
   const currentReasoningEffort: ModelReasoningEffort | null =
@@ -1001,6 +994,8 @@ export function App({
   // Show compaction messages preference (can be toggled at runtime)
   const [showCompactionsEnabled, _setShowCompactionsEnabled] =
     useState(showCompactions);
+  const [terminalTitleConfigRefreshEpoch, setTerminalTitleConfigRefreshEpoch] =
+    useState(0);
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
@@ -1021,13 +1016,18 @@ export function App({
   const [thinkingMessage, setThinkingMessage] = useState(
     getRandomThinkingVerb(),
   );
+  const [terminalTitlePreviewOverride, setTerminalTitlePreviewOverride] =
+    useState<string | null | undefined>(undefined);
+  const clearTerminalTitlePreviewOverride = useCallback(() => {
+    setTerminalTitlePreviewOverride(undefined);
+  }, []);
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
   const sessionExtensionStartAttemptedRef = useRef(false);
-  const extensionRuntimeRef = useRef<LocalExtensionRuntime | null>(null);
+  const extensionAdapterRef = useRef<LocalExtensionAdapter | null>(null);
 
   // Initialize chunk log for this agent + session (clears buffer, GCs old files).
   // Re-runs when agentId changes (e.g. agent switch via /agents).
@@ -1143,14 +1143,10 @@ export function App({
         // Silently ignore hook errors
       }
 
-      const extensionRuntime = extensionRuntimeRef.current;
-      if (
-        extensionRuntime &&
-        !extensionRuntime.isLoading &&
-        extensionRuntime.hasExtensionSources
-      ) {
+      const extensionAdapter = extensionAdapterRef.current;
+      if (extensionAdapter) {
         try {
-          await extensionRuntime.emitEvent("conversation_close", {
+          await extensionAdapter.events.emit("conversation_close", {
             agentId: agentIdRef.current ?? null,
             conversationId: conversationIdRef.current ?? null,
             durationMs,
@@ -1188,6 +1184,9 @@ export function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
+  const autoConversationTitleStartIndexRef = useRef<number | null>(
+    !resumedExistingConversation ? 0 : null,
+  );
   const shouldAutoGenerateConversationDescriptionRef = useRef(
     !resumedExistingConversation,
   );
@@ -1197,6 +1196,9 @@ export function App({
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
+      autoConversationTitleStartIndexRef.current = enabled
+        ? buffersRef.current.order.length
+        : null;
       shouldAutoGenerateConversationDescriptionRef.current = enabled;
       isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
@@ -1227,7 +1229,7 @@ export function App({
 
     // Heuristic-only when the experiment is off, on local backends, or for
     // the agent-direct "default" conversation (which can't be forked safely).
-    if (!experimentManager.isEnabled("conversation_titles")) {
+    if (!getConversationTitleSettings().enabled) {
       return fallback;
     }
     if (getBackend().capabilities.localModelCatalog) {
@@ -1239,10 +1241,46 @@ export function App({
     }
 
     try {
-      const client = await getClient();
-      const aiTitle = await generateConversationTitleFromFork(
-        client,
+      const messages: ConversationTitleMessage[] = [];
+      const startIndex = autoConversationTitleStartIndexRef.current ?? 0;
+      const titleLineIds = buffersRef.current.order.slice(
+        Math.min(startIndex, buffersRef.current.order.length),
+      );
+      for (const lineId of titleLineIds) {
+        const line = buffersRef.current.byId.get(lineId);
+        if (line?.kind === "user" || line?.kind === "assistant") {
+          const content = line.text.trim();
+          if (content) {
+            messages.push({ role: line.kind, content });
+          }
+        }
+      }
+
+      let summaryModel: string | undefined;
+      if (currentModelLabel) {
+        try {
+          const providers = await listProviders();
+          const byokProviderAliases = buildByokProviderAliases(providers);
+          summaryModel = isByokHandleForSelector(
+            currentModelLabel,
+            byokProviderAliases,
+          )
+            ? currentModelLabel
+            : undefined;
+        } catch {
+          const byokProviderAliases = buildByokProviderAliases([]);
+          summaryModel = isByokHandleForSelector(
+            currentModelLabel,
+            byokProviderAliases,
+          )
+            ? currentModelLabel
+            : undefined;
+        }
+      }
+      const aiTitle = await generateConversationTitleFromSummary(
         conversationId,
+        messages,
+        summaryModel,
       );
       return aiTitle ?? fallback;
     } catch (err) {
@@ -1251,7 +1289,7 @@ export function App({
       }
       return fallback;
     }
-  }, [deriveAutoConversationTitle]);
+  }, [deriveAutoConversationTitle, currentModelLabel]);
   const generateConversationDescription = useCallback(
     async (options?: { force?: boolean }) => {
       if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {
@@ -1591,7 +1629,7 @@ export function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
-          extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
+          extensionEvents: extensionAdapterRef.current?.events,
         });
       }
 
@@ -1599,7 +1637,7 @@ export function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
-          extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
+          extensionEvents: extensionAdapterRef.current?.events,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -1608,7 +1646,7 @@ export function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
-        extensionEventEmitter: extensionRuntimeRef.current?.eventEmitter,
+        extensionEvents: extensionAdapterRef.current?.events,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });
@@ -2313,28 +2351,28 @@ export function App({
       statusLinePayload,
     ],
   );
-  const extensionRuntime = useLocalExtensionRuntime(extensionContext, {
+  const extensionAdapter = useLocalExtensionAdapter(extensionContext, {
     disabled: extensionsDisabled,
   });
 
   useEffect(() => {
-    extensionRuntimeRef.current = extensionRuntime;
-  }, [extensionRuntime]);
+    extensionAdapterRef.current = extensionAdapter;
+  }, [extensionAdapter]);
 
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
     if (sessionExtensionStartAttemptedRef.current) return;
-    if (extensionRuntime.isLoading) return;
-    if (!extensionRuntime.hasExtensionSources) return;
+    if (extensionAdapter.isLoading) return;
+    if (!extensionAdapter.hasExtensionSources) return;
 
     sessionExtensionStartAttemptedRef.current = true;
-    void extensionRuntime.emitEvent("conversation_open", {
+    void extensionAdapter.events.emit("conversation_open", {
       agentId,
       agentName: agentName ?? null,
       conversationId: conversationIdRef.current ?? null,
       reason: "startup",
     });
-  }, [agentId, agentName, extensionRuntime]);
+  }, [agentId, agentName, extensionAdapter]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
@@ -2533,6 +2571,46 @@ export function App({
     commitEligibleLines(b);
   }, [commitEligibleLines]);
   refreshDerivedRef.current = refreshDerived;
+
+  const handleReload = useCallback(async () => {
+    settingsManager.clearCaches();
+    await settingsManager.loadProjectSettings();
+    await settingsManager.loadLocalProjectSettings();
+
+    const settings = settingsManager.getSettings();
+    setTokenStreamingEnabled(settings.tokenStreaming);
+    _setReasoningTabCycleEnabled(settings.reasoningTabCycleEnabled === true);
+    _setShowCompactionsEnabled(settings.showCompactions === true);
+
+    try {
+      refreshCustomCommands();
+    } catch (error) {
+      debugLog(
+        "commands",
+        "refreshCustomCommands failed during /reload: %s",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    const durationMs = Date.now() - sessionStartTimeRef.current;
+    void extensionAdapter.events.emit("conversation_close", {
+      agentId,
+      conversationId: conversationIdRef.current ?? null,
+      durationMs,
+      messageCount: telemetry.getMessageCount(),
+      reason: "reload",
+      toolCallCount: telemetry.getToolCallCount(),
+    });
+    await extensionAdapter.reload();
+    void extensionAdapter.events.emit("conversation_open", {
+      agentId,
+      agentName: agentName ?? null,
+      conversationId: conversationIdRef.current ?? null,
+      reason: "reload",
+    });
+    setTerminalTitleConfigRefreshEpoch((epoch) => epoch + 1);
+    refreshDerived();
+  }, [agentId, agentName, extensionAdapter, refreshDerived]);
 
   const recordCommandReminder = useCallback((event: CommandFinishedEvent) => {
     let input = event.input.trim();
@@ -3136,7 +3214,7 @@ export function App({
       });
     };
 
-    if (!extensionRuntime.isLoading) {
+    if (!extensionAdapter.isLoading) {
       refreshAgentFromRegisteredProviderMetadata();
     }
 
@@ -3149,7 +3227,7 @@ export function App({
     };
   }, [
     agentId,
-    extensionRuntime.isLoading,
+    extensionAdapter.isLoading,
     hasConversationModelOverrideRef,
     isLocalBackend,
     loadingState,
@@ -3626,7 +3704,7 @@ export function App({
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
     generateConversationDescription,
-    extensionRuntime,
+    extensionAdapter,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -3945,7 +4023,7 @@ export function App({
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
-    extensionRuntime,
+    extensionAdapter,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
@@ -4034,7 +4112,7 @@ export function App({
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
-    extensionRuntime,
+    extensionAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
     generateConversationDescription,
@@ -4115,7 +4193,7 @@ export function App({
     updateAgentName,
     updateMemorySyncCommand,
     userCancelledRef,
-    onReload,
+    onReload: handleReload,
   });
 
   const onSubmitRef = useRef(onSubmit);
@@ -4634,6 +4712,57 @@ export function App({
     });
   }, [estimatedLiveHeight, terminalRows]);
 
+  const terminalTitleTaskRunning =
+    loadingState !== "ready" ||
+    streaming ||
+    isExecutingTool ||
+    commandRunning ||
+    bashRunning ||
+    pendingApprovals.length > 0;
+  const terminalTitleRunState =
+    loadingState !== "ready"
+      ? "Starting"
+      : !terminalTitleTaskRunning
+        ? "Ready"
+        : executionPhase === "thinking"
+          ? "Thinking"
+          : "Working";
+  const terminalTitleData = useMemo<WindowTitleData>(
+    () => ({
+      agentName,
+      appName: "Letta Code",
+      version: getVersion(),
+      conversationSummary,
+      conversationId,
+      projectDirectory,
+      currentDirectory: statusLinePayload.workspace.current_dir,
+      runState: terminalTitleRunState,
+      modelDisplayName: currentModelDisplay,
+      reasoningEffort: currentReasoningEffort,
+      contextUsedPercentage: statusLinePayload.context_window.used_percentage,
+      contextRemainingPercentage:
+        statusLinePayload.context_window.remaining_percentage,
+      totalInputTokens: statusLinePayload.context_window.total_input_tokens,
+      totalOutputTokens: statusLinePayload.context_window.total_output_tokens,
+      fastMode: currentModelServiceTier === CHATGPT_FAST_SERVICE_TIER,
+    }),
+    [
+      agentName,
+      conversationId,
+      conversationSummary,
+      currentModelDisplay,
+      currentModelServiceTier,
+      currentReasoningEffort,
+      projectDirectory,
+      statusLinePayload.context_window.remaining_percentage,
+      statusLinePayload.context_window.total_input_tokens,
+      statusLinePayload.context_window.total_output_tokens,
+      statusLinePayload.context_window.used_percentage,
+      statusLinePayload.workspace.current_dir,
+      terminalTitleRunState,
+    ],
+  );
+
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
   useEffect(() => {
@@ -4772,150 +4901,166 @@ export function App({
   }, [trajectoryTokenDisplay]);
 
   return (
-    <AppView
-      activeOverlay={activeOverlay}
-      agentId={agentId}
-      agentName={agentName}
-      agentState={agentState}
-      anySelectorOpen={anySelectorOpen}
-      approvalMap={approvalMap}
-      bashRunning={bashRunning}
-      billingTier={billingTier}
-      btwState={btwState}
-      buffersRef={buffersRef}
-      chromeColumns={chromeColumns}
-      closeOverlay={closeOverlay}
-      columns={columns}
-      commandRunner={commandRunner}
-      completeOverlay={completeOverlay}
-      contextTrackerRef={contextTrackerRef}
-      continueSession={continueSession}
-      conversationId={conversationId}
-      conversationSummary={conversationSummary}
-      projectDirectory={projectDirectory}
-      currentApproval={currentApproval}
-      currentApprovalContext={currentApprovalContext}
-      currentModelDisplay={currentModelDisplay}
-      currentModelHandle={currentModelHandle}
-      currentModelId={currentModelId}
-      currentModelServiceTier={currentModelServiceTier}
-      currentModelProvider={currentModelProvider}
-      isLocalBackend={isLocalBackend}
-      currentPersonalityId={currentPersonalityId}
-      currentReasoningEffort={currentReasoningEffort}
-      currentSystemPromptId={currentSystemPromptId}
-      currentToolset={currentToolset}
-      currentToolsetPreference={currentToolsetPreference}
-      expandedToolCallId={expandedToolCallId}
-      lastShellToolCallId={lastShellToolCallId}
-      handleCtrlO={handleCtrlO}
-      queueMode={queueMode}
-      deferModeSupported={deferModeSupported}
-      handleCtrlD={handleCtrlD}
-      emittedIdsRef={emittedIdsRef}
-      feedbackPrefill={feedbackPrefill}
-      footerUpdateText={footerUpdateText}
-      showInspirationalPromptHints={showInspirationalPromptHints}
-      onEscapeCommandCancel={onEscapeCommandCancel}
-      handleAgentSelect={handleAgentSelect}
-      handleApproveAlways={handleApproveAlways}
-      handleApproveCurrent={handleApproveCurrent}
-      handleBashInterrupt={handleBashInterrupt}
-      handleBashSubmit={handleBashSubmit}
-      handleBtwJump={handleBtwJump}
-      handleCancelApprovals={handleCancelApprovals}
-      handleCompactionModeSelect={handleCompactionModeSelect}
-      handleCreateNewAgent={handleCreateNewAgent}
-      handleCycleReasoningEffort={handleCycleReasoningEffort}
-      handleDenyCurrent={handleDenyCurrent}
-      handleQueueEdit={handleQueueEdit}
-      handleExit={handleExit}
-      handleExperimentsConfirm={handleExperimentsConfirm}
-      handleFeedbackSubmit={handleFeedbackSubmit}
-      handleInterrupt={handleInterrupt}
-      handleModelSelect={handleModelSelect}
-      handlePasteError={handlePasteError}
-      handlePermissionModeChange={handlePermissionModeChange}
-      handlePersonalitySelect={handlePersonalitySelect}
-      handleProfileEscapeCancel={handleProfileEscapeCancel}
-      handleQuestionSubmit={handleQuestionSubmit}
-      handleGoalLoopExit={handleGoalLoopExit}
-      handleSleeptimeModeSelect={handleSleeptimeModeSelect}
-      handleSystemPromptSelect={handleSystemPromptSelect}
-      handleToolsetSelect={handleToolsetSelect}
-      hasBackfilledRef={hasBackfilledRef}
-      hasTemporaryModelOverride={hasTemporaryModelOverride}
-      includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
-      inputEnabled={inputEnabled}
-      inputVisible={inputVisible}
-      interruptRequested={interruptRequested}
-      isAgentBusy={isAgentBusy}
-      liveItems={liveItems}
-      liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
-      loadingState={loadingState}
-      markLocalModelsAvailable={markLocalModelsAvailable}
-      maybeCarryOverActiveConversationModel={
-        maybeCarryOverActiveConversationModel
-      }
-      modelReasoningPrompt={modelReasoningPrompt}
-      modelSelectorOptions={modelSelectorOptions}
-      networkPhase={networkPhase}
-      executionPhase={executionPhase}
-      fileAutocompleteFdPath={fileAutocompleteFdPath}
-      onSubmit={onSubmit}
-      pendingApprovals={pendingApprovals}
-      pendingConversationSwitchRef={pendingConversationSwitchRef}
-      pendingIds={pendingIds}
-      pinDialogLocal={pinDialogLocal}
-      precomputedDiffsRef={precomputedDiffsRef}
-      profileConfirmPending={profileConfirmPending}
-      queueDisplay={queueDisplay}
-      queuedDecisions={queuedDecisions}
-      queuedIds={queuedIds}
-      reasoningTabCycleEnabled={reasoningTabCycleEnabled}
-      recoverRestoredPendingApprovals={recoverRestoredPendingApprovals}
-      refreshDerived={refreshDerived}
-      resetBootstrapReminderState={resetBootstrapReminderState}
-      resetDeferredToolCallCommits={resetDeferredToolCallCommits}
-      resetTrajectoryBases={resetTrajectoryBases}
-      restoredInput={restoredInput}
-      resumeKey={resumeKey}
-      searchQuery={searchQuery}
-      sessionStatsRef={sessionStatsRef}
-      worktreeDiffSelectorPending={worktreeDiffSelectorPending}
-      setWorktreeDiffSelectorPending={setWorktreeDiffSelectorPending}
-      setActiveOverlay={setActiveOverlay}
-      setBtwState={setBtwState}
-      setCommandRunning={setCommandRunning}
-      setConversationAutoTitleEligibility={setConversationAutoTitleEligibility}
-      setConversationIdAndRef={setConversationIdAndRef}
-      setConversationSummary={setConversationSummary}
-      setLines={setLines}
-      setModelReasoningPrompt={setModelReasoningPrompt}
-      setModelSelectorOptions={setModelSelectorOptions}
-      setQueuedOverlayAction={setQueuedOverlayAction}
-      setRestoredInput={setRestoredInput}
-      setStaticItems={setStaticItems}
-      setStaticRenderEpoch={setStaticRenderEpoch}
-      shouldAnimate={shouldAnimate}
-      showApprovalPreview={showApprovalPreview}
-      showCompactionsEnabled={showCompactionsEnabled}
-      showExitStats={showExitStats}
-      openOverlay={openOverlay}
-      staticItems={staticItems}
-      staticRenderEpoch={staticRenderEpoch}
-      statusLinePayload={statusLinePayload}
-      statusLinePrompt={CLI_GLYPHS.prompt}
-      extensionRuntime={extensionRuntime}
-      streaming={streaming}
-      stubDescriptions={stubDescriptions}
-      thinkingMessage={thinkingMessage}
-      trajectoryTokenDisplay={trajectoryTokenDisplay}
-      usedContextTokens={usedContextTokens}
-      contextWindowSize={effectiveContextWindowSize}
-      uiPermissionMode={uiPermissionMode}
-      uiGoalLoopActive={uiGoalLoopActive}
-      updateAgentName={updateAgentName}
-    />
+    <>
+      <TerminalTitleWriter
+        projectDirectory={projectDirectory}
+        configRefreshKey={`${activeOverlay ?? ""}:${terminalTitleConfigRefreshEpoch}`}
+        titleData={terminalTitleData}
+        shouldAnimate={shouldAnimate}
+        hasActiveProgress={terminalTitleTaskRunning}
+        requiresAction={pendingApprovals.length > 0}
+        previewTitle={terminalTitlePreviewOverride}
+      />
+      <AppView
+        activeOverlay={activeOverlay}
+        agentId={agentId}
+        agentName={agentName}
+        agentState={agentState}
+        anySelectorOpen={anySelectorOpen}
+        approvalMap={approvalMap}
+        bashRunning={bashRunning}
+        billingTier={billingTier}
+        btwState={btwState}
+        buffersRef={buffersRef}
+        chromeColumns={chromeColumns}
+        closeOverlay={closeOverlay}
+        columns={columns}
+        commandRunner={commandRunner}
+        completeOverlay={completeOverlay}
+        contextTrackerRef={contextTrackerRef}
+        continueSession={continueSession}
+        conversationId={conversationId}
+        conversationSummary={conversationSummary}
+        projectDirectory={projectDirectory}
+        currentApproval={currentApproval}
+        currentApprovalContext={currentApprovalContext}
+        currentModelDisplay={currentModelDisplay}
+        currentModelHandle={currentModelHandle}
+        currentModelId={currentModelId}
+        currentModelServiceTier={currentModelServiceTier}
+        currentModelProvider={currentModelProvider}
+        isLocalBackend={isLocalBackend}
+        currentPersonalityId={currentPersonalityId}
+        currentReasoningEffort={currentReasoningEffort}
+        currentSystemPromptId={currentSystemPromptId}
+        currentToolset={currentToolset}
+        currentToolsetPreference={currentToolsetPreference}
+        expandedToolCallId={expandedToolCallId}
+        lastShellToolCallId={lastShellToolCallId}
+        handleCtrlO={handleCtrlO}
+        queueMode={queueMode}
+        deferModeSupported={deferModeSupported}
+        handleCtrlD={handleCtrlD}
+        emittedIdsRef={emittedIdsRef}
+        feedbackPrefill={feedbackPrefill}
+        footerUpdateText={footerUpdateText}
+        showInspirationalPromptHints={showInspirationalPromptHints}
+        onEscapeCommandCancel={onEscapeCommandCancel}
+        handleAgentSelect={handleAgentSelect}
+        handleApproveAlways={handleApproveAlways}
+        handleApproveCurrent={handleApproveCurrent}
+        handleBashInterrupt={handleBashInterrupt}
+        handleBashSubmit={handleBashSubmit}
+        handleBtwJump={handleBtwJump}
+        handleCancelApprovals={handleCancelApprovals}
+        handleCompactionModeSelect={handleCompactionModeSelect}
+        handleCreateNewAgent={handleCreateNewAgent}
+        handleCycleReasoningEffort={handleCycleReasoningEffort}
+        handleDenyCurrent={handleDenyCurrent}
+        handleQueueEdit={handleQueueEdit}
+        handleExit={handleExit}
+        handleExperimentsConfirm={handleExperimentsConfirm}
+        handleFeedbackSubmit={handleFeedbackSubmit}
+        handleInterrupt={handleInterrupt}
+        handleModelSelect={handleModelSelect}
+        handlePasteError={handlePasteError}
+        handlePermissionModeChange={handlePermissionModeChange}
+        handlePersonalitySelect={handlePersonalitySelect}
+        handleProfileEscapeCancel={handleProfileEscapeCancel}
+        handleQuestionSubmit={handleQuestionSubmit}
+        handleGoalLoopExit={handleGoalLoopExit}
+        handleSleeptimeModeSelect={handleSleeptimeModeSelect}
+        handleSystemPromptSelect={handleSystemPromptSelect}
+        handleToolsetSelect={handleToolsetSelect}
+        hasBackfilledRef={hasBackfilledRef}
+        hasTemporaryModelOverride={hasTemporaryModelOverride}
+        includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
+        inputEnabled={inputEnabled}
+        inputVisible={inputVisible}
+        interruptRequested={interruptRequested}
+        isAgentBusy={isAgentBusy}
+        liveItems={liveItems}
+        liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
+        loadingState={loadingState}
+        markLocalModelsAvailable={markLocalModelsAvailable}
+        maybeCarryOverActiveConversationModel={
+          maybeCarryOverActiveConversationModel
+        }
+        modelReasoningPrompt={modelReasoningPrompt}
+        modelSelectorOptions={modelSelectorOptions}
+        networkPhase={networkPhase}
+        executionPhase={executionPhase}
+        fileAutocompleteFdPath={fileAutocompleteFdPath}
+        onSubmit={onSubmit}
+        pendingApprovals={pendingApprovals}
+        pendingConversationSwitchRef={pendingConversationSwitchRef}
+        pendingIds={pendingIds}
+        pinDialogLocal={pinDialogLocal}
+        precomputedDiffsRef={precomputedDiffsRef}
+        profileConfirmPending={profileConfirmPending}
+        queueDisplay={queueDisplay}
+        queuedDecisions={queuedDecisions}
+        queuedIds={queuedIds}
+        reasoningTabCycleEnabled={reasoningTabCycleEnabled}
+        recoverRestoredPendingApprovals={recoverRestoredPendingApprovals}
+        refreshDerived={refreshDerived}
+        resetBootstrapReminderState={resetBootstrapReminderState}
+        resetDeferredToolCallCommits={resetDeferredToolCallCommits}
+        resetTrajectoryBases={resetTrajectoryBases}
+        restoredInput={restoredInput}
+        resumeKey={resumeKey}
+        searchQuery={searchQuery}
+        sessionStatsRef={sessionStatsRef}
+        worktreeDiffSelectorPending={worktreeDiffSelectorPending}
+        setWorktreeDiffSelectorPending={setWorktreeDiffSelectorPending}
+        setActiveOverlay={setActiveOverlay}
+        setBtwState={setBtwState}
+        setCommandRunning={setCommandRunning}
+        setConversationAutoTitleEligibility={
+          setConversationAutoTitleEligibility
+        }
+        setConversationIdAndRef={setConversationIdAndRef}
+        setConversationSummary={setConversationSummary}
+        setLines={setLines}
+        setModelReasoningPrompt={setModelReasoningPrompt}
+        setModelSelectorOptions={setModelSelectorOptions}
+        setQueuedOverlayAction={setQueuedOverlayAction}
+        setRestoredInput={setRestoredInput}
+        setStaticItems={setStaticItems}
+        setStaticRenderEpoch={setStaticRenderEpoch}
+        shouldAnimate={shouldAnimate}
+        showApprovalPreview={showApprovalPreview}
+        showCompactionsEnabled={showCompactionsEnabled}
+        showExitStats={showExitStats}
+        openOverlay={openOverlay}
+        staticItems={staticItems}
+        staticRenderEpoch={staticRenderEpoch}
+        statusLinePayload={statusLinePayload}
+        statusLinePrompt={CLI_GLYPHS.prompt}
+        terminalTitleData={terminalTitleData}
+        onTitlePreview={setTerminalTitlePreviewOverride}
+        onTitlePreviewEnd={clearTerminalTitlePreviewOverride}
+        extensionAdapter={extensionAdapter}
+        streaming={streaming}
+        stubDescriptions={stubDescriptions}
+        thinkingMessage={thinkingMessage}
+        trajectoryTokenDisplay={trajectoryTokenDisplay}
+        usedContextTokens={usedContextTokens}
+        contextWindowSize={effectiveContextWindowSize}
+        uiPermissionMode={uiPermissionMode}
+        uiGoalLoopActive={uiGoalLoopActive}
+        updateAgentName={updateAgentName}
+      />
+    </>
   );
 }

@@ -2,6 +2,7 @@
  * Utilities for sending messages to an agent via conversations
  **/
 
+import { Buffer } from "node:buffer";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -33,6 +34,9 @@ import { getSkillSources } from "./context";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
+const RESPONSE_STATE_HEADER = "X-Letta-Response-State";
+const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary";
+const responseStateIdsByScope = new Map<string, string>();
 
 export type StreamRequestContext = {
   conversationId: string;
@@ -42,6 +46,121 @@ export type StreamRequestContext = {
   otid?: string;
 };
 const streamRequestContexts = new WeakMap<object, StreamRequestContext>();
+
+type ResponseStateChunk = {
+  message_type?: unknown;
+  response_id?: unknown;
+  cache_scope?: unknown;
+};
+
+type ResponseStateHeaderPayload = {
+  v: 1;
+  cache_scope: typeof RESPONSE_STATE_CACHE_SCOPE;
+  previous_response_id?: string;
+};
+
+function buildResponseStateScope(
+  conversationId: string,
+  agentId: string | null | undefined,
+): string {
+  return agentId ? `${conversationId}:${agentId}` : conversationId;
+}
+
+function getResponseStateId(chunk: unknown): string | null {
+  if (typeof chunk !== "object" || chunk === null) {
+    return null;
+  }
+
+  const candidate = chunk as ResponseStateChunk;
+  if (
+    candidate.message_type !== "response_state" ||
+    candidate.cache_scope !== RESPONSE_STATE_CACHE_SCOPE
+  ) {
+    return null;
+  }
+
+  return typeof candidate.response_id === "string" &&
+    candidate.response_id.length > 0
+    ? candidate.response_id
+    : null;
+}
+
+function encodeResponseStateHeader(
+  payload: ResponseStateHeaderPayload,
+): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function isApprovalContinuationRequest(
+  messages: Array<MessageCreate | ApprovalCreate>,
+): boolean {
+  if (messages.length !== 1) {
+    return false;
+  }
+
+  const [message] = messages;
+  return (
+    Boolean(message) &&
+    (message as { type?: unknown }).type === "approval" &&
+    Array.isArray((message as { approvals?: unknown }).approvals)
+  );
+}
+
+function attachResponseStateTracking(
+  stream: Stream<LettaStreamingResponse>,
+  params: {
+    scope: string;
+    conversationId: string;
+    agentId: string | null;
+  },
+): Stream<LettaStreamingResponse> {
+  const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
+  const streamWithIterator = stream as Stream<LettaStreamingResponse> & {
+    [Symbol.asyncIterator]: () => AsyncIterator<LettaStreamingResponse>;
+  };
+
+  streamWithIterator[Symbol.asyncIterator] = () => {
+    const iterator = originalAsyncIterator();
+
+    return {
+      async next() {
+        const result = await iterator.next();
+        if (!result.done) {
+          const responseId = getResponseStateId(result.value);
+          if (responseId) {
+            responseStateIdsByScope.set(params.scope, responseId);
+            debugLog(
+              "response-state",
+              "received response_id=%s conversation_id=%s agent_id=%s",
+              responseId,
+              params.conversationId,
+              params.agentId ?? "none",
+            );
+          }
+        }
+
+        return result;
+      },
+      return(value?: unknown) {
+        if (iterator.return) {
+          return iterator.return(value);
+        }
+        return Promise.resolve({
+          done: true as const,
+          value: value as LettaStreamingResponse,
+        });
+      },
+      throw(error?: unknown) {
+        if (iterator.throw) {
+          return iterator.throw(error);
+        }
+        return Promise.reject(error);
+      },
+    };
+  };
+
+  return stream;
+}
 
 export function getStreamRequestStartTime(
   stream: Stream<LettaStreamingResponse>,
@@ -77,6 +196,12 @@ export type SendMessageStreamOptions = {
   overrideModel?: string;
   /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
+  /**
+   * Allow sending a cached previous response id for this request. Callers should
+   * set this only for approval continuations that were fully auto-handled by
+   * the client, with no human approval/denial in the loop.
+   */
+  allowResponseStateReuse?: boolean;
   /** Skip shared image normalization when the caller already did it. */
   skipImageNormalization?: boolean;
   /**
@@ -200,6 +325,20 @@ export async function sendMessageStreamWithBackend(
     });
 
   const resolvedConversationId = conversationId;
+  const responseStateScope = buildResponseStateScope(
+    resolvedConversationId,
+    opts.agentId ?? null,
+  );
+  const isApprovalContinuation =
+    isApprovalContinuationRequest(normalizedMessages);
+  // Only reuse cached response state when the approval continuation was fully
+  // auto-handled by the client. If a human reviewed any approval, the pause can
+  // allow visible agent/conversation state to change, so use the full server path.
+  const canUsePreviousResponseState =
+    isApprovalContinuation && opts.allowResponseStateReuse === true;
+  const previousResponseId = canUsePreviousResponseState
+    ? responseStateIdsByScope.get(responseStateScope)
+    : undefined;
   const requestBody = buildConversationMessagesCreateRequestBody(
     conversationId,
     normalizedMessages,
@@ -241,6 +380,24 @@ export async function sendMessageStreamWithBackend(
   const extraHeaders: Record<string, string> = {};
   if (process.env.LETTA_RESPONSES_WS === "1") {
     extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
+  }
+  if (previousResponseId) {
+    extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
+      v: 1,
+      cache_scope: RESPONSE_STATE_CACHE_SCOPE,
+      previous_response_id: previousResponseId,
+    });
+    responseStateIdsByScope.delete(responseStateScope);
+    debugLog(
+      "response-state",
+      "sending previous_response_id=%s cache_scope=%s conversation_id=%s agent_id=%s",
+      previousResponseId,
+      RESPONSE_STATE_CACHE_SCOPE,
+      resolvedConversationId,
+      opts.agentId ?? "none",
+    );
+  } else if (!canUsePreviousResponseState) {
+    responseStateIdsByScope.delete(responseStateScope);
   }
   // Echo the cloud user id back to cloud-api so it can re-attribute
   // credits + rate limits on multi-user sandboxes. See
@@ -294,6 +451,11 @@ export async function sendMessageStreamWithBackend(
         },
       },
     );
+    stream = attachResponseStateTracking(stream, {
+      scope: responseStateScope,
+      conversationId: resolvedConversationId,
+      agentId: opts.agentId ?? null,
+    });
   } catch (error) {
     abortRelay?.cleanup();
     debugWarn(

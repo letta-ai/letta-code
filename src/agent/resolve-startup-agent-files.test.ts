@@ -45,13 +45,23 @@ async function resolveFromSettings(options?: {
   const localAgentId = settingsManager.getLocalLastAgentId(testProjectDir);
   const localSession = settingsManager.getLocalLastSession(testProjectDir);
   const globalAgentId = settingsManager.getGlobalLastAgentId();
+  const localPinnedAgents =
+    settingsManager.getLocalPinnedAgents(testProjectDir);
+  const localPinnedAgentId =
+    localPinnedAgents.length === 1 ? (localPinnedAgents[0] ?? null) : null;
 
+  const localPinnedAgentExists = localPinnedAgentId
+    ? existing.has(localPinnedAgentId)
+    : false;
   const localAgentExists = localAgentId ? existing.has(localAgentId) : false;
   const globalAgentExists = globalAgentId ? existing.has(globalAgentId) : false;
   const mergedPinnedCount =
     settingsManager.getMergedPinnedAgents(testProjectDir).length;
 
   return resolveStartupTarget({
+    localPinnedAgentId,
+    localPinnedAgentExists,
+    localPinnedCount: localPinnedAgents.length,
     localAgentId,
     localConversationId: options?.includeLocalConversation
       ? (localSession?.conversationId ?? null)
@@ -189,6 +199,29 @@ describe("startup resolution from settings files", () => {
       action: "resume",
       agentId: "agent-local",
       conversationId: "conv-local",
+    });
+  });
+
+  test("local pinned agent takes precedence over stale local last session", async () => {
+    await writeLocalSettings({
+      lastAgent: "agent-last-used",
+      lastSession: {
+        agentId: "agent-last-used",
+        conversationId: "conv-stale",
+      },
+      pinnedAgentsByServer: {
+        "api.letta.com": ["agent-pinned"],
+      },
+    });
+
+    const target = await resolveFromSettings({
+      existingAgentIds: ["agent-pinned", "agent-last-used"],
+      includeLocalConversation: true,
+    });
+
+    expect(target).toEqual({
+      action: "resume",
+      agentId: "agent-pinned",
     });
   });
 

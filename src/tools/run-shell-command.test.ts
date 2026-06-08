@@ -25,6 +25,24 @@ describe("RunShellCommand tool (Gemini)", () => {
     expect(result.message).toBeTruthy();
   });
 
+  test("strict mode fails fast on intermediate shell errors", async () => {
+    if (process.platform === "win32") return;
+
+    const result = await run_shell_command({
+      command: [
+        "cat > missing-dir/SKILL.md <<'EOF'",
+        "contents",
+        "EOF",
+        "echo 'SKILL.md written successfully'",
+      ].join("\n"),
+      dir_path: process.cwd(),
+      secretEnv: { LETTA_BASH_STRICT: "1" },
+    });
+
+    expect(result.message).toContain("missing-dir/SKILL.md");
+    expect(result.message).not.toContain("SKILL.md written successfully");
+  });
+
   test("throws error when command is missing", async () => {
     await expect(
       run_shell_command({

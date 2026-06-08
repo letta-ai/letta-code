@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   __clearExecSessionsForTests,
   exec_command,
@@ -11,6 +13,17 @@ import {
 } from "@/tools/impl/process_manager";
 
 const isWindows = process.platform === "win32";
+
+function deleteOverflowFiles(output: string): void {
+  for (const match of output.matchAll(
+    /\[Full output written to: (.+?\.txt)\]/g,
+  )) {
+    const filePath = match[1];
+    if (filePath && fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  }
+}
 
 describe.skipIf(isWindows)("Codex unified exec tools", () => {
   beforeEach(() => {
@@ -51,6 +64,69 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(result.output).not.toContain("Process running with session ID");
   });
 
+  test("caps exec_command inline output when max_output_tokens is too large", async () => {
+    const result = await exec_command({
+      cmd: "node -e \"process.stdout.write('x'.repeat(50000))\"",
+      max_output_tokens: 80_000,
+    });
+
+    try {
+      expect(result.output).toContain("Process exited with code 0");
+      expect(result.output).toContain(
+        "[Output truncated: showing 30,000 of 50,000 characters.]",
+      );
+      expect(result.output).toContain("[Full output written to:");
+      expect(result.output.length).toBeLessThan(35_000);
+
+      const match = result.output.match(
+        /\[Full output written to: (.+?\.txt)\]/,
+      );
+      expect(match?.[1]).toBeDefined();
+      const overflowPath = match?.[1];
+      if (!overflowPath) {
+        throw new Error("expected overflow path");
+      }
+      expect(fs.existsSync(overflowPath)).toBe(true);
+      expect(fs.readFileSync(overflowPath, "utf-8")).toBe("x".repeat(50_000));
+    } finally {
+      deleteOverflowFiles(result.output);
+    }
+  });
+
+  test("falls back to available Windows PowerShell when pwsh is unavailable", async () => {
+    const tempDir = fs.mkdtempSync(join(tmpdir(), "letta-exec-win-shell-"));
+    const fakePowerShell = join(tempDir, "powershell");
+    fs.writeFileSync(fakePowerShell, "#!/bin/sh\nprintf fake-powershell\n");
+    fs.chmodSync(fakePowerShell, 0o755);
+
+    const originalPlatform = Object.getOwnPropertyDescriptor(
+      process,
+      "platform",
+    );
+    const originalPath = process.env.PATH;
+    const originalPathext = process.env.PATHEXT;
+
+    Object.defineProperty(process, "platform", { value: "win32" });
+    process.env.PATH = tempDir;
+    delete process.env.PATHEXT;
+
+    try {
+      const result = await exec_command({ cmd: "ignored" });
+
+      expect(result.output).toContain("Process exited with code 0");
+      expect(result.output).toContain("Output:\nfake-powershell");
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalPathext === undefined) delete process.env.PATHEXT;
+      else process.env.PATHEXT = originalPathext;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("returns session id for running command and write_stdin polls it", async () => {
     const first = await exec_command({
       cmd: "printf start; sleep 0.5; printf done",
@@ -76,6 +152,38 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
         chars: "",
       }),
     ).rejects.toThrow("Unknown process id");
+  });
+
+  test("caps write_stdin inline output when max_output_tokens is too large", async () => {
+    const first = await exec_command({
+      cmd: "sleep 0.3; node -e \"process.stdout.write('y'.repeat(50000))\"",
+      yield_time_ms: 250,
+    });
+
+    let second: Awaited<ReturnType<typeof write_stdin>> | undefined;
+    try {
+      const match = first.output.match(/Process running with session ID (\d+)/);
+      expect(match?.[1]).toBeDefined();
+
+      second = await write_stdin({
+        session_id: Number(match?.[1]),
+        chars: "",
+        yield_time_ms: 1000,
+        max_output_tokens: 80_000,
+      });
+
+      expect(second.output).toContain("Process exited with code 0");
+      expect(second.output).toContain(
+        "[Output truncated: showing 30,000 of 50,000 characters.]",
+      );
+      expect(second.output).toContain("[Full output written to:");
+      expect(second.output.length).toBeLessThan(35_000);
+    } finally {
+      deleteOverflowFiles(first.output);
+      if (second) {
+        deleteOverflowFiles(second.output);
+      }
+    }
   });
 
   test("empty write_stdin polls wait like Codex background terminal polls", async () => {

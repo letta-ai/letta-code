@@ -20,6 +20,8 @@ export type PhaseVisual = {
   shimmerColor: string;
   /** Optional whole-word color modulation layered under the sweep. */
   overlay: PhaseOverlay;
+  /** Whole-word overlay period in ms. Larger = slower light/dark breathing. */
+  overlayPeriodMs?: number;
   /**
    * Whether the bright-cell sweep is rendered. Defaults to true. Set false
    * for phases where the row should breathe color without any horizontal
@@ -31,6 +33,9 @@ export type PhaseVisual = {
   /** `two-sided` overlay: color reached on the lower lobe of the sin curve. */
   deeperColor?: string;
 };
+
+const DEFAULT_SIN_PULSE_OVERLAY_PERIOD_MS = 2000;
+const DEFAULT_TWO_SIDED_OVERLAY_PERIOD_MS = 3000;
 
 const REQUESTING: PhaseVisual = {
   tickMs: 50,
@@ -51,8 +56,9 @@ const THINKING: PhaseVisual = {
   baseColor: colors.status.processing,
   shimmerColor: colors.status.processingShimmer,
   overlay: "two-sided",
+  overlayPeriodMs: 6000,
   hasSweep: false,
-  lighterColor: "#F0F0FF",
+  lighterColor: "#D8D8FF",
   deeperColor: "#2828A0",
 };
 
@@ -146,9 +152,9 @@ export function blendHex(a: string, b: string, t: number): string {
  * a global clock — that way the curve always begins at its anchor when the
  * phase becomes active, instead of landing mid-cycle.
  *
- *  - `sin-pulse`: blends baseColor → shimmerColor on a 2s cos curve. Anchored
- *    at baseColor (calm) and breathes lighter.
- *  - `two-sided`: 3s sin curve. Positive lobe blends baseColor → lighterColor,
+ *  - `sin-pulse`: blends baseColor → shimmerColor on a 2s cos curve by
+ *    default. Anchored at baseColor (calm) and breathes lighter.
+ *  - `two-sided`: 3s sin curve by default. Positive lobe blends baseColor → lighterColor,
  *    negative lobe blends baseColor → deeperColor. Crosses through unblended
  *    baseColor twice per period — so phase entry and every half-period look
  *    identical to neighboring phases' resting color (no jump).
@@ -156,11 +162,15 @@ export function blendHex(a: string, b: string, t: number): string {
 export function effectiveBaseColor(visual: PhaseVisual, t: number): string {
   if (!visual.overlay) return visual.baseColor;
   if (visual.overlay === "sin-pulse") {
-    const f = (1 - Math.cos((t * Math.PI) / 1000)) / 2;
+    const periodMs =
+      visual.overlayPeriodMs ?? DEFAULT_SIN_PULSE_OVERLAY_PERIOD_MS;
+    const f = (1 - Math.cos((t * 2 * Math.PI) / periodMs)) / 2;
     return blendHex(visual.baseColor, visual.shimmerColor, f * 0.55);
   }
   if (visual.overlay === "two-sided") {
-    const f = Math.sin((t * Math.PI) / 1500);
+    const periodMs =
+      visual.overlayPeriodMs ?? DEFAULT_TWO_SIDED_OVERLAY_PERIOD_MS;
+    const f = Math.sin((t * 2 * Math.PI) / periodMs);
     if (f >= 0 && visual.lighterColor) {
       return blendHex(visual.baseColor, visual.lighterColor, f * 0.85);
     }

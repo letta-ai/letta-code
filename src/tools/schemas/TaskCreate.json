@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "subject": {
+      "type": "string",
+      "description": "Short imperative summary of the task (e.g. \"Run tests\", \"Fix auth bug\")."
+    },
+    "description": {
+      "type": "string",
+      "description": "Full description of what the task entails. Include enough detail to be actionable later."
+    },
+    "activeForm": {
+      "type": "string",
+      "description": "Present-continuous form shown while the task is in progress (e.g. \"Running tests\", \"Fixing auth bug\")."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Free-form string-valued metadata bag attached to the task.",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "required": ["subject", "description"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

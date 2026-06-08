@@ -1211,6 +1211,10 @@ export function createSlackAdapter(
         return;
       }
 
+      if (event.user === botUserId) {
+        return;
+      }
+
       const chatType = resolveSlackChatType(chatId);
       const threadId =
         chatType === "channel"

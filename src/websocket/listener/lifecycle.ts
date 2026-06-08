@@ -55,6 +55,10 @@ import {
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
 import { loadPersistedCwdMap } from "./cwd";
+import {
+  disposeListenerExtensionAdapter,
+  reloadListenerExtensionAdapter,
+} from "./extension-adapter";
 import { createFileCommandSession } from "./file-commands";
 import { createListenerMessageHandler } from "./message-router";
 import {
@@ -602,6 +606,9 @@ export async function wireChannelIngress(
       recompileByConversation: listener.systemPromptRecompileByConversation,
       recompileQueuedByConversation:
         listener.queuedSystemPromptRecompileByConversation,
+      feedbackContext: {
+        surface: getListenerTelemetrySurface(),
+      },
       onCompletionMessage: async (completionMessage) => {
         const conversationRuntime = getOrCreateConversationRuntime(
           listener,
@@ -788,6 +795,7 @@ export function stopRuntime(
   runtime: ListenerRuntime,
   suppressCallbacks: boolean,
 ): void {
+  disposeListenerExtensionAdapter(runtime);
   setMessageQueueAdder(null); // Clear bridge for ALL stop paths
   runtime.intentionallyClosed = true;
   clearRuntimeTimers(runtime);
@@ -1047,6 +1055,7 @@ export async function startListenerClient(
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
+  await reloadListenerExtensionAdapter(runtime);
   await connectWithRetry(runtime, opts);
 }
 
@@ -1081,6 +1090,7 @@ export async function startLocalChannelListener(
   telemetry.init();
 
   try {
+    await reloadListenerExtensionAdapter(runtime);
     await loadTools();
     const transport = new LocalListenerTransport();
     const processQueuedTurn: ProcessQueuedTurn = async (

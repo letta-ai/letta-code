@@ -1,11 +1,11 @@
 ---
-name: configuring-your-harness
-description: "Configure deterministic Letta Code harness behavior, such as permission rules, lifecycle hooks, and model configuration."
+name: modifying-the-harness
+description: "Modify the Letta Code harness, such as permission rules, lifecycle hooks, tool availability, model/context settings, schedules, and deterministic runtime configuration."
 ---
 
-# Configuring Your Harness
+# Modifying the Harness
 
-Use this skill to configure deterministic Letta Code harness behavior, primarily permissions and lifecycle hooks. It can also help with local per-agent settings like toolset, model, context window, name, and description.
+Use this skill to modify deterministic Letta Code harness behavior, primarily permissions and lifecycle hooks. It can also help with local per-agent settings like toolset, model, context window, name, description, and schedules.
 
 ## Memory vs harness
 

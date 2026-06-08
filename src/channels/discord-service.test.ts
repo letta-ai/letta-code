@@ -62,6 +62,7 @@ describe("discord channel service", () => {
     __testOverrideSaveRoutes(() => {});
     __testOverrideLoadPairingStore(() => null);
     __testOverrideSavePairingStore(() => {});
+    __testOverrideResolveChannelAccountDisplayName(async () => undefined);
   });
 
   afterEach(() => {

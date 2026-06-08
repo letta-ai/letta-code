@@ -308,6 +308,9 @@ export async function runConnectSubcommand(
 
     try {
       io.stdout("Validating AWS Bedrock credentials...");
+      if (provider.target !== "local") {
+        await io.ensureSettingsReady();
+      }
       await io.checkProviderApiKey(
         provider.byokProvider.providerType,
         method === "iam" ? secretKey : "",
@@ -386,6 +389,9 @@ export async function runConnectSubcommand(
 
     try {
       io.stdout(`Validating ${provider.byokProvider.displayName} API key...`);
+      if (provider.target !== "local") {
+        await io.ensureSettingsReady();
+      }
       await io.checkProviderApiKey(provider.byokProvider.providerType, apiKey);
 
       io.stdout("Saving provider...");

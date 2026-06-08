@@ -1,10 +1,13 @@
 // src/permissions/types.ts
 // Types for Claude Code-compatible permission system
 
+import type { PermissionMode } from "./mode";
+
 /**
  * Permission rules following Claude Code's format
  */
 export interface PermissionRules {
+  mode?: PermissionMode;
   allow?: string[];
   deny?: string[];
   ask?: string[];

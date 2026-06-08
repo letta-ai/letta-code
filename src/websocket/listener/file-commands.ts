@@ -4,6 +4,7 @@ import path from "node:path";
 import picomatch from "picomatch";
 import type WebSocket from "ws";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { runGrepInFiles } from "./grep-in-files";
 import {
   isEditFileCommand,
@@ -707,8 +708,7 @@ export function createFileCommandSession(params: {
       );
       runDetachedListenerTask("read_file", async () => {
         try {
-          const { readFile } = await import("node:fs/promises");
-          const content = await readFile(parsed.path, "utf-8");
+          const content = await readUtf8TextStrict(parsed.path);
           console.log(
             `[Listen] read_file success: ${parsed.path} (${content.length} bytes)`,
           );
@@ -760,14 +760,13 @@ export function createFileCommandSession(params: {
         try {
           const { edit } = await import("@/tools/impl/edit");
           const { write } = await import("@/tools/impl/write");
-          const { readFile } = await import("node:fs/promises");
 
           // Read current content so we can use edit for an atomic
           // read-modify-write that goes through the same code path as
           // the agent's Edit tool (CRLF normalisation, rich errors, etc.).
           let currentContent: string | null = null;
           try {
-            currentContent = await readFile(parsed.path, "utf-8");
+            currentContent = await readUtf8TextStrict(parsed.path);
           } catch (readErr) {
             const e = readErr as NodeJS.ErrnoException;
             if (e.code !== "ENOENT") throw readErr;
@@ -923,7 +922,6 @@ export function createFileCommandSession(params: {
       );
       runDetachedListenerTask("edit_file", async () => {
         try {
-          const { readFile } = await import("node:fs/promises");
           const { edit } = await import("@/tools/impl/edit");
 
           console.log(
@@ -942,7 +940,7 @@ export function createFileCommandSession(params: {
           // Notify web clients of the new content so they can update live.
           if (result.replacements > 0) {
             try {
-              const contentAfter = await readFile(parsed.file_path, "utf-8");
+              const contentAfter = await readUtf8TextStrict(parsed.file_path);
               safeSocketSend(
                 socket,
                 {
@@ -1010,9 +1008,8 @@ export function createFileCommandSession(params: {
       if (parsed.document_content !== undefined) {
         runDetachedListenerTask("file_ops", async () => {
           try {
-            const { writeFile } = await import("node:fs/promises");
             const content = parsed.document_content as string;
-            await writeFile(parsed.path, content, "utf-8");
+            await writeUtf8Text(parsed.path, content);
             console.log(
               `[Listen] file_ops: wrote ${content.length} bytes to ${parsed.path}`,
             );

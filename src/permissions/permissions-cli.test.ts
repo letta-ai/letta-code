@@ -61,10 +61,10 @@ test("Handle whitespace in tool list", () => {
   expect(tools).toEqual(["Bash(:*)", "Read(**)", "Write(**)"]);
 });
 
-test("tracks disable-memory-guard CLI override", () => {
-  expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
-  cliPermissions.setMemoryGuardDisabled(true);
+test("tracks memory guard disabled state", () => {
   expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
+  cliPermissions.setMemoryGuardDisabled(false);
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
 });
 
 test("stores singleton on global symbol for bundled duplicate modules", () => {
@@ -75,9 +75,9 @@ test("stores singleton on global symbol for bundled duplicate modules", () => {
 });
 
 test("clear resets disable-memory-guard CLI override", () => {
-  cliPermissions.setMemoryGuardDisabled(true);
+  cliPermissions.setMemoryGuardDisabled(false);
   cliPermissions.clear();
-  expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
 });
 
 // ============================================================================

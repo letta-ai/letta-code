@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CommandHookConfig, HookCommand } from "@/hooks/types";
 import { runWithRuntimeContext } from "@/runtime-context";
+import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
 
 // Type-safe helper to extract command from a hook (tests only use command hooks)
@@ -645,6 +647,40 @@ describe("Settings Manager - Multiple Projects", () => {
 
     expect(settings1.windowTitle?.items).toEqual(["agent-name"]);
     expect(settings2.windowTitle?.items).toEqual(["model-name"]);
+  });
+});
+
+describe("Settings Manager - Session Persistence", () => {
+  test("persistSession skips unchanged session writes", async () => {
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    settingsManager.persistSession(
+      "agent-session",
+      "conv-session",
+      testProjectDir,
+    );
+    await settingsManager.flush();
+
+    const globalSettingsPath = join(testHomeDir, ".letta", "settings.json");
+    const localSettingsPath = join(
+      testProjectDir,
+      ".letta",
+      "settings.local.json",
+    );
+    const firstGlobalMtime = (await stat(globalSettingsPath)).mtimeMs;
+    const firstLocalMtime = (await stat(localSettingsPath)).mtimeMs;
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    settingsManager.persistSession(
+      "agent-session",
+      "conv-session",
+      testProjectDir,
+    );
+    await settingsManager.flush();
+
+    expect((await stat(globalSettingsPath)).mtimeMs).toBe(firstGlobalMtime);
+    expect((await stat(localSettingsPath)).mtimeMs).toBe(firstLocalMtime);
   });
 });
 
@@ -1814,5 +1850,247 @@ describe("Settings Manager - Conversation Goals", () => {
     expect(
       settingsManager.areConversationGoalToolsEnabled("conv-1", testProjectDir),
     ).toBe(false);
+  });
+});
+
+describe("Settings Manager - Conversation Pins", () => {
+  async function initPinTest() {
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+  }
+
+  test("pins conversations globally and locally per agent", async () => {
+    await initPinTest();
+
+    settingsManager.pinConversationGlobal("agent-1", "conv-1");
+    settingsManager.pinConversationLocal("agent-1", "conv-2", testProjectDir);
+
+    expect(settingsManager.getGlobalPinnedConversations("agent-1")).toEqual([
+      "conv-1",
+    ]);
+    expect(
+      settingsManager.getLocalPinnedConversations("agent-1", testProjectDir),
+    ).toEqual(["conv-2"]);
+    expect(
+      settingsManager.getMergedPinnedConversations("agent-1", testProjectDir),
+    ).toEqual([
+      { conversationId: "conv-2", isLocal: true },
+      { conversationId: "conv-1", isLocal: false },
+    ]);
+  });
+
+  test("global conversation pin writes merge with latest settings on disk", async () => {
+    const { readFile, writeFile } = await import("@/utils/fs.js");
+    await initPinTest();
+
+    settingsManager.pinConversationGlobal("agent-1", "stale-conv");
+
+    const settingsPath = join(testHomeDir, ".letta", "settings.json");
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        pinnedConversationsByServer: {
+          "api.letta.com": {
+            "agent-1": ["fresh-conv"],
+          },
+        },
+      }),
+    );
+
+    settingsManager.pinConversationGlobal("agent-1", "new-conv");
+
+    const persisted = JSON.parse(await readFile(settingsPath)) as Settings;
+    expect(
+      persisted.pinnedConversationsByServer?.["api.letta.com"]?.["agent-1"],
+    ).toEqual(["fresh-conv", "new-conv"]);
+    expect(settingsManager.getGlobalPinnedConversations("agent-1")).toEqual([
+      "fresh-conv",
+      "new-conv",
+    ]);
+  });
+
+  test("global conversation unpin writes do not restore stale cached pins", async () => {
+    const { readFile, writeFile } = await import("@/utils/fs.js");
+    await initPinTest();
+
+    settingsManager.pinConversationGlobal("agent-1", "stale-conv");
+    settingsManager.pinConversationGlobal("agent-1", "remove-conv");
+
+    const settingsPath = join(testHomeDir, ".letta", "settings.json");
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        pinnedConversationsByServer: {
+          "api.letta.com": {
+            "agent-1": ["fresh-conv", "remove-conv"],
+          },
+        },
+      }),
+    );
+
+    settingsManager.unpinConversationGlobal("agent-1", "remove-conv");
+
+    const persisted = JSON.parse(await readFile(settingsPath)) as Settings;
+    expect(
+      persisted.pinnedConversationsByServer?.["api.letta.com"]?.["agent-1"],
+    ).toEqual(["fresh-conv"]);
+  });
+
+  test("local conversation pin writes merge with latest project settings on disk", async () => {
+    const { readFile, writeFile } = await import("@/utils/fs.js");
+    await initPinTest();
+
+    settingsManager.pinConversationLocal(
+      "agent-1",
+      "stale-local-conv",
+      testProjectDir,
+    );
+
+    const localSettingsPath = join(
+      testProjectDir,
+      ".letta",
+      "settings.local.json",
+    );
+    await writeFile(
+      localSettingsPath,
+      JSON.stringify({
+        pinnedConversationsByServer: {
+          "api.letta.com": {
+            "agent-1": ["fresh-local-conv"],
+          },
+        },
+      }),
+    );
+
+    settingsManager.pinConversationLocal(
+      "agent-1",
+      "new-local-conv",
+      testProjectDir,
+    );
+
+    const persisted = JSON.parse(
+      await readFile(localSettingsPath),
+    ) as LocalProjectSettings;
+    expect(
+      persisted.pinnedConversationsByServer?.["api.letta.com"]?.["agent-1"],
+    ).toEqual(["fresh-local-conv", "new-local-conv"]);
+  });
+
+  test("LETTA_SETTINGS_BASE_URL scopes conversation pins independently from LETTA_BASE_URL", async () => {
+    const originalBaseUrl = process.env.LETTA_BASE_URL;
+    const originalSettingsBaseUrl = process.env.LETTA_SETTINGS_BASE_URL;
+
+    try {
+      process.env.LETTA_BASE_URL = "http://localhost:49692";
+      process.env.LETTA_SETTINGS_BASE_URL = "https://api.letta.com";
+      await initPinTest();
+
+      settingsManager.pinConversationGlobal("agent-1", "cloud-conv");
+
+      expect(settingsManager.getGlobalPinnedConversations("agent-1")).toEqual([
+        "cloud-conv",
+      ]);
+      const { readFile } = await import("@/utils/fs.js");
+      const persisted = JSON.parse(
+        await readFile(join(testHomeDir, ".letta", "settings.json")),
+      ) as Settings;
+      expect(
+        persisted.pinnedConversationsByServer?.["api.letta.com"]?.["agent-1"],
+      ).toEqual(["cloud-conv"]);
+      expect(
+        persisted.pinnedConversationsByServer?.["localhost:49692"]?.["agent-1"],
+      ).toBeUndefined();
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.LETTA_BASE_URL;
+      } else {
+        process.env.LETTA_BASE_URL = originalBaseUrl;
+      }
+      if (originalSettingsBaseUrl === undefined) {
+        delete process.env.LETTA_SETTINGS_BASE_URL;
+      } else {
+        process.env.LETTA_SETTINGS_BASE_URL = originalSettingsBaseUrl;
+      }
+    }
+  });
+
+  test("conversation pins are scoped by local backend storage dir", async () => {
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = join(testHomeDir, "local-store-a");
+    await initPinTest();
+
+    settingsManager.pinConversationGlobal("local-agent-1", "conv-a");
+    expect(
+      settingsManager.getGlobalPinnedConversations("local-agent-1"),
+    ).toEqual(["conv-a"]);
+
+    process.env.LETTA_LOCAL_BACKEND_DIR = join(testHomeDir, "local-store-b");
+    expect(
+      settingsManager.getGlobalPinnedConversations("local-agent-1"),
+    ).toEqual([]);
+  });
+});
+
+describe("readStartupBackendSettingsSync", () => {
+  let tmpHome: string;
+  const savedHome = process.env.HOME;
+
+  beforeEach(async () => {
+    tmpHome = await mkdtemp(join(tmpdir(), "letta-startup-backend-"));
+    process.env.HOME = tmpHome;
+  });
+
+  afterEach(async () => {
+    if (savedHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = savedHome;
+    }
+    await rm(tmpHome, { recursive: true, force: true });
+  });
+
+  function writeSettings(data: Record<string, unknown>): void {
+    const dir = join(tmpHome, ".letta");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "settings.json"), JSON.stringify(data));
+  }
+
+  test("returns empty settings when settings file does not exist", () => {
+    expect(settingsManager.readStartupBackendSettingsSync()).toEqual({
+      preferredBackendMode: undefined,
+      envBaseUrl: undefined,
+    });
+  });
+
+  test("reads valid backend preference and configured base URL", () => {
+    writeSettings({
+      preferredBackendMode: "local",
+      env: { LETTA_BASE_URL: "http://localhost:8283" },
+    });
+
+    expect(settingsManager.readStartupBackendSettingsSync()).toEqual({
+      preferredBackendMode: "local",
+      envBaseUrl: "http://localhost:8283",
+    });
+  });
+
+  test("ignores invalid backend preference and malformed env", () => {
+    writeSettings({ preferredBackendMode: "other", env: "not-an-object" });
+
+    expect(settingsManager.readStartupBackendSettingsSync()).toEqual({
+      preferredBackendMode: undefined,
+      envBaseUrl: undefined,
+    });
+  });
+
+  test("returns empty settings for malformed JSON", () => {
+    const dir = join(tmpHome, ".letta");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "settings.json"), "not json{{{");
+
+    expect(settingsManager.readStartupBackendSettingsSync()).toEqual({
+      preferredBackendMode: undefined,
+      envBaseUrl: undefined,
+    });
   });
 });

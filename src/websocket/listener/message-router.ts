@@ -23,6 +23,7 @@ import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
 } from "./commands/channels";
+import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import { handleMemoryProtocolCommand } from "./commands/memory";
@@ -495,6 +496,16 @@ export function createListenerMessageHandler(
       }
 
       if (
+        handleConnectProvidersCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
+        return;
+      }
+
+      if (
         handleCronProtocolCommand(parsed, {
           socket,
           safeSocketSend,
@@ -588,7 +599,9 @@ export function createListenerMessageHandler(
         runDetachedListenerTask("execute_command", async () => {
           await handleExecuteCommand(parsed, socket, scopedRuntime, {
             onStatusChange: opts.onStatusChange,
+            onLog: opts.onLog,
             connectionId: opts.connectionId,
+            connectionName: opts.connectionName,
           });
         });
         return;

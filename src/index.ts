@@ -42,6 +42,7 @@ import {
 import { getBillingTier } from "./backend/api/metadata";
 import {
   isLocalBackendNoMemfsEnvEnabled,
+  LOCAL_BACKEND_EXPERIMENTAL_ENV,
   LOCAL_BACKEND_NO_MEMFS_ENV,
 } from "./backend/local/paths";
 import {
@@ -66,22 +67,22 @@ import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   getStartupBackendLookupOrder,
   inferBackendModeFromAgentId,
+  resolveSubcommandBackendMode,
 } from "./cli/startup-backend-mode";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
-import { runSubcommand } from "./cli/subcommands/router";
+import {
+  runSubcommand,
+  subcommandNeedsEarlyBackendMode,
+} from "./cli/subcommands/router";
 import {
   disableExtensionsForProcess,
   shouldDisableExtensions,
 } from "./extensions/disable";
-import {
-  migratePermissionMode,
-  permissionMode,
-  VALID_PERMISSION_MODES,
-} from "./permissions/mode";
+import { applyStartupPermissionMode } from "./permissions/startup";
 import {
   type Settings,
   settingsManager,
@@ -582,6 +583,15 @@ function isBackendNotFoundError(error: unknown): boolean {
   );
 }
 
+function isLocalBackendTranscriptStartupError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.name === "LocalTranscriptMigrationRequiredError" ||
+    error.name === "LocalTranscriptRepairRequiredError" ||
+    error.message.includes("Unsupported local transcript format")
+  );
+}
+
 async function getLocalBackendStartupFallbackSession(
   backend: Backend,
 ): Promise<LocalStartupFallbackSession | null> {
@@ -683,6 +693,32 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  if (subcommandNeedsEarlyBackendMode(subcommandArgs[0])) {
+    const savedBackendSettings =
+      settingsManager.readStartupBackendSettingsSync();
+    const localBackendEnvValue = process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV];
+    const envBackendMode =
+      localBackendEnvValue === undefined
+        ? undefined
+        : localBackendEnvValue === "1" ||
+            localBackendEnvValue.toLowerCase() === "true"
+          ? "local"
+          : "api";
+    const backendMode = resolveSubcommandBackendMode({
+      explicitBackendMode,
+      envBackendMode,
+      savedBackendMode: savedBackendSettings.preferredBackendMode,
+      baseURL:
+        process.env.LETTA_BASE_URL ||
+        savedBackendSettings.envBaseUrl ||
+        LETTA_CLOUD_API_URL,
+      cloudBaseURL: LETTA_CLOUD_API_URL,
+    });
+    if (backendMode) {
+      configureBackendMode(backendMode);
+    }
+  }
+
   // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
   // Subcommands handle their own setup and don't need TUI init, theme
   // detection, or base tool bootstrapping.
@@ -691,9 +727,8 @@ async function main(): Promise<void> {
     process.exit(subcommandResult);
   }
 
-  // Everything below only runs for interactive TUI mode
+  // Everything below only runs for interactive/headless agent mode
   await settingsManager.initialize();
-  await initTerminalTheme();
 
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
@@ -836,6 +871,12 @@ async function main(): Promise<void> {
   if (!explicitBackendMode && inferredBackendModeFromAgentId) {
     configureBackendMode(inferredBackendModeFromAgentId);
   }
+  const setupLocalModeDisabledReason =
+    !explicitBackendMode &&
+    specifiedAgentId &&
+    inferredBackendModeFromAgentId === "api"
+      ? `Agent ${specifiedAgentId} is a Constellation agent. Sign in to access it, or rerun without --agent to start locally.`
+      : undefined;
   const specifiedModel = values.model ?? undefined;
   const systemPromptPreset = values.system ?? undefined;
   const systemCustom = values["system-custom"] ?? undefined;
@@ -874,12 +915,55 @@ async function main(): Promise<void> {
     fromAfFlagValue: values["from-af"],
   });
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+  const terminalThemePromise = !isHeadless
+    ? initTerminalTheme().catch(() => undefined)
+    : Promise.resolve(undefined);
+  // Terminal preflight must happen before Ink takes over stdin. Start it as
+  // early as possible so OSC/Kitty handshakes are hidden behind auth checks,
+  // argument validation, and module loading instead of sitting in front of
+  // first render.
+  const terminalPreflightPromise = !isHeadless
+    ? (async () => {
+        await terminalThemePromise;
+        try {
+          const { detectAndEnableKittyProtocol } = await import(
+            "@/cli/utils/kitty-protocol-detector"
+          );
+          await detectAndEnableKittyProtocol();
+        } catch {
+          // Best-effort: if this fails, the app still runs (Option+Enter remains supported).
+        }
+      })()
+    : Promise.resolve(undefined);
+  const ensureTerminalPreflightComplete = async () => {
+    await terminalPreflightPromise;
+  };
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
+  const tryConfigureStartupLocalBackend = async (): Promise<boolean> => {
+    try {
+      configureBackendMode("local");
+      return true;
+    } catch (error) {
+      if (!isLocalBackendTranscriptStartupError(error)) {
+        throw error;
+      }
+      console.warn(
+        `Local backend data needs migration before it can be used: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      console.warn(
+        "Continuing to setup/login so local transcript migration does not block account access.",
+      );
+      configureBackendMode("api");
+      settingsManager.updateSettings({ preferredBackendMode: "api" });
+      await settingsManager.flush();
+      return false;
+    }
+  };
 
   if (
     !explicitBackendMode &&
@@ -887,7 +971,7 @@ async function main(): Promise<void> {
     settings.preferredBackendMode === "local" &&
     baseURL === LETTA_CLOUD_API_URL
   ) {
-    configureBackendMode("local");
+    await tryConfigureStartupLocalBackend();
   }
 
   // Local-first new-user flow: if the user has no Letta Cloud credentials and
@@ -902,9 +986,10 @@ async function main(): Promise<void> {
     !settings.refreshToken &&
     !apiKey
   ) {
-    configureBackendMode("local");
-    settingsManager.updateSettings({ preferredBackendMode: "local" });
-    await settingsManager.flush();
+    if (await tryConfigureStartupLocalBackend()) {
+      settingsManager.updateSettings({ preferredBackendMode: "local" });
+      await settingsManager.flush();
+    }
   }
 
   const startupTargetLookupOrder = getStartupTargetLookupOrderForCredentials({
@@ -1225,8 +1310,11 @@ async function main(): Promise<void> {
       !apiKey
     ) {
       // For interactive mode, show setup flow
+      await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
-      const setupResult = await runSetup();
+      const setupResult = await runSetup({
+        localModeDisabledReason: setupLocalModeDisabledReason,
+      });
       if (setupResult.kind === "cancelled") {
         process.exit(0);
       }
@@ -1247,8 +1335,11 @@ async function main(): Promise<void> {
     if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
       // For interactive mode, show setup flow
       console.log("No credentials found. Let's get you set up!\n");
+      await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
-      const setupResult = await runSetup();
+      const setupResult = await runSetup({
+        localModeDisabledReason: setupLocalModeDisabledReason,
+      });
       if (setupResult.kind === "cancelled") {
         process.exit(0);
       }
@@ -1266,13 +1357,16 @@ async function main(): Promise<void> {
       apiKey = (await refreshStartupOAuthToken(settings)) ?? apiKey;
     }
 
-    // Cloud always requires credentials. Self-hosted/local API servers may be
+    // Cloud always requires credentials. Custom API backends may be
     // intentionally unauthenticated, so only validate them when a key is present.
     const shouldValidateCredentials =
       baseURL === LETTA_CLOUD_API_URL || Boolean(apiKey);
 
     if (shouldValidateCredentials) {
-      // Validate credentials by checking an authenticated endpoint.
+      // Validate credentials by checking an authenticated endpoint. Startups
+      // that use API credentials should preserve targeted invalid-key/network
+      // handling; the terminal preflight above already runs in parallel with
+      // this request, so most of the cost is hidden in interactive mode.
       const { validateCredentialsWithResult } = await import("@/auth/oauth");
       let credentialValidation = await validateCredentialsWithResult(
         baseURL,
@@ -1298,13 +1392,23 @@ async function main(): Promise<void> {
       }
       markMilestone("CREDENTIALS_VALIDATED");
 
-      // Ensure base tools exist on the server (first-run-per-machine, non-blocking).
-      // Must run after credentials are validated so OAuth tokens are available.
+      // Ensure base tools exist on the server (first-run-per-machine,
+      // backgrounded for interactive startup). Must run after credentials are
+      // validated so OAuth tokens are available.
       if (isValid) {
-        const { bootstrapBaseToolsIfNeeded } = await import(
-          "@/agent/bootstrap-tools"
+        const bootstrapPromise = import("@/agent/bootstrap-tools").then(
+          ({ bootstrapBaseToolsIfNeeded }) => bootstrapBaseToolsIfNeeded(),
         );
-        await bootstrapBaseToolsIfNeeded();
+        if (isHeadless) {
+          await bootstrapPromise;
+        } else {
+          void bootstrapPromise.catch((error) => {
+            debugWarn(
+              "startup",
+              `Failed to bootstrap base tools: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+        }
       }
 
       if (!isValid) {
@@ -1312,7 +1416,6 @@ async function main(): Promise<void> {
           ? null
           : credentialValidation;
 
-        // For headless mode, error out with helpful message
         if (isHeadless) {
           console.error("Failed to connect to Letta server");
           console.error(`Base URL: ${baseURL}`);
@@ -1332,7 +1435,6 @@ async function main(): Promise<void> {
           process.exit(1);
         }
 
-        // For interactive mode, show setup flow
         console.log("Failed to connect to Letta server.");
         console.log(`Base URL: ${baseURL}\n`);
         console.log(
@@ -1362,9 +1464,11 @@ async function main(): Promise<void> {
         }
 
         console.log("Let's reauthenticate your setup.\n");
+        await ensureTerminalPreflightComplete();
         const { runSetup } = await import("@/auth/setup");
         const setupResult = await runSetup({
           initialMode: baseURL === LETTA_CLOUD_API_URL ? "device-code" : "menu",
+          localModeDisabledReason: setupLocalModeDisabledReason,
         });
         if (setupResult.kind === "cancelled") {
           process.exit(0);
@@ -1438,24 +1542,18 @@ async function main(): Promise<void> {
   }
 
   // Set permission mode if provided (or via --yolo alias)
-  const permissionModeValue = values["permission-mode"];
+  const permissionModeValue =
+    typeof values["permission-mode"] === "string"
+      ? values["permission-mode"]
+      : undefined;
   const yoloMode = values.yolo;
-
-  if (yoloMode || permissionModeValue) {
-    if (yoloMode) {
-      // --yolo is an alias for --permission-mode unrestricted
-      permissionMode.setMode("unrestricted");
-    } else if (permissionModeValue) {
-      const migrated = migratePermissionMode(permissionModeValue);
-      if (migrated) {
-        permissionMode.setMode(migrated);
-      } else {
-        console.error(
-          `Invalid permission mode: ${permissionModeValue}. Valid modes: ${VALID_PERMISSION_MODES.join(", ")}`,
-        );
-        process.exit(1);
-      }
-    }
+  const startupPermissionMode = await applyStartupPermissionMode({
+    permissionModeValue,
+    yoloMode,
+  });
+  if (!startupPermissionMode.ok) {
+    console.error(startupPermissionMode.message);
+    process.exit(1);
   }
 
   if (isHeadless) {
@@ -1490,23 +1588,17 @@ async function main(): Promise<void> {
 
   markMilestone("TUI_MODE_START");
 
-  // Enable enhanced key reporting (Shift+Enter, etc.) BEFORE Ink initializes.
-  // In VS Code/xterm.js this typically requires a short handshake (query + enable).
-  try {
-    const { detectAndEnableKittyProtocol } = await import(
-      "@/cli/utils/kitty-protocol-detector"
-    );
-    await detectAndEnableKittyProtocol();
-  } catch {
-    // Best-effort: if this fails, the app still runs (Option+Enter remains supported).
-  }
-
   // Interactive: lazy-load React/Ink + App
   markMilestone("REACT_IMPORT_START");
-  const React = await import("react");
-  const { render } = await import("ink");
-  const { useState, useEffect, useCallback, useRef } = React;
-  const AppModule = await import("@/cli/App");
+  const [React, { render }, AppModule] = await Promise.all([
+    import("react"),
+    import("ink"),
+    import("@/cli/App"),
+  ]);
+  markMilestone("REACT_IMPORT_DONE");
+  await terminalPreflightPromise;
+  markMilestone("TERMINAL_PREFLIGHT_DONE");
+  const { useState, useEffect, useRef } = React;
   const App = AppModule.App;
 
   function LoadingApp({
@@ -1554,8 +1646,6 @@ async function main(): Promise<void> {
     const [isResumingSession, setIsResumingSession] = useState(false);
     const [resumedExistingConversation, setResumedExistingConversation] =
       useState(false);
-    // Epoch counter: incrementing forces App to remount via React key
-    const [appReloadEpoch, setAppReloadEpoch] = useState(0);
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
@@ -1585,7 +1675,7 @@ async function main(): Promise<void> {
     const [failedAgentMessage, setFailedAgentMessage] = useState<string | null>(
       null,
     );
-    // For self-hosted: available model handles from server and user's selection
+    // For custom API backends: available model handles from server and user's selection
     const [availableServerModels, setAvailableServerModels] = useState<
       string[]
     >([]);
@@ -1596,10 +1686,10 @@ async function main(): Promise<void> {
       selectedServerModelReasoningEffort,
       setSelectedServerModelReasoningEffort,
     ] = useState<ModelReasoningEffort | null>(null);
-    const [selfHostedDefaultModel, setSelfHostedDefaultModel] = useState<
+    const [customApiDefaultModel, setCustomApiDefaultModel] = useState<
       string | null
     >(null);
-    const [selfHostedBaseUrl, setSelfHostedBaseUrl] = useState<string | null>(
+    const [customApiBaseUrl, setCustomApiBaseUrl] = useState<string | null>(
       null,
     );
 
@@ -1706,6 +1796,7 @@ async function main(): Promise<void> {
     // Initialize on mount - check if we should show global agent selector
     useEffect(() => {
       async function checkAndStart() {
+        markMilestone("TUI_CHECK_AND_START");
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const backend = getBackend();
@@ -1713,57 +1804,73 @@ async function main(): Promise<void> {
           ? "local"
           : "api";
 
-        // For self-hosted servers, pre-fetch available models
-        // This is needed so ProfileSelectionInline can show model picker
-        // if the default model isn't available
+        // For custom API backends, available-model discovery can require a
+        // slow network/API round trip. It is only used to improve the fresh
+        // "create agent" model picker, so keep it off the startup decision path.
         const baseURL =
           process.env.LETTA_BASE_URL ||
           settings.env?.LETTA_BASE_URL ||
           LETTA_CLOUD_API_URL;
-        const isSelfHosted = !baseURL.includes("api.letta.com");
+        const isCustomApiBackend =
+          startupBackendMode !== "local" && !baseURL.includes("api.letta.com");
         const isCredentiallessLocalStartup =
           startupBackendMode === "local" &&
-          !isSelfHosted &&
+          !isCustomApiBackend &&
           !settings.refreshToken &&
           !apiKey;
         setStartupHasCloudCredentials(Boolean(settings.refreshToken || apiKey));
         const startupModelsPromise =
-          startupBackendMode === "local" || isSelfHosted
+          startupBackendMode === "local"
             ? backend.listModels()
             : Promise.resolve([]);
         if (startupBackendMode === "local") {
-          try {
-            const models = await startupModelsPromise;
-            setStartupHasAvailableLocalModels(models.length > 0);
-          } catch {
-            setStartupHasAvailableLocalModels(false);
-          }
+          // Local model discovery can hit slow/unreachable provider endpoints
+          // (bounded by the discovery timeout). It is only needed for the UI
+          // availability hint, so never block disk-backed agent resume on it.
+          void startupModelsPromise
+            .then((models) => {
+              markMilestone("LOCAL_MODEL_DISCOVERY_DONE");
+              setStartupHasAvailableLocalModels(models.length > 0);
+            })
+            .catch(() => {
+              markMilestone("LOCAL_MODEL_DISCOVERY_DONE");
+              setStartupHasAvailableLocalModels(false);
+            });
         } else {
           setStartupHasAvailableLocalModels(true);
         }
 
-        // Track whether we need model picker (for skipping ensureDefaultAgents)
-        let needsModelPicker = false;
+        // Model picker availability is populated opportunistically below. Do
+        // not block startup on it; fresh-agent creation can fail naturally or
+        // be retried with an explicit model.
+        const needsModelPicker = false;
 
-        if (isSelfHosted) {
-          setSelfHostedBaseUrl(baseURL);
-          try {
-            const { getDefaultModel } = await import("@/agent/model");
-            const defaultModel = getDefaultModel();
-            setSelfHostedDefaultModel(defaultModel);
-            const modelsList = await startupModelsPromise;
-            const handles = modelsList
-              .map((m) => m.handle)
-              .filter((h): h is string => typeof h === "string");
+        if (isCustomApiBackend) {
+          setCustomApiBaseUrl(baseURL);
+          const modelPrefetchTimer = setTimeout(() => {
+            void import("@/agent/model")
+              .then(({ getDefaultModel }) => {
+                const defaultModel = getDefaultModel();
+                setCustomApiDefaultModel(defaultModel);
+                return backend.listModels().then((modelsList) => {
+                  markMilestone("CUSTOM_API_MODEL_PREFETCH_DONE");
+                  const handles = modelsList
+                    .map((m) => m.handle)
+                    .filter((h): h is string => typeof h === "string");
 
-            // Only set if default model isn't available
-            if (!handles.includes(defaultModel)) {
-              setAvailableServerModels(handles);
-              needsModelPicker = true;
-            }
-          } catch {
-            // Ignore errors - will fail naturally during agent creation if needed
-          }
+                  // Only show the custom-API model picker helper when the
+                  // default model is unavailable, but never wait on this before
+                  // deciding whether to resume/select/create.
+                  if (!handles.includes(defaultModel)) {
+                    setAvailableServerModels(handles);
+                  }
+                });
+              })
+              .catch(() => {
+                // Ignore errors - will fail naturally during agent creation if needed.
+              });
+          }, 1000);
+          modelPrefetchTimer.unref?.();
         }
 
         // =====================================================================
@@ -1888,6 +1995,15 @@ async function main(): Promise<void> {
           process.cwd(),
         );
         const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
+        const localPinnedAgentIds = settingsManager
+          .getLocalPinnedAgents(process.cwd())
+          .filter((agentId) =>
+            isAgentIdCompatibleWithBackend(agentId, startupBackendMode),
+          );
+        const localPinnedAgentId =
+          localPinnedAgentIds.length === 1
+            ? (localPinnedAgentIds[0] ?? null)
+            : null;
         const localAgentId =
           startupBackendMode === "local" &&
           rawLocalAgentId &&
@@ -1901,53 +2017,46 @@ async function main(): Promise<void> {
             ? rawGlobalAgentId
             : null;
 
-        // Fetch local + global LRU agents in parallel
+        // Fetch local pin + LRU agents in parallel, de-duping shared IDs.
+        const agentIdsToValidate = [
+          ...new Set(
+            [localPinnedAgentId, localAgentId, globalAgentId].filter(
+              (agentId): agentId is string => Boolean(agentId),
+            ),
+          ),
+        ];
+        const validationResults = await Promise.allSettled(
+          agentIdsToValidate.map(async (agentId) => ({
+            agentId,
+            agent: await backend.retrieveAgent(agentId, {
+              include: ["agent.tags"],
+            }),
+          })),
+        );
+        const cachedAgents = new Map<string, AgentState>();
+        for (const result of validationResults) {
+          if (result.status === "fulfilled") {
+            cachedAgents.set(result.value.agentId, result.value.agent);
+          }
+        }
+
+        const localPinnedAgentExists = localPinnedAgentId
+          ? cachedAgents.has(localPinnedAgentId)
+          : false;
         let localAgentExists = false;
         let globalAgentExists = false;
-        let cachedAgent: AgentState | null = null;
-
-        if (globalAgentId && globalAgentId === localAgentId) {
-          // Same agent — only need one fetch
-          if (localAgentId) {
-            try {
-              cachedAgent = await backend.retrieveAgent(localAgentId, {
-                include: ["agent.tags"],
-              });
-              localAgentExists = true;
-            } catch {
-              setFailedAgentMessage(
-                `Unable to locate recently used agent ${localAgentId}`,
-              );
-            }
-          }
-          globalAgentExists = localAgentExists;
-        } else {
-          // Different agents — fetch in parallel
-          const [localResult, globalResult] = await Promise.allSettled([
-            localAgentId
-              ? backend.retrieveAgent(localAgentId, { include: ["agent.tags"] })
-              : Promise.reject(new Error("no local")),
-            globalAgentId
-              ? backend.retrieveAgent(globalAgentId, {
-                  include: ["agent.tags"],
-                })
-              : Promise.reject(new Error("no global")),
-          ]);
-
-          if (localResult.status === "fulfilled") {
-            localAgentExists = true;
-            cachedAgent = localResult.value;
-          } else if (localAgentId) {
+        if (localAgentId) {
+          localAgentExists = cachedAgents.has(localAgentId);
+          if (!localAgentExists) {
             setFailedAgentMessage(
               `Unable to locate recently used agent ${localAgentId}`,
             );
           }
-
-          if (globalResult.status === "fulfilled") {
-            globalAgentExists = true;
-            cachedAgent = globalResult.value;
-          }
         }
+        if (globalAgentId) {
+          globalAgentExists = cachedAgents.has(globalAgentId);
+        }
+        markMilestone("STARTUP_LRU_FETCH_DONE");
 
         // Step 3: Resolve startup target using pure decision logic
         const mergedPinned = isCredentiallessLocalStartup
@@ -1966,6 +2075,9 @@ async function main(): Promise<void> {
         );
         const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
+          localPinnedAgentId,
+          localPinnedAgentExists,
+          localPinnedCount: localPinnedAgentIds.length,
           localAgentId,
           localConversationId: localSession?.conversationId ?? null,
           localAgentExists,
@@ -1977,11 +2089,13 @@ async function main(): Promise<void> {
           forceNew: false, // forceNew short-circuited above
           needsModelPicker,
         });
+        markMilestone(`STARTUP_TARGET_${target.action.toUpperCase()}`);
 
         switch (target.action) {
-          case "resume":
+          case "resume": {
             setSelectedGlobalAgentId(target.agentId);
-            if (cachedAgent && cachedAgent.id === target.agentId) {
+            const cachedAgent = cachedAgents.get(target.agentId);
+            if (cachedAgent) {
               setValidatedAgent(cachedAgent);
             }
             if (target.conversationId && !forceNewConversation) {
@@ -1989,6 +2103,7 @@ async function main(): Promise<void> {
             }
             setLoadingState("assembling");
             return;
+          }
           case "select":
             setLoadingState("selecting_global");
             return;
@@ -2031,29 +2146,6 @@ async function main(): Promise<void> {
     // Main initialization effect - runs after profile selection
     const initStartedRef = React.useRef(false);
 
-    // Reload handler: re-triggers the startup path for the current agent/conversation,
-    // then remounts AppCoordinator via key change so all effects re-fire.
-    const handleReload = useCallback(
-      async (currentAgentId: string, currentConversationId: string) => {
-        // Clear cached settings and re-populate local project settings
-        // BEFORE triggering state updates. React components read local
-        // project settings synchronously during render (e.g. getConversationGoal),
-        // so the cache must be warm before the re-render cycle starts.
-        settingsManager.clearCaches();
-        await settingsManager.loadLocalProjectSettings();
-        initStartedRef.current = false;
-        setResumeData(null);
-        setAgentState(null);
-        setValidatedAgent(null);
-        setSelectedGlobalAgentId(currentAgentId);
-        setSelectedConversationId(currentConversationId);
-        setResumedExistingConversation(true);
-        setLoadingState("assembling");
-        setAppReloadEpoch((x) => x + 1);
-      },
-      [],
-    );
-
     useEffect(() => {
       if (loadingState !== "assembling") {
         // If init bounced back to a picker, allow the next user selection to
@@ -2073,6 +2165,7 @@ async function main(): Promise<void> {
       initStartedRef.current = true;
 
       async function init() {
+        markMilestone("TUI_INIT_START");
         const backend = getBackend();
         const startupBackendMode = backend.capabilities.localModelCatalog
           ? "local"
@@ -2192,6 +2285,8 @@ async function main(): Promise<void> {
               modelOverride: model,
               stripMessages: true,
               stripSkills: false,
+              enableMemfs:
+                noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
             });
           } else {
             // Import from local file
@@ -2201,6 +2296,8 @@ async function main(): Promise<void> {
               modelOverride: model,
               stripMessages: true,
               stripSkills: false,
+              enableMemfs:
+                noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
             });
           }
 
@@ -2213,7 +2310,7 @@ async function main(): Promise<void> {
           // Mark imported agents as "custom" to prevent legacy auto-migration
           // from overwriting their system prompt on resume.
           if (settingsManager.isReady) {
-            settingsManager.setSystemPromptPreset(agent.id, "custom");
+            settingsManager.setSystemPromptCustom(agent.id);
           }
 
           // Display extracted skills summary
@@ -2246,20 +2343,20 @@ async function main(): Promise<void> {
 
         // Priority 3: Check if --new flag was passed or user requested new from selector
         if (!agent && shouldCreateNew) {
-          // For self-hosted: if default model unavailable and no model selected yet, show picker
+          // For custom API backends: if default model unavailable and no model selected yet, show picker
           if (availableServerModels.length > 0 && !selectedServerModel) {
             setLoadingState("selecting_global");
             return;
           }
 
           // Determine effective model:
-          // 1. Use selectedServerModel if user picked from self-hosted picker
+          // 1. Use selectedServerModel if user picked from the custom-API picker
           // 2. Use model if --model flag was passed
           // 3. Otherwise, use billing-tier-aware default (free tier gets GLM-5)
           let effectiveModel = selectedServerModel || model;
           if (
             !effectiveModel &&
-            !selfHostedBaseUrl &&
+            !customApiBaseUrl &&
             !backend.capabilities.localModelCatalog
           ) {
             // On Letta API without explicit model - check billing tier for appropriate default
@@ -2302,6 +2399,7 @@ async function main(): Promise<void> {
             skillsDirectory,
             parallelToolCalls: true,
             systemPromptPreset,
+            systemPromptCustom: systemCustom,
             memoryPromptMode: effectiveMemoryMode,
             initBlocks,
             baseTools,
@@ -2349,13 +2447,6 @@ async function main(): Promise<void> {
           settingsManager.getLocalProjectSettings();
         } catch {
           await settingsManager.loadLocalProjectSettings();
-        }
-
-        // Save agent ID to project settings.
-        // Only mirror into global legacy lastAgent for cloud/self-hosted agents.
-        settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
-        if (isAgentIdCompatibleWithBackend(agent.id, "api")) {
-          settingsManager.updateSettings({ lastAgent: agent.id });
         }
 
         // Set agent context for tools that need it (e.g., Skill tool)
@@ -2637,41 +2728,6 @@ async function main(): Promise<void> {
           );
         }
 
-        // Auto-heal system prompt drift (rebuild from stored recipe).
-        // Runs after memfs flag reconciliation so isMemfsEnabled() reflects
-        // the target memory mode even if clone/pull is still in flight.
-        if (resuming && !systemPromptPreset) {
-          let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
-
-          // Adopt legacy agents (created before recipe tracking) as "custom"
-          // so their prompts are left untouched by auto-heal.
-          if (
-            !storedPreset &&
-            agent.tags?.includes("origin:letta-code") &&
-            !agent.tags?.includes("role:subagent")
-          ) {
-            storedPreset = "custom";
-            settingsManager.setSystemPromptPreset(agent.id, storedPreset);
-          }
-
-          if (storedPreset && storedPreset !== "custom") {
-            const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
-              await import("@/agent/prompt-assets");
-            if (isKnown(storedPreset)) {
-              const memoryMode = settingsManager.isMemfsEnabled(agent.id)
-                ? "memfs"
-                : "standard";
-              const expected = rebuildPrompt(storedPreset, memoryMode);
-              if (agent.system !== expected) {
-                await backend.updateAgent(agent.id, { system: expected });
-                agent = await backend.retrieveAgent(agent.id);
-              }
-            } else {
-              settingsManager.clearSystemPromptPreset(agent.id);
-            }
-          }
-        }
-
         // Save the session (agent + conversation) to settings
         // Skip for subagents - they shouldn't pollute the LRU settings
         if (shouldPersistSessionState()) {
@@ -2683,7 +2739,41 @@ async function main(): Promise<void> {
         setConversationId(conversationIdToUse);
         // Also set in global context for tools (e.g., Skill tool) to access
         setContextConversationId(conversationIdToUse);
+        markMilestone("TUI_READY");
         setLoadingState("ready");
+
+        // Maintain managed system prompt versions without blocking startup.
+        // This updates only agents whose current prompt still matches the
+        // stored managed prompt hash, so custom edits are preserved.
+        if (resuming && !systemPromptPreset) {
+          const {
+            ensureLettaCodeOriginTag,
+            getMemoryPromptModeForAgent,
+            scheduleManagedSystemPromptUpdate,
+          } = await import("@/agent/system-prompt-versioning");
+          void ensureLettaCodeOriginTag(agent)
+            .catch((error) => {
+              import("@/utils/debug").then(({ debugWarn }) =>
+                debugWarn(
+                  "startup",
+                  `Failed to ensure Letta Code origin tag for ${agent.id}: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                ),
+              );
+              return agent;
+            })
+            .then((taggedAgent) => {
+              setAgentState(taggedAgent);
+              scheduleManagedSystemPromptUpdate({
+                agent: taggedAgent,
+                memoryMode: getMemoryPromptModeForAgent(taggedAgent.id),
+                onUpdated: (updatedAgent) => {
+                  setAgentState(updatedAgent);
+                },
+              });
+            });
+        }
       }
 
       init().catch((err) => {
@@ -2759,11 +2849,11 @@ async function main(): Promise<void> {
         loading: false,
         freshRepoMode: true, // Hides "(global)" labels and simplifies context message
         failedAgentMessage: failedAgentMessage ?? undefined,
-        // For self-hosted: pass available models so user can pick one when creating new agent
+        // For custom API backends: pass available models so user can pick one when creating new agent
         serverModelsForNewAgent:
           availableServerModels.length > 0 ? availableServerModels : undefined,
-        defaultModelHandle: selfHostedDefaultModel ?? undefined,
-        serverBaseUrl: selfHostedBaseUrl ?? undefined,
+        defaultModelHandle: customApiDefaultModel ?? undefined,
+        serverBaseUrl: customApiBaseUrl ?? undefined,
         onSelect: (agentId: string) => {
           setSelectedGlobalAgentId(agentId);
           setLoadingState("assembling");
@@ -2818,7 +2908,7 @@ async function main(): Promise<void> {
     }
 
     return React.createElement(App, {
-      key: `${agentId}:${conversationId}:${appReloadEpoch}`,
+      key: `${agentId}:${conversationId}`,
       agentId,
       agentState,
       conversationId,
@@ -2839,7 +2929,6 @@ async function main(): Promise<void> {
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
       extensionsDisabled,
       fileAutocompleteFdPath,
-      onReload: handleReload,
     });
   }
 

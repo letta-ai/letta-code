@@ -42,11 +42,13 @@ import {
   type LocalUserMessage,
 } from "./local-message";
 import {
+  clipOversizedLocalToolResults,
   cloneLocalMessage,
   isLocalToolCallContent,
   mergeSnapshotContentWithExistingToolCalls,
   projectedMessageLookupKeys,
   projectLocalMessageToStoredMessages,
+  removeOrphanLocalToolResults,
   withProjectedMessageDates,
 } from "./local-message-projection";
 import {
@@ -182,6 +184,23 @@ function conversationModelSettings(
   return optionalRecordOrNull(value);
 }
 
+function supportedConversationModelSettingsFromBody(
+  bodyRecord: Record<string, unknown>,
+): Record<string, unknown> | null | undefined {
+  const modelSettings = conversationModelSettings(bodyRecord.model_settings);
+  if (modelSettings === null) return null;
+
+  const next = modelSettings ?? {};
+  if (
+    typeof bodyRecord.max_tokens === "number" ||
+    bodyRecord.max_tokens === null
+  ) {
+    next.max_tokens = bodyRecord.max_tokens;
+  }
+
+  return Object.keys(next).length > 0 ? next : modelSettings;
+}
+
 function createLocalConversationRecord(
   conversationId: string,
   agentId: string,
@@ -190,7 +209,7 @@ function createLocalConversationRecord(
 ): StoredConversation {
   const bodyRecord = body as Record<string, unknown>;
   const now = currentIsoTimestamp();
-  const modelSettings = conversationModelSettings(bodyRecord.model_settings);
+  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
   return {
     id: conversationId,
     agent_id: agentId,
@@ -243,7 +262,7 @@ function updateLocalConversationRecord(
   if (typeof bodyRecord.model === "string" || bodyRecord.model === null) {
     next.model = bodyRecord.model;
   }
-  const modelSettings = conversationModelSettings(bodyRecord.model_settings);
+  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
   if (modelSettings !== undefined) {
     next.model_settings = modelSettings as StoredConversation["model_settings"];
   }
@@ -709,8 +728,27 @@ interface LocalTranscriptRowsResult {
   messages: LocalMessage[];
   entryIds: Set<string>;
   entryIdByMessageId: Map<string, string>;
+  messageById: Map<string, LocalMessage>;
   lastEntryId: string | null;
   sourceStartIndex: number;
+}
+
+function setLatestLocalMessage(
+  messagesById: Map<string, LocalMessage>,
+  message: LocalMessage,
+): void {
+  // Map#set does not move an existing key to the insertion tail. Delete first so
+  // append-only replacement snapshots preserve latest-message order when a
+  // conversation has no explicit in-context id list.
+  if (messagesById.has(message.id)) messagesById.delete(message.id);
+  messagesById.set(message.id, message);
+}
+
+function localMessagesHaveSameSnapshot(
+  a: LocalMessage,
+  b: LocalMessage,
+): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function isLocalTranscriptSessionMessageEntry(
@@ -794,14 +832,15 @@ function localTranscriptRowsResult(
 ): LocalTranscriptRowsResult {
   if (messageFormat === LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT) {
     const allMessages = rows as LocalMessage[];
-    const messageById = new Map(
-      allMessages.map((message) => [message.id, message] as const),
-    );
+    const messageById = new Map<string, LocalMessage>();
+    for (const message of allMessages) {
+      setLatestLocalMessage(messageById, message);
+    }
     const activeMessages = activeMessageIds.length
       ? activeMessageIds
           .map((id) => messageById.get(id))
           .filter((message): message is LocalMessage => message !== undefined)
-      : allMessages;
+      : Array.from(messageById.values());
     const firstActiveId = activeMessages[0]?.id;
     return {
       messages: activeMessages,
@@ -809,6 +848,7 @@ function localTranscriptRowsResult(
       entryIdByMessageId: new Map(
         allMessages.map((message) => [message.id, message.id] as const),
       ),
+      messageById,
       lastEntryId: allMessages.at(-1)?.id ?? null,
       sourceStartIndex: firstActiveId
         ? Math.max(0, activeMessageIds.indexOf(firstActiveId))
@@ -828,20 +868,21 @@ function localTranscriptRowsResult(
     lastEntryId = row.id;
     entryIdByMessageId.set(row.message.id, row.id);
     allMessages.push(row.message);
-    messageById.set(row.message.id, row.message);
+    setLatestLocalMessage(messageById, row.message);
   }
 
   const activeMessages = activeMessageIds.length
     ? activeMessageIds
         .map((id) => messageById.get(id))
         .filter((message): message is LocalMessage => message !== undefined)
-    : allMessages;
+    : Array.from(messageById.values());
   const firstActiveId = activeMessages[0]?.id;
 
   return {
     messages: activeMessages,
     entryIds,
     entryIdByMessageId,
+    messageById,
     lastEntryId,
     sourceStartIndex: firstActiveId
       ? Math.max(0, activeMessageIds.indexOf(firstActiveId))
@@ -1079,6 +1120,7 @@ export class LocalStore {
     LocalMessage[]
   >();
   private readonly loadedConversationKeys = new Set<string>();
+  private readonly loadRepairedConversationKeys = new Set<string>();
   private readonly transcriptMetadataByConversationKey = new Map<
     string,
     LocalConversationTranscriptMetadata
@@ -1090,6 +1132,10 @@ export class LocalStore {
   private readonly sessionEntryIdByMessageIdByConversationKey = new Map<
     string,
     Map<string, string>
+  >();
+  private readonly persistedMessageByMessageIdByConversationKey = new Map<
+    string,
+    Map<string, LocalMessage>
   >();
   private readonly lastSessionEntryIdByConversationKey = new Map<
     string,
@@ -1195,9 +1241,11 @@ export class LocalStore {
         this.conversations.delete(key);
         this.localMessagesByConversationKey.delete(key);
         this.loadedConversationKeys.delete(key);
+        this.loadRepairedConversationKeys.delete(key);
         this.transcriptMetadataByConversationKey.delete(key);
         this.sessionEntryIdsByConversationKey.delete(key);
         this.sessionEntryIdByMessageIdByConversationKey.delete(key);
+        this.persistedMessageByMessageIdByConversationKey.delete(key);
         this.lastSessionEntryIdByConversationKey.delete(key);
         if (this.storageDir) {
           rmSync(
@@ -1257,13 +1305,6 @@ export class LocalStore {
     const systemChanged =
       nextSystem !== undefined && nextSystem !== existingRecord.system;
     const requestedModel = bodyRecord.model;
-    const nextModelSettings = {
-      ...existingRecord.model_settings,
-      ...(shouldUseDefaultLocalModel(requestedModel)
-        ? this.defaultAgentModelSettings
-        : {}),
-      ...supportedModelSettingsFromBody(bodyRecord),
-    };
     const nextModel =
       typeof requestedModel === "string" &&
       !shouldUseDefaultLocalModel(requestedModel)
@@ -1271,6 +1312,16 @@ export class LocalStore {
         : typeof requestedModel === "string" && this.defaultAgentModel
           ? this.defaultAgentModel
           : undefined;
+    const modelChanged =
+      nextModel !== undefined && nextModel !== existingRecord.model;
+    const nextModelDefaults = nextModel
+      ? this.modelSettingsDefaultsForModel(nextModel)
+      : undefined;
+    const nextModelSettings = {
+      ...(modelChanged ? {} : existingRecord.model_settings),
+      ...supportedModelSettingsFromBody(bodyRecord),
+      ...(modelChanged ? (nextModelDefaults ?? {}) : {}),
+    };
     const updated = {
       ...existingRecord,
       ...(typeof bodyRecord.name === "string" && { name: bodyRecord.name }),
@@ -1464,17 +1515,22 @@ export class LocalStore {
         body,
         currentIsoTimestamp(),
       );
+      const projected = this.applyConversationModelDefaults(
+        updated,
+        body,
+        created,
+      );
       this.conversations.set(
         this.conversationKey(conversationId, created.agent_id),
-        updated,
+        projected,
       );
       this.persistConversationState(conversationId, created.agent_id);
-      return updated;
+      return projected;
     }
-    const updated = updateLocalConversationRecord(
-      current,
+    const updated = this.applyConversationModelDefaults(
+      updateLocalConversationRecord(current, body, currentIsoTimestamp()),
       body,
-      currentIsoTimestamp(),
+      current,
     );
     this.conversations.set(
       this.conversationKey(conversationId, current.agent_id),
@@ -1482,6 +1538,28 @@ export class LocalStore {
     );
     this.persistConversationState(conversationId, current.agent_id);
     return updated;
+  }
+
+  private applyConversationModelDefaults(
+    conversation: StoredConversation,
+    body: ConversationUpdateBody,
+    previousConversation: StoredConversation,
+  ): StoredConversation {
+    const requestedModel = (body as Record<string, unknown>).model;
+    if (typeof requestedModel !== "string") return conversation;
+    if (previousConversation.model === requestedModel) return conversation;
+    const defaults = this.modelSettingsDefaultsForModel(requestedModel);
+    if (!defaults || Object.keys(defaults).length === 0) return conversation;
+    const existingSettings = isRecord(conversation.model_settings)
+      ? conversation.model_settings
+      : {};
+    return {
+      ...conversation,
+      model_settings: {
+        ...existingSettings,
+        ...defaults,
+      },
+    };
   }
 
   forkConversation(
@@ -2416,9 +2494,9 @@ export class LocalStore {
         this.storageDir ?? "",
         metadata.conversationDir,
       );
-      const normalizedMessages = transcript.messages.map(
-        normalizeLocalMessageForPi,
-      );
+      const normalizedMessages = removeOrphanLocalToolResults(
+        transcript.messages.map(normalizeLocalMessageForPi),
+      ).messages;
       const projected = this.projectLocalMessages(
         normalizedMessages,
         agentId,
@@ -2542,9 +2620,9 @@ export class LocalStore {
         this.storageDir ?? "",
         metadata.conversationDir,
       );
-      const normalizedMessages = transcript.messages.map(
-        normalizeLocalMessageForPi,
-      );
+      const normalizedMessages = removeOrphanLocalToolResults(
+        transcript.messages.map(normalizeLocalMessageForPi),
+      ).messages;
       this.projectLocalMessages(
         normalizedMessages,
         conversation.agent_id,
@@ -2599,24 +2677,49 @@ export class LocalStore {
       this.storageDir ?? "",
       metadata.conversationDir,
     );
-    const localMessages = repairSyntheticLocalMessageTimestamps(
+    const loadedMessages = repairSyntheticLocalMessageTimestamps(
       transcript.messages.map(normalizeLocalMessageForPi),
       metadata.timing,
     );
+    const toolResultRepair = removeOrphanLocalToolResults(loadedMessages);
+    const toolResultClip = clipOversizedLocalToolResults(
+      toolResultRepair.messages,
+    );
+    const localMessages = toolResultClip.messages;
+    if (toolResultClip.clippedToolResultIds.length > 0) {
+      this.loadRepairedConversationKeys.add(key);
+    } else {
+      this.loadRepairedConversationKeys.delete(key);
+    }
     if (conversation) {
-      this.conversations.set(
-        key,
-        repairSyntheticConversationTimestamps(
-          conversation,
-          localMessages,
-          metadata.timing,
-        ),
+      let repairedConversation = repairSyntheticConversationTimestamps(
+        conversation,
+        localMessages,
+        metadata.timing,
       );
+      if (toolResultRepair.removedMessageIds.length > 0) {
+        const removedMessageIds = new Set(toolResultRepair.removedMessageIds);
+        repairedConversation = {
+          ...repairedConversation,
+          in_context_message_ids:
+            repairedConversation.in_context_message_ids.length > 0
+              ? repairedConversation.in_context_message_ids.filter(
+                  (id) => !removedMessageIds.has(id),
+                )
+              : localMessages.map((message) => message.id),
+        };
+      }
+      this.conversations.set(key, repairedConversation);
     }
     this.localMessagesByConversationKey.set(key, localMessages);
     this.loadedConversationKeys.add(key);
     this.resetPersistedSessionState(key, metadata.messageFormat, transcript);
-    for (const message of localMessages) {
+    if (conversation && toolResultRepair.removedMessageIds.length > 0) {
+      this.persistConversationState(conversation.id, agentId, {
+        transcript: "skip",
+      });
+    }
+    for (const message of loadedMessages) {
       this.localMessageSeq = Math.max(
         this.localMessageSeq,
         numericSuffix(message.id, this.localMessageIdPrefix),
@@ -2993,6 +3096,13 @@ export class LocalStore {
     options: LocalTranscriptPersistOptions,
   ): void {
     if (options.transcript === "skip") return;
+    if (
+      options.transcript === undefined &&
+      this.loadRepairedConversationKeys.has(key) &&
+      existsSync(messagesPath)
+    ) {
+      return;
+    }
     const messages = this.localMessagesByConversationKey.get(key) ?? [];
     let activeMessageFormat = messageFormat;
     if (messageFormat === LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT) {
@@ -3054,6 +3164,7 @@ export class LocalStore {
         messagesPath,
         messages,
       );
+      this.loadRepairedConversationKeys.delete(key);
     }
   }
 
@@ -3076,7 +3187,17 @@ export class LocalStore {
     message: LocalMessage,
   ): void {
     const entryIdByMessageId = this.sessionEntryIdsByMessageId(key);
-    if (entryIdByMessageId.has(message.id)) return;
+    if (entryIdByMessageId.has(message.id)) {
+      const persistedMessage = this.persistedMessagesByMessageId(key).get(
+        message.id,
+      );
+      if (
+        persistedMessage &&
+        localMessagesHaveSameSnapshot(persistedMessage, message)
+      ) {
+        return;
+      }
+    }
 
     this.ensureConversationTranscriptHeader(conversation, messagesPath);
     const parentId = this.lastSessionEntryIdByConversationKey.get(key) ?? null;
@@ -3128,6 +3249,10 @@ export class LocalStore {
     appendFileSync(messagesPath, `${JSON.stringify(entry)}\n`);
     this.sessionEntryIds(key).add(entry.id);
     this.sessionEntryIdsByMessageId(key).set(entry.message.id, entry.id);
+    this.persistedMessagesByMessageId(key).set(
+      entry.message.id,
+      cloneLocalMessage(entry.message),
+    );
     this.lastSessionEntryIdByConversationKey.set(key, entry.id);
   }
 
@@ -3152,6 +3277,15 @@ export class LocalStore {
     this.sessionEntryIdByMessageIdByConversationKey.set(
       key,
       transcript.entryIdByMessageId,
+    );
+    this.persistedMessageByMessageIdByConversationKey.set(
+      key,
+      new Map(
+        Array.from(transcript.messageById, ([messageId, message]) => [
+          messageId,
+          cloneLocalMessage(message),
+        ]),
+      ),
     );
     this.lastSessionEntryIdByConversationKey.set(key, transcript.lastEntryId);
   }
@@ -3183,6 +3317,15 @@ export class LocalStore {
       this.sessionEntryIdByMessageIdByConversationKey.set(key, entryIds);
     }
     return entryIds;
+  }
+
+  private persistedMessagesByMessageId(key: string): Map<string, LocalMessage> {
+    let messages = this.persistedMessageByMessageIdByConversationKey.get(key);
+    if (!messages) {
+      messages = new Map<string, LocalMessage>();
+      this.persistedMessageByMessageIdByConversationKey.set(key, messages);
+    }
+    return messages;
   }
 
   private nextSessionEntryId(key: string): string {

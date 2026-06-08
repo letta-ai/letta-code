@@ -75,11 +75,13 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
         onCancel();
         return;
       }
-      if (key.upArrow) {
+      // Up: arrow or vim-style "k"
+      if (key.upArrow || input === "k") {
         setCursor((c) => Math.max(0, c - 1));
         return;
       }
-      if (key.downArrow) {
+      // Down: arrow or vim-style "j"
+      if (key.downArrow || input === "j") {
         setCursor((c) => Math.min(items.length - 1, c + 1));
         return;
       }
@@ -151,7 +153,7 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
       {/* Footer */}
       <Box marginTop={footer ? 0 : 1}>
         {footer ?? (
-          <Text dimColor> Enter select · ↑↓ navigate · Esc cancel</Text>
+          <Text dimColor> Enter select · ↑↓/jk navigate · Esc cancel</Text>
         )}
       </Box>
     </Box>

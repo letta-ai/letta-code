@@ -34,6 +34,7 @@ import {
   markCurrentLineAsFinished,
   markIncompleteToolsAsCancelled,
   onChunk,
+  removeIncompleteTools,
 } from "./accumulator";
 import { chunkLog } from "./chunk-log";
 import type { ContextTracker } from "./context-tracker";
@@ -559,9 +560,29 @@ export async function drainStream(
     stopReason = "error";
   }
 
-  // Mark incomplete tool calls as cancelled if stream was cancelled
+  // Clean up incomplete tool calls:
+  // - cancelled: user interrupted, show "Interrupted by user"
+  // - end_turn: server ended without completing, remove entirely (don't show anything)
   if (stopReason === "cancelled") {
-    markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
+    const hadOrphanedTools = markIncompleteToolsAsCancelled(
+      buffers,
+      true,
+      "user_interrupt",
+    );
+    if (hadOrphanedTools) {
+      debugWarn(
+        "drainStream",
+        "cancelled had orphaned tool calls (see [ORPHANED_TOOL] logs for diagnosis)",
+      );
+    }
+  } else if (stopReason === "end_turn") {
+    const hadOrphanedTools = removeIncompleteTools(buffers);
+    if (hadOrphanedTools) {
+      debugWarn(
+        "drainStream",
+        "end_turn had orphaned tool calls (see [REMOVED_ORPHANED_TOOL] logs)",
+      );
+    }
   }
 
   // Mark the final line as finished now that stream has ended.

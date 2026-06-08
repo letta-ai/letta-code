@@ -26,13 +26,17 @@ import type {
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
   CheckoutBranchCommand,
+  ConnectProviderCommand,
   CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
   CronDeleteCommand,
   CronGetCommand,
   CronListCommand,
+  CronRunsCommand,
+  CronTriggerCommand,
   DeleteMemoryFileCommand,
+  DisconnectProviderCommand,
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
@@ -43,6 +47,8 @@ import type {
   GetTreeCommand,
   GrepInFilesCommand,
   InputCommand,
+  ListConnectProvidersCommand,
+  ListConversationPinsCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
   ListModelsCommand,
@@ -57,6 +63,7 @@ import type {
   SearchFilesCommand,
   SecretApplyCommand,
   SecretListCommand,
+  SetConversationPinCommand,
   SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -96,6 +103,15 @@ export type ServerLifecycleMessage = {
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.values(value).every((item) => typeof item === "string")
   );
 }
 
@@ -665,6 +681,62 @@ export function isListModelsCommand(
   return c.type === "list_models" && typeof c.request_id === "string";
 }
 
+export function isListConnectProvidersCommand(
+  value: unknown,
+): value is ListConnectProvidersCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    target?: unknown;
+  };
+  return (
+    c.type === "list_connect_providers" &&
+    typeof c.request_id === "string" &&
+    c.target === "local"
+  );
+}
+
+export function isConnectProviderCommand(
+  value: unknown,
+): value is ConnectProviderCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    target?: unknown;
+    provider_id?: unknown;
+    auth_method_id?: unknown;
+    fields?: unknown;
+  };
+  return (
+    c.type === "connect_provider" &&
+    typeof c.request_id === "string" &&
+    c.target === "local" &&
+    typeof c.provider_id === "string" &&
+    (c.auth_method_id === undefined || typeof c.auth_method_id === "string") &&
+    isStringRecord(c.fields)
+  );
+}
+
+export function isDisconnectProviderCommand(
+  value: unknown,
+): value is DisconnectProviderCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    target?: unknown;
+    provider_id?: unknown;
+  };
+  return (
+    c.type === "disconnect_provider" &&
+    typeof c.request_id === "string" &&
+    c.target === "local" &&
+    typeof c.provider_id === "string"
+  );
+}
+
 export function isUpdateModelCommand(
   value: unknown,
 ): value is UpdateModelCommand {
@@ -783,6 +855,42 @@ export function isCronGetCommand(value: unknown): value is CronGetCommand {
   );
 }
 
+export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    task_id?: unknown;
+    limit?: unknown;
+    offset?: unknown;
+    run_id?: unknown;
+  };
+  return (
+    c.type === "cron_runs" &&
+    typeof c.request_id === "string" &&
+    typeof c.task_id === "string" &&
+    (c.limit === undefined || typeof c.limit === "number") &&
+    (c.offset === undefined || typeof c.offset === "number") &&
+    (c.run_id === undefined || typeof c.run_id === "string")
+  );
+}
+
+export function isCronTriggerCommand(
+  value: unknown,
+): value is CronTriggerCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    task_id?: unknown;
+  };
+  return (
+    c.type === "cron_trigger" &&
+    typeof c.request_id === "string" &&
+    typeof c.task_id === "string"
+  );
+}
+
 export function isCronDeleteCommand(
   value: unknown,
 ): value is CronDeleteCommand {
@@ -868,6 +976,47 @@ export function isCreateAgentCommand(
       c.personality === "kawaii") &&
     (c.model === undefined || typeof c.model === "string") &&
     (c.pin_global === undefined || typeof c.pin_global === "boolean")
+  );
+}
+
+export function isListConversationPinsCommand(
+  value: unknown,
+): value is ListConversationPinsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+  };
+  return (
+    c.type === "list_conversation_pins" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime)
+  );
+}
+
+export function isSetConversationPinCommand(
+  value: unknown,
+): value is SetConversationPinCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    runtime?: unknown;
+    conversation_id?: unknown;
+    action?: unknown;
+    scope?: unknown;
+  };
+  return (
+    c.type === "set_conversation_pin" &&
+    typeof c.request_id === "string" &&
+    isRuntimeScope(c.runtime) &&
+    typeof c.conversation_id === "string" &&
+    (c.action === "pin" || c.action === "unpin" || c.action === "toggle") &&
+    (c.scope === undefined ||
+      c.scope === "global" ||
+      c.scope === "local_project" ||
+      c.scope === "both")
   );
 }
 
@@ -1605,11 +1754,16 @@ export function parseServerMessage(
       isDeleteMemoryFileCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
+      isListConnectProvidersCommand(parsed) ||
+      isConnectProviderCommand(parsed) ||
+      isDisconnectProviderCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
       isUpdateToolsetCommand(parsed) ||
       isCronListCommand(parsed) ||
       isCronAddCommand(parsed) ||
       isCronGetCommand(parsed) ||
+      isCronRunsCommand(parsed) ||
+      isCronTriggerCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
@@ -1618,6 +1772,8 @@ export function parseServerMessage(
       isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||
+      isListConversationPinsCommand(parsed) ||
+      isSetConversationPinCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||

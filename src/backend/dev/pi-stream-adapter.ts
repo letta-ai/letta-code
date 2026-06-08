@@ -20,6 +20,7 @@ import {
   type LocalAssistantMessage,
   type LocalMessage,
 } from "@/backend/local/local-message";
+import { removeOrphanLocalToolResults } from "@/backend/local/local-message-projection";
 import type { ClientTool } from "@/tools/manager";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
@@ -91,29 +92,6 @@ class PiProviderError extends Error {
       )
       .find((value): value is number => typeof value === "number");
     this.statusCode = status;
-  }
-}
-
-class EmptyPiResponseError extends Error {
-  readonly isRetryable = true;
-
-  constructor() {
-    super("Received empty content in local provider response.");
-    this.name = "EmptyPiResponseError";
-  }
-}
-
-function hasAssistantOutputContent(message: AssistantMessage): boolean {
-  return message.content.some((block) => {
-    if (block.type === "toolCall") return true;
-    if (block.type === "text") return block.text.trim().length > 0;
-    return false;
-  });
-}
-
-function assertAssistantHasOutputContent(message: AssistantMessage): void {
-  if (!hasAssistantOutputContent(message)) {
-    throw new EmptyPiResponseError();
   }
 }
 
@@ -250,8 +228,9 @@ function toPiMessage(message: LocalMessage): Message | undefined {
   } satisfies Message;
 }
 
-function toPiMessages(messages: LocalMessage[]): Message[] {
-  let normalized = messages.flatMap((message) => {
+function toPiMessages(messages: readonly LocalMessage[]): Message[] {
+  const providerSafeMessages = removeOrphanLocalToolResults(messages).messages;
+  let normalized = providerSafeMessages.flatMap((message) => {
     const piMessage = toPiMessage(message);
     return piMessage ? [piMessage] : [];
   });
@@ -308,6 +287,31 @@ function withOpenAIResponsesReplayIdSanitizer(
     const sanitized = stripOpenAIResponsesReplayItemIds(next);
     if (sanitized !== undefined) return sanitized;
     return upstreamChanged ? next : undefined;
+  };
+}
+
+function withMidConversationSystemPrompt(
+  existing: SimpleStreamOptions["onPayload"] | undefined,
+  systemPrompt: string | undefined,
+): SimpleStreamOptions["onPayload"] {
+  if (!systemPrompt) return existing;
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+    if (model.id !== "claude-opus-4-8" || !isRecord(next)) {
+      return upstreamChanged ? next : undefined;
+    }
+    const messages = Array.isArray(next.messages) ? next.messages : undefined;
+    if (!messages) return upstreamChanged ? next : undefined;
+    return {
+      ...next,
+      messages: [...messages, { role: "system", content: systemPrompt }],
+    };
   };
 }
 
@@ -511,6 +515,12 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         options.onPayload,
       );
     }
+    if (resolved.model.api === "anthropic-messages") {
+      options.onPayload = withMidConversationSystemPrompt(
+        options.onPayload,
+        input.midConversationSystemPrompt,
+      );
+    }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
     try {
@@ -534,7 +544,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         }
         if (part.type === "done") {
-          assertAssistantHasOutputContent(part.message);
           finalMessage = part.message;
           yield providerLocalMessage(
             toLocalAssistantMessage(part.message, input),
@@ -545,7 +554,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       if (streamError) throw streamError;
       finalMessage ??= await result.result();
-      assertAssistantHasOutputContent(finalMessage);
       if (
         finalMessage.stopReason === "error" ||
         finalMessage.stopReason === "aborted"

@@ -37,6 +37,24 @@ test("shell_command preserves stdout and stderr arrays when output is not trunca
   }
 });
 
+test("shell_command strict mode fails fast on intermediate shell errors", async () => {
+  if (process.platform === "win32") return;
+
+  const result = await shell_command({
+    command: [
+      "cat > missing-dir/SKILL.md <<'EOF'",
+      "contents",
+      "EOF",
+      "echo 'SKILL.md written successfully'",
+    ].join("\n"),
+    workdir: process.cwd(),
+    secretEnv: { LETTA_BASH_STRICT: "1" },
+  });
+
+  expect(result.output).toContain("missing-dir/SKILL.md");
+  expect(result.output).not.toContain("SKILL.md written successfully");
+});
+
 test("shell_command falls back when preferred shell is missing", async () => {
   const marker = "shell-fallback";
   if (process.platform === "win32") {

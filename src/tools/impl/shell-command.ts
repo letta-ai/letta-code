@@ -71,6 +71,7 @@ export async function shell_command(
   const resolvedWorkdir = resolveShellWorkdir(workdir);
   const launchers = buildShellLaunchers(command, {
     login,
+    env: { ...process.env, ...envOverrides },
     powershellEnvAliases: secretEnv ? Object.keys(secretEnv) : undefined,
   });
   if (launchers.length === 0) {

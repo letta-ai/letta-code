@@ -1,10 +1,12 @@
 import { commands as builtinCommands } from "@/cli/commands/registry";
+import type { CreateExtensionAdapterOptions } from "@/extensions/extension-adapter";
+import { createExtensionAdapter as createExtensionAdapterBase } from "@/extensions/extension-adapter";
 import type {
-  CreateExtensionHostOptions,
+  CreateExtensionEngineOptions,
   LoadLocalExtensionsOptions,
-} from "@/extensions/extension-host";
+} from "@/extensions/extension-engine";
 import {
-  createExtensionHost as createExtensionHostBase,
+  createExtensionEngine as createExtensionEngineBase,
   disposeLocalExtensions,
   EXTENSION_CACHE_DIRECTORY,
   emitLocalExtensionEvent,
@@ -12,9 +14,7 @@ import {
   GLOBAL_EXTENSIONS_DIRECTORY,
   loadLocalExtensions as loadLocalExtensionsBase,
   resolveLocalExtensionSources,
-} from "@/extensions/extension-host";
-import type { CreateExtensionRuntimeOptions } from "@/extensions/extension-runtime";
-import { createExtensionRuntime as createExtensionRuntimeBase } from "@/extensions/extension-runtime";
+} from "@/extensions/extension-engine";
 import type { ExtensionCapabilities } from "@/extensions/types";
 import { getAllLettaToolNames, getServerToolName } from "@/tools/manager";
 import { TUI_EXTENSION_CAPABILITIES } from "./capabilities";
@@ -23,7 +23,7 @@ function stripSlash(command: string): string {
   return command.startsWith("/") ? command.slice(1) : command;
 }
 
-function getDefaultReservedCommandIds(): Set<string> {
+function getDefaultBuiltinCommandIds(): Set<string> {
   return new Set(Object.keys(builtinCommands).map(stripSlash));
 }
 
@@ -38,18 +38,18 @@ function getDefaultReservedToolNames(): Set<string> {
 
 function withDefaultReservations<
   T extends {
+    builtinCommandIds?: Iterable<string>;
     capabilities?: ExtensionCapabilities;
-    reservedCommandIds?: Iterable<string>;
     reservedToolNames?: Iterable<string>;
   },
 >(options: T): T {
   return {
     ...options,
-    capabilities: options.capabilities ?? TUI_EXTENSION_CAPABILITIES,
-    reservedCommandIds: [
-      ...getDefaultReservedCommandIds(),
-      ...(options.reservedCommandIds ?? []),
+    builtinCommandIds: [
+      ...getDefaultBuiltinCommandIds(),
+      ...(options.builtinCommandIds ?? []),
     ],
+    capabilities: options.capabilities ?? TUI_EXTENSION_CAPABILITIES,
     reservedToolNames: [
       ...getDefaultReservedToolNames(),
       ...(options.reservedToolNames ?? []),
@@ -57,12 +57,12 @@ function withDefaultReservations<
   };
 }
 
-export function createExtensionHost(options: CreateExtensionHostOptions) {
-  return createExtensionHostBase(withDefaultReservations(options));
+export function createExtensionEngine(options: CreateExtensionEngineOptions) {
+  return createExtensionEngineBase(withDefaultReservations(options));
 }
 
-export function createExtensionRuntime(options: CreateExtensionRuntimeOptions) {
-  return createExtensionRuntimeBase(withDefaultReservations(options));
+export function createExtensionAdapter(options: CreateExtensionAdapterOptions) {
+  return createExtensionAdapterBase(withDefaultReservations(options));
 }
 
 export function loadLocalExtensions(options: LoadLocalExtensionsOptions) {
@@ -79,25 +79,24 @@ export {
 };
 
 export type {
-  CreateExtensionHostOptions,
-  ExtensionHost,
+  CreateExtensionAdapterOptions,
+  ExtensionAdapter,
+  ExtensionAdapterLoadState,
+  ExtensionAdapterSnapshot,
+} from "@/extensions/extension-adapter";
+export type {
+  CreateExtensionEngineOptions,
+  ExtensionEngine,
   ExtensionStatusValue,
   LettaExtensionApi,
   LettaExtensionDisposer,
   LettaExtensionFactory,
   LoadLocalExtensionsOptions,
   LocalExtensionDisposer,
-  LocalExtensionLoadError,
   LocalExtensionRegistry,
   LocalExtensionSource,
   LocalExtensionUiRegistry,
   ResolveLocalExtensionSourcesOptions,
   StatuslineRenderFunction,
-} from "@/extensions/extension-host";
-export type {
-  CreateExtensionRuntimeOptions,
-  ExtensionRuntime,
-  ExtensionRuntimeLoadState,
-  ExtensionRuntimeSnapshot,
-} from "@/extensions/extension-runtime";
+} from "@/extensions/extension-engine";
 export { TUI_EXTENSION_CAPABILITIES } from "./capabilities";

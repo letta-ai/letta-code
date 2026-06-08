@@ -2,6 +2,16 @@
 
 Use events when trusted local code should react to app/session changes or transform outbound turns without the human explicitly invoking a command. For event-driven extensions with state, timers, panels, or background model work, also read `architecture.md`.
 
+## Contents
+
+- Capabilities
+- Supported events
+- Tool argument transforms
+- Turn input transforms
+- Event handler context
+- Conversation status example
+- Rules
+
 This is the first slice of the hooks-v2 direction. The long-term goal is for typed extension events to replace settings-based hooks. Existing hooks still own blocking decisions and model feedback injection until each event has a typed return contract.
 
 ## Capabilities
@@ -34,7 +44,7 @@ letta.events.on("event_name", (event, ctx) => {
 });
 ```
 
-Tool events use this same API. Existing settings-based hooks still own blocking decisions and model feedback injection until those contracts are explicitly added to extension events.
+Tool events use this same API. Use `letta.permissions.register` for allow/ask/deny policy; use `tool_start` for last-mile argument transforms and lifecycle reactions.
 
 ```ts
 letta.events.on("tool_start", (event, ctx) => {
@@ -105,7 +115,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 }
 ```
 
-`tool_start` fires immediately before a client-side tool executes. This includes built-in tools, extension tools, and external tools executed through the local tool manager. It runs after permission/approval classification and before `PreToolUse` hooks, so trusted local extensions can change the actual executed arguments after the approval UI has already classified the original request.
+`tool_start` fires immediately before a client-side tool executes. This includes built-in tools, extension tools, and external tools executed through the local tool manager. It runs after permission/approval classification and before `PreToolUse` hooks, so trusted local extensions can change the actual executed arguments after the approval UI has already classified the original request. Extension permission overlays are rechecked after `tool_start` on the final args.
 
 Handlers can inspect `event.args`, mutate it directly, or return replacement args:
 
@@ -126,7 +136,7 @@ letta.events.on("tool_start", (event) => {
 
 Handlers run in registration order. Later handlers see the current args after earlier mutations/returns. If a handler throws, its partial `event.args` mutation is rolled back and the error is recorded as an extension diagnostic.
 
-`tool_start` is intentionally a trusted local extension point: it can rewrite commands, file paths, and other tool inputs before execution. Keep transforms focused and unsurprising. It does not support blocking; use existing hooks for blocking safety decisions.
+`tool_start` is intentionally a trusted local extension point: it can rewrite commands, file paths, and other tool inputs before execution. Keep transforms focused and unsurprising.
 
 `turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns.
 

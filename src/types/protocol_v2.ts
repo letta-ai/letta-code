@@ -10,7 +10,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { DmPolicy } from "@/channels/types";
-import type { CronTask } from "@/cron";
+import type { CronRunLogPage, CronTask } from "@/cron";
 import type { ExperimentId, ExperimentSnapshot } from "@/experiments/types";
 
 /**
@@ -871,7 +871,7 @@ export interface ReadMemoryFileCommand {
 }
 
 /**
- * Write a file into the agent's MemFS and commit + push.
+ * Write a file into the agent's MemFS and commit.
  *
  * Use for agent memory writes (e.g. profile images). Path is
  * relative to the memory root and is rejected if it escapes the root.
@@ -931,6 +931,110 @@ export interface ListModelsCommand {
   type: "list_models";
   /** Echoed back in the response for request correlation. */
   request_id: string;
+}
+
+export type ConnectProviderStorageTarget = "local";
+
+export interface ListConnectProvidersCommand {
+  type: "list_connect_providers";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Provider store to inspect. MVP supports local provider storage. */
+  target: ConnectProviderStorageTarget;
+}
+
+export interface ConnectProviderCommand {
+  type: "connect_provider";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Provider store to write. MVP supports local provider storage. */
+  target: ConnectProviderStorageTarget;
+  /** Provider id from list_connect_providers. */
+  provider_id: string;
+  /** Optional auth method id for providers with multiple auth methods. */
+  auth_method_id?: string;
+  /** User-provided connection fields keyed by field id. */
+  fields: Record<string, string>;
+}
+
+export interface DisconnectProviderCommand {
+  type: "disconnect_provider";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Provider store to write. MVP supports local provider storage. */
+  target: ConnectProviderStorageTarget;
+  /** Provider id from list_connect_providers. */
+  provider_id: string;
+}
+
+export interface ConnectProviderField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean;
+  required?: boolean;
+}
+
+export interface ConnectProviderAuthMethod {
+  id: string;
+  label: string;
+  description: string;
+  fields: ConnectProviderField[];
+}
+
+export interface ConnectProviderConnectionState {
+  is_connected: boolean;
+  id?: string;
+  provider_name?: string;
+  provider_type?: string;
+  auth_type?: "api" | "oauth";
+  base_url?: string;
+  timeout?: number | false;
+  region?: string;
+}
+
+export interface ConnectProviderEntry {
+  id: string;
+  display_name: string;
+  description: string;
+  provider_type: string;
+  provider_name: string;
+  provider_names: string[];
+  is_oauth?: boolean;
+  oauth_provider_id?: string;
+  requires_api_key: boolean;
+  fields?: ConnectProviderField[];
+  auth_methods?: ConnectProviderAuthMethod[];
+  connected: ConnectProviderConnectionState;
+}
+
+export interface ListConnectProvidersResponseMessage {
+  type: "list_connect_providers_response";
+  request_id: string;
+  success: boolean;
+  target: ConnectProviderStorageTarget;
+  providers: ConnectProviderEntry[];
+  error?: string;
+}
+
+export interface ConnectProviderResponseMessage {
+  type: "connect_provider_response";
+  request_id: string;
+  success: boolean;
+  target: ConnectProviderStorageTarget;
+  providers: ConnectProviderEntry[];
+  models_may_have_changed: boolean;
+  error?: string;
+}
+
+export interface DisconnectProviderResponseMessage {
+  type: "disconnect_provider_response";
+  request_id: string;
+  success: boolean;
+  target: ConnectProviderStorageTarget;
+  providers: ConnectProviderEntry[];
+  models_may_have_changed: boolean;
+  error?: string;
 }
 
 export interface UpdateModelPayload {
@@ -1019,6 +1123,12 @@ export interface CronAddCommand {
   /** Echoed back in the response for request correlation. */
   request_id: string;
   agent_id: string;
+  /**
+   * Conversation target for scheduled fires.
+   * - omitted/"default": agent default conversation
+   * - "new": create a fresh conversation for every fire
+   * - any other string: existing conversation id
+   */
   conversation_id?: string;
   name: string;
   description: string;
@@ -1032,6 +1142,26 @@ export interface CronAddCommand {
 
 export interface CronGetCommand {
   type: "cron_get";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  task_id: string;
+}
+
+export interface CronRunsCommand {
+  type: "cron_runs";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  task_id: string;
+  /** Maximum run-log entries to return. */
+  limit?: number;
+  /** Page offset for run-log entries. */
+  offset?: number;
+  /** Optional run id filter. */
+  run_id?: string;
+}
+
+export interface CronTriggerCommand {
+  type: "cron_trigger";
   /** Echoed back in the response for request correlation. */
   request_id: string;
   task_id: string;
@@ -1093,6 +1223,42 @@ export interface GetCwdMapResponseMessage {
   cwd_map: Record<string, string>;
   /** Listener boot CWD used when a conversation has no entry in cwd_map. */
   boot_working_directory: string | null;
+  error?: string;
+}
+
+export type ConversationPinScope = "global" | "local_project" | "both";
+export type ConversationPinAction = "pin" | "unpin" | "toggle";
+
+export interface ListConversationPinsCommand {
+  type: "list_conversation_pins";
+  request_id: string;
+  runtime: RuntimeScope;
+}
+
+export interface ListConversationPinsResponseMessage {
+  type: "list_conversation_pins_response";
+  request_id: string;
+  success: boolean;
+  pins: Array<{ conversation_id: string; is_local: boolean }>;
+  error?: string;
+}
+
+export interface SetConversationPinCommand {
+  type: "set_conversation_pin";
+  request_id: string;
+  runtime: RuntimeScope;
+  conversation_id: string;
+  action: ConversationPinAction;
+  scope?: ConversationPinScope;
+}
+
+export interface SetConversationPinResponseMessage {
+  type: "set_conversation_pin_response";
+  request_id: string;
+  success: boolean;
+  conversation_id: string;
+  pinned: boolean;
+  pins: Array<{ conversation_id: string; is_local: boolean }>;
   error?: string;
 }
 
@@ -1313,6 +1479,23 @@ export interface CronGetResponseMessage {
   success: boolean;
   found: boolean;
   task: CronTask | null;
+  error?: string;
+}
+
+export interface CronRunsResponseMessage {
+  type: "cron_runs_response";
+  request_id: string;
+  success: boolean;
+  page?: CronRunLogPage;
+  error?: string;
+}
+
+export interface CronTriggerResponseMessage {
+  type: "cron_trigger_response";
+  request_id: string;
+  success: boolean;
+  found: boolean;
+  task?: CronTask;
   error?: string;
 }
 
@@ -1779,17 +1962,24 @@ export type WsProtocolCommand =
   | DeleteMemoryFileCommand
   | EnableMemfsCommand
   | ListModelsCommand
+  | ListConnectProvidersCommand
+  | ConnectProviderCommand
+  | DisconnectProviderCommand
   | UpdateModelCommand
   | UpdateToolsetCommand
   | CronListCommand
   | CronAddCommand
   | CronGetCommand
+  | CronRunsCommand
+  | CronTriggerCommand
   | CronDeleteCommand
   | CronDeleteAllCommand
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
   | GetCwdMapCommand
+  | ListConversationPinsCommand
+  | SetConversationPinCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | GetExperimentsCommand
@@ -1828,10 +2018,15 @@ export type WsProtocolMessage =
   | StreamDeltaMessage
   | SubagentStateUpdateMessage
   | ListModelsResponseMessage
+  | ListConnectProvidersResponseMessage
+  | ConnectProviderResponseMessage
+  | DisconnectProviderResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
+  | ListConversationPinsResponseMessage
+  | SetConversationPinResponseMessage
   | ChannelsListResponseMessage
   | ChannelAccountsListResponseMessage
   | ChannelAccountCreateResponseMessage

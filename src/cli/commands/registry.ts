@@ -231,7 +231,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent globally, or use -l for local only",
+    desc: "Pin current agent or conversation (/pin [name]|agent [name]|convo)",
     order: 22,
     handler: () => {
       // Handled specially in App.tsx
@@ -289,11 +289,11 @@ export const commands: Record<string, Command> = {
     },
   },
   "/reload": {
-    desc: "Reload settings and restart TUI effects",
+    desc: "Reload settings and local extensions",
     order: 27.2,
     noArgs: true,
     handler: () => {
-      // Handled specially in AppCoordinator to trigger a soft restart
+      // Handled specially in AppCoordinator to reload runtime surfaces in-place
       return "Reloading...";
     },
   },

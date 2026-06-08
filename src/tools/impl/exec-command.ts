@@ -15,8 +15,9 @@ import { getShellEnv } from "./shell-env.js";
 import {
   buildPowerShellCommand,
   buildShellLaunchers,
+  selectAvailableShellLauncher,
 } from "./shell-launchers.js";
-import { truncateByChars } from "./truncation.js";
+import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
@@ -26,6 +27,7 @@ const MIN_EMPTY_WRITE_STDIN_YIELD_TIME_MS = 5_000;
 const MAX_YIELD_TIME_MS = 30_000;
 const MAX_EMPTY_WRITE_STDIN_YIELD_TIME_MS = 300_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
+const MAX_INLINE_OUTPUT_CHARS = LIMITS.BASH_OUTPUT_CHARS;
 const MAX_SESSION_OUTPUT_CHARS = 1_000_000;
 const EXEC_SESSION_CLEANUP_MS = 5 * 60 * 1000;
 
@@ -192,7 +194,7 @@ function maxCharsForTokens(maxOutputTokens?: number): number {
     maxOutputTokens && maxOutputTokens > 0
       ? maxOutputTokens
       : DEFAULT_MAX_OUTPUT_TOKENS;
-  return Math.max(1, maxTokens * 4);
+  return Math.min(Math.max(1, maxTokens * 4), MAX_INLINE_OUTPUT_CHARS);
 }
 
 function truncateOutput(text: string, maxOutputTokens?: number): string {
@@ -644,7 +646,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
   const launchers = buildExecLaunchers(args);
-  const launcher = launchers[0];
+  const launcher = selectAvailableShellLauncher(launchers, env);
   if (!launcher) {
     throw new Error("Command must be a non-empty string");
   }

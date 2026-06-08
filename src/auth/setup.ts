@@ -8,6 +8,7 @@ import { type SetupInitialMode, type SetupResult, SetupUI } from "./setup-ui";
 
 interface RunSetupOptions {
   initialMode?: SetupInitialMode;
+  localModeDisabledReason?: string;
 }
 
 /**
@@ -32,6 +33,7 @@ export async function runSetup(
     instance = render(
       React.createElement(SetupUI, {
         initialMode: options.initialMode,
+        localModeDisabledReason: options.localModeDisabledReason,
         onComplete: settle,
         onCancel: () => settle({ kind: "cancelled" }),
       }),

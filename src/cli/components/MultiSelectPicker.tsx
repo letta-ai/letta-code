@@ -9,7 +9,7 @@
 // - Items are identified by key (string), not index
 
 import { Box, type Key, useInput } from "ink";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -29,6 +29,7 @@ export interface MultiSelectPickerProps {
   onCancel: () => void;
   onSelectionChange?: (selectedKeys: string[]) => void;
   preview?: string;
+  enableOrdering?: boolean;
 }
 
 export const MultiSelectPicker = memo(function MultiSelectPicker({
@@ -38,12 +39,27 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
   onCancel,
   onSelectionChange,
   preview,
+  enableOrdering = false,
 }: MultiSelectPickerProps) {
   const [cursor, setCursor] = useState(0);
+  const [orderedItems, setOrderedItems] = useState<SelectableItem[]>(items);
   const [selectedSet, setSelectedSet] = useState<Set<string>>(
     () => new Set(selected),
   );
   const columns = useTerminalWidth();
+
+  useEffect(() => {
+    setOrderedItems(items);
+    setCursor((c) => Math.min(c, Math.max(0, items.length - 1)));
+  }, [items]);
+
+  const selectedKeysInOrder = useMemo(
+    () =>
+      orderedItems
+        .filter((item) => selectedSet.has(item.key))
+        .map((item) => item.key),
+    [orderedItems, selectedSet],
+  );
 
   const toggle = useCallback((key: string) => {
     setSelectedSet((prev) => {
@@ -57,19 +73,52 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
     });
   }, []);
 
-  // Propagate selection changes to parent in a separate render cycle
+  const moveSelectedItem = useCallback(
+    (direction: "up" | "down") => {
+      if (!enableOrdering) return;
+      const nextIndex = direction === "up" ? cursor - 1 : cursor + 1;
+      setOrderedItems((prev) => {
+        if (cursor < 0 || cursor >= prev.length) return prev;
+        if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+
+        const next = [...prev];
+        const current = next[cursor];
+        const target = next[nextIndex];
+        if (!current || !target) return prev;
+        next[cursor] = target;
+        next[nextIndex] = current;
+        return next;
+      });
+      if (nextIndex >= 0 && nextIndex < orderedItems.length) {
+        setCursor(nextIndex);
+      }
+    },
+    [cursor, enableOrdering, orderedItems.length],
+  );
+
+  // Propagate selection/order changes to parent in a separate render cycle
   useEffect(() => {
-    onSelectionChange?.([...selectedSet]);
-  }, [selectedSet, onSelectionChange]);
+    onSelectionChange?.(selectedKeysInOrder);
+  }, [selectedKeysInOrder, onSelectionChange]);
 
   const handleInput = useCallback(
     (input: string, key: Key) => {
-      if (key.upArrow) {
+      // Up: arrow or vim-style "k"
+      if (key.upArrow || input === "k") {
         setCursor((c) => Math.max(0, c - 1));
         return;
       }
-      if (key.downArrow) {
-        setCursor((c) => Math.min(items.length - 1, c + 1));
+      // Down: arrow or vim-style "j"
+      if (key.downArrow || input === "j") {
+        setCursor((c) => Math.min(orderedItems.length - 1, c + 1));
+        return;
+      }
+      if (enableOrdering && key.leftArrow) {
+        moveSelectedItem("up");
+        return;
+      }
+      if (enableOrdering && key.rightArrow) {
+        moveSelectedItem("down");
         return;
       }
       if (key.escape) {
@@ -77,19 +126,28 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
         return;
       }
       if (key.return) {
-        onConfirm([...selectedSet]);
+        onConfirm(selectedKeysInOrder);
         return;
       }
       // Space toggles checkbox (no-op for disabled items)
       if (input === " ") {
-        const item = items[cursor];
+        const item = orderedItems[cursor];
         if (item && !item.disabled) {
           toggle(item.key);
         }
         return;
       }
     },
-    [items, cursor, onCancel, onConfirm, selectedSet, toggle],
+    [
+      cursor,
+      enableOrdering,
+      moveSelectedItem,
+      onCancel,
+      onConfirm,
+      orderedItems,
+      selectedKeysInOrder,
+      toggle,
+    ],
   );
 
   useInput(handleInput, { isActive: true });
@@ -98,7 +156,7 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
     <Box flexDirection="column">
       {/* Items */}
       <Box flexDirection="column">
-        {items.map((item, index) => {
+        {orderedItems.map((item, index) => {
           const isCursor = index === cursor;
           const isChecked = selectedSet.has(item.key);
           const isDisabled = item.disabled ?? false;
@@ -154,6 +212,7 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
       <Box marginTop={1}>
         <Text dimColor>
           Space to toggle · ↑↓ to navigate · Enter to confirm · Esc to cancel
+          {enableOrdering ? " · ←→ to reorder" : ""}
         </Text>
       </Box>
     </Box>

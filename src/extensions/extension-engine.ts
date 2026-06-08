@@ -16,6 +16,8 @@ import { pathToFileURL } from "node:url";
 import type Letta from "@letta-ai/letta-client";
 import * as ts from "typescript";
 import { clearAvailableModelsCache } from "@/agent/available-models";
+import { sendMessageStreamWithBackend } from "@/agent/message";
+import type { Backend } from "@/backend";
 import type { PiProviderRegistration } from "@/backend/dev/pi-provider-extension-registry";
 import {
   registerPiProvider,
@@ -33,6 +35,17 @@ import {
 } from "@/extensions/capabilities";
 import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import {
+  appendExtensionDiagnostic,
+  recordExtensionDiagnostic,
+  recordStaleHandleUse,
+} from "@/extensions/extension-diagnostics";
+import {
+  getExtensionPermissionDefinition,
+  registerExtensionPermission,
+  unregisterExtensionPermission,
+  unregisterExtensionPermissionsForOwner,
+} from "@/extensions/permission-registry";
+import {
   getExtensionToolDefinition,
   registerExtensionTool,
   unregisterExtensionTool,
@@ -44,6 +57,8 @@ import type {
   ExtensionCommandRegistration,
   ExtensionContext,
   ExtensionDiagnostic,
+  ExtensionDiagnosticReportOptions,
+  ExtensionDiagnosticSeverity,
   ExtensionEventContext,
   ExtensionEventEmissionResult,
   ExtensionEventHandler,
@@ -57,7 +72,8 @@ import type {
   ExtensionPanelHandle,
   ExtensionPanelOptions,
   ExtensionPanelUpdate,
-  ExtensionRuntimeBackendApi,
+  ExtensionPermission,
+  ExtensionPermissionRegistration,
   ExtensionTool,
   ExtensionToolRegistration,
   ExtensionToolStartEvent,
@@ -133,6 +149,15 @@ export interface LettaExtensionApi {
       handler: ExtensionEventHandler<TName>,
     ) => LettaExtensionDisposer;
   };
+  permissions: {
+    register: (
+      permission: ExtensionPermissionRegistration,
+    ) => LettaExtensionDisposer;
+    unregister: (id: string) => void;
+  };
+  diagnostics: {
+    report: (diagnostic: ExtensionDiagnosticReportOptions) => void;
+  };
   ui: {
     clearPanel: (id: string) => void;
     clearStatus: (key: string) => void;
@@ -147,15 +172,7 @@ export interface LettaExtensionApi {
 export interface LocalExtensionDisposer {
   abortController?: AbortController;
   dispose: LettaExtensionDisposer;
-  owner?: ExtensionOwner;
-  path: string;
-}
-
-export interface LocalExtensionLoadError {
-  error: Error;
-  owner?: ExtensionOwner;
-  path: string;
-  phase?: ExtensionDiagnostic["phase"];
+  owner: ExtensionOwner;
 }
 
 export interface LocalExtensionUiRegistry {
@@ -175,12 +192,12 @@ export interface LocalExtensionRegistry {
   commands: Record<string, ExtensionCommand>;
   diagnostics: ExtensionDiagnostic[];
   disposers: LocalExtensionDisposer[];
-  errors: LocalExtensionLoadError[];
   events: LocalExtensionEventsRegistry;
   generation: number;
   loadedPaths: string[];
   ownerAbortControllers: Record<string, AbortController>;
   owners: Record<string, ExtensionOwner>;
+  permissions: Record<string, ExtensionPermission>;
   sources: LocalExtensionSource[];
   tools: Record<string, ExtensionTool>;
   ui: LocalExtensionUiRegistry;
@@ -207,34 +224,33 @@ export interface LoadLocalExtensionsOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionRuntimeBackendApi;
   capabilities?: ExtensionCapabilities;
+  builtinCommandIds?: Iterable<string>;
   generation?: number;
   onChange?: () => void;
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void;
-  reservedCommandIds?: Iterable<string>;
   reservedToolNames?: Iterable<string>;
 }
 
-export interface ExtensionHost {
+export interface ExtensionEngine {
   dispose: () => void;
   emitEvent: <TName extends ExtensionEventName>(
     name: TName,
     event: ExtensionEventMap[TName],
-    backend?: ExtensionRuntimeBackendApi,
   ) => Promise<ExtensionEventEmissionResult<TName>>;
   getSnapshot: () => LocalExtensionRegistry;
   reload: () => Promise<void>;
   subscribe: (listener: () => void) => () => void;
 }
 
-export interface CreateExtensionHostOptions
+export interface CreateExtensionEngineOptions
   extends ResolveLocalExtensionSourcesOptions {
   getContext?: () => ExtensionContext;
   getClient: () => Promise<Letta>;
-  backend?: ExtensionRuntimeBackendApi;
+  getBackend?: () => Backend | undefined;
+  builtinCommandIds?: Iterable<string>;
   capabilities?: ExtensionCapabilities;
-  reservedCommandIds?: Iterable<string>;
+  onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void;
   reservedToolNames?: Iterable<string>;
 }
 
@@ -277,12 +293,12 @@ function createEmptyExtensionRegistry(
     commands: {},
     diagnostics: [],
     disposers: [],
-    errors: [],
     events: {},
     generation,
     loadedPaths: [],
     ownerAbortControllers: {},
     owners: {},
+    permissions: {},
     sources,
     tools: {},
     ui: {
@@ -314,48 +330,6 @@ function isOwnerLive(
   return registry.owners[owner.id]?.generation === owner.generation;
 }
 
-function recordExtensionDiagnostic(
-  registry: LocalExtensionRegistry,
-  diagnostic: Omit<ExtensionDiagnostic, "timestamp">,
-  onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
-): void {
-  const completeDiagnostic: ExtensionDiagnostic = {
-    ...diagnostic,
-    timestamp: Date.now(),
-  };
-  registry.diagnostics.push(completeDiagnostic);
-  if (completeDiagnostic.phase !== "status.evaluate") {
-    registry.errors.push({
-      error: completeDiagnostic.error,
-      ...(completeDiagnostic.owner ? { owner: completeDiagnostic.owner } : {}),
-      path: completeDiagnostic.path ?? completeDiagnostic.owner?.path ?? "",
-      phase: completeDiagnostic.phase,
-    });
-  }
-  onDiagnostic?.(completeDiagnostic);
-}
-
-function recordStaleHandleUse(
-  registry: LocalExtensionRegistry,
-  owner: ExtensionOwner,
-  capability: ExtensionDiagnostic["capability"],
-  onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
-): void {
-  recordExtensionDiagnostic(
-    registry,
-    {
-      capability,
-      error: new Error(
-        `Ignored stale extension handle for ${capability?.kind ?? "capability"}${capability?.id ? ` '${capability.id}'` : ""}`,
-      ),
-      owner,
-      path: owner.path,
-      phase: "stale_handle",
-    },
-    onDiagnostic,
-  );
-}
-
 function snapshotRegistryForReaders(
   registry: LocalExtensionRegistry,
 ): LocalExtensionRegistry {
@@ -365,7 +339,6 @@ function snapshotRegistryForReaders(
     capabilities: cloneExtensionCapabilities(registry.capabilities),
     diagnostics: [...registry.diagnostics],
     disposers: [...registry.disposers],
-    errors: [...registry.errors],
     events: Object.fromEntries(
       Object.entries(registry.events).map(([name, handlers]) => [
         name,
@@ -375,6 +348,7 @@ function snapshotRegistryForReaders(
     loadedPaths: [...registry.loadedPaths],
     ownerAbortControllers: { ...registry.ownerAbortControllers },
     owners: { ...registry.owners },
+    permissions: { ...registry.permissions },
     sources: registry.sources.map((source) => ({
       ...source,
       files: [...source.files],
@@ -724,6 +698,35 @@ function normalizeExtensionCommand(
   };
 }
 
+function validateExtensionPermissionId(id: string): void {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
+    throw new Error(
+      "Extension permission id must be a lowercase slug using letters, numbers, and hyphens",
+    );
+  }
+}
+
+function normalizeExtensionPermission(
+  permission: ExtensionPermissionRegistration,
+  owner: ExtensionOwner,
+): ExtensionPermission {
+  validateExtensionPermissionId(permission.id);
+  if (typeof permission.check !== "function") {
+    throw new Error(
+      `Extension permission '${permission.id}' must include check()`,
+    );
+  }
+
+  return {
+    id: permission.id,
+    ...(permission.description ? { description: permission.description } : {}),
+    owner,
+    path: owner.path,
+    ...(permission.isEnabled ? { isEnabled: permission.isEnabled } : {}),
+    check: permission.check,
+  };
+}
+
 function validateExtensionToolName(name: string): void {
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) {
     throw new Error(
@@ -831,7 +834,7 @@ function createLettaExtensionApi(
   getContext: () => ExtensionContext,
   onChange: () => void,
   onDiagnostic: ((diagnostic: ExtensionDiagnostic) => void) | undefined,
-  reservedCommandIds: Set<string>,
+  builtinCommandIds: Set<string>,
   reservedToolNames: Set<string>,
   signal: AbortSignal,
 ): LettaExtensionApi {
@@ -873,6 +876,18 @@ function createLettaExtensionApi(
     const existing = registry.commands[id];
     if (existing?.owner?.id === owner.id) {
       delete registry.commands[id];
+      onChange();
+    }
+  };
+
+  const unregisterPermission = (id: string) => {
+    if (!capabilities.permissions) return;
+    validateExtensionPermissionId(id);
+    if (!guardLive({ id, kind: "permission" })) return;
+    const existing = registry.permissions[id];
+    if (existing?.owner?.id === owner.id) {
+      delete registry.permissions[id];
+      unregisterExtensionPermission(id, owner);
       onChange();
     }
   };
@@ -928,6 +943,49 @@ function createLettaExtensionApi(
     return () => unregisterProvider(name);
   };
 
+  const normalizeReportedDiagnostic = (
+    diagnostic: ExtensionDiagnosticReportOptions,
+  ): { message: string; severity: ExtensionDiagnosticSeverity } => {
+    if (!diagnostic || typeof diagnostic !== "object") {
+      throw new Error("Extension diagnostic report must be an object");
+    }
+    if (typeof diagnostic.message !== "string") {
+      throw new Error("Extension diagnostic report must include a message");
+    }
+    const message = diagnostic.message.trim();
+    if (message.length === 0) {
+      throw new Error("Extension diagnostic report message cannot be empty");
+    }
+    if (
+      diagnostic.severity !== undefined &&
+      diagnostic.severity !== "error" &&
+      diagnostic.severity !== "warning"
+    ) {
+      throw new Error(
+        "Extension diagnostic severity must be 'error' or 'warning'",
+      );
+    }
+    return { message, severity: diagnostic.severity ?? "error" };
+  };
+
+  const reportDiagnostic = (diagnostic: ExtensionDiagnosticReportOptions) => {
+    if (!guardLive(undefined)) return;
+    const normalized = normalizeReportedDiagnostic(diagnostic);
+    const error = new Error(normalized.message);
+    error.name = "ExtensionDiagnosticReport";
+    error.stack = undefined;
+    recordExtensionDiagnostic(
+      registry,
+      {
+        error,
+        owner,
+        phase: "report",
+        severity: normalized.severity,
+      },
+      onDiagnostic,
+    );
+  };
+
   const onEvent = <TName extends ExtensionEventName>(
     name: TName,
     handler: ExtensionEventHandler<TName>,
@@ -949,7 +1007,6 @@ function createLettaExtensionApi(
         handler: handler as unknown as ExtensionEventHandler,
         name,
         owner,
-        path: owner.path,
       },
     ];
     onChange();
@@ -975,9 +1032,18 @@ function createLettaExtensionApi(
         }
 
         const normalized = normalizeExtensionCommand(command, owner);
-        if (reservedCommandIds.has(normalized.id)) {
-          throw new Error(
-            `Extension command '${normalized.id}' conflicts with a built-in command`,
+        if (builtinCommandIds.has(normalized.id)) {
+          recordExtensionDiagnostic(
+            registry,
+            {
+              capability: { id: normalized.id, kind: "command" },
+              error: new Error(
+                `Extension command '${normalized.id}' overrides a built-in command`,
+              ),
+              owner,
+              phase: "command_override",
+            },
+            onDiagnostic,
           );
         }
 
@@ -1044,6 +1110,43 @@ function createLettaExtensionApi(
     events: {
       off: unregisterEvent,
       on: onEvent,
+    },
+    permissions: {
+      register(permission) {
+        if (!capabilities.permissions) {
+          return () => undefined;
+        }
+        if (!guardLive({ id: permission.id, kind: "permission" })) {
+          return () => undefined;
+        }
+
+        const normalized = normalizeExtensionPermission(permission, owner);
+        const existing = registry.permissions[normalized.id];
+        const existingGlobal = getExtensionPermissionDefinition(normalized.id);
+        if (existing || existingGlobal) {
+          throw new Error(
+            `Extension permission '${normalized.id}' is already registered by ${existing?.path ?? existingGlobal?.path}`,
+          );
+        }
+
+        registry.permissions[normalized.id] = normalized;
+        registerExtensionPermission({
+          ...normalized,
+          activationSignal: signal,
+          getContext,
+          isAvailable: () => {
+            if (signal.aborted) return false;
+            return normalized.isEnabled?.(getContext()) ?? true;
+          },
+        });
+        onChange();
+
+        return () => unregisterPermission(normalized.id);
+      },
+      unregister: unregisterPermission,
+    },
+    diagnostics: {
+      report: reportDiagnostic,
     },
     ui: {
       clearPanel,
@@ -1132,7 +1235,7 @@ export async function loadLocalExtensions(
   const sources = resolveLocalExtensionSources(options);
   const capabilities = resolveExtensionCapabilities(options.capabilities);
   const generation = options.generation ?? 1;
-  const reservedCommandIds = new Set([...(options.reservedCommandIds ?? [])]);
+  const builtinCommandIds = new Set([...(options.builtinCommandIds ?? [])]);
   const reservedToolNames = new Set([...(options.reservedToolNames ?? [])]);
   const registry = createEmptyExtensionRegistry(
     sources,
@@ -1181,7 +1284,7 @@ export async function loadLocalExtensions(
             getContext,
             onChange,
             options.onDiagnostic,
-            reservedCommandIds,
+            builtinCommandIds,
             reservedToolNames,
             abortController.signal,
           ),
@@ -1191,7 +1294,6 @@ export async function loadLocalExtensions(
             abortController,
             dispose,
             owner,
-            path: extensionPath,
           });
         }
         registry.loadedPaths.push(extensionPath);
@@ -1204,7 +1306,6 @@ export async function loadLocalExtensions(
           {
             error: error instanceof Error ? error : new Error(String(error)),
             owner,
-            path: extensionPath,
             phase: failurePhase,
           },
           options.onDiagnostic,
@@ -1243,7 +1344,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
   name: TName,
   event: ExtensionEventMap[TName],
   getContext: () => ExtensionContext,
-  backend?: ExtensionRuntimeBackendApi,
+  backend?: Backend,
   onDiagnostic?: (diagnostic: ExtensionDiagnostic) => void,
 ): Promise<ExtensionEventEmissionResult<TName>> {
   if (!registry) {
@@ -1286,6 +1387,7 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
             typeof event.conversationId === "string"
               ? event.conversationId
               : context.sessionId,
+          sendMessageStream: sendMessageStreamWithBackend,
           workingDirectory: context.cwd,
         }),
         context,
@@ -1323,19 +1425,17 @@ export async function emitLocalExtensionEvent<TName extends ExtensionEventName>(
       if (toolStartEvent && toolStartArgsBeforeHandler) {
         toolStartEvent.args = toolStartArgsBeforeHandler;
       }
-      recordExtensionDiagnostic(
+      const diagnostic = recordExtensionDiagnostic(
         registry,
         {
           capability: { id: name, kind: "event" },
           error: error instanceof Error ? error : new Error(String(error)),
-          ...(registration.owner ? { owner: registration.owner } : {}),
-          path: registration.path,
+          owner: registration.owner,
           phase: "event",
         },
         onDiagnostic,
       );
-      const diagnostic = registry.diagnostics.at(-1);
-      if (diagnostic) diagnostics.push(diagnostic);
+      diagnostics.push(diagnostic);
     }
   }
 
@@ -1350,14 +1450,13 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   const disposers = [...registry.disposers].reverse();
   registry.disposers = [];
 
-  for (const { dispose, owner, path: extensionPath } of disposers) {
+  for (const { dispose, owner } of disposers) {
     try {
       dispose();
     } catch (error) {
       recordExtensionDiagnostic(registry, {
         error: error instanceof Error ? error : new Error(String(error)),
-        ...(owner ? { owner } : {}),
-        path: extensionPath,
+        owner,
         phase: "dispose",
       });
     }
@@ -1365,6 +1464,7 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
 
   for (const owner of Object.values(registry.owners)) {
     unregisterPiProvidersForOwner(owner.id);
+    unregisterExtensionPermissionsForOwner(owner);
     unregisterExtensionToolsForOwner(owner);
   }
   clearAvailableModelsCache();
@@ -1373,6 +1473,7 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   registry.events = {};
   registry.ownerAbortControllers = {};
   registry.owners = {};
+  registry.permissions = {};
   registry.tools = {};
   registry.ui.panels = {};
   registry.ui.statusOwners = {};
@@ -1381,19 +1482,22 @@ export function disposeLocalExtensions(registry: LocalExtensionRegistry): void {
   delete registry.ui.statuslineRendererOwner;
 }
 
-export function createExtensionHost(
-  options: CreateExtensionHostOptions,
-): ExtensionHost {
+export function createExtensionEngine(
+  options: CreateExtensionEngineOptions,
+): ExtensionEngine {
+  const { getBackend, onDiagnostic, ...extensionOptions } = options;
   let generation = 0;
   let disposed = false;
-  const capabilities = resolveExtensionCapabilities(options.capabilities);
+  const capabilities = resolveExtensionCapabilities(
+    extensionOptions.capabilities,
+  );
   const getContext =
-    options.getContext ??
+    extensionOptions.getContext ??
     (() => {
       throw new Error("Extension context is not available yet");
     });
   let activeRegistry = createEmptyExtensionRegistry(
-    resolveLocalExtensionSources(options),
+    resolveLocalExtensionSources(extensionOptions),
     generation,
     capabilities,
   );
@@ -1414,7 +1518,7 @@ export function createExtensionHost(
     generation += 1;
     const loadGeneration = generation;
     activeRegistry = createEmptyExtensionRegistry(
-      resolveLocalExtensionSources(options),
+      resolveLocalExtensionSources(extensionOptions),
       loadGeneration,
       capabilities,
     );
@@ -1422,7 +1526,7 @@ export function createExtensionHost(
 
     let loadingRegistry: LocalExtensionRegistry | null = null;
     const nextRegistry = await loadLocalExtensions({
-      ...options,
+      ...extensionOptions,
       generation: loadGeneration,
       onChange: () => {
         if (!disposed && loadingRegistry && loadGeneration === generation) {
@@ -1436,21 +1540,15 @@ export function createExtensionHost(
         if (loadingRegistry && loadGeneration === generation) {
           activeRegistry = loadingRegistry;
           publish();
+          onDiagnostic?.(diagnostic);
           return;
         }
         // Stale handles from a prior generation report through their old
-        // activation callback. Preserve the diagnostic on the current host
+        // activation callback. Preserve the diagnostic on the current engine
         // snapshot without reviving the old registry.
-        activeRegistry.diagnostics.push(diagnostic);
-        if (diagnostic.phase !== "status.evaluate") {
-          activeRegistry.errors.push({
-            error: diagnostic.error,
-            ...(diagnostic.owner ? { owner: diagnostic.owner } : {}),
-            path: diagnostic.path ?? diagnostic.owner?.path ?? "",
-            phase: diagnostic.phase,
-          });
-        }
+        appendExtensionDiagnostic(activeRegistry, diagnostic);
         publish();
+        onDiagnostic?.(diagnostic);
       },
     });
     loadingRegistry = nextRegistry;
@@ -1470,23 +1568,25 @@ export function createExtensionHost(
       generation += 1;
       disposeLocalExtensions(activeRegistry);
       activeRegistry = createEmptyExtensionRegistry(
-        resolveLocalExtensionSources(options),
+        resolveLocalExtensionSources(extensionOptions),
         generation,
         capabilities,
       );
       publish();
       listeners.clear();
     },
-    async emitEvent(name, payload, backend) {
+    async emitEvent(name, payload) {
       if (disposed) {
         return { diagnostics: [], handlerCount: 0, name, results: [] };
       }
+      const invocationBackend = getBackend?.();
       const result = await emitLocalExtensionEvent(
         activeRegistry,
         name,
         payload,
         getContext,
-        backend ?? options.backend,
+        invocationBackend,
+        onDiagnostic,
       );
       if (result.diagnostics.length > 0) {
         publish();

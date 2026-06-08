@@ -17,6 +17,31 @@ async function runUpdateSubcommand(): Promise<number> {
   return result.success ? 0 : 1;
 }
 
+async function runVersionSubcommand(): Promise<number> {
+  const { getVersion } = await import("@/version");
+  console.log(`${getVersion()} (Letta Code)`);
+  return 0;
+}
+
+export function subcommandNeedsEarlyBackendMode(
+  command: string | undefined,
+): boolean {
+  switch (command) {
+    case "agents":
+    case "connect":
+    case "install":
+    case "memfs":
+    case "memory":
+    case "messages":
+    case "remote":
+    case "server":
+    case "skills":
+      return true;
+    default:
+      return false;
+  }
+}
+
 export async function runSubcommand(argv: string[]): Promise<number | null> {
   const [command, ...rest] = argv;
 
@@ -25,6 +50,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
   }
 
   switch (command) {
+    case "version":
+      return runVersionSubcommand();
     case "update":
     case "upgrade":
       return runUpdateSubcommand();

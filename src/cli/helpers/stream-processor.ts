@@ -72,6 +72,11 @@ export class StreamProcessor {
     if (chunk.message_type === "ping") {
       return { shouldOutput: false };
     }
+    if (
+      (chunk as { message_type?: string }).message_type === "response_state"
+    ) {
+      return { shouldOutput: false };
+    }
 
     // Detect mid-stream errors
     // Case 1: LettaErrorMessage from the API (has message_type: "error_message")

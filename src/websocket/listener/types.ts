@@ -8,6 +8,7 @@ import type {
 import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
+import type { ExtensionAdapter } from "@/extensions/extension-adapter";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import type {
   DequeuedBatch,
@@ -40,6 +41,7 @@ export interface StartListenerOptions {
     status: "idle" | "receiving" | "processing",
     connectionId: string,
   ) => void;
+  onLog?: (message: string) => void;
   onRetrying?: (
     attempt: number,
     maxAttempts: number,
@@ -180,6 +182,8 @@ export type ListenerRuntime = {
   hasSuccessfulConnection: boolean;
   /** True once the WS has connected at least once. Never reset to false. */
   everConnected: boolean;
+  /** Provider-only local extension adapter for desktop/listener surfaces. */
+  extensionAdapter?: ExtensionAdapter | undefined;
   sessionId: string;
   eventSeqCounter: number;
   lastStopReason: string | null;

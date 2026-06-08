@@ -3,6 +3,11 @@
 
 import { resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
+import {
+  checkExtensionPermissions,
+  type ExtensionPermissionDefinition,
+  getAvailableExtensionPermissionsRegistry,
+} from "@/extensions/permission-registry";
 import { extensionToolRequiresApproval } from "@/extensions/tool-registry";
 import { runPermissionRequestHooks } from "@/hooks";
 import type { PermissionModeState } from "@/tools/manager";
@@ -92,6 +97,12 @@ const FILE_TOOLS_V1 = [
 
 type ToolArgs = Record<string, unknown>;
 
+interface ExtensionPermissionCheckOptions {
+  conversationId?: string | null;
+  phase?: "approval" | "execution";
+  toolCallId?: string | null;
+}
+
 function envFlagEnabled(name: string): boolean {
   const value = process.env[name];
   if (!value) return false;
@@ -118,9 +129,10 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  * Check permission for a tool execution.
  *
  * Decision logic:
- * 0. Cross-agent guard (unbypassable) → DENY any tool call targeting
- *    another agent's memory dir unless it targets the current agent, targets
- *    an explicit parent agent for a subagent process, or the parent process
+ * 0. Cross-agent guard (enabled by default for headless + subagents,
+ *    unbypassable when enabled) → DENY any tool call targeting another
+ *    agent's memory dir unless it targets the current agent, targets an
+ *    explicit parent agent for a subagent process, or the parent process
  *    passed --disable-memory-guard.
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
@@ -270,9 +282,9 @@ function checkPermissionForEngine(
   const workingDirectoryTools =
     engine === "v2" ? WORKING_DIRECTORY_TOOLS_V2 : WORKING_DIRECTORY_TOOLS_V1;
 
-  // Cross-agent guard — denies any tool call targeting another agent's
-  // memory unless that agent is in the allowed set. Unbypassable by any
-  // mode, rule, or flag.
+  // Cross-agent guard — when enabled, denies any tool call targeting another
+  // agent's memory unless that agent is in the allowed set. Unbypassable by
+  // any mode, rule, or flag.
   const guardResult = evaluateCrossAgentGuard(
     toolName,
     toolArgs,
@@ -817,9 +829,14 @@ export async function checkPermissionWithHooks(
   workingDirectory: string = process.cwd(),
   modeState?: PermissionModeState,
   agentId?: string,
+  extensionPermissions: Map<
+    string,
+    ExtensionPermissionDefinition
+  > = getAvailableExtensionPermissionsRegistry(),
+  extensionPermissionOptions: ExtensionPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
-  const result = checkPermission(
+  let result = checkPermission(
     toolName,
     toolArgs,
     permissions,
@@ -827,6 +844,32 @@ export async function checkPermissionWithHooks(
     modeState,
     agentId,
   );
+
+  if (result.decision !== "deny") {
+    const extensionDecision = await checkExtensionPermissions(
+      {
+        agentId: agentId ?? null,
+        conversationId: extensionPermissionOptions.conversationId ?? null,
+        toolCallId: extensionPermissionOptions.toolCallId ?? null,
+        toolName,
+        args: toolArgs,
+        cwd: workingDirectory,
+        workingDirectory,
+        permissionMode: modeState?.mode ?? permissionMode.getMode(),
+        phase: extensionPermissionOptions.phase ?? "approval",
+      },
+      extensionPermissions,
+    );
+    if (extensionDecision) {
+      result = {
+        decision: extensionDecision.decision,
+        matchedRule: extensionDecision.matchedRule,
+        reason:
+          extensionDecision.reason ??
+          `Matched ${extensionDecision.matchedRule}`,
+      };
+    }
+  }
 
   // If decision is "ask", run PermissionRequest hooks to see if they auto-allow/deny
   if (result.decision === "ask") {

@@ -40,7 +40,7 @@ import {
   hasActiveSubagents,
 } from "@/agent/subagent-state";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
-import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
+import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import {
   type Buffers,
   type Line,
@@ -201,7 +201,7 @@ type ConversationLoopContext = {
   generateConversationDescription: (options?: {
     force?: boolean;
   }) => Promise<void>;
-  extensionRuntime: LocalExtensionRuntime;
+  extensionAdapter: LocalExtensionAdapter;
   generateConversationTitle: () => Promise<string | null>;
   hasConversationModelOverrideRef: MutableRefObject<boolean>;
   interruptQueuedRef: MutableRefObject<boolean>;
@@ -299,7 +299,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
     generateConversationDescription,
-    extensionRuntime,
+    extensionAdapter,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -473,6 +473,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         allowReentry?: boolean;
         submissionGeneration?: number;
         transcriptStartLineIndex?: number | null;
+        allowResponseStateReuse?: boolean;
       },
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
@@ -630,11 +631,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       }
       processingConversationRef.current += 1;
 
-      if (
-        hasUserMessageInput(currentInput) &&
-        extensionRuntime.hasExtensionSources &&
-        !extensionRuntime.isLoading
-      ) {
+      if (hasUserMessageInput(currentInput)) {
         const originalInput = currentInput;
         try {
           const turnStartEvent = {
@@ -642,7 +639,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             conversationId: conversationIdRef.current ?? null,
             input: currentInput,
           };
-          await extensionRuntime.emitEvent("turn_start", turnStartEvent);
+          await extensionAdapter.events.emit("turn_start", turnStartEvent);
           currentInput = isTurnInputArray(turnStartEvent.input)
             ? turnStartEvent.input
             : originalInput;
@@ -850,6 +847,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 agentId: agentIdRef.current,
                 overrideModel: tempModelOverrideRef.current ?? undefined,
                 preparedToolContext: preparedToolContext.preparedToolContext,
+                allowResponseStateReuse:
+                  options?.allowResponseStateReuse === true,
               },
             );
             stream = nextStream;
@@ -1660,12 +1659,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               conversationIdRef.current !== "default"
             ) {
               isAutoConversationTitleInFlightRef.current = true;
+              const titleConversationId = conversationIdRef.current;
               const conversationTitle = await generateConversationTitle();
               if (!conversationTitle) {
                 isAutoConversationTitleInFlightRef.current = false;
+              } else if (
+                !shouldAutoGenerateConversationTitleRef.current ||
+                conversationIdRef.current !== titleConversationId
+              ) {
+                isAutoConversationTitleInFlightRef.current = false;
               } else {
                 void getBackend()
-                  .updateConversation(conversationIdRef.current, {
+                  .updateConversation(titleConversationId, {
                     summary: conversationTitle,
                   })
                   .then(() => {
@@ -1913,6 +1918,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 alwaysRequiresUserInput,
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
+                toolContextId: approvalToolContextIdRef.current,
               });
 
             // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
@@ -2204,7 +2210,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       otid: randomUUID(),
                     },
                   ],
-                  { allowReentry: true },
+                  {
+                    allowReentry: true,
+                    allowResponseStateReuse: true,
+                  },
                 );
                 toolResultsInFlightRef.current = false;
                 return;
@@ -2985,7 +2994,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       setUiPermissionMode,
       prepareScopedToolExecutionContext,
       maybeStreamSyntheticNoModelResponse,
-      extensionRuntime,
+      extensionAdapter,
     ],
   );
 

@@ -104,16 +104,17 @@ import {
   disableExtensionsForProcess,
   shouldDisableExtensions,
 } from "./extensions/disable";
-import type { ExtensionRuntime } from "./extensions/extension-runtime";
+import type { ExtensionAdapter } from "./extensions/extension-adapter";
 import type { ExtensionConversationOpenReason } from "./extensions/types";
 import {
+  createHeadlessExtensionAdapter,
   createHeadlessExtensionContext,
-  createHeadlessExtensionRuntime,
   emitHeadlessConversationClose,
   emitHeadlessConversationOpen,
-} from "./headless-extension-runtime";
+} from "./headless-extension-adapter";
 import { computeDiffPreviews } from "./helpers/diff-preview";
 import { formatPermissionDenial } from "./permissions/format-denial";
+import { applyStartupPermissionMode } from "./permissions/startup";
 import { QueueRuntime } from "./queue/queue-runtime";
 import {
   mergeQueuedTurnInput,
@@ -123,8 +124,10 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "./reminders/engine";
+import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
 import {
   createSharedReminderState,
+  enqueueMemoryGitSyncReminder,
   syncReminderStateFromContextTracker,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
@@ -426,7 +429,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   conversationId: string;
   overrideModel?: string | null;
   cachedAgent?: AgentState | null;
-  extensionEventEmitter?: ExtensionRuntime["eventEmitter"];
+  extensionEvents?: ExtensionAdapter["events"];
 }): Promise<{
   preparedToolContext: Awaited<
     ReturnType<typeof prepareToolExecutionContextForScope>
@@ -440,7 +443,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
     cachedAgent: params.cachedAgent,
-    extensionEventEmitter: params.extensionEventEmitter,
+    extensionEvents: params.extensionEvents,
   });
 
   return {
@@ -464,17 +467,15 @@ async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
   input: Array<MessageCreate | ApprovalCreate>;
-  runtime: ExtensionRuntime;
+  adapter: ExtensionAdapter;
 }): Promise<Array<MessageCreate | ApprovalCreate>> {
-  if (!options.runtime.getSnapshot().hasExtensionSources) return options.input;
-
   try {
     const event = {
       agentId: options.agent.id,
       conversationId: options.conversationId,
       input: options.input,
     };
-    await options.runtime.emitEvent("turn_start", event);
+    await options.adapter.events.emit("turn_start", event);
     return isTurnInputArray(event.input) ? event.input : options.input;
   } catch {
     // Extension turn_start handlers should not block sending the turn.
@@ -486,12 +487,12 @@ async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
   approvalMessages: Array<MessageCreate | ApprovalCreate>;
-  extensionEventEmitter?: ExtensionRuntime["eventEmitter"];
+  extensionEvents?: ExtensionAdapter["events"];
 }): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   const approvalToolContext = await prepareHeadlessToolExecutionContext({
     agentId: params.agentId,
     conversationId: params.conversationId,
-    extensionEventEmitter: params.extensionEventEmitter,
+    extensionEvents: params.extensionEvents,
   });
 
   return await sendMessageStream(
@@ -557,20 +558,25 @@ export async function handleHeadlessCommand(
     const { toolFilter } = await import("@/tools/filter");
     toolFilter.setEnabledTools(values.tools);
   }
+
+  const { cliPermissions } = await import(
+    "@/permissions/cli-permissions-instance"
+  );
+  cliPermissions.setMemoryGuardDisabled(false);
+
   // Set permission mode if provided (or via --yolo alias)
-  const permissionModeValue = values["permission-mode"];
+  const permissionModeValue =
+    typeof values["permission-mode"] === "string"
+      ? values["permission-mode"]
+      : undefined;
   const yoloMode = values.yolo;
-  if (yoloMode || permissionModeValue) {
-    const { permissionMode } = await import("@/permissions/mode");
-    if (yoloMode) {
-      permissionMode.setMode("unrestricted");
-    } else if (permissionModeValue) {
-      const { migratePermissionMode } = await import("@/permissions/mode");
-      const migrated = migratePermissionMode(permissionModeValue);
-      if (migrated) {
-        permissionMode.setMode(migrated);
-      }
-    }
+  const startupPermissionMode = await applyStartupPermissionMode({
+    permissionModeValue,
+    yoloMode,
+  });
+  if (!startupPermissionMode.ok) {
+    console.error(startupPermissionMode.message);
+    process.exit(1);
   }
 
   // Set CLI permission overrides if provided
@@ -579,9 +585,6 @@ export async function handleHeadlessCommand(
     values.disallowedTools ||
     values["disable-memory-guard"]
   ) {
-    const { cliPermissions } = await import(
-      "@/permissions/cli-permissions-instance"
-    );
     if (values.allowedTools) {
       cliPermissions.setAllowedTools(values.allowedTools);
     }
@@ -1120,6 +1123,7 @@ export async function handleHeadlessCommand(
         modelOverride: model,
         stripMessages: true,
         stripSkills: false,
+        enableMemfs: noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
       });
     } else {
       // Import from local file
@@ -1129,6 +1133,7 @@ export async function handleHeadlessCommand(
         modelOverride: model,
         stripMessages: true,
         stripSkills: false,
+        enableMemfs: noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
       });
     }
 
@@ -1137,7 +1142,7 @@ export async function handleHeadlessCommand(
     // Mark imported agents as "custom" to prevent legacy auto-migration
     // from overwriting their system prompt on resume.
     if (settingsManager.isReady) {
-      settingsManager.setSystemPromptPreset(agent.id, "custom");
+      settingsManager.setSystemPromptCustom(agent.id);
     }
 
     // Display extracted skills summary
@@ -1494,40 +1499,30 @@ export async function handleHeadlessCommand(
     agent = result.agent;
   }
 
-  // Auto-heal system prompt drift (rebuild from stored recipe).
-  // Runs after memfs sync so isMemfsEnabled() reflects the final state.
+  // Maintain managed system prompt versions without blocking startup.
+  // This updates only agents whose current prompt still matches the stored
+  // managed prompt hash, so custom edits are preserved.
   if (isResumingAgent && !systemPromptPreset) {
-    let storedPreset = settingsManager.getSystemPromptPreset(agent.id);
-
-    // Adopt legacy agents (created before recipe tracking) as "custom"
-    // so their prompts are left untouched by auto-heal.
-    if (
-      !storedPreset &&
-      agent.tags?.includes("origin:letta-code") &&
-      !agent.tags?.includes("role:subagent")
-    ) {
-      storedPreset = "custom";
-      settingsManager.setSystemPromptPreset(agent.id, storedPreset);
+    const {
+      ensureLettaCodeOriginTag,
+      getMemoryPromptModeForAgent,
+      scheduleManagedSystemPromptUpdate,
+    } = await import("@/agent/system-prompt-versioning");
+    let taggedAgent = agent;
+    try {
+      taggedAgent = await ensureLettaCodeOriginTag(agent);
+    } catch (error) {
+      debugWarn(
+        "headless startup",
+        `Failed to ensure Letta Code origin tag for ${agent.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
-
-    if (storedPreset && storedPreset !== "custom") {
-      const { buildSystemPrompt: rebuildPrompt, isKnownPreset: isKnown } =
-        await import("@/agent/prompt-assets");
-      if (isKnown(storedPreset)) {
-        const memoryMode = settingsManager.isMemfsEnabled(agent.id)
-          ? "memfs"
-          : "standard";
-        const expected = rebuildPrompt(storedPreset, memoryMode);
-        if (agent.system !== expected) {
-          await backend.updateAgent(agent.id, { system: expected });
-          agent = await backend.retrieveAgent(agent.id, {
-            include: ["agent.secrets", "agent.tools", "agent.tags"],
-          });
-        }
-      } else {
-        settingsManager.clearSystemPromptPreset(agent.id);
-      }
-    }
+    scheduleManagedSystemPromptUpdate({
+      agent: taggedAgent,
+      memoryMode: getMemoryPromptModeForAgent(taggedAgent.id),
+    });
   }
 
   const startupAgentId = agent.id;
@@ -1665,12 +1660,8 @@ export async function handleHeadlessCommand(
   }
 
   const sessionStats = new SessionStats();
-  const headlessPermissionMode = yoloMode
-    ? "unrestricted"
-    : typeof permissionModeValue === "string"
-      ? permissionModeValue
-      : null;
-  const headlessExtensionRuntime = createHeadlessExtensionRuntime({
+  const headlessPermissionMode = startupPermissionMode.mode;
+  const headlessExtensionAdapter = createHeadlessExtensionAdapter({
     agent,
     backend,
     conversationId,
@@ -1679,13 +1670,13 @@ export async function handleHeadlessCommand(
     sessionStats,
     disabled: extensionsDisabled,
   });
-  await headlessExtensionRuntime.reload();
+  await headlessExtensionAdapter.reload();
   try {
     await emitHeadlessConversationOpen({
       agent,
       conversationId,
       reason: conversationOpenReason,
-      runtime: headlessExtensionRuntime,
+      adapter: headlessExtensionAdapter,
     });
   } catch {
     // Extension lifecycle events should not block headless startup.
@@ -1706,7 +1697,7 @@ export async function handleHeadlessCommand(
       agentId: agent.id,
       conversationId,
       cachedAgent: agent as AgentState,
-      extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
+      extensionEvents: headlessExtensionAdapter.events,
     });
     availableTools = initialToolContext.availableTools;
     cachedAgent = initialToolContext.preparedToolContext.agent;
@@ -1725,7 +1716,7 @@ export async function handleHeadlessCommand(
       resolvedSkillSources,
       systemInfoReminderEnabled,
       effectiveReflectionSettings,
-      headlessExtensionRuntime,
+      headlessExtensionAdapter,
     );
     return;
   }
@@ -1746,7 +1737,7 @@ export async function handleHeadlessCommand(
     try {
       if (!headlessConversationClosed) {
         headlessConversationClosed = true;
-        headlessExtensionRuntime.updateContext(
+        headlessExtensionAdapter.updateContext(
           createHeadlessExtensionContext({
             agent,
             conversationId,
@@ -1761,7 +1752,7 @@ export async function handleHeadlessCommand(
             agent,
             conversationId,
             durationMs: sessionStats.getSnapshot().totalWallMs,
-            runtime: headlessExtensionRuntime,
+            adapter: headlessExtensionAdapter,
           });
         } catch {
           // Extension lifecycle events should not block headless shutdown.
@@ -1770,7 +1761,7 @@ export async function handleHeadlessCommand(
       telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
       await telemetry.flush();
     } finally {
-      headlessExtensionRuntime.dispose();
+      headlessExtensionAdapter.dispose();
       telemetry.setSessionStatsGetter(undefined);
     }
     return await flushAndExit(code);
@@ -1878,7 +1869,7 @@ export async function handleHeadlessCommand(
         agentId: agent.id,
         conversationId,
         approvalMessages,
-        extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
+        extensionEvents: headlessExtensionAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -2038,7 +2029,7 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
-  headlessExtensionRuntime.updateContext(
+  headlessExtensionAdapter.updateContext(
     createHeadlessExtensionContext({
       agent,
       conversationId,
@@ -2051,7 +2042,7 @@ ${SYSTEM_REMINDER_CLOSE}
     agent,
     conversationId,
     input: currentInput,
-    runtime: headlessExtensionRuntime,
+    adapter: headlessExtensionAdapter,
   });
 
   // Track lastRunId outside the while loop so it's available in catch block
@@ -2128,7 +2119,7 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId,
           overrideModel: overrideModelHandle ?? preparedEffectiveModel,
           cachedAgent,
-          extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
+          extensionEvents: headlessExtensionAdapter.events,
         });
         availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
@@ -3006,6 +2997,17 @@ ${SYSTEM_REMINDER_CLOSE}
     await exitHeadless(1, "headless_runtime_exception");
   }
 
+  await runPostTurnMemorySync({
+    agentId: agent.id,
+    isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+    debugLabel: "Post-turn headless memory sync",
+    emitWarning: (text) => {
+      if (outputFormat !== "stream-json") {
+        console.error(text);
+      }
+    },
+  });
+
   // Update stats with final usage data from buffers
   sessionStats.updateUsageFromBuffers(buffers);
 
@@ -3135,7 +3137,7 @@ async function runBidirectionalMode(
   skillSources: SkillSource[],
   systemInfoReminderEnabled: boolean,
   reflectionSettings: ReflectionSettings,
-  headlessExtensionRuntime: ExtensionRuntime,
+  headlessExtensionAdapter: ExtensionAdapter,
 ): Promise<void> {
   const sessionId = agent.id;
   const backend = getBackend();
@@ -3156,7 +3158,7 @@ async function runBidirectionalMode(
             agent,
             conversationId,
             durationMs: null,
-            runtime: headlessExtensionRuntime,
+            adapter: headlessExtensionAdapter,
           });
         } catch {
           // Extension lifecycle events should not block headless shutdown.
@@ -3165,7 +3167,7 @@ async function runBidirectionalMode(
       telemetry.trackSessionEnd(undefined, exitReason);
       await telemetry.flush();
     } finally {
-      headlessExtensionRuntime.dispose();
+      headlessExtensionAdapter.dispose();
     }
     return await flushAndExit(code);
   };
@@ -3283,7 +3285,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId,
         approvalMessages,
-        extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
+        extensionEvents: headlessExtensionAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -3703,7 +3705,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId: targetConversationId,
         approvalMessages: [approvalInput],
-        extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
+        extensionEvents: headlessExtensionAdapter.events,
       });
 
       const drainResult = await drainStreamWithResume(
@@ -4109,7 +4111,7 @@ async function runBidirectionalMode(
           skillSources,
           maybeLaunchReflectionSubagent,
         });
-        headlessExtensionRuntime.updateContext(
+        headlessExtensionAdapter.updateContext(
           createHeadlessExtensionContext({
             agent,
             conversationId,
@@ -4128,7 +4130,7 @@ async function runBidirectionalMode(
           agent,
           conversationId,
           input: currentInput,
-          runtime: headlessExtensionRuntime,
+          adapter: headlessExtensionAdapter,
         });
 
         // Approval handling loop - continue until end_turn or error
@@ -4168,7 +4170,7 @@ async function runBidirectionalMode(
             const turnToolContext = await prepareHeadlessToolExecutionContext({
               agentId: agent.id,
               conversationId,
-              extensionEventEmitter: headlessExtensionRuntime.eventEmitter,
+              extensionEvents: headlessExtensionAdapter.events,
             });
             availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {
@@ -4614,6 +4616,17 @@ async function runBidirectionalMode(
         };
         writeWireMessage(errorResultMsg);
       } finally {
+        await runPostTurnMemorySync({
+          agentId: agent.id,
+          isEnabled: (id) => settingsManager.isMemfsEnabled(id),
+          debugLabel: "Post-turn headless memory sync",
+          enqueueReminder: (text) => {
+            enqueueMemoryGitSyncReminder(sharedReminderState, { text });
+          },
+          emitWarning: (text) => {
+            debugWarn("memfs-git", text);
+          },
+        });
         turnInProgress = false;
         blockedEmittedThisTurn = false;
         currentAbortController = null;

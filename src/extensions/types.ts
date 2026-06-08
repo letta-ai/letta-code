@@ -79,6 +79,7 @@ export interface ExtensionCapabilities {
   tools: boolean;
   commands: boolean;
   events: ExtensionEventCapabilities;
+  permissions: boolean;
   providers: boolean;
   ui: ExtensionUiCapabilities;
 }
@@ -127,38 +128,6 @@ export interface ExtensionConversationHandle {
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
-export interface ExtensionRuntimeBackendForkConversationOptions
-  extends ExtensionConversationForkOptions {
-  agentId?: string;
-}
-
-export interface ExtensionRuntimeBackendSendMessageOptions
-  extends ExtensionConversationSendMessageOptions {
-  agentId?: string;
-}
-
-export interface ExtensionRuntimeBackendHistoryOptions
-  extends ExtensionConversationHistoryOptions {
-  agentId?: string | null;
-}
-
-export interface ExtensionRuntimeBackendApi {
-  forkConversation: (
-    conversationId: string,
-    options?: ExtensionRuntimeBackendForkConversationOptions,
-  ) => Promise<{ id: string }>;
-  getConversationHistory: (
-    conversationId: string,
-    options?: ExtensionRuntimeBackendHistoryOptions,
-  ) => Promise<Message[]>;
-  sendMessageStream: (
-    conversationId: string,
-    messages: ExtensionConversationMessage[],
-    options?: ExtensionRuntimeBackendSendMessageOptions,
-    requestOptions?: ExtensionConversationSendMessageRequestOptions,
-  ) => Promise<AsyncIterable<LettaStreamingResponse>>;
-}
-
 export type ExtensionSourceScope = "global" | "project" | "bundled";
 
 export interface ExtensionOwner {
@@ -178,13 +147,15 @@ export type ExtensionConversationOpenReason =
   | "startup"
   | "new"
   | "resume"
-  | "fork";
+  | "fork"
+  | "reload";
 
 export type ExtensionConversationCloseReason =
   | "quit"
   | "new"
   | "resume"
-  | "fork";
+  | "fork"
+  | "reload";
 
 export interface ExtensionConversationOpenEvent {
   agentId: string | null;
@@ -258,8 +229,7 @@ export interface ExtensionEventRegistration<
 > {
   handler: ExtensionEventHandler<TName>;
   name: TName;
-  owner?: ExtensionOwner;
-  path: string;
+  owner: ExtensionOwner;
 }
 
 export interface ExtensionEventEmissionResult<
@@ -274,6 +244,7 @@ export interface ExtensionEventEmissionResult<
 export type ExtensionCapabilityKind =
   | "command"
   | "event"
+  | "permission"
   | "provider"
   | "tool"
   | "panel"
@@ -292,10 +263,18 @@ export type ExtensionDiagnosticPhase =
   | "transpile"
   | "import"
   | "activate"
+  | "command_override"
   | "dispose"
   | "event"
-  | "stale_handle"
-  | "status.evaluate";
+  | "report"
+  | "stale_handle";
+
+export type ExtensionDiagnosticSeverity = "error" | "warning";
+
+export interface ExtensionDiagnosticReportOptions {
+  message: string;
+  severity?: ExtensionDiagnosticSeverity;
+}
 
 export interface ExtensionDiagnostic {
   capability?: {
@@ -303,9 +282,9 @@ export interface ExtensionDiagnostic {
     kind: ExtensionCapabilityKind;
   };
   error: Error;
-  owner?: ExtensionOwner;
-  path?: string;
+  owner: ExtensionOwner;
   phase: ExtensionDiagnosticPhase;
+  severity?: ExtensionDiagnosticSeverity;
   timestamp: number;
 }
 
@@ -449,12 +428,7 @@ export interface ExtensionToolRunContext {
   agent: {
     id: string | null;
   };
-  conversation: {
-    id: string | null;
-    getHistory: (
-      options?: ExtensionConversationHistoryOptions,
-    ) => Promise<Message[]>;
-  };
+  conversation: ExtensionConversationHandle;
   getContext: () => ExtensionContext;
 }
 
@@ -481,4 +455,51 @@ export interface ExtensionTool {
   parallelSafe: boolean;
   isEnabled?: ExtensionToolRegistration["isEnabled"];
   run: ExtensionToolRegistration["run"];
+}
+
+export type ExtensionPermissionDecision = "allow" | "ask" | "deny";
+
+export type ExtensionPermissionCheckPhase = "approval" | "execution";
+
+export interface ExtensionPermissionCheckEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  toolCallId: string | null;
+  toolName: string;
+  args: Record<string, unknown>;
+  cwd: string;
+  workingDirectory: string;
+  permissionMode: string | null;
+  phase: ExtensionPermissionCheckPhase;
+}
+
+export type ExtensionPermissionCheckResult =
+  | {
+      decision: ExtensionPermissionDecision;
+      reason?: string;
+    }
+  | undefined;
+
+export interface ExtensionPermissionCheckContext {
+  getContext: () => ExtensionContext;
+  signal: AbortSignal;
+}
+
+export interface ExtensionPermissionRegistration {
+  id: string;
+  description?: string;
+  isEnabled?: (context: ExtensionContext) => boolean;
+  check: (
+    event: ExtensionPermissionCheckEvent,
+    context: ExtensionPermissionCheckContext,
+  ) => ExtensionPermissionCheckResult | Promise<ExtensionPermissionCheckResult>;
+}
+
+export interface ExtensionPermission {
+  id: string;
+  description?: string;
+  owner?: ExtensionOwner;
+  path: string;
+  isEnabled?: ExtensionPermissionRegistration["isEnabled"];
+  check: ExtensionPermissionRegistration["check"];
 }

@@ -23,6 +23,7 @@ import { LocalBackend } from "@/backend/local";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { setSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { appendCronRunLog, getCronRunLogPath } from "@/cron";
 import type { MessageQueueItem } from "@/queue/queue-runtime";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
@@ -44,6 +45,7 @@ import {
   handleExecuteCommand,
   SUPPORTED_REMOTE_COMMANDS,
 } from "@/websocket/listener/commands";
+import { ensureListenerExtensionAdapter } from "@/websocket/listener/extension-adapter";
 import { isEditFileCommand } from "@/websocket/listener/protocol-inbound";
 import {
   DESKTOP_DEBUG_PANEL_INFO_PREFIX,
@@ -449,6 +451,16 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
+    const cronRuns = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cron_runs",
+          request_id: "cron-runs-1",
+          task_id: "cron-1",
+          limit: 10,
+        }),
+      ),
+    );
     const cronDelete = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -471,6 +483,7 @@ describe("listen-client parseServerMessage", () => {
     expect(cronList?.type).toBe("cron_list");
     expect(cronAdd?.type).toBe("cron_add");
     expect(cronGet?.type).toBe("cron_get");
+    expect(cronRuns?.type).toBe("cron_runs");
     expect(cronDelete?.type).toBe("cron_delete");
     expect(cronDeleteAll?.type).toBe("cron_delete_all");
   });
@@ -722,6 +735,102 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("list_models");
   });
 
+  test("parses list_connect_providers command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "list_connect_providers",
+          request_id: "connect-providers-1",
+          target: "local",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("list_connect_providers");
+  });
+
+  test("rejects list_connect_providers command for non-local target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "list_connect_providers",
+          request_id: "connect-providers-2",
+          target: "api",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
+  test("parses connect_provider command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "connect_provider",
+          request_id: "connect-provider-1",
+          target: "local",
+          provider_id: "anthropic",
+          fields: { apiKey: "sk-test" },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("connect_provider");
+  });
+
+  test("parses connect_provider command with auth method", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "connect_provider",
+          request_id: "connect-provider-2",
+          target: "local",
+          provider_id: "amazon-bedrock",
+          auth_method_id: "profile",
+          fields: { profile: "default", region: "us-east-1" },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("connect_provider");
+  });
+
+  test("rejects connect_provider command with non-string fields", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "connect_provider",
+          request_id: "connect-provider-3",
+          target: "local",
+          provider_id: "anthropic",
+          fields: { apiKey: 123 },
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
+  test("parses disconnect_provider command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "disconnect_provider",
+          request_id: "disconnect-provider-1",
+          target: "local",
+          provider_id: "anthropic",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("disconnect_provider");
+  });
+
   test("parses update_model command with model_id", () => {
     const parsed = parseServerMessage(
       Buffer.from(
@@ -940,6 +1049,7 @@ describe("listen-client parseServerMessage", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("reload");
 
     const command = parseServerMessage(
       Buffer.from(
@@ -1214,6 +1324,45 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
+  test("runs remote reload execute_command", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const adapter = ensureListenerExtensionAdapter(listener);
+    const originalReload = adapter.reload;
+    let reloadCalls = 0;
+    adapter.reload = async () => {
+      reloadCalls += 1;
+    };
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-reload",
+      "default",
+    );
+    const socket = new MockSocket(WebSocket.OPEN);
+
+    try {
+      await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: "reload",
+          request_id: "reload-run-1",
+          runtime: { agent_id: "agent-reload", conversation_id: "default" },
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        {},
+      );
+    } finally {
+      adapter.reload = originalReload;
+      adapter.dispose();
+      listener.extensionAdapter = undefined;
+    }
+
+    expect(reloadCalls).toBe(1);
+    expect(socket.sentPayloads.join("\n")).toContain(
+      "Reloaded settings and local extensions",
+    );
+  });
+
   test("rejects legacy cancel_run in hard-cut v2 protocol", () => {
     const legacyCancel = parseServerMessage(
       Buffer.from(
@@ -1343,6 +1492,24 @@ describe("listen-client cron command handling", () => {
       });
 
       const taskId = addMessages[0].task.id as string;
+      appendCronRunLog(getCronRunLogPath(taskId), {
+        ts: 1000,
+        jobId: taskId,
+        action: "finished",
+        status: "ok",
+        summary: "Older run",
+        conversationId: "conv-1",
+        runId: "run-older",
+      });
+      appendCronRunLog(getCronRunLogPath(taskId), {
+        ts: 2000,
+        jobId: taskId,
+        action: "finished",
+        status: "error",
+        error: "Newer run failed",
+        conversationId: "conv-1",
+        runId: "run-newer",
+      });
       socket.sentPayloads.length = 0;
 
       await __listenClientTestUtils.handleCronCommand(
@@ -1377,6 +1544,40 @@ describe("listen-client cron command handling", () => {
         success: true,
         found: true,
         task: { id: taskId },
+      });
+
+      socket.sentPayloads.length = 0;
+      await __listenClientTestUtils.handleCronCommand(
+        {
+          type: "cron_runs",
+          request_id: "cron-runs-1",
+          task_id: taskId,
+          limit: 1,
+        },
+        socket as unknown as WebSocket,
+      );
+      expect(JSON.parse(socket.sentPayloads[0] as string)).toMatchObject({
+        type: "cron_runs_response",
+        request_id: "cron-runs-1",
+        success: true,
+        page: {
+          total: 2,
+          offset: 0,
+          limit: 1,
+          hasMore: true,
+          nextOffset: 1,
+          entries: [
+            {
+              ts: 2000,
+              jobId: taskId,
+              action: "finished",
+              status: "error",
+              error: "Newer run failed",
+              conversationId: "conv-1",
+              runId: "run-newer",
+            },
+          ],
+        },
       });
 
       socket.sentPayloads.length = 0;
@@ -2201,7 +2402,7 @@ describe("listen-client channels command handling", () => {
 
     __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
       ...actualChannelsService,
-      createChannelAccountLiveWithSecrets: async () => ({
+      createChannelAccountLive: () => ({
         channelId: "telegram" as const,
         accountId: "bot-1",
         displayName: "@docsbot",
@@ -2557,7 +2758,7 @@ describe("listen-client experiment command handling", () => {
     const originalGetSettings = settingsManager.getSettings;
     const originalUpdateSettings = settingsManager.updateSettings;
     const originalNodeFlag = process.env.LETTA_NODE;
-    const globalSettings = {} as Settings;
+    const globalSettings = { autoConversationTitles: false } as Settings;
 
     try {
       delete process.env.LETTA_NODE;
@@ -2599,6 +2800,10 @@ describe("listen-client experiment command handling", () => {
             id: "node",
             enabled: false,
             source: "default",
+          }),
+          expect.objectContaining({
+            id: "conversation_titles",
+            enabled: false,
           }),
         ]),
       });
@@ -2642,6 +2847,33 @@ describe("listen-client experiment command handling", () => {
           ]),
         },
       });
+
+      socket.sentPayloads.length = 0;
+
+      await __listenClientTestUtils.handleExperimentCommand(
+        {
+          type: "set_experiment",
+          request_id: "conversation-titles-set-1",
+          experiment_id: "conversation_titles",
+          enabled: true,
+        },
+        socket as unknown as WebSocket,
+        listener,
+      );
+
+      const titleSetResponse = JSON.parse(socket.sentPayloads[0] as string);
+      expect(titleSetResponse).toMatchObject({
+        type: "set_experiment_response",
+        request_id: "conversation-titles-set-1",
+        success: true,
+        experiments: expect.arrayContaining([
+          expect.objectContaining({
+            id: "conversation_titles",
+            enabled: true,
+          }),
+        ]),
+      });
+      expect(globalSettings.autoConversationTitles).toBe(true);
     } finally {
       if (originalNodeFlag === undefined) {
         delete process.env.LETTA_NODE;

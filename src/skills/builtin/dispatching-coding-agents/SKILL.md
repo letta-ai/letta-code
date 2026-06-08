@@ -108,6 +108,8 @@ For hard problems, use the strongest available models:
 codex exec "YOUR PROMPT" -m gpt-5.3-codex --full-auto -C /path/to/repo
 ```
 
+Claude Code does not support a `-C` working-directory flag. Run the Bash tool with its `workdir` set to the target repo, or `cd /path/to/repo && claude ...` inside the shell command. Use `--add-dir` only to grant access to additional directories outside the current working directory.
+
 ### Code review — cross-agent validation
 Have one agent write code or create a plan, then dispatch another to review:
 ```bash
@@ -123,8 +125,9 @@ claude -p "Review the following diff for correctness, edge cases, and missed err
 ### Get outside feedback on your work
 Write your plan or analysis to a file, then ask a subagent to critique it:
 ```bash
+# Run this from the target repo, or set the Bash tool's workdir to the repo.
 claude -p "Read /tmp/my-plan.md and critique it. What am I missing? What could go wrong?" \
-  --model opus --dangerously-skip-permissions -C /path/to/repo
+  --model opus --dangerously-skip-permissions
 ```
 
 ## Handling Failures
@@ -151,8 +154,10 @@ claude -p "YOUR PROMPT" --model MODEL --dangerously-skip-permissions
 | `--append-system-prompt "..."` | Inject additional system instructions |
 | `--allowedTools "Bash Edit Read"` | Restrict available tools |
 | `--max-budget-usd N` | Cap spend for the invocation |
-| `-C DIR` | Set working directory |
+| `--add-dir DIR` | Allow access to an additional directory; does not change the working directory |
 | `--output-format json` | Structured output with `session_id`, `cost_usd`, `duration_ms` |
+
+Set Claude Code's working directory via the surrounding shell/tool invocation, not a Claude flag. In Letta Code, pass `workdir` to the Bash tool. In a raw shell, use `cd /path/to/repo && claude ...`.
 
 ### Codex
 

@@ -1,21 +1,14 @@
 import { existsSync } from "node:fs";
-import {
-  access,
-  mkdir,
-  readFile,
-  rm,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, rm, stat, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
 import {
-  assertMemoryRepoReadyForWrite,
-  commitAndSyncMemoryWrite,
+  assertMemoryRepoCleanForWrite,
+  commitMemoryWrite,
   type MemoryWriteSyncMode,
 } from "@/agent/memory-git";
+import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation";
 
 type ParsedPatchOp =
@@ -125,7 +118,7 @@ export async function memory_apply_patch(
 
   const { agentId, agentName } = await getAgentIdentity();
   const syncMode = await getMemoryWriteSyncMode();
-  await assertMemoryRepoReadyForWrite(memoryDir, agentId, { syncMode });
+  await assertMemoryRepoCleanForWrite(memoryDir);
 
   const pathspecs = await applyMemoryPatch(memoryDir, input);
   if (pathspecs.length === 0) {
@@ -135,7 +128,7 @@ export async function memory_apply_patch(
     );
   }
 
-  const commitResult = await commitAndSyncMemoryWrite({
+  const commitResult = await commitMemoryWrite({
     memoryDir,
     pathspecs,
     reason,
@@ -145,36 +138,22 @@ export async function memory_apply_patch(
       authorEmail: `${agentId}@letta.com`,
     },
     syncMode,
-    replay: async () => applyMemoryPatch(memoryDir, input),
   });
   if (!commitResult.committed) {
     throw new Error(
       syncMode === "local"
         ? "memory_apply_patch made no effective changes; nothing was committed. " +
             "The patched content matched what was already on disk."
-        : "memory_apply_patch made no effective changes; nothing was committed or pushed. " +
+        : "memory_apply_patch made no effective changes; nothing was committed. " +
             "The patched content matched what was already on disk.",
     );
-  }
-
-  if (commitResult.replayed && commitResult.replayNoop) {
-    return {
-      message:
-        "memory_apply_patch matched newer remote memory; skipped an extra commit.",
-    };
-  }
-
-  if (commitResult.replayed) {
-    return {
-      message: `memory_apply_patch reapplied on top of newer remote memory and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
-    };
   }
 
   return {
     message:
       syncMode === "local"
         ? `memory_apply_patch committed locally (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`
-        : `memory_apply_patch applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+        : `memory_apply_patch committed (${commitResult.sha?.slice(0, 7) ?? "unknown"}); harness will sync after the turn.`,
   };
 }
 
@@ -207,7 +186,7 @@ async function applyMemoryPatch(
       return pending;
     }
 
-    const content = await readFile(absPath, "utf8").catch((error) => {
+    const content = await readUtf8TextStrict(absPath).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(
         `memory_apply_patch: failed to read ${sourcePathForErrors}: ${message}`,
@@ -290,7 +269,7 @@ async function applyMemoryPatch(
 
   for (const [absPath, content] of pendingWrites.entries()) {
     await mkdir(dirname(absPath), { recursive: true });
-    await writeFile(absPath, content, "utf8");
+    await writeUtf8Text(absPath, content);
   }
 
   for (const absPath of pendingDeletes) {
@@ -643,7 +622,7 @@ async function loadEditableMemoryFile(
   filePath: string,
   sourcePath: string,
 ): Promise<ParsedMemoryFile> {
-  const content = await readFile(filePath, "utf8").catch((error) => {
+  const content = await readUtf8TextStrict(filePath).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
       `memory_apply_patch: failed to read ${sourcePath}: ${message}`,

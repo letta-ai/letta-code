@@ -18,10 +18,7 @@ import {
   getRegisteredPiProvider,
   type PiProviderModelRegistration,
   type PiProviderRegistration,
-  type RegisteredPiProvider,
-  resolveRegisteredPiProviderApiKey,
   resolveRegisteredPiProviderFromModelHandle,
-  resolveRegisteredPiProviderHeaders,
   stripRegisteredProviderHandlePrefix,
 } from "./pi-provider-extension-registry";
 import {
@@ -35,6 +32,11 @@ import {
   resolveProviderFromProviderType,
   stripProviderHandlePrefix,
 } from "./pi-provider-registry";
+import {
+  getRegisteredPiProviderLocalNames,
+  listRegisteredPiProviderModels,
+  resolveRegisteredPiProviderRuntimeConnection,
+} from "./registered-pi-provider-runtime";
 
 export const DEFAULT_PI_PROVIDER = "openai" satisfies PiProvider;
 export type { PiProvider } from "./pi-provider-registry";
@@ -178,58 +180,6 @@ function localProviderConnection(
     }),
     ...(record ? { record } : {}),
   };
-}
-
-function registeredProviderLocalNames(
-  provider: RegisteredPiProvider,
-): readonly string[] {
-  return isPiProvider(provider.providerName)
-    ? getPiProviderSpec(provider.providerName).localProviderNames
-    : [provider.providerName];
-}
-
-function registeredProviderConnection(
-  provider: RegisteredPiProvider,
-  storageDir?: string,
-): {
-  apiKey?: string;
-  baseURL?: string;
-  timeout: LocalProviderTimeout;
-  headers?: Record<string, string>;
-  record?: LocalProviderRecord;
-} {
-  const providerNames = registeredProviderLocalNames(provider);
-  const record = localProviderRecord(providerNames, storageDir);
-  return {
-    apiKey:
-      localProviderApiKeyFromRecord(record) ??
-      resolveRegisteredPiProviderApiKey(provider.config.apiKey),
-    baseURL: record?.base_url ?? provider.config.baseUrl,
-    timeout: resolveLocalProviderTimeout({
-      configuredTimeout: record?.timeout,
-      providerIds: providerNames,
-    }),
-    headers: resolveRegisteredPiProviderHeaders(provider.config.headers),
-    ...(record ? { record } : {}),
-  };
-}
-
-async function registeredProviderModels(
-  provider: RegisteredPiProvider,
-  connection: {
-    apiKey?: string;
-    baseURL?: string;
-    headers?: Record<string, string>;
-  },
-): Promise<PiProviderModelRegistration[]> {
-  const listed = await provider.config.listModels?.({
-    id: provider.providerName,
-    providerName: provider.providerName,
-    baseUrl: connection.baseURL,
-    apiKey: connection.apiKey,
-    headers: connection.headers,
-  });
-  return listed ?? provider.config.models ?? [];
 }
 
 export interface ZaiConnection {
@@ -511,7 +461,10 @@ export async function resolvePiModelForAgent(
       : options.preferredProviderType;
 
   let connection = registeredProvider
-    ? registeredProviderConnection(registeredProvider, storageDir)
+    ? resolveRegisteredPiProviderRuntimeConnection(
+        registeredProvider,
+        storageDir,
+      )
     : spec
       ? localProviderConnection(
           spec.localProviderNames,
@@ -564,7 +517,7 @@ export async function resolvePiModelForAgent(
   ) {
     const oauth = await getLocalOAuthApiKey({
       providerId: registeredProvider.providerName,
-      providerNames: registeredProviderLocalNames(registeredProvider),
+      providerNames: getRegisteredPiProviderLocalNames(registeredProvider),
       storageDir,
     });
     connection = {
@@ -589,7 +542,7 @@ export async function resolvePiModelForAgent(
   );
 
   const registeredModels = registeredProvider
-    ? await registeredProviderModels(registeredProvider, connection)
+    ? await listRegisteredPiProviderModels(registeredProvider, connection)
     : undefined;
   const registeredModel = registeredModels?.find(
     (model) => model.id === modelId,

@@ -42,15 +42,6 @@ afterEach(async () => {
 });
 
 describe("experimentManager", () => {
-  test("conversation title generation is opt-in by default", () => {
-    expect(experimentManager.getSnapshot("conversation_titles")).toMatchObject({
-      id: "conversation_titles",
-      enabled: false,
-      source: "default",
-      override: null,
-    });
-  });
-
   test("falls back to LETTA_NODE when no override is stored", () => {
     process.env.LETTA_NODE = "1";
 
@@ -84,12 +75,15 @@ describe("experimentManager", () => {
     });
   });
 
-  test("persists explicit conversation title overrides", async () => {
+  test("maps conversation title experiment controls to the persistent setting", async () => {
+    expect(experimentManager.getSnapshot("conversation_titles")).toMatchObject({
+      id: "conversation_titles",
+      enabled: false,
+    });
+
     expect(experimentManager.set("conversation_titles", true)).toMatchObject({
       id: "conversation_titles",
       enabled: true,
-      source: "override",
-      override: true,
     });
     await settingsManager.flush();
 
@@ -99,8 +93,6 @@ describe("experimentManager", () => {
     expect(experimentManager.getSnapshot("conversation_titles")).toMatchObject({
       id: "conversation_titles",
       enabled: true,
-      source: "override",
-      override: true,
     });
   });
 });

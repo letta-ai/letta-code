@@ -585,6 +585,39 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("lc-openrouter/custom-model");
   });
 
+  test("explicit user inherit follows subagent inherit instead of literal model", async () => {
+    const result = await resolveSubagentModel({
+      userModel: "inherit",
+      recommendedModel: "inherit",
+      parentModelHandle: "lc-anthropic/parent-model",
+      availableHandles: new Set(["lc-anthropic/parent-model"]),
+    });
+
+    expect(result).toBe("lc-anthropic/parent-model");
+    expect(result).not.toBe("inherit");
+  });
+
+  test("explicit user inherit overrides subagent recommended model", async () => {
+    const result = await resolveSubagentModel({
+      userModel: "inherit",
+      recommendedModel: "anthropic/test-model",
+      parentModelHandle: "openai/parent-model",
+      availableHandles: new Set(["anthropic/test-model"]),
+    });
+
+    expect(result).toBe("openai/parent-model");
+  });
+
+  test("explicit user inherit still allows default fallback without a parent model", async () => {
+    const result = await resolveSubagentModel({
+      userModel: "inherit",
+      recommendedModel: "inherit",
+      availableHandles: new Set(["letta/auto"]),
+    });
+
+    expect(result).toBe("letta/auto");
+  });
+
   test("inherits parent when recommended is inherit", async () => {
     const result = await resolveSubagentModel({
       recommendedModel: "inherit",

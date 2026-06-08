@@ -121,5 +121,5 @@ describe("local/API system prompt parity", () => {
       await rm(storageDir, { recursive: true, force: true });
       await client.agents.delete(apiAgent.id).catch(() => undefined);
     }
-  });
+  }, 60000);
 });
