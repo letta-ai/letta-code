@@ -152,7 +152,11 @@ function extractBashMemoryReferences(
 }
 
 function confidenceForTool(toolName: string): Confidence {
-  return toolName === "Bash" || toolName === "ShellCommand" ? "medium" : "high";
+  return toolName === "Bash" ||
+    toolName === "ShellCommand" ||
+    toolName === "exec_command"
+    ? "medium"
+    : "high";
 }
 
 function addCitation(
@@ -245,7 +249,11 @@ export function activate(letta) {
         const toolName = event.toolName;
         const confidence = confidenceForTool(toolName);
 
-        if (toolName === "Bash" || toolName === "ShellCommand") {
+        if (
+          toolName === "Bash" ||
+          toolName === "ShellCommand" ||
+          toolName === "exec_command"
+        ) {
           const command =
             typeof event.args.command === "string"
               ? event.args.command

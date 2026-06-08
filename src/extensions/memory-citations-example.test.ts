@@ -156,6 +156,19 @@ describe("memory citations example extension", () => {
         toolCallId: "toolu-bash",
         toolName: "Bash",
       });
+      await engine.emitEvent("tool_start", {
+        agentId: "agent-1",
+        args: {
+          cmd: `sed -n '1,80p' ${path.join(
+            memoryDir,
+            "reference",
+            "learning-extensions.md",
+          )}`,
+        },
+        conversationId: "conversation-1",
+        toolCallId: "toolu-exec-command",
+        toolName: "exec_command",
+      });
 
       const snapshotTool = getExtensionToolDefinition(
         "memory_citation_snapshot",
@@ -164,7 +177,7 @@ describe("memory citations example extension", () => {
       const result = await snapshotTool?.run(createToolContext(memoryDir));
       const parsed = JSON.parse(String(result));
 
-      expect(parsed.citationCount).toBe(2);
+      expect(parsed.citationCount).toBe(3);
       expect(parsed.citations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -176,6 +189,11 @@ describe("memory citations example extension", () => {
             confidence: "medium",
             path: "system/collaboration.md",
             toolName: "Bash",
+          }),
+          expect.objectContaining({
+            confidence: "medium",
+            path: "reference/learning-extensions.md",
+            toolName: "exec_command",
           }),
         ]),
       );
