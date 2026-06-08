@@ -6,6 +6,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
@@ -71,6 +72,7 @@ import {
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import {
+  onChunk as accumulateChunk,
   createBuffers,
   type Line,
   markIncompleteToolsAsCancelled,
@@ -313,11 +315,48 @@ function toBidirectionalQueuedInput(
   };
 }
 
+function emitHeadlessToolReturnChunk({
+  buffers,
+  chunk,
+  contextTracker,
+  outputFormat,
+  sessionId,
+}: {
+  buffers: ReturnType<typeof createBuffers>;
+  chunk: ToolReturnMessage;
+  contextTracker?: ReturnType<typeof createContextTracker>;
+  outputFormat: string;
+  sessionId: string;
+}): void {
+  accumulateChunk(buffers, chunk, contextTracker);
+
+  if (outputFormat !== "stream-json") {
+    return;
+  }
+
+  const toolCallId = chunk.tool_call_id;
+  const messageId =
+    chunk.id && chunk.id !== "dummy"
+      ? chunk.id
+      : toolCallId
+        ? `tool-return-${toolCallId}`
+        : randomUUID();
+  const msg: MessageWire = {
+    type: "message",
+    ...chunk,
+    id: messageId,
+    session_id: sessionId,
+    uuid: messageId,
+  };
+  writeWireMessage(msg);
+}
+
 export const __headlessTestUtils = {
   trackTelemetryUserInputFromContent,
   shouldTrackTelemetryForQueuedMessage,
   contentToTaskNotificationText,
   toBidirectionalQueuedInput,
+  emitHeadlessToolReturnChunk,
   prepareHeadlessToolExecutionContext,
 };
 
@@ -2549,7 +2588,15 @@ ${SYSTEM_REMINDER_CLOSE}
         );
         const executedResults = await executeApprovalBatch(
           decisions,
-          undefined,
+          (chunk) => {
+            emitHeadlessToolReturnChunk({
+              buffers,
+              chunk,
+              contextTracker: reminderContextTracker,
+              outputFormat,
+              sessionId,
+            });
+          },
           {
             toolContextId: turnToolContextId ?? undefined,
           },
@@ -3108,7 +3155,7 @@ ${SYSTEM_REMINDER_CLOSE}
 async function runBidirectionalMode(
   agent: AgentState,
   conversationId: string,
-  _outputFormat: string,
+  outputFormat: string,
   includePartialMessages: boolean,
   availableTools: string[],
   skillSources: SkillSource[],
@@ -4376,7 +4423,15 @@ async function runBidirectionalMode(
             );
             const executedResults = await executeApprovalBatch(
               decisions,
-              undefined,
+              (chunk) => {
+                emitHeadlessToolReturnChunk({
+                  buffers,
+                  chunk,
+                  contextTracker: reminderContextTracker,
+                  outputFormat,
+                  sessionId,
+                });
+              },
               { toolContextId: turnToolContextId ?? undefined },
             );
 

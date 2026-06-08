@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Backend } from "@/backend";
+import { createBuffers, onChunk, toLines } from "@/cli/helpers/accumulator";
 import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
 import {
   clearExtensionTools,
@@ -98,6 +99,70 @@ describe("headless extension adapter", () => {
     expect(source).toContain("await emitHeadlessConversationOpen({");
     expect(source).toContain("await emitHeadlessConversationClose({");
     expect(source).toContain("headlessExtensionAdapter.dispose()");
+  });
+
+  test("headless approval execution emits and accumulates tool returns", () => {
+    const buffers = createBuffers("agent-1");
+    onChunk(buffers, {
+      message_type: "approval_request_message",
+      id: "approval-message-1",
+      date: "2026-06-08T00:00:00.000Z",
+      tool_call: {
+        tool_call_id: "tool-call-1",
+        name: "memory_citation_snapshot",
+        arguments: "{}",
+      },
+    } as Parameters<typeof onChunk>[1]);
+
+    const readyLine = toLines(buffers).find(
+      (line) => line.kind === "tool_call",
+    );
+    expect(readyLine?.phase).toBe("ready");
+
+    const originalLog = console.log;
+    const emitted: string[] = [];
+    console.log = (line?: unknown) => {
+      emitted.push(String(line));
+    };
+
+    try {
+      __headlessTestUtils.emitHeadlessToolReturnChunk({
+        buffers,
+        chunk: {
+          message_type: "tool_return_message",
+          id: "dummy",
+          date: "2026-06-08T00:00:01.000Z",
+          tool_call_id: "tool-call-1",
+          tool_return: "citation snapshot ok",
+          status: "success",
+        },
+        outputFormat: "stream-json",
+        sessionId: "agent-1",
+      });
+    } finally {
+      console.log = originalLog;
+    }
+
+    const finishedLine = toLines(buffers).find(
+      (line) => line.kind === "tool_call",
+    );
+    expect(finishedLine?.phase).toBe("finished");
+    expect(finishedLine?.resultText).toBe("citation snapshot ok");
+    expect(finishedLine?.resultOk).toBe(true);
+
+    expect(emitted).toHaveLength(1);
+    const wire = JSON.parse(emitted[0] ?? "{}");
+    expect(wire).toMatchObject({
+      type: "message",
+      id: "tool-return-tool-call-1",
+      uuid: "tool-return-tool-call-1",
+      message_type: "tool_return_message",
+      tool_call_id: "tool-call-1",
+      tool_return: "citation snapshot ok",
+      status: "success",
+      session_id: "agent-1",
+    });
+    expect(typeof wire.timestamp).toBe("string");
   });
 
   test("registers extension tools for headless tool snapshots and disables commands/UI", async () => {
