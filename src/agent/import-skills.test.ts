@@ -167,7 +167,7 @@ describe("skills extraction from .af files", () => {
       mcp_servers: [],
       skills: [
         {
-          name: "a".repeat(61),
+          name: "a".repeat(65),
           files: {
             "SKILL.md": "# Too Long",
           },

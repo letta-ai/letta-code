@@ -7,6 +7,7 @@ import { dirname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
+import { MAX_SKILL_NAME_LENGTH } from "@/skills/builtin/creating-skills/scripts/validate-skill";
 import {
   buildCreatedAgentTags,
   resolveCreatedAgentMemfsConfig,
@@ -36,15 +37,14 @@ export interface ImportAgentResult {
 }
 
 const IMPORTED_SKILL_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
-const MAX_IMPORTED_SKILL_NAME_LENGTH = 60;
-
 // This function prevent slash and backslash since skill name is
 // used in `resolve` which potentially cause path traversal
 function validateImportedSkillName(name: string): string {
   const trimmedName = name.trim();
   if (
+    trimmedName !== name ||
     trimmedName.length === 0 ||
-    trimmedName.length > MAX_IMPORTED_SKILL_NAME_LENGTH ||
+    trimmedName.length > MAX_SKILL_NAME_LENGTH ||
     trimmedName === "." ||
     trimmedName === ".." ||
     !IMPORTED_SKILL_NAME_PATTERN.test(trimmedName)
