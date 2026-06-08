@@ -2758,7 +2758,7 @@ describe("listen-client experiment command handling", () => {
     const originalGetSettings = settingsManager.getSettings;
     const originalUpdateSettings = settingsManager.updateSettings;
     const originalNodeFlag = process.env.LETTA_NODE;
-    const globalSettings = { autoConversationTitles: false } as Settings;
+    const globalSettings = { autoConversationTitles: true } as Settings;
 
     try {
       delete process.env.LETTA_NODE;
@@ -2803,7 +2803,7 @@ describe("listen-client experiment command handling", () => {
           }),
           expect.objectContaining({
             id: "conversation_titles",
-            enabled: false,
+            enabled: true,
           }),
         ]),
       });
