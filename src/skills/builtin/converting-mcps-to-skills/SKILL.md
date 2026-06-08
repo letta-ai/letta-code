@@ -34,10 +34,6 @@ Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visi
 
 **For stdio servers:**
 ```bash
-# First, install dependencies (one time)
-cd <SKILL_DIR>/scripts && npm install
-
-# Then connect
 npx tsx <SKILL_DIR>/scripts/mcp-stdio.ts "<command>" list-tools
 
 # Examples
@@ -110,12 +106,9 @@ npx tsx mcp-http.ts http://localhost:3001/mcp call vault '{"action":"search","qu
 
 ### mcp-stdio.ts - stdio Transport
 
-Connects to MCP servers that run as subprocesses. Requires npm install first.
+Connects to MCP servers that run as subprocesses. No dependencies required.
 
 ```bash
-# One-time setup
-cd <SKILL_DIR>/scripts && npm install
-
 npx tsx mcp-stdio.ts "<command>" [options] <action> [args]
 
 Actions:
@@ -162,10 +155,6 @@ Here are some well-known MCP servers:
 **"Authentication required" error:**
 - Add `--header "Authorization: Bearer YOUR_KEY"` for HTTP
 - Or `--env "API_KEY=xxx"` for stdio servers that need env vars
-
-**stdio "npm install" error:**
-- Run `cd <SKILL_DIR>/scripts && npm install` first
-- The stdio client requires the MCP SDK
 
 **Tool call fails:**
 - Use `info <tool>` to see the expected input schema

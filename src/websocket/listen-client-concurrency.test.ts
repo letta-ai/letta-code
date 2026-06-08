@@ -25,8 +25,14 @@ import type {
   TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
 import { sharedReminderProviders } from "@/reminders/engine";
+import { settingsManager } from "@/settings-manager";
 import { queueSkillContent } from "@/tools/impl/skill-content-registry";
 import { clearTools, loadSpecificTools } from "@/tools/manager";
+import {
+  __testOverrideSecretsBackend,
+  clearSecretsCache,
+} from "@/utils/secrets-store";
+import { handleSecretsCommand } from "@/websocket/listener/commands/secrets";
 import { shouldProcessInboundMessageDirectly } from "@/websocket/listener/queue";
 import { resolveRecoveredApprovalResponse } from "@/websocket/listener/recovery";
 import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
@@ -330,6 +336,8 @@ function makeIncomingMessage(
 // to avoid mock.module (which leaks into other test files in Bun).
 const origSessionContext = sharedReminderProviders["session-context"];
 const origAgentInfo = sharedReminderProviders["agent-info"];
+const originalGetLocalProjectSettings = settingsManager.getLocalProjectSettings;
+const originalGetSettings = settingsManager.getSettings;
 const originalTranscriptRoot = process.env.LETTA_TRANSCRIPT_ROOT;
 let testTranscriptRoot: string | null = null;
 
@@ -343,6 +351,14 @@ describe("listen-client multi-worker concurrency", () => {
     // No-op stubs for providers that need settingsManager / process.cwd
     sharedReminderProviders["session-context"] = async () => null;
     sharedReminderProviders["agent-info"] = async () => null;
+    (settingsManager as typeof settingsManager).getSettings = (() =>
+      ({
+        memoryReminderInterval: null,
+      }) as ReturnType<
+        typeof settingsManager.getSettings
+      >) as typeof settingsManager.getSettings;
+    (settingsManager as typeof settingsManager).getLocalProjectSettings = () =>
+      ({}) as ReturnType<typeof settingsManager.getLocalProjectSettings>;
 
     queueSkillContent("__test-cleanup__", "__test-cleanup__");
     injectQueuedSkillContent([]);
@@ -374,6 +390,12 @@ describe("listen-client multi-worker concurrency", () => {
   afterEach(() => {
     sharedReminderProviders["session-context"] = origSessionContext;
     sharedReminderProviders["agent-info"] = origAgentInfo;
+    (settingsManager as typeof settingsManager).getSettings =
+      originalGetSettings;
+    (settingsManager as typeof settingsManager).getLocalProjectSettings =
+      originalGetLocalProjectSettings;
+    __testOverrideSecretsBackend(null);
+    clearSecretsCache("agent-secret-payload");
     clearTools();
   });
 
@@ -2399,6 +2421,77 @@ describe("listen-client multi-worker concurrency", () => {
         otid: "cm-user-otid",
       }),
     ]);
+  });
+
+  test("secret_apply refreshes the next user payload for the same conversation", async () => {
+    const agentId = "agent-secret-payload";
+    const conversationId = "conv-secret-payload";
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      agentId,
+      conversationId,
+    );
+    const socket = new MockSocket();
+    let serverSecrets: Record<string, string> = {};
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      retrieveAgent: async () => ({
+        secrets: Object.entries(serverSecrets).map(([key, value]) => ({
+          key,
+          value,
+        })),
+      }),
+      updateAgent: async (_agentId, body) => {
+        serverSecrets = { ...body.secrets };
+      },
+    });
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage(agentId, conversationId, "before secret"),
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const firstPayload = sendMessageStreamCalls[0]?.messages;
+    expect(JSON.stringify(firstPayload)).not.toContain("PLAYGROUND_AGENT_ID");
+
+    const tasks: Promise<void>[] = [];
+    handleSecretsCommand(
+      {
+        type: "secret_apply",
+        request_id: "secret-payload-apply",
+        agent_id: agentId,
+        set: { PLAYGROUND_AGENT_ID: "agent-playground" },
+        unset: [],
+      },
+      {
+        socket: socket as unknown as WebSocket,
+        runtime: listener,
+        safeSocketSend: () => true,
+        runDetachedListenerTask: (_name, task) => {
+          tasks.push(task());
+        },
+      },
+    );
+    await Promise.all(tasks);
+    expect(runtime.reminderState.pendingSecretsInfoRefresh).toBe(true);
+    expect(runtime.reminderState.hasSentSecretsInfo).toBe(false);
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage(agentId, conversationId, "after secret"),
+      socket as unknown as WebSocket,
+      runtime,
+    );
+    expect(runtime.reminderState.lastSentSecretNamesKey).toBe(
+      "PLAYGROUND_AGENT_ID",
+    );
+
+    const secondPayload = sendMessageStreamCalls[1]?.messages;
+    const payloadText = JSON.stringify(secondPayload);
+    expect(payloadText).toContain("The agent secrets were updated");
+    expect(payloadText).toContain("$PLAYGROUND_AGENT_ID");
+    expect(payloadText).toContain("after secret");
   });
 
   test("handleIncomingMessage records direct websocket user turns in the reflection transcript", async () => {

@@ -31,6 +31,8 @@ export interface SharedReminderState {
   hasSentConversationBootstrap: boolean;
   pendingConversationBootstrap: boolean;
   hasSentSecretsInfo: boolean;
+  pendingSecretsInfoRefresh: boolean;
+  lastSentSecretNamesKey: string | null;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
@@ -48,6 +50,8 @@ export function createSharedReminderState(): SharedReminderState {
     hasSentConversationBootstrap: false,
     pendingConversationBootstrap: false,
     hasSentSecretsInfo: false,
+    pendingSecretsInfoRefresh: false,
+    lastSentSecretNamesKey: null,
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,
@@ -98,4 +102,11 @@ export function enqueueToolsetChangeReminder(
   reminder: ToolsetChangeReminder,
 ): void {
   pushBounded(state.pendingToolsetChangeReminders, reminder);
+}
+
+export function markSecretsInfoReminderPending(
+  state: SharedReminderState,
+): void {
+  state.hasSentSecretsInfo = false;
+  state.pendingSecretsInfoRefresh = true;
 }

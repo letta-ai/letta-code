@@ -2,9 +2,6 @@
 /**
  * MCP stdio Client - Connect to any MCP server over stdio
  *
- * NOTE: Requires npm install in this directory first:
- *   cd <this-directory> && npm install
- *
  * Usage:
  *   npx tsx mcp-stdio.ts "<command>" <action> [args]
  *
@@ -25,8 +22,31 @@
  *   npx tsx mcp-stdio.ts "node server.js" --env "API_KEY=xxx" list-tools
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+
+interface JsonRpcRequest {
+  jsonrpc: "2.0";
+  method: string;
+  params?: object;
+  id: number;
+}
+
+interface JsonRpcNotification {
+  jsonrpc: "2.0";
+  method: string;
+  params?: object;
+}
+
+interface JsonRpcResponse {
+  jsonrpc: "2.0";
+  result?: unknown;
+  error?: {
+    code: number;
+    message: string;
+    data?: unknown;
+  };
+  id: number;
+}
 
 interface ParsedArgs {
   serverCommand: string;
@@ -81,7 +101,7 @@ function parseArgs(): ParsedArgs {
 }
 
 function parseCommand(commandStr: string): { command: string; args: string[] } {
-  // Simple parsing - split on spaces, respecting quotes
+  // Simple parsing - split on spaces, respecting quotes.
   const parts: string[] = [];
   let current = "";
   let inQuote = false;
@@ -113,21 +133,79 @@ function parseCommand(commandStr: string): { command: string; args: string[] } {
   };
 }
 
-let client: Client | null = null;
-let transport: StdioClientTransport | null = null;
+let serverProcess: ChildProcessWithoutNullStreams | null = null;
+let stdoutBuffer = "";
+let nextRequestId = 1;
+const pendingRequests = new Map<
+  number,
+  {
+    resolve: (response: JsonRpcResponse) => void;
+    reject: (error: Error) => void;
+  }
+>();
+
+function handleStdout(chunk: Buffer): void {
+  stdoutBuffer += chunk.toString("utf8");
+
+  while (true) {
+    const newlineIndex = stdoutBuffer.indexOf("\n");
+    if (newlineIndex === -1) {
+      return;
+    }
+
+    const line = stdoutBuffer.slice(0, newlineIndex).trim();
+    stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+
+    if (!line) {
+      continue;
+    }
+
+    let message: unknown;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      process.stderr.write(`[server stdout] ${line}\n`);
+      continue;
+    }
+
+    if (
+      typeof message !== "object" ||
+      message === null ||
+      !("id" in message) ||
+      typeof message.id !== "number"
+    ) {
+      continue;
+    }
+
+    const pending = pendingRequests.get(message.id);
+    if (!pending) {
+      continue;
+    }
+
+    pendingRequests.delete(message.id);
+    pending.resolve(message as JsonRpcResponse);
+  }
+}
+
+function rejectPendingRequests(error: Error): void {
+  for (const pending of pendingRequests.values()) {
+    pending.reject(error);
+  }
+  pendingRequests.clear();
+}
 
 async function connect(
   serverCommand: string,
   env: Record<string, string>,
   cwd?: string,
-): Promise<Client> {
+): Promise<void> {
   const { command, args } = parseCommand(serverCommand);
 
   if (!command) {
     throw new Error("No command specified");
   }
 
-  // Merge with process.env
+  // Merge with process.env.
   const mergedEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) {
@@ -136,47 +214,86 @@ async function connect(
   }
   Object.assign(mergedEnv, env);
 
-  transport = new StdioClientTransport({
-    command,
-    args,
-    env: mergedEnv,
+  serverProcess = spawn(command, args, {
     cwd,
-    stderr: "pipe",
+    env: mergedEnv,
+    stdio: ["pipe", "pipe", "pipe"],
   });
 
-  // Forward stderr for debugging
-  if (transport.stderr) {
-    transport.stderr.on("data", (chunk: Buffer) => {
-      process.stderr.write(`[server] ${chunk.toString()}`);
-    });
-  }
+  serverProcess.stdout.on("data", handleStdout);
+  serverProcess.stderr.on("data", (chunk: Buffer) => {
+    process.stderr.write(`[server] ${chunk.toString()}`);
+  });
+  serverProcess.on("error", (error) => {
+    rejectPendingRequests(error);
+  });
+  serverProcess.on("exit", (code, signal) => {
+    rejectPendingRequests(
+      new Error(`MCP server exited with code ${code} signal ${signal}`),
+    );
+  });
 
-  client = new Client(
-    {
+  const initializeResponse = await sendRequest("initialize", {
+    protocolVersion: "2024-11-05",
+    capabilities: {},
+    clientInfo: {
       name: "mcp-stdio-cli",
       version: "1.0.0",
     },
-    {
-      capabilities: {},
-    },
-  );
+  });
 
-  await client.connect(transport);
-  return client;
+  if (initializeResponse.error) {
+    throw new Error(
+      `Initialization failed: ${initializeResponse.error.message}`,
+    );
+  }
+
+  sendNotification("notifications/initialized", {});
+}
+
+function sendMessage(message: JsonRpcRequest | JsonRpcNotification): void {
+  if (!serverProcess) {
+    throw new Error("MCP server is not connected");
+  }
+
+  serverProcess.stdin.write(`${JSON.stringify(message)}\n`);
+}
+
+function sendNotification(method: string, params?: object): void {
+  sendMessage({ jsonrpc: "2.0", method, params });
+}
+
+function sendRequest(
+  method: string,
+  params?: object,
+): Promise<JsonRpcResponse> {
+  const id = nextRequestId++;
+  const request: JsonRpcRequest = { jsonrpc: "2.0", method, params, id };
+
+  return new Promise((resolve, reject) => {
+    pendingRequests.set(id, { resolve, reject });
+    sendMessage(request);
+  });
 }
 
 async function cleanup(): Promise<void> {
-  if (client) {
-    try {
-      await client.close();
-    } catch {
-      // Ignore cleanup errors
-    }
+  if (serverProcess && !serverProcess.killed) {
+    serverProcess.kill();
   }
+  serverProcess = null;
 }
 
-async function listTools(client: Client): Promise<void> {
-  const result = await client.listTools();
+async function listTools(): Promise<void> {
+  const response = await sendRequest("tools/list");
+
+  if (response.error) {
+    console.error("Error:", response.error.message);
+    process.exit(1);
+  }
+
+  const result = response.result as {
+    tools: Array<{ name: string; description?: string; inputSchema: object }>;
+  };
 
   console.log("Available tools:\n");
   for (const tool of result.tools) {
@@ -192,8 +309,17 @@ async function listTools(client: Client): Promise<void> {
   console.log("\nUse 'call <tool> <json-args>' to invoke a tool");
 }
 
-async function listResources(client: Client): Promise<void> {
-  const result = await client.listResources();
+async function listResources(): Promise<void> {
+  const response = await sendRequest("resources/list");
+
+  if (response.error) {
+    console.error("Error:", response.error.message);
+    process.exit(1);
+  }
+
+  const result = response.result as {
+    resources: Array<{ uri: string; name: string; description?: string }>;
+  };
 
   if (!result.resources || result.resources.length === 0) {
     console.log("No resources available.");
@@ -211,8 +337,17 @@ async function listResources(client: Client): Promise<void> {
   }
 }
 
-async function getToolSchema(client: Client, toolName: string): Promise<void> {
-  const result = await client.listTools();
+async function getToolSchema(toolName: string): Promise<void> {
+  const response = await sendRequest("tools/list");
+
+  if (response.error) {
+    console.error("Error:", response.error.message);
+    process.exit(1);
+  }
+
+  const result = response.result as {
+    tools: Array<{ name: string; description?: string; inputSchema: object }>;
+  };
 
   const tool = result.tools.find((t) => t.name === toolName);
   if (!tool) {
@@ -231,11 +366,7 @@ async function getToolSchema(client: Client, toolName: string): Promise<void> {
   console.log(JSON.stringify(tool.inputSchema, null, 2));
 }
 
-async function callTool(
-  client: Client,
-  toolName: string,
-  argsJson: string,
-): Promise<void> {
+async function callTool(toolName: string, argsJson: string): Promise<void> {
   let args: Record<string, unknown>;
   try {
     args = JSON.parse(argsJson || "{}");
@@ -244,19 +375,24 @@ async function callTool(
     process.exit(1);
   }
 
-  const result = await client.callTool({
+  const response = await sendRequest("tools/call", {
     name: toolName,
     arguments: args,
   });
 
-  console.log(JSON.stringify(result, null, 2));
+  if (response.error) {
+    console.error("Error:", response.error.message);
+    if (response.error.data) {
+      console.error("Details:", JSON.stringify(response.error.data, null, 2));
+    }
+    process.exit(1);
+  }
+
+  console.log(JSON.stringify(response.result, null, 2));
 }
 
 function printUsage(): void {
   console.log(`MCP stdio Client - Connect to any MCP server over stdio
-
-NOTE: Requires npm install in this directory first:
-  cd <this-directory> && npm install
 
 Usage: npx tsx mcp-stdio.ts "<command>" [options] <action> [args]
 
@@ -298,7 +434,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Handle process exit
   process.on("SIGINT", async () => {
     await cleanup();
     process.exit(0);
@@ -310,15 +445,15 @@ async function main(): Promise<void> {
   });
 
   try {
-    const connectedClient = await connect(serverCommand, env, cwd);
+    await connect(serverCommand, env, cwd);
 
     switch (action) {
       case "list-tools":
-        await listTools(connectedClient);
+        await listTools();
         break;
 
       case "list-resources":
-        await listResources(connectedClient);
+        await listResources();
         break;
 
       case "info": {
@@ -328,7 +463,7 @@ async function main(): Promise<void> {
           console.error("Usage: info <tool>");
           process.exit(1);
         }
-        await getToolSchema(connectedClient, toolName);
+        await getToolSchema(toolName);
         break;
       }
 
@@ -339,7 +474,7 @@ async function main(): Promise<void> {
           console.error("Usage: call <tool> '<json-args>'");
           process.exit(1);
         }
-        await callTool(connectedClient, toolName, argsJson || "{}");
+        await callTool(toolName, argsJson || "{}");
         break;
       }
 

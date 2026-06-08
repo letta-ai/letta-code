@@ -3,7 +3,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   initSkill,
@@ -213,6 +220,93 @@ allowed-tools: Bash Read Write
     const result = validateSkill(skillDir);
     expect(result.valid).toBe(true);
     expect(result.warnings).toBeUndefined();
+  });
+
+  test("fails when unquoted frontmatter contains colon-space", () => {
+    const skillDir = join(TEST_DIR, "bad-colon");
+    mkdirSync(skillDir);
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: bad-colon
+description: This breaks: unless quoted
+---
+
+# Bad Colon
+`,
+    );
+
+    const result = validateSkill(skillDir);
+    expect(result.valid).toBe(false);
+    expect(result.message).toContain("Invalid YAML in frontmatter");
+  });
+
+  test("runs from a node_modules path without external dependencies", () => {
+    const fakePackageScriptsDir = join(
+      TEST_DIR,
+      "app",
+      "node_modules",
+      "@letta-ai",
+      "letta-code",
+      "skills",
+      "creating-skills",
+      "scripts",
+    );
+    mkdirSync(fakePackageScriptsDir, { recursive: true });
+    copyFileSync(
+      join(
+        import.meta.dir,
+        "builtin",
+        "creating-skills",
+        "scripts",
+        "validate-skill.ts",
+      ),
+      join(fakePackageScriptsDir, "validate-skill.ts"),
+    );
+    copyFileSync(
+      join(
+        import.meta.dir,
+        "builtin",
+        "creating-skills",
+        "scripts",
+        "package-skill.ts",
+      ),
+      join(fakePackageScriptsDir, "package-skill.ts"),
+    );
+
+    const skillDir = join(TEST_DIR, "self-contained-skill");
+    mkdirSync(skillDir);
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: self-contained-skill
+description: A valid test skill
+---
+
+# Self-contained Skill
+`,
+    );
+
+    const env = { ...process.env };
+    delete env.NODE_PATH;
+
+    const validateResult = spawnSync(
+      process.execPath,
+      [join(fakePackageScriptsDir, "validate-skill.ts"), skillDir],
+      { cwd: join(TEST_DIR, "app"), env, encoding: "utf8" },
+    );
+    expect(validateResult.status).toBe(0);
+    expect(validateResult.stderr).toBe("");
+    expect(validateResult.stdout).toContain("Skill is valid!");
+
+    const packageResult = spawnSync(
+      process.execPath,
+      [join(fakePackageScriptsDir, "package-skill.ts"), skillDir, TEST_DIR],
+      { cwd: join(TEST_DIR, "app"), env, encoding: "utf8" },
+    );
+    expect(packageResult.status).toBe(0);
+    expect(packageResult.stderr).toBe("");
+    expect(existsSync(join(TEST_DIR, "self-contained-skill.skill"))).toBe(true);
   });
 
   test("warns when name doesn't match directory name", () => {
