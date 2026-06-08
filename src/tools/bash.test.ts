@@ -27,7 +27,10 @@ async function runBashInTemp(
 describe("Bash tool", () => {
   test("executes simple command", async () => {
     const result = await bash({
-      command: "echo 'Hello, World!'",
+      command:
+        process.platform === "win32"
+          ? "node -e \"console.log('Hello, World!')\""
+          : "echo 'Hello, World!'",
       description: "Test echo",
     });
 
@@ -38,7 +41,10 @@ describe("Bash tool", () => {
 
   test("captures stderr in output", async () => {
     const result = await bash({
-      command: "echo 'error message' >&2",
+      command:
+        process.platform === "win32"
+          ? "node -e \"console.error('error message')\""
+          : "echo 'error message' >&2",
       description: "Test stderr",
     });
 
