@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { markSecretsInfoReminderPending } from "@/reminders/state";
 import {
   isSecretApplyCommand,
   isSecretListCommand,
@@ -13,6 +14,25 @@ type SecretsCommandContext = {
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
 };
+
+export function markSecretsReminderRefreshPending(
+  runtime: ListenerRuntime,
+  agentId: string,
+): void {
+  const prefix = `agent:${agentId}::conversation:`;
+
+  for (const [key, state] of runtime.reminderStateByConversation) {
+    if (key.startsWith(prefix)) {
+      markSecretsInfoReminderPending(state);
+    }
+  }
+
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    if (conversationRuntime.agentId === agentId) {
+      markSecretsInfoReminderPending(conversationRuntime.reminderState);
+    }
+  }
+}
 
 export function handleSecretsCommand(
   parsed: unknown,
@@ -84,6 +104,7 @@ export function handleSecretsCommand(
 
         if (parsed.agent_id) {
           invalidateSecretsCacheForAgent(runtime, parsed.agent_id);
+          markSecretsReminderRefreshPending(runtime, parsed.agent_id);
         }
 
         safeSocketSend(

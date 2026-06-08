@@ -89,21 +89,36 @@ async function buildAgentInfoReminder(
 async function buildSecretsInfoReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  if (context.state.hasSentSecretsInfo) {
-    return null;
-  }
-
-  context.state.hasSentSecretsInfo = true;
-
   try {
     const { listSecretNames } = await import("@/utils/secrets-store");
-    const names = listSecretNames();
+    const names = listSecretNames(context.agent.id);
+    const namesKey = names.join("\0");
+    const isRefresh = context.state.pendingSecretsInfoRefresh;
+    const namesChanged =
+      context.state.lastSentSecretNamesKey !== null &&
+      context.state.lastSentSecretNamesKey !== namesKey;
+
+    if (context.state.hasSentSecretsInfo && !isRefresh && !namesChanged) {
+      return null;
+    }
+
+    context.state.hasSentSecretsInfo = true;
+    context.state.pendingSecretsInfoRefresh = false;
+    context.state.lastSentSecretNamesKey = namesKey;
+
     if (names.length === 0) {
+      if (isRefresh || namesChanged) {
+        return `${SYSTEM_REMINDER_OPEN}\nThe agent secrets were updated. No secrets are currently set.\n${SYSTEM_REMINDER_CLOSE}`;
+      }
       return null;
     }
 
     const list = names.map((n) => `- \`$${n}\``).join("\n");
-    return `${SYSTEM_REMINDER_OPEN}\nThe following secrets are set on your agent and available for use.\nReference them with \`$SECRET_NAME\` in shell commands — substitution happens automatically at exec time:\n${list}\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.\n${SYSTEM_REMINDER_CLOSE}`;
+    const intro =
+      isRefresh || namesChanged
+        ? "The agent secrets were updated. The following secrets are now available for use."
+        : "The following secrets are set on your agent and available for use.";
+    return `${SYSTEM_REMINDER_OPEN}\n${intro}\nReference them with \`$SECRET_NAME\` in shell commands — substitution happens automatically at exec time:\n${list}\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",
