@@ -3,7 +3,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   initSkill,
@@ -13,6 +20,45 @@ import { packageSkill } from "@/skills/builtin/creating-skills/scripts/package-s
 import { validateSkill } from "@/skills/builtin/creating-skills/scripts/validate-skill";
 
 const TEST_DIR = join(import.meta.dir, ".test-skill-creator");
+const CREATING_SKILLS_SCRIPTS_DIR = join(
+  import.meta.dir,
+  "builtin",
+  "creating-skills",
+  "scripts",
+);
+
+function packageDependencies(): Record<string, string> {
+  return JSON.parse(
+    readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf-8"),
+  ).dependencies;
+}
+
+function bundledScriptExternalImports(): string[] {
+  const bareImports = new Set<string>();
+  const importPattern = /\bfrom\s+["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g;
+
+  for (const file of readdirSync(CREATING_SKILLS_SCRIPTS_DIR)) {
+    if (!file.endsWith(".ts")) continue;
+
+    const contents = readFileSync(
+      join(CREATING_SKILLS_SCRIPTS_DIR, file),
+      "utf-8",
+    );
+
+    for (const match of contents.matchAll(importPattern)) {
+      const specifier = match[1] ?? match[2];
+      if (
+        specifier &&
+        !specifier.startsWith(".") &&
+        !specifier.startsWith("node:")
+      ) {
+        bareImports.add(specifier);
+      }
+    }
+  }
+
+  return [...bareImports].sort();
+}
 
 describe("validate-skill", () => {
   beforeEach(() => {
@@ -233,6 +279,17 @@ description: Name doesn't match directory
     expect(result.valid).toBe(true);
     expect(result.warnings).toBeDefined();
     expect(result.warnings?.[0]).toContain("doesn't match directory name");
+  });
+});
+
+describe("bundled skill scripts", () => {
+  test("declare external runtime imports as package dependencies", () => {
+    const dependencies = packageDependencies();
+    const missing = bundledScriptExternalImports().filter(
+      (specifier) => !(specifier in dependencies),
+    );
+
+    expect(missing).toEqual([]);
   });
 });
 
