@@ -24,12 +24,14 @@ This is a pattern reference, not a full product implementation. Keep local exten
 -> remind the agent that only read-only tools and plan-file writes are allowed
 -> permission overlay denies mutations outside ~/.letta/plans/*.md
 -> agent writes the plan with normal Write/Edit/ApplyPatch tools
--> agent reads the plan and calls AskUserQuestion with Approve / Revise
+-> agent reads the plan and calls AskUserQuestion with the full current plan text and Approve / Revise
 -> if approved, agent calls exit_plan_mode
 -> exit_plan_mode clears state and returns the approved-plan execution handoff
 ```
 
 Plan files are normal markdown files. Do not add a special `update_plan_file` tool unless the user explicitly wants that abstraction. Let the agent use normal write tools and constrain those tools with permissions.
+
+Plan approval must show the user the full current plan text. Do not ask "does this look right?" with only a summary. After every revision, read the plan file again and present the full revised plan in the `AskUserQuestion.question` body before exiting plan mode.
 
 ## Capabilities used
 
@@ -38,7 +40,7 @@ Guard each registration with the matching capability:
 - `commands`: `/plan` for explicit human entry
 - `tools`: `enter_plan_mode` and `exit_plan_mode` for model-driven entry/exit
 - `events.turns`: append a focused plan-mode reminder while active
-- `permissions`: block mutating tools except plan-file writes
+- `permissions`: block mutating tools except planning coordination tools and plan-file writes
 
 Do not use panels for persistent mode state. Panels are transient UI and can be noisy/fragile for mode indicators. Do not add a custom statusline renderer just to show plan mode; `setStatuslineRenderer` is a single global renderer, not an additive slot. This example intentionally keeps visible mode state out of scope.
 
@@ -99,9 +101,10 @@ In plan mode, you should:
 1. Thoroughly explore the codebase to understand existing patterns
 2. Identify similar features and architectural approaches
 3. Consider multiple approaches and their trade-offs
-4. Use AskUserQuestion if you need to clarify the approach
-5. Design a concrete implementation strategy
-6. When ready, write the plan to the plan file, use AskUserQuestion to present the full plan for approval, and call exit_plan_mode after the user approves
+4. Use direct read-only tools for exploration. Do not launch coding, general-purpose, or fork subagents in plan mode; they may mutate files and should be denied. Only recall-style subagents are allowed if available.
+5. Use AskUserQuestion if you need to clarify the approach
+6. Design a concrete implementation strategy
+7. When ready, write the plan to the plan file, read the plan file, use AskUserQuestion to present the full current plan text for approval, and call exit_plan_mode after the user approves
 
 Remember: DO NOT write or edit any files except the plan file. This is a read-only exploration and planning phase.
 
@@ -159,8 +162,9 @@ Plan mode is active. The user indicated that they do not want you to execute yet
 1. Answer the user's query comprehensively, using the AskUserQuestion tool if you need to ask the user clarifying questions.
 2. Write your implementation plan to the plan file. Plan file path: ${session.planFilePath}
 3. If using apply_patch, use this exact relative path in patch headers: ${relativePatchPath}
-4. When the plan is complete, read the plan file and present the full plan to the user with AskUserQuestion. The question should offer at least "Approve" and "Revise" options.
-5. If the user approves, call exit_plan_mode immediately. If the user asks to revise, stay in plan mode and update the plan file.
+4. Use direct read-only tools for exploration. Do not launch coding, general-purpose, or fork subagents in plan mode; they may mutate files and should be denied. Only recall-style subagents are allowed if available.
+5. When the plan is complete, read the plan file and present the full current plan text to the user with AskUserQuestion. The question body must include the entire plan, not a summary. The question should offer at least "Approve" and "Revise" options.
+6. If the user approves, call exit_plan_mode immediately. If the user asks to revise, stay in plan mode, update the plan file, then read and present the full revised plan again.
 Do NOT make any file changes outside the plan file or run any tools that modify the system state until the user has approved the plan and you have called exit_plan_mode.
 </system-reminder>`;
 }
@@ -176,35 +180,58 @@ if (letta.capabilities.events.turns) {
 
 ## Permission overlay
 
-Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, `read_file`, `ReadFile`, `SearchFileContent`, etc.).
+Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, `read_file`, `ReadFile`, `SearchFileContent`, etc.). Keep pure read-only tools separate from planning coordination tools like `AskUserQuestion` and todo/plan updates so the policy stays honest.
 
 ```ts
 const readOnlyToolNames = new Set([
-  "askuserquestion",
-  "ask_user_question",
   "glob",
+  "globgemini",
   "grep",
+  "grepfiles",
+  "list",
   "listdir",
-  "list_directory",
+  "listdirectory",
   "ls",
+  "notebookread",
   "read",
-  "read_file",
   "readfile",
+  "readfilegemini",
+  "readlsp",
+  "readmanyfiles",
   "search",
-  "search_file_content",
+  "searchfilecontent",
+  "searchfiles",
   "skill",
   "taskoutput",
-  "update_plan",
-  "view_image",
+  "viewimage",
 ]);
 
+const planningToolNames = new Set([
+  "askuserquestion",
+  "enterplanmode",
+  "exitplanmode",
+  "todowrite",
+  "updateplan",
+  "writetodos",
+]);
+
+const readOnlySubagentTypes = new Set(["recall"]);
+
 function normalizedToolName(toolName) {
-  return toolName.replace(/[\s-]/g, "").toLowerCase();
+  return toolName.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
 function isReadOnlyToolName(toolName) {
-  const raw = toolName.toLowerCase();
-  return readOnlyToolNames.has(raw) || readOnlyToolNames.has(normalizedToolName(toolName));
+  return readOnlyToolNames.has(normalizedToolName(toolName));
+}
+
+function isPlanningToolName(toolName) {
+  return planningToolNames.has(normalizedToolName(toolName));
+}
+
+function isAllowedReadOnlySubagent(args) {
+  const subagentType = args?.subagent_type;
+  return typeof subagentType === "string" && readOnlySubagentTypes.has(normalizedToolName(subagentType));
 }
 
 function isPlanFileWrite(toolName, args, cwd) {
@@ -220,18 +247,28 @@ if (letta.capabilities.permissions) {
     check(event) {
       const session = getSession(event.conversationId);
       if (!session) return;
+      const toolName = String(event.toolName);
+      const args = event.args ?? {};
 
-      if (isReadOnlyToolName(event.toolName)) return { decision: "allow" };
-      if (isPlanFileWrite(event.toolName, event.args, event.workingDirectory || event.cwd)) {
+      if (isReadOnlyToolName(toolName)) return { decision: "allow" };
+      if (isPlanningToolName(toolName)) return { decision: "allow", reason: "planning" };
+
+      const normalized = normalizedToolName(toolName);
+      if ((normalized === "agent" || normalized === "task") && isAllowedReadOnlySubagent(args)) {
+        return { decision: "allow", reason: "read-only subagent" };
+      }
+
+      if (isPlanFileWrite(toolName, args, event.workingDirectory || event.cwd)) {
         return { decision: "allow", reason: "plan file" };
       }
 
       return {
         decision: "deny",
         reason:
-          `Plan mode is active. You can only use read-only tools (Read, Grep, Glob, etc.) and write to the plan file. ` +
+          `Plan mode is active. Use direct read-only tools (Read, Grep, Glob, List, Search, Skill, TaskOutput, safe read-only Bash), planning tools (AskUserQuestion, TodoWrite/UpdatePlan), or recall-style subagents only. ` +
+          `Do not use coding, general-purpose, or fork subagents in plan mode. ` +
           `Write your plan to: ${session.planFilePath}. ` +
-          `Use AskUserQuestion when your plan is ready for user approval, then call exit_plan_mode after approval.`,
+          `When ready, read the plan file and include the full current plan text in AskUserQuestion for approval, then call exit_plan_mode after approval.`,
       };
     },
   }));
@@ -242,14 +279,14 @@ Shell allowlists are easy to get wrong. Start conservative: allow clearly read-o
 
 ## Exit tool
 
-In the extension version, `exit_plan_mode` is not the approval UI. The agent should present the plan with `AskUserQuestion` first, then call `exit_plan_mode` only after the user approves.
+In the extension version, `exit_plan_mode` is not the approval UI. The agent should read the plan file, present the full current plan text with `AskUserQuestion`, then call `exit_plan_mode` only after the user approves.
 
 ```ts
 if (letta.capabilities.tools) {
   disposers.push(letta.tools.register({
     name: "exit_plan_mode",
     description:
-      "Exit plan mode only after the plan file has been written, the full plan has been presented with AskUserQuestion, and the user has approved it.",
+      "Exit plan mode only after the plan file has been written, the full current plan text has been presented with AskUserQuestion, and the user has approved it.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
     requiresApproval: false,
     parallelSafe: false,
@@ -282,4 +319,6 @@ if (letta.capabilities.tools) {
 ## Notes
 
 - Keep `exit_plan_mode` as the final state transition and execution handoff. The approved-plan text in its tool return is useful model context.
+- Plan approval must include the full current plan text in `AskUserQuestion.question`, not just a summary or "does this look right?". After revisions, re-read the file and present the full revised plan again.
+- Keep arbitrary coding subagents denied in plan mode unless the runtime has a true read-only child mode. With the current subagent set, allow only recall-style subagents.
 - If the user renames the plan file, exit logic can use the newest non-empty `~/.letta/plans/*.md` modified after plan mode started, or accept an optional plan path. Keep the user-facing flow normal: write plan file, ask approval, then exit.
