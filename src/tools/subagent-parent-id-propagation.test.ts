@@ -13,12 +13,12 @@ import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
  * `spawnSubagent` re-derives parentAgentId from getCurrentAgentId() after
  * multiple async yields — by which point the listener's in-process agent
  * context may have changed. The fix is to capture parentAgentId
- * synchronously at the call site (from parentScope.agentId) and plumb it
- * through as the 10th positional arg to spawnSubagent.
+ * synchronously at the call site (from parentScope) and plumb it through to
+ * spawnSubagent.
  *
  * Verifying at the spawnBackgroundSubagentTask boundary: whatever
- * parentScope.agentId callers pass in MUST reach the spawnSubagentImpl
- * as its parentAgentId argument — not re-read from a global context.
+ * parentScope callers pass in MUST reach the spawnSubagentImpl as explicit
+ * parent scope arguments — not be re-read from a global context.
  */
 
 describe("parentScope.agentId propagation to spawnSubagent", () => {
@@ -78,8 +78,10 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
   // Positional args of spawnSubagent:
   //   0: type, 1: prompt, 2: userModel, 3: subagentId, 4: signal,
   //   5: existingAgentId, 6: existingConversationId, 7: maxTurns,
-  //   8: forkedContext, 9: parentAgentId   ← the one we care about
+  //   8: forkedContext, 9: parentAgentId, 10: transcriptPath,
+  //   11: parentConversationId
   const PARENT_ID_ARG_INDEX = 9;
+  const PARENT_CONVERSATION_ID_ARG_INDEX = 11;
 
   // Typed stub matching spawnSubagent's shape so mock.calls is inferred
   // as a tuple with the 10th element addressable.
@@ -94,6 +96,8 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     maxTurns?: number,
     forkedContext?: boolean,
     parentAgentId?: string,
+    transcriptPath?: string,
+    parentConversationId?: string,
   ];
 
   const makeSpawnStub = () =>
@@ -115,7 +119,7 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
       }),
     );
 
-  test("forwards parentScope.agentId as 10th positional arg to spawnSubagent", async () => {
+  test("forwards parentScope as explicit positional args to spawnSubagent", async () => {
     const spawnSubagentImpl = makeSpawnStub();
 
     spawnBackgroundSubagentTask({
@@ -142,6 +146,7 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     const call = spawnSubagentImpl.mock.calls[0] as SpawnArgs | undefined;
     expect(call).toBeDefined();
     expect(call?.[PARENT_ID_ARG_INDEX]).toBe(PARENT_AGENT_ID);
+    expect(call?.[PARENT_CONVERSATION_ID_ARG_INDEX]).toBe("conv-xyz");
   });
 
   test("forwards undefined parentAgentId when parentScope is omitted", async () => {
@@ -173,5 +178,6 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     // this layer we just confirm that without parentScope, nothing is
     // forwarded (so fallback will be exercised).
     expect(call?.[PARENT_ID_ARG_INDEX]).toBeUndefined();
+    expect(call?.[PARENT_CONVERSATION_ID_ARG_INDEX]).toBeUndefined();
   });
 });
