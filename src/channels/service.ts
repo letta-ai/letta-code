@@ -244,17 +244,13 @@ function isStalePlaceholderDisplayName(account: ChannelAccount): boolean {
     return false;
   }
   if (isTelegramChannelAccount(account)) {
-    return (
-      displayName === "Telegram bot" || displayName === "Migrated Telegram bot"
-    );
+    return displayName === "Telegram bot";
   }
   if (isSlackChannelAccount(account)) {
-    return displayName === "Slack app" || displayName === "Migrated Slack app";
+    return displayName === "Slack app";
   }
   if (isDiscordChannelAccount(account)) {
-    return (
-      displayName === "Discord bot" || displayName === "Migrated Discord bot"
-    );
+    return displayName === "Discord bot";
   }
   return isWhatsAppChannelAccount(account) && displayName === "WhatsApp";
 }
