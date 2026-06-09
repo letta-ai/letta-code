@@ -147,6 +147,7 @@ export function createHeadlessExtensionAdapter(options: {
     disabled: options.disabled,
     getBackend: () => options.backend,
     getClient,
+    includeBundledExtensions: true,
     ...(options.globalExtensionsDirectory
       ? { globalExtensionsDirectory: options.globalExtensionsDirectory }
       : {}),

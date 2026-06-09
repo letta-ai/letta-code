@@ -355,6 +355,19 @@ function filterExtensionToolsByClientAllowlist(
   );
 }
 
+function filterExtensionToolsByName(
+  extensionTools: Map<string, ExtensionToolDefinition>,
+  filter?: (name: string) => boolean,
+): Map<string, ExtensionToolDefinition> {
+  if (!filter) {
+    return new Map(extensionTools);
+  }
+
+  return new Map(
+    Array.from(extensionTools.entries()).filter(([name]) => filter(name)),
+  );
+}
+
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
@@ -477,9 +490,6 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
   update_plan: { requiresApproval: false },
-  get_goal: { requiresApproval: false },
-  create_goal: { requiresApproval: false },
-  update_goal: { requiresApproval: false },
   // Gemini toolset
   glob_gemini: { requiresApproval: false },
   list_directory: { requiresApproval: false },
@@ -498,9 +508,6 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   GrepFiles: { requiresApproval: false },
   ApplyPatch: { requiresApproval: true },
   UpdatePlan: { requiresApproval: false },
-  GetGoal: { requiresApproval: false },
-  CreateGoal: { requiresApproval: false },
-  UpdateGoal: { requiresApproval: false },
   // Gemini-2 toolset (PascalCase)
   RunShellCommand: { requiresApproval: true },
   ReadFileGemini: { requiresApproval: false },
@@ -1024,6 +1031,7 @@ function capturePreparedToolExecutionContext(
   },
   options?: {
     clientToolAllowlist?: string[];
+    extensionToolNameFilter?: (name: string) => boolean;
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     extensionEvents?: ExtensionEvents;
@@ -1049,7 +1057,10 @@ function capturePreparedToolExecutionContext(
     extensionEvents: options?.extensionEvents ?? snapshot.extensionEvents,
     extensionPermissions: snapshot.extensionPermissions,
     extensionTools: filterExtensionToolsByClientAllowlist(
-      snapshot.extensionTools,
+      filterExtensionToolsByName(
+        snapshot.extensionTools,
+        options?.extensionToolNameFilter,
+      ),
       options?.clientToolAllowlist,
     ),
     workingDirectory:
@@ -1104,6 +1115,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: ChannelTurnSource[];
   extensionEvents?: ExtensionEvents;
+  extensionToolNameFilter?: (name: string) => boolean;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -1133,6 +1145,7 @@ export async function prepareToolExecutionContextForSpecificTools(
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
     extensionEvents?: ExtensionEvents;
+    extensionToolNameFilter?: (name: string) => boolean;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1164,6 +1177,7 @@ export async function prepareToolExecutionContextForModel(
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
     extensionEvents?: ExtensionEvents;
+    extensionToolNameFilter?: (name: string) => boolean;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {

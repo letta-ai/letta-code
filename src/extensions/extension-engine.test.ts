@@ -8,6 +8,7 @@ import {
   clearRegisteredPiProviders,
   getRegisteredPiProvider,
 } from "@/backend/dev/pi-provider-extension-registry";
+import { GOAL_EXTENSION_TOOL_NAMES } from "@/extensions/builtin/goal";
 import { getExtensionErrorDiagnostics } from "@/extensions/extension-diagnostics";
 import {
   createExtensionEngine,
@@ -214,6 +215,47 @@ describe("extension engine", () => {
       expect(Object.keys(snapshot.tools)).toEqual(["visible_tool"]);
     } finally {
       delete testGlobal.__lettaExtensionCapabilities;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads bundled goal extension when requested", async () => {
+    const root = createTempDir();
+    try {
+      const engine = createExtensionEngine({
+        cacheDirectory: path.join(root, "extension-cache"),
+        capabilities: TOOL_ONLY_EXTENSION_CAPABILITIES,
+        getClient: async () => ({}) as unknown as Letta,
+        getContext: createExtensionContext,
+        globalExtensionsDirectory: path.join(root, "global-extensions"),
+        includeBundledExtensions: true,
+      });
+
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(snapshot.loadedPaths).toEqual([]);
+      expect(snapshot.sources).toContainEqual({
+        files: ["bundled:goal"],
+        root: "bundled:",
+        scope: "bundled",
+        trusted: true,
+      });
+
+      for (const name of GOAL_EXTENSION_TOOL_NAMES) {
+        expect(snapshot.tools[name]?.requiresApproval).toBe(false);
+        expect(snapshot.tools[name]?.owner).toMatchObject({
+          path: "bundled:goal",
+          scope: "bundled",
+        });
+        expect(getExtensionToolDefinition(name)?.owner).toMatchObject({
+          path: "bundled:goal",
+          scope: "bundled",
+        });
+      }
+
+      engine.dispose();
+    } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });

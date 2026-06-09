@@ -30,6 +30,12 @@ import type {
   StatuslineRendererOutput,
 } from "@/cli/display/statusline/types";
 import {
+  BUILTIN_EXTENSIONS,
+  BUNDLED_EXTENSION_SOURCE_ROOT,
+  getBundledExtensionPath,
+  getBundledExtensionSourceFiles,
+} from "@/extensions/builtin";
+import {
   cloneExtensionCapabilities,
   resolveExtensionCapabilities,
 } from "@/extensions/capabilities";
@@ -218,6 +224,7 @@ interface LocalExtensionModule {
 export interface ResolveLocalExtensionSourcesOptions {
   cacheDirectory?: string;
   globalExtensionsDirectory?: string;
+  includeBundledExtensions?: boolean;
 }
 
 export interface LoadLocalExtensionsOptions
@@ -272,8 +279,20 @@ export function resolveLocalExtensionSources(
 ): LocalExtensionSource[] {
   const globalExtensionsDirectory =
     options.globalExtensionsDirectory ?? GLOBAL_EXTENSIONS_DIRECTORY;
+  const bundledSources: LocalExtensionSource[] =
+    options.includeBundledExtensions
+      ? [
+          {
+            files: getBundledExtensionSourceFiles(),
+            root: BUNDLED_EXTENSION_SOURCE_ROOT,
+            scope: "bundled",
+            trusted: true,
+          },
+        ]
+      : [];
 
   return [
+    ...bundledSources,
     {
       files: listExtensionFiles(globalExtensionsDirectory),
       root: globalExtensionsDirectory,
@@ -1217,6 +1236,37 @@ function getExtensionFactory(module: LocalExtensionModule): unknown {
     : module.activate;
 }
 
+function getBundledExtensionFactory(
+  extensionPath: string,
+): LettaExtensionFactory | undefined {
+  const definition = BUILTIN_EXTENSIONS.find(
+    (extension) => getBundledExtensionPath(extension.id) === extensionPath,
+  );
+  return definition?.activate;
+}
+
+async function importExtensionFactory(
+  extensionPath: string,
+  source: LocalExtensionSource,
+  cacheDirectory: string,
+): Promise<{ factory: unknown }> {
+  if (source.scope === "bundled") {
+    return {
+      factory: getBundledExtensionFactory(extensionPath),
+    };
+  }
+
+  const mtimeMs = statSync(extensionPath).mtimeMs;
+  const importPath = createImportableExtensionPath(
+    extensionPath,
+    cacheDirectory,
+  );
+  const module = (await import(
+    `${pathToFileURL(importPath).href}?extension=${mtimeMs}`
+  )) as LocalExtensionModule;
+  return { factory: getExtensionFactory(module) };
+}
+
 export async function loadLocalExtensions(
   options: LoadLocalExtensionsOptions,
 ): Promise<LocalExtensionRegistry> {
@@ -1252,21 +1302,17 @@ export async function loadLocalExtensions(
       registry.owners[owner.id] = owner;
 
       try {
-        const mtimeMs = statSync(extensionPath).mtimeMs;
-        failurePhase = TYPESCRIPT_EXTENSION_FILE_EXTENSIONS.has(
-          path.extname(extensionPath),
-        )
-          ? "transpile"
-          : "import";
-        const importPath = createImportableExtensionPath(
+        failurePhase =
+          source.scope !== "bundled" &&
+          TYPESCRIPT_EXTENSION_FILE_EXTENSIONS.has(path.extname(extensionPath))
+            ? "transpile"
+            : "import";
+        const { factory } = await importExtensionFactory(
           extensionPath,
+          source,
           cacheDirectory,
         );
         failurePhase = "import";
-        const module = (await import(
-          `${pathToFileURL(importPath).href}?extension=${mtimeMs}`
-        )) as LocalExtensionModule;
-        const factory = getExtensionFactory(module);
         failurePhase = "activate";
 
         if (typeof factory !== "function") {
@@ -1296,7 +1342,9 @@ export async function loadLocalExtensions(
             owner,
           });
         }
-        registry.loadedPaths.push(extensionPath);
+        if (source.scope !== "bundled") {
+          registry.loadedPaths.push(extensionPath);
+        }
       } catch (error) {
         removeOwnerCapabilities(registry, owner);
         abortController.abort("extension activation failed");
