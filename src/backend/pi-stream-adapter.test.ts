@@ -365,6 +365,62 @@ describe("PiStreamAdapter", () => {
     }
   });
 
+  test("maps max reasoning effort to pi-ai xhigh for Fable", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-stream-fable-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "anthropic",
+        providerName: "lc-anthropic",
+        apiKey: "secret-key",
+      });
+
+      let capturedOptions:
+        | (SimpleStreamOptions & Record<string, unknown>)
+        | undefined;
+      const stream: PiStreamFunction = (
+        _model: Model<string>,
+        _context: Context,
+        options?: SimpleStreamOptions & Record<string, unknown>,
+      ) => {
+        capturedOptions = options;
+        const finalMessage = {
+          ...assistantMessage(),
+          api: "anthropic-messages",
+          provider: "anthropic",
+          model: "claude-fable-5",
+        } satisfies AssistantMessage;
+        return streamFromEvents(
+          [{ type: "done", reason: "stop", message: finalMessage }],
+          finalMessage,
+        );
+      };
+
+      const adapter = new PiStreamAdapter({
+        stream,
+        localProviderAuthStorageDir: storageDir,
+      });
+      const baseInput = input();
+      for await (const _event of adapter.stream({
+        ...baseInput,
+        agent: {
+          ...baseInput.agent,
+          model: "anthropic/claude-fable-5",
+          model_settings: {
+            provider_type: "anthropic",
+            effort: "max",
+          },
+        },
+      })) {
+        // drain
+      }
+
+      expect(capturedOptions).toMatchObject({ reasoning: "xhigh" });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("strips trailing assistant messages from context before calling provider", async () => {
     let capturedContext: Context | undefined;
     const stream: PiStreamFunction = (

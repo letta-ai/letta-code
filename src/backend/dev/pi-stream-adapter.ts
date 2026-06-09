@@ -325,6 +325,7 @@ function boolValue(value: unknown): boolean | undefined {
 
 function thinkingLevel(value: unknown): ThinkingLevel | undefined {
   const effort = stringValue(value);
+  if (effort === "max") return "xhigh";
   return effort === "minimal" ||
     effort === "low" ||
     effort === "medium" ||
