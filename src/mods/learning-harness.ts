@@ -140,7 +140,7 @@ function timestampForPath(now: Date): string {
 
 export function defaultModLearningRunDirectory(
   spec: ModLearningSpec,
-  baseDir: string = path.join(".letta", "mod-lab-runs"),
+  baseDir: string = path.join(".letta", "mod-learning-runs"),
   now: Date = new Date(),
 ): string {
   return path.join(
@@ -438,7 +438,7 @@ function renderMarkerSection(label: string, checks: MarkerCheck[]): string[] {
 
 function renderMarkdownReport(report: ModLearningReport): string {
   const lines = [
-    `# Mod Lab report: ${report.spec.name}`,
+    `# Mod learning report: ${report.spec.name}`,
     "",
     `- Status: ${report.passed ? "PASS" : "FAIL"}`,
     `- Run directory: ${report.runDir}`,
@@ -485,7 +485,7 @@ export async function runModLearning(
     options.runDir ??
       defaultModLearningRunDirectory(
         options.spec,
-        options.outputBaseDir ?? path.join(".letta", "mod-lab-runs"),
+        options.outputBaseDir ?? path.join(".letta", "mod-learning-runs"),
       ),
   );
   const candidateDir = path.join(runDir, "mods");
@@ -504,7 +504,7 @@ export async function runModLearning(
     options.onProgress?.({ candidatePath, message, phase, runDir });
   };
 
-  emitProgress("preparing", "Preparing Mod Lab run");
+  emitProgress("preparing", "Preparing mod learning run");
   await mkdir(candidateDir, { recursive: true });
   await writeJsonArtifact(
     path.join(runDir, "spec.snapshot.json"),
@@ -622,7 +622,7 @@ export async function runModLearning(
   }
 
   const reportPath = path.join(runDir, "report.md");
-  emitProgress("writing-report", "Writing Mod Lab report");
+  emitProgress("writing-report", "Writing mod learning report");
   const report: ModLearningReport = {
     candidatePath,
     evalMemoryDir,
@@ -637,7 +637,10 @@ export async function runModLearning(
   };
   await writeJsonArtifact(path.join(runDir, "report.json"), report);
   await writeFile(reportPath, renderMarkdownReport(report), "utf8");
-  emitProgress("done", report.passed ? "Mod Lab passed" : "Mod Lab failed");
+  emitProgress(
+    "done",
+    report.passed ? "mod learning passed" : "mod learning failed",
+  );
   return report;
 }
 

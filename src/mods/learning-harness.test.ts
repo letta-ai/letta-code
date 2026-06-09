@@ -20,7 +20,7 @@ import {
 const tempDirs: string[] = [];
 
 function createTempDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "letta-mod-lab-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "letta-mod-learning-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -32,14 +32,14 @@ function createSpec(): ModLearningSpec {
     requirements: ["Register memory_citation_snapshot", "Cite observed paths"],
     evaluation: {
       memoryFiles: {
-        "reference/mod-lab.md": "The code word is CITATION-DOGFOOD-OK.\n",
+        "reference/mod-learning.md": "The code word is CITATION-DOGFOOD-OK.\n",
       },
       outputFormat: "stream-json",
-      prompt: "Read $MEMORY_DIR/reference/mod-lab.md and cite it.",
+      prompt: "Read $MEMORY_DIR/reference/mod-learning.md and cite it.",
       requiredResultMarkers: [
         "CITATION-DOGFOOD-OK",
         "Memory references:",
-        "reference/mod-lab.md",
+        "reference/mod-learning.md",
       ],
       requiredTraceMarkers: [
         '"name":"memory_citation_snapshot"',
@@ -90,12 +90,12 @@ describe("mod learning harness", () => {
         type: "message",
         message_type: "assistant_message",
         content:
-          "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-lab.md",
+          "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-learning.md",
       }),
       JSON.stringify({
         type: "result",
         result:
-          "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-lab.md",
+          "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-learning.md",
       }),
     ].join("\n");
 
@@ -123,7 +123,7 @@ describe("mod learning harness", () => {
       JSON.stringify({
         type: "result",
         result:
-          "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-lab.md",
+          "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-learning.md",
       }),
     ].join("\n");
 
@@ -145,7 +145,12 @@ describe("mod learning harness", () => {
 
   test("runs generation, eval, and writes artifacts with a fake command runner", async () => {
     const repoRoot = createTempDir();
-    const runDir = path.join(repoRoot, ".letta", "mod-lab-runs", "test-run");
+    const runDir = path.join(
+      repoRoot,
+      ".letta",
+      "mod-learning-runs",
+      "test-run",
+    );
     const candidatePath = path.join(runDir, "mods", "memory-citations.ts");
     const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
     const progress: string[] = [];
@@ -198,7 +203,7 @@ describe("mod learning harness", () => {
           JSON.stringify({
             type: "result",
             result:
-              "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-lab.md",
+              "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-learning.md",
           }),
         ].join("\n"),
         timedOut: false,
@@ -230,7 +235,7 @@ describe("mod learning harness", () => {
     expect(existsSync(path.join(runDir, "report.md"))).toBe(true);
     expect(
       readFileSync(
-        path.join(runDir, "eval-memory", "reference", "mod-lab.md"),
+        path.join(runDir, "eval-memory", "reference", "mod-learning.md"),
         "utf8",
       ),
     ).toContain("CITATION-DOGFOOD-OK");

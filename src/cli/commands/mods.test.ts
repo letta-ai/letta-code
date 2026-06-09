@@ -158,7 +158,7 @@ describe("/mods command", () => {
       phase: "finished",
       success: true,
     });
-    expect(updates.at(-1)?.output).toContain("PASS Mod Lab");
+    expect(updates.at(-1)?.output).toContain("PASS mod learning");
     expect(updates.at(-1)?.output).toContain("did not promote or load");
   });
 });

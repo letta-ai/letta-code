@@ -298,12 +298,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/mods": {
-    desc: "Run Mod Lab learning targets",
+    desc: "Run mod learning targets",
     order: 27.3,
     args: "learn [memory-citations] [options]",
     handler: () => {
-      // Handled specially in use-submit-handler.ts to stream Mod Lab progress
-      return "Starting Mod Lab...";
+      // Handled specially in use-submit-handler.ts to stream mod learning progress
+      return "Starting mod learning...";
     },
   },
   "/ade": {

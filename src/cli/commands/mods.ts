@@ -89,7 +89,7 @@ function formatModsUsage(error?: string): string {
     "  --backend <api|local>          Backend flag forwarded to headless runs",
     "  --candidate <path>            Evaluate an existing candidate instead of generating",
     "  --candidate-file-name <name>  Candidate filename in the eval mod dir",
-    "  --out <dir>                   Artifact directory (default: .letta/mod-lab-runs/<target>-<timestamp>)",
+    "  --out <dir>                   Artifact directory (default: .letta/mod-learning-runs/<target>-<timestamp>)",
     "  --skip-generation             Expect the candidate file to already exist in the run dir",
     "",
     "Built-in targets:",
@@ -267,7 +267,7 @@ function formatProgress(
   cwd: string,
 ): string {
   return [
-    `Running Mod Lab: ${learn.targetLabel}`,
+    `Running mod learning: ${learn.targetLabel}`,
     `Phase: ${progress.message}`,
     `Run directory: ${displayPath(progress.runDir, cwd)}`,
     `Candidate: ${displayPath(progress.candidatePath, cwd)}`,
@@ -282,7 +282,7 @@ export function formatModLearningSummary(
 ): string {
   const status = report.passed ? "PASS" : "FAIL";
   const lines = [
-    `${status} Mod Lab: ${report.spec.name}`,
+    `${status} mod learning: ${report.spec.name}`,
     `Report: ${displayPath(report.reportPath, cwd)}`,
     `Candidate: ${displayPath(report.candidatePath, cwd)}`,
     `Run directory: ${displayPath(report.runDir, cwd)}`,
@@ -401,12 +401,12 @@ export function handleModsCommand(
 
   const command = ctx.commandRunner.start(
     trimmed,
-    `Starting Mod Lab: ${parsed.learn.targetLabel}...`,
+    `Starting mod learning: ${parsed.learn.targetLabel}...`,
   );
 
   const done = runLearnCommand(parsed.learn, ctx, command).catch((error) => {
     command.fail(
-      `Failed to run Mod Lab: ${error instanceof Error ? error.message : String(error)}`,
+      `Failed to run mod learning: ${error instanceof Error ? error.message : String(error)}`,
     );
   });
 

@@ -65,14 +65,14 @@ function parseArgs(argv: string[]): Args {
 }
 
 function printHelp(): void {
-  console.log(`Usage: bun scripts/mod-lab/learn-mod.ts [options]
+  console.log(`Usage: bun scripts/mod-learning/learn-mod.ts [options]
 
-Runs the Mod Lab dogfood loop:
+Runs the mod learning dogfood loop:
   spec/demo -> generate candidate mod -> headless eval with LETTA_MODS_DIR (and legacy LETTA_EXTENSIONS_DIR for pre-rename branches) -> artifacts/report
 
 Options:
   --spec <path>                 Learning spec JSON (default: memory-citations spec)
-  --out <dir>                   Run artifact directory (default: .letta/mod-lab-runs/<slug>-<timestamp>)
+  --out <dir>                   Run artifact directory (default: .letta/mod-learning-runs/<slug>-<timestamp>)
   --candidate <path>            Use an existing candidate mod instead of generation
   --candidate-file-name <name>  Candidate filename inside the eval mod directory
   --model <handle>              Model for generation and eval

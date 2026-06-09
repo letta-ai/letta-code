@@ -19,9 +19,9 @@ The v0 provenance is intentionally conservative and imperfect: `tool_start`
 fires before execution, so the mod observes memory paths passed to tools,
 not successful reads. Shell-command matches are marked `medium` confidence.
 
-## Mod Lab dogfood
+## Mod learning dogfood
 
-The learning harness in `scripts/mod-lab/learn-mod.ts` dogfoods the
+The learning harness in `scripts/mod-learning/learn-mod.ts` dogfoods the
 mod system itself:
 
 1. read a target spec/demo;
@@ -29,12 +29,12 @@ mod system itself:
 3. run a second headless eval with `LETTA_MODS_DIR` pointed at the
    candidate directory;
 4. save prompts, stdout/stderr, the candidate mod, and a pass/fail report
-   under `.letta/mod-lab-runs/`.
+   under `.letta/mod-learning-runs/`.
 
 Run the memory-citation learner target with:
 
 ```bash
-bun run mod-lab:memory-citations
+bun run mod-learning:memory-citations
 ```
 
 From inside the Letta Code TUI, run the same built-in target with:
@@ -44,7 +44,7 @@ From inside the Letta Code TUI, run the same built-in target with:
 ```
 
 The TUI command streams progress into the transcript and writes the same
-candidate/report artifacts under `.letta/mod-lab-runs/`. It never installs
+candidate/report artifacts under `.letta/mod-learning-runs/`. It never installs
 or promotes the learned mod automatically; review the generated candidate
 before copying it into your local mod directory and running `/reload`.
 

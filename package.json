@@ -89,7 +89,7 @@
     "test:update-chain:startup": "bun run src/test-utils/update-chain-smoke.ts --mode startup",
     "prepublishOnly": "bun run build",
     "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true",
-    "mod-lab:memory-citations": "bun scripts/mod-lab/learn-mod.ts --spec docs/examples/mods/learning/memory-citations.spec.json"
+    "mod-learning:memory-citations": "bun scripts/mod-learning/learn-mod.ts --spec docs/examples/mods/learning/memory-citations.spec.json"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json}": [
