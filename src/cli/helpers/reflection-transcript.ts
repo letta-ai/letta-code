@@ -738,7 +738,7 @@ function normalizeV3State(
   };
 }
 
-function countRowsThroughReflectedMessageId(
+function countAssistantRowsThroughMessageId(
   rows: ParsedTranscriptRow[],
   reflectedThroughMessageId?: string,
 ): number {
@@ -771,7 +771,7 @@ function migrateMessageIdState(
     parsed.reflected_through_message_id,
   );
   const reflectedCompletedSteps = Math.min(
-    countRowsThroughReflectedMessageId(rows, reflectedThroughMessageId),
+    countAssistantRowsThroughMessageId(rows, reflectedThroughMessageId),
     totalCompletedSteps,
   );
 
@@ -815,14 +815,9 @@ function migrateLegacyState(
     ? lastCanonicalRow.entry.source_message_id
     : undefined;
   const allEntries = rows.map((row) => row.entry);
-  const reflectedEntries = lastCanonicalRow
-    ? rows
-        .filter((row) => row.lineIndex <= lastCanonicalRow.lineIndex)
-        .map((row) => row.entry)
-    : [];
   const totalCompletedSteps = countAssistantRows(allEntries);
   const reflectedCompletedSteps = reflectedThroughMessageId
-    ? countAssistantRows(reflectedEntries)
+    ? countAssistantRowsThroughMessageId(rows, reflectedThroughMessageId)
     : 0;
 
   return {
