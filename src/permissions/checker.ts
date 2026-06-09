@@ -3,13 +3,13 @@
 
 import { resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
-import {
-  checkExtensionPermissions,
-  type ExtensionPermissionDefinition,
-  getAvailableExtensionPermissionsRegistry,
-} from "@/extensions/permission-registry";
-import { extensionToolRequiresApproval } from "@/extensions/tool-registry";
 import { runPermissionRequestHooks } from "@/hooks";
+import {
+  checkModPermissions,
+  getAvailableModPermissionsRegistry,
+  type ModPermissionDefinition,
+} from "@/mods/permission-registry";
+import { modToolRequiresApproval } from "@/mods/tool-registry";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
@@ -97,7 +97,7 @@ const FILE_TOOLS_V1 = [
 
 type ToolArgs = Record<string, unknown>;
 
-interface ExtensionPermissionCheckOptions {
+interface ModPermissionCheckOptions {
   conversationId?: string | null;
   phase?: "approval" | "execution";
   toolCallId?: string | null;
@@ -744,9 +744,9 @@ function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
 ): PermissionDecision {
-  const extensionRequiresApproval = extensionToolRequiresApproval(toolName);
-  if (extensionRequiresApproval !== undefined) {
-    return extensionRequiresApproval ? "ask" : "allow";
+  const modRequiresApproval = modToolRequiresApproval(toolName);
+  if (modRequiresApproval !== undefined) {
+    return modRequiresApproval ? "ask" : "allow";
   }
 
   // Check TOOL_PERMISSIONS to determine if tool requires approval
@@ -829,11 +829,11 @@ export async function checkPermissionWithHooks(
   workingDirectory: string = process.cwd(),
   modeState?: PermissionModeState,
   agentId?: string,
-  extensionPermissions: Map<
+  modPermissions: Map<
     string,
-    ExtensionPermissionDefinition
-  > = getAvailableExtensionPermissionsRegistry(),
-  extensionPermissionOptions: ExtensionPermissionCheckOptions = {},
+    ModPermissionDefinition
+  > = getAvailableModPermissionsRegistry(),
+  modPermissionOptions: ModPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
   let result = checkPermission(
@@ -846,27 +846,25 @@ export async function checkPermissionWithHooks(
   );
 
   if (result.decision !== "deny") {
-    const extensionDecision = await checkExtensionPermissions(
+    const modDecision = await checkModPermissions(
       {
         agentId: agentId ?? null,
-        conversationId: extensionPermissionOptions.conversationId ?? null,
-        toolCallId: extensionPermissionOptions.toolCallId ?? null,
+        conversationId: modPermissionOptions.conversationId ?? null,
+        toolCallId: modPermissionOptions.toolCallId ?? null,
         toolName,
         args: toolArgs,
         cwd: workingDirectory,
         workingDirectory,
         permissionMode: modeState?.mode ?? permissionMode.getMode(),
-        phase: extensionPermissionOptions.phase ?? "approval",
+        phase: modPermissionOptions.phase ?? "approval",
       },
-      extensionPermissions,
+      modPermissions,
     );
-    if (extensionDecision) {
+    if (modDecision) {
       result = {
-        decision: extensionDecision.decision,
-        matchedRule: extensionDecision.matchedRule,
-        reason:
-          extensionDecision.reason ??
-          `Matched ${extensionDecision.matchedRule}`,
+        decision: modDecision.decision,
+        matchedRule: modDecision.matchedRule,
+        reason: modDecision.reason ?? `Matched ${modDecision.matchedRule}`,
       };
     }
   }

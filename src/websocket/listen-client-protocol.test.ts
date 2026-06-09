@@ -45,7 +45,7 @@ import {
   handleExecuteCommand,
   SUPPORTED_REMOTE_COMMANDS,
 } from "@/websocket/listener/commands";
-import { ensureListenerExtensionAdapter } from "@/websocket/listener/extension-adapter";
+import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
 import { isEditFileCommand } from "@/websocket/listener/protocol-inbound";
 import {
   DESKTOP_DEBUG_PANEL_INFO_PREFIX,
@@ -1348,7 +1348,7 @@ describe("listen-client parseServerMessage", () => {
 
   test("runs remote reload execute_command", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
-    const adapter = ensureListenerExtensionAdapter(listener);
+    const adapter = ensureListenerModAdapter(listener);
     const originalReload = adapter.reload;
     let reloadCalls = 0;
     adapter.reload = async () => {
@@ -1376,12 +1376,12 @@ describe("listen-client parseServerMessage", () => {
     } finally {
       adapter.reload = originalReload;
       adapter.dispose();
-      listener.extensionAdapter = undefined;
+      listener.modAdapter = undefined;
     }
 
     expect(reloadCalls).toBe(1);
     expect(socket.sentPayloads.join("\n")).toContain(
-      "Reloaded settings, local extensions, and agent secrets",
+      "Reloaded settings, local mods, and agent secrets",
     );
   });
 

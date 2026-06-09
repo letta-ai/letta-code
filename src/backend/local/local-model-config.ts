@@ -10,7 +10,7 @@ import {
   listRegisteredPiProviders,
   resolveRegisteredPiProviderFromModelHandle,
   stripRegisteredProviderHandlePrefix,
-} from "@/backend/dev/pi-provider-extension-registry";
+} from "@/backend/dev/pi-provider-mod-registry";
 import {
   getPiProviderSpec,
   isPiProvider,

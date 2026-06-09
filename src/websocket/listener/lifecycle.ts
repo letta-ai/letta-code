@@ -55,12 +55,12 @@ import {
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
 import { loadPersistedCwdMap } from "./cwd";
-import {
-  disposeListenerExtensionAdapter,
-  reloadListenerExtensionAdapter,
-} from "./extension-adapter";
 import { createFileCommandSession } from "./file-commands";
 import { createListenerMessageHandler } from "./message-router";
+import {
+  disposeListenerModAdapter,
+  reloadListenerModAdapter,
+} from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   loadPersistedPermissionModeMap,
@@ -795,7 +795,7 @@ export function stopRuntime(
   runtime: ListenerRuntime,
   suppressCallbacks: boolean,
 ): void {
-  disposeListenerExtensionAdapter(runtime);
+  disposeListenerModAdapter(runtime);
   setMessageQueueAdder(null); // Clear bridge for ALL stop paths
   runtime.intentionallyClosed = true;
   clearRuntimeTimers(runtime);
@@ -1055,7 +1055,7 @@ export async function startListenerClient(
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
-  await reloadListenerExtensionAdapter(runtime);
+  await reloadListenerModAdapter(runtime);
   await connectWithRetry(runtime, opts);
 }
 
@@ -1090,7 +1090,7 @@ export async function startLocalChannelListener(
   telemetry.init();
 
   try {
-    await reloadListenerExtensionAdapter(runtime);
+    await reloadListenerModAdapter(runtime);
     await loadTools();
     const transport = new LocalListenerTransport();
     const processQueuedTurn: ProcessQueuedTurn = async (

@@ -10,7 +10,7 @@ import {
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
-} from "@/backend/dev/pi-provider-extension-registry";
+} from "@/backend/dev/pi-provider-mod-registry";
 import {
   PI_PROVIDER_SPECS,
   PI_TUI_DEFAULT_MODEL_IDS,
@@ -150,7 +150,7 @@ describe("local pi provider catalog", () => {
     expect(localApiKeyProviderIds.has("github-copilot")).toBe(false);
   });
 
-  test("local /connect configs include registered extension providers", () => {
+  test("local /connect configs include registered mod providers", () => {
     registerPiProvider("kilo", {
       name: "Kilo",
       description: "Connect Kilo",
@@ -194,7 +194,7 @@ describe("local pi provider catalog", () => {
     });
   });
 
-  test("local /connect configs include registered extension OAuth providers", () => {
+  test("local /connect configs include registered mod OAuth providers", () => {
     registerPiProvider("kilo", {
       name: "Kilo",
       description: "Connect Kilo account",
@@ -243,7 +243,7 @@ describe("local pi provider catalog", () => {
     expect(provider?.fields).toBeUndefined();
   });
 
-  test("local /connect configs respect connect false for registered extension OAuth providers", () => {
+  test("local /connect configs respect connect false for registered mod OAuth providers", () => {
     registerPiProvider("kilo", {
       name: "Kilo",
       baseUrl: "https://api.kilo.dev/v1",
@@ -278,7 +278,7 @@ describe("local pi provider catalog", () => {
     ).toBe(false);
   });
 
-  test("local model listing includes dynamic extension provider models when configured", async () => {
+  test("local model listing includes dynamic mod provider models when configured", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-kilo-provider-"));
     try {
       const connections: unknown[] = [];
@@ -331,7 +331,7 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("local model listing passes extension OAuth api keys to listModels", async () => {
+  test("local model listing passes mod OAuth api keys to listModels", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-kilo-oauth-"));
     try {
       const connections: unknown[] = [];

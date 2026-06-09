@@ -78,10 +78,7 @@ import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
 } from "./cli/subcommands/router";
-import {
-  disableExtensionsForProcess,
-  shouldDisableExtensions,
-} from "./extensions/disable";
+import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import { applyStartupPermissionMode } from "./permissions/startup";
 import {
   type Settings,
@@ -749,7 +746,7 @@ async function main(): Promise<void> {
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
   // Parse command-line arguments from a shared schema used by both TUI and headless flows.
-  // Preprocess args to support --conv as an alias for --conversation.
+  // Preprocess args to support legacy aliases before strict parsing.
   const processedArgs = preprocessCliArgs([
     process.argv[0] ?? "node",
     process.argv[1] ?? "letta",
@@ -890,11 +887,11 @@ async function main(): Promise<void> {
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const noSystemInfoReminderFlag = values["no-system-info-reminder"];
-  const extensionsDisabled = shouldDisableExtensions({
-    cliFlag: values["no-extensions"],
+  const modsDisabled = shouldDisableMods({
+    cliFlag: values["no-mods"],
   });
-  if (extensionsDisabled) {
-    disableExtensionsForProcess();
+  if (modsDisabled) {
+    disableModsForProcess();
   }
   const resolvedSkillSources = (() => {
     try {
@@ -2902,7 +2899,7 @@ async function main(): Promise<void> {
         startupHasAvailableLocalModels,
         releaseNotes,
         systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-        extensionsDisabled,
+        modsDisabled,
         fileAutocompleteFdPath,
       });
     }
@@ -2927,7 +2924,7 @@ async function main(): Promise<void> {
       releaseNotes,
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-      extensionsDisabled,
+      modsDisabled,
       fileAutocompleteFdPath,
     });
   }
