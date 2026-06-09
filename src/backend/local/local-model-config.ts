@@ -1,10 +1,13 @@
-import { type Api, getModels, type Model } from "@earendil-works/pi-ai";
 import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
   type PiProvider,
   UNSELECTED_LOCAL_MODEL_HANDLE,
 } from "@/backend/dev/pi-model-factory";
+import {
+  findPiRegistryModelForHandle,
+  listPiRegistryCatalogModelsForProvider,
+} from "@/backend/dev/pi-model-registry-adapter";
 import {
   getRegisteredPiProvider,
   listRegisteredPiProviders,
@@ -14,7 +17,6 @@ import {
 import {
   getPiProviderSpec,
   isPiProvider,
-  listCatalogModelsForProvider,
   listConfiguredPiProviders,
   localModelHandle,
   localProviderType,
@@ -281,16 +283,13 @@ function registeredModelSettingsForProviderModel(
   };
 }
 
-function catalogModelSettingsForProviderModel(
-  provider: PiProvider,
-  modelId: string | undefined,
+function catalogModelSettingsForHandle(
+  handle: string,
+  storageDir?: string,
 ): Record<string, unknown> | undefined {
-  if (!modelId || !isPiProvider(provider)) return undefined;
-  const spec = getPiProviderSpec(provider);
-  if (!spec.piProvider) return undefined;
-  const model = (getModels(spec.piProvider) as Model<Api>[]).find(
-    (entry) => entry.id === modelId,
-  );
+  const provider = resolveProviderFromModelHandle(handle);
+  if (!provider || !isPiProvider(provider)) return undefined;
+  const model = findPiRegistryModelForHandle(handle, storageDir);
   if (!model) return undefined;
   return {
     provider_type: localProviderTypeForModelConfig(provider),
@@ -301,6 +300,7 @@ function catalogModelSettingsForProviderModel(
 
 export function localModelSettingsForHandle(
   handle: string | undefined,
+  storageDir?: string,
 ): Record<string, unknown> | undefined {
   if (!handle) return undefined;
   const registeredProvider = resolveRegisteredPiProviderFromModelHandle(handle);
@@ -316,7 +316,7 @@ export function localModelSettingsForHandle(
   const modelId = stripProviderHandlePrefix(handle, provider);
   return (
     registeredModelSettingsForProviderModel(provider, modelId) ??
-    catalogModelSettingsForProviderModel(provider, modelId)
+    catalogModelSettingsForHandle(handle, storageDir)
   );
 }
 
@@ -336,7 +336,7 @@ export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
     : model === UNSELECTED_LOCAL_MODEL_HANDLE
       ? UNSELECTED_LOCAL_MODEL_HANDLE
       : localModelHandle(provider, model);
-  const modelSettings = localModelSettingsForHandle(handle);
+  const modelSettings = localModelSettingsForHandle(handle, storageDir);
   return {
     provider,
     model,
@@ -388,7 +388,7 @@ export async function resolveAvailableLocalModelForTurn(input: {
     model: selected.handle,
     modelSettings: {
       ...baseSettings,
-      ...localModelSettingsForHandle(selected.handle),
+      ...localModelSettingsForHandle(selected.handle, input.storageDir),
       provider_type: selected.model_endpoint_type,
     },
   };
@@ -424,7 +424,7 @@ export async function listLocalModels(
         ? `${provider}/${model}`
         : localModelHandle(provider as PiProvider, model));
     if (models.some((entry) => entry.handle === handle)) return;
-    const modelSettings = localModelSettingsForHandle(handle);
+    const modelSettings = localModelSettingsForHandle(handle, storageDir);
     const maxContextWindow =
       options.maxContextWindow ??
       (typeof modelSettings?.context_window_limit === "number"
@@ -501,8 +501,15 @@ export async function listLocalModels(
         // reachable; simply omit that provider's catalog from /model.
       }
     } else {
-      for (const model of listCatalogModelsForProvider(provider)) {
-        addModel(provider, model);
+      for (const entry of listPiRegistryCatalogModelsForProvider(
+        provider,
+        storageDir,
+      )) {
+        addModel(provider, entry.handle, {
+          handle: entry.handle,
+          maxContextWindow: entry.model.contextWindow,
+          modelEndpointType: entry.modelEndpointType,
+        });
       }
     }
   }

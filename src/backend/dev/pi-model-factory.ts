@@ -1,9 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { getModel, getModels } from "@earendil-works/pi-ai";
-import {
-  getOAuthProvider,
-  type OAuthCredentials,
-} from "@earendil-works/pi-ai/oauth";
+import { getModel } from "@earendil-works/pi-ai";
+import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import {
   getLocalOAuthApiKey,
   getLocalProviderRecordByName,
@@ -14,6 +11,7 @@ import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { findPiRegistryModelForProviderModel } from "./pi-model-registry-adapter";
 import {
   getRegisteredPiProvider,
   type PiProviderModelRegistration,
@@ -253,36 +251,6 @@ export function resolveZaiConnection(options: {
   if (codingKey) return codingConnection;
   if (regularKey) return regularConnection;
   return codingConnection;
-}
-
-function getCatalogModel(
-  provider: PiProvider,
-  modelId: string,
-  oauthCredentials?: OAuthCredentials,
-): Model<Api> | undefined {
-  const spec = getPiProviderSpec(provider);
-  const piProvider = spec.piProvider;
-  if (!piProvider) return undefined;
-  const catalog = getModels(piProvider);
-  const fallbackModelId = fallbackCatalogModelId(piProvider, modelId);
-  const model = (catalog.find((model) => model.id === modelId) ??
-    catalog.find((model) => model.id === fallbackModelId)) as
-    | Model<Api>
-    | undefined;
-  if (!model || !oauthCredentials) return model;
-
-  const oauthProvider = getOAuthProvider(piProvider);
-  return (oauthProvider?.modifyModels?.([model], oauthCredentials)[0] ??
-    model) as Model<Api>;
-}
-
-function fallbackCatalogModelId(
-  provider: string,
-  modelId: string,
-): string | undefined {
-  if (provider !== "openai") return undefined;
-  const withoutReleaseDate = modelId.replace(/-\d{4}-\d{2}-\d{2}$/, "");
-  return withoutReleaseDate === modelId ? undefined : withoutReleaseDate;
 }
 
 function customOpenAICompatibleModel(input: {
@@ -613,7 +581,12 @@ export async function resolvePiModelForAgent(
       maxTokens,
     });
   } else {
-    const catalogModel = getCatalogModel(spec.id, modelId, oauthCredentials);
+    const catalogModel = findPiRegistryModelForProviderModel({
+      provider: spec.id,
+      modelId,
+      storageDir,
+      oauthCredentials,
+    });
     if (catalogModel) {
       model = withOverrides(catalogModel, {
         baseURL,
