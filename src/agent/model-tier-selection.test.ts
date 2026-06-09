@@ -103,7 +103,7 @@ describe("getModelInfoForLlmConfig", () => {
   });
 
   test("selects opus 1M variant by context_window", () => {
-    const handle = "anthropic/claude-opus-4-6";
+    const handle = "anthropic/claude-opus-4-8";
 
     const withEffort = getModelInfoForLlmConfig(handle, {
       context_window: 950000,
@@ -333,6 +333,26 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
+  test("returns reasoning options for anthropic fable 5", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-fable-5",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "fable-low",
+      "fable-medium",
+      "fable",
+      "fable-xhigh",
+      "fable-max",
+    ]);
+  });
+
   test("returns reasoning options for anthropic opus 4.7", () => {
     const options = getReasoningTierOptionsForHandle(
       "anthropic/claude-opus-4-7",
@@ -373,7 +393,7 @@ describe("getReasoningTierOptionsForHandle", () => {
 
   test("returns only 1M reasoning options when context_window specified for opus", () => {
     const options = getReasoningTierOptionsForHandle(
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-opus-4-8",
       950000,
     );
     for (const option of options) {
@@ -383,7 +403,7 @@ describe("getReasoningTierOptionsForHandle", () => {
 
   test("returns only 200k reasoning options when no context_window for opus", () => {
     const options = getReasoningTierOptionsForHandle(
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-opus-4-8",
     );
     for (const option of options) {
       expect(option.modelId).not.toContain("1m");
