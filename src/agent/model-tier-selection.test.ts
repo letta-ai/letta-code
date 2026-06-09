@@ -20,6 +20,18 @@ describe("getModelInfo", () => {
     });
   });
 
+  test("resolves Fable 5 registry metadata", () => {
+    const info = getModelInfo("fable");
+    expect(info?.handle).toBe("anthropic/claude-fable-5");
+    expect(info?.label).toBe("Fable 5");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 200000,
+      max_output_tokens: 128000,
+      enable_reasoner: true,
+      parallel_tool_calls: true,
+    });
+  });
+
   test("preserves Bedrock Opus 4.7", () => {
     const info = getModelInfo("bedrock-opus-4.7");
     expect(info?.handle).toBe("bedrock/us.anthropic.claude-opus-4-7");

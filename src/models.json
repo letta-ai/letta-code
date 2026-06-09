@@ -245,6 +245,19 @@
       }
     },
     {
+      "id": "fable",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5",
+      "description": "Anthropic's most capable model",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "opus",
       "handle": "anthropic/claude-opus-4-8",
       "label": "Opus 4.8",
