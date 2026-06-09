@@ -144,6 +144,12 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(resolved.description).toContain(
       "If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement.",
     );
+    expect(resolved.description).toContain(
+      'For lightweight acknowledgement, prefer action="react" when supported.',
+    );
+    expect(resolved.description).toContain(
+      "If the useful response belongs later, schedule the follow-up instead of sending a placeholder.",
+    );
     expect(resolved.description).not.toContain("Telegram");
     expect(properties.channel?.enum).toEqual(["slack"]);
     expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
