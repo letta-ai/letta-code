@@ -1508,12 +1508,9 @@ export async function handleHeadlessCommand(
       getMemoryPromptModeForAgent,
       scheduleManagedSystemPromptUpdate,
     } = await import("@/agent/system-prompt-versioning");
-    scheduleManagedSystemPromptUpdate({
-      agent,
-      memoryMode: getMemoryPromptModeForAgent(agent.id),
-    });
+    let taggedAgent = agent;
     try {
-      await ensureLettaCodeOriginTag(agent);
+      taggedAgent = await ensureLettaCodeOriginTag(agent);
     } catch (error) {
       debugWarn(
         "headless startup",
@@ -1522,6 +1519,10 @@ export async function handleHeadlessCommand(
         }`,
       );
     }
+    scheduleManagedSystemPromptUpdate({
+      agent: taggedAgent,
+      memoryMode: getMemoryPromptModeForAgent(taggedAgent.id),
+    });
   }
 
   const startupAgentId = agent.id;

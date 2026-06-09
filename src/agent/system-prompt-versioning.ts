@@ -89,17 +89,6 @@ function isLettaCodePrimaryAgent(agent: AgentState): boolean {
   );
 }
 
-function isLettaCodeSubagent(agent: AgentState): boolean {
-  return (agent.tags ?? []).includes(LETTA_CODE_SUBAGENT_TAG);
-}
-
-function looksLikeLegacyLettaCodePrompt(systemPrompt: string): boolean {
-  return [
-    "You are Letta Code, a state-of-the-art coding agent running within the Letta Code CLI",
-    "You are Letta Code, a Letta agent",
-  ].some((prefix) => systemPrompt.startsWith(prefix));
-}
-
 function findMatchingCurrentPreset(
   systemPrompt: string,
   memoryMode: MemoryPromptMode,
@@ -127,6 +116,9 @@ export function decideManagedSystemPromptUpdate(input: {
   const currentSystemPrompt = agent.system ?? "";
   const currentHash = hashSystemPrompt(currentSystemPrompt);
   const currentVersion = getVersion();
+  const isLegacyLettaCodePrompt = [
+    "You are Letta Code, a state-of-the-art coding agent running within the Letta Code CLI",
+  ].some((prefix) => currentSystemPrompt.startsWith(prefix));
 
   if (storedPreset === "custom") {
     return { kind: "noop", reason: "system prompt is marked custom" };
@@ -189,7 +181,7 @@ export function decideManagedSystemPromptUpdate(input: {
     };
   }
 
-  if (isLettaCodeSubagent(agent)) {
+  if ((agent.tags ?? []).includes(LETTA_CODE_SUBAGENT_TAG)) {
     return { kind: "noop", reason: "agent is a Letta Code subagent" };
   }
 
@@ -198,21 +190,21 @@ export function decideManagedSystemPromptUpdate(input: {
     memoryMode,
   );
   if (!matchingPreset) {
-    if (isLettaCodePrimaryAgent(agent)) {
-      return {
-        kind: "custom",
-        reason:
-          "legacy Letta Code agent prompt does not match a current preset",
-      };
-    }
-
-    if (looksLikeLegacyLettaCodePrompt(currentSystemPrompt)) {
+    if (isLegacyLettaCodePrompt) {
       const nextSystemPrompt = buildSystemPrompt("default", memoryMode);
       return {
         kind: "update",
         nextSystemPrompt,
         prompt: managedPrompt("default", memoryMode, nextSystemPrompt),
         reason: "untracked legacy Letta Code prompt detected",
+      };
+    }
+
+    if (isLettaCodePrimaryAgent(agent)) {
+      return {
+        kind: "custom",
+        reason:
+          "legacy Letta Code agent prompt does not match a current preset",
       };
     }
 

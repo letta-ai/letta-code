@@ -2751,13 +2751,6 @@ async function main(): Promise<void> {
             getMemoryPromptModeForAgent,
             scheduleManagedSystemPromptUpdate,
           } = await import("@/agent/system-prompt-versioning");
-          scheduleManagedSystemPromptUpdate({
-            agent,
-            memoryMode: getMemoryPromptModeForAgent(agent.id),
-            onUpdated: (updatedAgent) => {
-              setAgentState(updatedAgent);
-            },
-          });
           void ensureLettaCodeOriginTag(agent)
             .catch((error) => {
               import("@/utils/debug").then(({ debugWarn }) =>
@@ -2772,6 +2765,13 @@ async function main(): Promise<void> {
             })
             .then((taggedAgent) => {
               setAgentState(taggedAgent);
+              scheduleManagedSystemPromptUpdate({
+                agent: taggedAgent,
+                memoryMode: getMemoryPromptModeForAgent(taggedAgent.id),
+                onUpdated: (updatedAgent) => {
+                  setAgentState(updatedAgent);
+                },
+              });
             });
         }
       }
