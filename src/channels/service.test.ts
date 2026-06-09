@@ -626,6 +626,55 @@ describe("channel service", () => {
     expect(refreshed.displayName).toBe("Old Slack Name");
   });
 
+  test("forced display-name refresh updates existing labels", async () => {
+    __testOverrideResolveChannelAccountDisplayName(
+      async () => "Fresh Slack Name",
+    );
+
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Old Slack Name",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+      },
+      { accountId: "slack-bot" },
+    );
+
+    const refreshed = await refreshChannelAccountDisplayNameLive(
+      "slack",
+      "slack-bot",
+      { force: true },
+    );
+
+    expect(refreshed.displayName).toBe("Fresh Slack Name");
+  });
+
+  test("forced display-name refresh clears stale placeholders", async () => {
+    __testOverrideResolveChannelAccountDisplayName(async () => undefined);
+
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Slack app",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+      },
+      { accountId: "slack-bot" },
+    );
+
+    const refreshed = await refreshChannelAccountDisplayNameLive(
+      "slack",
+      "slack-bot",
+      { force: true },
+    );
+
+    expect(refreshed.displayName).toBeUndefined();
+    expect(
+      getChannelAccountSnapshot("slack", "slack-bot")?.displayName,
+    ).toBeUndefined();
+  });
+
   test("config helpers resolve the sole account instead of assuming a default id", async () => {
     const snapshot = await setChannelConfigLive("telegram", {
       token: "telegram-token",

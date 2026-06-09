@@ -238,6 +238,27 @@ function normalizeDisplayName(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function isStalePlaceholderDisplayName(account: ChannelAccount): boolean {
+  const displayName = normalizeDisplayName(account.displayName);
+  if (!displayName) {
+    return false;
+  }
+  if (isTelegramChannelAccount(account)) {
+    return (
+      displayName === "Telegram bot" || displayName === "Migrated Telegram bot"
+    );
+  }
+  if (isSlackChannelAccount(account)) {
+    return displayName === "Slack app" || displayName === "Migrated Slack app";
+  }
+  if (isDiscordChannelAccount(account)) {
+    return (
+      displayName === "Discord bot" || displayName === "Migrated Discord bot"
+    );
+  }
+  return isWhatsAppChannelAccount(account) && displayName === "WhatsApp";
+}
+
 async function resolveChannelAccountDisplayName(
   account: ChannelAccount,
 ): Promise<string | undefined> {
@@ -1375,13 +1396,15 @@ export async function refreshChannelAccountDisplayNameLive(
   if (!isAccountConfigured(existing)) {
     return toAccountSnapshot(existing);
   }
-  if (existing.displayName) {
+  if (existing.displayName && !options?.force) {
     return toAccountSnapshot(existing);
   }
 
   const resolvedDisplayName = await resolveChannelAccountDisplayName(existing);
   const nextDisplayName =
-    options?.force && resolvedDisplayName === undefined
+    options?.force &&
+    resolvedDisplayName === undefined &&
+    isStalePlaceholderDisplayName(existing)
       ? undefined
       : (resolvedDisplayName ?? existing.displayName);
 
