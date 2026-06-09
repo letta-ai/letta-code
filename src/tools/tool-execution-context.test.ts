@@ -27,6 +27,7 @@ import {
   setRouteInMemory,
 } from "@/channels/routing";
 import type { ChannelAdapter } from "@/channels/types";
+import { GOAL_EXTENSION_TOOL_NAMES } from "@/extensions/builtin/goal";
 import {
   clearExtensionPermissions,
   registerExtensionPermission,
@@ -57,6 +58,7 @@ import {
   registerExternalTools,
 } from "@/tools/manager";
 import {
+  prepareToolExecutionContextForResolvedTarget,
   prepareToolExecutionContextForScope,
   resolveConversationChannelToolScope,
 } from "@/tools/toolset";
@@ -114,6 +116,31 @@ describe("tool execution context snapshot", () => {
       isAvailable: () => true,
       run: (ctx) => `echo:${ctx.args.message}`,
     });
+  }
+
+  function registerGoalExtensionTools(signal: AbortSignal): void {
+    for (const name of GOAL_EXTENSION_TOOL_NAMES) {
+      registerExtensionTool({
+        name,
+        description: `${name} test goal tool`,
+        parameters: { type: "object", properties: {} },
+        owner: {
+          id: "bundled:bundled:goal",
+          path: "bundled:goal",
+          scope: "bundled",
+          generation: 1,
+        },
+        path: "bundled:goal",
+        requiresApproval: false,
+        parallelSafe: false,
+        activationSignal: signal,
+        getContext: () => {
+          throw new Error("context should not be needed for this test");
+        },
+        isAvailable: () => true,
+        run: () => JSON.stringify({ name }),
+      });
+    }
   }
 
   beforeAll(() => {
@@ -435,6 +462,60 @@ describe("tool execution context snapshot", () => {
 
     expect(result.status).toBe("success");
     expect(asText(result.toolReturn)).toBe("echo:hi");
+  });
+
+  test("filters bundled goal extension aliases by active toolset", async () => {
+    const controller = new AbortController();
+    registerGoalExtensionTools(controller.signal);
+
+    const snakePrepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "openai/gpt-5.1-codex-max",
+      toolsetPreference: "codex_snake",
+    });
+    const snakeToolNames = snakePrepared.preparedToolContext.clientTools.map(
+      (tool) => tool.name,
+    );
+
+    expect(snakeToolNames).toContain("get_goal");
+    expect(snakeToolNames).toContain("create_goal");
+    expect(snakeToolNames).toContain("update_goal");
+    expect(snakeToolNames).not.toContain("GetGoal");
+    expect(snakeToolNames).not.toContain("CreateGoal");
+    expect(snakeToolNames).not.toContain("UpdateGoal");
+
+    const pascalPrepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "openai/gpt-5.1-codex-max",
+      toolsetPreference: "codex",
+    });
+    const pascalToolNames = pascalPrepared.preparedToolContext.clientTools.map(
+      (tool) => tool.name,
+    );
+
+    expect(pascalToolNames).toContain("GetGoal");
+    expect(pascalToolNames).toContain("CreateGoal");
+    expect(pascalToolNames).toContain("UpdateGoal");
+    expect(pascalToolNames).not.toContain("get_goal");
+    expect(pascalToolNames).not.toContain("create_goal");
+    expect(pascalToolNames).not.toContain("update_goal");
+  });
+
+  test("applies request-scoped allowlist to goal extension tools", async () => {
+    const controller = new AbortController();
+    registerGoalExtensionTools(controller.signal);
+
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "openai/gpt-5.1-codex-max",
+      toolsetPreference: "codex",
+      clientToolAllowlist: ["GetGoal"],
+    });
+    const toolNames = prepared.preparedToolContext.clientTools.map(
+      (tool) => tool.name,
+    );
+
+    expect(toolNames).toContain("GetGoal");
+    expect(toolNames).not.toContain("CreateGoal");
+    expect(toolNames).not.toContain("UpdateGoal");
+    expect(toolNames).not.toContain("get_goal");
   });
 
   test("exposes recent conversation history to extension tools", async () => {

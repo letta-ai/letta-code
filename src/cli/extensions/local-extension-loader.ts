@@ -1,4 +1,5 @@
 import { commands as builtinCommands } from "@/cli/commands/registry";
+import { isGoalExtensionToolName } from "@/extensions/builtin/goal";
 import type { CreateExtensionAdapterOptions } from "@/extensions/extension-adapter";
 import { createExtensionAdapter as createExtensionAdapterBase } from "@/extensions/extension-adapter";
 import type {
@@ -30,8 +31,14 @@ function getDefaultBuiltinCommandIds(): Set<string> {
 function getDefaultReservedToolNames(): Set<string> {
   const reserved = new Set<string>();
   for (const toolName of getAllLettaToolNames()) {
+    if (isGoalExtensionToolName(toolName)) {
+      continue;
+    }
     reserved.add(toolName);
-    reserved.add(getServerToolName(toolName));
+    const serverToolName = getServerToolName(toolName);
+    if (!isGoalExtensionToolName(serverToolName)) {
+      reserved.add(serverToolName);
+    }
   }
   return reserved;
 }
@@ -40,6 +47,7 @@ function withDefaultReservations<
   T extends {
     builtinCommandIds?: Iterable<string>;
     capabilities?: ExtensionCapabilities;
+    includeBundledExtensions?: boolean;
     reservedToolNames?: Iterable<string>;
   },
 >(options: T): T {
@@ -50,6 +58,7 @@ function withDefaultReservations<
       ...(options.builtinCommandIds ?? []),
     ],
     capabilities: options.capabilities ?? TUI_EXTENSION_CAPABILITIES,
+    includeBundledExtensions: options.includeBundledExtensions ?? true,
     reservedToolNames: [
       ...getDefaultReservedToolNames(),
       ...(options.reservedToolNames ?? []),

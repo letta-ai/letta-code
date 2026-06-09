@@ -3,11 +3,9 @@ import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
 import BashOutputDescription from "./descriptions/BashOutput.md";
-import CreateGoalDescription from "./descriptions/CreateGoal.md";
 import CreateWorktreeDescription from "./descriptions/CreateWorktree.md";
 import EditDescription from "./descriptions/Edit.md";
 import ExecCommandDescription from "./descriptions/ExecCommand.md";
-import GetGoalDescription from "./descriptions/GetGoal.md";
 import GlobDescription from "./descriptions/Glob.md";
 // Gemini toolset
 import GlobGeminiDescription from "./descriptions/GlobGemini.md";
@@ -40,7 +38,6 @@ import TaskOutputDescription from "./descriptions/TaskOutput.md";
 import TaskStopDescription from "./descriptions/TaskStop.md";
 import TaskUpdateDescription from "./descriptions/TaskUpdate.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
-import UpdateGoalDescription from "./descriptions/UpdateGoal.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
 import WriteDescription from "./descriptions/Write.md";
@@ -51,11 +48,9 @@ import { apply_patch } from "./impl/apply-patch";
 import { ask_user_question } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
 import { bash_output } from "./impl/bash-output";
-import { create_goal } from "./impl/create-goal";
 import { create_worktree } from "./impl/create-worktree";
 import { edit } from "./impl/edit";
 import { exec_command, write_stdin } from "./impl/exec-command";
-import { get_goal } from "./impl/get-goal";
 import { glob } from "./impl/glob";
 // Gemini toolset
 import { glob_gemini } from "./impl/glob-gemini";
@@ -88,7 +83,6 @@ import { task_output } from "./impl/task-output";
 import { task_stop } from "./impl/task-stop";
 import { task_update } from "./impl/task-update";
 import { todo_write } from "./impl/todo-write";
-import { update_goal } from "./impl/update-goal";
 import { update_plan } from "./impl/update-plan";
 import { view_image } from "./impl/view-image";
 import { write } from "./impl/write";
@@ -99,11 +93,9 @@ import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
-import CreateGoalSchema from "./schemas/CreateGoal.json";
 import CreateWorktreeSchema from "./schemas/CreateWorktree.json";
 import EditSchema from "./schemas/Edit.json";
 import ExecCommandSchema from "./schemas/ExecCommand.json";
-import GetGoalSchema from "./schemas/GetGoal.json";
 import GlobSchema from "./schemas/Glob.json";
 // Gemini toolset
 import GlobGeminiSchema from "./schemas/GlobGemini.json";
@@ -136,7 +128,6 @@ import TaskOutputSchema from "./schemas/TaskOutput.json";
 import TaskStopSchema from "./schemas/TaskStop.json";
 import TaskUpdateSchema from "./schemas/TaskUpdate.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
-import UpdateGoalSchema from "./schemas/UpdateGoal.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
 import WriteSchema from "./schemas/Write.json";
@@ -353,21 +344,6 @@ const toolDefinitions = {
     description: UpdatePlanDescription.trim(),
     impl: update_plan,
   }),
-  get_goal: defineTool({
-    schema: GetGoalSchema,
-    description: GetGoalDescription.trim(),
-    impl: get_goal,
-  }),
-  create_goal: defineTool({
-    schema: CreateGoalSchema,
-    description: CreateGoalDescription.trim(),
-    impl: create_goal,
-  }),
-  update_goal: defineTool({
-    schema: UpdateGoalSchema,
-    description: UpdateGoalDescription.trim(),
-    impl: update_goal,
-  }),
   // Gemini toolset
   glob_gemini: defineTool({
     schema: GlobGeminiSchema,
@@ -449,21 +425,6 @@ const toolDefinitions = {
     schema: UpdatePlanSchema,
     description: UpdatePlanDescription.trim(),
     impl: update_plan,
-  }),
-  GetGoal: defineTool({
-    schema: GetGoalSchema,
-    description: GetGoalDescription.trim(),
-    impl: get_goal,
-  }),
-  CreateGoal: defineTool({
-    schema: CreateGoalSchema,
-    description: CreateGoalDescription.trim(),
-    impl: create_goal,
-  }),
-  UpdateGoal: defineTool({
-    schema: UpdateGoalSchema,
-    description: UpdateGoalDescription.trim(),
-    impl: update_goal,
   }),
   // Gemini-2 toolset (PascalCase aliases for Gemini tools)
   RunShellCommand: defineTool({

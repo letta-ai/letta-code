@@ -7,6 +7,7 @@ import { getSupportedChannelIds } from "@/channels/plugin-registry";
 import { getChannelRegistry } from "@/channels/registry";
 import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
 import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
+import { shouldExposeGoalExtensionToolForToolset } from "@/extensions/builtin/goal";
 import type { ExtensionEvents } from "@/extensions/event-emitter";
 import {
   type InheritedChannelContextPayload,
@@ -140,51 +141,15 @@ function getToolNamesForToolset(
   return tools;
 }
 
-export function getGoalToolNamesForToolset(
+function createExtensionToolNameFilter(
   toolsetName: ToolsetName,
-): ToolName[] {
-  switch (toolsetName) {
-    case "codex_snake":
-    case "gemini_snake":
-      return ["get_goal", "create_goal", "update_goal"];
-    case "codex":
-    case "gemini":
-    case "default":
-      return ["GetGoal", "CreateGoal", "UpdateGoal"];
-    case "none":
-      return [];
-  }
-}
-
-function appendUniqueTools(
-  toolNames: ToolName[],
-  additions: ToolName[],
-): ToolName[] {
-  if (additions.length === 0) return toolNames;
-  const result = [...toolNames];
-  const seen = new Set(result);
-  for (const toolName of additions) {
-    if (!seen.has(toolName)) {
-      result.push(toolName);
-      seen.add(toolName);
-    }
-  }
-  return result;
-}
-
-function areGoalToolsEnabledForScope(params: {
-  conversationId?: string | null;
-  workingDirectory?: string;
-}): boolean {
-  if (!params.conversationId) return false;
-  try {
-    return settingsManager.areConversationGoalToolsEnabled(
-      params.conversationId,
-      params.workingDirectory,
-    );
-  } catch {
-    return false;
-  }
+  exclude?: string[],
+): (name: string) => boolean {
+  const excluded = exclude ? new Set(exclude) : null;
+  return (name) => {
+    if (excluded?.has(name)) return false;
+    return shouldExposeGoalExtensionToolForToolset(name, toolsetName);
+  };
 }
 
 export async function prepareToolExecutionContextForResolvedTarget(params: {
@@ -201,7 +166,6 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
-    conversationId,
     toolsetPreference,
     exclude,
     clientToolAllowlist,
@@ -224,17 +188,15 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       effectiveModel ?? undefined,
       {
         exclude,
-        include: areGoalToolsEnabledForScope({
-          conversationId,
-          workingDirectory,
-        })
-          ? getGoalToolNamesForToolset(derivedToolset)
-          : undefined,
         clientToolAllowlist,
         workingDirectory,
         permissionModeState,
         channelToolScope,
         extensionEvents,
+        extensionToolNameFilter: createExtensionToolNameFilter(
+          derivedToolset,
+          exclude,
+        ),
         runtimeContext,
       },
     );
@@ -250,13 +212,8 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     filterBuiltInToolNamesByClientAllowlist(
-      appendUniqueTools(
-        getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
-          (toolName) => (exclude ? !exclude.includes(toolName) : true),
-        ),
-        areGoalToolsEnabledForScope({ conversationId, workingDirectory })
-          ? getGoalToolNamesForToolset(toolsetPreference)
-          : [],
+      getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
+        (toolName) => (exclude ? !exclude.includes(toolName) : true),
       ),
       clientToolAllowlist,
     ),
@@ -266,6 +223,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       permissionModeState,
       channelToolScope,
       extensionEvents,
+      extensionToolNameFilter: createExtensionToolNameFilter(
+        toolsetPreference,
+        exclude,
+      ),
       runtimeContext,
     },
   );

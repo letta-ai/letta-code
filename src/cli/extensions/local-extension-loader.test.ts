@@ -54,6 +54,7 @@ function createLoadOptions(root: string) {
       ({ getMarker: () => "test-client" }) as unknown as Letta,
     getContext: createStatuslineContext,
     globalExtensionsDirectory: path.join(root, "global-extensions"),
+    includeBundledExtensions: false,
   };
 }
 
