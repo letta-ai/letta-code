@@ -58,7 +58,6 @@ export type HandleModsCommandContext = {
   readSpec?: typeof readModLearningSpec;
   resolveLauncher?: () => LettaLauncher;
   runLearning?: RunModLearning;
-  setCommandRunning: (value: boolean) => void;
 };
 
 export type HandleModsCommandResult =
@@ -404,17 +403,12 @@ export function handleModsCommand(
     trimmed,
     `Starting Mod Lab: ${parsed.learn.targetLabel}...`,
   );
-  ctx.setCommandRunning(true);
 
-  const done = runLearnCommand(parsed.learn, ctx, command)
-    .catch((error) => {
-      command.fail(
-        `Failed to run Mod Lab: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    })
-    .finally(() => {
-      ctx.setCommandRunning(false);
-    });
+  const done = runLearnCommand(parsed.learn, ctx, command).catch((error) => {
+    command.fail(
+      `Failed to run Mod Lab: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
 
   return { handled: true, done };
 }

@@ -76,7 +76,11 @@ describe("/mods command", () => {
   test("runs learning in the background and finishes with report summary", async () => {
     const cwd = path.resolve("/tmp/letta-mod-command-test");
     const { runner, updates } = createFakeCommandRunner();
-    const commandRunningStates: boolean[] = [];
+    let resolveLearning: (() => void) | undefined;
+    const learningGate = new Promise<void>((resolve) => {
+      resolveLearning = resolve;
+    });
+    let learningStarted = false;
 
     const result = handleModsCommand(
       "/mods learn memory-citations --model current --out .letta/test-run",
@@ -90,6 +94,7 @@ describe("/mods command", () => {
           args: ["--from-test"],
         }),
         runLearning: async (options) => {
+          learningStarted = true;
           expect(options.cliCommand).toBe("letta-test");
           expect(options.cliArgsPrefix).toEqual(["--from-test"]);
           expect(options.env?.LETTA_API_KEY).toBe("test-key");
@@ -108,6 +113,7 @@ describe("/mods command", () => {
             phase: "generating",
             runDir: path.join(cwd, ".letta", "test-run"),
           });
+          await learningGate;
           return {
             candidatePath: path.join(
               cwd,
@@ -134,17 +140,20 @@ describe("/mods command", () => {
             spec: options.spec,
           } satisfies ModLearningReport;
         },
-        setCommandRunning: (value) => commandRunningStates.push(value),
       },
     );
 
     expect(result.handled).toBe(true);
+    for (let tick = 0; tick < 5 && !learningStarted; tick += 1) {
+      await Promise.resolve();
+    }
+    expect(learningStarted).toBe(true);
+    expect(updates.at(-1)).toMatchObject({ phase: "running" });
+    expect(updates.at(-1)?.output).toContain("Generating candidate mod");
+
+    resolveLearning?.();
     if (result.handled) await result.done;
 
-    expect(commandRunningStates).toEqual([true, false]);
-    expect(updates.some((update) => update.output.includes("Generating"))).toBe(
-      true,
-    );
     expect(updates.at(-1)).toMatchObject({
       phase: "finished",
       success: true,

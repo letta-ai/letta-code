@@ -804,7 +804,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           commandRunner,
           currentModelId,
           cwd: getCurrentWorkingDirectory(),
-          setCommandRunning,
         });
         if (modsCommand.handled) {
           return { submitted: true };
