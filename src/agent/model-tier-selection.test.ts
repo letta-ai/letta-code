@@ -25,7 +25,7 @@ describe("getModelInfo", () => {
     expect(info?.handle).toBe("anthropic/claude-fable-5");
     expect(info?.label).toBe("Fable 5");
     expect(info?.updateArgs).toMatchObject({
-      context_window: 200000,
+      context_window: 1000000,
       max_output_tokens: 128000,
       enable_reasoner: true,
       reasoning_effort: "high",

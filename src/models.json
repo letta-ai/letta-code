@@ -251,7 +251,7 @@
       "description": "Anthropic's most capable model",
       "isFeatured": true,
       "updateArgs": {
-        "context_window": 200000,
+        "context_window": 1000000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "high",
