@@ -109,7 +109,7 @@ describe("getModelInfoForLlmConfig", () => {
       context_window: 950000,
       reasoning_effort: "high",
     });
-    expect(withEffort?.id).toBe("opus-1m");
+    expect(withEffort?.id).toBe("opus-4.8-1m");
 
     // With 1M context_window but no effort → still a 1M variant (not 200k "opus")
     const noEffort = getModelInfoForLlmConfig(handle, {
@@ -119,6 +119,15 @@ describe("getModelInfoForLlmConfig", () => {
     expect(
       (noEffort?.updateArgs as { context_window?: number })?.context_window,
     ).toBe(950000);
+  });
+
+  test("keeps existing opus 4.6 1M variant ids stable", () => {
+    const info = getModelInfoForLlmConfig("anthropic/claude-opus-4-6", {
+      context_window: 950000,
+      reasoning_effort: "high",
+    });
+    expect(info?.id).toBe("opus-1m");
+    expect(info?.label).toBe("Opus 4.6 1M");
   });
 
   test("selects sonnet 1M variant by context_window", () => {

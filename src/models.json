@@ -189,21 +189,21 @@
       }
     },
     {
-      "id": "opus-1m",
+      "id": "opus-4.8-1m",
       "handle": "anthropic/claude-opus-4-8",
       "label": "Opus 4.8 1M",
       "description": "Claude Opus 4.8 with 1M token context window (high reasoning)",
-      "isFeatured": true,
       "updateArgs": {
         "context_window": 950000,
         "max_output_tokens": 128000,
         "reasoning_effort": "high",
         "enable_reasoner": true,
         "parallel_tool_calls": true
-      }
+      },
+      "isFeatured": true
     },
     {
-      "id": "opus-1m-no-reasoning",
+      "id": "opus-4.8-1m-no-reasoning",
       "handle": "anthropic/claude-opus-4-8",
       "label": "Opus 4.8 1M",
       "description": "Opus 4.8 1M with no reasoning (faster)",
@@ -216,10 +216,77 @@
       }
     },
     {
-      "id": "opus-1m-low",
+      "id": "opus-4.8-1m-low",
       "handle": "anthropic/claude-opus-4-8",
       "label": "Opus 4.8 1M",
       "description": "Opus 4.8 1M (low reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "low",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true,
+        "max_reasoning_tokens": 4000
+      }
+    },
+    {
+      "id": "opus-4.8-1m-medium",
+      "handle": "anthropic/claude-opus-4-8",
+      "label": "Opus 4.8 1M",
+      "description": "Opus 4.8 1M (med reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "medium",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true,
+        "max_reasoning_tokens": 12000
+      }
+    },
+    {
+      "id": "opus-4.8-1m-xhigh",
+      "handle": "anthropic/claude-opus-4-8",
+      "label": "Opus 4.8 1M",
+      "description": "Opus 4.8 1M (max reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "xhigh",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-1m",
+      "handle": "anthropic/claude-opus-4-6",
+      "label": "Opus 4.6 1M",
+      "description": "Claude Opus 4.6 with 1M token context window (high reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "high",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-1m-no-reasoning",
+      "handle": "anthropic/claude-opus-4-6",
+      "label": "Opus 4.6 1M",
+      "description": "Opus 4.6 1M with no reasoning (faster)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "none",
+        "enable_reasoner": false,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "opus-1m-low",
+      "handle": "anthropic/claude-opus-4-6",
+      "label": "Opus 4.6 1M",
+      "description": "Opus 4.6 1M (low reasoning)",
       "updateArgs": {
         "context_window": 950000,
         "max_output_tokens": 128000,
@@ -231,9 +298,9 @@
     },
     {
       "id": "opus-1m-medium",
-      "handle": "anthropic/claude-opus-4-8",
-      "label": "Opus 4.8 1M",
-      "description": "Opus 4.8 1M (med reasoning)",
+      "handle": "anthropic/claude-opus-4-6",
+      "label": "Opus 4.6 1M",
+      "description": "Opus 4.6 1M (med reasoning)",
       "updateArgs": {
         "context_window": 950000,
         "max_output_tokens": 128000,
@@ -245,9 +312,9 @@
     },
     {
       "id": "opus-1m-xhigh",
-      "handle": "anthropic/claude-opus-4-8",
-      "label": "Opus 4.8 1M",
-      "description": "Opus 4.8 1M (max reasoning)",
+      "handle": "anthropic/claude-opus-4-6",
+      "label": "Opus 4.6 1M",
+      "description": "Opus 4.6 1M (max reasoning)",
       "updateArgs": {
         "context_window": 950000,
         "max_output_tokens": 128000,
