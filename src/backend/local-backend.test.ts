@@ -686,6 +686,25 @@ describe("local backend pi transcript", () => {
     expect(handles).toContain("zai/glm-5.1");
   });
 
+  test("lists Fable 5 from the configured Anthropic pi catalog", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-anthropic-fable-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+      apiKey: "dummy",
+      storageDir,
+    });
+
+    const fable = (await listLocalModels(storageDir)).find(
+      (model) => model.handle === "anthropic/claude-fable-5",
+    );
+    expect(fable?.max_context_window).toBe(
+      getModel("anthropic", "claude-fable-5")?.contextWindow,
+    );
+  });
+
   test("lists pi catalog context windows for configured OpenRouter models", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-openrouter-context-"),
