@@ -35,6 +35,9 @@ type ListenerProcessAnchor = {
 
 type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
 
+// Keep listener process anchors reachable for the lifetime of the CLI command.
+// Without a retained reference, the MessageChannel anchor could be garbage
+// collected even though it is intended to hold channel-only listeners open.
 const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 type ListenerOAuthDeps = {
