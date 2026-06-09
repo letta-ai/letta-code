@@ -243,6 +243,8 @@ function isStalePlaceholderDisplayName(account: ChannelAccount): boolean {
   if (!displayName) {
     return false;
   }
+  // Legacy placeholders from older channel-account migration paths. Current
+  // code does not generate these, but persisted accounts may still contain them.
   if (isTelegramChannelAccount(account)) {
     return (
       displayName === "Telegram bot" || displayName === "Migrated Telegram bot"

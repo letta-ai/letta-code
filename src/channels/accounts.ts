@@ -271,6 +271,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
       ? { ...(next as CustomChannelAccount).config }
       : {};
   }
+  // Legacy placeholders from older channel-account migration paths. Current
+  // code does not generate these, but persisted accounts may still contain them.
   if (
     (isTelegramChannelAccount(next) &&
       (next.displayName === "Telegram bot" ||
