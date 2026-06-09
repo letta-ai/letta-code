@@ -272,9 +272,15 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
       : {};
   }
   if (
-    (isTelegramChannelAccount(next) && next.displayName === "Telegram bot") ||
-    (isSlackChannelAccount(next) && next.displayName === "Slack app") ||
-    (isDiscordChannelAccount(next) && next.displayName === "Discord bot") ||
+    (isTelegramChannelAccount(next) &&
+      (next.displayName === "Telegram bot" ||
+        next.displayName === "Migrated Telegram bot")) ||
+    (isSlackChannelAccount(next) &&
+      (next.displayName === "Slack app" ||
+        next.displayName === "Migrated Slack app")) ||
+    (isDiscordChannelAccount(next) &&
+      (next.displayName === "Discord bot" ||
+        next.displayName === "Migrated Discord bot")) ||
     (isWhatsAppChannelAccount(next) && next.displayName === "WhatsApp")
   ) {
     next.displayName = undefined;
