@@ -11,14 +11,26 @@ before replying.
 
 ## Example
 
-Generate an image and save it to a file:
+Generate the image, save it locally, then show it inline:
 
 ```bash
 curl -sS -X POST "https://api.letta.com/v1/images/generations" \
   -H "Authorization: Bearer $LETTA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"provider":"gemini","prompt":"a friendly robot mascot waving, flat vector logo, mint green background","n":1}' \
-  | python3 -c "import sys,json,base64,urllib.request; d=json.load(sys.stdin); img=d['images'][0]; data=base64.b64decode(img['b64_json']) if img.get('b64_json') else urllib.request.urlopen(img['url']).read(); open('robot-mascot.png','wb').write(data); print('saved robot-mascot.png; credits:', d['billing']['credits_charged'])"
+  > image-response.json
+
+python3 - <<'PY'
+import base64, json
+
+with open("image-response.json") as f:
+    response = json.load(f)
+
+with open("robot-mascot.png", "wb") as f:
+    f.write(base64.b64decode(response["images"][0]["b64_json"]))
+
+print("saved robot-mascot.png; credits:", response["billing"]["credits_charged"])
+PY
 ```
 
 In Bash tools launched by Letta Code, the current Letta credential is available
@@ -76,7 +88,8 @@ Default to `gemini` unless the user wants photoreal or a specific size/quality.
 ```
 
 Each `images[]` entry has either `b64_json` or `url`, plus `mime_type`. Gemini
-always returns `b64_json`; OpenAI may return either — handle both.
+always returns `b64_json`. If OpenAI returns a `url`, download that URL to your
+local image file instead of base64-decoding.
 
 ## Editing / remixing images
 
