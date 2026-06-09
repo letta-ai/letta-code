@@ -145,5 +145,5 @@ Before finishing, verify:
 | `references/events.md` | Reacting to lifecycle/tool/turn events or transforming turns/tools |
 | `references/permissions.md` | Enforcing dynamic tool allow/ask/deny policy before approval/execution |
 | `references/ui.md` | Panels, status values, or statusline capability guards are involved |
-| `references/plan-mode.md` | Recreating pla mode with commands, tools, events, permissions, and local state |
+| `references/plan-mode.md` | Recreating plan mode with commands, tools, events, permissions, and local state |
 | `references/architecture.md` | Multiple capabilities, local state, cleanup, background model work, or non-trivial composition |

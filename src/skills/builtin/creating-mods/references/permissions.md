@@ -30,7 +30,7 @@ export default function activate(letta) {
 
       return {
         decision: "deny",
-        reason: "Pla mode is active. You can only read files or update the plan file.",
+        reason: "Plan mode is active. You can only read files or update the plan file.",
       };
     },
   });
