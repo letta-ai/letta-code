@@ -20,6 +20,19 @@ describe("getModelInfo", () => {
     });
   });
 
+  test("resolves Fable 5 registry metadata", () => {
+    const info = getModelInfo("fable");
+    expect(info?.handle).toBe("anthropic/claude-fable-5");
+    expect(info?.label).toBe("Fable 5");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 1000000,
+      max_output_tokens: 128000,
+      enable_reasoner: true,
+      reasoning_effort: "high",
+      parallel_tool_calls: true,
+    });
+  });
+
   test("preserves Bedrock Opus 4.7", () => {
     const info = getModelInfo("bedrock-opus-4.7");
     expect(info?.handle).toBe("bedrock/us.anthropic.claude-opus-4-7");
@@ -90,13 +103,13 @@ describe("getModelInfoForLlmConfig", () => {
   });
 
   test("selects opus 1M variant by context_window", () => {
-    const handle = "anthropic/claude-opus-4-6";
+    const handle = "anthropic/claude-opus-4-8";
 
     const withEffort = getModelInfoForLlmConfig(handle, {
       context_window: 950000,
       reasoning_effort: "high",
     });
-    expect(withEffort?.id).toBe("opus-1m");
+    expect(withEffort?.id).toBe("opus-4.8-1m");
 
     // With 1M context_window but no effort → still a 1M variant (not 200k "opus")
     const noEffort = getModelInfoForLlmConfig(handle, {
@@ -106,6 +119,15 @@ describe("getModelInfoForLlmConfig", () => {
     expect(
       (noEffort?.updateArgs as { context_window?: number })?.context_window,
     ).toBe(950000);
+  });
+
+  test("keeps existing opus 4.6 1M variant ids stable", () => {
+    const info = getModelInfoForLlmConfig("anthropic/claude-opus-4-6", {
+      context_window: 950000,
+      reasoning_effort: "high",
+    });
+    expect(info?.id).toBe("opus-1m");
+    expect(info?.label).toBe("Opus 4.6 1M");
   });
 
   test("selects sonnet 1M variant by context_window", () => {
@@ -320,6 +342,26 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
+  test("returns reasoning options for anthropic fable 5", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-fable-5",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "fable-low",
+      "fable-medium",
+      "fable",
+      "fable-xhigh",
+      "fable-max",
+    ]);
+  });
+
   test("returns reasoning options for anthropic opus 4.7", () => {
     const options = getReasoningTierOptionsForHandle(
       "anthropic/claude-opus-4-7",
@@ -360,7 +402,7 @@ describe("getReasoningTierOptionsForHandle", () => {
 
   test("returns only 1M reasoning options when context_window specified for opus", () => {
     const options = getReasoningTierOptionsForHandle(
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-opus-4-8",
       950000,
     );
     for (const option of options) {
@@ -370,7 +412,7 @@ describe("getReasoningTierOptionsForHandle", () => {
 
   test("returns only 200k reasoning options when no context_window for opus", () => {
     const options = getReasoningTierOptionsForHandle(
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-opus-4-8",
     );
     for (const option of options) {
       expect(option.modelId).not.toContain("1m");
