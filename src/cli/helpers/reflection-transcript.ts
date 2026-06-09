@@ -31,12 +31,6 @@ export interface ReflectionTranscriptState {
   last_reflection_succeeded_at?: string;
 }
 
-interface LegacyReflectionTranscriptState {
-  auto_cursor_line: number;
-  last_auto_reflection_started_at?: string;
-  last_auto_reflection_succeeded_at?: string;
-}
-
 interface LegacyMessageIdReflectionTranscriptState {
   schema_version: typeof LEGACY_MESSAGE_ID_STATE_SCHEMA_VERSION;
   reflected_through_message_id?: string;
@@ -49,8 +43,7 @@ interface LegacyMessageIdReflectionTranscriptState {
 
 type StoredReflectionTranscriptState =
   | Partial<ReflectionTranscriptState>
-  | Partial<LegacyMessageIdReflectionTranscriptState>
-  | Partial<LegacyReflectionTranscriptState>;
+  | Partial<LegacyMessageIdReflectionTranscriptState>;
 
 type TranscriptEntry =
   | {
@@ -465,15 +458,6 @@ function getTranscriptRoot(): string {
   return join(homedir(), ".letta", DEFAULT_TRANSCRIPT_DIR);
 }
 
-function defaultState(): ReflectionTranscriptState {
-  return {
-    schema_version: REFLECTION_STATE_SCHEMA_VERSION,
-    total_completed_steps: 0,
-    reflected_completed_steps: 0,
-    steps_since_last_successful_reflection: 0,
-  };
-}
-
 const stateMutexes = new Map<string, Promise<unknown>>();
 
 function withStateLock<T>(
@@ -793,48 +777,18 @@ function migrateMessageIdState(
   };
 }
 
-function migrateLegacyState(
-  parsed: Partial<LegacyReflectionTranscriptState> | null,
+function buildUnreflectedStateFromTranscript(
   lines: string[],
 ): ReflectionTranscriptState {
   const rows = parseTranscriptRows(lines);
-  const cursorLine = Math.min(
-    Math.max(
-      0,
-      typeof parsed?.auto_cursor_line === "number"
-        ? Math.floor(parsed.auto_cursor_line)
-        : 0,
-    ),
-    lines.length,
-  );
-  const prefixRows = rows.filter((row) => row.lineIndex < cursorLine);
-  const lastCanonicalRow = prefixRows.findLast((row) =>
-    isEligibleCanonicalEntry(row.entry),
-  );
-  const reflectedThroughMessageId = lastCanonicalRow
-    ? lastCanonicalRow.entry.source_message_id
-    : undefined;
   const allEntries = rows.map((row) => row.entry);
   const totalCompletedSteps = countAssistantRows(allEntries);
-  const reflectedCompletedSteps = reflectedThroughMessageId
-    ? countAssistantRowsThroughMessageId(rows, reflectedThroughMessageId)
-    : 0;
 
   return {
     schema_version: REFLECTION_STATE_SCHEMA_VERSION,
-    reflected_through_message_id: reflectedThroughMessageId,
     total_completed_steps: totalCompletedSteps,
-    reflected_completed_steps: reflectedCompletedSteps,
-    steps_since_last_successful_reflection: Math.max(
-      0,
-      totalCompletedSteps - reflectedCompletedSteps,
-    ),
-    last_reflection_started_at: normalizeString(
-      parsed?.last_auto_reflection_started_at,
-    ),
-    last_reflection_succeeded_at: normalizeString(
-      parsed?.last_auto_reflection_succeeded_at,
-    ),
+    reflected_completed_steps: 0,
+    steps_since_last_successful_reflection: totalCompletedSteps,
   };
 }
 
@@ -863,23 +817,21 @@ async function readState(
     return state;
   }
 
+  const transcriptLines = await readTranscriptLines(paths);
+
   if (!parsed) {
-    const state = defaultState();
+    const state = buildUnreflectedStateFromTranscript(transcriptLines);
     await writeState(paths, state);
     return state;
   }
 
-  const transcriptLines = await readTranscriptLines(paths);
   const migrated =
     schemaVersion === LEGACY_MESSAGE_ID_STATE_SCHEMA_VERSION
       ? migrateMessageIdState(
           parsed as Partial<LegacyMessageIdReflectionTranscriptState>,
           transcriptLines,
         )
-      : migrateLegacyState(
-          parsed as Partial<LegacyReflectionTranscriptState>,
-          transcriptLines,
-        );
+      : buildUnreflectedStateFromTranscript(transcriptLines);
   await writeState(paths, migrated);
   return migrated;
 }

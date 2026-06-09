@@ -147,60 +147,6 @@ describe("reflectionTranscript helper", () => {
     expect(retried).not.toBeNull();
   });
 
-  test("legacy cursor migrates to message-id state and resumes on new transcript lines", async () => {
-    await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "first", messageId: "u1" },
-    ]);
-
-    const paths = getReflectionTranscriptPaths(agentId, conversationId);
-    await writeFile(
-      paths.statePath,
-      `${JSON.stringify({ auto_cursor_line: 999 })}\n`,
-      "utf-8",
-    );
-
-    const firstAttempt = await buildAutoReflectionPayload(
-      agentId,
-      conversationId,
-    );
-    expect(firstAttempt).toBeNull();
-
-    const clampedRaw = await readFile(paths.statePath, "utf-8");
-    const clamped = JSON.parse(clampedRaw) as {
-      schema_version: string;
-      reflected_through_message_id?: string;
-      reflected_completed_steps: number;
-      steps_since_last_successful_reflection: number;
-    };
-    expect(clamped.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
-    expect(clamped.reflected_through_message_id).toBe("u1");
-    expect(clamped.reflected_completed_steps).toBe(0);
-    expect(clamped.steps_since_last_successful_reflection).toBe(0);
-
-    await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      {
-        kind: "assistant",
-        id: "a2",
-        text: "second",
-        phase: "finished",
-        messageId: "a2",
-      },
-    ]);
-
-    const secondAttempt = await buildAutoReflectionPayload(
-      agentId,
-      conversationId,
-    );
-    expect(secondAttempt).not.toBeNull();
-    if (!secondAttempt) return;
-    expect(secondAttempt.startMessageId).toBe("a2");
-    expect(secondAttempt.endMessageId).toBe("a2");
-
-    const payloadText = await readFile(secondAttempt.payloadPath, "utf-8");
-    const messages = JSON.parse(payloadText);
-    expect(messages).toContainEqual({ role: "assistant", content: "second" });
-  });
-
   test("v2 message-id state migrates from turn counts to assistant step counts", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "first", messageId: "u1" },
