@@ -285,6 +285,36 @@ describe("listen subcommand auth resolution", () => {
     expect(pollForTokenMock).not.toHaveBeenCalled();
   });
 
+  test("uses a ref'ed timer to keep local channel listeners alive", async () => {
+    const calls: Array<{
+      callback: () => void;
+      delay?: number;
+    }> = [];
+    const intervalHandle = {} as ReturnType<typeof setInterval>;
+    const setIntervalMock = mock(((callback: () => void, delay?: number) => {
+      calls.push({ callback, delay });
+      return intervalHandle;
+    }) as typeof setInterval);
+
+    const keepAlive =
+      __listenSubcommandTestUtils.createListenerKeepAlivePromise(
+        setIntervalMock,
+      );
+
+    let resolved = false;
+    void keepAlive.then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+
+    expect(setIntervalMock).toHaveBeenCalledTimes(1);
+    expect(calls[0]?.delay).toBe(
+      __listenSubcommandTestUtils.LISTENER_KEEPALIVE_INTERVAL_MS,
+    );
+    expect(typeof calls[0]?.callback).toBe("function");
+    expect(resolved).toBe(false);
+  });
+
   test("rejects self-hosted listener startup without channels", async () => {
     process.env.LETTA_BASE_URL = "http://localhost:8283";
 

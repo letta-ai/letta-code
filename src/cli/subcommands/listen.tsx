@@ -27,6 +27,7 @@ import {
 } from "@/websocket/listen-register";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+const LISTENER_KEEPALIVE_INTERVAL_MS = 60 * 60 * 1000;
 
 type ListenerOAuthDeps = {
   LETTA_CLOUD_API_URL: string;
@@ -85,6 +86,20 @@ function formatTimestamp(): string {
   const s = String(now.getSeconds()).padStart(2, "0");
   const ms = String(now.getMilliseconds()).padStart(3, "0");
   return `${h}:${m}:${s}.${ms}`;
+}
+
+function createListenerKeepAlivePromise(
+  setIntervalFn: typeof setInterval = setInterval,
+): Promise<number> {
+  const keepAlive = setIntervalFn(() => {
+    // Intentionally empty: this ref'ed timer keeps channel-only listeners
+    // alive when adapters have no other active Node handles.
+  }, LISTENER_KEEPALIVE_INTERVAL_MS);
+
+  return new Promise<number>(() => {
+    void keepAlive;
+    // Never resolves - runs until the process receives a shutdown signal.
+  });
 }
 
 async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
@@ -286,6 +301,8 @@ async function resolveListenerRegistrationOptions(
 }
 
 export const __listenSubcommandTestUtils = {
+  LISTENER_KEEPALIVE_INTERVAL_MS,
+  createListenerKeepAlivePromise,
   flushListenerTelemetryEnd,
   getListenerServerUrl,
   resolveListenerStartupMode,
@@ -551,9 +568,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         },
       });
 
-      return new Promise<number>(() => {
-        // Never resolves - runs until Ctrl+C
-      });
+      return createListenerKeepAlivePromise();
     }
 
     let registerOptions: RegisterOptions;
