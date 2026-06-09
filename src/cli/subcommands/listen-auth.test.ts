@@ -285,20 +285,15 @@ describe("listen subcommand auth resolution", () => {
     expect(pollForTokenMock).not.toHaveBeenCalled();
   });
 
-  test("uses a ref'ed timer to keep local channel listeners alive", async () => {
-    const calls: Array<{
-      callback: () => void;
-      delay?: number;
-    }> = [];
-    const intervalHandle = {} as ReturnType<typeof setInterval>;
-    const setIntervalMock = mock(((callback: () => void, delay?: number) => {
-      calls.push({ callback, delay });
-      return intervalHandle;
-    }) as typeof setInterval);
+  test("uses a ref'ed process anchor to keep local channel listeners alive", async () => {
+    const anchor = {
+      close: mock(() => {}),
+    };
+    const createProcessAnchor = mock(() => anchor);
 
     const keepAlive =
-      __listenSubcommandTestUtils.createListenerKeepAlivePromise(
-        setIntervalMock,
+      __listenSubcommandTestUtils.createListenerProcessAnchorPromise(
+        createProcessAnchor,
       );
 
     let resolved = false;
@@ -307,11 +302,8 @@ describe("listen subcommand auth resolution", () => {
     });
     await Promise.resolve();
 
-    expect(setIntervalMock).toHaveBeenCalledTimes(1);
-    expect(calls[0]?.delay).toBe(
-      __listenSubcommandTestUtils.LISTENER_KEEPALIVE_INTERVAL_MS,
-    );
-    expect(typeof calls[0]?.callback).toBe("function");
+    expect(createProcessAnchor).toHaveBeenCalledTimes(1);
+    expect(anchor.close).not.toHaveBeenCalled();
     expect(resolved).toBe(false);
   });
 

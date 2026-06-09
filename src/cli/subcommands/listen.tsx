@@ -5,6 +5,7 @@
 
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
+import { MessageChannel } from "node:worker_threads";
 import { Box, render, Text } from "ink";
 import TextInput from "ink-text-input";
 import type React from "react";
@@ -27,7 +28,14 @@ import {
 } from "@/websocket/listen-register";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
-const LISTENER_KEEPALIVE_INTERVAL_MS = 60 * 60 * 1000;
+
+type ListenerProcessAnchor = {
+  close: () => void;
+};
+
+type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
+
+const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 type ListenerOAuthDeps = {
   LETTA_CLOUD_API_URL: string;
@@ -88,17 +96,31 @@ function formatTimestamp(): string {
   return `${h}:${m}:${s}.${ms}`;
 }
 
-function createListenerKeepAlivePromise(
-  setIntervalFn: typeof setInterval = setInterval,
+function createMessageChannelProcessAnchor(): ListenerProcessAnchor {
+  const { port1, port2 } = new MessageChannel();
+
+  port1.ref();
+  port2.ref();
+
+  return {
+    close: () => {
+      port1.close();
+      port2.close();
+    },
+  };
+}
+
+function createListenerProcessAnchorPromise(
+  createProcessAnchor: CreateListenerProcessAnchor = createMessageChannelProcessAnchor,
 ): Promise<number> {
-  const keepAlive = setIntervalFn(() => {
-    // Intentionally empty: this ref'ed timer keeps channel-only listeners
-    // alive when adapters have no other active Node handles.
-  }, LISTENER_KEEPALIVE_INTERVAL_MS);
+  const anchor = createProcessAnchor();
+
+  activeListenerProcessAnchors.add(anchor);
 
   return new Promise<number>(() => {
-    void keepAlive;
     // Never resolves - runs until the process receives a shutdown signal.
+    // The ref'ed MessageChannel above is a zero-wakeup process anchor for
+    // channel-only listeners whose adapters may not own a persistent handle.
   });
 }
 
@@ -301,8 +323,7 @@ async function resolveListenerRegistrationOptions(
 }
 
 export const __listenSubcommandTestUtils = {
-  LISTENER_KEEPALIVE_INTERVAL_MS,
-  createListenerKeepAlivePromise,
+  createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
   getListenerServerUrl,
   resolveListenerStartupMode,
@@ -568,7 +589,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         },
       });
 
-      return createListenerKeepAlivePromise();
+      return createListenerProcessAnchorPromise();
     }
 
     let registerOptions: RegisterOptions;
