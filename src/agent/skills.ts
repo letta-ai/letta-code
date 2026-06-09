@@ -13,6 +13,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import { isLocalAgentId } from "./agent-id";
 import { ALL_SKILL_SOURCES, type SkillSource } from "./skill-sources";
 
 /**
@@ -152,6 +153,23 @@ export function isModelInvocableSkill(skill: Skill): boolean {
 
 export function isUserInvocableSkill(skill: Skill): boolean {
   return skill.userInvocable !== false;
+}
+
+const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set(["image-generation"]);
+
+export function isSkillAvailableForAgent(
+  skill: Skill,
+  agentId?: string,
+): boolean {
+  if (
+    skill.source === "bundled" &&
+    agentId &&
+    isLocalAgentId(agentId) &&
+    LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS.has(skill.id)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /**

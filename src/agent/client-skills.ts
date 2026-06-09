@@ -9,6 +9,7 @@ import {
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
   isModelInvocableSkill,
+  isSkillAvailableForAgent,
   SKILLS_DIR,
   type Skill,
   type SkillDiscoveryError,
@@ -403,7 +404,9 @@ async function collectClientSideSkills(
       });
       errors.push(...discovery.errors);
       for (const skill of discovery.skills) {
-        skillsById.set(skill.id, skill);
+        if (isSkillAvailableForAgent(skill, options.agentId)) {
+          skillsById.set(skill.id, skill);
+        }
       }
     } catch (error) {
       const message =
@@ -418,6 +421,9 @@ async function collectClientSideSkills(
     const memoryDiscovery = await discoverMemorySkills(options.agentId);
     errors.push(...memoryDiscovery.errors);
     for (const skill of memoryDiscovery.skills) {
+      if (!isSkillAvailableForAgent(skill, options.agentId)) {
+        continue;
+      }
       const existing = skillsById.get(skill.id);
       if (existing?.source === "project" || existing?.source === "agent") {
         continue;
