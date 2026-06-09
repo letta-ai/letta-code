@@ -28,6 +28,7 @@ describe("getModelInfo", () => {
       context_window: 200000,
       max_output_tokens: 128000,
       enable_reasoner: true,
+      reasoning_effort: "high",
       parallel_tool_calls: true,
     });
   });
