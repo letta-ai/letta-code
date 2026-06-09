@@ -17,7 +17,7 @@ Generate the image, save it locally, then show it inline:
 curl -sS -X POST "https://api.letta.com/v1/images/generations" \
   -H "Authorization: Bearer $LETTA_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"provider":"flux","prompt":"a friendly robot mascot waving, flat vector logo, mint green background","n":1}' \
+  -d '{"provider":"gemini","prompt":"a friendly robot mascot waving, flat vector logo, mint green background","n":1}' \
   > image-response.json
 
 python3 - <<'PY'
@@ -89,9 +89,9 @@ wants photoreal output or a specific size/quality.
 
 ```json
 {
-  "provider": "flux",
-  "model": "flux-2-pro",
-  "images": [{ "url": "https://...", "mime_type": "image/png" }],
+  "provider": "gemini",
+  "model": "gemini-3-pro-image",
+  "images": [{ "b64_json": "<base64>", "mime_type": "image/png" }],
   "billing": { "credits_charged": 12, "...": "..." }
 }
 ```
