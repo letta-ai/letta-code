@@ -40,7 +40,7 @@ Guard each registration with the matching capability:
 - `commands`: `/plan` for explicit human entry
 - `tools`: `enter_plan_mode` and `exit_plan_mode` for model-driven entry/exit
 - `events.turns`: append a focused plan-mode reminder while active
-- `permissions`: block mutating tools except plan-file writes
+- `permissions`: block mutating tools except planning coordination tools and plan-file writes
 
 Do not use panels for persistent mode state. Panels are transient UI and can be noisy/fragile for mode indicators. Do not add a custom statusline renderer just to show plan mode; `setStatuslineRenderer` is a single global renderer, not an additive slot. This example intentionally keeps visible mode state out of scope.
 
@@ -180,13 +180,10 @@ if (letta.capabilities.events.turns) {
 
 ## Permission overlay
 
-Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, `read_file`, `ReadFile`, `SearchFileContent`, etc.).
+Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, `read_file`, `ReadFile`, `SearchFileContent`, etc.). Keep pure read-only tools separate from planning coordination tools like `AskUserQuestion` and todo/plan updates so the policy stays honest.
 
 ```ts
 const readOnlyToolNames = new Set([
-  "askuserquestion",
-  "enterplanmode",
-  "exitplanmode",
   "glob",
   "globgemini",
   "grep",
@@ -206,9 +203,15 @@ const readOnlyToolNames = new Set([
   "searchfiles",
   "skill",
   "taskoutput",
+  "viewimage",
+]);
+
+const planningToolNames = new Set([
+  "askuserquestion",
+  "enterplanmode",
+  "exitplanmode",
   "todowrite",
   "updateplan",
-  "viewimage",
   "writetodos",
 ]);
 
@@ -220,6 +223,10 @@ function normalizedToolName(toolName) {
 
 function isReadOnlyToolName(toolName) {
   return readOnlyToolNames.has(normalizedToolName(toolName));
+}
+
+function isPlanningToolName(toolName) {
+  return planningToolNames.has(normalizedToolName(toolName));
 }
 
 function isAllowedReadOnlySubagent(args) {
@@ -244,6 +251,7 @@ if (letta.capabilities.permissions) {
       const args = event.args ?? {};
 
       if (isReadOnlyToolName(toolName)) return { decision: "allow" };
+      if (isPlanningToolName(toolName)) return { decision: "allow", reason: "planning" };
 
       const normalized = normalizedToolName(toolName);
       if ((normalized === "agent" || normalized === "task") && isAllowedReadOnlySubagent(args)) {
@@ -257,7 +265,7 @@ if (letta.capabilities.permissions) {
       return {
         decision: "deny",
         reason:
-          `Plan mode is active. Use direct read-only tools (Read, Grep, Glob, List, Search, Skill, TaskOutput, safe read-only Bash) or recall-style subagents only. ` +
+          `Plan mode is active. Use direct read-only tools (Read, Grep, Glob, List, Search, Skill, TaskOutput, safe read-only Bash), planning tools (AskUserQuestion, TodoWrite/UpdatePlan), or recall-style subagents only. ` +
           `Do not use coding, general-purpose, or fork subagents in plan mode. ` +
           `Write your plan to: ${session.planFilePath}. ` +
           `When ready, read the plan file and include the full current plan text in AskUserQuestion for approval, then call exit_plan_mode after approval.`,
