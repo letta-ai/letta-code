@@ -535,7 +535,6 @@ export async function handleIncomingMessage(
               getMemoryPromptModeForAgent,
               scheduleManagedSystemPromptUpdate,
             } = await import("@/agent/system-prompt-versioning");
-            cachedAgent = await ensureLettaCodeOriginTag(cachedAgent);
             scheduleManagedSystemPromptUpdate({
               agent: cachedAgent,
               memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
@@ -543,6 +542,7 @@ export async function handleIncomingMessage(
                 cachedAgent = updatedAgent;
               },
             });
+            cachedAgent = await ensureLettaCodeOriginTag(cachedAgent);
           } catch (error) {
             debugWarn(
               "listen",
