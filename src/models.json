@@ -5,7 +5,7 @@
       "isDefault": true,
       "handle": "letta/auto",
       "label": "Auto",
-      "description": "Automatically select the best model",
+      "description": "Automatically select a model",
       "isFeatured": true,
       "free": true,
       "updateArgs": {
@@ -18,7 +18,7 @@
       "id": "auto-fast",
       "handle": "letta/auto-fast",
       "label": "Auto Fast",
-      "description": "Automatically select the best fast model",
+      "description": "Automatically select a fast model",
       "isFeatured": true,
       "free": true,
       "updateArgs": {
@@ -31,7 +31,7 @@
       "id": "auto-chat",
       "handle": "letta/auto-chat",
       "label": "Auto Chat",
-      "description": "Automatically select the best model for chat",
+      "description": "Automatically select a chat model",
       "isFeatured": true,
       "free": true,
       "updateArgs": {
@@ -44,7 +44,7 @@
       "id": "sonnet",
       "handle": "anthropic/claude-sonnet-4-6",
       "label": "Sonnet 4.6",
-      "description": "Anthropic's new Sonnet model (high reasoning)",
+      "description": "Sonnet 4.6 (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
@@ -180,7 +180,7 @@
       "id": "opus-4.6-high",
       "handle": "anthropic/claude-opus-4-6",
       "label": "Opus 4.6",
-      "description": "Anthropic's (legacy) best model (high reasoning)",
+      "description": "Opus 4.6 (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
@@ -248,7 +248,7 @@
       "id": "fable",
       "handle": "anthropic/claude-fable-5",
       "label": "Fable 5",
-      "description": "Anthropic's most capable model",
+      "description": "Fable 5",
       "isFeatured": true,
       "updateArgs": {
         "context_window": 1000000,
@@ -262,7 +262,7 @@
       "id": "opus",
       "handle": "anthropic/claude-opus-4-8",
       "label": "Opus 4.8",
-      "description": "Anthropic's best model (high reasoning)",
+      "description": "Opus 4.8 (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
@@ -478,7 +478,7 @@
       "id": "opus-4.5",
       "handle": "anthropic/claude-opus-4-5-20251101",
       "label": "Opus 4.5",
-      "description": "Anthropic's (legacy) best model (high reasoning)",
+      "description": "Opus 4.5 (high reasoning)",
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,
@@ -534,7 +534,7 @@
       "handle": "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0",
       "label": "Bedrock Opus 4.5",
       "shortLabel": "Opus 4.5 BR",
-      "description": "Anthropic's Opus 4.5 (via AWS Bedrock)",
+      "description": "Opus 4.5 via AWS Bedrock",
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,
@@ -547,7 +547,7 @@
       "handle": "bedrock/us.anthropic.claude-opus-4-6-v1",
       "label": "Bedrock Opus 4.6",
       "shortLabel": "Opus 4.6 BR",
-      "description": "Anthropic's Opus 4.6 (via AWS Bedrock)",
+      "description": "Opus 4.6 via AWS Bedrock",
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,
@@ -560,7 +560,7 @@
       "handle": "bedrock/us.anthropic.claude-opus-4-7",
       "label": "Bedrock Opus 4.7",
       "shortLabel": "Opus 4.7 BR",
-      "description": "Anthropic's Opus 4.7 (via AWS Bedrock)",
+      "description": "Opus 4.7 via AWS Bedrock",
       "updateArgs": {
         "context_window": 200000,
         "max_output_tokens": 128000,
@@ -574,7 +574,7 @@
       "handle": "bedrock/us.anthropic.claude-sonnet-4-6",
       "label": "Bedrock Sonnet 4.6",
       "shortLabel": "Sonnet 4.6 BR",
-      "description": "Anthropic's Sonnet 4.6 (via AWS Bedrock)",
+      "description": "Sonnet 4.6 via AWS Bedrock",
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,
@@ -586,7 +586,7 @@
       "id": "haiku",
       "handle": "anthropic/claude-haiku-4-5",
       "label": "Haiku 4.5",
-      "description": "Anthropic's fastest model",
+      "description": "Haiku 4.5",
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,
@@ -636,7 +636,7 @@
       "id": "gpt-5.5-plus-pro-high",
       "handle": "chatgpt-plus-pro/gpt-5.5",
       "label": "GPT-5.5 (ChatGPT)",
-      "description": "OpenAI's most capable model (high reasoning) via ChatGPT Plus/Pro",
+      "description": "GPT-5.5 (high reasoning) via ChatGPT Plus/Pro",
       "isFeatured": true,
       "updateArgs": {
         "reasoning_effort": "high",
@@ -767,7 +767,7 @@
       "id": "gpt-5.4-plus-pro-high",
       "handle": "chatgpt-plus-pro/gpt-5.4",
       "label": "GPT-5.4 (ChatGPT)",
-      "description": "OpenAI's most capable model (high reasoning) via ChatGPT Plus/Pro",
+      "description": "GPT-5.4 (high reasoning) via ChatGPT Plus/Pro",
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "low",
@@ -1001,7 +1001,7 @@
       "id": "gpt-5.5-none",
       "handle": "openai/gpt-5.5",
       "label": "GPT-5.5",
-      "description": "OpenAI's most capable model (no reasoning)",
+      "description": "GPT-5.5 (no reasoning)",
       "updateArgs": {
         "reasoning_effort": "none",
         "verbosity": "medium",
@@ -1014,7 +1014,7 @@
       "id": "gpt-5.5-low",
       "handle": "openai/gpt-5.5",
       "label": "GPT-5.5",
-      "description": "OpenAI's most capable model (low reasoning)",
+      "description": "GPT-5.5 (low reasoning)",
       "updateArgs": {
         "reasoning_effort": "low",
         "verbosity": "medium",
@@ -1027,7 +1027,7 @@
       "id": "gpt-5.5-medium",
       "handle": "openai/gpt-5.5",
       "label": "GPT-5.5",
-      "description": "OpenAI's most capable model (med reasoning)",
+      "description": "GPT-5.5 (med reasoning)",
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -1040,7 +1040,7 @@
       "id": "gpt-5.5-high",
       "handle": "openai/gpt-5.5",
       "label": "GPT-5.5",
-      "description": "OpenAI's most capable model (high reasoning)",
+      "description": "GPT-5.5 (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
         "reasoning_effort": "high",
@@ -1054,7 +1054,7 @@
       "id": "gpt-5.5-xhigh",
       "handle": "openai/gpt-5.5",
       "label": "GPT-5.5",
-      "description": "OpenAI's most capable model (max reasoning)",
+      "description": "GPT-5.5 (max reasoning)",
       "updateArgs": {
         "reasoning_effort": "xhigh",
         "verbosity": "medium",
@@ -1067,7 +1067,7 @@
       "id": "gpt-5.4-none",
       "handle": "openai/gpt-5.4",
       "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (no reasoning)",
+      "description": "GPT-5.4 (no reasoning)",
       "updateArgs": {
         "reasoning_effort": "none",
         "verbosity": "medium",
@@ -1080,7 +1080,7 @@
       "id": "gpt-5.4-low",
       "handle": "openai/gpt-5.4",
       "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (low reasoning)",
+      "description": "GPT-5.4 (low reasoning)",
       "updateArgs": {
         "reasoning_effort": "low",
         "verbosity": "medium",
@@ -1093,7 +1093,7 @@
       "id": "gpt-5.4-medium",
       "handle": "openai/gpt-5.4",
       "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (med reasoning)",
+      "description": "GPT-5.4 (med reasoning)",
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -1106,7 +1106,7 @@
       "id": "gpt-5.4-high",
       "handle": "openai/gpt-5.4",
       "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (high reasoning)",
+      "description": "GPT-5.4 (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
         "reasoning_effort": "high",
@@ -1120,7 +1120,7 @@
       "id": "gpt-5.4-xhigh",
       "handle": "openai/gpt-5.4",
       "label": "GPT-5.4",
-      "description": "OpenAI's most capable model (max reasoning)",
+      "description": "GPT-5.4 (max reasoning)",
       "updateArgs": {
         "reasoning_effort": "xhigh",
         "verbosity": "medium",
