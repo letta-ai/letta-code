@@ -98,6 +98,15 @@ function findMatchingCurrentPreset(
       return preset.id;
     }
   }
+
+  if (
+    systemPrompt.startsWith(
+      "You are Letta Code, a state-of-the-art coding agent running within the Letta Code CLI",
+    )
+  ) {
+    return "default";
+  }
+
   return undefined;
 }
 
@@ -116,9 +125,6 @@ export function decideManagedSystemPromptUpdate(input: {
   const currentSystemPrompt = agent.system ?? "";
   const currentHash = hashSystemPrompt(currentSystemPrompt);
   const currentVersion = getVersion();
-  const isLegacyLettaCodePrompt = [
-    "You are Letta Code, a state-of-the-art coding agent running within the Letta Code CLI",
-  ].some((prefix) => currentSystemPrompt.startsWith(prefix));
 
   if (storedPreset === "custom") {
     return { kind: "noop", reason: "system prompt is marked custom" };
@@ -190,16 +196,6 @@ export function decideManagedSystemPromptUpdate(input: {
     memoryMode,
   );
   if (!matchingPreset) {
-    if (isLegacyLettaCodePrompt) {
-      const nextSystemPrompt = buildSystemPrompt("default", memoryMode);
-      return {
-        kind: "update",
-        nextSystemPrompt,
-        prompt: managedPrompt("default", memoryMode, nextSystemPrompt),
-        reason: "untracked legacy Letta Code prompt detected",
-      };
-    }
-
     if (isLettaCodePrimaryAgent(agent)) {
       return {
         kind: "custom",
@@ -209,6 +205,16 @@ export function decideManagedSystemPromptUpdate(input: {
     }
 
     return { kind: "noop", reason: "agent prompt is not managed" };
+  }
+
+  const nextSystemPrompt = buildSystemPrompt(matchingPreset, memoryMode);
+  if (currentSystemPrompt !== nextSystemPrompt) {
+    return {
+      kind: "update",
+      nextSystemPrompt,
+      prompt: managedPrompt(matchingPreset, memoryMode, nextSystemPrompt),
+      reason: "untracked legacy Letta Code prompt detected",
+    };
   }
 
   return {
