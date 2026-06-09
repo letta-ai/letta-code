@@ -33,7 +33,7 @@ export interface PiProviderSpec {
   providerTypes: readonly string[];
   handlePrefixes: readonly string[];
   localProviderNames: readonly string[];
-  defaultModel: string;
+  defaultModel?: string;
   defaultBaseURL?: string;
   apiKeyEnv?: () => string | undefined;
   baseUrlEnv?: () => string | undefined;
@@ -210,7 +210,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     providerTypes: ["ollama"],
     handlePrefixes: ["ollama/"],
     localProviderNames: ["ollama", LOCAL_OLLAMA_PROVIDER_NAME],
-    defaultModel: "ollama/llama2",
     defaultBaseURL: "http://localhost:11434/v1",
     apiKeyEnv: () => process.env.OLLAMA_LOCAL_API_KEY,
     baseUrlEnv: () => process.env.OLLAMA_BASE_URL,
@@ -226,7 +225,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     providerTypes: ["ollama_cloud"],
     handlePrefixes: ["ollama-cloud/"],
     localProviderNames: ["ollama-cloud", LOCAL_OLLAMA_CLOUD_PROVIDER_NAME],
-    defaultModel: "ollama-cloud/gpt-oss:20b",
     defaultBaseURL: "https://ollama.com/v1",
     apiKeyEnv: () => process.env.OLLAMA_API_KEY,
     baseUrlEnv: () => process.env.OLLAMA_CLOUD_BASE_URL,
@@ -242,7 +240,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     ],
     handlePrefixes: ["lmstudio/"],
     localProviderNames: ["lmstudio", LOCAL_LMSTUDIO_PROVIDER_NAME],
-    defaultModel: "lmstudio/google/gemma-3n-e4b",
     defaultBaseURL: "http://127.0.0.1:1234/v1",
     apiKeyEnv: () => process.env.LMSTUDIO_API_KEY,
     baseUrlEnv: () => process.env.LMSTUDIO_BASE_URL,
@@ -258,7 +255,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     providerTypes: ["llama_cpp", "llama.cpp"],
     handlePrefixes: ["llama.cpp/", "llama-cpp/"],
     localProviderNames: ["llama-cpp", LOCAL_LLAMA_CPP_PROVIDER_NAME],
-    defaultModel: "llama.cpp/model",
     defaultBaseURL: "http://localhost:8080/v1",
     apiKeyEnv: () => process.env.LLAMA_CPP_API_KEY,
     baseUrlEnv: () =>
@@ -360,7 +356,7 @@ export function localModelHandle(provider: PiProvider, model: string): string {
   return prefix ? `${prefix}${model}` : model;
 }
 
-export function resolveLocalModel(provider: PiProvider): string {
+export function resolveLocalModel(provider: PiProvider): string | undefined {
   return getPiProviderSpec(provider).defaultModel;
 }
 

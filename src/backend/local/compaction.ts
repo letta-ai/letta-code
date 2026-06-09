@@ -14,6 +14,7 @@ import {
 } from "@/backend/dev/pi-model-factory";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
+import { resolveAvailableLocalModelForTurn } from "./local-model-config";
 import type { LocalAgentRecord } from "./local-types";
 
 const ALL_WORD_LIMIT = 500;
@@ -369,9 +370,14 @@ async function runGenerateText(
   defaultPrompt: string,
 ): Promise<{ text: string }> {
   const systemPrompt = input.prompt ?? defaultPrompt;
+  const localModel = await resolveAvailableLocalModelForTurn({
+    model: input.agent.model,
+    modelSettings: input.agent.model_settings,
+    storageDir: input.localProviderAuthStorageDir,
+  });
   const resolved = await resolvePiModelForAgent(
-    input.agent.model,
-    input.agent.model_settings,
+    localModel.model,
+    localModel.modelSettings,
     { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
   );
   const run = input.complete ?? defaultComplete;
