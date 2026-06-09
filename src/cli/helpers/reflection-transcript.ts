@@ -18,14 +18,15 @@ import { safeJsonParseOr } from "./safe-json-parse";
 
 const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 const DEFAULT_TRANSCRIPT_DIR = "transcripts";
-export const REFLECTION_STATE_SCHEMA_VERSION = "v2_message_id" as const;
+const LEGACY_MESSAGE_ID_STATE_SCHEMA_VERSION = "v2_message_id";
+export const REFLECTION_STATE_SCHEMA_VERSION = "v3_assistant_steps" as const;
 
 export interface ReflectionTranscriptState {
   schema_version: typeof REFLECTION_STATE_SCHEMA_VERSION;
   reflected_through_message_id?: string;
-  total_completed_turns: number;
-  reflected_completed_turns: number;
-  turns_since_last_successful_reflection: number;
+  total_completed_steps: number;
+  reflected_completed_steps: number;
+  steps_since_last_successful_reflection: number;
   last_reflection_started_at?: string;
   last_reflection_succeeded_at?: string;
 }
@@ -35,6 +36,21 @@ interface LegacyReflectionTranscriptState {
   last_auto_reflection_started_at?: string;
   last_auto_reflection_succeeded_at?: string;
 }
+
+interface LegacyMessageIdReflectionTranscriptState {
+  schema_version: typeof LEGACY_MESSAGE_ID_STATE_SCHEMA_VERSION;
+  reflected_through_message_id?: string;
+  total_completed_turns?: number;
+  reflected_completed_turns?: number;
+  turns_since_last_successful_reflection?: number;
+  last_reflection_started_at?: string;
+  last_reflection_succeeded_at?: string;
+}
+
+type StoredReflectionTranscriptState =
+  | Partial<ReflectionTranscriptState>
+  | Partial<LegacyMessageIdReflectionTranscriptState>
+  | Partial<LegacyReflectionTranscriptState>;
 
 type TranscriptEntry =
   | {
@@ -452,9 +468,9 @@ function getTranscriptRoot(): string {
 function defaultState(): ReflectionTranscriptState {
   return {
     schema_version: REFLECTION_STATE_SCHEMA_VERSION,
-    total_completed_turns: 0,
-    reflected_completed_turns: 0,
-    turns_since_last_successful_reflection: 0,
+    total_completed_steps: 0,
+    reflected_completed_steps: 0,
+    steps_since_last_successful_reflection: 0,
   };
 }
 
@@ -494,8 +510,8 @@ function isEligibleCanonicalEntry(
   );
 }
 
-function countUserRows(entries: TranscriptEntry[]): number {
-  return entries.filter((entry) => entry.kind === "user").length;
+function countAssistantRows(entries: TranscriptEntry[]): number {
+  return entries.filter((entry) => entry.kind === "assistant").length;
 }
 
 /** Maximum characters to keep for tool-call arguments in the reflection payload. */
@@ -690,19 +706,19 @@ function normalizeNonNegativeInteger(value: unknown, fallback = 0): number {
     : fallback;
 }
 
-function normalizeV2State(
+function normalizeV3State(
   parsed: Partial<ReflectionTranscriptState>,
 ): ReflectionTranscriptState {
-  const totalCompletedTurns = normalizeNonNegativeInteger(
-    parsed.total_completed_turns,
+  const totalCompletedSteps = normalizeNonNegativeInteger(
+    parsed.total_completed_steps,
   );
-  const reflectedCompletedTurns = Math.min(
-    normalizeNonNegativeInteger(parsed.reflected_completed_turns),
-    totalCompletedTurns,
+  const reflectedCompletedSteps = Math.min(
+    normalizeNonNegativeInteger(parsed.reflected_completed_steps),
+    totalCompletedSteps,
   );
-  const turnsSinceLastSuccessfulReflection = Math.max(
+  const stepsSinceLastSuccessfulReflection = Math.max(
     0,
-    totalCompletedTurns - reflectedCompletedTurns,
+    totalCompletedSteps - reflectedCompletedSteps,
   );
 
   return {
@@ -710,9 +726,64 @@ function normalizeV2State(
     reflected_through_message_id: normalizeString(
       parsed.reflected_through_message_id,
     ),
-    total_completed_turns: totalCompletedTurns,
-    reflected_completed_turns: reflectedCompletedTurns,
-    turns_since_last_successful_reflection: turnsSinceLastSuccessfulReflection,
+    total_completed_steps: totalCompletedSteps,
+    reflected_completed_steps: reflectedCompletedSteps,
+    steps_since_last_successful_reflection: stepsSinceLastSuccessfulReflection,
+    last_reflection_started_at: normalizeString(
+      parsed.last_reflection_started_at,
+    ),
+    last_reflection_succeeded_at: normalizeString(
+      parsed.last_reflection_succeeded_at,
+    ),
+  };
+}
+
+function countRowsThroughReflectedMessageId(
+  rows: ParsedTranscriptRow[],
+  reflectedThroughMessageId?: string,
+): number {
+  if (!reflectedThroughMessageId) {
+    return 0;
+  }
+  const anchorRow = rows.find(
+    (row) =>
+      isEligibleCanonicalEntry(row.entry) &&
+      row.entry.source_message_id === reflectedThroughMessageId,
+  );
+  if (!anchorRow) {
+    return 0;
+  }
+  return countAssistantRows(
+    rows
+      .filter((row) => row.lineIndex <= anchorRow.lineIndex)
+      .map((row) => row.entry),
+  );
+}
+
+function migrateMessageIdState(
+  parsed: Partial<LegacyMessageIdReflectionTranscriptState>,
+  lines: string[],
+): ReflectionTranscriptState {
+  const rows = parseTranscriptRows(lines);
+  const allEntries = rows.map((row) => row.entry);
+  const totalCompletedSteps = countAssistantRows(allEntries);
+  const reflectedThroughMessageId = normalizeString(
+    parsed.reflected_through_message_id,
+  );
+  const reflectedCompletedSteps = Math.min(
+    countRowsThroughReflectedMessageId(rows, reflectedThroughMessageId),
+    totalCompletedSteps,
+  );
+
+  return {
+    schema_version: REFLECTION_STATE_SCHEMA_VERSION,
+    reflected_through_message_id: reflectedThroughMessageId,
+    total_completed_steps: totalCompletedSteps,
+    reflected_completed_steps: reflectedCompletedSteps,
+    steps_since_last_successful_reflection: Math.max(
+      0,
+      totalCompletedSteps - reflectedCompletedSteps,
+    ),
     last_reflection_started_at: normalizeString(
       parsed.last_reflection_started_at,
     ),
@@ -749,19 +820,19 @@ function migrateLegacyState(
         .filter((row) => row.lineIndex <= lastCanonicalRow.lineIndex)
         .map((row) => row.entry)
     : [];
-  const totalCompletedTurns = countUserRows(allEntries);
-  const reflectedCompletedTurns = reflectedThroughMessageId
-    ? countUserRows(reflectedEntries)
+  const totalCompletedSteps = countAssistantRows(allEntries);
+  const reflectedCompletedSteps = reflectedThroughMessageId
+    ? countAssistantRows(reflectedEntries)
     : 0;
 
   return {
     schema_version: REFLECTION_STATE_SCHEMA_VERSION,
     reflected_through_message_id: reflectedThroughMessageId,
-    total_completed_turns: totalCompletedTurns,
-    reflected_completed_turns: reflectedCompletedTurns,
-    turns_since_last_successful_reflection: Math.max(
+    total_completed_steps: totalCompletedSteps,
+    reflected_completed_steps: reflectedCompletedSteps,
+    steps_since_last_successful_reflection: Math.max(
       0,
-      totalCompletedTurns - reflectedCompletedTurns,
+      totalCompletedSteps - reflectedCompletedSteps,
     ),
     last_reflection_started_at: normalizeString(
       parsed?.last_auto_reflection_started_at,
@@ -782,13 +853,15 @@ async function readState(
     raw = null;
   }
   const parsed = raw
-    ? safeJsonParseOr<Partial<
-        ReflectionTranscriptState & LegacyReflectionTranscriptState
-      > | null>(raw, null)
+    ? safeJsonParseOr<StoredReflectionTranscriptState | null>(raw, null)
     : null;
+  const schemaVersion =
+    parsed && "schema_version" in parsed ? parsed.schema_version : undefined;
 
-  if (parsed?.schema_version === REFLECTION_STATE_SCHEMA_VERSION) {
-    const state = normalizeV2State(parsed);
+  if (schemaVersion === REFLECTION_STATE_SCHEMA_VERSION) {
+    const state = normalizeV3State(
+      parsed as Partial<ReflectionTranscriptState>,
+    );
     if (JSON.stringify(state) !== JSON.stringify(parsed)) {
       await writeState(paths, state);
     }
@@ -802,7 +875,16 @@ async function readState(
   }
 
   const transcriptLines = await readTranscriptLines(paths);
-  const migrated = migrateLegacyState(parsed, transcriptLines);
+  const migrated =
+    schemaVersion === LEGACY_MESSAGE_ID_STATE_SCHEMA_VERSION
+      ? migrateMessageIdState(
+          parsed as Partial<LegacyMessageIdReflectionTranscriptState>,
+          transcriptLines,
+        )
+      : migrateLegacyState(
+          parsed as Partial<LegacyReflectionTranscriptState>,
+          transcriptLines,
+        );
   await writeState(paths, migrated);
   return migrated;
 }
@@ -811,9 +893,9 @@ async function writeState(
   paths: ReflectionTranscriptPaths,
   state: ReflectionTranscriptState,
 ): Promise<void> {
-  state.turns_since_last_successful_reflection = Math.max(
+  state.steps_since_last_successful_reflection = Math.max(
     0,
-    state.total_completed_turns - state.reflected_completed_turns,
+    state.total_completed_steps - state.reflected_completed_steps,
   );
   await writeFile(
     paths.statePath,
@@ -863,7 +945,7 @@ export async function appendTranscriptDeltaJsonl(
 
     const payload = entries.map((entry) => JSON.stringify(entry)).join("\n");
     await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
-    state.total_completed_turns += countUserRows(entries);
+    state.total_completed_steps += countAssistantRows(entries);
     await writeState(paths, state);
     return entries.length;
   });
@@ -1048,7 +1130,7 @@ export async function finalizeAutoReflectionPayload(
       }
       const nowIso = new Date().toISOString();
       state.reflected_through_message_id = selection.endMessageId;
-      state.reflected_completed_turns = countUserRows(
+      state.reflected_completed_steps = countAssistantRows(
         snapshotRows.map((row) => row.entry),
       );
       state.last_reflection_succeeded_at = nowIso;

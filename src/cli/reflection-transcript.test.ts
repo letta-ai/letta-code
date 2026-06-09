@@ -96,15 +96,15 @@ describe("reflectionTranscript helper", () => {
     const state = JSON.parse(stateRaw) as {
       schema_version: string;
       reflected_through_message_id?: string;
-      total_completed_turns: number;
-      reflected_completed_turns: number;
-      turns_since_last_successful_reflection: number;
+      total_completed_steps: number;
+      reflected_completed_steps: number;
+      steps_since_last_successful_reflection: number;
     };
     expect(state.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
     expect(state.reflected_through_message_id).toBe("a1");
-    expect(state.total_completed_turns).toBe(1);
-    expect(state.reflected_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(0);
+    expect(state.total_completed_steps).toBe(1);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
 
     const secondPayload = await buildAutoReflectionPayload(
       agentId,
@@ -136,12 +136,12 @@ describe("reflectionTranscript helper", () => {
     const stateRaw = await readFile(paths.statePath, "utf-8");
     const state = JSON.parse(stateRaw) as {
       reflected_through_message_id?: string;
-      reflected_completed_turns: number;
-      turns_since_last_successful_reflection: number;
+      reflected_completed_steps: number;
+      steps_since_last_successful_reflection: number;
     };
     expect(state.reflected_through_message_id).toBeUndefined();
-    expect(state.reflected_completed_turns).toBe(0);
-    expect(state.turns_since_last_successful_reflection).toBe(1);
+    expect(state.reflected_completed_steps).toBe(0);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
 
     const retried = await buildAutoReflectionPayload(agentId, conversationId);
     expect(retried).not.toBeNull();
@@ -169,13 +169,13 @@ describe("reflectionTranscript helper", () => {
     const clamped = JSON.parse(clampedRaw) as {
       schema_version: string;
       reflected_through_message_id?: string;
-      reflected_completed_turns: number;
-      turns_since_last_successful_reflection: number;
+      reflected_completed_steps: number;
+      steps_since_last_successful_reflection: number;
     };
     expect(clamped.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
     expect(clamped.reflected_through_message_id).toBe("u1");
-    expect(clamped.reflected_completed_turns).toBe(1);
-    expect(clamped.turns_since_last_successful_reflection).toBe(0);
+    expect(clamped.reflected_completed_steps).toBe(0);
+    expect(clamped.steps_since_last_successful_reflection).toBe(0);
 
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       {
@@ -199,6 +199,47 @@ describe("reflectionTranscript helper", () => {
     const payloadText = await readFile(secondAttempt.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
     expect(messages).toContainEqual({ role: "assistant", content: "second" });
+  });
+
+  test("v2 message-id state migrates from turn counts to assistant step counts", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "first", messageId: "u1" },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "first done",
+        phase: "finished",
+        messageId: "a1",
+      },
+      { kind: "user", id: "u2", text: "second", messageId: "u2" },
+      {
+        kind: "assistant",
+        id: "a2",
+        text: "second done",
+        phase: "finished",
+        messageId: "a2",
+      },
+    ]);
+
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    await writeFile(
+      paths.statePath,
+      `${JSON.stringify({
+        schema_version: "v2_message_id",
+        reflected_through_message_id: "a1",
+        total_completed_turns: 2,
+        reflected_completed_turns: 1,
+        turns_since_last_successful_reflection: 1,
+      })}\n`,
+      "utf-8",
+    );
+
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
+    expect(state.reflected_through_message_id).toBe("a1");
+    expect(state.total_completed_steps).toBe(2);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(1);
   });
 
   test("auto payload uses actual message ids instead of transcript line ids", async () => {
@@ -259,9 +300,9 @@ describe("reflectionTranscript helper", () => {
     expect(payload).toBeNull();
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(1);
-    expect(state.reflected_completed_turns).toBe(0);
-    expect(state.turns_since_last_successful_reflection).toBe(1);
+    expect(state.total_completed_steps).toBe(1);
+    expect(state.reflected_completed_steps).toBe(0);
+    expect(state.steps_since_last_successful_reflection).toBe(1);
   });
 
   test("auto payload includes noncanonical rows before the next canonical anchor", async () => {
@@ -299,8 +340,8 @@ describe("reflectionTranscript helper", () => {
     );
     const state = await getReflectionTranscriptState(agentId, conversationId);
     expect(state.reflected_through_message_id).toBe("message-assistant-1");
-    expect(state.reflected_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(0);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
   });
 
   test("message-id cursor controls whether new payloads are available", async () => {
@@ -328,7 +369,7 @@ describe("reflectionTranscript helper", () => {
 
     let state = await getReflectionTranscriptState(agentId, conversationId);
     expect(state.reflected_through_message_id).toBe("a1");
-    expect(state.turns_since_last_successful_reflection).toBe(0);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
     await expect(
       buildAutoReflectionPayload(agentId, conversationId),
     ).resolves.toBeNull();
@@ -338,7 +379,7 @@ describe("reflectionTranscript helper", () => {
     ]);
 
     state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.turns_since_last_successful_reflection).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
     const secondPayload = await buildAutoReflectionPayload(
       agentId,
       conversationId,
@@ -348,7 +389,7 @@ describe("reflectionTranscript helper", () => {
     expect(secondPayload?.endMessageId).toBe("u2");
   });
 
-  test("turns appended during reflection are preserved across finalize", async () => {
+  test("assistant steps appended during reflection are preserved across finalize", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "first", messageId: "u1" },
       {
@@ -364,12 +405,26 @@ describe("reflectionTranscript helper", () => {
     expect(payload).not.toBeNull();
     if (!payload) return;
 
-    // Two more user turns complete while reflection is "running".
+    // Two more assistant steps complete while reflection is "running".
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u2", text: "second", messageId: "u2" },
+      {
+        kind: "assistant",
+        id: "a2",
+        text: "second done",
+        phase: "finished",
+        messageId: "a2",
+      },
     ]);
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u3", text: "third", messageId: "u3" },
+      {
+        kind: "assistant",
+        id: "a3",
+        text: "third done",
+        phase: "finished",
+        messageId: "a3",
+      },
     ]);
 
     await finalizeAutoReflectionPayload(
@@ -381,19 +436,19 @@ describe("reflectionTranscript helper", () => {
     );
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(3);
-    expect(state.reflected_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(2);
+    expect(state.total_completed_steps).toBe(3);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(2);
     expect(state.reflected_through_message_id).toBe("a1");
   });
 
-  test("assistant-only delta does not advance completed-turn counter", async () => {
+  test("assistant-only delta advances completed-step counter", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "hello", messageId: "u1" },
     ]);
 
     let state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(1);
+    expect(state.total_completed_steps).toBe(0);
 
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       {
@@ -406,7 +461,41 @@ describe("reflectionTranscript helper", () => {
     ]);
 
     state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(1);
+    expect(state.total_completed_steps).toBe(1);
+  });
+
+  test("completed-step counter ignores user, reasoning, and tool-call rows", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+      {
+        kind: "reasoning",
+        id: "r1",
+        text: "thinking",
+        phase: "finished",
+        messageId: "r1",
+      },
+      {
+        kind: "tool_call",
+        id: "tc1",
+        toolCallId: "tc1",
+        name: "Read",
+        argsText: "{}",
+        resultText: "done",
+        resultOk: true,
+        phase: "finished",
+      },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "hi",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(1);
   });
 
   test("concurrent append and finalize do not lose state updates", async () => {
@@ -428,6 +517,13 @@ describe("reflectionTranscript helper", () => {
     await Promise.all([
       appendTranscriptDeltaJsonl(agentId, conversationId, [
         { kind: "user", id: "u2", text: "second", messageId: "u2" },
+        {
+          kind: "assistant",
+          id: "a2",
+          text: "second done",
+          phase: "finished",
+          messageId: "a2",
+        },
       ]),
       finalizeAutoReflectionPayload(
         agentId,
@@ -438,13 +534,20 @@ describe("reflectionTranscript helper", () => {
       ),
       appendTranscriptDeltaJsonl(agentId, conversationId, [
         { kind: "user", id: "u3", text: "third", messageId: "u3" },
+        {
+          kind: "assistant",
+          id: "a3",
+          text: "third done",
+          phase: "finished",
+          messageId: "a3",
+        },
       ]),
     ]);
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(3);
-    expect(state.reflected_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(2);
+    expect(state.total_completed_steps).toBe(3);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(2);
     expect(state.reflected_through_message_id).toBe("a1");
   });
 
@@ -453,10 +556,11 @@ describe("reflectionTranscript helper", () => {
       Array.from({ length: 5 }, (_, i) =>
         appendTranscriptDeltaJsonl(agentId, conversationId, [
           {
-            kind: "user",
-            id: `u${i}`,
+            kind: "assistant",
+            id: `a${i}`,
             text: `msg ${i}`,
-            messageId: `m${i}`,
+            phase: "finished",
+            messageId: `a${i}`,
           },
         ]),
       ),
@@ -465,7 +569,7 @@ describe("reflectionTranscript helper", () => {
     expect(appends).toEqual([1, 1, 1, 1, 1]);
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(5);
+    expect(state.total_completed_steps).toBe(5);
   });
 
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {

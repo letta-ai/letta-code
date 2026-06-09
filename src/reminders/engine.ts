@@ -253,7 +253,7 @@ async function buildReflectionStepReminder(
         context.agent.conversationId ?? "default",
       );
       const shouldFireStepTrigger = shouldFireStepCountTrigger(
-        transcriptState.turns_since_last_successful_reflection,
+        transcriptState.steps_since_last_successful_reflection,
         context.reflectionSettings,
       );
       if (shouldFireStepTrigger) {
