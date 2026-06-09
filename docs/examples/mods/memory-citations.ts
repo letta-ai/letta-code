@@ -193,7 +193,7 @@ function summarizeCitations(state: ConversationState | undefined) {
 }
 
 function createCitationInstruction(): string {
-  return `${SYSTEM_REMINDER_OPEN}\nMemory citation extension is active. If memory materially contributes to your answer, call the memory_citation_snapshot tool before your final response and include a compact "Memory references" footer using only paths returned by that tool. Do not invent memory citations. If the snapshot returns no citations, omit the footer or say that no explicit memory file reads were observed.\n${SYSTEM_REMINDER_CLOSE}`;
+  return `${SYSTEM_REMINDER_OPEN}\nMemory citation mod is active. If memory materially contributes to your answer, call the memory_citation_snapshot tool before your final response and include a compact "Memory references" footer using only paths returned by that tool. Do not invent memory citations. If the snapshot returns no citations, omit the footer or say that no explicit memory file reads were observed.\n${SYSTEM_REMINDER_CLOSE}`;
 }
 
 function appendSystemMessage(input: unknown[], text: string): unknown[] {
@@ -326,7 +326,7 @@ export function activate(letta) {
       letta.commands.register({
         id: "memory-citations",
         description:
-          "Show memory references observed by the memory citation extension this turn.",
+          "Show memory references observed by the memory citation mod this turn.",
         run(ctx) {
           const key = conversationKey(
             ctx.conversation.id ?? ctx.getContext().sessionId,

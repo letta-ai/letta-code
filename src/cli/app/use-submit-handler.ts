@@ -42,6 +42,7 @@ import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { CustomCommand } from "@/cli/commands/custom";
+import { handleModsCommand } from "@/cli/commands/mods";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
 import {
@@ -799,6 +800,16 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        const modsCommand = handleModsCommand(trimmed, {
+          commandRunner,
+          currentModelId,
+          cwd: getCurrentWorkingDirectory(),
+          setCommandRunning,
+        });
+        if (modsCommand.handled) {
+          return { submitted: true };
+        }
+
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
           setModelSelectorOptions({}); // Clear any filters from previous connection
@@ -980,7 +991,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           if (onReload) {
             const cmd = commandRunner.start(
               "/reload",
-              "Reloading settings and local extensions...",
+              "Reloading settings and local mods...",
             );
             setCommandRunning(true);
             // Defer the reload to let the command UI render first
@@ -988,7 +999,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               void (async () => {
                 try {
                   await onReload();
-                  cmd.finish("Reloaded settings and local extensions", true);
+                  cmd.finish("Reloaded settings and local mods", true);
                 } catch (error) {
                   const errorDetails = formatErrorDetails(error, agentId);
                   cmd.fail(`Failed: ${errorDetails}`);
@@ -1257,7 +1268,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               },
             );
             const request = args
-              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline extension.`
+              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline mod.`
               : "The user ran `/statusline` without arguments. Use the loaded skill's bare `/statusline` behavior.";
 
             cmd.finish("Running statusline setup...", true);

@@ -1,3 +1,4 @@
+export const LETTA_DISABLE_MODS_ENV = "LETTA_DISABLE_MODS";
 export const LETTA_DISABLE_EXTENSIONS_ENV = "LETTA_DISABLE_EXTENSIONS";
 
 function isTruthyEnvFlag(value: string | undefined): boolean {
@@ -9,7 +10,10 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 export function areExtensionsDisabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return isTruthyEnvFlag(env[LETTA_DISABLE_EXTENSIONS_ENV]);
+  return (
+    isTruthyEnvFlag(env[LETTA_DISABLE_MODS_ENV]) ||
+    isTruthyEnvFlag(env[LETTA_DISABLE_EXTENSIONS_ENV])
+  );
 }
 
 export function shouldDisableExtensions(options?: {
@@ -22,5 +26,6 @@ export function shouldDisableExtensions(options?: {
 }
 
 export function disableExtensionsForProcess(): void {
+  process.env[LETTA_DISABLE_MODS_ENV] = "1";
   process.env[LETTA_DISABLE_EXTENSIONS_ENV] = "1";
 }

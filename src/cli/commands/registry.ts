@@ -289,12 +289,21 @@ export const commands: Record<string, Command> = {
     },
   },
   "/reload": {
-    desc: "Reload settings and local extensions",
+    desc: "Reload settings and local mods",
     order: 27.2,
     noArgs: true,
     handler: () => {
       // Handled specially in AppCoordinator to reload runtime surfaces in-place
       return "Reloading...";
+    },
+  },
+  "/mods": {
+    desc: "Run Mod Lab learning targets",
+    order: 27.3,
+    args: "learn [memory-citations] [options]",
+    handler: () => {
+      // Handled specially in use-submit-handler.ts to stream Mod Lab progress
+      return "Starting Mod Lab...";
     },
   },
   "/ade": {

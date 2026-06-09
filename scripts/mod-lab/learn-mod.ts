@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 import path from "node:path";
 import {
-  defaultExtensionLearningRunDirectory,
-  readExtensionLearningSpec,
-  runExtensionLearning,
-} from "../../src/extensions/learning-harness.ts";
+  defaultModLearningRunDirectory,
+  readModLearningSpec,
+  runModLearning,
+} from "../../src/mods/learning-harness.ts";
 
 interface Args {
   backend?: string;
@@ -25,7 +25,7 @@ function parseArgs(argv: string[]): Args {
     help: false,
     repoRoot: process.cwd(),
     skipGeneration: false,
-    spec: "docs/examples/extensions/learning/memory-citations.spec.json",
+    spec: "docs/examples/mods/learning/memory-citations.spec.json",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -65,16 +65,16 @@ function parseArgs(argv: string[]): Args {
 }
 
 function printHelp(): void {
-  console.log(`Usage: bun scripts/extension-lab/learn-extension.ts [options]
+  console.log(`Usage: bun scripts/mod-lab/learn-mod.ts [options]
 
-Runs the Extension Lab dogfood loop:
-  spec/demo -> generate candidate extension -> headless eval with LETTA_EXTENSIONS_DIR -> artifacts/report
+Runs the Mod Lab dogfood loop:
+  spec/demo -> generate candidate mod -> headless eval with LETTA_MODS_DIR (and legacy LETTA_EXTENSIONS_DIR for pre-rename branches) -> artifacts/report
 
 Options:
   --spec <path>                 Learning spec JSON (default: memory-citations spec)
-  --out <dir>                   Run artifact directory (default: .letta/extension-lab-runs/<slug>-<timestamp>)
-  --candidate <path>            Use an existing candidate extension instead of generation
-  --candidate-file-name <name>  Candidate filename inside the eval extension directory
+  --out <dir>                   Run artifact directory (default: .letta/mod-lab-runs/<slug>-<timestamp>)
+  --candidate <path>            Use an existing candidate mod instead of generation
+  --candidate-file-name <name>  Candidate filename inside the eval mod directory
   --model <handle>              Model for generation and eval
   --generation-model <handle>   Model for candidate generation
   --eval-model <handle>         Model for headless eval
@@ -95,12 +95,12 @@ async function main(): Promise<void> {
 
   const repoRoot = path.resolve(args.repoRoot);
   const specPath = path.resolve(repoRoot, args.spec);
-  const spec = await readExtensionLearningSpec(specPath);
+  const spec = await readModLearningSpec(specPath);
   const runDir = args.out
     ? path.resolve(repoRoot, args.out)
-    : path.resolve(repoRoot, defaultExtensionLearningRunDirectory(spec));
+    : path.resolve(repoRoot, defaultModLearningRunDirectory(spec));
 
-  const report = await runExtensionLearning({
+  const report = await runModLearning({
     backend: args.backend,
     candidateFileName: args.candidateFileName,
     candidateSourcePath: args.candidate,

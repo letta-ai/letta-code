@@ -80,11 +80,13 @@ import type {
   ExtensionTurnStartEvent,
 } from "@/extensions/types";
 
+export const GLOBAL_MODS_DIRECTORY = path.join(homedir(), ".letta", "mods");
 export const GLOBAL_EXTENSIONS_DIRECTORY = path.join(
   homedir(),
   ".letta",
   "extensions",
 );
+export const LETTA_MODS_DIR_ENV = "LETTA_MODS_DIR";
 export const LETTA_EXTENSIONS_DIR_ENV = "LETTA_EXTENSIONS_DIR";
 export const EXTENSION_CACHE_DIRECTORY = path.join(
   homedir(),
@@ -269,17 +271,25 @@ function listExtensionFiles(directory: string): string[] {
 }
 
 function getEnvironmentExtensionsDirectory(): string | undefined {
-  const value = process.env[LETTA_EXTENSIONS_DIR_ENV]?.trim();
-  return value ? value : undefined;
+  for (const envName of [LETTA_MODS_DIR_ENV, LETTA_EXTENSIONS_DIR_ENV]) {
+    const value = process.env[envName]?.trim();
+    if (value) return value;
+  }
+  return undefined;
 }
 
 export function resolveLocalExtensionSources(
   options: ResolveLocalExtensionSourcesOptions = {},
 ): LocalExtensionSource[] {
+  const explicitDirectory =
+    options.globalExtensionsDirectory ?? getEnvironmentExtensionsDirectory();
   const globalExtensionsDirectory =
-    options.globalExtensionsDirectory ??
-    getEnvironmentExtensionsDirectory() ??
-    GLOBAL_EXTENSIONS_DIRECTORY;
+    explicitDirectory ??
+    (existsSync(GLOBAL_MODS_DIRECTORY)
+      ? GLOBAL_MODS_DIRECTORY
+      : existsSync(GLOBAL_EXTENSIONS_DIRECTORY)
+        ? GLOBAL_EXTENSIONS_DIRECTORY
+        : GLOBAL_MODS_DIRECTORY);
 
   return [
     {

@@ -1,8 +1,8 @@
 {
-  "name": "Memory citation extension learner demo",
+  "name": "Memory citation mod learner demo",
   "slug": "memory-citations-learned",
-  "targetExtensionName": "memory-citations.ts",
-  "objective": "Learn a trusted local extension that observes memory-file references during a turn, exposes those observations through a snapshot tool, and nudges the agent to cite only observed memory paths.",
+  "targetModName": "memory-citations.ts",
+  "objective": "Learn a trusted local mod that observes memory-file references during a turn, exposes those observations through a snapshot tool, and nudges the agent to cite only observed memory paths.",
   "requirements": [
     "On turn_start, inject a compact system reminder telling the agent to call memory_citation_snapshot before a final answer when memory influenced the answer.",
     "On tool_start, track read/list/search-style tool calls whose path-like args point inside the active memory directory. Treat Read/Glob/Grep/LS style tools as high confidence.",
@@ -12,8 +12,8 @@
     "Keep state scoped per conversation and reset the collected citations at the start of each turn.",
     "Never invent citations. The snapshot should return only paths observed from tool_start events."
   ],
-  "extensionApiHints": [
-    "The extension runtime accepts TypeScript files in LETTA_EXTENSIONS_DIR and calls export function activate(letta) or a default export.",
+  "modApiHints": [
+    "The mod runtime accepts TypeScript files in LETTA_MODS_DIR (legacy LETTA_EXTENSIONS_DIR on pre-rename branches) and calls export function activate(letta) or a default export.",
     "letta.events.on(\"turn_start\", handler) can mutate event.input or return a replacement input.",
     "letta.events.on(\"tool_start\", handler) receives event.toolName, event.args, event.toolCallId, and event.conversationId.",
     "letta.tools.register({ name, description, parameters, requiresApproval, parallelSafe, run }) registers a tool available to the model.",
@@ -24,12 +24,12 @@
   ],
   "examples": [
     {
-      "input": "The agent runs exec_command with cmd: cat $MEMORY_DIR/reference/extension-lab.md, then calls memory_citation_snapshot.",
-      "expected": "The snapshot includes citationCount >= 1 and a citation for reference/extension-lab.md with medium confidence."
+      "input": "The agent runs exec_command with cmd: cat $MEMORY_DIR/reference/mod-lab.md, then calls memory_citation_snapshot.",
+      "expected": "The snapshot includes citationCount >= 1 and a citation for reference/mod-lab.md with medium confidence."
     },
     {
-      "input": "The agent reads /tmp/eval-memory/reference/extension-lab.md with a Read-style tool while the active memory directory is /tmp/eval-memory.",
-      "expected": "The snapshot includes reference/extension-lab.md with high confidence."
+      "input": "The agent reads /tmp/eval-memory/reference/mod-lab.md with a Read-style tool while the active memory directory is /tmp/eval-memory.",
+      "expected": "The snapshot includes reference/mod-lab.md with high confidence."
     }
   ],
   "evaluation": {
@@ -37,13 +37,13 @@
     "timeoutMs": 900000,
     "maxTurns": 8,
     "memoryFiles": {
-      "reference/extension-lab.md": "# Extension Lab memory fixture\n\nThe code word is CITATION-DOGFOOD-OK. If asked, cite this file as reference/extension-lab.md.\n"
+      "reference/mod-lab.md": "# Mod Lab memory fixture\n\nThe code word is CITATION-DOGFOOD-OK. If asked, cite this file as reference/mod-lab.md.\n"
     },
-    "prompt": "Use Bash to run `cat \"$MEMORY_DIR/reference/extension-lab.md\"`, then answer with the code word from the file. If the memory_citation_snapshot tool is available, call it immediately before your final answer. Your final answer must include a compact footer starting with `Memory references:` and cite only the observed memory path.",
+    "prompt": "Use Bash to run `cat \"$MEMORY_DIR/reference/mod-lab.md\"`, then answer with the code word from the file. If the memory_citation_snapshot tool is available, call it immediately before your final answer. Your final answer must include a compact footer starting with `Memory references:` and cite only the observed memory path.",
     "requiredResultMarkers": [
       "CITATION-DOGFOOD-OK",
       "Memory references:",
-      "reference/extension-lab.md"
+      "reference/mod-lab.md"
     ],
     "requiredTraceMarkers": [
       "\"tool_call\"",
@@ -55,7 +55,9 @@
       "memory_citation_snapshot tool is not available"
     ],
     "forbiddenTraceMarkers": [
+      "[mods] failed to load",
       "[extensions] failed to load",
+      "loaded 0 mod(s)",
       "loaded 0 extension(s)"
     ]
   }

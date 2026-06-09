@@ -891,7 +891,7 @@ async function main(): Promise<void> {
   const skillSourcesRaw = values["skill-sources"];
   const noSystemInfoReminderFlag = values["no-system-info-reminder"];
   const extensionsDisabled = shouldDisableExtensions({
-    cliFlag: values["no-extensions"],
+    cliFlag: values["no-mods"] || values["no-extensions"],
   });
   if (extensionsDisabled) {
     disableExtensionsForProcess();

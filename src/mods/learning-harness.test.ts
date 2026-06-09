@@ -9,46 +9,43 @@ import {
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type {
-  CommandRunner,
-  ExtensionLearningSpec,
-} from "@/extensions/learning-harness";
+import type { CommandRunner, ModLearningSpec } from "@/mods/learning-harness";
 import {
-  buildExtensionLearningPrompt,
-  evaluateExtensionLearningRun,
+  buildModLearningPrompt,
+  evaluateModLearningRun,
   extractHeadlessResultText,
-  runExtensionLearning,
-} from "@/extensions/learning-harness";
+  runModLearning,
+} from "@/mods/learning-harness";
 
 const tempDirs: string[] = [];
 
 function createTempDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "letta-extension-lab-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "letta-mod-lab-"));
   tempDirs.push(dir);
   return dir;
 }
 
-function createSpec(): ExtensionLearningSpec {
+function createSpec(): ModLearningSpec {
   return {
     name: "Memory citation learner",
-    objective: "Learn a memory citation extension.",
+    objective: "Learn a memory citation mod.",
     requirements: ["Register memory_citation_snapshot", "Cite observed paths"],
     evaluation: {
       memoryFiles: {
-        "reference/extension-lab.md": "The code word is CITATION-DOGFOOD-OK.\n",
+        "reference/mod-lab.md": "The code word is CITATION-DOGFOOD-OK.\n",
       },
       outputFormat: "stream-json",
-      prompt: "Read $MEMORY_DIR/reference/extension-lab.md and cite it.",
+      prompt: "Read $MEMORY_DIR/reference/mod-lab.md and cite it.",
       requiredResultMarkers: [
         "CITATION-DOGFOOD-OK",
         "Memory references:",
-        "reference/extension-lab.md",
+        "reference/mod-lab.md",
       ],
       requiredTraceMarkers: [
         '"name":"memory_citation_snapshot"',
         '"message_type":"tool_return_message"',
       ],
-      forbiddenTraceMarkers: ["[extensions] failed to load"],
+      forbiddenTraceMarkers: ["[mods] failed to load"],
       forbiddenResultMarkers: [
         "memory_citation_snapshot tool is not available",
       ],
@@ -62,15 +59,15 @@ afterEach(() => {
   }
 });
 
-describe("extension learning harness", () => {
+describe("mod learning harness", () => {
   test("builds a generation prompt with the target file and requirements", () => {
     const spec = createSpec();
-    const prompt = buildExtensionLearningPrompt(
+    const prompt = buildModLearningPrompt(
       spec,
-      "/tmp/run/extensions/memory-citations.ts",
+      "/tmp/run/mods/memory-citations.ts",
     );
 
-    expect(prompt).toContain("/tmp/run/extensions/memory-citations.ts");
+    expect(prompt).toContain("/tmp/run/mods/memory-citations.ts");
     expect(prompt).toContain("Register memory_citation_snapshot");
     expect(prompt).toContain("Edit only the candidate file");
     expect(prompt).toContain("letta.tools.register");
@@ -93,12 +90,12 @@ describe("extension learning harness", () => {
         type: "message",
         message_type: "assistant_message",
         content:
-          "CITATION-DOGFOOD-OK\n\nMemory references: reference/extension-lab.md",
+          "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-lab.md",
       }),
       JSON.stringify({
         type: "result",
         result:
-          "CITATION-DOGFOOD-OK\n\nMemory references: reference/extension-lab.md",
+          "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-lab.md",
       }),
     ].join("\n");
 
@@ -106,7 +103,7 @@ describe("extension learning harness", () => {
       "CITATION-DOGFOOD-OK",
     );
 
-    const evaluation = evaluateExtensionLearningRun({
+    const evaluation = evaluateModLearningRun({
       exitCode: 0,
       outputFormat: "stream-json",
       spec: createSpec().evaluation,
@@ -126,11 +123,11 @@ describe("extension learning harness", () => {
       JSON.stringify({
         type: "result",
         result:
-          "CITATION-DOGFOOD-OK\n\nMemory references: reference/extension-lab.md",
+          "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-lab.md",
       }),
     ].join("\n");
 
-    const evaluation = evaluateExtensionLearningRun({
+    const evaluation = evaluateModLearningRun({
       exitCode: 0,
       outputFormat: "stream-json",
       spec: createSpec().evaluation,
@@ -148,21 +145,15 @@ describe("extension learning harness", () => {
 
   test("runs generation, eval, and writes artifacts with a fake command runner", async () => {
     const repoRoot = createTempDir();
-    const runDir = path.join(
-      repoRoot,
-      ".letta",
-      "extension-lab-runs",
-      "test-run",
-    );
-    const candidatePath = path.join(
-      runDir,
-      "extensions",
-      "memory-citations.ts",
-    );
+    const runDir = path.join(repoRoot, ".letta", "mod-lab-runs", "test-run");
+    const candidatePath = path.join(runDir, "mods", "memory-citations.ts");
     const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
+    const progress: string[] = [];
     const runner: CommandRunner = async (command, args, options) => {
       calls.push({ args, env: options.env });
-      if (args.includes("--no-extensions")) {
+      expect(options.env.LETTA_API_KEY).toBe("test-key");
+      if (args.includes("--no-mods")) {
+        expect(options.env.LETTA_DISABLE_MODS).toBe("1");
         await mkdir(path.dirname(candidatePath), { recursive: true });
         writeFileSync(
           candidatePath,
@@ -180,9 +171,7 @@ describe("extension learning harness", () => {
         };
       }
 
-      expect(options.env.LETTA_EXTENSIONS_DIR).toBe(
-        path.dirname(candidatePath),
-      );
+      expect(options.env.LETTA_MODS_DIR).toBe(path.dirname(candidatePath));
       expect(options.env.MEMORY_DIR).toBe(path.join(runDir, "eval-memory"));
       const promptArg = args[args.indexOf("-p") + 1];
       expect(promptArg).toContain(options.env.MEMORY_DIR);
@@ -209,16 +198,18 @@ describe("extension learning harness", () => {
           JSON.stringify({
             type: "result",
             result:
-              "CITATION-DOGFOOD-OK\n\nMemory references: reference/extension-lab.md",
+              "CITATION-DOGFOOD-OK\n\nMemory references: reference/mod-lab.md",
           }),
         ].join("\n"),
         timedOut: false,
       };
     };
 
-    const report = await runExtensionLearning({
+    const report = await runModLearning({
       candidateFileName: "memory-citations.ts",
       commandRunner: runner,
+      env: { LETTA_API_KEY: "test-key" },
+      onProgress: (event) => progress.push(event.phase),
       repoRoot,
       runDir,
       spec: createSpec(),
@@ -226,13 +217,20 @@ describe("extension learning harness", () => {
 
     expect(report.passed).toBe(true);
     expect(calls).toHaveLength(2);
+    expect(progress).toEqual([
+      "preparing",
+      "generating",
+      "evaluating",
+      "writing-report",
+      "done",
+    ]);
     expect(existsSync(candidatePath)).toBe(true);
     expect(existsSync(path.join(runDir, "generation-prompt.md"))).toBe(true);
     expect(existsSync(path.join(runDir, "eval.stdout"))).toBe(true);
     expect(existsSync(path.join(runDir, "report.md"))).toBe(true);
     expect(
       readFileSync(
-        path.join(runDir, "eval-memory", "reference", "extension-lab.md"),
+        path.join(runDir, "eval-memory", "reference", "mod-lab.md"),
         "utf8",
       ),
     ).toContain("CITATION-DOGFOOD-OK");

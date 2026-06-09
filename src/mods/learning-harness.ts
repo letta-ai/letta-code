@@ -4,13 +4,13 @@ import path from "node:path";
 
 export type HeadlessLearningOutputFormat = "json" | "stream-json";
 
-export interface ExtensionLearningExample {
+export interface ModLearningExample {
   input: string;
   expected?: string;
   notes?: string;
 }
 
-export interface ExtensionLearningEvaluationSpec {
+export interface ModLearningEvaluationSpec {
   forbiddenTraceMarkers?: string[];
   prompt: string;
   outputFormat?: HeadlessLearningOutputFormat;
@@ -22,15 +22,15 @@ export interface ExtensionLearningEvaluationSpec {
   forbiddenResultMarkers?: string[];
 }
 
-export interface ExtensionLearningSpec {
+export interface ModLearningSpec {
   name: string;
   slug?: string;
   objective: string;
-  targetExtensionName?: string;
+  targetModName?: string;
   requirements: string[];
-  extensionApiHints?: string[];
-  examples?: ExtensionLearningExample[];
-  evaluation: ExtensionLearningEvaluationSpec;
+  modApiHints?: string[];
+  examples?: ModLearningExample[];
+  evaluation: ModLearningEvaluationSpec;
 }
 
 export interface CommandRunOptions {
@@ -61,7 +61,7 @@ export interface MarkerCheck {
   present: boolean;
 }
 
-export interface ExtensionLearningEvaluationResult {
+export interface ModLearningEvaluationResult {
   forbiddenResultMarkers: MarkerCheck[];
   forbiddenTraceMarkers: MarkerCheck[];
   requiredResultMarkers: MarkerCheck[];
@@ -70,41 +70,58 @@ export interface ExtensionLearningEvaluationResult {
   passed: boolean;
 }
 
-export interface RunExtensionLearningOptions {
+export interface RunModLearningOptions {
   backend?: string;
   candidateFileName?: string;
   candidateSourcePath?: string;
   cliArgsPrefix?: string[];
   cliCommand?: string;
   commandRunner?: CommandRunner;
+  env?: NodeJS.ProcessEnv;
   evalModel?: string;
   generationModel?: string;
+  onProgress?: (progress: ModLearningProgress) => void;
   outputBaseDir?: string;
   promoteToPath?: string;
   repoRoot: string;
   runDir?: string;
   skipGeneration?: boolean;
-  spec: ExtensionLearningSpec;
+  spec: ModLearningSpec;
 }
 
-export interface ExtensionLearningReport {
+export type ModLearningProgressPhase =
+  | "preparing"
+  | "generating"
+  | "evaluating"
+  | "promoting"
+  | "writing-report"
+  | "done";
+
+export interface ModLearningProgress {
+  candidatePath: string;
+  message: string;
+  phase: ModLearningProgressPhase;
+  runDir: string;
+}
+
+export interface ModLearningReport {
   candidatePath: string;
   evalMemoryDir: string;
   evalResult: CommandRunResult | null;
-  evaluation: ExtensionLearningEvaluationResult;
+  evaluation: ModLearningEvaluationResult;
   generationResult: CommandRunResult | null;
   passed: boolean;
   promotedToPath: string | null;
   reportPath: string;
   runDir: string;
-  spec: ExtensionLearningSpec;
+  spec: ModLearningSpec;
 }
 
 interface HeadlessCommandOptions {
   backend?: string;
   maxTurns?: number;
   model?: string;
-  noExtensions?: boolean;
+  noMods?: boolean;
   outputFormat: HeadlessLearningOutputFormat;
 }
 
@@ -114,16 +131,16 @@ function slugify(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return slug || "extension-learning-run";
+  return slug || "mod-learning-run";
 }
 
 function timestampForPath(now: Date): string {
   return now.toISOString().replace(/[:.]/g, "-");
 }
 
-export function defaultExtensionLearningRunDirectory(
-  spec: ExtensionLearningSpec,
-  baseDir: string = path.join(".letta", "extension-lab-runs"),
+export function defaultModLearningRunDirectory(
+  spec: ModLearningSpec,
+  baseDir: string = path.join(".letta", "mod-lab-runs"),
   now: Date = new Date(),
 ): string {
   return path.join(
@@ -164,7 +181,7 @@ function allAbsent(checks: MarkerCheck[]): boolean {
 }
 
 function normalizeCandidateFileName(
-  spec: ExtensionLearningSpec,
+  spec: ModLearningSpec,
   fileName: string | undefined,
 ): string {
   if (fileName?.trim()) return fileName;
@@ -228,14 +245,14 @@ function renderEvaluationPrompt(prompt: string, memoryDir: string): string {
   return prompt.replace(/\$\{MEMORY_DIR\}|\$MEMORY_DIR/g, () => memoryDir);
 }
 
-export function buildExtensionLearningPrompt(
-  spec: ExtensionLearningSpec,
+export function buildModLearningPrompt(
+  spec: ModLearningSpec,
   candidatePath: string,
 ): string {
   const requirements = spec.requirements
     .map((requirement, index) => `${index + 1}. ${requirement}`)
     .join("\n");
-  const hints = (spec.extensionApiHints ?? [])
+  const hints = (spec.modApiHints ?? [])
     .map((hint, index) => `${index + 1}. ${hint}`)
     .join("\n");
   const examples = (spec.examples ?? [])
@@ -248,7 +265,7 @@ export function buildExtensionLearningPrompt(
     })
     .join("\n\n");
 
-  return `You are dogfooding Letta Code's trusted local extension system. Learn a minimal extension from the target spec and write the candidate extension file.\n\nTarget: ${spec.name}\nObjective: ${spec.objective}\nCandidate file, absolute path: ${candidatePath}\n\nHard rules:\n- Edit only the candidate file above. Do not modify repository source, docs, package files, tests, or git state.\n- Export either \`activate(letta)\` or a default function.\n- Use the trusted local extension API directly; do not import from "@/..." or from this repo's src files.\n- Prefer a small implementation that satisfies the behavior over a polished product extension.\n- If you register an eval-facing tool, set \`requiresApproval: false\` and keep it read-only.\n- Do not run tests or lint. Write the candidate file and stop.\n\nMinimal extension API reminder:\n\`\`\`ts\nexport function activate(letta) {\n  const disposers = [];\n  if (letta.capabilities.events.turns) {\n    disposers.push(letta.events.on("turn_start", (event) => {\n      // event.input is an array of message/approval objects. Do not append\n      // strings to existing content because content may be structured parts.\n      event.input = [\n        ...event.input,\n        { type: "message", role: "system", content: "extension reminder" },\n      ];\n      return { input: event.input };\n    }));\n  }\n  if (letta.capabilities.events.tools) {\n    disposers.push(letta.events.on("tool_start", (event, ctx) => {\n      // event.toolName, event.args, event.conversationId, ctx.getContext().\n    }));\n  }\n  if (letta.capabilities.tools) {\n    disposers.push(letta.tools.register({\n      name: "example_tool",\n      description: "Short tool description",\n      parameters: { type: "object", properties: {}, additionalProperties: false },\n      requiresApproval: false,\n      parallelSafe: true,\n      run(ctx) {\n        // For conversation-scoped state, use ctx.conversation.id or\n        // ctx.getContext().sessionId as the key.\n        return "ok";\n      },\n    }));\n  }\n  return () => disposers.reverse().forEach((dispose) => dispose());\n}\n\`\`\`\n\nRequirements:\n${requirements}\n${hints ? `\nUseful API/implementation hints:\n${hints}\n` : ""}${examples ? `\nDemos:\n${examples}\n` : ""}\nEvaluation prompt this candidate must satisfy:\n${spec.evaluation.prompt}\n\nWrite the candidate extension now, then reply with only a concise summary and the file path.`;
+  return `You are dogfooding Letta Code's trusted local mod system. Learn a minimal mod from the target spec and write the candidate mod file.\n\nTarget: ${spec.name}\nObjective: ${spec.objective}\nCandidate file, absolute path: ${candidatePath}\n\nHard rules:\n- Edit only the candidate file above. Do not modify repository source, docs, package files, tests, or git state.\n- Export either \`activate(letta)\` or a default function.\n- Use the trusted local mod API directly; do not import from "@/..." or from this repo's src files.\n- Prefer a small implementation that satisfies the behavior over a polished product mod.\n- If you register an eval-facing tool, set \`requiresApproval: false\` and keep it read-only.\n- Do not run tests or lint. Write the candidate file and stop.\n\nMinimal mod API reminder:\n\`\`\`ts\nexport function activate(letta) {\n  const disposers = [];\n  if (letta.capabilities.events.turns) {\n    disposers.push(letta.events.on("turn_start", (event) => {\n      // event.input is an array of message/approval objects. Do not append\n      // strings to existing content because content may be structured parts.\n      event.input = [\n        ...event.input,\n        { type: "message", role: "system", content: "mod reminder" },\n      ];\n      return { input: event.input };\n    }));\n  }\n  if (letta.capabilities.events.tools) {\n    disposers.push(letta.events.on("tool_start", (event, ctx) => {\n      // event.toolName, event.args, event.conversationId, ctx.getContext().\n    }));\n  }\n  if (letta.capabilities.tools) {\n    disposers.push(letta.tools.register({\n      name: "example_tool",\n      description: "Short tool description",\n      parameters: { type: "object", properties: {}, additionalProperties: false },\n      requiresApproval: false,\n      parallelSafe: true,\n      run(ctx) {\n        // For conversation-scoped state, use ctx.conversation.id or\n        // ctx.getContext().sessionId as the key.\n        return "ok";\n      },\n    }));\n  }\n  return () => disposers.reverse().forEach((dispose) => dispose());\n}\n\`\`\`\n\nRequirements:\n${requirements}\n${hints ? `\nUseful API/implementation hints:\n${hints}\n` : ""}${examples ? `\nDemos:\n${examples}\n` : ""}\nEvaluation prompt this candidate must satisfy:\n${spec.evaluation.prompt}\n\nWrite the candidate mod now, then reply with only a concise summary and the file path.`;
 }
 function buildHeadlessArgs(
   prompt: string,
@@ -264,7 +281,7 @@ function buildHeadlessArgs(
     "--output-format",
     options.outputFormat,
   ];
-  if (options.noExtensions) args.push("--no-extensions");
+  if (options.noMods) args.push("--no-mods");
   if (options.model) args.push("--model", options.model);
   if (options.backend) args.push("--backend", options.backend);
   if (options.maxTurns !== undefined)
@@ -313,14 +330,14 @@ export function extractHeadlessResultText(
   return finalResult ?? assistantParts.join("");
 }
 
-export function evaluateExtensionLearningRun(params: {
+export function evaluateModLearningRun(params: {
   exitCode: number | null;
   outputFormat: HeadlessLearningOutputFormat;
-  spec: ExtensionLearningEvaluationSpec;
+  spec: ModLearningEvaluationSpec;
   stderr?: string;
   stdout: string;
   timedOut: boolean;
-}): ExtensionLearningEvaluationResult {
+}): ModLearningEvaluationResult {
   const resultText = extractHeadlessResultText(
     params.stdout,
     params.outputFormat,
@@ -419,9 +436,9 @@ function renderMarkerSection(label: string, checks: MarkerCheck[]): string[] {
   ];
 }
 
-function renderMarkdownReport(report: ExtensionLearningReport): string {
+function renderMarkdownReport(report: ModLearningReport): string {
   const lines = [
-    `# Extension Lab report: ${report.spec.name}`,
+    `# Mod Lab report: ${report.spec.name}`,
     "",
     `- Status: ${report.passed ? "PASS" : "FAIL"}`,
     `- Run directory: ${report.runDir}`,
@@ -459,19 +476,19 @@ function renderMarkdownReport(report: ExtensionLearningReport): string {
   return `${lines.join("\n")}\n`;
 }
 
-export async function runExtensionLearning(
-  options: RunExtensionLearningOptions,
-): Promise<ExtensionLearningReport> {
+export async function runModLearning(
+  options: RunModLearningOptions,
+): Promise<ModLearningReport> {
   const repoRoot = path.resolve(options.repoRoot);
   const runDir = path.resolve(
     repoRoot,
     options.runDir ??
-      defaultExtensionLearningRunDirectory(
+      defaultModLearningRunDirectory(
         options.spec,
-        options.outputBaseDir ?? path.join(".letta", "extension-lab-runs"),
+        options.outputBaseDir ?? path.join(".letta", "mod-lab-runs"),
       ),
   );
-  const candidateDir = path.join(runDir, "extensions");
+  const candidateDir = path.join(runDir, "mods");
   const candidateFileName = normalizeCandidateFileName(
     options.spec,
     options.candidateFileName,
@@ -481,7 +498,13 @@ export async function runExtensionLearning(
   const runner = options.commandRunner ?? defaultCommandRunner;
   const cliCommand = options.cliCommand ?? "bun";
   const cliArgsPrefix = options.cliArgsPrefix ?? ["run", "dev"];
+  const baseEnv = options.env ?? process.env;
 
+  const emitProgress = (phase: ModLearningProgressPhase, message: string) => {
+    options.onProgress?.({ candidatePath, message, phase, runDir });
+  };
+
+  emitProgress("preparing", "Preparing Mod Lab run");
   await mkdir(candidateDir, { recursive: true });
   await writeJsonArtifact(
     path.join(runDir, "spec.snapshot.json"),
@@ -490,12 +513,14 @@ export async function runExtensionLearning(
 
   let generationResult: CommandRunResult | null = null;
   if (options.candidateSourcePath) {
+    emitProgress("generating", "Copying candidate mod");
     await copyFile(
       path.resolve(repoRoot, options.candidateSourcePath),
       candidatePath,
     );
   } else if (!options.skipGeneration) {
-    const generationPrompt = buildExtensionLearningPrompt(
+    emitProgress("generating", "Generating candidate mod");
+    const generationPrompt = buildModLearningPrompt(
       options.spec,
       candidatePath,
     );
@@ -505,7 +530,7 @@ export async function runExtensionLearning(
         backend: options.backend,
         maxTurns: 12,
         model: options.generationModel,
-        noExtensions: true,
+        noMods: true,
         outputFormat: "json",
       }),
     ];
@@ -516,7 +541,11 @@ export async function runExtensionLearning(
     );
     generationResult = await runner(cliCommand, generationArgs, {
       cwd: repoRoot,
-      env: { ...process.env, LETTA_DISABLE_EXTENSIONS: "1" },
+      env: {
+        ...baseEnv,
+        LETTA_DISABLE_MODS: "1",
+        LETTA_DISABLE_EXTENSIONS: "1",
+      },
       timeoutMs: 15 * 60 * 1000,
     });
     await writeCommandArtifacts(
@@ -531,7 +560,7 @@ export async function runExtensionLearning(
   await prepareMemoryFiles(evalMemoryDir, options.spec.evaluation.memoryFiles);
 
   let evalResult: CommandRunResult | null = null;
-  let evaluation: ExtensionLearningEvaluationResult = {
+  let evaluation: ModLearningEvaluationResult = {
     forbiddenResultMarkers: [],
     forbiddenTraceMarkers: [],
     requiredResultMarkers: [],
@@ -541,6 +570,7 @@ export async function runExtensionLearning(
   };
 
   if (candidateExists) {
+    emitProgress("evaluating", "Evaluating candidate mod");
     const outputFormat = options.spec.evaluation.outputFormat ?? "stream-json";
     const evalPrompt = renderEvaluationPrompt(
       options.spec.evaluation.prompt,
@@ -559,7 +589,8 @@ export async function runExtensionLearning(
     evalResult = await runner(cliCommand, evalArgs, {
       cwd: repoRoot,
       env: {
-        ...process.env,
+        ...baseEnv,
+        LETTA_MODS_DIR: candidateDir,
         LETTA_EXTENSIONS_DIR: candidateDir,
         MEMORY_DIR: evalMemoryDir,
       },
@@ -571,7 +602,7 @@ export async function runExtensionLearning(
       evalArgs,
       evalResult,
     );
-    evaluation = evaluateExtensionLearningRun({
+    evaluation = evaluateModLearningRun({
       exitCode: evalResult.exitCode,
       outputFormat,
       spec: options.spec.evaluation,
@@ -584,13 +615,15 @@ export async function runExtensionLearning(
   let promotedToPath: string | null = null;
   const passed = candidateExists && evaluation.passed;
   if (passed && options.promoteToPath) {
+    emitProgress("promoting", "Promoting passing candidate mod");
     promotedToPath = path.resolve(repoRoot, options.promoteToPath);
     await mkdir(path.dirname(promotedToPath), { recursive: true });
     await copyFile(candidatePath, promotedToPath);
   }
 
   const reportPath = path.join(runDir, "report.md");
-  const report: ExtensionLearningReport = {
+  emitProgress("writing-report", "Writing Mod Lab report");
+  const report: ModLearningReport = {
     candidatePath,
     evalMemoryDir,
     evalResult,
@@ -604,11 +637,12 @@ export async function runExtensionLearning(
   };
   await writeJsonArtifact(path.join(runDir, "report.json"), report);
   await writeFile(reportPath, renderMarkdownReport(report), "utf8");
+  emitProgress("done", report.passed ? "Mod Lab passed" : "Mod Lab failed");
   return report;
 }
 
-export async function readExtensionLearningSpec(
+export async function readModLearningSpec(
   specPath: string,
-): Promise<ExtensionLearningSpec> {
-  return JSON.parse(await readFile(specPath, "utf8")) as ExtensionLearningSpec;
+): Promise<ModLearningSpec> {
+  return JSON.parse(await readFile(specPath, "utf8")) as ModLearningSpec;
 }

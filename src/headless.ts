@@ -586,7 +586,7 @@ export async function handleHeadlessCommand(
   const { values, positionals } = parsedArgs;
   telemetry.setSurface(getTerminalTelemetrySurface(true));
   const extensionsDisabled = shouldDisableExtensions({
-    cliFlag: values["no-extensions"],
+    cliFlag: values["no-mods"] || values["no-extensions"],
   });
   if (extensionsDisabled) {
     disableExtensionsForProcess();

@@ -92,7 +92,7 @@ function createToolContext(memoryDir: string): ExtensionToolRunContext {
   };
 }
 
-describe("memory citations example extension", () => {
+describe("memory citations example mod", () => {
   afterEach(() => {
     clearExtensionPermissions();
     clearExtensionTools();
@@ -101,23 +101,20 @@ describe("memory citations example extension", () => {
   test("tracks memory paths observed by tool_start and exposes a snapshot tool", async () => {
     const root = createTempDir();
     try {
-      const extensionDir = path.join(root, "extensions");
+      const modDir = path.join(root, "mods");
       const memoryDir = path.join(root, "memory");
-      mkdirSync(extensionDir, { recursive: true });
+      mkdirSync(modDir, { recursive: true });
       mkdirSync(path.join(memoryDir, "reference"), { recursive: true });
       copyFileSync(
-        path.join(
-          process.cwd(),
-          "docs/examples/extensions/memory-citations.ts",
-        ),
-        path.join(extensionDir, "memory-citations.ts"),
+        path.join(process.cwd(), "docs/examples/mods/memory-citations.ts"),
+        path.join(modDir, "memory-citations.ts"),
       );
 
       const engine = createExtensionEngine({
-        cacheDirectory: path.join(root, "extension-cache"),
+        cacheDirectory: path.join(root, "mod-cache"),
         getClient: async () => ({}) as unknown as Letta,
         getContext: () => createContext(memoryDir),
-        globalExtensionsDirectory: extensionDir,
+        globalExtensionsDirectory: modDir,
       });
 
       await engine.reload();
@@ -162,7 +159,7 @@ describe("memory citations example extension", () => {
           cmd: `sed -n '1,80p' ${path.join(
             memoryDir,
             "reference",
-            "learning-extensions.md",
+            "learning-mods.md",
           )}`,
         },
         conversationId: "conversation-1",
@@ -192,7 +189,7 @@ describe("memory citations example extension", () => {
           }),
           expect.objectContaining({
             confidence: "medium",
-            path: "reference/learning-extensions.md",
+            path: "reference/learning-mods.md",
             toolName: "exec_command",
           }),
         ]),

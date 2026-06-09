@@ -76,6 +76,7 @@ const ciDirs = [
   "src/extensions",
   "src/hooks",
   "src/lsp",
+  "src/mods",
   "src/permissions",
   "src/providers",
   "src/queue",

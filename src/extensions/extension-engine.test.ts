@@ -13,6 +13,7 @@ import {
   createExtensionEngine,
   type ExtensionEngine,
   LETTA_EXTENSIONS_DIR_ENV,
+  LETTA_MODS_DIR_ENV,
   resolveLocalExtensionSources,
 } from "@/extensions/extension-engine";
 import {
@@ -169,25 +170,36 @@ describe("extension engine", () => {
     }
   });
 
-  test("resolves extension directory from environment when not explicitly configured", () => {
-    const original = process.env[LETTA_EXTENSIONS_DIR_ENV];
+  test("resolves mod directory from environment when not explicitly configured", () => {
+    const originalMods = process.env[LETTA_MODS_DIR_ENV];
+    const originalExtensions = process.env[LETTA_EXTENSIONS_DIR_ENV];
     const root = createTempDir();
     try {
-      const extensionDir = path.join(root, "env-extensions");
-      mkdirSync(extensionDir, { recursive: true });
-      process.env[LETTA_EXTENSIONS_DIR_ENV] = extensionDir;
+      const modDir = path.join(root, "env-mods");
+      const legacyExtensionDir = path.join(root, "env-extensions");
+      mkdirSync(modDir, { recursive: true });
+      mkdirSync(legacyExtensionDir, { recursive: true });
+      process.env[LETTA_MODS_DIR_ENV] = modDir;
+      process.env[LETTA_EXTENSIONS_DIR_ENV] = legacyExtensionDir;
 
-      expect(resolveLocalExtensionSources()[0]?.root).toBe(extensionDir);
+      expect(resolveLocalExtensionSources()[0]?.root).toBe(modDir);
+      delete process.env[LETTA_MODS_DIR_ENV];
+      expect(resolveLocalExtensionSources()[0]?.root).toBe(legacyExtensionDir);
       expect(
         resolveLocalExtensionSources({
           globalExtensionsDirectory: path.join(root, "explicit"),
         })[0]?.root,
       ).toBe(path.join(root, "explicit"));
     } finally {
-      if (original === undefined) {
+      if (originalMods === undefined) {
+        delete process.env[LETTA_MODS_DIR_ENV];
+      } else {
+        process.env[LETTA_MODS_DIR_ENV] = originalMods;
+      }
+      if (originalExtensions === undefined) {
         delete process.env[LETTA_EXTENSIONS_DIR_ENV];
       } else {
-        process.env[LETTA_EXTENSIONS_DIR_ENV] = original;
+        process.env[LETTA_EXTENSIONS_DIR_ENV] = originalExtensions;
       }
       rmSync(root, { force: true, recursive: true });
     }
