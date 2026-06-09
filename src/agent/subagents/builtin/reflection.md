@@ -1,7 +1,7 @@
 ---
 name: reflection
 description: Background agent that reflects on recent conversations and updates memory files
-tools: Bash
+tools: Bash, Edit
 model: inherit
 memoryBlocks: none
 mode: stateless

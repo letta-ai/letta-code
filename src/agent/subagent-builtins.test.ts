@@ -55,11 +55,13 @@ describe("built-in subagents", () => {
     expect(configs.init?.permissionMode).toBe("memory");
   });
 
-  test("reflection and memory built-ins do not expose first-class file tools", async () => {
+  test("reflection exposes only Edit among first-class file tools", async () => {
     const configs = await getAllSubagentConfigs();
-    const removedFileTools = ["Read", "Edit", "Write", "Glob", "Grep"];
+    const hiddenFileTools = ["Read", "Write", "Glob", "Grep"];
 
-    for (const tool of removedFileTools) {
+    expect(configs.reflection?.allowedTools).toContain("Edit");
+    expect(configs.memory?.allowedTools).not.toContain("Edit");
+    for (const tool of hiddenFileTools) {
       expect(configs.reflection?.allowedTools).not.toContain(tool);
       expect(configs.memory?.allowedTools).not.toContain(tool);
     }
