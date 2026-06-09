@@ -311,14 +311,14 @@ describe("pi model factory", () => {
     }
   });
 
-  test("resolves server LM Studio provider type to local runtime provider", async () => {
-    const resolved = await resolvePiModelForAgent(undefined, {
-      provider_type: "lmstudio_openai",
-    });
-
-    expect(resolved.provider).toBe("lmstudio");
-    expect(resolved.model.provider).toBe("lmstudio");
-    expect(resolved.model.baseUrl).toBe("http://127.0.0.1:1234/v1");
+  test("requires a selected model for local endpoint providers", async () => {
+    await expect(
+      resolvePiModelForAgent(undefined, {
+        provider_type: "lmstudio_openai",
+      }),
+    ).rejects.toThrow(
+      'No model selected for provider "lmstudio". Choose an available model with /model.',
+    );
   });
 
   test("uses extension-registered provider capabilities for local OpenAI-compatible models", async () => {

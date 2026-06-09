@@ -1,7 +1,9 @@
 import { type Api, getModels, type Model } from "@earendil-works/pi-ai";
 import {
   DEFAULT_PI_PROVIDER,
+  isUnselectedLocalModelHandle,
   type PiProvider,
+  UNSELECTED_LOCAL_MODEL_HANDLE,
 } from "@/backend/dev/pi-model-factory";
 import {
   getRegisteredPiProvider,
@@ -18,6 +20,7 @@ import {
   localProviderType,
   resolveLocalModel,
   resolveProviderFromModelHandle,
+  resolveProviderFromProviderType,
   stripProviderHandlePrefix,
 } from "@/backend/dev/pi-provider-registry";
 import {
@@ -37,6 +40,8 @@ export interface LocalModelConfig {
   handle: string;
   modelSettings: Record<string, unknown>;
 }
+
+export { UNSELECTED_LOCAL_MODEL_HANDLE };
 
 interface LocalModelListEntry {
   handle: string;
@@ -319,12 +324,18 @@ export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
   const provider = resolveLocalProvider(storageDir);
   const registeredProvider = getRegisteredPiProvider(provider);
   const registeredModel = registeredProvider?.config.models?.[0];
+  const defaultModel = registeredProvider
+    ? undefined
+    : resolveLocalModel(provider);
   const model =
     registeredModel?.id ??
-    (registeredProvider ? "default" : resolveLocalModel(provider));
+    (registeredProvider ? "default" : defaultModel) ??
+    UNSELECTED_LOCAL_MODEL_HANDLE;
   const handle = registeredProvider
     ? `${provider}/${model}`
-    : localModelHandle(provider, model);
+    : model === UNSELECTED_LOCAL_MODEL_HANDLE
+      ? UNSELECTED_LOCAL_MODEL_HANDLE
+      : localModelHandle(provider, model);
   const modelSettings = localModelSettingsForHandle(handle);
   return {
     provider,
@@ -333,6 +344,52 @@ export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
     modelSettings: {
       provider_type: localProviderTypeForModelConfig(provider),
       ...(modelSettings ?? {}),
+    },
+  };
+}
+
+function providerForLocalModelListEntry(
+  entry: LocalModelListEntry,
+): PiProvider | undefined {
+  return (
+    resolveProviderFromModelHandle(entry.handle) ??
+    resolveProviderFromProviderType(entry.model_endpoint_type)
+  );
+}
+
+export async function resolveAvailableLocalModelForTurn(input: {
+  model?: string | null;
+  modelSettings?: Record<string, unknown> | null;
+  storageDir?: string;
+}): Promise<{ model?: string; modelSettings: Record<string, unknown> }> {
+  const baseSettings = { ...(input.modelSettings ?? {}) };
+  if (
+    typeof input.model === "string" &&
+    !isUnselectedLocalModelHandle(input.model)
+  ) {
+    return { model: input.model, modelSettings: baseSettings };
+  }
+
+  const preferredProvider = resolveProviderFromProviderType(
+    baseSettings.provider_type,
+  );
+  const models = await listLocalModels(input.storageDir);
+  const selected = preferredProvider
+    ? models.find(
+        (entry) => providerForLocalModelListEntry(entry) === preferredProvider,
+      )
+    : models[0];
+
+  if (!selected) {
+    return { model: undefined, modelSettings: baseSettings };
+  }
+
+  return {
+    model: selected.handle,
+    modelSettings: {
+      ...baseSettings,
+      ...localModelSettingsForHandle(selected.handle),
+      provider_type: selected.model_endpoint_type,
     },
   };
 }

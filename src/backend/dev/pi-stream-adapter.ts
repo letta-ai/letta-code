@@ -21,6 +21,7 @@ import {
   type LocalMessage,
 } from "@/backend/local/local-message";
 import { removeOrphanLocalToolResults } from "@/backend/local/local-message-projection";
+import { resolveAvailableLocalModelForTurn } from "@/backend/local/local-model-config";
 import type { ClientTool } from "@/tools/manager";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
@@ -466,9 +467,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     input: ProviderTurnInput,
   ): AsyncIterable<ProviderStreamEvent> {
     const tools = toPiTools(input.clientTools);
+    const localModel = await resolveAvailableLocalModelForTurn({
+      model: input.agent.model,
+      modelSettings: input.agent.model_settings,
+      storageDir: this.localProviderAuthStorageDir,
+    });
     const resolved = await resolvePiModelForAgent(
-      input.agent.model,
-      input.agent.model_settings,
+      localModel.model,
+      localModel.modelSettings,
       { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
     );
     const context: Context = {

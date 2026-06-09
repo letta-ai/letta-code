@@ -68,6 +68,8 @@ describe("local pi provider catalog", () => {
   test("local provider defaults point at current pi-ai catalog models", () => {
     for (const spec of PI_PROVIDER_SPECS) {
       if (!spec.piProvider) continue;
+      expect(spec.defaultModel).toBeDefined();
+      if (!spec.defaultModel) continue;
       const modelId = spec.defaultModel.split("/").slice(1).join("/");
       expect(
         getModels(spec.piProvider).some((model) => model.id === modelId),
