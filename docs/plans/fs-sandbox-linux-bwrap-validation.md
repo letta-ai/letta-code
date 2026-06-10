@@ -57,6 +57,9 @@ shared-policy fixes — see "Remaining" at the bottom.
   `wrapSubagentLauncher` (gating: flag / permissionMode / backendMode) and
   spawns the wrapped child the way `manager.ts` does, asserting gating +
   isolation end-to-end.
+- Added `scripts/sandbox-sigterm-live-test.ts` — task 3 as a reproducible
+  script: both the group-kill (`process.kill(-pid)`, the `shell-runner.ts` path)
+  and a plain `child.kill()` reap the inner shell.
 - Documented the **ancestor-carve hazard** inline in `src/sandbox/bwrap.ts`: a
   carve-out that is an *ancestor* of a denied root un-masks it on bwrap
   (last-mount-wins). No current caller does this; the comment guards re-intro.
@@ -221,7 +224,8 @@ removal is in `buildMemoryModeSandboxPolicy`, which both backends use. So before
 flipping `LETTA_FS_SANDBOX` on by default, on a **Mac/Seatbelt** host:
 
 1. Re-run all four live scripts (they auto-detect Seatbelt) **plus** the new
-   `scripts/sandbox-subagent-live-test.ts`. The memory-mode and subagent scripts
+   `scripts/sandbox-subagent-live-test.ts` and
+   `scripts/sandbox-sigterm-live-test.ts`. The memory-mode and subagent scripts
    are the ones the policy change affects — confirm self/parent-memory writes
    still work, writes outside the memory dir are denied, and the Seatbelt
    subagent process still launches now that there is no temp carve.
