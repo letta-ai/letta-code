@@ -92,7 +92,10 @@ async function buildSecretsInfoReminder(
   try {
     const { listSecretNames } = await import("@/utils/secrets-store");
     const names = listSecretNames(context.agent.id);
-    const namesKey = names.join("\0");
+    const hasLettaApiShellAuth = Boolean(
+      process.env.LETTA_API_KEY && process.env.LETTA_BASE_URL,
+    );
+    const namesKey = `${names.join("\0")}|letta-api:${hasLettaApiShellAuth ? "1" : "0"}`;
     const isRefresh = context.state.pendingSecretsInfoRefresh;
     const namesChanged =
       context.state.lastSentSecretNamesKey !== null &&
@@ -106,7 +109,18 @@ async function buildSecretsInfoReminder(
     context.state.pendingSecretsInfoRefresh = false;
     context.state.lastSentSecretNamesKey = namesKey;
 
+    const lettaApiRoutingNote = hasLettaApiShellAuth
+      ? "For Letta API calls from shell commands, use `$LETTA_BASE_URL` as the API host with `$LETTA_API_KEY`, for example `$LETTA_BASE_URL/v1/...` (strip a trailing slash first if needed). Do not hardcode `https://api.letta.com`: Desktop OAuth and some remote runtimes route `$LETTA_API_KEY` through a local/proxied base URL, and bypassing that URL can make valid auth look unauthorized."
+      : null;
+
     if (names.length === 0) {
+      if (lettaApiRoutingNote) {
+        const prefix =
+          isRefresh || namesChanged
+            ? "The agent secrets were updated. No secrets are currently set.\n\n"
+            : "";
+        return `${SYSTEM_REMINDER_OPEN}\n${prefix}${lettaApiRoutingNote}\n${SYSTEM_REMINDER_CLOSE}`;
+      }
       if (isRefresh || namesChanged) {
         return `${SYSTEM_REMINDER_OPEN}\nThe agent secrets were updated. No secrets are currently set.\n${SYSTEM_REMINDER_CLOSE}`;
       }
@@ -118,7 +132,8 @@ async function buildSecretsInfoReminder(
       isRefresh || namesChanged
         ? "The agent secrets were updated. The following secrets are now available for use."
         : "The following secrets are set on your agent and available for use.";
-    return `${SYSTEM_REMINDER_OPEN}\n${intro}\nReference them with \`$SECRET_NAME\` in shell commands — substitution happens automatically at exec time:\n${list}\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.\n${SYSTEM_REMINDER_CLOSE}`;
+    const suffix = lettaApiRoutingNote ? `\n\n${lettaApiRoutingNote}` : "";
+    return `${SYSTEM_REMINDER_OPEN}\n${intro}\nReference them with \`$SECRET_NAME\` in shell commands — substitution happens automatically at exec time:\n${list}\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.${suffix}\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",

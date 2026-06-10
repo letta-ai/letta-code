@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { setCurrentAgentId } from "@/agent/context";
 import { permissionMode } from "@/permissions/mode";
@@ -17,6 +17,8 @@ import {
 } from "@/utils/secrets-store";
 
 const SECRETS_AGENT_ID = "agent-reminder-secrets";
+const ORIGINAL_LETTA_API_KEY = process.env.LETTA_API_KEY;
+const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 
 async function buildSecretsTestReminderParts(
   state: ReturnType<typeof createSharedReminderState>,
@@ -41,7 +43,22 @@ async function buildSecretsTestReminderParts(
   }
 }
 
+beforeEach(() => {
+  delete process.env.LETTA_API_KEY;
+  delete process.env.LETTA_BASE_URL;
+});
+
 afterEach(() => {
+  if (ORIGINAL_LETTA_API_KEY === undefined) {
+    delete process.env.LETTA_API_KEY;
+  } else {
+    process.env.LETTA_API_KEY = ORIGINAL_LETTA_API_KEY;
+  }
+  if (ORIGINAL_LETTA_BASE_URL === undefined) {
+    delete process.env.LETTA_BASE_URL;
+  } else {
+    process.env.LETTA_BASE_URL = ORIGINAL_LETTA_BASE_URL;
+  }
   clearSecretsCache(SECRETS_AGENT_ID);
   setCurrentAgentId(null);
 });
@@ -150,5 +167,21 @@ describe("secrets info reminders", () => {
     expect(text).toContain("$PLAYGROUND_AGENT_ID");
     expect(state.hasSentSecretsInfo).toBe(true);
     expect(state.pendingSecretsInfoRefresh).toBe(false);
+  });
+
+  test("reminds shell callers to pair LETTA_API_KEY with LETTA_BASE_URL", async () => {
+    process.env.LETTA_API_KEY = "proxy-session-token";
+    process.env.LETTA_BASE_URL = "http://localhost:57294";
+
+    const state = createSharedReminderState();
+    state.lastNotifiedPermissionMode = permissionMode.getMode();
+
+    const result = await buildSecretsTestReminderParts(state);
+
+    const text = result.parts.map((part) => part.text).join("\n");
+    expect(result.appliedReminderIds).toContain("secrets-info");
+    expect(text).toContain("use `$LETTA_BASE_URL` as the API host");
+    expect(text).toContain("Do not hardcode `https://api.letta.com`");
+    expect(text).toContain("$LETTA_BASE_URL/v1/...");
   });
 });
