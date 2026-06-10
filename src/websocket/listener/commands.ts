@@ -219,7 +219,7 @@ async function handleReloadCommand(listener: ListenerRuntime): Promise<string> {
 
   await reloadListenerExtensionAdapter(listener);
 
-  return "Reloaded settings and local extensions";
+  return "Reloaded settings and local mods";
 }
 
 async function handleUpgradeLettaCodeCommand(opts: {

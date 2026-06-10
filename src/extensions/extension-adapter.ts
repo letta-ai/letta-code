@@ -72,11 +72,12 @@ export function createExtensionAdapter(
     ...engineOptions
   } = options;
 
-  const alreadyDisabled = areExtensionsDisabled();
-  if (disabled || alreadyDisabled) {
-    if (!alreadyDisabled) {
-      disableExtensionsForProcess();
-    }
+  if (disabled) {
+    disableExtensionsForProcess();
+    return createDisabledExtensionAdapter({ initialContext });
+  }
+
+  if (areExtensionsDisabled()) {
     return createDisabledExtensionAdapter({ initialContext });
   }
 

@@ -1359,7 +1359,7 @@ describe("listen-client parseServerMessage", () => {
 
     expect(reloadCalls).toBe(1);
     expect(socket.sentPayloads.join("\n")).toContain(
-      "Reloaded settings and local extensions",
+      "Reloaded settings and local mods",
     );
   });
 

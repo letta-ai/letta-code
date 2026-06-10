@@ -12,7 +12,10 @@ import { fileURLToPath } from "node:url";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Backend } from "@/backend";
 import { createBuffers, onChunk, toLines } from "@/cli/helpers/accumulator";
-import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
+import {
+  LETTA_DISABLE_EXTENSIONS_ENV,
+  LETTA_DISABLE_MODS_ENV,
+} from "@/extensions/disable";
 import {
   clearExtensionTools,
   getExtensionToolDefinition,
@@ -272,7 +275,9 @@ describe("headless extension adapter", () => {
     const root = mkdtempSync(
       path.join(tmpdir(), "letta-headless-ext-disabled-"),
     );
-    const originalDisableEnv = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+    const originalDisableExtensionsEnv =
+      process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+    const originalDisableModsEnv = process.env[LETTA_DISABLE_MODS_ENV];
     const extensionDir = path.join(root, "global-extensions");
     const toolName = "disabled_headless_tool";
     const agent = {
@@ -286,6 +291,8 @@ describe("headless extension adapter", () => {
     } as unknown as Backend;
 
     try {
+      delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+      delete process.env[LETTA_DISABLE_MODS_ENV];
       mkdirSync(extensionDir, { recursive: true });
       writeFileSync(
         path.join(extensionDir, "headless-tool.ts"),
@@ -324,13 +331,20 @@ describe("headless extension adapter", () => {
       expect(snapshot.registry.ui.statuslineRenderer).toBeNull();
       expect(getExtensionToolDefinition(toolName)).toBeUndefined();
       expect(process.env[LETTA_DISABLE_EXTENSIONS_ENV]).toBe("1");
+      expect(process.env[LETTA_DISABLE_MODS_ENV]).toBe("1");
 
       adapter.dispose();
     } finally {
-      if (originalDisableEnv === undefined) {
+      if (originalDisableExtensionsEnv === undefined) {
         delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
       } else {
-        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = originalDisableEnv;
+        process.env[LETTA_DISABLE_EXTENSIONS_ENV] =
+          originalDisableExtensionsEnv;
+      }
+      if (originalDisableModsEnv === undefined) {
+        delete process.env[LETTA_DISABLE_MODS_ENV];
+      } else {
+        process.env[LETTA_DISABLE_MODS_ENV] = originalDisableModsEnv;
       }
       rmSync(root, { force: true, recursive: true });
     }

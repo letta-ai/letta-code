@@ -5,7 +5,10 @@ import {
   registerPiProvider,
 } from "@/backend/dev/pi-provider-extension-registry";
 import { DISABLED_EXTENSION_CAPABILITIES } from "@/extensions/capabilities";
-import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
+import {
+  LETTA_DISABLE_EXTENSIONS_ENV,
+  LETTA_DISABLE_MODS_ENV,
+} from "@/extensions/disable";
 import { createDisabledExtensionAdapter } from "@/extensions/disabled-extension-adapter";
 import {
   clearExtensionPermissions,
@@ -86,10 +89,13 @@ function registerTestPiProvider(name: string): void {
 
 describe("disabled extension adapter", () => {
   test("clears extension registries and exposes no-op adapter surfaces", async () => {
-    const originalDisableEnv = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+    const originalDisableExtensionsEnv =
+      process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+    const originalDisableModsEnv = process.env[LETTA_DISABLE_MODS_ENV];
 
     try {
       delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+      delete process.env[LETTA_DISABLE_MODS_ENV];
       registerTestExtensionPermission("stale-permission");
       registerTestExtensionTool("stale_extension_tool");
       registerTestPiProvider("stale-provider");
@@ -153,10 +159,16 @@ describe("disabled extension adapter", () => {
       clearExtensionPermissions();
       clearExtensionTools();
       clearRegisteredPiProviders();
-      if (originalDisableEnv === undefined) {
+      if (originalDisableExtensionsEnv === undefined) {
         delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
       } else {
-        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = originalDisableEnv;
+        process.env[LETTA_DISABLE_EXTENSIONS_ENV] =
+          originalDisableExtensionsEnv;
+      }
+      if (originalDisableModsEnv === undefined) {
+        delete process.env[LETTA_DISABLE_MODS_ENV];
+      } else {
+        process.env[LETTA_DISABLE_MODS_ENV] = originalDisableModsEnv;
       }
     }
   });

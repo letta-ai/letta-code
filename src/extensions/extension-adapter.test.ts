@@ -12,7 +12,10 @@ import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import type { Backend } from "@/backend";
 import { DISABLED_EXTENSION_CAPABILITIES } from "@/extensions/capabilities";
-import { LETTA_DISABLE_EXTENSIONS_ENV } from "@/extensions/disable";
+import {
+  LETTA_DISABLE_EXTENSIONS_ENV,
+  LETTA_DISABLE_MODS_ENV,
+} from "@/extensions/disable";
 import { createExtensionAdapter } from "@/extensions/extension-adapter";
 import { getExtensionDiagnosticsLatestFilePath } from "@/extensions/extension-diagnostics-file";
 import type { ExtensionContext } from "@/extensions/types";
@@ -79,8 +82,10 @@ function sleep(ms: number): Promise<void> {
 
 describe("extension adapter", () => {
   test("LETTA_DISABLE_EXTENSIONS disables the adapter", () => {
-    const original = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+    const originalExtensions = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+    const originalMods = process.env[LETTA_DISABLE_MODS_ENV];
     try {
+      delete process.env[LETTA_DISABLE_MODS_ENV];
       process.env[LETTA_DISABLE_EXTENSIONS_ENV] = "1";
       const adapter = createExtensionAdapter({
         getClient: async () => ({}) as unknown as Letta,
@@ -95,18 +100,25 @@ describe("extension adapter", () => {
         DISABLED_EXTENSION_CAPABILITIES,
       );
     } finally {
-      if (original === undefined) {
+      if (originalExtensions === undefined) {
         delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
       } else {
-        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = original;
+        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = originalExtensions;
+      }
+      if (originalMods === undefined) {
+        delete process.env[LETTA_DISABLE_MODS_ENV];
+      } else {
+        process.env[LETTA_DISABLE_MODS_ENV] = originalMods;
       }
     }
   });
 
   test("disabled option disables extensions for the process", () => {
-    const original = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+    const originalExtensions = process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+    const originalMods = process.env[LETTA_DISABLE_MODS_ENV];
     try {
       delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
+      delete process.env[LETTA_DISABLE_MODS_ENV];
       const adapter = createExtensionAdapter({
         disabled: true,
         getClient: async () => ({}) as unknown as Letta,
@@ -114,14 +126,20 @@ describe("extension adapter", () => {
       });
 
       expect(process.env[LETTA_DISABLE_EXTENSIONS_ENV]).toBe("1");
+      expect(process.env[LETTA_DISABLE_MODS_ENV]).toBe("1");
       expect(adapter.getSnapshot().registry.capabilities).toEqual(
         DISABLED_EXTENSION_CAPABILITIES,
       );
     } finally {
-      if (original === undefined) {
+      if (originalExtensions === undefined) {
         delete process.env[LETTA_DISABLE_EXTENSIONS_ENV];
       } else {
-        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = original;
+        process.env[LETTA_DISABLE_EXTENSIONS_ENV] = originalExtensions;
+      }
+      if (originalMods === undefined) {
+        delete process.env[LETTA_DISABLE_MODS_ENV];
+      } else {
+        process.env[LETTA_DISABLE_MODS_ENV] = originalMods;
       }
     }
   });

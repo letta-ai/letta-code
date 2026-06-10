@@ -10,7 +10,7 @@ describe("/reload command", () => {
     const source = readFileSync(registryPath, "utf-8");
 
     expect(source).toContain('"/reload"');
-    expect(source).toContain("Reload settings and local extensions");
+    expect(source).toContain("Reload settings and local mods");
   });
 
   test("AppCoordinator owns the in-place reload callback", () => {
@@ -44,7 +44,7 @@ describe("/reload command", () => {
 
     expect(source).toContain('trimmed === "/reload"');
     expect(source).toContain("await onReload()");
-    expect(source).toContain("Reloaded settings and local extensions");
+    expect(source).toContain("Reloaded settings and local mods");
   });
 
   test("/reload has a busy guard", () => {
