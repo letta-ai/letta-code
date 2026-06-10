@@ -5,8 +5,10 @@ import type { ExperimentId } from "@/experiments/types";
 import type {
   AbortMessageCommand,
   AgentCreateCommand,
+  AgentDeleteCommand,
   AgentListCommand,
   AgentRetrieveCommand,
+  AgentUpdateCommand,
   ChangeDeviceStateCommand,
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -30,9 +32,14 @@ import type {
   ChannelTargetsListCommand,
   CheckoutBranchCommand,
   ConnectProviderCommand,
+  ConversationCompactCommand,
   ConversationCreateCommand,
+  ConversationForkCommand,
   ConversationListCommand,
+  ConversationMessagesListCommand,
+  ConversationRecompileCommand,
   ConversationRetrieveCommand,
+  ConversationUpdateCommand,
   CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
@@ -1071,6 +1078,40 @@ export function isAgentCreateCommand(
   );
 }
 
+export function isAgentUpdateCommand(
+  value: unknown,
+): value is AgentUpdateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "agent_update" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    isObjectRecord(c.body)
+  );
+}
+
+export function isAgentDeleteCommand(
+  value: unknown,
+): value is AgentDeleteCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "agent_delete" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string"
+  );
+}
+
 export function isConversationListCommand(
   value: unknown,
 ): value is ConversationListCommand {
@@ -1116,6 +1157,96 @@ export function isConversationCreateCommand(
     c.type === "conversation_create" &&
     typeof c.request_id === "string" &&
     isObjectRecord(c.body)
+  );
+}
+
+export function isConversationUpdateCommand(
+  value: unknown,
+): value is ConversationUpdateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_update" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string" &&
+    isObjectRecord(c.body)
+  );
+}
+
+export function isConversationRecompileCommand(
+  value: unknown,
+): value is ConversationRecompileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_recompile" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string" &&
+    (c.body === undefined || isObjectRecord(c.body))
+  );
+}
+
+export function isConversationForkCommand(
+  value: unknown,
+): value is ConversationForkCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_fork" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string" &&
+    (c.body === undefined || isObjectRecord(c.body))
+  );
+}
+
+export function isConversationMessagesListCommand(
+  value: unknown,
+): value is ConversationMessagesListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "conversation_messages_list" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string" &&
+    (c.query === undefined || isObjectRecord(c.query))
+  );
+}
+
+export function isConversationCompactCommand(
+  value: unknown,
+): value is ConversationCompactCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_compact" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string" &&
+    (c.body === undefined || isObjectRecord(c.body))
   );
 }
 
@@ -1913,9 +2044,16 @@ export function parseServerMessage(
       isAgentListCommand(parsed) ||
       isAgentRetrieveCommand(parsed) ||
       isAgentCreateCommand(parsed) ||
+      isAgentUpdateCommand(parsed) ||
+      isAgentDeleteCommand(parsed) ||
       isConversationListCommand(parsed) ||
       isConversationRetrieveCommand(parsed) ||
       isConversationCreateCommand(parsed) ||
+      isConversationUpdateCommand(parsed) ||
+      isConversationRecompileCommand(parsed) ||
+      isConversationForkCommand(parsed) ||
+      isConversationMessagesListCommand(parsed) ||
+      isConversationCompactCommand(parsed) ||
       isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||
