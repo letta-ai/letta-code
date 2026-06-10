@@ -10,14 +10,25 @@ import type {
   AgentCreateParams,
   AgentListParams,
   AgentState,
+  AgentUpdateParams,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  Message as LettaMessage,
+  LettaStreamingResponse,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   Conversation,
   ConversationCreateParams,
   ConversationListParams,
+  ConversationRecompileParams,
+  ConversationUpdateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
+import type {
+  CompactionResponse,
+  MessageCompactParams,
+  MessageListParams,
+} from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
@@ -1574,6 +1585,22 @@ export interface AgentCreateCommand {
   body: AgentCreateParams;
 }
 
+export interface AgentUpdateCommand {
+  type: "agent_update";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  agent_id: string;
+  /** Body forwarded to the Letta agents update API. */
+  body: AgentUpdateParams;
+}
+
+export interface AgentDeleteCommand {
+  type: "agent_delete";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  agent_id: string;
+}
+
 export interface ConversationListCommand {
   type: "conversation_list";
   /** Echoed back in the response for request correlation. */
@@ -1595,6 +1622,57 @@ export interface ConversationCreateCommand {
   request_id: string;
   /** Body forwarded to the Letta conversations create API. */
   body: ConversationCreateParams;
+}
+
+export interface ConversationUpdateCommand {
+  type: "conversation_update";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  /** Body forwarded to the Letta conversations update API. */
+  body: ConversationUpdateParams;
+}
+
+export interface ConversationRecompileCommand {
+  type: "conversation_recompile";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  /** Body/query forwarded to the Letta conversations recompile API. */
+  body?: ConversationRecompileParams;
+}
+
+export interface ConversationForkBody {
+  /** Agent ID for agent-direct mode with the default conversation. */
+  agent_id?: string | null;
+  /** Whether the forked conversation should be hidden. */
+  hidden?: boolean;
+}
+
+export interface ConversationForkCommand {
+  type: "conversation_fork";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  body?: ConversationForkBody;
+}
+
+export interface ConversationMessagesListCommand {
+  type: "conversation_messages_list";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  /** Query params forwarded to the Letta conversation messages list API. */
+  query?: MessageListParams;
+}
+
+export interface ConversationCompactCommand {
+  type: "conversation_compact";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  /** Body forwarded to the Letta conversation messages compact API. */
+  body?: MessageCompactParams;
 }
 
 export interface GetCwdMapCommand {
@@ -1953,6 +2031,22 @@ export interface AgentCreateResponseMessage {
   error?: string;
 }
 
+export interface AgentUpdateResponseMessage {
+  type: "agent_update_response";
+  request_id: string;
+  success: boolean;
+  agent: AgentState | null;
+  error?: string;
+}
+
+export interface AgentDeleteResponseMessage {
+  type: "agent_delete_response";
+  request_id: string;
+  success: boolean;
+  agent_id: string;
+  error?: string;
+}
+
 export interface ConversationListResponseMessage {
   type: "conversation_list_response";
   request_id: string;
@@ -1974,6 +2068,50 @@ export interface ConversationCreateResponseMessage {
   request_id: string;
   success: boolean;
   conversation: Conversation | null;
+  error?: string;
+}
+
+export interface ConversationUpdateResponseMessage {
+  type: "conversation_update_response";
+  request_id: string;
+  success: boolean;
+  conversation: Conversation | null;
+  error?: string;
+}
+
+export interface ConversationRecompileResponseMessage {
+  type: "conversation_recompile_response";
+  request_id: string;
+  success: boolean;
+  result: string | null;
+  error?: string;
+}
+
+export interface ForkedConversationReference {
+  id: string;
+}
+
+export interface ConversationForkResponseMessage {
+  type: "conversation_fork_response";
+  request_id: string;
+  success: boolean;
+  conversation: ForkedConversationReference | null;
+  error?: string;
+}
+
+export interface ConversationMessagesListResponseMessage {
+  type: "conversation_messages_list_response";
+  request_id: string;
+  success: boolean;
+  messages: LettaMessage[];
+  error?: string;
+}
+
+export interface ConversationCompactResponseMessage {
+  type: "conversation_compact_response";
+  request_id: string;
+  success: boolean;
+  compaction: CompactionResponse | null;
   error?: string;
 }
 
@@ -2425,9 +2563,16 @@ export type WsProtocolCommand =
   | AgentListCommand
   | AgentRetrieveCommand
   | AgentCreateCommand
+  | AgentUpdateCommand
+  | AgentDeleteCommand
   | ConversationListCommand
   | ConversationRetrieveCommand
   | ConversationCreateCommand
+  | ConversationUpdateCommand
+  | ConversationRecompileCommand
+  | ConversationForkCommand
+  | ConversationMessagesListCommand
+  | ConversationCompactCommand
   | GetCwdMapCommand
   | ListConversationPinsCommand
   | SetConversationPinCommand
@@ -2513,9 +2658,16 @@ export type WsProtocolMessage =
   | AgentListResponseMessage
   | AgentRetrieveResponseMessage
   | AgentCreateResponseMessage
+  | AgentUpdateResponseMessage
+  | AgentDeleteResponseMessage
   | ConversationListResponseMessage
   | ConversationRetrieveResponseMessage
   | ConversationCreateResponseMessage
+  | ConversationUpdateResponseMessage
+  | ConversationRecompileResponseMessage
+  | ConversationForkResponseMessage
+  | ConversationMessagesListResponseMessage
+  | ConversationCompactResponseMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
   | ListConversationPinsResponseMessage

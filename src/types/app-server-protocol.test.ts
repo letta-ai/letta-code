@@ -57,10 +57,52 @@ describe("app-server protocol export", () => {
         agents: [],
       },
       {
+        type: "agent_update_response",
+        request_id: "req",
+        success: true,
+        agent: null,
+      },
+      {
+        type: "agent_delete_response",
+        request_id: "req",
+        success: true,
+        agent_id: "agent-1",
+      },
+      {
         type: "conversation_list_response",
         request_id: "req",
         success: true,
         conversations: [],
+      },
+      {
+        type: "conversation_update_response",
+        request_id: "req",
+        success: true,
+        conversation: null,
+      },
+      {
+        type: "conversation_recompile_response",
+        request_id: "req",
+        success: true,
+        result: null,
+      },
+      {
+        type: "conversation_fork_response",
+        request_id: "req",
+        success: true,
+        conversation: null,
+      },
+      {
+        type: "conversation_messages_list_response",
+        request_id: "req",
+        success: true,
+        messages: [],
+      },
+      {
+        type: "conversation_compact_response",
+        request_id: "req",
+        success: true,
+        compaction: null,
       },
     ] satisfies WsProtocolMessage[];
 
@@ -74,7 +116,14 @@ describe("app-server protocol export", () => {
       "search_branches_response",
       "get_reflection_settings_response",
       "agent_list_response",
+      "agent_update_response",
+      "agent_delete_response",
       "conversation_list_response",
+      "conversation_update_response",
+      "conversation_recompile_response",
+      "conversation_fork_response",
+      "conversation_messages_list_response",
+      "conversation_compact_response",
     ]);
   });
 });

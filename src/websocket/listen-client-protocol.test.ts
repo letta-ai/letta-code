@@ -293,7 +293,21 @@ describe("listen-client parseServerMessage", () => {
     test("lists, retrieves, and creates agents and conversations", async () => {
       const storageDir = await mkdtemp(join(os.tmpdir(), "ws-management-"));
       try {
-        const backend = new LocalBackend({
+        class ManagementBackend extends LocalBackend {
+          override async compactConversationMessages(
+            ..._args: Parameters<LocalBackend["compactConversationMessages"]>
+          ): ReturnType<LocalBackend["compactConversationMessages"]> {
+            return {
+              num_messages_before: 4,
+              num_messages_after: 2,
+              summary: "compacted summary",
+            } as Awaited<
+              ReturnType<LocalBackend["compactConversationMessages"]>
+            >;
+          }
+        }
+
+        const backend = new ManagementBackend({
           storageDir,
           executionMode: "deterministic",
         });
@@ -357,6 +371,22 @@ describe("listen-client parseServerMessage", () => {
 
         await __listenClientTestUtils.handleAgentConversationManagementCommand(
           {
+            type: "agent_update",
+            request_id: "agent-update-1",
+            agent_id: agentId,
+            body: { name: "WS Managed Agent Updated" },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_update_response",
+          request_id: "agent-update-1",
+          success: true,
+          agent: { id: agentId, name: "WS Managed Agent Updated" },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
             type: "conversation_create",
             request_id: "conversation-create-1",
             body: { agent_id: agentId },
@@ -403,6 +433,107 @@ describe("listen-client parseServerMessage", () => {
           request_id: "conversation-retrieve-1",
           success: true,
           conversation: { id: conversationId },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_update",
+            request_id: "conversation-update-1",
+            conversation_id: conversationId,
+            body: { summary: "Updated conversation summary" },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_update_response",
+          request_id: "conversation-update-1",
+          success: true,
+          conversation: {
+            id: conversationId,
+            summary: "Updated conversation summary",
+          },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_recompile",
+            request_id: "conversation-recompile-1",
+            conversation_id: conversationId,
+            body: { dry_run: true },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_recompile_response",
+          request_id: "conversation-recompile-1",
+          success: true,
+          result: expect.any(String),
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_fork",
+            request_id: "conversation-fork-1",
+            conversation_id: conversationId,
+            body: { hidden: true },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_fork_response",
+          request_id: "conversation-fork-1",
+          success: true,
+          conversation: { id: expect.any(String) },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_messages_list",
+            request_id: "conversation-messages-list-1",
+            conversation_id: conversationId,
+            query: { limit: 10 },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_messages_list_response",
+          request_id: "conversation-messages-list-1",
+          success: true,
+          messages: expect.any(Array),
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_compact",
+            request_id: "conversation-compact-1",
+            conversation_id: conversationId,
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_compact_response",
+          request_id: "conversation-compact-1",
+          success: true,
+          compaction: {
+            num_messages_before: 4,
+            num_messages_after: 2,
+            summary: "compacted summary",
+          },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_delete",
+            request_id: "agent-delete-1",
+            agent_id: agentId,
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_delete_response",
+          request_id: "agent-delete-1",
+          success: true,
+          agent_id: agentId,
         });
       } finally {
         await rm(storageDir, { recursive: true, force: true });
