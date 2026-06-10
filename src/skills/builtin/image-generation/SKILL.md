@@ -6,8 +6,8 @@ description: Generate images from text prompts (and optionally edit/remix input 
 # Image Generation
 
 Generate images via Letta's hosted endpoint `POST /v1/images/generations`. The API
-usually returns base64 image bytes, so save the response to a local image file
-before replying.
+usually returns base64 image bytes, but some providers return signed image URLs;
+save either form to a local image file before replying.
 
 ## Example
 
@@ -23,28 +23,23 @@ curl -sS -X POST "$base_url/v1/images/generations" \
   > image-response.json
 
 python3 - <<'PY'
-import base64, json
+import base64, json, urllib.request
 
 with open("image-response.json") as f:
     response = json.load(f)
 
+image = response["images"][0]
+if image.get("b64_json"):
+    data = base64.b64decode(image["b64_json"])
+else:
+    data = urllib.request.urlopen(image["url"]).read()
+
 with open("robot-mascot.png", "wb") as f:
-    f.write(base64.b64decode(response["images"][0]["b64_json"]))
+    f.write(data)
 
 print("saved robot-mascot.png; credits:", response["billing"]["credits_charged"])
 PY
 ```
-
-Letta Code commands such as `letta messages` build their client from the active
-runtime config: `LETTA_BASE_URL` selects the server, and `LETTA_API_KEY` is the
-bearer credential for that server. Raw `curl` calls from Bash tools should do the
-same. Use the two variables as a pair, and do not hardcode
-`https://api.letta.com`: in Desktop, `LETTA_BASE_URL` may be a local proxy and
-`LETTA_API_KEY` may be a local session token that only works through that proxy.
-If either variable is missing, the user needs to authenticate with Letta Cloud
-(or provide a Letta API key); do **not** ask for an OpenAI/Gemini provider key.
-This endpoint also does not use `/connect` BYOK providers — the only `provider`
-values supported here are `gemini` and `openai`.
 
 Then **show the image to the user** by embedding the saved file in your reply:
 
@@ -64,7 +59,7 @@ embed each on its own line. Also tell the user the `credits_charged`.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `provider` | `"gemini"` \| `"openai"` | Required. |
+| `provider` | `"flux"` \| `"gemini"` \| `"openai"` | Required. |
 | `prompt` | string | Required, 1–32000 chars. |
 | `model` | string | Optional; defaults per provider (below). |
 | `n` | int 1–4 | Optional, default 1. Request variations in one call. |
@@ -76,10 +71,13 @@ embed each on its own line. Also tell the user the `credits_charged`.
 
 | Provider | Default model | Use for |
 |----------|---------------|---------|
-| `gemini` | `gemini-3-pro-image` | Default. Strong prompt adherence, image editing/remix. |
+| `flux` | `flux-2-pro` | Default for normal text-to-image. High-quality general image generation; commonly returns signed URLs. |
+| `gemini` | `gemini-3-pro-image` | Strong prompt adherence, image editing/remix. |
 | `openai` | `gpt-image-2` | Photoreal output, explicit `size`/`quality`/`output_format`. |
 
-Default to `gemini` unless the user wants photoreal or a specific size/quality.
+Default to `flux` for normal text-to-image requests. Use `gemini` when the user
+provides input images or wants image editing/remix. Use `openai` when the user
+wants photoreal output or a specific size/quality.
 
 ## Response
 
@@ -93,8 +91,9 @@ Default to `gemini` unless the user wants photoreal or a specific size/quality.
 ```
 
 Each `images[]` entry has either `b64_json` or `url`, plus `mime_type`. Gemini
-always returns `b64_json`. If OpenAI returns a `url`, download that URL to your
-local image file instead of base64-decoding.
+always returns `b64_json`. Flux commonly returns a signed `url`; download it to
+your local image file immediately because signed URLs expire. If OpenAI returns a
+`url`, download that URL instead of base64-decoding.
 
 ## Editing / remixing images
 
@@ -112,4 +111,4 @@ DATA_URL="data:image/png;base64,$(base64 < input.png | tr -d '\n')"
   `credits_charged`.
 - **Errors**: `402` = insufficient credits (`credits_required` in body); `400`/`500`
   return `{ "message": "..." }` — surface it to the user.
-- Only `gemini` and `openai` are supported here.
+- Only `flux`, `gemini`, and `openai` are supported here.
