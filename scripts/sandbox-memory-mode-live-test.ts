@@ -37,11 +37,12 @@ mkdirSync(otherMem, { recursive: true });
 writeFileSync(join(selfMem, "mine.md"), "SELFDATA");
 writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
 
+const SHELL = process.platform === "darwin" ? "/bin/zsh" : "/bin/bash";
 const policy = buildMemoryModeSandboxPolicy({
   memoryRoots: [selfMem],
   env: {},
 });
-const wrapped = wrapLauncher(["/bin/zsh", "-c", "__PROBE__"], policy, {
+const wrapped = wrapLauncher([SHELL, "-c", "__PROBE__"], policy, {
   backend: avail.backend,
   bwrapPath: avail.bwrapPath,
 });

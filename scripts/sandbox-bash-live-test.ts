@@ -49,8 +49,9 @@ const env: NodeJS.ProcessEnv = {
   MEMORY_DIR: selfMem,
 };
 
+const SHELL = process.platform === "darwin" ? "/bin/zsh" : "/bin/bash";
 const result = applyParentShellSandbox(
-  ["/bin/zsh", "-c", "__PROBE__"],
+  [SHELL, "-c", "__PROBE__"],
   repoCwd,
   env,
 );
