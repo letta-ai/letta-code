@@ -81,7 +81,6 @@ export interface Settings {
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   autoConversationTitles: boolean; // Generate AI conversation titles when possible
-  autoConversationTitlesRollbackApplied?: boolean; // One-time rollback marker for the default-on title experiment
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
   includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
@@ -173,8 +172,7 @@ const DEFAULT_SETTINGS: Settings = {
   enableSleeptime: false,
   conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
-  autoConversationTitles: false,
-  autoConversationTitlesRollbackApplied: true,
+  autoConversationTitles: true,
   autoSwapOnQuotaLimit: true,
   includeWorktreeTool: true,
   recentModels: [],
@@ -426,7 +424,6 @@ class SettingsManager {
     if (this.initialized) return;
 
     const settingsPath = this.getSettingsPath();
-    let shouldRollbackAutoConversationTitles = false;
 
     try {
       // Check if settings file exists
@@ -453,16 +450,6 @@ class SettingsManager {
           // Mark for deletion on next persist; keep startup backward-compatible.
           this.markDirty("reflectionBehavior");
         }
-        shouldRollbackAutoConversationTitles =
-          loadedSettingsRaw.autoConversationTitlesRollbackApplied !== true;
-        if (shouldRollbackAutoConversationTitles) {
-          loadedSettingsRaw.autoConversationTitles = false;
-          loadedSettingsRaw.autoConversationTitlesRollbackApplied = true;
-          this.markDirty(
-            "autoConversationTitles",
-            "autoConversationTitlesRollbackApplied",
-          );
-        }
         // Merge with defaults in case new fields were added
         this.settings = {
           ...DEFAULT_SETTINGS,
@@ -474,14 +461,6 @@ class SettingsManager {
       }
 
       this.initialized = true;
-
-      if (shouldRollbackAutoConversationTitles) {
-        try {
-          await this.persistSettings();
-        } catch {
-          // Best-effort cleanup only; do not fail the load path.
-        }
-      }
 
       // Check secrets availability and warn if not available
       await this.checkSecretsSupport();
