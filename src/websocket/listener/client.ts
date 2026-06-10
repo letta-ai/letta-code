@@ -30,6 +30,10 @@ import {
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
+  handleRuntimeStartCommand,
+  handleRuntimeStartProtocolCommand,
+} from "./commands/runtime-start";
+import {
   handleExperimentCommand,
   handleReflectionSettingsCommand,
 } from "./commands/settings";
@@ -524,6 +528,50 @@ export const __listenClientTestUtils = {
       socket,
       safeSocketSend,
       runDetachedListenerTask,
+    }),
+  handleRuntimeStartCommand: (
+    parsed: Parameters<typeof handleRuntimeStartCommand>[0],
+    socket: WebSocket,
+    runtime: ListenerRuntime,
+  ) =>
+    handleRuntimeStartCommand(parsed, {
+      socket,
+      runtime,
+      safeSocketSend,
+      runDetachedListenerTask,
+      getOrCreateScopedRuntime,
+      replaySyncStateForRuntime: (
+        listenerRuntime,
+        runtimeSocket,
+        scope,
+        opts,
+      ) =>
+        replaySyncStateForRuntime(listenerRuntime, runtimeSocket, scope, {
+          ...opts,
+          scheduleWarmupsAfterSync: () => {},
+        }),
+    }),
+  handleRuntimeStartProtocolCommand: (
+    parsed: Parameters<typeof handleRuntimeStartProtocolCommand>[0],
+    socket: WebSocket,
+    runtime: ListenerRuntime,
+  ) =>
+    handleRuntimeStartProtocolCommand(parsed, {
+      socket,
+      runtime,
+      safeSocketSend,
+      runDetachedListenerTask,
+      getOrCreateScopedRuntime,
+      replaySyncStateForRuntime: (
+        listenerRuntime,
+        runtimeSocket,
+        scope,
+        opts,
+      ) =>
+        replaySyncStateForRuntime(listenerRuntime, runtimeSocket, scope, {
+          ...opts,
+          scheduleWarmupsAfterSync: () => {},
+        }),
     }),
   handleSkillCommand: (
     parsed: Parameters<typeof handleSkillCommand>[0],

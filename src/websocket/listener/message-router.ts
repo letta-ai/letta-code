@@ -29,6 +29,7 @@ import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import { handleMemoryProtocolCommand } from "./commands/memory";
 import { handleModelToolsetCommand } from "./commands/model-toolset";
+import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
@@ -225,6 +226,19 @@ export function createListenerMessageHandler(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
         });
+        return;
+      }
+
+      if (
+        handleRuntimeStartProtocolCommand(parsed, {
+          socket,
+          runtime,
+          safeSocketSend,
+          runDetachedListenerTask,
+          getOrCreateScopedRuntime,
+          replaySyncStateForRuntime,
+        })
+      ) {
         return;
       }
 
