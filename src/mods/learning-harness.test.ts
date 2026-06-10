@@ -362,6 +362,188 @@ describe("mod learning harness", () => {
     );
   });
 
+  test("runs executable mod assertions without a headless marker run", async () => {
+    const repoRoot = createTempDir();
+    const runDir = path.join(
+      repoRoot,
+      ".letta",
+      "mod-learning-runs",
+      "assertions",
+    );
+    const sourcePath = path.join(repoRoot, "uv-pip-install.ts");
+    writeFileSync(
+      sourcePath,
+      `export function activate(letta) {
+        const disposers = [];
+        if (letta.capabilities.events.turns) {
+          disposers.push(letta.events.on("turn_start", (event) => ({
+            input: [
+              ...event.input,
+              {
+                type: "message",
+                role: "system",
+                content: "For Python packages, use uv pip install instead of pip install.",
+              },
+            ],
+          })));
+        }
+        if (letta.capabilities.events.tools) {
+          const rewrite = (command) => command
+            .replace(/^python3? -m pip install\\b/, "uv pip install")
+            .replace(/^pip install\\b/, "uv pip install");
+          disposers.push(letta.events.on("tool_start", (event) => {
+            if (typeof event.args.command === "string") {
+              return { args: { ...event.args, command: rewrite(event.args.command) } };
+            }
+            if (typeof event.args.cmd === "string") {
+              return { args: { ...event.args, cmd: rewrite(event.args.cmd) } };
+            }
+          }));
+        }
+        return () => disposers.reverse().forEach((dispose) => dispose());
+      }
+      `,
+    );
+    const runner: CommandRunner = async () => {
+      throw new Error("assertion-only eval should not spawn headless runs");
+    };
+    const spec: ModLearningSpec = {
+      name: "uv pip assertion eval",
+      objective: "Verify uv pip mod behavior directly.",
+      requirements: ["Inject a reminder", "Rewrite pip tool args"],
+      targetModName: "uv-pip-install.ts",
+      evaluation: {
+        scenarios: [
+          {
+            assertions: [{ type: "mod_loads", expectedLoadedCount: 1 }],
+            name: "mod-loads",
+          },
+          {
+            assertions: [
+              {
+                type: "turn_start_injects_message",
+                contains: ["uv pip install", "pip install"],
+              },
+            ],
+            name: "turn-start-reminder",
+          },
+          {
+            assertions: [
+              {
+                args: { command: "pip install --dry-run requests" },
+                expectArgs: {
+                  command: "uv pip install --dry-run requests",
+                },
+                toolName: "Bash",
+                type: "tool_start_rewrites_args",
+              },
+              {
+                args: {
+                  cmd: "python -m pip install --dry-run --upgrade numpy",
+                },
+                expectArgs: {
+                  cmd: "uv pip install --dry-run --upgrade numpy",
+                },
+                toolName: "exec_command",
+                type: "tool_start_rewrites_args",
+              },
+              {
+                args: { command: "npm install lodash" },
+                toolName: "Bash",
+                type: "tool_start_preserves_args",
+              },
+            ],
+            name: "tool-start-args",
+          },
+        ],
+      },
+    };
+
+    const report = await runModLearning({
+      candidateFileName: "uv-pip-install.ts",
+      candidateSourcePath: "uv-pip-install.ts",
+      commandRunner: runner,
+      env: {},
+      repoRoot,
+      runDir,
+      spec,
+    });
+
+    expect(report.passed).toBe(true);
+    expect(report.evalResult).toBeNull();
+    expect(report.evaluation.assertionChecks).toHaveLength(5);
+    expect(
+      report.evaluation.assertionChecks.every((check) => check.passed),
+    ).toBe(true);
+    expect(
+      existsSync(
+        path.join(
+          runDir,
+          "eval",
+          "003-tool-start-args",
+          "assertions.result.json",
+        ),
+      ),
+    ).toBe(true);
+    expect(readFileSync(path.join(runDir, "report.md"), "utf8")).toContain(
+      "Assertion checks",
+    );
+  });
+
+  test("fails executable assertions when tool args are not rewritten", async () => {
+    const repoRoot = createTempDir();
+    const runDir = path.join(
+      repoRoot,
+      ".letta",
+      "mod-learning-runs",
+      "assertion-failure",
+    );
+    writeFileSync(
+      path.join(repoRoot, "noop.ts"),
+      "export function activate() {}\n",
+    );
+    const spec: ModLearningSpec = {
+      name: "failing assertion eval",
+      objective: "Verify assertion failures are real.",
+      requirements: ["Rewrite pip tool args"],
+      targetModName: "noop.ts",
+      evaluation: {
+        scenarios: [
+          {
+            assertions: [
+              {
+                args: { command: "pip install requests" },
+                expectArgs: { command: "uv pip install requests" },
+                toolName: "Bash",
+                type: "tool_start_rewrites_args",
+              },
+            ],
+            name: "tool-start-args",
+          },
+        ],
+      },
+    };
+
+    const report = await runModLearning({
+      candidateFileName: "noop.ts",
+      candidateSourcePath: "noop.ts",
+      commandRunner: async () => {
+        throw new Error("assertion-only eval should not spawn headless runs");
+      },
+      env: {},
+      repoRoot,
+      runDir,
+      spec,
+    });
+
+    expect(report.passed).toBe(false);
+    expect(report.evaluation.assertionChecks).toHaveLength(1);
+    expect(report.evaluation.assertionChecks[0]?.passed).toBe(false);
+    expect(report.evaluation.assertionChecks[0]?.details?.actualArgs).toEqual({
+      command: "pip install requests",
+    });
+  });
+
   test("runs an outer loop where later candidates see prior attempts", async () => {
     const repoRoot = createTempDir();
     const runDir = path.join(

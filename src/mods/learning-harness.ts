@@ -1,6 +1,13 @@
 import { spawn } from "node:child_process";
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type Letta from "@letta-ai/letta-client";
+import { createModEngine } from "@/mods/mod-engine";
+import type {
+  ModContext,
+  ModToolStartEvent,
+  ModTurnStartEvent,
+} from "@/mods/types";
 
 export type HeadlessLearningOutputFormat = "json" | "stream-json";
 
@@ -12,6 +19,7 @@ export interface ModLearningExample {
 
 export interface ModLearningEvaluationScenarioSpec {
   name?: string;
+  assertions?: ModLearningAssertion[];
   forbiddenTraceMarkers?: string[];
   prompt?: string;
   outputFormat?: HeadlessLearningOutputFormat;
@@ -39,6 +47,30 @@ export interface ModLearningSpec {
   examples?: ModLearningExample[];
   evaluation: ModLearningEvaluationSpec;
 }
+
+export type ModLearningAssertion =
+  | {
+      type: "mod_loads";
+      expectedLoadedCount?: number;
+    }
+  | {
+      type: "turn_start_injects_message";
+      contains?: string | string[];
+      input?: Array<Record<string, unknown>>;
+      notContains?: string | string[];
+      role?: string;
+    }
+  | {
+      type: "tool_start_rewrites_args";
+      args: Record<string, unknown>;
+      expectArgs: Record<string, unknown>;
+      toolName: string;
+    }
+  | {
+      type: "tool_start_preserves_args";
+      args: Record<string, unknown>;
+      toolName: string;
+    };
 
 export interface CommandRunOptions {
   cwd: string;
@@ -68,7 +100,15 @@ export interface MarkerCheck {
   present: boolean;
 }
 
+export interface ModLearningAssertionCheck {
+  details?: Record<string, unknown>;
+  label: string;
+  message: string;
+  passed: boolean;
+}
+
 export interface ModLearningEvaluationResult {
+  assertionChecks: ModLearningAssertionCheck[];
   forbiddenResultMarkers: MarkerCheck[];
   forbiddenTraceMarkers: MarkerCheck[];
   requiredResultMarkers: MarkerCheck[];
@@ -79,6 +119,7 @@ export interface ModLearningEvaluationResult {
 }
 
 export interface ModLearningScenarioEvaluationResult {
+  assertionChecks: ModLearningAssertionCheck[];
   evalExit: number | null;
   evalMemoryDir: string;
   forbiddenResultMarkers: MarkerCheck[];
@@ -258,6 +299,134 @@ function markerChecks(
   }));
 }
 
+function asStringArray(value: string | string[] | undefined): string[] {
+  if (value === undefined) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function valuesMatch(actual: unknown, expected: unknown): boolean {
+  return stableJson(actual) === stableJson(expected);
+}
+
+function objectContains(
+  actual: Record<string, unknown>,
+  expected: Record<string, unknown>,
+): boolean {
+  return Object.entries(expected).every(([key, value]) =>
+    valuesMatch(actual[key], value),
+  );
+}
+
+function stringifyMessageContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => stringifyMessageContent(part)).join("");
+  }
+  if (typeof content === "object" && content !== null) {
+    const text = (content as { text?: unknown }).text;
+    if (typeof text === "string") return text;
+  }
+  return content == null ? "" : JSON.stringify(content);
+}
+
+function defaultTurnStartInput(): ModTurnStartEvent["input"] {
+  return [
+    {
+      type: "message",
+      role: "user",
+      content: "Install a Python package.",
+    },
+  ];
+}
+
+function assertionLabel(
+  assertion: ModLearningAssertion,
+  index: number,
+): string {
+  switch (assertion.type) {
+    case "mod_loads":
+      return `${index + 1}. mod_loads`;
+    case "turn_start_injects_message":
+      return `${index + 1}. turn_start_injects_message`;
+    case "tool_start_rewrites_args":
+      return `${index + 1}. tool_start_rewrites_args ${assertion.toolName}`;
+    case "tool_start_preserves_args":
+      return `${index + 1}. tool_start_preserves_args ${assertion.toolName}`;
+  }
+}
+
+function createAssertionCheck(
+  assertion: ModLearningAssertion,
+  index: number,
+  passed: boolean,
+  message: string,
+  details?: Record<string, unknown>,
+): ModLearningAssertionCheck {
+  return {
+    ...(details ? { details } : {}),
+    label: assertionLabel(assertion, index),
+    message,
+    passed,
+  };
+}
+
+function createAssertionModContext(repoRoot: string): ModContext {
+  return {
+    app: { version: "mod-learning-eval" },
+    backgroundAgents: [],
+    contextWindow: {
+      currentUsage: null,
+      remainingPercentage: null,
+      size: 200000,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      usedPercentage: null,
+    },
+    cost: {
+      totalApiDurationMs: 0,
+      totalCostUsd: null,
+      totalDurationMs: 0,
+      totalLinesAdded: null,
+      totalLinesRemoved: null,
+    },
+    cwd: repoRoot,
+    lastRunId: null,
+    memfs: { enabled: false, memoryDir: null },
+    model: {
+      displayName: "mod-learning-eval",
+      id: "mod-learning-eval",
+      provider: "local",
+      reasoningEffort: null,
+    },
+    networkPhase: null,
+    permissionMode: "standard",
+    reflection: { mode: null, stepCount: 0 },
+    sessionId: "mod-learning-eval-conversation",
+    systemPromptId: null,
+    terminalWidth: 80,
+    toolset: "default",
+    agent: { id: "mod-learning-eval-agent", name: "Mod Learning Eval" },
+    workspace: {
+      cwd: repoRoot,
+      currentDir: repoRoot,
+      projectDir: repoRoot,
+    },
+  };
+}
+
 function allPresent(checks: MarkerCheck[]): boolean {
   return checks.every((check) => check.present);
 }
@@ -274,6 +443,14 @@ function combineMarkers(
   return combined.length > 0 ? combined : undefined;
 }
 
+function combineAssertions(
+  base: ModLearningAssertion[] | undefined,
+  override: ModLearningAssertion[] | undefined,
+): ModLearningAssertion[] | undefined {
+  const combined = [...(base ?? []), ...(override ?? [])];
+  return combined.length > 0 ? combined : undefined;
+}
+
 function scenarioName(
   index: number,
   scenario: ModLearningEvaluationScenarioSpec,
@@ -286,9 +463,9 @@ function evaluationScenarios(
 ): Array<{ name: string; spec: ModLearningEvaluationScenarioSpec }> {
   const scenarios = evaluation.scenarios;
   if (!scenarios || scenarios.length === 0) {
-    if (!evaluation.prompt?.trim()) {
+    if (!evaluation.prompt?.trim() && !evaluation.assertions?.length) {
       throw new Error(
-        "evaluation.prompt is required when no scenarios are configured",
+        "evaluation.prompt or evaluation.assertions is required when no scenarios are configured",
       );
     }
     return [{ name: "default", spec: evaluation }];
@@ -296,12 +473,17 @@ function evaluationScenarios(
 
   return scenarios.map((scenario, index) => {
     const prompt = scenario.prompt ?? evaluation.prompt;
-    if (!prompt?.trim()) {
+    const assertions = combineAssertions(
+      evaluation.assertions,
+      scenario.assertions,
+    );
+    if (!prompt?.trim() && !assertions?.length) {
       throw new Error(`evaluation.scenarios[${index}].prompt is required`);
     }
     return {
       name: scenarioName(index, scenario),
       spec: {
+        assertions,
         forbiddenResultMarkers: combineMarkers(
           evaluation.forbiddenResultMarkers,
           scenario.forbiddenResultMarkers,
@@ -406,10 +588,49 @@ function renderEvaluationPrompt(prompt: string, memoryDir: string): string {
   return prompt.replace(/\$\{MEMORY_DIR\}|\$MEMORY_DIR/g, () => memoryDir);
 }
 
+function renderAssertionSummary(
+  assertions: ModLearningAssertion[] | undefined,
+): string {
+  if (!assertions?.length) return "";
+  return assertions
+    .map((assertion, index) => {
+      switch (assertion.type) {
+        case "mod_loads":
+          return `${index + 1}. mod_loads${
+            assertion.expectedLoadedCount !== undefined
+              ? ` (expected loaded count: ${assertion.expectedLoadedCount})`
+              : ""
+          }`;
+        case "turn_start_injects_message":
+          return `${index + 1}. turn_start_injects_message contains ${asStringArray(
+            assertion.contains,
+          ).join(", ")}`;
+        case "tool_start_rewrites_args":
+          return `${index + 1}. tool_start_rewrites_args ${assertion.toolName}: ${stableJson(
+            assertion.args,
+          )} -> ${stableJson(assertion.expectArgs)}`;
+        case "tool_start_preserves_args":
+          return `${index + 1}. tool_start_preserves_args ${assertion.toolName}: ${stableJson(
+            assertion.args,
+          )}`;
+      }
+      return "";
+    })
+    .join("\n");
+}
+
 function renderEvaluationSummaryForPrompt(spec: ModLearningSpec): string {
   const scenarios = evaluationScenarios(spec.evaluation);
   if (scenarios.length === 1) {
-    return scenarios[0]?.spec.prompt ?? "";
+    const scenario = scenarios[0]?.spec;
+    if (!scenario) return "";
+    const assertionSummary = renderAssertionSummary(scenario.assertions);
+    return [
+      scenario.prompt ? `Prompt: ${scenario.prompt}` : "",
+      assertionSummary ? `Executable assertions:\n${assertionSummary}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
   return scenarios
     .map(({ name, spec: scenario }, index) => {
@@ -419,7 +640,10 @@ function renderEvaluationSummaryForPrompt(spec: ModLearningSpec): string {
       const forbiddenResultMarkers = scenario.forbiddenResultMarkers?.length
         ? `\nForbidden result markers: ${scenario.forbiddenResultMarkers.join(", ")}`
         : "";
-      return `Scenario ${index + 1} (${name}):\nPrompt: ${scenario.prompt}${requiredResultMarkers}${forbiddenResultMarkers}`;
+      const assertions = renderAssertionSummary(scenario.assertions);
+      return `Scenario ${index + 1} (${name}):${
+        scenario.prompt ? `\nPrompt: ${scenario.prompt}` : ""
+      }${assertions ? `\nExecutable assertions:\n${assertions}` : ""}${requiredResultMarkers}${forbiddenResultMarkers}`;
     })
     .join("\n\n");
 }
@@ -571,6 +795,7 @@ export function evaluateModLearningRun(params: {
     allAbsent(forbiddenTraceMarkers);
 
   return {
+    assertionChecks: [],
     forbiddenResultMarkers,
     forbiddenTraceMarkers,
     requiredResultMarkers,
@@ -580,10 +805,270 @@ export function evaluateModLearningRun(params: {
   };
 }
 
+async function evaluateModLearningAssertions(params: {
+  assertions: ModLearningAssertion[] | undefined;
+  cacheDirectory: string;
+  candidateDir: string;
+  repoRoot: string;
+}): Promise<ModLearningEvaluationResult> {
+  const assertions = params.assertions ?? [];
+  if (assertions.length === 0) {
+    return {
+      assertionChecks: [],
+      forbiddenResultMarkers: [],
+      forbiddenTraceMarkers: [],
+      passed: true,
+      requiredResultMarkers: [],
+      requiredTraceMarkers: [],
+      resultText: "",
+    };
+  }
+
+  const context = createAssertionModContext(params.repoRoot);
+  const engine = createModEngine({
+    cacheDirectory: params.cacheDirectory,
+    getClient: async () => ({}) as unknown as Letta,
+    getContext: () => context,
+    globalModsDirectory: params.candidateDir,
+  });
+
+  try {
+    await engine.reload();
+    const snapshot = engine.getSnapshot();
+    const checks: ModLearningAssertionCheck[] = [];
+
+    for (const [index, assertion] of assertions.entries()) {
+      if (assertion.type === "mod_loads") {
+        const expectedLoadedCount = assertion.expectedLoadedCount;
+        const diagnostics = snapshot.diagnostics.map((diagnostic) => ({
+          message: diagnostic.error.message,
+          phase: diagnostic.phase,
+          path: diagnostic.owner.path,
+          severity: diagnostic.severity ?? "error",
+        }));
+        const expectedCountMatches =
+          expectedLoadedCount === undefined ||
+          snapshot.loadedPaths.length === expectedLoadedCount;
+        const passed =
+          snapshot.diagnostics.length === 0 &&
+          snapshot.loadedPaths.length > 0 &&
+          expectedCountMatches;
+        checks.push(
+          createAssertionCheck(
+            assertion,
+            index,
+            passed,
+            passed
+              ? "candidate mod loaded without diagnostics"
+              : "candidate mod failed to load as expected",
+            {
+              diagnostics,
+              expectedLoadedCount,
+              loadedCount: snapshot.loadedPaths.length,
+              loadedPaths: snapshot.loadedPaths,
+            },
+          ),
+        );
+        continue;
+      }
+
+      if (assertion.type === "turn_start_injects_message") {
+        const input = structuredClone(
+          (assertion.input as ModTurnStartEvent["input"] | undefined) ??
+            defaultTurnStartInput(),
+        );
+        const originalInput = structuredClone(input);
+        const event: ModTurnStartEvent = {
+          agentId: context.agent.id,
+          conversationId: context.sessionId,
+          input,
+        };
+        const emission = await engine.emitEvent("turn_start", event);
+        const newMessages = event.input.slice(originalInput.length);
+        const role = assertion.role ?? "system";
+        const matchingMessages = newMessages.filter(
+          (message) => (message as { role?: unknown }).role === role,
+        );
+        const matchingText = matchingMessages
+          .map((message) =>
+            stringifyMessageContent((message as { content?: unknown }).content),
+          )
+          .join("\n");
+        const required = asStringArray(assertion.contains);
+        const forbidden = asStringArray(assertion.notContains);
+        const hasRequired = required.every((text) =>
+          matchingText.includes(text),
+        );
+        const hasForbidden = forbidden.some((text) =>
+          matchingText.includes(text),
+        );
+        const preservedOriginalInput = valuesMatch(
+          event.input.slice(0, originalInput.length),
+          originalInput,
+        );
+        const passed =
+          emission.handlerCount > 0 &&
+          matchingMessages.length > 0 &&
+          hasRequired &&
+          !hasForbidden &&
+          preservedOriginalInput &&
+          emission.diagnostics.length === 0;
+        checks.push(
+          createAssertionCheck(
+            assertion,
+            index,
+            passed,
+            passed
+              ? "turn_start injected the expected message"
+              : "turn_start did not inject the expected message",
+            {
+              diagnostics: emission.diagnostics.map(
+                (diagnostic) => diagnostic.error.message,
+              ),
+              forbidden,
+              handlerCount: emission.handlerCount,
+              injectedMessageCount: matchingMessages.length,
+              matchingText,
+              preservedOriginalInput,
+              required,
+              role,
+            },
+          ),
+        );
+        continue;
+      }
+
+      if (assertion.type === "tool_start_rewrites_args") {
+        const event: ModToolStartEvent = {
+          agentId: context.agent.id,
+          args: structuredClone(assertion.args),
+          conversationId: context.sessionId,
+          toolCallId: "mod-learning-assertion-tool-call",
+          toolName: assertion.toolName,
+        };
+        const emission = await engine.emitEvent("tool_start", event);
+        const passed =
+          emission.handlerCount > 0 &&
+          emission.diagnostics.length === 0 &&
+          objectContains(event.args, assertion.expectArgs);
+        checks.push(
+          createAssertionCheck(
+            assertion,
+            index,
+            passed,
+            passed
+              ? "tool_start rewrote args as expected"
+              : "tool_start did not rewrite args as expected",
+            {
+              actualArgs: event.args,
+              diagnostics: emission.diagnostics.map(
+                (diagnostic) => diagnostic.error.message,
+              ),
+              expectedArgs: assertion.expectArgs,
+              handlerCount: emission.handlerCount,
+              inputArgs: assertion.args,
+              toolName: assertion.toolName,
+            },
+          ),
+        );
+        continue;
+      }
+
+      if (assertion.type === "tool_start_preserves_args") {
+        const originalArgs = structuredClone(assertion.args);
+        const event: ModToolStartEvent = {
+          agentId: context.agent.id,
+          args: structuredClone(assertion.args),
+          conversationId: context.sessionId,
+          toolCallId: "mod-learning-assertion-tool-call",
+          toolName: assertion.toolName,
+        };
+        const emission = await engine.emitEvent("tool_start", event);
+        const passed =
+          emission.handlerCount > 0 &&
+          emission.diagnostics.length === 0 &&
+          valuesMatch(event.args, originalArgs);
+        checks.push(
+          createAssertionCheck(
+            assertion,
+            index,
+            passed,
+            passed
+              ? "tool_start preserved args as expected"
+              : "tool_start unexpectedly changed args",
+            {
+              actualArgs: event.args,
+              diagnostics: emission.diagnostics.map(
+                (diagnostic) => diagnostic.error.message,
+              ),
+              expectedArgs: originalArgs,
+              handlerCount: emission.handlerCount,
+              toolName: assertion.toolName,
+            },
+          ),
+        );
+      }
+    }
+
+    const resultText = checks
+      .map(
+        (check) =>
+          `${check.passed ? "PASS" : "FAIL"} ${check.label}: ${check.message}`,
+      )
+      .join("\n");
+    return {
+      assertionChecks: checks,
+      forbiddenResultMarkers: [],
+      forbiddenTraceMarkers: [],
+      passed: checks.every((check) => check.passed),
+      requiredResultMarkers: [],
+      requiredTraceMarkers: [],
+      resultText,
+    };
+  } finally {
+    engine.dispose();
+  }
+}
+
+function mergeEvaluationResults(
+  first: ModLearningEvaluationResult,
+  second: ModLearningEvaluationResult,
+): ModLearningEvaluationResult {
+  return {
+    assertionChecks: [...first.assertionChecks, ...second.assertionChecks],
+    forbiddenResultMarkers: [
+      ...first.forbiddenResultMarkers,
+      ...second.forbiddenResultMarkers,
+    ],
+    forbiddenTraceMarkers: [
+      ...first.forbiddenTraceMarkers,
+      ...second.forbiddenTraceMarkers,
+    ],
+    passed: first.passed && second.passed,
+    requiredResultMarkers: [
+      ...first.requiredResultMarkers,
+      ...second.requiredResultMarkers,
+    ],
+    requiredTraceMarkers: [
+      ...first.requiredTraceMarkers,
+      ...second.requiredTraceMarkers,
+    ],
+    resultText: [first.resultText, second.resultText]
+      .filter((text) => text.trim().length > 0)
+      .join("\n\n"),
+  };
+}
+
 function aggregateScenarioEvaluations(
   scenarioResults: ModLearningScenarioEvaluationResult[],
 ): ModLearningEvaluationResult {
   return {
+    assertionChecks: scenarioResults.flatMap((scenario) =>
+      scenario.assertionChecks.map((check) => ({
+        ...check,
+        label: `${scenario.name}: ${check.label}`,
+      })),
+    ),
     forbiddenResultMarkers: scenarioResults.flatMap((scenario) =>
       prefixMarkerChecks(scenario.name, scenario.forbiddenResultMarkers),
     ),
@@ -606,6 +1091,7 @@ function aggregateScenarioEvaluations(
 
 function markerScore(evaluation: ModLearningEvaluationResult): number {
   return [
+    ...evaluation.assertionChecks.map((check) => check.passed),
     ...evaluation.requiredResultMarkers.map((check) => check.present),
     ...evaluation.requiredTraceMarkers.map((check) => check.present),
     ...evaluation.forbiddenResultMarkers.map((check) => !check.present),
@@ -841,70 +1327,111 @@ function createScenarioSuiteEvaluator(params: {
           : artifactsDir;
         await prepareMemoryFiles(scenarioMemoryDir, scenarioSpec.memoryFiles);
 
-        const outputFormat = scenarioSpec.outputFormat ?? "stream-json";
-        const evalPrompt = renderEvaluationPrompt(
-          scenarioSpec.prompt ?? "",
-          scenarioMemoryDir,
-        );
-        const evalArgs = [
-          ...context.cliArgsPrefix,
-          ...buildHeadlessArgs(evalPrompt, {
-            backend: context.backend,
-            maxTurns: scenarioSpec.maxTurns ?? 8,
-            model: context.evalModel,
-            outputFormat,
-          }),
-        ];
-        await writeFile(
-          hasConfiguredScenarios
-            ? path.join(scenarioDir, "prompt.md")
-            : path.join(context.runDir, "eval-prompt.md"),
-          evalPrompt,
-          "utf8",
-        );
-        const scenarioEvalResult = await context.runner(
-          context.cliCommand,
-          evalArgs,
-          {
-            cwd: context.repoRoot,
-            env: {
-              ...context.baseEnv,
-              LETTA_EXTENSIONS_DIR: context.candidate.dir,
-              LETTA_MODS_DIR: context.candidate.dir,
-              MEMORY_DIR: scenarioMemoryDir,
+        let scenarioEvaluation: ModLearningEvaluationResult = {
+          assertionChecks: [],
+          forbiddenResultMarkers: [],
+          forbiddenTraceMarkers: [],
+          passed: true,
+          requiredResultMarkers: [],
+          requiredTraceMarkers: [],
+          resultText: "",
+        };
+        let scenarioEvalExit: number | null = null;
+        let scenarioTimedOut = false;
+
+        if (scenarioSpec.assertions?.length) {
+          const assertionEvaluation = await evaluateModLearningAssertions({
+            assertions: scenarioSpec.assertions,
+            cacheDirectory: path.join(scenarioDir, "mod-cache"),
+            candidateDir: context.candidate.dir,
+            repoRoot: context.repoRoot,
+          });
+          await writeJsonArtifact(
+            hasConfiguredScenarios
+              ? path.join(scenarioDir, "assertions.result.json")
+              : path.join(context.runDir, "assertions.result.json"),
+            assertionEvaluation,
+          );
+          scenarioEvaluation = mergeEvaluationResults(
+            scenarioEvaluation,
+            assertionEvaluation,
+          );
+        }
+
+        if (scenarioSpec.prompt?.trim()) {
+          const outputFormat = scenarioSpec.outputFormat ?? "stream-json";
+          const evalPrompt = renderEvaluationPrompt(
+            scenarioSpec.prompt,
+            scenarioMemoryDir,
+          );
+          const evalArgs = [
+            ...context.cliArgsPrefix,
+            ...buildHeadlessArgs(evalPrompt, {
+              backend: context.backend,
+              maxTurns: scenarioSpec.maxTurns ?? 8,
+              model: context.evalModel,
+              outputFormat,
+            }),
+          ];
+          await writeFile(
+            hasConfiguredScenarios
+              ? path.join(scenarioDir, "prompt.md")
+              : path.join(context.runDir, "eval-prompt.md"),
+            evalPrompt,
+            "utf8",
+          );
+          const scenarioEvalResult = await context.runner(
+            context.cliCommand,
+            evalArgs,
+            {
+              cwd: context.repoRoot,
+              env: {
+                ...context.baseEnv,
+                LETTA_EXTENSIONS_DIR: context.candidate.dir,
+                LETTA_MODS_DIR: context.candidate.dir,
+                MEMORY_DIR: scenarioMemoryDir,
+              },
+              timeoutMs: scenarioSpec.timeoutMs ?? 15 * 60 * 1000,
             },
-            timeoutMs: scenarioSpec.timeoutMs ?? 15 * 60 * 1000,
-          },
-        );
-        commandResult ??= scenarioEvalResult;
-        await writeCommandArtifacts(
-          hasConfiguredScenarios
-            ? path.join(scenarioDir, "eval")
-            : path.join(context.runDir, "eval"),
-          context.cliCommand,
-          evalArgs,
-          scenarioEvalResult,
-        );
-        const scenarioEvaluation = evaluateModLearningRun({
-          exitCode: scenarioEvalResult.exitCode,
-          outputFormat,
-          spec: scenarioSpec,
-          stderr: scenarioEvalResult.stderr,
-          stdout: scenarioEvalResult.stdout,
-          timedOut: scenarioEvalResult.timedOut,
-        });
+          );
+          scenarioEvalExit = scenarioEvalResult.exitCode;
+          scenarioTimedOut = scenarioEvalResult.timedOut;
+          commandResult ??= scenarioEvalResult;
+          await writeCommandArtifacts(
+            hasConfiguredScenarios
+              ? path.join(scenarioDir, "eval")
+              : path.join(context.runDir, "eval"),
+            context.cliCommand,
+            evalArgs,
+            scenarioEvalResult,
+          );
+          const markerEvaluation = evaluateModLearningRun({
+            exitCode: scenarioEvalResult.exitCode,
+            outputFormat,
+            spec: scenarioSpec,
+            stderr: scenarioEvalResult.stderr,
+            stdout: scenarioEvalResult.stdout,
+            timedOut: scenarioEvalResult.timedOut,
+          });
+          scenarioEvaluation = mergeEvaluationResults(
+            scenarioEvaluation,
+            markerEvaluation,
+          );
+        }
+
         scenarioResults.push({
           ...scenarioEvaluation,
-          evalExit: scenarioEvalResult.exitCode,
+          evalExit: scenarioEvalExit,
           evalMemoryDir: scenarioMemoryDir,
           name: scenario.name,
-          timedOut: scenarioEvalResult.timedOut,
+          timedOut: scenarioTimedOut,
         });
       }
 
       const evaluation = hasConfiguredScenarios
         ? aggregateScenarioEvaluations(scenarioResults)
         : (scenarioResults[0] ?? {
+            assertionChecks: [],
             forbiddenResultMarkers: [],
             forbiddenTraceMarkers: [],
             passed: false,
@@ -939,6 +1466,21 @@ function renderMarkerSection(label: string, checks: MarkerCheck[]): string[] {
     `- ${label}:`,
     ...checks.map(
       (check) => `  - ${check.present ? "✅" : "❌"} ${check.marker}`,
+    ),
+  ];
+}
+
+function renderAssertionSection(checks: ModLearningAssertionCheck[]): string[] {
+  if (checks.length === 0) return ["- Assertion checks: none configured"];
+  return [
+    "- Assertion checks:",
+    ...checks.map((check) =>
+      [
+        `  - ${check.passed ? "✅" : "❌"} ${check.label}: ${check.message}`,
+        check.details ? `    - Details: ${JSON.stringify(check.details)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
     ),
   ];
 }
@@ -991,7 +1533,8 @@ function renderMarkdownReport(report: ModLearningReport): string {
           "",
         ]
       : []),
-    "## Marker checks",
+    "## Evaluation checks",
+    ...renderAssertionSection(report.evaluation.assertionChecks),
     ...renderMarkerSection(
       "Required result markers",
       report.evaluation.requiredResultMarkers,
@@ -1127,6 +1670,7 @@ async function runModLearningCandidate(
   let evalResult: CommandRunResult | null = null;
   let score = 0;
   let evaluation: ModLearningEvaluationResult = {
+    assertionChecks: [],
     forbiddenResultMarkers: [],
     forbiddenTraceMarkers: [],
     requiredResultMarkers: [],

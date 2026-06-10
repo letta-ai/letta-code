@@ -135,6 +135,7 @@ describe("/mods command", () => {
             evalMemoryDir: path.join(cwd, ".letta", "test-run", "eval-memory"),
             evalResult: null,
             evaluation: {
+              assertionChecks: [],
               forbiddenResultMarkers: [],
               forbiddenTraceMarkers: [],
               requiredResultMarkers: [],
