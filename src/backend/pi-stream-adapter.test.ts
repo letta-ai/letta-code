@@ -365,7 +365,7 @@ describe("PiStreamAdapter", () => {
     }
   });
 
-  test("maps max reasoning effort to pi-ai xhigh for Fable", async () => {
+  test("preserves max reasoning effort through pi-ai Fable payload", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-stream-fable-"));
     try {
       await createOrUpdateLocalProvider({
@@ -416,6 +416,16 @@ describe("PiStreamAdapter", () => {
       }
 
       expect(capturedOptions).toMatchObject({ reasoning: "xhigh" });
+      const rewrittenPayload = await capturedOptions?.onPayload?.(
+        {
+          model: "claude-fable-5",
+          output_config: { effort: "xhigh" },
+        },
+        { id: "claude-fable-5" } as Model<string>,
+      );
+      expect(rewrittenPayload).toMatchObject({
+        output_config: { effort: "max" },
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

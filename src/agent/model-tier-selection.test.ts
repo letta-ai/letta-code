@@ -351,12 +351,14 @@ describe("getReasoningTierOptionsForHandle", () => {
       "medium",
       "high",
       "xhigh",
+      "max",
     ]);
     expect(options.map((option) => option.modelId)).toEqual([
       "fable-low",
       "fable-medium",
       "fable",
       "fable-xhigh",
+      "fable-max",
     ]);
   });
 

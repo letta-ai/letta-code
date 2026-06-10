@@ -85,12 +85,25 @@
       "id": "fable-xhigh",
       "handle": "anthropic/claude-fable-5",
       "label": "Fable 5",
-      "description": "Fable 5 (max reasoning)",
+      "description": "Fable 5 (extra-high reasoning)",
       "updateArgs": {
         "context_window": 1000000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "xhigh",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-max",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5",
+      "description": "Fable 5 (max reasoning)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "max",
         "parallel_tool_calls": true
       }
     },
