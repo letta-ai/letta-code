@@ -96,8 +96,11 @@ const wrapped = wrapSubagentLauncher({
 });
 assert("memory + api + flag ON → wrapped", wrapped !== null);
 assert(
-  `wrapped command is the ${avail.backend} binary`,
-  wrapped?.command === (avail.bwrapPath ?? avail.backend),
+  `wrapped command is the ${avail.backend} wrapper`,
+  wrapped?.command !== "/bin/bash" &&
+    (avail.backend === "bwrap"
+      ? wrapped?.command === avail.bwrapPath
+      : wrapped?.command?.endsWith("sandbox-exec") === true),
 );
 assert(
   "sandbox sentinel present in returned env",
@@ -130,7 +133,7 @@ function probe(label: string, cmd: string, expectOk: boolean): void {
 
 {
   const args = wrapped.args.map((a) =>
-    a === "__PROBE__" ? 'echo "envkeys=$(env | wc -l)"' : a,
+    a === "__PROBE__" ? 'echo "envkeys=$(env | wc -l | tr -d " ")"' : a,
   );
   const r = spawnSync(wrapped.command, args, {
     cwd: parentMem,
