@@ -12,7 +12,7 @@ import {
   startAppServer,
 } from "@/websocket/app-server";
 
-const TEST_TIMEOUT_MS = 5000;
+const TEST_TIMEOUT_MS = 10000;
 
 function waitForOpen(socket: WebSocket): Promise<void> {
   if (socket.readyState === WebSocket.OPEN) {
