@@ -35,14 +35,16 @@ print("saved robot-mascot.png; credits:", response["billing"]["credits_charged"]
 PY
 ```
 
-In Bash tools launched by Letta Code, the current Letta API host and credential
-are available as `$LETTA_BASE_URL` and `$LETTA_API_KEY`. Use them as a pair. Do
-not hardcode `https://api.letta.com`: Desktop OAuth and some remote runtimes route
-the token through a local/proxied base URL. If either variable is missing, the
-user needs to authenticate with Letta Cloud (or provide a Letta API key); do
-**not** ask for an OpenAI/Gemini provider key. This endpoint also does not use
-`/connect` BYOK providers — the only `provider` values supported here are
-`gemini` and `openai`.
+Letta Code commands such as `letta messages` build their client from the active
+runtime config: `LETTA_BASE_URL` selects the server, and `LETTA_API_KEY` is the
+bearer credential for that server. Raw `curl` calls from Bash tools should do the
+same. Use the two variables as a pair, and do not hardcode
+`https://api.letta.com`: in Desktop, `LETTA_BASE_URL` may be a local proxy and
+`LETTA_API_KEY` may be a local session token that only works through that proxy.
+If either variable is missing, the user needs to authenticate with Letta Cloud
+(or provide a Letta API key); do **not** ask for an OpenAI/Gemini provider key.
+This endpoint also does not use `/connect` BYOK providers — the only `provider`
+values supported here are `gemini` and `openai`.
 
 Then **show the image to the user** by embedding the saved file in your reply:
 
