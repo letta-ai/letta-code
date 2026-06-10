@@ -33,7 +33,8 @@ Validated: unit tests, full `bun run check`, and `sandbox-local-backend-live-tes
 on Seatbelt (both surfaces — other-agent memory read+write denied, self memory
 works, env survives cwd-in-tree, repo/`/tmp` writes denied for subagents, harness
 dirs still persist).
-**Remaining:** the Linux/bwrap host run, and a real local turn (L5).
+**Remaining:** the Linux/bwrap host run (separate handoff). L5 (a real local turn
+with a reflection subagent) is ✅ done — see below.
 
 ---
 
@@ -199,13 +200,19 @@ shell runs. Establishes the floor.
 - Re-run the full `bun run check`; verify every flag-OFF path is unchanged
   (`isFsSandboxEnabled` short-circuits remain the first check everywhere).
 
-### L5 — Real local turn (spends tokens — needs sign-off)
-Run a real local-backend agent turn with `LETTA_FS_SANDBOX=1` +
-`LETTA_LOCAL_BACKEND_EXPERIMENTAL=1` using the OpenAI/Anthropic keys in `.env`
-(never print secret values). Confirm: the agent completes a turn, its memory
-edits persist, a reflection/memory subagent runs and persists, and a second
-local agent cannot read the first's memory via a shell. This is the local mirror
-of the deferred API `REAL_TURN` check.
+### L5 — Real local turn ✅ DONE
+Validated by `scripts/sandbox-l5-local-reflection.ts`: a real local-backend
+bidirectional session (`LETTA_FS_SANDBOX=1`, Anthropic provider, throwaway HOME,
+`--reflection-step-count 1`) that forces a **real reflection subagent** to fire.
+Confirmed on Seatbelt: the reflection child was actually sandboxed (`memory-mode
+child sandboxed via seatbelt`), ran to completion with **no trap** (no EPERM /
+"operation not permitted" anywhere), persisted its own agent-state (a 2nd
+`agents/` record), the parent's memory edits committed to memfs (init + 2 edits),
+and transcript files were written — proving the carved harness write-set
+(conversations/agents/providers + transcript root) is complete under
+`restrictWrites:true`. (Note: `openai/gpt-5-mini` returned a non-retryable
+`llm_error` via the local pi-ai path — unrelated to the sandbox; Anthropic is the
+working provider for this run.)
 
 ---
 
@@ -229,9 +236,6 @@ client-side on both).
   Memory is isolated; conversation/state reads (and, since the harness carve,
   writes) of other agents are not, because there's no per-agent path prefix for
   conversations. Genuinely harder; separate investigation.
-- **Real local turn (L5)** — the synthetic live test proves the policy shape; a
-  real local-backend turn with a reflection subagent (spends tokens, needs
-  sign-off) is still needed to confirm the harness write-set is complete.
 
 ## Risks / gotchas
 
