@@ -104,6 +104,15 @@ describe("app-server protocol export", () => {
         success: true,
         compaction: null,
       },
+      {
+        type: "runtime_start_response",
+        request_id: "req",
+        success: true,
+        runtime: null,
+        agent: null,
+        conversation: null,
+        created: { agent: false, conversation: false },
+      },
     ] satisfies WsProtocolMessage[];
 
     expect(messages.map((message) => message.type)).toEqual([
@@ -124,6 +133,7 @@ describe("app-server protocol export", () => {
       "conversation_fork_response",
       "conversation_messages_list_response",
       "conversation_compact_response",
+      "runtime_start_response",
     ]);
   });
 });

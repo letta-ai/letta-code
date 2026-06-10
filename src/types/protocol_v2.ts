@@ -752,6 +752,48 @@ export interface SyncCommand {
   force_device_status?: boolean;
 }
 
+export interface RuntimeStartCreateAgentOptions {
+  /** Body forwarded to the Letta agents create API. */
+  body: AgentCreateParams;
+  /** Whether to pin the created agent globally. Defaults to true. */
+  pin_global?: boolean;
+}
+
+export interface RuntimeStartCreateConversationOptions {
+  /** Body forwarded to the Letta conversations create API. */
+  body?: Omit<ConversationCreateParams, "agent_id">;
+}
+
+export interface RuntimeStartClientInfo {
+  name: string;
+  title?: string;
+  version?: string;
+}
+
+export interface RuntimeStartCommand {
+  type: "runtime_start";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Existing agent to start/resume a runtime for. Mutually exclusive with create_agent. */
+  agent_id?: string;
+  /** Create a new agent before starting the runtime. Mutually exclusive with agent_id. */
+  create_agent?: RuntimeStartCreateAgentOptions;
+  /** Existing conversation to start/resume. Mutually exclusive with create_conversation. */
+  conversation_id?: string;
+  /** Create a new conversation for the resolved agent before starting the runtime. */
+  create_conversation?: RuntimeStartCreateConversationOptions;
+  /** Initial working directory for this runtime scope. Null resets to listener boot CWD. */
+  cwd?: string | null;
+  /** Initial permission mode for this runtime scope. */
+  mode?: DevicePermissionMode;
+  /** Optional client metadata for diagnostics/future protocol negotiation. */
+  client_info?: RuntimeStartClientInfo;
+  /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */
+  recover_approvals?: boolean;
+  /** Force the initial state replay to include update_device_status. Defaults to true. */
+  force_device_status?: boolean;
+}
+
 export interface TerminalSpawnCommand {
   type: "terminal_spawn";
   terminal_id: string;
@@ -2115,6 +2157,20 @@ export interface ConversationCompactResponseMessage {
   error?: string;
 }
 
+export interface RuntimeStartResponseMessage {
+  type: "runtime_start_response";
+  request_id: string;
+  success: boolean;
+  runtime: RuntimeScope | null;
+  agent: AgentState | null;
+  conversation: Conversation | null;
+  created: {
+    agent: boolean;
+    conversation: boolean;
+  };
+  error?: string;
+}
+
 export interface GetReflectionSettingsResponseMessage {
   type: "get_reflection_settings_response";
   request_id: string;
@@ -2521,6 +2577,7 @@ export type WsProtocolCommand =
   | ChangeDeviceStateCommand
   | AbortMessageCommand
   | SyncCommand
+  | RuntimeStartCommand
   | TerminalSpawnCommand
   | TerminalInputCommand
   | TerminalResizeCommand
@@ -2668,6 +2725,7 @@ export type WsProtocolMessage =
   | ConversationForkResponseMessage
   | ConversationMessagesListResponseMessage
   | ConversationCompactResponseMessage
+  | RuntimeStartResponseMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
   | ListConversationPinsResponseMessage

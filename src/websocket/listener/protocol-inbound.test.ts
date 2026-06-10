@@ -22,6 +22,15 @@ describe("app-server protocol hard cut", () => {
 
 describe("agent/conversation management protocol-inbound validators", () => {
   test.each([
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      create_agent: { body: { name: "Agent" }, pin_global: false },
+      create_conversation: { body: { summary: "New conversation" } },
+      cwd: "/tmp/project",
+      mode: "acceptEdits",
+      client_info: { name: "test", title: "Test", version: "1.0.0" },
+    },
     { type: "agent_list", request_id: "r1", query: { limit: 10 } },
     { type: "agent_retrieve", request_id: "r2", agent_id: "agent-1" },
     { type: "agent_create", request_id: "r3", body: { name: "Agent" } },
@@ -83,6 +92,25 @@ describe("agent/conversation management protocol-inbound validators", () => {
   });
 
   test.each([
+    { type: "runtime_start", request_id: "r0", create_agent: { body: [] } },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      create_conversation: [],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      mode: "bad",
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      client_info: { title: "missing name" },
+    },
     { type: "agent_list", request_id: "r1", query: "bad" },
     { type: "agent_retrieve", request_id: "r2" },
     { type: "agent_create", request_id: "r3", body: null },

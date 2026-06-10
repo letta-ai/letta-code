@@ -571,6 +571,178 @@ describe("listen-client parseServerMessage", () => {
     });
   });
 
+  describe("listen-client runtime_start command handling", () => {
+    test("creates an agent and conversation, starts runtime, and replays state", async () => {
+      const storageDir = await mkdtemp(join(os.tmpdir(), "ws-runtime-start-"));
+      const cwdDir = await mkdtemp(join(os.tmpdir(), "ws-runtime-cwd-"));
+      try {
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        __testSetBackend(backend);
+        const listener = __listenClientTestUtils.createListenerRuntime();
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: "runtime-start-create",
+            create_agent: {
+              body: {
+                name: "Runtime Agent",
+                model: "anthropic/claude-sonnet-4-6",
+              } as AgentCreateBody,
+              pin_global: false,
+            },
+            create_conversation: {
+              body: { summary: "Runtime conversation" },
+            },
+            cwd: cwdDir,
+            mode: "acceptEdits",
+            recover_approvals: false,
+          },
+          socket as unknown as WebSocket,
+          listener,
+        );
+
+        const messages = socket.sentPayloads.map((payload) =>
+          JSON.parse(payload),
+        );
+        const runtimeScope = messages[0].runtime as {
+          agent_id: string;
+          conversation_id: string;
+        };
+        expect(runtimeScope.agent_id).toEqual(expect.any(String));
+        expect(runtimeScope.conversation_id).toEqual(expect.any(String));
+        expect(messages[0]).toMatchObject({
+          type: "runtime_start_response",
+          request_id: "runtime-start-create",
+          success: true,
+          runtime: runtimeScope,
+          agent: { name: "Runtime Agent" },
+          conversation: { summary: "Runtime conversation" },
+          created: { agent: true, conversation: true },
+        });
+        expect(
+          __listenClientTestUtils.getConversationWorkingDirectory(
+            listener,
+            runtimeScope.agent_id,
+            runtimeScope.conversation_id,
+          ),
+        ).toBe(cwdDir);
+        expect(messages).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "update_device_status",
+              runtime: runtimeScope,
+              device_status: expect.objectContaining({
+                current_working_directory: cwdDir,
+                current_permission_mode: "acceptEdits",
+              }),
+            }),
+            expect.objectContaining({
+              type: "update_loop_status",
+              runtime: runtimeScope,
+            }),
+            expect.objectContaining({
+              type: "update_queue",
+              runtime: runtimeScope,
+            }),
+          ]),
+        );
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+        await rm(cwdDir, { recursive: true, force: true });
+      }
+    });
+
+    test("resumes an existing agent and conversation", async () => {
+      const storageDir = await mkdtemp(
+        join(os.tmpdir(), "ws-runtime-start-resume-"),
+      );
+      try {
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        __testSetBackend(backend);
+        const agent = await backend.createAgent({
+          name: "Runtime Existing Agent",
+          model: "anthropic/claude-sonnet-4-6",
+        } as AgentCreateBody);
+        const conversation = await backend.createConversation({
+          agent_id: agent.id,
+          summary: "Existing conversation",
+        });
+        const listener = __listenClientTestUtils.createListenerRuntime();
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: "runtime-start-resume",
+            agent_id: agent.id,
+            conversation_id: conversation.id,
+            recover_approvals: false,
+          },
+          socket as unknown as WebSocket,
+          listener,
+        );
+
+        expect(JSON.parse(socket.sentPayloads[0] ?? "{}")).toMatchObject({
+          type: "runtime_start_response",
+          request_id: "runtime-start-resume",
+          success: true,
+          runtime: {
+            agent_id: agent.id,
+            conversation_id: conversation.id,
+          },
+          agent: { id: agent.id },
+          conversation: { id: conversation.id },
+          created: { agent: false, conversation: false },
+        });
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+
+    test("soft-fails invalid runtime_start combinations", async () => {
+      const storageDir = await mkdtemp(
+        join(os.tmpdir(), "ws-runtime-start-error-"),
+      );
+      try {
+        __testSetBackend(
+          new LocalBackend({ storageDir, executionMode: "deterministic" }),
+        );
+        const listener = __listenClientTestUtils.createListenerRuntime();
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: "runtime-start-invalid",
+            agent_id: "agent-1",
+            create_agent: { body: { name: "Bad" } as AgentCreateBody },
+            recover_approvals: false,
+          },
+          socket as unknown as WebSocket,
+          listener,
+        );
+
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "runtime_start_response",
+          request_id: "runtime-start-invalid",
+          success: false,
+          runtime: null,
+          created: { agent: false, conversation: false },
+        });
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   test("classifies invalid input approval_response payloads", () => {
     const missingResponse = parseServerMessage(
       Buffer.from(
