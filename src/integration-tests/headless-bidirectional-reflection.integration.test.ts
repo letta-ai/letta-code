@@ -182,7 +182,7 @@ async function runLiveBidirectionalCli(paths: {
         "--no-system-info-reminder",
         "--yolo",
         "-m",
-        "sonnet-4.6-low",
+        "auto",
       ],
       {
         cwd: process.cwd(),
