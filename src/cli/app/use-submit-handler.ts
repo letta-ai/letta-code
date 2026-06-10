@@ -42,6 +42,7 @@ import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { CustomCommand } from "@/cli/commands/custom";
+import { handleModsCommand } from "@/cli/commands/mods";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
@@ -791,6 +792,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
           }
 
+          return { submitted: true };
+        }
+
+        const modsCommand = handleModsCommand(trimmed, {
+          commandRunner,
+          currentModelId,
+          cwd: getCurrentWorkingDirectory(),
+        });
+        if (modsCommand.handled) {
           return { submitted: true };
         }
 
