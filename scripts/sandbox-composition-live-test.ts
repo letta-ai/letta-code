@@ -70,6 +70,12 @@ process.env.LETTA_FS_SANDBOX = "1";
 process.env.AGENT_ID = SELF;
 process.env.MEMORY_DIR = selfMem;
 
+// SB_NO_GUARD=1 disables the static guard so only the kernel sandbox is live —
+// the "can the kernel stand alone?" question (the precondition for deleting the
+// guard in step 4). With the guard off, EVERY attack must be stopped by the
+// kernel, not merely "by at least one layer".
+const guardEnabled = process.env.SB_NO_GUARD !== "1";
+
 type Layer = "guard" | "kernel" | "none";
 interface Outcome {
   blockedBy: Layer;
@@ -82,7 +88,7 @@ async function runCommand(command: string): Promise<Outcome> {
   const verdict = evaluateCrossAgentGuard("Bash", { command }, repoCwd, {
     env: process.env,
     currentAgentId: SELF,
-    disableMemoryGuard: false,
+    disableMemoryGuard: !guardEnabled,
   });
   if (verdict) {
     return {
@@ -113,8 +119,14 @@ async function runCommand(command: string): Promise<Outcome> {
 interface Case {
   label: string;
   command: string;
-  expect: (o: Outcome) => boolean;
+  expect: (o: Outcome, guard: boolean) => boolean;
   why: string;
+}
+
+// An attack must be stopped by *at least one* layer when the guard is on, but
+// by the kernel specifically when the guard is off (nothing else is left).
+function attackBlocked(o: Outcome, guard: boolean): boolean {
+  return guard ? o.blockedBy !== "none" : o.blockedBy === "kernel";
 }
 
 const cases: Case[] = [
@@ -122,40 +134,43 @@ const cases: Case[] = [
     label: "legit: write+read self memory",
     command: `echo hi > ${join(selfMem, "note.md")} && cat ${join(selfMem, "note.md")}`,
     expect: (o) => o.blockedBy === "none" && /hi/.test(o.text),
-    why: "self memory must pass BOTH layers (carve-out matches guard allowance)",
+    why: "self memory must pass every active layer (carve-out matches guard)",
   },
   {
     label: "legit: write repo/tmp",
     command: "echo x > /tmp/sb-comp-ok.txt && echo OK",
     expect: (o) => o.blockedBy === "none" && /OK/.test(o.text),
-    why: "non-agent writes stay allowed under both layers",
+    why: "non-agent writes stay allowed",
   },
   {
     label: "attack: direct read of other's memory",
     command: `cat ${join(otherMem, "secret.md")}`,
-    expect: (o) => o.blockedBy !== "none" && !/TOPSECRET/.test(o.text),
-    why: "guard catches the literal agent path before spawn",
+    expect: (o, g) => attackBlocked(o, g) && !/TOPSECRET/.test(o.text),
+    why: "guard catches the literal path; kernel denies it too when guard is off",
   },
   {
-    label: "attack: symlink read of other's memory (guard blind spot)",
+    label: "attack: symlink read of other's memory",
     command: `cat ${link}/secret.md`,
     expect: (o) => o.blockedBy === "kernel" && !/TOPSECRET/.test(o.text),
-    why: "lexical guard allows the symlink; the KERNEL denies it",
+    why: "lexical guard always misses the symlink; the KERNEL denies it",
   },
   {
     label: "attack: enumerate the agents tree",
     command: `ls ${agents} && echo LISTED`,
-    expect: (o) =>
-      o.blockedBy !== "none" && !/LISTED .*agent-other/.test(o.text),
+    expect: (o, g) =>
+      attackBlocked(o, g) && !/LISTED .*agent-other/.test(o.text),
     why: "bare agents-root reference is denied",
   },
 ];
 
 let failures = 0;
-console.log("\n=== guard + kernel composition (both layers live) ===");
+const mode = guardEnabled
+  ? "guard + kernel (both layers live)"
+  : "kernel only (guard disabled — can it stand alone?)";
+console.log(`\n=== ${mode} ===`);
 for (const c of cases) {
   const outcome = await runCommand(c.command);
-  const pass = c.expect(outcome);
+  const pass = c.expect(outcome, guardEnabled);
   if (!pass) failures++;
   console.log(
     `${pass ? "PASS" : "FAIL"}  ${c.label}\n` +
