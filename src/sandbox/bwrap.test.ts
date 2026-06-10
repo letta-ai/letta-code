@@ -41,18 +41,18 @@ test("denied roots are masked with tmpfs", () => {
   expect(args[tmpfsIdx + 1]).toBe("/home/u/.letta/agents");
 });
 
-test("carveouts are restored after the tmpfs mask", () => {
+test("carveouts are restored after the tmpfs mask (with -try so missing roots don't abort the spawn)", () => {
   const args = buildBwrapArgs(CROSS_AGENT);
   const maskIdx = args.indexOf("--tmpfs");
   const writableIdx = tripleIndex(
     args,
-    "--bind",
+    "--bind-try",
     "/home/u/.letta/agents/self",
     "/home/u/.letta/agents/self",
   );
   const readonlyIdx = tripleIndex(
     args,
-    "--ro-bind",
+    "--ro-bind-try",
     "/home/u/.letta/agents/parent",
     "/home/u/.letta/agents/parent",
   );
