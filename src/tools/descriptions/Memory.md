@@ -10,7 +10,7 @@ Supported operations on memory files:
 - `rename` (path rename only)
 - `update_description`
 - `create`
-More general operations can be performanced through directory modifying the files. 
+For larger reorganizations, edit the projected files directly and commit the changes yourself (see the syncing instructions in your system prompt).
 
 Path formats accepted:
 - relative memory file paths (e.g. `system/contacts.md`, `reference/project/team.md`)
@@ -36,7 +36,7 @@ memory(command="delete", reason="Remove stale notes", file_path="reference/histo
 memory(command="rename", reason="Promote temp notes", old_path="reference/history/temp.md", new_path="reference/history/permanent.md")
 
 # Update a block description
-memory(command="update_description", reason="Clarify coding prefs block", file_path="system/human/prefs/coding.md", description="Dr. Wooders' coding preferences.")
+memory(command="update_description", reason="Clarify coding prefs block", file_path="system/human/prefs/coding.md", description="The user's coding preferences.")
 
 # Create a block with starting text
 memory(command="create", reason="Track coding preferences", file_path="system/human/prefs/coding.md", description="The user's coding preferences.", file_text="The user seems to add type hints to all of their Python code.")
