@@ -24,7 +24,7 @@ not successful reads. Shell-command matches are marked `medium` confidence.
 The learning harness in `scripts/mod-learning/learn-mod.ts` dogfoods the
 mod system itself:
 
-1. read a target spec/demo;
+1. read a target env/demo;
 2. ask a fresh headless Letta Code agent to generate a candidate mod;
 3. run a second headless eval with `LETTA_MODS_DIR` pointed at the
    candidate directory;
@@ -48,8 +48,12 @@ candidate/report artifacts under `.letta/mod-learning-runs/`. It never installs
 or promotes the learned mod automatically; review the generated candidate
 before copying it into your local mod directory and running `/reload`.
 
-The default spec is
-`docs/examples/mods/learning/memory-citations.spec.json`. Use
+For shell/script usage, pass `--background` to detach the learning run and write
+`background.stdout`, `background.stderr`, and `background.json` into the run
+directory while the main process returns immediately.
+
+The default env is
+`docs/examples/mods/learning/memory-citations.env.json`. Use
 `--candidate path/to/mod.ts` to skip generation and evaluate an existing
 candidate, or `--promote-to <path>` to copy a passing learned candidate into a
 repo path.

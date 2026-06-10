@@ -1,15 +1,20 @@
 import path from "node:path";
-import memoryCitationsSpecJson from "@/../docs/examples/mods/learning/memory-citations.spec.json";
+import memoryCitationsEnvJson from "@/../docs/examples/mods/learning/memory-citations.env.json";
 import type { AppCommandRunner } from "@/cli/app/types";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { parseExtensionCommandArgv as parseModCommandArgv } from "@/cli/extensions/command-runtime";
+import { renderDatasetScore } from "@/mods/dataset-adapter";
+import {
+  builtInDatasetAdapterConfig,
+  builtInDatasetLearningEnv,
+} from "@/mods/dataset-presets";
 import type {
   CommandRunner,
   ModLearningProgress,
   ModLearningReport,
   ModLearningSpec,
 } from "@/mods/learning-harness";
-import { readModLearningSpec, runModLearning } from "@/mods/learning-harness";
+import { readModLearningEnv, runModLearning } from "@/mods/learning-harness";
 import { settingsManager } from "@/settings-manager";
 import {
   resolveEntryScriptPath,
@@ -29,19 +34,25 @@ type LettaLauncher = {
 type LearnCommandOptions = {
   backend?: string;
   candidate?: string;
+  candidateCount?: number;
   candidateFileName?: string;
+  dataset?: string;
+  datasetAdapterCommand?: string;
+  datasetSubset?: string;
+  datasetTaskIds?: string[];
+  datasetTrials?: number;
   evalModel?: string;
+  envPath?: string;
   generationModel?: string;
   model?: string;
   out?: string;
   skipGeneration: boolean;
-  specPath?: string;
   target: string;
 };
 
 type LearnCommand = {
   options: LearnCommandOptions;
-  spec: ModLearningSpec | null;
+  env: ModLearningSpec | null;
   targetLabel: string;
 };
 
@@ -55,7 +66,7 @@ export type HandleModsCommandContext = {
   currentModelId?: string | null;
   getHeadlessEnv?: () => Promise<NodeJS.ProcessEnv>;
   learningCommandRunner?: CommandRunner;
-  readSpec?: typeof readModLearningSpec;
+  readEnv?: typeof readModLearningEnv;
   resolveLauncher?: () => LettaLauncher;
   runLearning?: RunModLearning;
 };
@@ -64,13 +75,13 @@ export type HandleModsCommandResult =
   | { handled: false }
   | { done: Promise<void>; handled: true };
 
-function cloneSpec(spec: ModLearningSpec): ModLearningSpec {
+function cloneEnv(spec: ModLearningSpec): ModLearningSpec {
   return JSON.parse(JSON.stringify(spec)) as ModLearningSpec;
 }
 
-function builtInSpecForTarget(target: string): ModLearningSpec | null {
+function builtInEnvForTarget(target: string): ModLearningSpec | null {
   if (target === DEFAULT_TARGET) {
-    return cloneSpec(memoryCitationsSpecJson as ModLearningSpec);
+    return cloneEnv(memoryCitationsEnvJson as ModLearningSpec);
   }
   return null;
 }
@@ -80,7 +91,8 @@ function formatModsUsage(error?: string): string {
     ...(error ? [`Error: ${error}`, ""] : []),
     "Usage:",
     "  /mods learn [memory-citations] [options]",
-    "  /mods learn --spec <path> [options]",
+    "  /mods learn --env <path> [options]",
+    "  /mods learn --dataset terminalbench [options]",
     "",
     "Options:",
     "  --model <handle>              Model for generation and eval (default: auto)",
@@ -88,7 +100,13 @@ function formatModsUsage(error?: string): string {
     "  --eval-model <handle>         Model for headless eval",
     "  --backend <api|local>          Backend flag forwarded to headless runs",
     "  --candidate <path>            Evaluate an existing candidate instead of generating",
+    "  --candidates <n>              Generate/evaluate N candidates, each seeing prior attempts",
     "  --candidate-file-name <name>  Candidate filename in the eval mod dir",
+    "  --dataset <name>              Use a host-filesystem dataset adapter instead of env scenarios",
+    "  --subset <name>               Dataset subset (terminalbench default: smoke)",
+    "  --task <id>[,<id>]            Restrict dataset evaluation to task id(s)",
+    "  --trials <n>                  Dataset trials per task",
+    "  --dataset-adapter-command <cmd> Override built-in host adapter executable",
     "  --out <dir>                   Artifact directory (default: .letta/mod-learning-runs/<target>-<timestamp>)",
     "  --skip-generation             Expect the candidate file to already exist in the run dir",
     "",
@@ -182,8 +200,17 @@ export function parseModsCommand(
           case "--candidate":
             options.candidate = value;
             break;
+          case "--candidates":
+            options.candidateCount = Number(value);
+            break;
           case "--candidate-file-name":
             options.candidateFileName = value;
+            break;
+          case "--dataset":
+            options.dataset = value;
+            break;
+          case "--dataset-adapter-command":
+            options.datasetAdapterCommand = value;
             break;
           case "--eval-model":
             options.evalModel = resolveRequestedModel(value, currentModelId);
@@ -200,8 +227,23 @@ export function parseModsCommand(
           case "--out":
             options.out = value;
             break;
-          case "--spec":
-            options.specPath = value;
+          case "--env":
+            options.envPath = value;
+            break;
+          case "--subset":
+            options.datasetSubset = value;
+            break;
+          case "--task":
+            options.datasetTaskIds = [
+              ...(options.datasetTaskIds ?? []),
+              ...value
+                .split(",")
+                .map((taskId) => taskId.trim())
+                .filter(Boolean),
+            ];
+            break;
+          case "--trials":
+            options.datasetTrials = Number(value);
             break;
           default:
             throw new Error(`Unknown option: ${optionName}`);
@@ -225,11 +267,27 @@ export function parseModsCommand(
     };
   }
 
-  const spec = options.specPath ? null : builtInSpecForTarget(options.target);
-  if (!spec && !options.specPath) {
+  if (options.dataset && options.envPath) {
     return {
       command: "usage",
-      output: formatModsUsage(`Unknown learning target: ${options.target}`),
+      output: formatModsUsage("--dataset cannot be combined with --env"),
+      success: false,
+    };
+  }
+
+  const learningEnv = options.dataset
+    ? builtInDatasetLearningEnv(options.dataset, options.datasetSubset)
+    : options.envPath
+      ? null
+      : builtInEnvForTarget(options.target);
+  if (!learningEnv && !options.envPath) {
+    return {
+      command: "usage",
+      output: formatModsUsage(
+        options.dataset
+          ? `Unknown dataset: ${options.dataset}`
+          : `Unknown learning target: ${options.target}`,
+      ),
       success: false,
     };
   }
@@ -238,12 +296,14 @@ export function parseModsCommand(
     command: "learn",
     learn: {
       options,
-      spec,
-      targetLabel: options.specPath
-        ? targetSet
-          ? options.target
-          : "custom spec"
-        : options.target,
+      env: learningEnv,
+      targetLabel: options.dataset
+        ? `${options.dataset}/${options.datasetSubset ?? "smoke"}`
+        : options.envPath
+          ? targetSet
+            ? options.target
+            : "custom env"
+          : options.target,
     },
   };
 }
@@ -266,11 +326,20 @@ function formatProgress(
   progress: ModLearningProgress,
   cwd: string,
 ): string {
+  const candidateLine =
+    progress.candidateIndex &&
+    progress.candidateCount &&
+    progress.candidateCount > 1
+      ? `Candidate: ${progress.candidateIndex}/${progress.candidateCount} (${displayPath(progress.candidatePath, cwd)})`
+      : `Candidate: ${displayPath(progress.candidatePath, cwd)}`;
   return [
     `Running mod learning: ${learn.targetLabel}`,
     `Phase: ${progress.message}`,
     `Run directory: ${displayPath(progress.runDir, cwd)}`,
-    `Candidate: ${displayPath(progress.candidatePath, cwd)}`,
+    ...(progress.candidateRunDir && progress.candidateRunDir !== progress.runDir
+      ? [`Attempt directory: ${displayPath(progress.candidateRunDir, cwd)}`]
+      : []),
+    candidateLine,
     "",
     "No mod will be installed automatically.",
   ].join("\n");
@@ -280,18 +349,40 @@ export function formatModLearningSummary(
   report: ModLearningReport,
   cwd: string,
 ): string {
-  const status = report.passed ? "PASS" : "FAIL";
+  const status = report.datasetEvaluation
+    ? "SCORED"
+    : report.passed
+      ? "PASS"
+      : "FAIL";
   const lines = [
     `${status} mod learning: ${report.spec.name}`,
     `Report: ${displayPath(report.reportPath, cwd)}`,
+    ...(report.candidateCount && report.candidateCount > 1
+      ? [
+          `Selected candidate: ${report.selectedCandidateIndex ?? report.candidateIndex}/${report.candidateCount}`,
+        ]
+      : []),
+    ...(report.datasetEvaluation
+      ? [
+          `Dataset: ${report.datasetEvaluation.dataset}${report.datasetEvaluation.subset ? `/${report.datasetEvaluation.subset}` : ""}`,
+          `Dataset score: ${renderDatasetScore(report.datasetEvaluation.score)}`,
+          ...(report.datasetEvaluation.score.costUsd !== undefined
+            ? [
+                `Dataset cost: $${report.datasetEvaluation.score.costUsd.toFixed(4)}`,
+              ]
+            : []),
+        ]
+      : []),
     `Candidate: ${displayPath(report.candidatePath, cwd)}`,
     `Run directory: ${displayPath(report.runDir, cwd)}`,
     `Generation exit: ${report.generationResult?.exitCode ?? "skipped"}`,
     `Eval exit: ${report.evalResult?.exitCode ?? "not run"}`,
     "",
-    report.passed
-      ? "Review the candidate source before installing it. This command did not promote or load the mod."
-      : "Open the report, generation stdout/stderr, and eval stdout/stderr in the run directory to debug the candidate.",
+    report.datasetEvaluation
+      ? "Review the dataset report, per-task reports, and raw traces before installing the mod. This command did not promote or load the mod."
+      : report.passed
+        ? "Review the candidate source before installing it. This command did not promote or load the mod."
+        : "Open the report, generation stdout/stderr, and eval stdout/stderr in the run directory to debug the candidate.",
   ];
   return lines.join("\n");
 }
@@ -333,19 +424,19 @@ export function resolveCurrentLettaLauncher(): LettaLauncher {
   return { command: "letta", args: [] };
 }
 
-async function resolveSpec(
+async function resolveEnv(
   learn: LearnCommand,
   cwd: string,
-  readSpec: typeof readModLearningSpec,
+  readEnv: typeof readModLearningEnv,
 ): Promise<ModLearningSpec> {
-  if (learn.spec) return cloneSpec(learn.spec);
-  const specPath = learn.options.specPath;
-  if (!specPath) {
+  if (learn.env) return cloneEnv(learn.env);
+  const envPath = learn.options.envPath;
+  if (!envPath) {
     throw new Error(
-      `No spec configured for learning target: ${learn.options.target}`,
+      `No env configured for learning target: ${learn.options.target}`,
     );
   }
-  return readSpec(path.resolve(cwd, specPath));
+  return readEnv(path.resolve(cwd, envPath));
 }
 
 async function runLearnCommand(
@@ -354,19 +445,31 @@ async function runLearnCommand(
   command: CommandHandle,
 ): Promise<void> {
   const runLearningImpl = ctx.runLearning ?? runModLearning;
-  const readSpecImpl = ctx.readSpec ?? readModLearningSpec;
+  const readEnvImpl = ctx.readEnv ?? readModLearningEnv;
   const launcher = (ctx.resolveLauncher ?? resolveCurrentLettaLauncher)();
-  const env = await (ctx.getHeadlessEnv ?? defaultHeadlessEnv)();
-  const spec = await resolveSpec(learn, ctx.cwd, readSpecImpl);
+  const headlessEnv = await (ctx.getHeadlessEnv ?? defaultHeadlessEnv)();
+  const learningEnv = await resolveEnv(learn, ctx.cwd, readEnvImpl);
   const model = learn.options.model ?? DEFAULT_MODEL;
+  const dataset = learn.options.dataset
+    ? builtInDatasetAdapterConfig({
+        adapterCommand: learn.options.datasetAdapterCommand,
+        dataset: learn.options.dataset,
+        repoRoot: ctx.cwd,
+        subset: learn.options.datasetSubset,
+        taskIds: learn.options.datasetTaskIds,
+        trials: learn.options.datasetTrials,
+      })
+    : undefined;
   const report = await runLearningImpl({
     backend: learn.options.backend,
+    candidateCount: learn.options.candidateCount,
     candidateFileName: learn.options.candidateFileName,
     candidateSourcePath: learn.options.candidate,
     cliArgsPrefix: launcher.args,
     cliCommand: launcher.command,
     commandRunner: ctx.learningCommandRunner,
-    env,
+    dataset,
+    env: headlessEnv,
     evalModel: learn.options.evalModel ?? model,
     generationModel: learn.options.generationModel ?? model,
     repoRoot: ctx.cwd,
@@ -374,7 +477,7 @@ async function runLearnCommand(
       ? path.resolve(ctx.cwd, learn.options.out)
       : undefined,
     skipGeneration: learn.options.skipGeneration,
-    spec,
+    spec: learningEnv,
     onProgress: (progress) => {
       command.update({
         output: formatProgress(learn, progress, ctx.cwd),
@@ -383,7 +486,10 @@ async function runLearnCommand(
     },
   });
 
-  command.finish(formatModLearningSummary(report, ctx.cwd), report.passed);
+  command.finish(
+    formatModLearningSummary(report, ctx.cwd),
+    report.datasetEvaluation ? true : report.passed,
+  );
 }
 
 export function handleModsCommand(
