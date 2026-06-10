@@ -24,6 +24,7 @@ import {
   normalizeMemoryPath,
   resolveMemoryTargetPath,
 } from "./memory-paths";
+import { canonicalizeRoot } from "./sandbox-policy";
 import { splitShellSegments, tokenizeShellWords } from "./shell-analysis";
 
 // --------------------------------------------------------------------------
@@ -150,9 +151,42 @@ export function classifyAgentsTreePath(
   path: string,
   homeDir: string,
 ): AgentsTreeClassification {
-  const root = getAgentsTreeRoot(homeDir);
-  const normalized = normalizePathForCompare(path);
+  return classifyPathUnderRoot(
+    normalizePathForCompare(path),
+    getAgentsTreeRoot(homeDir),
+  );
+}
 
+/**
+ * Symlink-aware variant of {@link classifyAgentsTreePath}: realpath-canonicalize
+ * both the target and the agents-tree root (resolving symlinks, tolerating a
+ * not-yet-existing leaf for the create-file case) before the structural compare.
+ *
+ * This is what closes the symlink bypass for in-process file tools: a path like
+ * `~/proj/link/secret.md`, where `link` points into another agent's memory,
+ * classifies as `outside` lexically but as that agent once symlinks are
+ * resolved. The kernel sandbox catches this for spawned shells; in-process
+ * Read/Write/Edit/Glob/Grep never fork, so the guard must resolve it itself.
+ */
+function classifyAgentsTreePathByRealpath(
+  path: string,
+  homeDir: string,
+): AgentsTreeClassification {
+  return classifyPathUnderRoot(
+    canonicalizeRoot(path),
+    canonicalizeRoot(getAgentsTreeRoot(homeDir)),
+  );
+}
+
+/**
+ * Structural classification of a normalized path relative to a normalized
+ * agents-tree root. Both inputs must already be canonical (forward slashes, no
+ * trailing slash) — the caller decides whether that means lexical or realpath.
+ */
+function classifyPathUnderRoot(
+  normalized: string,
+  root: string,
+): AgentsTreeClassification {
   if (normalized === root) {
     return { kind: "agents-root" };
   }
@@ -498,11 +532,7 @@ export function extractTargetAgentPaths(
   let anyAgentScoped = false;
   const recursive = isRecursivePathTool(toolName);
 
-  const addFromPath = (rawPath: string | null | undefined) => {
-    if (!rawPath || typeof rawPath !== "string") return;
-    const resolvedPath = resolveMemoryTargetPath(rawPath, workingDirectory);
-    if (!resolvedPath) return;
-    const classification = classifyAgentsTreePath(resolvedPath, homeDir);
+  const applyClassification = (classification: AgentsTreeClassification) => {
     switch (classification.kind) {
       case "outside":
         return;
@@ -525,6 +555,20 @@ export function extractTargetAgentPaths(
         agentIds.add(classification.id);
         return;
     }
+  };
+
+  const addFromPath = (rawPath: string | null | undefined) => {
+    if (!rawPath || typeof rawPath !== "string") return;
+    const resolvedPath = resolveMemoryTargetPath(rawPath, workingDirectory);
+    if (!resolvedPath) return;
+    // Lexical classification preserves the existing behavior; the realpath
+    // classification follows symlinks so a link whose real target lands in
+    // another agent's memory can't slip past string matching. The two union
+    // via the shared `agentIds` set — realpath can only add denials.
+    applyClassification(classifyAgentsTreePath(resolvedPath, homeDir));
+    applyClassification(
+      classifyAgentsTreePathByRealpath(resolvedPath, homeDir),
+    );
   };
 
   const canonical = canonicalToolName(toolName);

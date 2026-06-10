@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { homedir } from "node:os";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, parse } from "node:path";
 
 import { checkPermission } from "@/permissions/checker";
@@ -800,5 +808,137 @@ describe("Grep/Glob ancestor-path regression tests", () => {
       "/tmp",
     );
     expect(result).not.toBeNull();
+  });
+});
+
+describe("symlink-escape (realpath classification of in-process file tools)", () => {
+  // Real temp dirs with real symlinks: the realpath classification only has
+  // teeth when the paths actually exist on disk. Each test builds a throwaway
+  // home (~/.letta/agents/<id>/memory) and injects it as the guard's homeDir.
+  const tempHomes: string[] = [];
+
+  function makeTempHome(): string {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "xa-guard-")));
+    tempHomes.push(home);
+    return home;
+  }
+
+  function agentMemory(home: string, id: string, rel = ""): string {
+    return join(home, ".letta", "agents", id, "memory", rel);
+  }
+
+  afterEach(() => {
+    while (tempHomes.length) {
+      rmSync(tempHomes.pop() as string, { recursive: true, force: true });
+    }
+  });
+
+  test("Read through a symlink into another agent's memory is attributed to that agent", () => {
+    const home = makeTempHome();
+    const otherMem = agentMemory(home, "agent-other");
+    mkdirSync(otherMem, { recursive: true });
+    writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
+
+    // A benign-looking symlink in the user's project pointing into other's memory.
+    const projectDir = join(home, "project");
+    mkdirSync(projectDir, { recursive: true });
+    const link = join(projectDir, "link");
+    symlinkSync(otherMem, link);
+
+    const targets = extractTargetAgentPaths(
+      "Read",
+      { file_path: join(link, "secret.md") },
+      projectDir,
+      {},
+      home,
+    );
+
+    expect(targets.anyAgentScoped).toBe(true);
+    expect([...targets.agentIds]).toContain("agent-other");
+  });
+
+  test("Writing a not-yet-existing file through a symlinked dir still resolves to the agent", () => {
+    const home = makeTempHome();
+    const otherMem = agentMemory(home, "agent-other");
+    mkdirSync(otherMem, { recursive: true });
+    const link = join(home, "link-to-other");
+    symlinkSync(otherMem, link);
+
+    const targets = extractTargetAgentPaths(
+      "Write",
+      { file_path: join(link, "implanted.md") }, // leaf does not exist yet
+      home,
+      {},
+      home,
+    );
+
+    expect([...targets.agentIds]).toContain("agent-other");
+  });
+
+  test("a symlink from inside self's own memory into another agent is still caught", () => {
+    const home = makeTempHome();
+    const selfMem = agentMemory(home, "agent-self");
+    const otherMem = agentMemory(home, "agent-other");
+    mkdirSync(selfMem, { recursive: true });
+    mkdirSync(otherMem, { recursive: true });
+    writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
+
+    // The hole that a lexical-only check (or a realpath check skipped when the
+    // lexical path already looks like self) would miss.
+    const sneaky = join(selfMem, "sneaky");
+    symlinkSync(otherMem, sneaky);
+
+    const targets = extractTargetAgentPaths(
+      "Read",
+      { file_path: join(sneaky, "secret.md") },
+      selfMem,
+      {},
+      home,
+    );
+
+    // Lexically this is agent-self (allowed); realpath reveals agent-other.
+    expect([...targets.agentIds]).toContain("agent-self");
+    expect([...targets.agentIds]).toContain("agent-other");
+  });
+
+  test("evaluateCrossAgentGuard denies a symlink escape end-to-end", () => {
+    const home = makeTempHome();
+    const otherMem = agentMemory(home, "agent-other");
+    mkdirSync(otherMem, { recursive: true });
+    writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
+    const link = join(home, "escape");
+    symlinkSync(otherMem, link);
+
+    const result = evaluateCrossAgentGuard(
+      "Read",
+      { file_path: join(link, "secret.md") },
+      home,
+      {
+        env: { HOME: home } as NodeJS.ProcessEnv,
+        currentAgentId: "agent-self",
+        disableMemoryGuard: false,
+      },
+    );
+
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toContain("agent-other");
+  });
+
+  test("a plain (non-symlinked) path outside the tree is not a false positive", () => {
+    const home = makeTempHome();
+    const projectDir = join(home, "project");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, "notes.md"), "hi");
+
+    const targets = extractTargetAgentPaths(
+      "Read",
+      { file_path: join(projectDir, "notes.md") },
+      projectDir,
+      {},
+      home,
+    );
+
+    expect(targets.anyAgentScoped).toBe(false);
+    expect([...targets.agentIds]).toHaveLength(0);
   });
 });
