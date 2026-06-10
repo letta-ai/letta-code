@@ -230,6 +230,8 @@ function main(): void {
     );
   }
 
+  failures += runMemoryModePhase(paths, avail, innerOf);
+
   rmSync(base, { recursive: true, force: true });
 
   console.log("-".repeat(56));
@@ -241,6 +243,99 @@ function main(): void {
     console.log(`\n❌ ${failures} attempt(s) did not behave as expected.\n`);
     process.exit(1);
   }
+}
+
+/**
+ * Memory mode as actually shipped (`buildMemoryModeSandboxPolicy`): restrict
+ * writes to the memory dir, with NO read-deny on the agents tree. Runs with the
+ * cwd set to the memory dir — the realistic memory-subagent cwd, which lives
+ * inside `~/.letta/agents`. Validates write scoping AND that the child env
+ * survives that cwd (a read-deny there would empty it under Seatbelt).
+ */
+function runMemoryModePhase(
+  paths: Paths,
+  avail: { backend: "seatbelt" | "bwrap" | null; bwrapPath?: string },
+  innerOf: (cmd: string) => string[],
+): number {
+  if (!avail.backend) return 0;
+
+  const policy = buildFsSandboxPolicy({
+    writableRoots: [paths.selfMem],
+    restrictWrites: true,
+  });
+
+  interface MemAttempt {
+    id: string;
+    command: string;
+    want: "allowed" | "blocked";
+    /** True when the effect occurred (write landed / env survived). */
+    occurred: (output: string) => boolean;
+  }
+
+  const repoFile = join(paths.work, "repo-write.txt");
+  const selfFile = join(paths.selfMem, "mem-ok.txt");
+  const otherFile = join(paths.otherMem, "mem-pwn.txt");
+
+  const memAttempts: MemAttempt[] = [
+    {
+      id: "env-intact-from-mem-cwd",
+      command: '[ -n "$HOME" ] && echo ENVOK || echo ENVEMPTY',
+      want: "allowed",
+      occurred: (out) => out.includes("ENVOK"),
+    },
+    {
+      id: "write-self-memory",
+      command: `echo ok > ${selfFile}`,
+      want: "allowed",
+      occurred: () => existsSync(selfFile),
+    },
+    {
+      id: "write-repo",
+      command: `echo x > ${repoFile}`,
+      want: "blocked",
+      occurred: () => existsSync(repoFile),
+    },
+    {
+      id: "write-other-memory",
+      command: `echo x > ${otherFile}`,
+      want: "blocked",
+      occurred: () => existsSync(otherFile),
+    },
+  ];
+
+  console.log(`\n${"memory-mode attempt".padEnd(28)}result`);
+  console.log("-".repeat(56));
+
+  let failures = 0;
+  for (const attempt of memAttempts) {
+    for (const f of [repoFile, selfFile, otherFile]) {
+      rmSync(f, { force: true });
+    }
+    const wrapped = wrapLauncher(innerOf(attempt.command), policy, {
+      backend: avail.backend,
+      bwrapPath: avail.bwrapPath,
+    });
+    if (!wrapped) throw new Error("wrapLauncher returned null with a backend");
+    // cwd = the memory dir, inside the agents tree (realistic subagent cwd).
+    const res = runLauncher(wrapped, paths.selfMem);
+
+    const occurred = attempt.occurred(res.output);
+    const pass = attempt.want === "allowed" ? occurred : !occurred;
+    if (!pass) failures++;
+
+    const result =
+      attempt.want === "allowed"
+        ? occurred
+          ? "ok"
+          : "FAILED"
+        : occurred
+          ? "ESCAPED"
+          : "blocked";
+    console.log(
+      `${attempt.id.padEnd(28)}${result.padEnd(16)}${pass ? "PASS" : "FAIL"}`,
+    );
+  }
+  return failures;
 }
 
 function describe(kind: Kind, leak: boolean): string {

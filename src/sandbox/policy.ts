@@ -46,8 +46,8 @@ export type SandboxBackend = "seatbelt" | "bwrap";
 export const SANDBOX_ENV_VAR = "LETTA_SANDBOX";
 
 export interface BuildPolicyOptions {
-  /** Root of the per-agent tree to wall off, e.g. `~/.letta/agents`. */
-  deniedRoots: string[];
+  /** Roots to wall off (read+write), e.g. `~/.letta/agents`. */
+  deniedRoots?: string[];
   /** Paths to re-expose read-only (e.g. a subagent's parent memory dir). */
   readonlyRoots?: string[];
   /** Paths to re-expose read-write (self agent/memory dir, $TMPDIR, /tmp). */
@@ -64,7 +64,7 @@ export function buildFsSandboxPolicy(
   options: BuildPolicyOptions,
 ): FsSandboxPolicy {
   return {
-    deniedRoots: normalizeRoots(options.deniedRoots),
+    deniedRoots: normalizeRoots(options.deniedRoots ?? []),
     readonlyRoots: normalizeRoots(options.readonlyRoots ?? []),
     writableRoots: normalizeRoots(options.writableRoots ?? []),
     restrictWrites: options.restrictWrites ?? false,

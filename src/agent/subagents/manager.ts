@@ -18,6 +18,7 @@ import {
   emitStreamEvent,
   updateSubagent,
 } from "@/agent/subagent-state.js";
+import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
 import {
   type BackendMode,
   getBackend,
@@ -1141,9 +1142,32 @@ async function executeSubagent(
       inheritedChannelContext,
     });
 
-    const proc = spawn(launcher.command, launcher.args, {
+    // Optionally confine memory-mode subagents to an OS filesystem sandbox.
+    // Returns null (spawn unchanged) when disabled, not applicable, or no
+    // backend is available on this host.
+    const sandbox = wrapSubagentLauncher({
+      launcher,
+      permissionMode: config.permissionMode,
+      backendMode,
+      memoryRoots: inheritedMemoryRoots.roots,
+      inheritedPrimaryRoot,
+    });
+    const spawnLauncher = sandbox
+      ? { command: sandbox.command, args: sandbox.args }
+      : launcher;
+    const spawnEnv = sandbox
+      ? { ...childEnv, ...sandbox.sandboxEnv }
+      : childEnv;
+    if (sandbox) {
+      debugLog(
+        "subagent",
+        `memory-mode child sandboxed via ${sandbox.backend}`,
+      );
+    }
+
+    const proc = spawn(spawnLauncher.command, spawnLauncher.args, {
       cwd: subagentWorkingDirectory,
-      env: childEnv,
+      env: spawnEnv,
     });
     proc.stdin.on("error", () => {});
     proc.stdin.end(boundedUserPrompt);
