@@ -35,6 +35,7 @@ import type {
   CronListCommand,
   CronRunsCommand,
   CronTriggerCommand,
+  CronUpdateCommand,
   DeleteMemoryFileCommand,
   DisconnectProviderCommand,
   EditFileCommand,
@@ -888,6 +889,41 @@ export function isCronTriggerCommand(
     c.type === "cron_trigger" &&
     typeof c.request_id === "string" &&
     typeof c.task_id === "string"
+  );
+}
+
+export function isCronUpdateCommand(
+  value: unknown,
+): value is CronUpdateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    task_id?: unknown;
+    name?: unknown;
+    description?: unknown;
+    conversation_id?: unknown;
+    cron?: unknown;
+    timezone?: unknown;
+    recurring?: unknown;
+    prompt?: unknown;
+    scheduled_for?: unknown;
+  };
+  return (
+    c.type === "cron_update" &&
+    typeof c.request_id === "string" &&
+    typeof c.task_id === "string" &&
+    (c.name === undefined || typeof c.name === "string") &&
+    (c.description === undefined || typeof c.description === "string") &&
+    (c.conversation_id === undefined ||
+      typeof c.conversation_id === "string") &&
+    (c.cron === undefined || typeof c.cron === "string") &&
+    (c.timezone === undefined || typeof c.timezone === "string") &&
+    (c.recurring === undefined || typeof c.recurring === "boolean") &&
+    (c.prompt === undefined || typeof c.prompt === "string") &&
+    (c.scheduled_for === undefined ||
+      c.scheduled_for === null ||
+      typeof c.scheduled_for === "string")
   );
 }
 
@@ -1764,6 +1800,7 @@ export function parseServerMessage(
       isCronGetCommand(parsed) ||
       isCronRunsCommand(parsed) ||
       isCronTriggerCommand(parsed) ||
+      isCronUpdateCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||

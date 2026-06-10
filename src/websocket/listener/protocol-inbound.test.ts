@@ -3,7 +3,22 @@ import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
+  parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
+
+describe("app-server protocol hard cut", () => {
+  test.each([
+    "request_state",
+    "change_cwd",
+    "cancel_run",
+    "recover_pending_approvals",
+    "change_mode",
+    "message",
+  ])("rejects legacy command %s", (type) => {
+    const parsed = parseServerMessage(Buffer.from(JSON.stringify({ type })));
+    expect(parsed).toBeNull();
+  });
+});
 
 describe("discord protocol-inbound validators", () => {
   test("valid discord account create passes", () => {
