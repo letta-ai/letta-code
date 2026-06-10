@@ -245,6 +245,71 @@ describe("PiStreamAdapter", () => {
     expect(events.some((event) => event.type === "local-message")).toBe(true);
   });
 
+  test("falls back to transient retry when oversized-payload compaction fails", async () => {
+    let providerCalls = 0;
+    const stream: PiStreamFunction = () => {
+      providerCalls += 1;
+      if (providerCalls === 1) {
+        const error = assistantErrorMessage(
+          "WebSocket closed 1006 Connection ended\nretry-after-ms: 0",
+        );
+        return streamFromEvents(
+          [{ type: "error", reason: "error", error }],
+          error,
+        );
+      }
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({
+      stream,
+      onContextWindowOverflow: async () => {
+        // Simulates a summarizer failure (for example the summarization model
+        // call being rejected by the provider).
+        throw new Error("Local compaction failed");
+      },
+    });
+    const baseInput = input();
+    const events = await collectEvents(
+      adapter.stream({
+        ...baseInput,
+        uiMessages: [
+          {
+            id: "ui-msg-large-image",
+            role: "user",
+            content: [
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: "a".repeat(8_000_001),
+              },
+            ],
+            timestamp: Date.now(),
+          },
+        ],
+      }),
+    );
+
+    // The retryable transport error must win over the compaction failure:
+    // the turn retries and completes instead of surfacing the summarizer
+    // error as a non-retryable run failure.
+    expect(providerCalls).toBe(2);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "letta-chunk",
+        chunk: expect.objectContaining({
+          message_type: "event_message",
+          event_type: "retry",
+        }),
+      }),
+    );
+    expect(events.some((event) => event.type === "local-message")).toBe(true);
+  });
+
   test("removes OpenAI Responses replay item IDs before provider submission", async () => {
     let sanitizedPayload: unknown;
     const stream: PiStreamFunction = (

@@ -1,4 +1,4 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getModel, getModels } from "@earendil-works/pi-ai";
 import {
   getOAuthProvider,
@@ -14,6 +14,7 @@ import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { isRecord } from "@/utils/type-guards";
 import {
   getRegisteredPiProvider,
   type PiProviderModelRegistration,
@@ -49,6 +50,44 @@ export function isUnselectedLocalModelHandle(model: unknown): boolean {
     model === "auto" ||
     model === UNSELECTED_LOCAL_MODEL_HANDLE ||
     model.startsWith("letta/")
+  );
+}
+
+function settingString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
+  const effort = settingString(value);
+  if (effort === "max") return "xhigh";
+  return effort === "minimal" ||
+    effort === "low" ||
+    effort === "medium" ||
+    effort === "high" ||
+    effort === "xhigh"
+    ? effort
+    : undefined;
+}
+
+// Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
+// call against a reasoning-capable model must pass this when available:
+// pi-ai sends `thinking: {type: "disabled"}` for reasoning models when
+// `options.reasoning` is absent, and adaptive-thinking models (for example
+// claude-fable-5) reject that with a 400 invalid_request_error.
+export function reasoningForSettings(
+  modelSettings: Record<string, unknown>,
+): ThinkingLevel | undefined {
+  const thinking = isRecord(modelSettings.thinking)
+    ? modelSettings.thinking
+    : undefined;
+  if (thinking?.type === "disabled") return undefined;
+  const nestedReasoning = isRecord(modelSettings.reasoning)
+    ? modelSettings.reasoning
+    : undefined;
+  return (
+    thinkingLevelSetting(nestedReasoning?.reasoning_effort) ??
+    thinkingLevelSetting(modelSettings.effort) ??
+    thinkingLevelSetting(modelSettings.reasoning_effort)
   );
 }
 

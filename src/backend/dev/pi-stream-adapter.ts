@@ -8,7 +8,6 @@ import {
   type SimpleStreamOptions,
   stream,
   streamSimple,
-  type ThinkingLevel,
   type Tool,
   type TSchema,
   Type,
@@ -32,6 +31,7 @@ import {
 } from "./local-provider-errors";
 import {
   applyPiEnvOverrides,
+  reasoningForSettings,
   resolvePiModelForAgent,
 } from "./pi-model-factory";
 import type {
@@ -363,35 +363,6 @@ function boolValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
-function thinkingLevel(value: unknown): ThinkingLevel | undefined {
-  const effort = stringValue(value);
-  if (effort === "max") return "xhigh";
-  return effort === "minimal" ||
-    effort === "low" ||
-    effort === "medium" ||
-    effort === "high" ||
-    effort === "xhigh"
-    ? effort
-    : undefined;
-}
-
-function reasoningForSettings(
-  modelSettings: Record<string, unknown>,
-): ThinkingLevel | undefined {
-  const thinking = isRecord(modelSettings.thinking)
-    ? modelSettings.thinking
-    : undefined;
-  if (thinking?.type === "disabled") return undefined;
-  const nestedReasoning = isRecord(modelSettings.reasoning)
-    ? modelSettings.reasoning
-    : undefined;
-  return (
-    thinkingLevel(nestedReasoning?.reasoning_effort) ??
-    thinkingLevel(modelSettings.effort) ??
-    thinkingLevel(modelSettings.reasoning_effort)
-  );
-}
-
 function anthropicEffortForSettings(
   modelSettings: Record<string, unknown>,
 ): string | undefined {
@@ -706,10 +677,19 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           contextOverflowCompactions < LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS &&
           isOversizedPayloadTransportFailure(activeInput)
         ) {
-          const compaction = await this.onContextWindowOverflow(
-            activeInput,
-            error,
-          );
+          // Unlike the provider-reported overflow branch above, the original
+          // error here is retryable. If compaction itself fails (for example
+          // the summarizer model call errors), fall back to the normal
+          // transient retry path instead of replacing a retryable transport
+          // error with a non-retryable compaction error.
+          let compaction: Awaited<
+            ReturnType<NonNullable<typeof this.onContextWindowOverflow>>
+          > = null;
+          try {
+            compaction = await this.onContextWindowOverflow(activeInput, error);
+          } catch {
+            compaction = null;
+          }
           if (compaction) {
             contextOverflowCompactions += 1;
             activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
