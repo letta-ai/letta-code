@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 
+import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
 import {
   isFsSandboxEnabled,
-  wrapSubagentLauncher,
-} from "@/agent/subagents/sandbox";
-import type { SandboxAvailability } from "@/sandbox/availability";
+  type SandboxAvailability,
+} from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import { SANDBOX_EXEC_PATH } from "@/sandbox/seatbelt";
 

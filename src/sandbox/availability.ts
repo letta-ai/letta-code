@@ -48,6 +48,18 @@ export function resetSandboxAvailabilityCache(): void {
   cached = null;
 }
 
+/**
+ * Whether filesystem sandboxing is opted in via the `LETTA_FS_SANDBOX` flag.
+ * Lives in this leaf so both subagent spawning (agent layer) and parent Bash
+ * wrapping (tools layer) gate on the same check without importing each other.
+ */
+export function isFsSandboxEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const value = env.LETTA_FS_SANDBOX?.trim().toLowerCase();
+  return value === "1" || value === "true";
+}
+
 function probe(platform: NodeJS.Platform): SandboxAvailability {
   if (platform === "darwin") {
     if (existsSync(SANDBOX_EXEC_PATH)) {

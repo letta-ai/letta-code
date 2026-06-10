@@ -101,3 +101,42 @@ export function buildMemoryModeSandboxPolicy(
     restrictWrites: true,
   });
 }
+
+export interface CrossAgentSandboxInput {
+  /**
+   * Directories the agent may freely read+write inside the walled-off agents
+   * tree — typically its own agent directory (`~/.letta/agents/<self-id>`).
+   */
+  selfRoots: string[];
+  /** The agents tree to wall off (read+write). Defaults to `~/.letta/agents`. */
+  agentsTreeRoot?: string;
+}
+
+/**
+ * Policy for a normal agent that may use the whole filesystem but must not read
+ * or write *other* agents' memory. This is the kernel-enforced replacement for
+ * the static cross-agent guard.
+ *
+ * Walls off the agents tree (read + write) and carves the agent's own directory
+ * back out. Writes elsewhere — the repo, the home dir, temp — stay allowed
+ * (`restrictWrites: false`): the only thing this policy removes is access to
+ * other agents' memory, exactly like the guard it replaces.
+ *
+ * Unlike the memory-mode policy, this one DOES deny reads of the agents tree.
+ * That is only safe when the process cwd is outside the tree (the parent
+ * agent's cwd is the repo); a cwd inside a read-denied subtree launches with an
+ * empty environment under Seatbelt. Callers must enforce that precondition.
+ */
+export function buildCrossAgentSandboxPolicy(
+  input: CrossAgentSandboxInput,
+): FsSandboxPolicy {
+  const agentsTreeRoot = input.agentsTreeRoot
+    ? canonicalizeRoot(input.agentsTreeRoot)
+    : getDefaultAgentsTreeRoot();
+
+  return buildFsSandboxPolicy({
+    deniedRoots: [agentsTreeRoot],
+    writableRoots: input.selfRoots.map(canonicalizeRoot),
+    restrictWrites: false,
+  });
+}

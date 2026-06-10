@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  buildCrossAgentSandboxPolicy,
   buildMemoryModeSandboxPolicy,
   canonicalizeRoot,
   getDefaultAgentsTreeRoot,
@@ -90,4 +91,30 @@ test("memory-mode policy folds in extra writable roots and TMPDIR", () => {
   });
 
   expect(policy.writableRoots).toContain(extra);
+});
+
+test("cross-agent policy denies the agents tree and carves out self", () => {
+  const home = makeTempDir();
+  const agentsTree = join(home, ".letta", "agents");
+  const selfDir = join(agentsTree, "self");
+  mkdirSync(selfDir, { recursive: true });
+
+  const policy = buildCrossAgentSandboxPolicy({
+    selfRoots: [selfDir],
+    agentsTreeRoot: agentsTree,
+  });
+
+  // Default-allow writes (the repo/home stay writable); only the agents tree
+  // is walled off, with self carved back out.
+  expect(policy.restrictWrites).toBe(false);
+  expect(policy.deniedRoots).toEqual([agentsTree]);
+  expect(policy.writableRoots).toEqual([selfDir]);
+});
+
+test("cross-agent policy defaults the agents tree to ~/.letta/agents", () => {
+  const policy = buildCrossAgentSandboxPolicy({
+    selfRoots: [canonicalizeRoot("/tmp")],
+  });
+
+  expect(policy.deniedRoots).toEqual([getDefaultAgentsTreeRoot()]);
 });

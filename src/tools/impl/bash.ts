@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
+import { applyBashSandbox } from "./bash-sandbox.js";
 import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
@@ -90,9 +91,16 @@ export async function spawnCommand(
   if (process.platform !== "win32") {
     // On macOS, prefer zsh due to bash 3.2's HEREDOC bug with apostrophes
     const executable = process.platform === "darwin" ? "/bin/zsh" : "bash";
-    return spawnWithLauncher([executable, "-c", commandToRun], {
+    const innerLauncher = [executable, "-c", commandToRun];
+    const sandboxed = applyBashSandbox(innerLauncher, options.cwd, env);
+    if (sandboxed.backend) {
+      // The sandbox wrapper hides the inner shell from launcher inspection;
+      // note the unwrapped launcher so `git worktree add` ownership resolves.
+      noteExpectedWorktreeForLauncher(innerLauncher, options.cwd);
+    }
+    return spawnWithLauncher(sandboxed.launcher, {
       cwd: options.cwd,
-      env,
+      env: sandboxed.env,
       timeoutMs: options.timeout,
       signal: options.signal,
       onOutput: options.onOutput,
@@ -235,18 +243,22 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     const bashId = getNextBashId();
     const outputFile = createBackgroundOutputFile(bashId);
     const launcher = getBackgroundLauncher(bgCommand, bgEnv, secretEnv);
-    const [executable, ...launcherArgs] = launcher;
+    const [executable] = launcher;
     if (!executable) {
       return {
         content: [{ type: "text", text: "No shell available" }],
         status: "error",
       };
     }
+    // Note the unwrapped launcher first; the sandbox wrapper (below) hides the
+    // inner shell from launcher inspection.
     noteExpectedWorktreeForLauncher(launcher, userCwd);
-    const childProcess = spawn(executable, launcherArgs, {
+    const sandboxed = applyBashSandbox(launcher, userCwd, bgEnv);
+    const [bgExecutable, ...bgLauncherArgs] = sandboxed.launcher;
+    const childProcess = spawn(bgExecutable ?? executable, bgLauncherArgs, {
       shell: false,
       cwd: userCwd,
-      env: bgEnv,
+      env: sandboxed.env,
     });
     backgroundProcesses.set(bashId, {
       process: childProcess,

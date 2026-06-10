@@ -1,6 +1,7 @@
 import { buildMemoryModeSandboxPolicy } from "@/permissions/sandbox-policy";
 import {
   detectSandboxBackend,
+  isFsSandboxEnabled,
   type SandboxAvailability,
 } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR, type SandboxBackend } from "@/sandbox/policy";
@@ -47,14 +48,6 @@ export interface WrapSubagentLauncherResult {
   /** Env additions to merge into the child env (the sandbox sentinel). */
   sandboxEnv: Record<string, string>;
   backend: SandboxBackend;
-}
-
-/** Whether filesystem sandboxing is opted in via env flag. */
-export function isFsSandboxEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  const value = env.LETTA_FS_SANDBOX?.trim().toLowerCase();
-  return value === "1" || value === "true";
 }
 
 /**
