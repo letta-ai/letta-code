@@ -94,7 +94,13 @@ export interface MemoryModeSandboxInput {
    * `MEMORY_DIR` plus its `memory-worktrees` sibling.
    */
   memoryRoots: string[];
-  /** Additional writable roots (e.g. a backend storage dir). */
+  /**
+   * Additional writable roots folded in alongside the memory roots. The local
+   * backend passes its harness-persistence dirs here (conversation state,
+   * agent-state, provider auth) so its in-process subagent child can persist
+   * normally even though writes are otherwise scoped to memory — the API backend
+   * persists those server-side and needs none.
+   */
   extraWritableRoots?: string[];
   /**
    * The agents tree to wall off + carve self out of. Defaults to
@@ -108,16 +114,6 @@ export interface MemoryModeSandboxInput {
    * already-resolved path rather than branching on a backend it cannot import.
    */
   agentsTreeRoot?: string;
-  /**
-   * When true (default — API/cloud), writes are denied everywhere except the
-   * memory roots, matching the static memory contract. The local backend passes
-   * `false`: its subagent child runs the backend in-process and persists its own
-   * conversation + agent-state to disk *outside* the memfs tree, so a
-   * write-restriction would trap it. The cross-agent read-deny (walling off the
-   * tree, carving self) holds either way — that is the property this policy
-   * exists to enforce.
-   */
-  restrictWrites?: boolean;
 }
 
 /**
@@ -138,14 +134,17 @@ export interface MemoryModeSandboxInput {
  * cwd is its memory dir inside the agents tree, and under Seatbelt a child
  * launches with an EMPTY environment if a cwd *ancestor* is read-denied. With
  * the agent dir (the cwd's immediate parent) readable, process init can
- * traverse to the cwd and the env survives. Under `restrictWrites:true` (the
- * default) writes stay scoped to `/memory` because the readonly carve only
+ * traverse to the cwd and the env survives. Writes always stay scoped to
+ * `writableRoots` (`restrictWrites:true`) because the readonly carve only
  * re-allows reads (validated on darwin).
  *
- * The tree and the write-restriction are both parameterized so this one builder
- * serves both backends: API/cloud uses the default `~/.letta/agents` tree with
- * `restrictWrites:true`; the local backend passes its `lc-local-backend/memfs`
- * tree with `restrictWrites:false` (a deny-list — see {@link MemoryModeSandboxInput.restrictWrites}).
+ * The tree is parameterized so this one builder serves both backends with the
+ * SAME write-scoping property: API/cloud uses the default `~/.letta/agents` tree
+ * and writes only to memory (its conversation/state persistence is server-side);
+ * the local backend passes its `lc-local-backend/memfs` tree plus its harness
+ * persistence dirs via `extraWritableRoots` (it persists those on disk). Either
+ * way the agent's non-deterministic work can write only memory — not the repo,
+ * home, or temp.
  */
 export function buildMemoryModeSandboxPolicy(
   input: MemoryModeSandboxInput,
@@ -154,7 +153,8 @@ export function buildMemoryModeSandboxPolicy(
     ? canonicalizeRoot(input.agentsTreeRoot)
     : getDefaultAgentsTreeRoot();
 
-  // Writes are scoped to the memory roots only — deliberately NOT a temp dir.
+  // Writes are scoped to the memory roots (plus any explicit extra roots, e.g.
+  // the local backend's harness persistence dirs) — deliberately NOT a temp dir.
   // Memory mode's static enforcement (`isScopedMemoryShellCommand`) only ever
   // allowed writes inside the memory tree, so the kernel policy must match that
   // contract rather than widen it. A temp carve also has a Linux-specific
@@ -170,7 +170,7 @@ export function buildMemoryModeSandboxPolicy(
     deniedRoots: [agentsTreeRoot],
     readonlyRoots: deriveSelfAgentRoots(input.memoryRoots, agentsTreeRoot),
     writableRoots,
-    restrictWrites: input.restrictWrites ?? true,
+    restrictWrites: true,
   });
 }
 

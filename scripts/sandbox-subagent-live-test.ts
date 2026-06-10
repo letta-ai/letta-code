@@ -80,7 +80,7 @@ assert(
   }) === null,
 );
 assert(
-  "local backend → wrapped (deny-list against the memfs tree)",
+  "local backend → wrapped (write-scoped against the memfs tree)",
   wrapSubagentLauncher({
     ...baseInput,
     permissionMode: "memory",

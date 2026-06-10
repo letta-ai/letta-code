@@ -1,4 +1,7 @@
-import { getLocalBackendCrossAgentTreeRoot } from "@/backend/local/paths";
+import {
+  getLocalBackendCrossAgentTreeRoot,
+  getLocalBackendHarnessWritableRoots,
+} from "@/backend/local/paths";
 import { buildMemoryModeSandboxPolicy } from "@/permissions/sandbox-policy";
 import {
   detectSandboxBackend,
@@ -7,6 +10,7 @@ import {
 } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR, type SandboxBackend } from "@/sandbox/policy";
 import { wrapLauncher } from "@/sandbox/wrap";
+import { getTranscriptRoot } from "@/utils/transcript-paths";
 
 /**
  * Applies an OS-level filesystem sandbox to a subagent child process at spawn.
@@ -19,16 +23,15 @@ import { wrapLauncher } from "@/sandbox/wrap";
  *
  * Gated behind `LETTA_FS_SANDBOX=1` while the per-host bring-up is validated.
  *
- * Both backends are covered, with different write postures:
- *   - API/cloud: `restrictWrites:true` — writes scoped to the memory dir (the
- *     child's conversation/state persistence is server-side, nothing local to
- *     trap).
- *   - Local: `restrictWrites:false` (a deny-list) against the `lc-local-backend/memfs`
- *     tree. The child runs the backend in-process and persists its own
- *     conversation + agent-state to disk *outside* `memfs`, so write-restriction
- *     would trap it. The cross-agent read-deny — another agent's memory is read-
- *     and write-blocked — still holds; only the "writes confined to memory"
- *     blast-radius nicety is dropped (tracked as a follow-up).
+ * Both backends write-scope the agent's work to memory (`restrictWrites:true`):
+ * a memory subagent may write its memory but not the repo, home, or temp.
+ *   - API/cloud: walls off `~/.letta/agents`; conversation/state persistence is
+ *     server-side, so only memory (+ the transcript root) is writable.
+ *   - Local: walls off `lc-local-backend/memfs` and additionally carves the
+ *     backend's on-disk harness dirs (conversations/agents/providers) writable —
+ *     the child runs the backend in-process and persists there, so without the
+ *     carve write-scoping would trap it. Cross-agent memory stays read- and
+ *     write-denied on both.
  */
 
 interface SubagentLauncher {
@@ -92,18 +95,23 @@ export function wrapSubagentLauncher(
   const availability = input.availability ?? detectSandboxBackend();
   if (!availability.backend) return null;
 
-  // Local backend: deny-list against the memfs tree (restrictWrites:false) so
-  // the in-process child can still persist its conversation/agent-state outside
-  // memfs. API/cloud: default tree + write-scoping (restrictWrites:true).
+  // Writes are scoped to memory on both backends. Carve the harness-metadata
+  // paths the child legitimately persists so write-scoping doesn't trap it: the
+  // transcript root (both backends, written via the headless loop) and, on
+  // local, the on-disk conversation/agent-state/auth dirs the in-process backend
+  // writes (the API backend persists those server-side).
   const isLocal = input.backendMode === "local";
+  const storageDir = input.localBackendStorageDir ?? undefined;
+  const extraWritableRoots = [
+    getTranscriptRoot(),
+    ...(isLocal ? getLocalBackendHarnessWritableRoots(storageDir) : []),
+  ];
   const policy = buildMemoryModeSandboxPolicy({
     memoryRoots: writableMemoryRoots,
     agentsTreeRoot: isLocal
-      ? getLocalBackendCrossAgentTreeRoot(
-          input.localBackendStorageDir ?? undefined,
-        )
+      ? getLocalBackendCrossAgentTreeRoot(storageDir)
       : undefined,
-    restrictWrites: !isLocal,
+    extraWritableRoots,
   });
 
   const wrapped = wrapLauncher(

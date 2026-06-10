@@ -98,40 +98,49 @@ test("memory-mode policy folds in extra writable roots but not temp dirs", () =>
   expect(policy.writableRoots).not.toContain(canonicalizeRoot("/tmp"));
 });
 
-test("memory-mode policy (local backend): custom tree + restrictWrites:false deny-list", () => {
+test("memory-mode policy (local backend): custom tree + harness writable carves, still write-scoped", () => {
   // The local backend walls off `lc-local-backend/memfs` (not ~/.letta/agents)
-  // and uses a deny-list (restrictWrites:false) so the in-process child can
-  // still persist conversation/agent-state OUTSIDE the tree. Cross-agent
-  // read-deny + self carve must still hold.
+  // and stays write-scoped (restrictWrites:true) like cloud — but carves the
+  // harness persistence dirs (outside memfs) so the in-process child isn't
+  // trapped. Cross-agent read-deny + self carve must still hold.
   const home = makeTempDir();
-  const memfsTree = join(home, ".letta", "lc-local-backend", "memfs");
+  const storage = join(home, ".letta", "lc-local-backend");
+  const memfsTree = join(storage, "memfs");
   const selfAgentDir = join(memfsTree, "agent-self");
   const memoryRoot = join(selfAgentDir, "memory");
   mkdirSync(memoryRoot, { recursive: true });
+  const harness = [
+    join(storage, "conversations"),
+    join(storage, "agents"),
+    join(storage, "providers"),
+  ];
 
   const policy = buildMemoryModeSandboxPolicy({
     memoryRoots: [memoryRoot],
     agentsTreeRoot: memfsTree,
-    restrictWrites: false,
+    extraWritableRoots: harness,
   });
 
-  // Deny-list: writes allowed by default (so conv/state outside memfs persist).
-  expect(policy.restrictWrites).toBe(false);
+  // Write-scoped like cloud — the agent's work can't escape to repo/home/temp.
+  expect(policy.restrictWrites).toBe(true);
   // The memfs tree is walled off (read+write) — NOT ~/.letta/agents.
   expect(policy.deniedRoots).toEqual([canonicalizeRoot(memfsTree)]);
-  // Self agent dir carved readonly (env survival + own reads); self memory
-  // carved writable (the subagent edits its own memory).
+  // Self agent dir carved readonly (env survival + own reads).
   expect(policy.readonlyRoots).toEqual([canonicalizeRoot(selfAgentDir)]);
-  expect(policy.writableRoots).toEqual([canonicalizeRoot(memoryRoot)]);
+  // Self memory writable, plus the harness dirs (so persistence isn't trapped).
+  expect(policy.writableRoots).toEqual([
+    canonicalizeRoot(memoryRoot),
+    ...harness.map(canonicalizeRoot),
+  ]);
 });
 
-test("memory-mode policy: restrictWrites and tree default to the API/cloud shape", () => {
+test("memory-mode policy: tree defaults to ~/.letta/agents with write-scoping on", () => {
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-default");
   const memoryRoot = join(agentDir, "memory");
 
   const policy = buildMemoryModeSandboxPolicy({ memoryRoots: [memoryRoot] });
 
-  // Omitting both params preserves the original API behavior exactly.
+  // Omitting agentsTreeRoot preserves the original API behavior exactly.
   expect(policy.restrictWrites).toBe(true);
   expect(policy.deniedRoots).toEqual([getDefaultAgentsTreeRoot()]);
 });

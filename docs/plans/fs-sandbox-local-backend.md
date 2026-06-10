@@ -8,15 +8,20 @@ OFF. This plan extends the sandbox from **API/cloud-backend** agents to
 
 ## Status
 
-**Cross-agent read-deny — DONE on both surfaces (v1, deny-list shape).** Shipped:
+**Cross-agent read-deny + write-scoping parity — DONE on both surfaces.**
+Subagents are write-scoped (`restrictWrites:true`, matching API) with the harness
+persistence dirs carved writable; parent shells get cross-agent isolation against
+the local `memfs` tree. Shipped:
 
 - **L1** — `buildMemoryModeSandboxPolicy` parameterized with `agentsTreeRoot?` +
-  `restrictWrites?` (defaults preserve cloud behavior exactly).
+  the `agentsTreeRoot` (defaults preserve cloud behavior exactly).
 - **L2** — parent shells wall off the local `memfs` tree when
   `isLocalBackendEnvEnabled(env)` (`shell-sandbox.ts`), resolved *after* the gate
   so the sandbox-off hot path does no fs work.
 - **L3** — `wrapSubagentLauncher` no longer skips local; it builds the memory-mode
-  policy against the `memfs` tree with `restrictWrites:false`.
+  policy against the `memfs` tree with `restrictWrites:true` (write-scoped) and
+  carves the harness persistence dirs (`getLocalBackendHarnessWritableRoots()` +
+  `getTranscriptRoot()`) via `extraWritableRoots` so the child isn't trapped.
 - The backend→tree branching is single-sourced in
   `getLocalBackendCrossAgentTreeRoot()` (`backend/local/paths.ts`); the builders
   stay in `permissions/` and take a resolved path (they cannot import `backend/`).
@@ -24,10 +29,11 @@ OFF. This plan extends the sandbox from **API/cloud-backend** agents to
   always the repo (outside both trees), so its default-tree empty-env check stays
   correct. Kept the diff minimal.
 
-Validated: 26 unit tests, full `bun run check`, and `sandbox-local-backend-live-test.ts`
+Validated: unit tests, full `bun run check`, and `sandbox-local-backend-live-test.ts`
 on Seatbelt (both surfaces — other-agent memory read+write denied, self memory
-works, env survives cwd-in-tree, harness artifacts outside `memfs` still persist).
-**Remaining:** write-scoping parity (Phase 3, below) and the Linux/bwrap host run.
+works, env survives cwd-in-tree, repo/`/tmp` writes denied for subagents, harness
+dirs still persist).
+**Remaining:** the Linux/bwrap host run, and a real local turn (L5).
 
 ---
 
@@ -124,21 +130,24 @@ restrictWrites:false                            // only the tree is walled off
 Parent process persistence (conversations/agents) happens in the *unsandboxed
 parent process*, not in the wrapped shell, so it's unaffected.
 
-**Subagents (local memory-mode), v1 = deny-list, `restrictWrites:false`** —
-avoids the write-trap. The child's cwd is `memfs/<self>/memory` (inside the
-denied tree), so it needs the agent-dir readonly carve for env survival
-(identical to the API empty-env fix):
+**Subagents (local memory-mode), `restrictWrites:true` + harness carves** (the
+SHIPPED shape — supersedes the original `restrictWrites:false` deny-list). The
+child's cwd is `memfs/<self>/memory` (inside the denied tree), so it needs the
+agent-dir readonly carve for env survival (identical to the API empty-env fix):
 ```
 deniedRoots:  [lc-local-backend/memfs]
-readonlyRoots:[lc-local-backend/memfs/<self>]   // traversal + env survival + own reads
-writableRoots:[lc-local-backend/memfs/<self>/memory, tmp]
-restrictWrites:false                            // child may persist conv/state freely
+readonlyRoots:[lc-local-backend/memfs/<self>]              // traversal + env survival + own reads
+writableRoots:[lc-local-backend/memfs/<self>/memory,       // self memory
+               lc-local-backend/{conversations,agents,providers},  // harness persistence
+               ~/.letta/transcripts]                       // harness metadata
+restrictWrites:true                                        // agent work scoped to memory
 ```
-This delivers the **primary** goal — another agent's memory is read- and
-write-denied — while letting the child persist normally. The property it does
-**not** deliver (vs API memory-mode) is "writes scoped to the memory dir":
-under `restrictWrites:false` the child could write the repo/home. That's a
-blast-radius nicety, not cross-agent isolation; see Phase 3.
+This delivers BOTH the cross-agent read-deny (another agent's memory is read- and
+write-denied) AND write-scoping parity with API: the agent's non-deterministic
+work can write only memory, not the repo/home/temp. The harness paths the child
+legitimately persists (its conversation/agent-state/auth on disk, and its
+transcript) are carved writable so write-scoping doesn't trap it — honoring the
+rule that the write policy governs the agent's work, not harness artifacts.
 
 ---
 
@@ -153,7 +162,8 @@ policy, and asserts: env intact, repo+tmp+`lc-local-backend` writes succeed,
 shell runs. Establishes the floor.
 
 ### L1 — Backend-aware tree primitive ✅ DONE
-- Added `agentsTreeRoot?` + `restrictWrites?` to `buildMemoryModeSandboxPolicy`.
+- Added `agentsTreeRoot?` to `buildMemoryModeSandboxPolicy` (a `restrictWrites?`
+  param was added then removed once parity landed — both backends restrict).
 - **Did NOT** add `treeRoot` to `willSandboxParentShell` — unnecessary (parent cwd
   is the repo, outside both trees; the default-tree check is correct either way).
 - The helper is `getLocalBackendCrossAgentTreeRoot()` in `backend/local/paths.ts`
@@ -171,14 +181,16 @@ shell runs. Establishes the floor.
 
 ### L3 — Subagents on local ✅ DONE
 - Removed the `if (input.backendMode === "local") return null;` short-circuit.
-  Local now builds the memory-mode policy against the `memfs` tree with
-  `restrictWrites:false` (deny-list); API keeps `restrictWrites:true`.
+  Local builds the memory-mode policy against the `memfs` tree with
+  `restrictWrites:true` (write-scoped, same as API) and carves the harness
+  persistence dirs via `extraWritableRoots` so the in-process child isn't
+  trapped (see Phase 3 below).
 - `wrapSubagentLauncher` gained `localBackendStorageDir?`; `manager.ts` forwards
   the value it already computes.
 - Live-validated in `sandbox-local-backend-live-test.ts` (subagent surface): env
   survives, self memory read+write OK, **other agent memory read+write DENIED**,
-  and conversation/agent-state/providers writes **outside** `memfs` **succeed**
-  (proving the child isn't trapped).
+  **repo + /tmp writes DENIED** (write-scoping), and conversation/agent-state/
+  providers/transcript writes **succeed** (child not trapped).
 
 ### L4 — Guard coordination + flag-off invariants
 - Confirm the static guard still no-ops correctly for local (it keys on
@@ -197,20 +209,29 @@ of the deferred API `REAL_TURN` check.
 
 ---
 
-## Out of scope for v1 (call out explicitly, don't silently skip)
+## Phase 3 — Write-scoping parity ✅ DONE
 
-- **Write-scoping parity (`restrictWrites:true`) for local subagents** — would
-  match API's "writes only to memory" property but requires carving the self
-  conversation + agent-state paths so persistence isn't trapped. The agent-state
-  file is tractable (`agents/<enc-id>.json`); the conversation dir is **not**
-  (named by conversation key, not agent id, and possibly created mid-run). Track
-  as Phase 3; needs plumbing the child's conversation key to spawn time, or an
-  ephemeral/no-persist subagent mode.
+Local subagents now run `restrictWrites:true`, matching API's "writes only to
+memory" property: the agent's non-deterministic work can write its memory but not
+the repo/home/temp. The trap is avoided NOT by per-conversation carving (the
+conversation dir is keyed by conversation key, unknown at spawn) but by carving
+the **parent** harness dirs writable: `lc-local-backend/{conversations,agents,providers}`
++ `~/.letta/transcripts` (via `getLocalBackendHarnessWritableRoots()` +
+`getTranscriptRoot()`, fed through `extraWritableRoots`). This is strictly tighter
+than the deny-list it replaced — those dirs were writable there too, plus the
+repo/home/temp. The transcript carve also lands on API (harness metadata is
+client-side on both).
+
+## Out of scope (call out explicitly, don't silently skip)
+
 - **Cross-agent conversation / agent-state isolation** — a *new* exposure on
   local backend that doesn't exist on API (where conversations are server-side).
-  Memory is isolated; conversation/state reads of other agents are not, because
-  there's no per-agent path prefix for conversations. Genuinely harder; separate
-  investigation.
+  Memory is isolated; conversation/state reads (and, since the harness carve,
+  writes) of other agents are not, because there's no per-agent path prefix for
+  conversations. Genuinely harder; separate investigation.
+- **Real local turn (L5)** — the synthetic live test proves the policy shape; a
+  real local-backend turn with a reflection subagent (spends tokens, needs
+  sign-off) is still needed to confirm the harness write-set is complete.
 
 ## Risks / gotchas
 

@@ -29,6 +29,7 @@ import {
 } from "@/backend/local/paths";
 import { detectSandboxBackend } from "@/sandbox/availability";
 import { applyParentShellSandbox } from "@/tools/impl/shell-sandbox";
+import { getTranscriptRoot } from "@/utils/transcript-paths";
 
 const home = realpathSync(homedir());
 if (!home.startsWith("/private/") && !home.startsWith("/tmp")) {
@@ -50,7 +51,11 @@ const otherMem = join(memfs, "agent-other", "memory");
 const convDir = join(storage, "conversations");
 const stateDir = join(storage, "agents");
 const providersDir = join(storage, "providers");
-for (const d of [selfMem, otherMem, convDir, stateDir, providersDir]) {
+// Reflection transcripts are harness metadata the child writes via its headless
+// loop — carved writable on both backends even under write-scoping.
+const transcriptRoot = getTranscriptRoot();
+const repoCwd = process.cwd();
+for (const d of [selfMem, otherMem, convDir, stateDir, providersDir, transcriptRoot]) {
   mkdirSync(d, { recursive: true });
 }
 writeFileSync(join(selfMem, "mine.md"), "SELFDATA");
@@ -121,14 +126,19 @@ sub("read self memory (allow)", "cat mine.md", true);
 sub("read other agent memory (DENY)", `cat ${otherSecret}`, false);
 sub("write self memory (allow)", "echo x > note.md && echo OK", true);
 sub("write other agent memory (DENY)", `echo x > ${join(otherMem, "evil.md")}`, false);
-// The no-write-trap proof: harness artifacts live OUTSIDE memfs and must persist.
-sub("write conversation dir outside memfs (allow)", `echo x > ${join(convDir, "c.json")} && echo OK`, true);
-sub("write agent-state dir outside memfs (allow)", `echo x > ${join(stateDir, "a.json")} && echo OK`, true);
+// Write-scoping (restrictWrites:true): the agent's non-deterministic work can't
+// escape memory — not to the repo, not to temp.
+sub("write repo file (DENY)", `echo x > ${join(repoCwd, ".sb-sub-probe")}`, false);
+sub("write /tmp (DENY)", "echo x > /tmp/sb_sub_probe.txt", false);
+// No-write-trap: the harness paths the child legitimately persists ARE carved.
+sub("write conversation dir (allow)", `echo x > ${join(convDir, "c.json")} && echo OK`, true);
+sub("write agent-state dir (allow)", `echo x > ${join(stateDir, "a.json")} && echo OK`, true);
+sub("write providers dir (allow)", `echo x > ${join(providersDir, "p.json")} && echo OK`, true);
+sub("write transcript root (allow)", `echo x > ${join(transcriptRoot, "t.txt")} && echo OK`, true);
 sub("read providers/auth.json (allow)", `cat ${join(providersDir, "auth.json")} > /dev/null && echo OK`, true);
 
 // === Surface 2: parent shell (real applyParentShellSandbox, local) ===
 console.log("\n=== local parent shell (applyParentShellSandbox) ===");
-const repoCwd = process.cwd();
 const parentEnv: NodeJS.ProcessEnv = {
   LETTA_FS_SANDBOX: "1",
   LETTA_LOCAL_BACKEND_EXPERIMENTAL: "1",
