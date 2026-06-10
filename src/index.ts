@@ -183,6 +183,7 @@ USAGE
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
+  letta app-server ...  Run local app-server websocket transport
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
@@ -206,6 +207,7 @@ SUBCOMMANDS
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
+  letta app-server [--listen ws://127.0.0.1:4500]
   letta connect <provider> [options]
   letta install <skill> [--agent <id> | -n <name>]
   letta skills list [--agent <id> | -n <name>]

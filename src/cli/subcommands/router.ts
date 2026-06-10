@@ -1,4 +1,5 @@
 import { runAgentsSubcommand } from "./agents";
+import { runAppServerSubcommand } from "./app-server";
 import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
@@ -27,6 +28,7 @@ export function subcommandNeedsEarlyBackendMode(
   command: string | undefined,
 ): boolean {
   switch (command) {
+    case "app-server":
     case "agents":
     case "connect":
     case "install":
@@ -60,6 +62,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runMemorySubcommand(rest);
     case "agents":
       return runAgentsSubcommand(rest);
+    case "app-server":
+      return runAppServerSubcommand(rest);
     case "messages":
       return runMessagesSubcommand(rest);
     case "server":

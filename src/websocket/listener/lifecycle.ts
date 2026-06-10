@@ -1036,6 +1036,165 @@ export async function startConnectedListenerRuntime(
 }
 
 /**
+ * Attach an already-open, locally accepted websocket to a listener runtime.
+ *
+ * Unlike the cloud listener client path, this helper does not reconnect on
+ * close. It is intended for local app-server transports where the HTTP server
+ * keeps running and the next client connection creates a fresh runtime.
+ */
+
+export async function attachOpenListenerSocket(
+  runtime: ListenerRuntime,
+  socket: WebSocket,
+  opts: StartListenerOptions,
+  options: {
+    streamSocket?: WebSocket | null;
+    startHeartbeat?: boolean;
+    startCronScheduler?: boolean;
+    startupReady?: Promise<void>;
+  } = {},
+): Promise<void> {
+  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+    return;
+  }
+
+  const streamSocket = options.streamSocket ?? null;
+  const fileCommandSession = createFileCommandSession({
+    socket,
+    safeSocketSend,
+    runDetachedListenerTask,
+  });
+
+  runtime.socket = socket;
+  runtime.streamSocket = streamSocket;
+  const transport = socket;
+  const processQueuedTurn: ProcessQueuedTurn = async (
+    queuedTurn: IncomingMessage,
+    dequeuedBatch: DequeuedBatch,
+  ): Promise<void> => {
+    const scopedRuntime = getOrCreateScopedRuntime(
+      runtime,
+      queuedTurn.agentId,
+      queuedTurn.conversationId,
+    );
+    await handleIncomingMessage(
+      queuedTurn,
+      transport,
+      scopedRuntime,
+      opts.onStatusChange,
+      opts.connectionId,
+      dequeuedBatch.batchId,
+    );
+  };
+
+  const handleMessage = createListenerMessageHandler({
+    runtime,
+    socket,
+    opts,
+    processQueuedTurn,
+    fileCommandSession,
+    getParsedRuntimeScope,
+    replaySyncStateForRuntime,
+    getOrCreateScopedRuntime,
+    handleApprovalResponseInput,
+    handleChangeDeviceStateInput,
+    handleAbortMessageInput,
+    stampInboundUserMessageOtids,
+    safeSocketSend,
+    runDetachedListenerTask,
+    trackListenerError,
+    wireChannelIngress,
+  });
+  socket.on("message", (data: WebSocket.RawData) => {
+    void (async () => {
+      await options.startupReady;
+      await handleMessage(data);
+    })().catch((error) => {
+      trackListenerError(
+        "listener_message_handler_failed",
+        error,
+        "listener_message_handler",
+      );
+      opts.onError(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
+
+  socket.on("close", (code: number, reason: Buffer) => {
+    if (runtime !== getActiveRuntime()) {
+      return;
+    }
+
+    const reasonText = reason.toString();
+    safeEmitWsEvent("recv", "lifecycle", {
+      type: "_ws_close",
+      code,
+      reason: reasonText,
+    });
+    fileCommandSession.dispose();
+    stopCronScheduler();
+    getChannelRegistry()?.pause();
+    stopRuntime(runtime, true);
+    if (getActiveRuntime() === runtime) {
+      setActiveRuntime(null);
+    }
+    opts.onDisconnected();
+  });
+
+  socket.on("error", (error: Error) => {
+    trackListenerError("listener_websocket_error", error, "listener_socket");
+    safeEmitWsEvent("recv", "lifecycle", {
+      type: "_ws_error",
+      message: error.message,
+    });
+    if (isDebugEnabled()) {
+      console.error("[Listen] WebSocket error:", error);
+    }
+  });
+
+  if (streamSocket) {
+    streamSocket.on("error", (error: Error) => {
+      trackListenerError(
+        "listener_stream_socket_error",
+        error,
+        "listener_stream_socket",
+      );
+      if (isDebugEnabled()) {
+        console.error("[Listen] Stream WebSocket error:", error);
+      }
+    });
+
+    streamSocket.on("close", (code: number, reason: Buffer) => {
+      if (isDebugEnabled()) {
+        console.log(
+          `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
+        );
+      }
+
+      if (runtime.streamSocket === streamSocket) {
+        runtime.streamSocket = null;
+        runtime.streamTransport = null;
+      }
+    });
+  }
+
+  await options.startupReady;
+
+  const streamTransport =
+    streamSocket?.readyState === WebSocket.OPEN ? streamSocket : null;
+  await startConnectedListenerRuntime(
+    runtime,
+    transport,
+    opts,
+    processQueuedTurn,
+    {
+      startHeartbeat: options.startHeartbeat ?? false,
+      startCronScheduler: options.startCronScheduler ?? true,
+      streamTransport,
+    },
+  );
+}
+
+/**
  * Start the listener WebSocket client with automatic retry.
  */
 export async function startListenerClient(
