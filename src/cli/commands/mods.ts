@@ -3,11 +3,6 @@ import memoryCitationsEnvJson from "@/../docs/examples/mods/learning/memory-cita
 import type { AppCommandRunner } from "@/cli/app/types";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { parseExtensionCommandArgv as parseModCommandArgv } from "@/cli/extensions/command-runtime";
-import { renderDatasetScore } from "@/mods/dataset-adapter";
-import {
-  builtInDatasetAdapterConfig,
-  builtInDatasetLearningEnv,
-} from "@/mods/dataset-presets";
 import type {
   CommandRunner,
   ModLearningProgress,
@@ -36,11 +31,6 @@ type LearnCommandOptions = {
   candidate?: string;
   candidateCount?: number;
   candidateFileName?: string;
-  dataset?: string;
-  datasetAdapterCommand?: string;
-  datasetSubset?: string;
-  datasetTaskIds?: string[];
-  datasetTrials?: number;
   evalModel?: string;
   envPath?: string;
   generationModel?: string;
@@ -92,7 +82,6 @@ function formatModsUsage(error?: string): string {
     "Usage:",
     "  /mods learn [memory-citations] [options]",
     "  /mods learn --env <path> [options]",
-    "  /mods learn --dataset terminalbench [options]",
     "",
     "Options:",
     "  --model <handle>              Model for generation and eval (default: auto)",
@@ -102,11 +91,6 @@ function formatModsUsage(error?: string): string {
     "  --candidate <path>            Evaluate an existing candidate instead of generating",
     "  --candidates <n>              Generate/evaluate N candidates, each seeing prior attempts",
     "  --candidate-file-name <name>  Candidate filename in the eval mod dir",
-    "  --dataset <name>              Use a host-filesystem dataset adapter instead of env scenarios",
-    "  --subset <name>               Dataset subset (terminalbench default: smoke)",
-    "  --task <id>[,<id>]            Restrict dataset evaluation to task id(s)",
-    "  --trials <n>                  Dataset trials per task",
-    "  --dataset-adapter-command <cmd> Override built-in host adapter executable",
     "  --out <dir>                   Artifact directory (default: .letta/mod-learning-runs/<target>-<timestamp>)",
     "  --skip-generation             Expect the candidate file to already exist in the run dir",
     "",
@@ -206,12 +190,6 @@ export function parseModsCommand(
           case "--candidate-file-name":
             options.candidateFileName = value;
             break;
-          case "--dataset":
-            options.dataset = value;
-            break;
-          case "--dataset-adapter-command":
-            options.datasetAdapterCommand = value;
-            break;
           case "--eval-model":
             options.evalModel = resolveRequestedModel(value, currentModelId);
             break;
@@ -229,21 +207,6 @@ export function parseModsCommand(
             break;
           case "--env":
             options.envPath = value;
-            break;
-          case "--subset":
-            options.datasetSubset = value;
-            break;
-          case "--task":
-            options.datasetTaskIds = [
-              ...(options.datasetTaskIds ?? []),
-              ...value
-                .split(",")
-                .map((taskId) => taskId.trim())
-                .filter(Boolean),
-            ];
-            break;
-          case "--trials":
-            options.datasetTrials = Number(value);
             break;
           default:
             throw new Error(`Unknown option: ${optionName}`);
@@ -267,27 +230,13 @@ export function parseModsCommand(
     };
   }
 
-  if (options.dataset && options.envPath) {
-    return {
-      command: "usage",
-      output: formatModsUsage("--dataset cannot be combined with --env"),
-      success: false,
-    };
-  }
-
-  const learningEnv = options.dataset
-    ? builtInDatasetLearningEnv(options.dataset, options.datasetSubset)
-    : options.envPath
-      ? null
-      : builtInEnvForTarget(options.target);
+  const learningEnv = options.envPath
+    ? null
+    : builtInEnvForTarget(options.target);
   if (!learningEnv && !options.envPath) {
     return {
       command: "usage",
-      output: formatModsUsage(
-        options.dataset
-          ? `Unknown dataset: ${options.dataset}`
-          : `Unknown learning target: ${options.target}`,
-      ),
+      output: formatModsUsage(`Unknown learning target: ${options.target}`),
       success: false,
     };
   }
@@ -297,13 +246,11 @@ export function parseModsCommand(
     learn: {
       options,
       env: learningEnv,
-      targetLabel: options.dataset
-        ? `${options.dataset}/${options.datasetSubset ?? "smoke"}`
-        : options.envPath
-          ? targetSet
-            ? options.target
-            : "custom env"
-          : options.target,
+      targetLabel: options.envPath
+        ? targetSet
+          ? options.target
+          : "custom env"
+        : options.target,
     },
   };
 }
@@ -349,11 +296,7 @@ export function formatModLearningSummary(
   report: ModLearningReport,
   cwd: string,
 ): string {
-  const status = report.datasetEvaluation
-    ? "SCORED"
-    : report.passed
-      ? "PASS"
-      : "FAIL";
+  const status = report.passed ? "PASS" : "FAIL";
   const lines = [
     `${status} mod learning: ${report.spec.name}`,
     `Report: ${displayPath(report.reportPath, cwd)}`,
@@ -362,27 +305,14 @@ export function formatModLearningSummary(
           `Selected candidate: ${report.selectedCandidateIndex ?? report.candidateIndex}/${report.candidateCount}`,
         ]
       : []),
-    ...(report.datasetEvaluation
-      ? [
-          `Dataset: ${report.datasetEvaluation.dataset}${report.datasetEvaluation.subset ? `/${report.datasetEvaluation.subset}` : ""}`,
-          `Dataset score: ${renderDatasetScore(report.datasetEvaluation.score)}`,
-          ...(report.datasetEvaluation.score.costUsd !== undefined
-            ? [
-                `Dataset cost: $${report.datasetEvaluation.score.costUsd.toFixed(4)}`,
-              ]
-            : []),
-        ]
-      : []),
     `Candidate: ${displayPath(report.candidatePath, cwd)}`,
     `Run directory: ${displayPath(report.runDir, cwd)}`,
     `Generation exit: ${report.generationResult?.exitCode ?? "skipped"}`,
     `Eval exit: ${report.evalResult?.exitCode ?? "not run"}`,
     "",
-    report.datasetEvaluation
-      ? "Review the dataset report, per-task reports, and raw traces before installing the mod. This command did not promote or load the mod."
-      : report.passed
-        ? "Review the candidate source before installing it. This command did not promote or load the mod."
-        : "Open the report, generation stdout/stderr, and eval stdout/stderr in the run directory to debug the candidate.",
+    report.passed
+      ? "Review the candidate source before installing it. This command did not promote or load the mod."
+      : "Open the report, generation stdout/stderr, and eval stdout/stderr in the run directory to debug the candidate.",
   ];
   return lines.join("\n");
 }
@@ -450,16 +380,6 @@ async function runLearnCommand(
   const headlessEnv = await (ctx.getHeadlessEnv ?? defaultHeadlessEnv)();
   const learningEnv = await resolveEnv(learn, ctx.cwd, readEnvImpl);
   const model = learn.options.model ?? DEFAULT_MODEL;
-  const dataset = learn.options.dataset
-    ? builtInDatasetAdapterConfig({
-        adapterCommand: learn.options.datasetAdapterCommand,
-        dataset: learn.options.dataset,
-        repoRoot: ctx.cwd,
-        subset: learn.options.datasetSubset,
-        taskIds: learn.options.datasetTaskIds,
-        trials: learn.options.datasetTrials,
-      })
-    : undefined;
   const report = await runLearningImpl({
     backend: learn.options.backend,
     candidateCount: learn.options.candidateCount,
@@ -468,7 +388,6 @@ async function runLearnCommand(
     cliArgsPrefix: launcher.args,
     cliCommand: launcher.command,
     commandRunner: ctx.learningCommandRunner,
-    dataset,
     env: headlessEnv,
     evalModel: learn.options.evalModel ?? model,
     generationModel: learn.options.generationModel ?? model,
@@ -486,10 +405,7 @@ async function runLearnCommand(
     },
   });
 
-  command.finish(
-    formatModLearningSummary(report, ctx.cwd),
-    report.datasetEvaluation ? true : report.passed,
-  );
+  command.finish(formatModLearningSummary(report, ctx.cwd), report.passed);
 }
 
 export function handleModsCommand(

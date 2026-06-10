@@ -83,21 +83,6 @@ describe("/mods command", () => {
     expect(parsed.learn.options.candidateCount).toBe(3);
   });
 
-  test("parses dataset-backed learning options", () => {
-    const parsed = parseModsCommand(
-      "/mods learn --dataset terminalbench --subset smoke --task extract-elf,foo --trials 2 --candidates 3",
-    );
-
-    expect(parsed?.command).toBe("learn");
-    if (parsed?.command !== "learn") return;
-    expect(parsed.learn.targetLabel).toBe("terminalbench/smoke");
-    expect(parsed.learn.env?.name).toContain("TerminalBench");
-    expect(parsed.learn.options.dataset).toBe("terminalbench");
-    expect(parsed.learn.options.datasetTaskIds).toEqual(["extract-elf", "foo"]);
-    expect(parsed.learn.options.datasetTrials).toBe(2);
-    expect(parsed.learn.options.candidateCount).toBe(3);
-  });
-
   test("runs learning in the background and finishes with report summary", async () => {
     const cwd = path.resolve("/tmp/letta-mod-command-test");
     const { runner, updates } = createFakeCommandRunner();
@@ -125,7 +110,6 @@ describe("/mods command", () => {
           expect(options.env?.LETTA_API_KEY).toBe("test-key");
           expect(options.generationModel).toBe("openai/gpt-5.5");
           expect(options.evalModel).toBe("openai/gpt-5.5");
-          expect(options.dataset).toBeUndefined();
           expect(options.runDir).toBe(path.join(cwd, ".letta", "test-run"));
           options.onProgress?.({
             candidatePath: path.join(
@@ -186,79 +170,5 @@ describe("/mods command", () => {
     });
     expect(updates.at(-1)?.output).toContain("PASS mod learning");
     expect(updates.at(-1)?.output).toContain("did not promote or load");
-  });
-
-  test("passes built-in dataset adapter config to background learning", async () => {
-    const cwd = path.resolve("/tmp/letta-mod-command-test");
-    const { runner, updates } = createFakeCommandRunner();
-    const result = handleModsCommand(
-      "/mods learn --dataset terminalbench --subset smoke --task extract-elf --model auto --out .letta/dataset-run",
-      {
-        commandRunner: runner,
-        cwd,
-        getHeadlessEnv: async () => ({}),
-        resolveLauncher: () => ({ command: "letta-test", args: [] }),
-        runLearning: async (options) => {
-          expect(options.dataset).toMatchObject({
-            dataset: "terminalbench",
-            subset: "smoke",
-            taskIds: ["extract-elf"],
-            trials: 1,
-          });
-          expect(options.dataset?.adapter.command).toBe("bun");
-          expect(options.dataset?.adapter.args?.[0]).toContain(
-            path.join(
-              "scripts",
-              "mod-learning",
-              "dataset-adapters",
-              "terminalbench.ts",
-            ),
-          );
-          return {
-            candidatePath: path.join(
-              cwd,
-              ".letta",
-              "dataset-run",
-              "mods",
-              "mod.ts",
-            ),
-            datasetEvaluation: {
-              action: "evaluate_candidate",
-              dataset: "terminalbench",
-              passed: false,
-              schemaVersion: 1,
-              score: { passed: 0, passRate: 0, total: 1 },
-              subset: "smoke",
-              tasks: [{ passed: false, taskId: "extract-elf" }],
-            },
-            evalMemoryDir: path.join(cwd, ".letta", "dataset-run", "dataset"),
-            evalResult: null,
-            evaluation: {
-              forbiddenResultMarkers: [],
-              forbiddenTraceMarkers: [],
-              requiredResultMarkers: [],
-              requiredTraceMarkers: [],
-              resultText: "dataset result",
-              passed: false,
-            },
-            generationResult: null,
-            passed: false,
-            promotedToPath: null,
-            reportPath: path.join(cwd, ".letta", "dataset-run", "report.md"),
-            runDir: path.join(cwd, ".letta", "dataset-run"),
-            spec: options.spec,
-          } satisfies ModLearningReport;
-        },
-      },
-    );
-
-    expect(result.handled).toBe(true);
-    if (result.handled) await result.done;
-    expect(updates.at(-1)).toMatchObject({
-      phase: "finished",
-      success: true,
-    });
-    expect(updates.at(-1)?.output).toContain("SCORED mod learning");
-    expect(updates.at(-1)?.output).toContain("raw traces");
   });
 });

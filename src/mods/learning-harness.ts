@@ -1,14 +1,6 @@
 import { spawn } from "node:child_process";
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  DATASET_ADAPTER_SCHEMA_VERSION,
-  type DatasetCandidateEvaluation,
-  type ModLearningDatasetConfig,
-  normalizeDatasetTaskIds,
-  renderDatasetScore,
-  runDatasetAdapterCommand,
-} from "@/mods/dataset-adapter";
 
 export type HeadlessLearningOutputFormat = "json" | "stream-json";
 
@@ -107,7 +99,6 @@ export interface RunModLearningOptions {
   cliArgsPrefix?: string[];
   cliCommand?: string;
   commandRunner?: CommandRunner;
-  dataset?: ModLearningDatasetConfig;
   env?: NodeJS.ProcessEnv;
   evalModel?: string;
   generationModel?: string;
@@ -141,11 +132,6 @@ export interface ModLearningProgress {
 export interface ModLearningAttemptSummary {
   candidateIndex: number;
   candidatePath: string;
-  datasetCostUsd?: number;
-  datasetDurationMs?: number;
-  datasetPassedTasks?: number;
-  datasetPassRate?: number;
-  datasetTotalTasks?: number;
   evalExit: number | null | "not run";
   generationExit: number | null | "skipped";
   missingRequiredResultMarkers: string[];
@@ -163,8 +149,6 @@ export interface ModLearningReport {
   candidateCount?: number;
   candidateIndex?: number;
   candidatePath: string;
-  datasetEvaluation?: DatasetCandidateEvaluation;
-  evaluatorKind?: ModLearningEvaluatorKind;
   evalMemoryDir: string;
   evalResult: CommandRunResult | null;
   evaluation: ModLearningEvaluationResult;
@@ -174,23 +158,8 @@ export interface ModLearningReport {
   reportPath: string;
   runDir: string;
   score?: number;
-  selectionScore?: ModLearningCandidateSelectionScore;
   selectedCandidateIndex?: number;
   spec: ModLearningSpec;
-}
-
-export type ModLearningEvaluatorKind = "scenario-suite" | "dataset-adapter";
-
-export interface ModLearningCandidateSelectionScore {
-  costUsd?: number;
-  durationMs?: number;
-  kind: ModLearningEvaluatorKind;
-  markerScore?: number;
-  passed: boolean;
-  passedTasks?: number;
-  passRate?: number;
-  primary: number;
-  totalTasks?: number;
 }
 
 interface ModLearningCandidateDescriptor {
@@ -215,10 +184,8 @@ interface ModLearningEvaluatorContext {
 interface ModLearningEvaluatorResult {
   artifactsDir: string;
   commandResult: CommandRunResult | null;
-  datasetEvaluation?: DatasetCandidateEvaluation;
   evaluation: ModLearningEvaluationResult;
   score: number;
-  selectionScore: ModLearningCandidateSelectionScore;
 }
 
 interface ModLearningEvaluator {
@@ -226,7 +193,6 @@ interface ModLearningEvaluator {
   evaluate: (
     context: ModLearningEvaluatorContext,
   ) => Promise<ModLearningEvaluatorResult>;
-  kind: ModLearningEvaluatorKind;
   label: string;
 }
 
@@ -647,90 +613,6 @@ function markerScore(evaluation: ModLearningEvaluationResult): number {
   ].filter(Boolean).length;
 }
 
-function markerSelectionScore(
-  evaluation: ModLearningEvaluationResult,
-): ModLearningCandidateSelectionScore {
-  const score = markerScore(evaluation);
-  return {
-    kind: "scenario-suite",
-    markerScore: score,
-    passed: evaluation.passed,
-    primary: score,
-  };
-}
-
-function datasetSelectionScore(
-  evaluation: DatasetCandidateEvaluation,
-): ModLearningCandidateSelectionScore {
-  return {
-    costUsd: evaluation.score.costUsd,
-    durationMs: evaluation.score.durationMs,
-    kind: "dataset-adapter",
-    passed: evaluation.passed,
-    passedTasks: evaluation.score.passed,
-    passRate: evaluation.score.passRate,
-    primary: evaluation.score.passRate,
-    totalTasks: evaluation.score.total,
-  };
-}
-
-function datasetEvaluationToResult(
-  evaluation: DatasetCandidateEvaluation,
-): ModLearningEvaluationResult {
-  const resultText = [
-    `Dataset: ${evaluation.dataset}${evaluation.subset ? `/${evaluation.subset}` : ""}`,
-    `Pass rate: ${renderDatasetScore(evaluation.score)}`,
-    ...(evaluation.score.costUsd !== undefined
-      ? [`Cost: $${evaluation.score.costUsd.toFixed(4)}`]
-      : []),
-    ...(evaluation.score.durationMs !== undefined
-      ? [`Duration: ${evaluation.score.durationMs}ms`]
-      : []),
-    ...(evaluation.summary ? ["", evaluation.summary] : []),
-  ].join("\n");
-  return {
-    forbiddenResultMarkers: [],
-    forbiddenTraceMarkers: [],
-    passed: evaluation.passed,
-    requiredResultMarkers: [],
-    requiredTraceMarkers: [],
-    resultText,
-  };
-}
-
-function selectionScoreFromReport(
-  report: ModLearningReport,
-): ModLearningCandidateSelectionScore {
-  if (report.selectionScore) return report.selectionScore;
-  if (report.datasetEvaluation)
-    return datasetSelectionScore(report.datasetEvaluation);
-  return markerSelectionScore(report.evaluation);
-}
-
-function compareDatasetReports(
-  candidate: ModLearningReport,
-  incumbent: ModLearningReport,
-): number {
-  const candidateScore = selectionScoreFromReport(candidate);
-  const incumbentScore = selectionScoreFromReport(incumbent);
-  const passRateDelta = candidateScore.primary - incumbentScore.primary;
-  if (passRateDelta !== 0) return passRateDelta;
-
-  const candidateCost = candidateScore.costUsd ?? Number.POSITIVE_INFINITY;
-  const incumbentCost = incumbentScore.costUsd ?? Number.POSITIVE_INFINITY;
-  if (candidateCost !== incumbentCost) return incumbentCost - candidateCost;
-
-  const candidateDuration =
-    candidateScore.durationMs ?? Number.POSITIVE_INFINITY;
-  const incumbentDuration =
-    incumbentScore.durationMs ?? Number.POSITIVE_INFINITY;
-  if (candidateDuration !== incumbentDuration) {
-    return incumbentDuration - candidateDuration;
-  }
-
-  return (incumbent.candidateIndex ?? 0) - (candidate.candidateIndex ?? 0);
-}
-
 function compareScenarioReports(
   candidate: ModLearningReport,
   incumbent: ModLearningReport,
@@ -742,8 +624,8 @@ function compareScenarioReports(
     return (incumbent.candidateIndex ?? 0) - (candidate.candidateIndex ?? 0);
   }
 
-  const candidateScore = selectionScoreFromReport(candidate).primary;
-  const incumbentScore = selectionScoreFromReport(incumbent).primary;
+  const candidateScore = candidate.score ?? markerScore(candidate.evaluation);
+  const incumbentScore = incumbent.score ?? markerScore(incumbent.evaluation);
   if (candidateScore !== incumbentScore) return candidateScore - incumbentScore;
 
   return (candidate.candidateIndex ?? 0) - (incumbent.candidateIndex ?? 0);
@@ -753,14 +635,6 @@ function compareReportsForSelection(
   candidate: ModLearningReport,
   incumbent: ModLearningReport,
 ): number {
-  const candidateKind = selectionScoreFromReport(candidate).kind;
-  const incumbentKind = selectionScoreFromReport(incumbent).kind;
-  if (
-    candidateKind === "dataset-adapter" ||
-    incumbentKind === "dataset-adapter"
-  ) {
-    return compareDatasetReports(candidate, incumbent);
-  }
   return compareScenarioReports(candidate, incumbent);
 }
 
@@ -778,11 +652,6 @@ function summarizeAttempt(
   return {
     candidateIndex: report.candidateIndex ?? 1,
     candidatePath: report.candidatePath,
-    datasetCostUsd: report.datasetEvaluation?.score.costUsd,
-    datasetDurationMs: report.datasetEvaluation?.score.durationMs,
-    datasetPassedTasks: report.datasetEvaluation?.score.passed,
-    datasetPassRate: report.datasetEvaluation?.score.passRate,
-    datasetTotalTasks: report.datasetEvaluation?.score.total,
     evalExit: report.evalResult?.exitCode ?? "not run",
     generationExit: report.generationResult?.exitCode ?? "skipped",
     missingRequiredResultMarkers: missingMarkers(
@@ -849,17 +718,6 @@ function renderHistoryIndex(params: {
       `- Generation exit: ${attempt.generationExit}`,
       `- Eval exit: ${attempt.evalExit}`,
     );
-    if (attempt.datasetPassRate !== undefined) {
-      lines.push(
-        `- Dataset pass rate: ${attempt.datasetPassedTasks ?? 0}/${attempt.datasetTotalTasks ?? 0} (${(attempt.datasetPassRate * 100).toFixed(1)}%)`,
-      );
-    }
-    if (attempt.datasetCostUsd !== undefined) {
-      lines.push(`- Dataset cost: $${attempt.datasetCostUsd.toFixed(4)}`);
-    }
-    if (attempt.datasetDurationMs !== undefined) {
-      lines.push(`- Dataset duration: ${attempt.datasetDurationMs}ms`);
-    }
     if (attempt.missingRequiredResultMarkers.length > 0) {
       lines.push(
         `- Missing required result markers: ${attempt.missingRequiredResultMarkers.join(", ")}`,
@@ -1054,95 +912,14 @@ function createScenarioSuiteEvaluator(params: {
             requiredTraceMarkers: [],
             resultText: "",
           });
-      const selectionScore = markerSelectionScore(evaluation);
       return {
         artifactsDir,
         commandResult,
         evaluation,
-        score: selectionScore.primary,
-        selectionScore,
+        score: markerScore(evaluation),
       };
     },
-    kind: "scenario-suite",
     label: hasConfiguredScenarios ? "scenario suite" : "scenario",
-  };
-}
-
-function createDatasetAdapterEvaluator(params: {
-  dataset: ModLearningDatasetConfig;
-  runDir: string;
-}): ModLearningEvaluator {
-  const artifactsDir = path.join(params.runDir, "dataset");
-  const label = params.dataset.subset
-    ? `${params.dataset.dataset}/${params.dataset.subset}`
-    : params.dataset.dataset;
-
-  return {
-    artifactsDir,
-    async evaluate(context) {
-      await mkdir(artifactsDir, { recursive: true });
-      const request = {
-        action: "evaluate_candidate" as const,
-        artifactsDir,
-        candidate: {
-          fileName: context.candidate.fileName,
-          index: context.candidate.index,
-          modDir: context.candidate.dir,
-          path: context.candidate.path,
-        },
-        dataset: params.dataset.dataset,
-        repoRoot: context.repoRoot,
-        runDir: context.runDir,
-        schemaVersion: DATASET_ADAPTER_SCHEMA_VERSION,
-        subset: params.dataset.subset,
-        taskIds: normalizeDatasetTaskIds(params.dataset.taskIds),
-        trials: params.dataset.trials,
-      };
-      const requestPath = path.join(artifactsDir, "adapter-request.json");
-      const datasetResult = await runDatasetAdapterCommand({
-        baseEnv: {
-          ...context.baseEnv,
-          LETTA_EXTENSIONS_DIR: context.candidate.dir,
-          LETTA_MODS_DIR: context.candidate.dir,
-        },
-        config: params.dataset,
-        repoRoot: context.repoRoot,
-        request,
-        requestPath,
-        runner: context.runner,
-      });
-      await writeCommandArtifacts(
-        path.join(artifactsDir, "adapter"),
-        params.dataset.adapter.command,
-        [
-          ...(params.dataset.adapter.args ?? []),
-          "evaluate_candidate",
-          "--request",
-          requestPath,
-        ],
-        datasetResult.commandResult,
-      );
-      await writeJsonArtifact(
-        path.join(artifactsDir, "adapter-response.json"),
-        datasetResult.response,
-      );
-      await writeJsonArtifact(
-        path.join(artifactsDir, "score.json"),
-        datasetResult.response.score,
-      );
-
-      const selectionScore = datasetSelectionScore(datasetResult.response);
-      return {
-        artifactsDir,
-        commandResult: datasetResult.commandResult,
-        datasetEvaluation: datasetResult.response,
-        evaluation: datasetEvaluationToResult(datasetResult.response),
-        score: selectionScore.primary,
-        selectionScore,
-      };
-    },
-    kind: "dataset-adapter",
-    label,
   };
 }
 
@@ -1150,12 +927,6 @@ function createModLearningEvaluator(params: {
   options: RunModLearningOptions;
   runDir: string;
 }): ModLearningEvaluator {
-  if (params.options.dataset) {
-    return createDatasetAdapterEvaluator({
-      dataset: params.options.dataset,
-      runDir: params.runDir,
-    });
-  }
   return createScenarioSuiteEvaluator({
     runDir: params.runDir,
     spec: params.options.spec,
@@ -1172,49 +943,13 @@ function renderMarkerSection(label: string, checks: MarkerCheck[]): string[] {
   ];
 }
 
-function renderDatasetEvaluationSection(
-  evaluation: DatasetCandidateEvaluation | undefined,
-): string[] {
-  if (!evaluation) return [];
-  return [
-    "## Dataset evaluation",
-    "",
-    `- Dataset: ${evaluation.dataset}`,
-    ...(evaluation.subset ? [`- Subset: ${evaluation.subset}`] : []),
-    `- Pass rate: ${renderDatasetScore(evaluation.score)}`,
-    ...(evaluation.score.costUsd !== undefined
-      ? [`- Cost: $${evaluation.score.costUsd.toFixed(4)}`]
-      : []),
-    ...(evaluation.score.durationMs !== undefined
-      ? [`- Duration: ${evaluation.score.durationMs}ms`]
-      : []),
-    ...(evaluation.reportPath ? [`- Report: ${evaluation.reportPath}`] : []),
-    ...(evaluation.artifactsDir
-      ? [`- Artifacts: ${evaluation.artifactsDir}`]
-      : []),
-    ...(evaluation.summary ? ["", evaluation.summary] : []),
-    "",
-    "| Task | Status | Cost | Duration | Report | Raw trace |",
-    "| --- | --- | ---: | ---: | --- | --- |",
-    ...evaluation.tasks.map(
-      (task) =>
-        `| ${task.taskId}${task.trial !== undefined ? ` #${task.trial}` : ""} | ${task.passed ? "PASS" : "FAIL"} | ${task.costUsd ?? ""} | ${task.durationMs ?? ""} | ${task.reportPath ?? ""} | ${task.rawTracePath ?? ""} |`,
-    ),
-    "",
-  ];
-}
-
 function renderMarkdownReport(report: ModLearningReport): string {
-  const status = report.datasetEvaluation
-    ? "SCORED"
-    : report.passed
-      ? "PASS"
-      : "FAIL";
+  const status = report.passed ? "PASS" : "FAIL";
   const lines = [
     `# Mod learning report: ${report.spec.name}`,
     "",
     `- Status: ${status}`,
-    `- Evaluator: ${report.evaluatorKind ?? (report.datasetEvaluation ? "dataset-adapter" : "scenario-suite")}`,
+    `- Evaluator: scenario-suite`,
     `- Run directory: ${report.runDir}`,
     ...(report.candidateCount && report.candidateCount > 1
       ? [
@@ -1223,14 +958,10 @@ function renderMarkdownReport(report: ModLearningReport): string {
         ]
       : []),
     `- Candidate: ${report.candidatePath}`,
-    report.datasetEvaluation
-      ? `- Dataset artifacts dir: ${report.evalMemoryDir}`
-      : `- Eval memory dir: ${report.evalMemoryDir}`,
+    `- Eval memory dir: ${report.evalMemoryDir}`,
     `- Generation exit: ${report.generationResult?.exitCode ?? "skipped"}`,
     `- Eval exit: ${report.evalResult?.exitCode ?? "not run"}`,
-    report.datasetEvaluation
-      ? `- Dataset score: ${renderDatasetScore(report.datasetEvaluation.score)}`
-      : `- Marker score: ${report.score ?? markerScore(report.evaluation)}`,
+    `- Marker score: ${report.score ?? markerScore(report.evaluation)}`,
     `- Promoted to: ${report.promotedToPath ?? "not promoted"}`,
     "",
     ...(report.attempts && report.attempts.length > 0
@@ -1246,7 +977,6 @@ function renderMarkdownReport(report: ModLearningReport): string {
           "",
         ]
       : []),
-    ...renderDatasetEvaluationSection(report.datasetEvaluation),
     ...(report.evaluation.scenarioResults &&
     report.evaluation.scenarioResults.length > 0
       ? [
@@ -1395,14 +1125,7 @@ async function runModLearningCandidate(
   const candidateExists = await fileExists(candidatePath);
 
   let evalResult: CommandRunResult | null = null;
-  let datasetEvaluation: DatasetCandidateEvaluation | undefined;
-  let evaluatorKind = evaluator.kind;
   let score = 0;
-  let selectionScore: ModLearningCandidateSelectionScore = {
-    kind: evaluator.kind,
-    passed: false,
-    primary: 0,
-  };
   let evaluation: ModLearningEvaluationResult = {
     forbiddenResultMarkers: [],
     forbiddenTraceMarkers: [],
@@ -1438,11 +1161,8 @@ async function runModLearningCandidate(
       runner: params.runner,
     });
     evalResult = evaluatorResult.commandResult;
-    datasetEvaluation = evaluatorResult.datasetEvaluation;
     evaluation = evaluatorResult.evaluation;
-    evaluatorKind = evaluator.kind;
     score = evaluatorResult.score;
-    selectionScore = evaluatorResult.selectionScore;
   }
 
   const passed = candidateExists && evaluation.passed;
@@ -1460,8 +1180,6 @@ async function runModLearningCandidate(
     candidateCount: params.candidateCount,
     candidateIndex: params.candidateIndex,
     candidatePath,
-    datasetEvaluation,
-    evaluatorKind,
     evalMemoryDir,
     evalResult,
     evaluation,
@@ -1471,7 +1189,6 @@ async function runModLearningCandidate(
     reportPath,
     runDir,
     score,
-    selectionScore,
     spec: options.spec,
   };
   await writeJsonArtifact(path.join(runDir, "report.json"), report);

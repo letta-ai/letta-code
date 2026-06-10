@@ -5,10 +5,6 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  builtInDatasetAdapterConfig,
-  builtInDatasetLearningEnv,
-} from "../../src/mods/dataset-presets.ts";
-import {
   defaultModLearningRunDirectory,
   readModLearningEnv,
   runModLearning,
@@ -19,11 +15,6 @@ interface Args {
   candidate?: string;
   candidateCount?: number;
   candidateFileName?: string;
-  dataset?: string;
-  datasetAdapterCommand?: string;
-  datasetSubset?: string;
-  datasetTaskIds?: string[];
-  datasetTrials?: number;
   evalModel?: string;
   generationModel?: string;
   help: boolean;
@@ -93,12 +84,6 @@ function parseArgs(argv: string[]): Args {
         case "--candidate-file-name":
           args.candidateFileName = value;
           break;
-        case "--dataset":
-          args.dataset = value;
-          break;
-        case "--dataset-adapter-command":
-          args.datasetAdapterCommand = value;
-          break;
         case "--eval-model":
           args.evalModel = value;
           break;
@@ -120,21 +105,6 @@ function parseArgs(argv: string[]): Args {
           break;
         case "--repo-root":
           args.repoRoot = value;
-          break;
-        case "--subset":
-          args.datasetSubset = value;
-          break;
-        case "--task":
-          args.datasetTaskIds = [
-            ...(args.datasetTaskIds ?? []),
-            ...value
-              .split(",")
-              .map((taskId) => taskId.trim())
-              .filter(Boolean),
-          ];
-          break;
-        case "--trials":
-          args.datasetTrials = Number(value);
           break;
         default:
           throw new Error(`Unknown argument: ${arg}`);
@@ -159,11 +129,6 @@ Options:
   --candidate <path>            Use an existing candidate mod instead of generation
   --candidates <n>              Generate/evaluate N candidates, each seeing prior attempts (default: 1)
   --candidate-file-name <name>  Candidate filename inside the eval mod directory
-  --dataset <name>              Use a host-filesystem dataset adapter instead of env scenarios
-  --subset <name>               Dataset subset (terminalbench default: smoke)
-  --task <id>[,<id>]            Restrict dataset evaluation to task id(s)
-  --trials <n>                  Dataset trials per task
-  --dataset-adapter-command <cmd> Override built-in host adapter executable
   --model <handle>              Model for generation and eval
   --generation-model <handle>   Model for candidate generation
   --eval-model <handle>         Model for headless eval
@@ -247,20 +212,9 @@ async function main(): Promise<void> {
   }
 
   const repoRoot = path.resolve(args.repoRoot);
-  const learningEnv = args.dataset
-    ? builtInDatasetLearningEnv(args.dataset, args.datasetSubset)
-    : await readModLearningEnv(path.resolve(repoRoot, args.env));
-  if (!learningEnv) throw new Error(`Unknown dataset: ${args.dataset}`);
-  const dataset = args.dataset
-    ? builtInDatasetAdapterConfig({
-        adapterCommand: args.datasetAdapterCommand,
-        dataset: args.dataset,
-        repoRoot,
-        subset: args.datasetSubset,
-        taskIds: args.datasetTaskIds,
-        trials: args.datasetTrials,
-      })
-    : undefined;
+  const learningEnv = await readModLearningEnv(
+    path.resolve(repoRoot, args.env),
+  );
   const runDir = args.out
     ? path.resolve(repoRoot, args.out)
     : path.resolve(repoRoot, defaultModLearningRunDirectory(learningEnv));
@@ -280,7 +234,6 @@ async function main(): Promise<void> {
     candidateCount: args.candidateCount,
     candidateFileName: args.candidateFileName,
     candidateSourcePath: args.candidate,
-    dataset,
     evalModel: args.evalModel,
     generationModel: args.generationModel,
     promoteToPath: args.promoteTo,
@@ -290,13 +243,9 @@ async function main(): Promise<void> {
     spec: learningEnv,
   });
 
-  const status = report.datasetEvaluation
-    ? "SCORED"
-    : report.passed
-      ? "PASS"
-      : "FAIL";
+  const status = report.passed ? "PASS" : "FAIL";
   console.log(`${status} ${report.reportPath}`);
-  if (!report.datasetEvaluation && !report.passed) process.exit(1);
+  if (!report.passed) process.exit(1);
 }
 
 main().catch((error) => {
