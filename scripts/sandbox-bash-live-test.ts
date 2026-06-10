@@ -2,7 +2,7 @@
 /**
  * Live bring-up for the parent-agent Bash cross-agent sandbox (step 3).
  *
- * Exercises the *real* shipped `applyBashSandbox` end-to-end: it builds a
+ * Exercises the *real* shipped `applyParentShellSandbox` end-to-end: it builds a
  * wrapped launcher, then spawns actual shell commands through it to confirm the
  * kernel enforces the cross-agent policy — self memory read/write works, other
  * agents' memory is read- and write-denied (including via a symlink escape),
@@ -19,7 +19,7 @@ import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { detectSandboxBackend } from "@/sandbox/availability";
-import { applyBashSandbox } from "@/tools/impl/bash-sandbox";
+import { applyParentShellSandbox } from "@/tools/impl/shell-sandbox";
 
 const home = realpathSync(homedir());
 if (!home.startsWith("/private/") && !home.startsWith("/tmp")) {
@@ -49,12 +49,16 @@ const env: NodeJS.ProcessEnv = {
   MEMORY_DIR: selfMem,
 };
 
-const result = applyBashSandbox(["/bin/zsh", "-c", "__PROBE__"], repoCwd, env);
+const result = applyParentShellSandbox(
+  ["/bin/zsh", "-c", "__PROBE__"],
+  repoCwd,
+  env,
+);
 console.log(
   `wrapped: ${result.backend ?? "NO"}  launcher[0]=${result.launcher[0]}`,
 );
 if (!result.backend) {
-  console.error("applyBashSandbox did not wrap — aborting.");
+  console.error("applyParentShellSandbox did not wrap — aborting.");
   rmSync(join(home, ".letta"), { recursive: true, force: true });
   process.exit(1);
 }

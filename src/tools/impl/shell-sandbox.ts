@@ -20,6 +20,11 @@ import { wrapLauncher } from "@/sandbox/wrap";
  * kernel policy that denies reading or writing other agents' memory while
  * leaving the agent's own directory, the repo, and temp writable.
  *
+ * Shared by every parent shell executor — the `Bash` tool (`bash.ts`), the
+ * Codex `exec_command`/`write_stdin` sessions (`exec-command.ts`), and the
+ * Gemini `run_shell_command` path (`shell.ts`) — so the kernel owns the whole
+ * shell surface, not just one dialect.
+ *
  * This is the kernel-enforced backstop for the static cross-agent guard: it
  * closes the bypasses static command analysis can't (symlinks, command
  * substitution, globbing, subprocesses) because the kernel resolves real paths
@@ -28,7 +33,7 @@ import { wrapLauncher } from "@/sandbox/wrap";
  * Gated behind `LETTA_FS_SANDBOX=1` while the per-host bring-up is validated.
  */
 
-export interface BashSandboxResult {
+export interface ParentShellSandboxResult {
   launcher: string[];
   env: NodeJS.ProcessEnv;
   /** The backend the launcher was wrapped with, or null when left unchanged. */
@@ -81,22 +86,22 @@ function deriveSelfRoots(
  *   - the `LETTA_FS_SANDBOX` flag is off,
  *   - the process is already inside a sandbox (avoid nested `sandbox-exec`,
  *     which the kernel blocks),
- *   - the process is a subagent (parent-only for now; subagents keep the static
- *     guard plus their own memory-mode wrap),
+ *   - the process is a subagent (parent-only here; subagents are confined as a
+ *     whole process at spawn instead),
  *   - no sandbox backend exists on this host,
  *   - the cwd is inside the agents tree (a read-deny on a cwd ancestor empties
  *     the child env under Seatbelt), or
  *   - self memory roots can't be resolved (nothing safe to carve out, so
  *     denying the tree could trap the agent out of its own memory).
  */
-export function applyBashSandbox(
+export function applyParentShellSandbox(
   launcher: string[],
   cwd: string,
   env: NodeJS.ProcessEnv,
   /** Injectable for tests; defaults to a real host probe. */
   availability?: SandboxAvailability,
-): BashSandboxResult {
-  const unchanged: BashSandboxResult = { launcher, env, backend: null };
+): ParentShellSandboxResult {
+  const unchanged: ParentShellSandboxResult = { launcher, env, backend: null };
 
   if (!isFsSandboxEnabled(env)) return unchanged;
   if (env[SANDBOX_ENV_VAR]) return unchanged;

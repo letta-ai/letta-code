@@ -5,7 +5,7 @@
  *
  * The real agent loop runs two layers in sequence:
  *   1. the cross-agent guard at the permission stage (before dispatch), and
- *   2. applyBashSandbox at spawn (inside the real bash() tool).
+ *   2. applyParentShellSandbox at spawn (inside the real bash() tool).
  * This drives both exactly that way and asserts they compose: legitimate
  * self/repo commands pass BOTH layers (proving the sandbox's self carve-out
  * matches what the guard allows — no false-positive conflict), while every
@@ -98,7 +98,7 @@ async function runCommand(command: string): Promise<Outcome> {
     };
   }
 
-  // Layer 2 — the real bash() tool (wraps via applyBashSandbox at spawn).
+  // Layer 2 — the real bash() tool (wraps via applyParentShellSandbox at spawn).
   const result = await runWithRuntimeContext(
     { workingDirectory: repoCwd, agentId: SELF },
     () => bash({ command }),
