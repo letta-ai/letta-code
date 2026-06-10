@@ -14,6 +14,7 @@ import {
 import {
   PI_PROVIDER_SPECS,
   PI_TUI_DEFAULT_MODEL_IDS,
+  PI_TUI_DEFAULTLESS_PROVIDER_IDS,
   resolveProviderFromProviderType,
 } from "@/backend/dev/pi-provider-registry";
 import { listLocalModels } from "@/backend/local/local-model-config";
@@ -89,6 +90,17 @@ describe("local pi provider catalog", () => {
         getModels(provider as Parameters<typeof getModels>[0]).some(
           (model) => model.id === modelId,
         ),
+      ).toBe(true);
+    }
+  });
+
+  test("pi-ai providers without Pi TUI defaults are explicit", () => {
+    const defaultedProviders = new Set(Object.keys(PI_TUI_DEFAULT_MODEL_IDS));
+
+    for (const provider of getProviders()) {
+      expect(
+        defaultedProviders.has(provider) ||
+          PI_TUI_DEFAULTLESS_PROVIDER_IDS.has(provider),
       ).toBe(true);
     }
   });

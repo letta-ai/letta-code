@@ -120,6 +120,12 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
     "xiaomi-token-plan-sgp": "mimo-v2.5-pro",
   };
 
+// These pi-ai providers are intentionally absent from Pi TUI's
+// `defaultModelPerProvider`. Keep the omission explicit so newly added pi-ai
+// providers cannot silently inherit catalog-order defaults without review.
+export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<KnownProvider> =
+  new Set(["ant-ling", "nvidia", "zai-coding-cn"]);
+
 const PI_PROVIDER_OVERRIDES: Partial<
   Record<KnownProvider, PiProviderOverride>
 > = {
@@ -193,6 +199,8 @@ function defaultModelForProvider(
 ): string {
   const piTuiDefault = PI_TUI_DEFAULT_MODEL_IDS[provider];
   if (piTuiDefault) return `${handlePrefix}${piTuiDefault}`;
+  // Match Pi TUI's no-explicit-default behavior for providers omitted from its
+  // default map: use catalog order as the generic fallback.
   const model = getModels(provider)[0] as Model<Api> | undefined;
   return model ? `${handlePrefix}${model.id}` : `${handlePrefix}model`;
 }
