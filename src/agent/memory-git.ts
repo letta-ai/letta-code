@@ -248,11 +248,30 @@ export async function maybeUpdateMemoryRemoteOrigin(
     const { stdout } = await runGit(repoDir, ["remote", "get-url", "origin"]);
     currentOrigin = stdout.trim();
   } catch {
-    // No origin remote configured — leave as-is.
+    // No origin remote configured — create one so pushes have a destination.
+    const expectedOrigin = normalizeRemoteUrl(getGitRemoteUrl(agentId));
+    await runGit(repoDir, ["remote", "add", "origin", expectedOrigin]);
+    console.warn(
+      `[memfs-git] Created missing origin remote for agent ${agentId}: ${expectedOrigin}`,
+    );
+    debugLog(
+      "memfs-git",
+      `Created missing origin remote for ${agentId}: ${expectedOrigin}`,
+    );
     return;
   }
 
   if (!currentOrigin) {
+    // origin key exists but value is empty — set it.
+    const expectedOrigin = normalizeRemoteUrl(getGitRemoteUrl(agentId));
+    await runGit(repoDir, ["remote", "set-url", "origin", expectedOrigin]);
+    console.warn(
+      `[memfs-git] Set empty origin remote for agent ${agentId}: ${expectedOrigin}`,
+    );
+    debugLog(
+      "memfs-git",
+      `Set empty origin remote for ${agentId}: ${expectedOrigin}`,
+    );
     return;
   }
 
@@ -1658,7 +1677,7 @@ export async function pushMemory(agentId: string): Promise<void> {
   const dir = getMemoryRepoDir(agentId);
 
   await prepareMemoryRepoForGitOps(dir, agentId, token);
-  await runGit(dir, ["push"], token);
+  await runGit(dir, ["push", "-u", "origin", "main"], token);
 }
 
 export interface MemoryGitStatus {
@@ -1881,7 +1900,7 @@ export async function syncPendingMemoryCommitsAfterTurn(
   }
 
   try {
-    await runGitWithRetry(memoryDir, ["push"], token, {
+    await runGitWithRetry(memoryDir, ["push", "-u", "origin", "main"], token, {
       operation: "post-turn push pending memory commits",
     });
     return {
@@ -1915,9 +1934,14 @@ export async function syncPendingMemoryCommitsAfterTurn(
           localOnly,
         };
       }
-      await runGitWithRetry(memoryDir, ["push"], token, {
-        operation: "post-turn push rebased memory commits",
-      });
+      await runGitWithRetry(
+        memoryDir,
+        ["push", "-u", "origin", "main"],
+        token,
+        {
+          operation: "post-turn push rebased memory commits",
+        },
+      );
       return {
         status: "pushed",
         summary: `Rebased and pushed ${divergence.ahead} pending memory commit(s).`,
