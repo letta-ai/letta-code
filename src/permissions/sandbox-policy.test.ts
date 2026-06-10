@@ -13,6 +13,7 @@ import {
   buildCrossAgentSandboxPolicy,
   buildMemoryModeSandboxPolicy,
   canonicalizeRoot,
+  deriveSelfAgentRoots,
   getDefaultAgentsTreeRoot,
 } from "@/permissions/sandbox-policy";
 
@@ -59,10 +60,11 @@ test("getDefaultAgentsTreeRoot ends with the agents tree path", () => {
   expect(getDefaultAgentsTreeRoot(home)).toBe(join(home, ".letta", "agents"));
 });
 
-test("memory-mode policy restricts writes to memory roots + tmp, no read-deny", () => {
-  const home = makeTempDir();
-  const memoryRoot = join(home, ".letta", "agents", "self", "memory");
-  mkdirSync(memoryRoot, { recursive: true });
+test("memory-mode policy: writes scoped to memory, agents tree read-denied with agent dir carved readonly", () => {
+  // Use the real agents tree so deriveSelfAgentRoots resolves the agent dir
+  // (the policy always denies getDefaultAgentsTreeRoot(), keyed to homedir()).
+  const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-self");
+  const memoryRoot = join(agentDir, "memory");
 
   const policy = buildMemoryModeSandboxPolicy({
     memoryRoots: [memoryRoot],
@@ -70,18 +72,19 @@ test("memory-mode policy restricts writes to memory roots + tmp, no read-deny", 
   });
 
   expect(policy.restrictWrites).toBe(true);
-  expect(policy.writableRoots).toContain(memoryRoot);
-  // /tmp is canonicalized (e.g. /private/tmp on macOS) — match the real path.
+  // Writes scoped to the memory dir (+ tmp).
+  expect(policy.writableRoots).toContain(canonicalizeRoot(memoryRoot));
   expect(policy.writableRoots).toContain(canonicalizeRoot("/tmp"));
-  // No read-deny: a memory subagent's cwd is the memory dir, inside the agents
-  // tree; denying reads there empties the child env under Seatbelt.
-  expect(policy.deniedRoots).toEqual([]);
+  // Cross-agent reads denied: the whole agents tree is walled off...
+  expect(policy.deniedRoots).toEqual([getDefaultAgentsTreeRoot()]);
+  // ...with the agent's own dir carved back out READ-only (env survival +
+  // reading own state) — writes stay denied there by restrictWrites.
+  expect(policy.readonlyRoots).toEqual([canonicalizeRoot(agentDir)]);
 });
 
 test("memory-mode policy folds in extra writable roots and TMPDIR", () => {
-  const home = makeTempDir();
-  const memoryRoot = join(home, ".letta", "agents", "self", "memory");
-  mkdirSync(memoryRoot, { recursive: true });
+  const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-self");
+  const memoryRoot = join(agentDir, "memory");
   const extra = makeTempDir();
 
   const policy = buildMemoryModeSandboxPolicy({
@@ -117,4 +120,20 @@ test("cross-agent policy defaults the agents tree to ~/.letta/agents", () => {
   });
 
   expect(policy.deniedRoots).toEqual([getDefaultAgentsTreeRoot()]);
+});
+
+test("deriveSelfAgentRoots collapses in-tree memory roots to the agent dir", () => {
+  const tree = getDefaultAgentsTreeRoot();
+  const agentDir = join(tree, "abc");
+  const roots = deriveSelfAgentRoots(
+    [join(agentDir, "memory"), join(agentDir, "memory-worktrees")],
+    tree,
+  );
+  expect(roots).toEqual([canonicalizeRoot(agentDir)]);
+});
+
+test("deriveSelfAgentRoots keeps roots outside the tree as-is", () => {
+  const tree = getDefaultAgentsTreeRoot();
+  const outside = canonicalizeRoot("/tmp");
+  expect(deriveSelfAgentRoots([outside], tree)).toEqual([outside]);
 });

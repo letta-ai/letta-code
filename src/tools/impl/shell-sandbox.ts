@@ -1,14 +1,12 @@
-import { basename, dirname } from "node:path";
-
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
+import { willSandboxParentShell } from "@/permissions/sandbox-gate";
 import {
   buildCrossAgentSandboxPolicy,
-  canonicalizeRoot,
+  deriveSelfAgentRoots,
   getDefaultAgentsTreeRoot,
 } from "@/permissions/sandbox-policy";
 import {
   detectSandboxBackend,
-  isFsSandboxEnabled,
   type SandboxAvailability,
 } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR, type SandboxBackend } from "@/sandbox/policy";
@@ -40,59 +38,13 @@ export interface ParentShellSandboxResult {
   backend: SandboxBackend | null;
 }
 
-function isSubagentProcess(env: NodeJS.ProcessEnv): boolean {
-  return env.LETTA_CODE_AGENT_ROLE === "subagent";
-}
-
-/** Whether a canonical path is the given root or nested inside it. */
-function isWithin(path: string, root: string): boolean {
-  return path === root || path.startsWith(`${root}/`);
-}
-
-/**
- * Derive the self-agent directories to keep accessible inside the walled-off
- * agents tree. A memory root under the tree
- * (`~/.letta/agents/<id>/memory[-worktrees]`) carves out the whole agent dir
- * (`~/.letta/agents/<id>`) so self memory, worktrees, and any sibling state
- * stay readable/writable — matching the static guard's self allowance. Roots
- * outside the tree (a custom `MEMORY_DIR`) are kept as-is.
- */
-function deriveSelfRoots(
-  memoryRoots: string[],
-  agentsTreeRoot: string,
-): string[] {
-  const out = new Set<string>();
-  for (const root of memoryRoots) {
-    const canon = canonicalizeRoot(root);
-    if (canon !== agentsTreeRoot && isWithin(canon, agentsTreeRoot)) {
-      const leaf = basename(canon);
-      out.add(
-        leaf === "memory" || leaf === "memory-worktrees"
-          ? dirname(canon)
-          : canon,
-      );
-    } else {
-      out.add(canon);
-    }
-  }
-  return [...out];
-}
-
 /**
  * Apply the cross-agent sandbox to a parent-agent shell launcher. Returns the
  * launcher (possibly wrapped) and the env to spawn it with (carrying the
- * sandbox sentinel when wrapped). Returns the inputs unchanged — a no-op — when
- * any of these hold:
- *   - the `LETTA_FS_SANDBOX` flag is off,
- *   - the process is already inside a sandbox (avoid nested `sandbox-exec`,
- *     which the kernel blocks),
- *   - the process is a subagent (parent-only here; subagents are confined as a
- *     whole process at spawn instead),
- *   - no sandbox backend exists on this host,
- *   - the cwd is inside the agents tree (a read-deny on a cwd ancestor empties
- *     the child env under Seatbelt), or
- *   - self memory roots can't be resolved (nothing safe to carve out, so
- *     denying the tree could trap the agent out of its own memory).
+ * sandbox sentinel when wrapped). Returns the inputs unchanged when the shared
+ * gate ({@link willSandboxParentShell}) says this process's shells are not to be
+ * wrapped (flag off, already sandboxed, a subagent, no backend, cwd inside the
+ * agents tree, or no resolvable self roots).
  */
 export function applyParentShellSandbox(
   launcher: string[],
@@ -103,22 +55,15 @@ export function applyParentShellSandbox(
 ): ParentShellSandboxResult {
   const unchanged: ParentShellSandboxResult = { launcher, env, backend: null };
 
-  if (!isFsSandboxEnabled(env)) return unchanged;
-  if (env[SANDBOX_ENV_VAR]) return unchanged;
-  if (isSubagentProcess(env)) return unchanged;
-
+  // The gate short-circuits on the flag before any host probe, so the
+  // sandbox-off hot path stays a no-op.
+  if (!willSandboxParentShell(cwd, env, availability)) return unchanged;
   const avail = availability ?? detectSandboxBackend();
   if (!avail.backend) return unchanged;
 
   const agentsTreeRoot = getDefaultAgentsTreeRoot();
-
-  // Seatbelt empties the child env when a cwd ancestor is read-denied. The
-  // parent's cwd is normally the repo (outside the tree); bail if it isn't.
-  if (isWithin(canonicalizeRoot(cwd), agentsTreeRoot)) return unchanged;
-
   const memoryRoots = resolveAllowedMemoryRoots({ env }).roots;
-  const selfRoots = deriveSelfRoots(memoryRoots, agentsTreeRoot);
-  if (selfRoots.length === 0) return unchanged;
+  const selfRoots = deriveSelfAgentRoots(memoryRoots, agentsTreeRoot);
 
   const policy = buildCrossAgentSandboxPolicy({ selfRoots, agentsTreeRoot });
   const wrapped = wrapLauncher(launcher, policy, {

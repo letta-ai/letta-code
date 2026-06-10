@@ -17,6 +17,7 @@
 // guard and cannot use the flag to open broad cross-agent memory access.
 
 import { homedir } from "node:os";
+import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import {
@@ -24,6 +25,7 @@ import {
   normalizeMemoryPath,
   resolveMemoryTargetPath,
 } from "./memory-paths";
+import { willSandboxParentShell } from "./sandbox-gate";
 import { canonicalizeRoot } from "./sandbox-policy";
 import { splitShellSegments, tokenizeShellWords } from "./shell-analysis";
 
@@ -666,6 +668,25 @@ export function evaluateCrossAgentGuard(
   const homeDir = env.HOME ?? homedir();
 
   if (isMemoryGuardDisabled(options)) {
+    return null;
+  }
+
+  // A subagent confined as a whole process by the kernel sandbox (sentinel set)
+  // has cross-agent isolation enforced for *every* tool — reads, writes, shells,
+  // and in-process file ops alike — so the static guard is fully redundant.
+  if (env.LETTA_CODE_AGENT_ROLE === "subagent" && env[SANDBOX_ENV_VAR]) {
+    return null;
+  }
+
+  // The parent's shell commands (every dialect — they are all wrapped at spawn)
+  // are confined by the kernel when the cross-agent sandbox is active for this
+  // process. Defer the bypassable static shell analysis to the kernel; the
+  // in-process file tools below still get the guard, since the kernel can't see
+  // them.
+  if (
+    (isShellToolName(toolName) || canonicalToolName(toolName) === "Bash") &&
+    willSandboxParentShell(workingDirectory, env)
+  ) {
     return null;
   }
 

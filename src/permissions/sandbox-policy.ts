@@ -60,6 +60,41 @@ function tempWritableRoots(env: NodeJS.ProcessEnv): string[] {
   return roots.map(canonicalizeRoot);
 }
 
+/** Whether a canonical path is the given root or nested inside it. */
+function isWithinRoot(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+/**
+ * Map memory roots to the agent directories to carve out of the walled-off
+ * agents tree. A memory root under the tree
+ * (`~/.letta/agents/<id>/memory[-worktrees]`) yields the whole agent dir
+ * (`~/.letta/agents/<id>`); carving the *agent dir* rather than just `/memory`
+ * keeps the cwd's immediate parent traversable, so a read-deny on the tree does
+ * not empty the child env under Seatbelt. Roots outside the tree (a custom
+ * `MEMORY_DIR`) are returned as-is.
+ */
+export function deriveSelfAgentRoots(
+  memoryRoots: string[],
+  agentsTreeRoot: string = getDefaultAgentsTreeRoot(),
+): string[] {
+  const out = new Set<string>();
+  for (const root of memoryRoots) {
+    const canon = canonicalizeRoot(root);
+    if (canon !== agentsTreeRoot && isWithinRoot(canon, agentsTreeRoot)) {
+      const leaf = basename(canon);
+      out.add(
+        leaf === "memory" || leaf === "memory-worktrees"
+          ? dirname(canon)
+          : canon,
+      );
+    } else {
+      out.add(canon);
+    }
+  }
+  return [...out];
+}
+
 export interface MemoryModeSandboxInput {
   /**
    * Memory roots the child may write to — typically the resolved
@@ -72,23 +107,31 @@ export interface MemoryModeSandboxInput {
 }
 
 /**
- * Policy for a memory-mode subagent: it may read the filesystem to do its work
- * but may write *only* under its memory roots (and temp).
+ * Policy for a memory-mode subagent: it may read the filesystem broadly to do
+ * its work and write *only* under its memory roots (and temp), and it may not
+ * read or write *other* agents' memory.
  *
- * Deliberately does NOT deny reads of the agents tree. "Memory mode" is a
- * write restriction ("writes go only to the memory dir"); cross-agent *read*
- * isolation is a separate concern handled by the cross-agent guard. Critically,
- * a memory subagent runs with its cwd set to the memory dir, which lives inside
- * `~/.letta/agents`: under Seatbelt, a `(deny file-read*)` on a cwd ancestor
- * makes the child launch with an EMPTY environment (macOS can't traverse the
- * read-denied path during process init), which would break the subagent
- * entirely. `restrictWrites` alone already prevents writing to other agents
- * (they are not in `writableRoots`), so no read-deny is needed here.
+ * The whole subagent process runs under this policy, so it is the sole
+ * enforcement for these agents — the static guard is skipped for them. That
+ * means it must cover both axes:
+ *   - writes: `restrictWrites` denies writes everywhere except `writableRoots`
+ *     (the memory dir + temp).
+ *   - cross-agent reads: the agents tree is read+write denied, with the agent's
+ *     own (and inherited parent's) directory carved back out READ-only.
+ *
+ * Carving the whole agent *directory* readable — not just `/memory` — is what
+ * lets us deny the tree without re-triggering the empty-env bug: the subagent's
+ * cwd is its memory dir inside `~/.letta/agents`, and under Seatbelt a child
+ * launches with an EMPTY environment if a cwd *ancestor* is read-denied. With
+ * the agent dir (the cwd's immediate parent) readable, process init can
+ * traverse to the cwd and the env survives. Writes stay scoped to `/memory`
+ * because the readonly carve only re-allows reads (validated on darwin).
  */
 export function buildMemoryModeSandboxPolicy(
   input: MemoryModeSandboxInput,
 ): FsSandboxPolicy {
   const env = input.env ?? process.env;
+  const agentsTreeRoot = getDefaultAgentsTreeRoot();
 
   const writableRoots = [
     ...input.memoryRoots.map(canonicalizeRoot),
@@ -97,6 +140,8 @@ export function buildMemoryModeSandboxPolicy(
   ];
 
   return buildFsSandboxPolicy({
+    deniedRoots: [agentsTreeRoot],
+    readonlyRoots: deriveSelfAgentRoots(input.memoryRoots, agentsTreeRoot),
     writableRoots,
     restrictWrites: true,
   });

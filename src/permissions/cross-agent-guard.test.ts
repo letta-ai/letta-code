@@ -19,6 +19,7 @@ import {
   resolveAllowedAgents,
 } from "@/permissions/cross-agent-guard";
 import { permissionMode } from "@/permissions/mode";
+import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 
 const HOME = homedir();
 const SELF = "agent-self";
@@ -940,5 +941,32 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
 
     expect(targets.anyAgentScoped).toBe(false);
     expect([...targets.agentIds]).toHaveLength(0);
+  });
+});
+
+describe("sandboxed subagent defers entirely to the kernel", () => {
+  // A subagent confined as a whole process by the kernel sandbox (sentinel set)
+  // gets cross-agent isolation enforced for every tool, so the guard skips.
+  const subagentEnv = {
+    LETTA_CODE_AGENT_ROLE: "subagent",
+    LETTA_PARENT_AGENT_ID: "agent-parent",
+  } as NodeJS.ProcessEnv;
+  const crossAgentRead = { file_path: otherMemory("secret.md") };
+
+  test("without the sandbox sentinel the guard still denies the cross-agent read", () => {
+    const result = evaluateCrossAgentGuard("Read", crossAgentRead, "/tmp", {
+      env: subagentEnv,
+      currentAgentId: "agent-self",
+    });
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toContain(OTHER);
+  });
+
+  test("with the sentinel the guard defers (the kernel owns the whole process)", () => {
+    const result = evaluateCrossAgentGuard("Read", crossAgentRead, "/tmp", {
+      env: { ...subagentEnv, [SANDBOX_ENV_VAR]: "seatbelt" },
+      currentAgentId: "agent-self",
+    });
+    expect(result).toBeNull();
   });
 });
