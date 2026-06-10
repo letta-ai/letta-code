@@ -53,13 +53,6 @@ export function canonicalizeRoot(input: string): string {
   }
 }
 
-/** Writable temp roots a sandboxed process realistically needs. */
-function tempWritableRoots(env: NodeJS.ProcessEnv): string[] {
-  const roots = ["/tmp"];
-  if (env.TMPDIR) roots.push(env.TMPDIR);
-  return roots.map(canonicalizeRoot);
-}
-
 /** Whether a canonical path is the given root or nested inside it. */
 function isWithinRoot(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
@@ -103,7 +96,6 @@ export interface MemoryModeSandboxInput {
   memoryRoots: string[];
   /** Additional writable roots (e.g. a backend storage dir). */
   extraWritableRoots?: string[];
-  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -115,7 +107,7 @@ export interface MemoryModeSandboxInput {
  * enforcement for these agents — the static guard is skipped for them. That
  * means it must cover both axes:
  *   - writes: `restrictWrites` denies writes everywhere except `writableRoots`
- *     (the memory dir + temp).
+ *     (the memory dir — no temp carve, mirroring the static memory contract).
  *   - cross-agent reads: the agents tree is read+write denied, with the agent's
  *     own (and inherited parent's) directory carved back out READ-only.
  *
@@ -130,13 +122,18 @@ export interface MemoryModeSandboxInput {
 export function buildMemoryModeSandboxPolicy(
   input: MemoryModeSandboxInput,
 ): FsSandboxPolicy {
-  const env = input.env ?? process.env;
   const agentsTreeRoot = getDefaultAgentsTreeRoot();
 
+  // Writes are scoped to the memory roots only — deliberately NOT a temp dir.
+  // Memory mode's static enforcement (`isScopedMemoryShellCommand`) only ever
+  // allowed writes inside the memory tree, so the kernel policy must match that
+  // contract rather than widen it. A temp carve also has a Linux-specific
+  // hazard: when the agents tree lives under a writable root (e.g. a /tmp-based
+  // throwaway HOME), bwrap's last-mount-wins re-binds the carve over the
+  // agents-tree tmpfs mask and re-exposes other agents.
   const writableRoots = [
     ...input.memoryRoots.map(canonicalizeRoot),
     ...(input.extraWritableRoots ?? []).map(canonicalizeRoot),
-    ...tempWritableRoots(env),
   ];
 
   return buildFsSandboxPolicy({

@@ -80,7 +80,6 @@ export function wrapSubagentLauncher(
 
   const policy = buildMemoryModeSandboxPolicy({
     memoryRoots: writableMemoryRoots,
-    env,
   });
 
   const wrapped = wrapLauncher(

@@ -60,7 +60,7 @@ test("getDefaultAgentsTreeRoot ends with the agents tree path", () => {
   expect(getDefaultAgentsTreeRoot(home)).toBe(join(home, ".letta", "agents"));
 });
 
-test("memory-mode policy: writes scoped to memory, agents tree read-denied with agent dir carved readonly", () => {
+test("memory-mode policy: writes scoped to memory (no temp carve), agents tree read-denied with agent dir carved readonly", () => {
   // Use the real agents tree so deriveSelfAgentRoots resolves the agent dir
   // (the policy always denies getDefaultAgentsTreeRoot(), keyed to homedir()).
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-self");
@@ -68,13 +68,14 @@ test("memory-mode policy: writes scoped to memory, agents tree read-denied with 
 
   const policy = buildMemoryModeSandboxPolicy({
     memoryRoots: [memoryRoot],
-    env: {},
   });
 
   expect(policy.restrictWrites).toBe(true);
-  // Writes scoped to the memory dir (+ tmp).
-  expect(policy.writableRoots).toContain(canonicalizeRoot(memoryRoot));
-  expect(policy.writableRoots).toContain(canonicalizeRoot("/tmp"));
+  // Writes scoped to the memory dir ONLY — memory mode never granted temp, so
+  // the kernel policy must not either (also avoids the bwrap mask-clobber when
+  // a throwaway HOME lives under /tmp).
+  expect(policy.writableRoots).toEqual([canonicalizeRoot(memoryRoot)]);
+  expect(policy.writableRoots).not.toContain(canonicalizeRoot("/tmp"));
   // Cross-agent reads denied: the whole agents tree is walled off...
   expect(policy.deniedRoots).toEqual([getDefaultAgentsTreeRoot()]);
   // ...with the agent's own dir carved back out READ-only (env survival +
@@ -82,7 +83,7 @@ test("memory-mode policy: writes scoped to memory, agents tree read-denied with 
   expect(policy.readonlyRoots).toEqual([canonicalizeRoot(agentDir)]);
 });
 
-test("memory-mode policy folds in extra writable roots and TMPDIR", () => {
+test("memory-mode policy folds in extra writable roots but not temp dirs", () => {
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-self");
   const memoryRoot = join(agentDir, "memory");
   const extra = makeTempDir();
@@ -90,10 +91,11 @@ test("memory-mode policy folds in extra writable roots and TMPDIR", () => {
   const policy = buildMemoryModeSandboxPolicy({
     memoryRoots: [memoryRoot],
     extraWritableRoots: [extra],
-    env: { TMPDIR: extra },
   });
 
+  // Explicit extra roots are honored, but no temp dir is auto-granted.
   expect(policy.writableRoots).toContain(extra);
+  expect(policy.writableRoots).not.toContain(canonicalizeRoot("/tmp"));
 });
 
 test("cross-agent policy denies the agents tree and carves out self", () => {

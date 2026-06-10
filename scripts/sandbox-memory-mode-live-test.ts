@@ -40,7 +40,6 @@ writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
 const SHELL = process.platform === "darwin" ? "/bin/zsh" : "/bin/bash";
 const policy = buildMemoryModeSandboxPolicy({
   memoryRoots: [selfMem],
-  env: {},
 });
 const wrapped = wrapLauncher([SHELL, "-c", "__PROBE__"], policy, {
   backend: avail.backend,
