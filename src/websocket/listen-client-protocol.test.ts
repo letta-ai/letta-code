@@ -461,6 +461,26 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
+    const cronTrigger = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cron_trigger",
+          request_id: "cron-trigger-1",
+          task_id: "cron-1",
+        }),
+      ),
+    );
+    const cronUpdate = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "cron_update",
+          request_id: "cron-update-1",
+          task_id: "cron-1",
+          name: "Updated task",
+          scheduled_for: null,
+        }),
+      ),
+    );
     const cronDelete = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -484,6 +504,8 @@ describe("listen-client parseServerMessage", () => {
     expect(cronAdd?.type).toBe("cron_add");
     expect(cronGet?.type).toBe("cron_get");
     expect(cronRuns?.type).toBe("cron_runs");
+    expect(cronTrigger?.type).toBe("cron_trigger");
+    expect(cronUpdate?.type).toBe("cron_update");
     expect(cronDelete?.type).toBe("cron_delete");
     expect(cronDeleteAll?.type).toBe("cron_delete_all");
   });
@@ -1544,6 +1566,37 @@ describe("listen-client cron command handling", () => {
         success: true,
         found: true,
         task: { id: taskId },
+      });
+
+      socket.sentPayloads.length = 0;
+      await __listenClientTestUtils.handleCronCommand(
+        {
+          type: "cron_update",
+          request_id: "cron-update-1",
+          task_id: taskId,
+          name: "Updated cron",
+          prompt: "run the updated cron task",
+          scheduled_for: null,
+        },
+        socket as unknown as WebSocket,
+      );
+      const updateMessages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(updateMessages[0]).toMatchObject({
+        type: "cron_update_response",
+        request_id: "cron-update-1",
+        success: true,
+        task: {
+          id: taskId,
+          name: "Updated cron",
+          prompt: "run the updated cron task",
+        },
+      });
+      expect(updateMessages[1]).toMatchObject({
+        type: "crons_updated",
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
       });
 
       socket.sentPayloads.length = 0;

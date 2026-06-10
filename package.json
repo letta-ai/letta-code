@@ -19,6 +19,9 @@
   ],
   "exports": {
     ".": "./letta.js",
+    "./app-server-protocol": {
+      "types": "./dist/types/app-server-protocol.d.ts"
+    },
     "./protocol": {
       "types": "./dist/types/protocol.d.ts"
     }

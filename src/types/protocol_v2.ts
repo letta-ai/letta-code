@@ -9,9 +9,98 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { DmPolicy } from "@/channels/types";
-import type { CronRunLogPage, CronTask } from "@/cron";
-import type { ExperimentId, ExperimentSnapshot } from "@/experiments/types";
+
+export type DmPolicy = "pairing" | "allowlist" | "open";
+
+export type ExperimentId =
+  | "conversation_titles"
+  | "desktop_conversation_bootstrap"
+  | "diffs"
+  | "node"
+  | "tui_cron";
+
+export type ExperimentSource = "override" | "env" | "default";
+
+export interface ExperimentSnapshot {
+  id: ExperimentId;
+  label: string;
+  description: string;
+  envVar?: string;
+  enabled: boolean;
+  source: ExperimentSource;
+  override: boolean | null;
+}
+
+export type CronTaskStatus = "active" | "fired" | "missed" | "cancelled";
+export type CronCancelReason = "conversation_not_found" | "expired";
+export type CronRunOutcome = "queued" | "missed" | "failed" | "skipped";
+export type CronRunReason =
+  | "scheduled_time_matched"
+  | "one_off_due"
+  | "scheduler_inactive"
+  | "started_too_late"
+  | "queue_full"
+  | "runtime_unavailable"
+  | "task_cancelled"
+  | "scheduler_error";
+
+export interface CronTask {
+  id: string;
+  agent_id: string;
+  conversation_id: string;
+  name: string;
+  description: string;
+  cron: string;
+  timezone: string;
+  recurring: boolean;
+  prompt: string;
+  status: CronTaskStatus;
+  created_at: string;
+  expires_at: string | null;
+  last_fired_at: string | null;
+  fire_count: number;
+  cancel_reason: CronCancelReason | null;
+  jitter_offset_ms: number;
+  last_run_at: string | null;
+  last_run_outcome: CronRunOutcome | null;
+  last_run_reason: CronRunReason | null;
+  last_run_error: string | null;
+  last_missed_at: string | null;
+  missed_count: number;
+  failed_count: number;
+  scheduled_for: string | null;
+  fired_at: string | null;
+  missed_at: string | null;
+}
+
+export type CronRunLogStatus = "ok" | "error" | "skipped";
+
+export interface CronRunLogEntry {
+  ts: number;
+  jobId: string;
+  action: "finished";
+  status?: CronRunLogStatus;
+  outcome?: CronRunOutcome;
+  reason?: CronRunReason;
+  error?: string;
+  summary?: string;
+  agentId?: string;
+  conversationId?: string;
+  runId?: string;
+  runAtMs?: number;
+  queueItemId?: string;
+  scheduledFor?: string | null;
+  firedAt?: string;
+}
+
+export interface CronRunLogPage {
+  entries: CronRunLogEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  nextOffset: number | null;
+}
 
 /**
  * Runtime identity for all state and delta events.
@@ -669,6 +758,24 @@ export interface TerminalKillCommand {
   terminal_id: string;
 }
 
+export interface TerminalOutputMessage {
+  type: "terminal_output";
+  terminal_id: string;
+  data: string;
+}
+
+export interface TerminalSpawnedMessage {
+  type: "terminal_spawned";
+  terminal_id: string;
+  pid: number;
+}
+
+export interface TerminalExitedMessage {
+  type: "terminal_exited";
+  terminal_id: string;
+  exitCode: number;
+}
+
 export interface SearchFilesCommand {
   type: "search_files";
   /** Substring to match against file paths. Empty string returns top files by mtime. */
@@ -727,6 +834,30 @@ export interface GrepInFilesMatch {
   after?: string[];
 }
 
+export interface SearchFilesEntry {
+  path: string;
+  type: "file";
+}
+
+export interface SearchFilesResponseMessage {
+  type: "search_files_response";
+  request_id: string;
+  files: SearchFilesEntry[];
+  success: boolean;
+  error?: string;
+}
+
+export interface GrepInFilesResponseMessage {
+  type: "grep_in_files_response";
+  request_id: string;
+  success: boolean;
+  matches: GrepInFilesMatch[];
+  total_matches: number;
+  total_files: number;
+  truncated: boolean;
+  error?: string;
+}
+
 export interface ListInDirectoryCommand {
   type: "list_in_directory";
   /** Absolute path to list entries in. */
@@ -741,6 +872,18 @@ export interface ListInDirectoryCommand {
   request_id?: string;
 }
 
+export interface ListInDirectoryResponseMessage {
+  type: "list_in_directory_response";
+  path: string;
+  folders: string[];
+  files?: string[];
+  hasMore: boolean;
+  total?: number;
+  success: boolean;
+  error?: string;
+  request_id?: string;
+}
+
 export interface GetTreeCommand {
   type: "get_tree";
   /** Absolute path to the root of the subtree to fetch. */
@@ -751,12 +894,36 @@ export interface GetTreeCommand {
   request_id: string;
 }
 
+export interface TreeEntry {
+  path: string;
+  type: "file" | "dir";
+}
+
+export interface GetTreeResponseMessage {
+  type: "get_tree_response";
+  path: string;
+  request_id: string;
+  entries: TreeEntry[];
+  has_more_depth: boolean;
+  success: boolean;
+  error?: string;
+}
+
 export interface ReadFileCommand {
   type: "read_file";
   /** Absolute path to the file to read. */
   path: string;
   /** Echoed back in the response for request correlation. */
   request_id: string;
+}
+
+export interface ReadFileResponseMessage {
+  type: "read_file_response";
+  request_id: string;
+  path: string;
+  content: string | null;
+  success: boolean;
+  error?: string;
 }
 
 export interface WriteFileCommand {
@@ -767,6 +934,14 @@ export interface WriteFileCommand {
   content: string;
   /** Echoed back in the response for request correlation. */
   request_id: string;
+}
+
+export interface WriteFileResponseMessage {
+  type: "write_file_response";
+  request_id: string;
+  path: string;
+  success: boolean;
+  error?: string;
 }
 
 export interface WatchFileCommand {
@@ -821,6 +996,23 @@ export interface EditFileCommand {
   expected_replacements?: number;
   /** Echoed back in the response for request correlation. */
   request_id: string;
+}
+
+export interface EditFileResponseMessage {
+  type: "edit_file_response";
+  request_id: string;
+  file_path: string;
+  message: string | null;
+  replacements: number;
+  start_line?: number;
+  success: boolean;
+  error?: string;
+}
+
+export interface FileChangedMessage {
+  type: "file_changed";
+  path: string;
+  lastModified: number;
 }
 
 export interface ListMemoryCommand {
@@ -925,6 +1117,109 @@ export interface EnableMemfsCommand {
   request_id: string;
   /** The agent to enable memfs for. */
   agent_id: string;
+}
+
+export interface MemoryFileEntry {
+  relative_path: string;
+  is_system: boolean;
+  description: string | null;
+  content: string;
+  size: number;
+  references?: string[];
+}
+
+export interface ListMemoryResponseMessage {
+  type: "list_memory_response";
+  request_id: string;
+  entries: MemoryFileEntry[];
+  done: boolean;
+  total: number;
+  success: boolean;
+  error?: string;
+  memfs_enabled?: boolean;
+  memfs_initialized?: boolean;
+}
+
+export interface MemoryHistoryCommitEntry {
+  sha: string;
+  message: string;
+  timestamp: string;
+  author_name: string | null;
+}
+
+export interface MemoryHistoryResponseMessage {
+  type: "memory_history_response";
+  request_id: string;
+  file_path: string;
+  commits: MemoryHistoryCommitEntry[];
+  success: boolean;
+  error?: string;
+}
+
+export interface MemoryFileAtRefResponseMessage {
+  type: "memory_file_at_ref_response";
+  request_id: string;
+  file_path: string;
+  ref: string;
+  content: string | null;
+  success: boolean;
+  error?: string;
+}
+
+export interface ReadMemoryFileResponseMessage {
+  type: "read_memory_file_response";
+  request_id: string;
+  agent_id: string;
+  path: string;
+  content: string | null;
+  encoding: "utf8" | "base64";
+  success: boolean;
+  error?: string;
+}
+
+export interface WriteMemoryFileResponseMessage {
+  type: "write_memory_file_response";
+  request_id: string;
+  agent_id: string;
+  path: string;
+  success: boolean;
+  committed?: boolean;
+  commit_sha?: string;
+  error?: string;
+}
+
+export interface DeleteMemoryFileResponseMessage {
+  type: "delete_memory_file_response";
+  request_id: string;
+  agent_id: string;
+  path: string;
+  success: boolean;
+  committed?: boolean;
+  commit_sha?: string;
+  error?: string;
+}
+
+export interface MemoryCommitDiffResponseMessage {
+  type: "memory_commit_diff_response";
+  request_id: string;
+  sha: string;
+  diff: string | null;
+  success: boolean;
+  error?: string;
+}
+
+export interface EnableMemfsResponseMessage {
+  type: "enable_memfs_response";
+  request_id: string;
+  success: boolean;
+  memory_directory?: string;
+  error?: string;
+}
+
+export interface MemoryUpdatedMessage {
+  type: "memory_updated";
+  affected_paths: string[];
+  timestamp: number;
 }
 
 export interface ListModelsCommand {
@@ -1167,6 +1462,22 @@ export interface CronTriggerCommand {
   task_id: string;
 }
 
+export interface CronUpdateCommand {
+  type: "cron_update";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  task_id: string;
+  name?: string;
+  description?: string;
+  conversation_id?: string;
+  cron?: string;
+  timezone?: string;
+  recurring?: boolean;
+  prompt?: string;
+  /** Optional ISO timestamp for one-shot tasks. */
+  scheduled_for?: string | null;
+}
+
 export interface CronDeleteCommand {
   type: "cron_delete";
   /** Echoed back in the response for request correlation. */
@@ -1189,12 +1500,33 @@ export interface SkillEnableCommand {
   skill_path: string;
 }
 
+export interface SkillEnableResponseMessage {
+  type: "skill_enable_response";
+  request_id: string;
+  success: boolean;
+  skill_name?: string;
+  error?: string;
+}
+
 export interface SkillDisableCommand {
   type: "skill_disable";
   /** Echoed back in the response for request correlation. */
   request_id: string;
   /** Skill name (symlink name in ~/.letta/skills/). */
   name: string;
+}
+
+export interface SkillDisableResponseMessage {
+  type: "skill_disable_response";
+  request_id: string;
+  success: boolean;
+  skill_name?: string;
+  error?: string;
+}
+
+export interface SkillsUpdatedMessage {
+  type: "skills_updated";
+  timestamp: number;
 }
 
 export interface CreateAgentCommand {
@@ -1495,6 +1827,14 @@ export interface CronTriggerResponseMessage {
   request_id: string;
   success: boolean;
   found: boolean;
+  task?: CronTask;
+  error?: string;
+}
+
+export interface CronUpdateResponseMessage {
+  type: "cron_update_response";
+  request_id: string;
+  success: boolean;
   task?: CronTask;
   error?: string;
 }
@@ -1972,6 +2312,7 @@ export type WsProtocolCommand =
   | CronGetCommand
   | CronRunsCommand
   | CronTriggerCommand
+  | CronUpdateCommand
   | CronDeleteCommand
   | CronDeleteAllCommand
   | SkillEnableCommand
@@ -2011,22 +2352,60 @@ export type WsProtocolCommand =
   | SecretListCommand
   | SecretApplyCommand;
 
+export type WsProtocolCommandType = WsProtocolCommand["type"];
+
 export type WsProtocolMessage =
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
   | QueueUpdateMessage
   | StreamDeltaMessage
   | SubagentStateUpdateMessage
+  | TerminalOutputMessage
+  | TerminalSpawnedMessage
+  | TerminalExitedMessage
+  | SearchFilesResponseMessage
+  | GrepInFilesResponseMessage
+  | ListInDirectoryResponseMessage
+  | GetTreeResponseMessage
+  | ReadFileResponseMessage
+  | WriteFileResponseMessage
+  | FileOpsCommand
+  | EditFileResponseMessage
+  | FileChangedMessage
+  | ListMemoryResponseMessage
+  | MemoryHistoryResponseMessage
+  | MemoryFileAtRefResponseMessage
+  | MemoryCommitDiffResponseMessage
+  | ReadMemoryFileResponseMessage
+  | WriteMemoryFileResponseMessage
+  | DeleteMemoryFileResponseMessage
+  | EnableMemfsResponseMessage
+  | MemoryUpdatedMessage
   | ListModelsResponseMessage
   | ListConnectProvidersResponseMessage
   | ConnectProviderResponseMessage
   | DisconnectProviderResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
+  | CronListResponseMessage
+  | CronAddResponseMessage
+  | CronGetResponseMessage
+  | CronRunsResponseMessage
+  | CronTriggerResponseMessage
+  | CronUpdateResponseMessage
+  | CronDeleteResponseMessage
+  | CronDeleteAllResponseMessage
+  | CronsUpdatedMessage
+  | SkillEnableResponseMessage
+  | SkillDisableResponseMessage
+  | SkillsUpdatedMessage
+  | CreateAgentResponseMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
   | ListConversationPinsResponseMessage
   | SetConversationPinResponseMessage
+  | GetReflectionSettingsResponseMessage
+  | SetReflectionSettingsResponseMessage
   | ChannelsListResponseMessage
   | ChannelAccountsListResponseMessage
   | ChannelAccountCreateResponseMessage
@@ -2053,8 +2432,12 @@ export type WsProtocolMessage =
   | ChannelRoutesUpdatedMessage
   | ChannelTargetsUpdatedMessage
   | GetCwdMapResponseMessage
+  | SearchBranchesResponse
+  | CheckoutBranchResponse
   | SecretListResponse
   | SecretApplyResponse
   | RemoveQueueItemResponse;
+
+export type WsProtocolMessageType = WsProtocolMessage["type"];
 
 export type { StopReasonType };

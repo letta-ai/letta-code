@@ -133,6 +133,14 @@ async function resolveListenerStartupMode(
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
+  // When running under the desktop app (which sets LETTA_DESKTOP_DEBUG_PANEL),
+  // the local proxy has a full environment server that expects device
+  // registration. Treat it as "remote" so the listener registers and connects
+  // via WebSocket, even when channels are active.
+  if (process.env.LETTA_DESKTOP_DEBUG_PANEL === "1") {
+    return { kind: "remote", serverUrl };
+  }
+
   if (isLocalBackendEnvEnabled() && channelNames.length > 0) {
     return {
       kind: "local-channels",
@@ -142,14 +150,6 @@ async function resolveListenerStartupMode(
   }
 
   if (isCloudListenerServerUrl(serverUrl)) {
-    return { kind: "remote", serverUrl };
-  }
-
-  // When running under the desktop app (which sets LETTA_DESKTOP_DEBUG_PANEL),
-  // the local proxy has a full environment server that expects device
-  // registration. Treat it as "remote" so the listener registers and connects
-  // via WebSocket, even when channels are active.
-  if (process.env.LETTA_DESKTOP_DEBUG_PANEL === "1") {
     return { kind: "remote", serverUrl };
   }
 
