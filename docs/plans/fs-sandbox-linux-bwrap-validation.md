@@ -11,6 +11,63 @@ changes; you are exercising it explicitly.
 
 ---
 
+## STATUS — Linux/bwrap validation COMPLETE (2026-06-10)
+
+Live-validated on Debian 12 (bookworm), kernel 6.1.0, **bwrap 0.8.0**,
+unprivileged userns enabled. Tasks 0–4 below all pass, and **two real bugs were
+found and fixed**. The bwrap backend is functionally validated end-to-end on
+Linux. What remains before default-on is the macOS re-validation of the two
+shared-policy fixes — see "Remaining" at the bottom.
+
+**Results**
+- **Task 0** — backend detected: `{ backend: "bwrap", reason: "bwrap available" }`.
+- **Task 1** — all live scripts pass (after the matcher fixes below): bash
+  cross-agent, shell-executors (pipe + **PTY** + shell), memory-mode,
+  composition (both layers + `SB_NO_GUARD=1` kernel-only).
+- **Task 2c** — env survives on bwrap (cwd = masked memory dir; ~51 keys). The
+  predicted tmpfs-mask + rebind avoids the Seatbelt empty-env bug.
+- **Task 3** — SIGTERM: **both** the group-kill (`process.kill(-pid)`, the real
+  `shell-runner.ts` path) and a plain `child.kill()` reap the inner shell;
+  `--die-with-parent` backs it up. No blocker for default-on.
+- **Task 4** — network stays open (HTTP 200, no `--unshare-net`); tmpfs mask
+  hides other agents (enumeration shows only the carved self).
+
+**Bugs found + fixed**
+1. **Memory-mode temp over-grant** — the policy carved `/tmp`/`$TMPDIR`
+   writable, which memory mode's static contract (`isScopedMemoryShellCommand`)
+   never allowed. On bwrap, when the agents tree lives under a writable root (a
+   `/tmp`-based throwaway HOME), the broad `/tmp` carve re-binds over the
+   agents-tree tmpfs mask (last-mount-wins) and re-exposes other agents. Dropped
+   the temp carve — writes are now scoped to the memory dir only; the wrapped
+   bun runtime still launches fine under the read-only root.
+2. **bwrap aborts on a missing carve-out root** — `--bind`/`--ro-bind` fail the
+   whole spawn when the source is missing, and `resolveAllowedMemoryRoots`
+   always lists the lazily-created `memory-worktrees` sibling, so any agent
+   without worktrees couldn't spawn a memory subagent. Switched carve-out
+   restores to `--bind-try`/`--ro-bind-try` (skip a missing source; fail-closed,
+   masks stay strict). Seatbelt was never affected (lexical rules). Caught by the
+   new subagent live test.
+
+**Test/script changes**
+- Live matchers made cross-platform: accept bwrap's absent-path semantics
+  (`No such file or directory`) alongside Seatbelt's `operation not permitted` /
+  `read-only file system`; the composition enumerate case accepts the bwrap
+  outcome (ls succeeds, mask hides other agents).
+- Added `scripts/sandbox-subagent-live-test.ts` — drives the **real**
+  `wrapSubagentLauncher` (gating: flag / permissionMode / backendMode) and
+  spawns the wrapped child the way `manager.ts` does, asserting gating +
+  isolation end-to-end.
+- Documented the **ancestor-carve hazard** inline in `src/sandbox/bwrap.ts`: a
+  carve-out that is an *ancestor* of a denied root un-masks it on bwrap
+  (last-mount-wins). No current caller does this; the comment guards re-intro.
+
+Commits (branch `worktree-fs-sandbox`): `fix(sandbox): scope memory-mode writes
+to the memory dir only`, `fix(sandbox): tolerate not-yet-created carve-out roots
+on bwrap`, `test(sandbox): cross-platform live matchers; add subagent-spawn live
+test`.
+
+---
+
 ## What the feature does (one paragraph)
 
 It kernel-confines an agent's filesystem access so one agent can't read or write
@@ -154,3 +211,26 @@ Report back:
   must keep Seatbelt working.
 - Keep the live scripts cross-platform (branch on `process.platform`), don't
   hard-code Linux paths.
+
+---
+
+## Remaining before default-on — macOS re-validation handoff
+
+The two fixes above touch the **shared** policy, not just bwrap: the temp-carve
+removal is in `buildMemoryModeSandboxPolicy`, which both backends use. So before
+flipping `LETTA_FS_SANDBOX` on by default, on a **Mac/Seatbelt** host:
+
+1. Re-run all four live scripts (they auto-detect Seatbelt) **plus** the new
+   `scripts/sandbox-subagent-live-test.ts`. The memory-mode and subagent scripts
+   are the ones the policy change affects — confirm self/parent-memory writes
+   still work, writes outside the memory dir are denied, and the Seatbelt
+   subagent process still launches now that there is no temp carve.
+2. Confirm the temp removal didn't regress the Seatbelt empty-env workaround
+   (env should still survive from a memory-dir cwd — it's a separate mechanism,
+   but verify explicitly).
+
+Open follow-up (not a blocker for the Seatbelt sign-off): a true end-to-end
+subagent spawn through the live agent loop with an LLM round-trip.
+`sandbox-subagent-live-test.ts` exercises the real spawn path
+(`wrapSubagentLauncher` + the manager's spawn shape) but substitutes a `/bin/bash`
+filesystem probe for the agent itself.
