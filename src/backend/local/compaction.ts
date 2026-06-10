@@ -10,6 +10,7 @@ import {
 import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 import {
   applyPiEnvOverrides,
+  reasoningForSettings,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
@@ -386,12 +387,20 @@ async function runGenerateText(
     systemPrompt,
     messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
   };
+  const reasoning = reasoningForSettings(localModel.modelSettings);
   const options: SimpleStreamOptions & Record<string, unknown> = {
     ...resolved.providerOptions,
     ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
     ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
     ...(resolved.headers ? { headers: resolved.headers } : {}),
     ...(input.abortSignal ? { signal: input.abortSignal } : {}),
+    // Mirrors Pi's createSummarizationOptions, which passes the session
+    // thinking level into summarization requests. Required for adaptive
+    // thinking Anthropic models (for example claude-fable-5): without
+    // options.reasoning, pi-ai sends `thinking: {type: "disabled"}`, which
+    // those models reject with a 400 invalid_request_error — breaking every
+    // compaction (automatic and manual /compact).
+    ...(reasoning ? { reasoning } : {}),
     maxRetries: 0,
   };
   const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
