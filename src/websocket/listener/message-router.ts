@@ -19,6 +19,7 @@ import {
   handleTerminalSpawn,
 } from "@/websocket/terminal-handler";
 import { handleExecuteCommand } from "./commands";
+import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
 import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
@@ -507,6 +508,16 @@ export function createListenerMessageHandler(
 
       if (
         handleCronProtocolCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
+        return;
+      }
+
+      if (
+        handleAgentConversationManagementProtocolCommand(parsed, {
           socket,
           safeSocketSend,
           runDetachedListenerTask,

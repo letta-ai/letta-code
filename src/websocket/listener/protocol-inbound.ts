@@ -4,6 +4,9 @@ import { isSupportedChannelId } from "@/channels/plugin-registry";
 import type { ExperimentId } from "@/experiments/types";
 import type {
   AbortMessageCommand,
+  AgentCreateCommand,
+  AgentListCommand,
+  AgentRetrieveCommand,
   ChangeDeviceStateCommand,
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -27,6 +30,9 @@ import type {
   ChannelTargetsListCommand,
   CheckoutBranchCommand,
   ConnectProviderCommand,
+  ConversationCreateCommand,
+  ConversationListCommand,
+  ConversationRetrieveCommand,
   CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
@@ -114,6 +120,10 @@ function isStringRecord(value: unknown): value is Record<string, string> {
     !Array.isArray(value) &&
     Object.values(value).every((item) => typeof item === "string")
   );
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function isRuntimeScope(value: unknown): value is RuntimeScope {
@@ -1015,6 +1025,100 @@ export function isCreateAgentCommand(
   );
 }
 
+export function isAgentListCommand(value: unknown): value is AgentListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "agent_list" &&
+    typeof c.request_id === "string" &&
+    (c.query === undefined || isObjectRecord(c.query))
+  );
+}
+
+export function isAgentRetrieveCommand(
+  value: unknown,
+): value is AgentRetrieveCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "agent_retrieve" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string"
+  );
+}
+
+export function isAgentCreateCommand(
+  value: unknown,
+): value is AgentCreateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "agent_create" &&
+    typeof c.request_id === "string" &&
+    isObjectRecord(c.body)
+  );
+}
+
+export function isConversationListCommand(
+  value: unknown,
+): value is ConversationListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "conversation_list" &&
+    typeof c.request_id === "string" &&
+    (c.query === undefined || isObjectRecord(c.query))
+  );
+}
+
+export function isConversationRetrieveCommand(
+  value: unknown,
+): value is ConversationRetrieveCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+  };
+  return (
+    c.type === "conversation_retrieve" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string"
+  );
+}
+
+export function isConversationCreateCommand(
+  value: unknown,
+): value is ConversationCreateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_create" &&
+    typeof c.request_id === "string" &&
+    isObjectRecord(c.body)
+  );
+}
+
 export function isListConversationPinsCommand(
   value: unknown,
 ): value is ListConversationPinsCommand {
@@ -1806,6 +1910,12 @@ export function parseServerMessage(
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
+      isAgentListCommand(parsed) ||
+      isAgentRetrieveCommand(parsed) ||
+      isAgentCreateCommand(parsed) ||
+      isConversationListCommand(parsed) ||
+      isConversationRetrieveCommand(parsed) ||
+      isConversationCreateCommand(parsed) ||
       isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||

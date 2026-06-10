@@ -11,6 +11,10 @@ import {
   resolveRecoveryBatchId,
 } from "./approval";
 import {
+  handleAgentConversationManagementCommand,
+  handleAgentConversationManagementProtocolCommand,
+} from "./commands/agents-conversations";
+import {
   handleChannelRegistryEvent,
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
@@ -506,6 +510,21 @@ export const __listenClientTestUtils = {
     socket: Parameters<typeof handleChannelRegistryEvent>[1],
     runtime: ListenerRuntime,
   ) => handleChannelRegistryEvent(event, socket, runtime, safeSocketSend),
+  handleAgentConversationManagementCommand: (
+    parsed: Parameters<typeof handleAgentConversationManagementCommand>[0],
+    socket: WebSocket,
+  ) => handleAgentConversationManagementCommand(parsed, socket, safeSocketSend),
+  handleAgentConversationManagementProtocolCommand: (
+    parsed: Parameters<
+      typeof handleAgentConversationManagementProtocolCommand
+    >[0],
+    socket: WebSocket,
+  ) =>
+    handleAgentConversationManagementProtocolCommand(parsed, {
+      socket,
+      safeSocketSend,
+      runDetachedListenerTask,
+    }),
   handleSkillCommand: (
     parsed: Parameters<typeof handleSkillCommand>[0],
     socket: WebSocket,

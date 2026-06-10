@@ -50,6 +50,18 @@ describe("app-server protocol export", () => {
         success: true,
         reflection_settings: null,
       },
+      {
+        type: "agent_list_response",
+        request_id: "req",
+        success: true,
+        agents: [],
+      },
+      {
+        type: "conversation_list_response",
+        request_id: "req",
+        success: true,
+        conversations: [],
+      },
     ] satisfies WsProtocolMessage[];
 
     expect(messages.map((message) => message.type)).toEqual([
@@ -61,6 +73,8 @@ describe("app-server protocol export", () => {
       "terminal_output",
       "search_branches_response",
       "get_reflection_settings_response",
+      "agent_list_response",
+      "conversation_list_response",
     ]);
   });
 });
