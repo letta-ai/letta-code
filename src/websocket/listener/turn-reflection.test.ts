@@ -1,4 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createBuffers, toLines } from "@/cli/helpers/accumulator";
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { REFLECTION_STATE_SCHEMA_VERSION } from "@/cli/helpers/reflection-transcript";
@@ -109,5 +111,23 @@ describe("post-turn channel reflection", () => {
 
     expect(didLaunch).toBe(false);
     expect(launch).not.toHaveBeenCalled();
+  });
+
+  test("records listener transcript rows before evaluating post-turn reflection", () => {
+    const turnPath = fileURLToPath(new URL("./turn.ts", import.meta.url));
+    const source = readFileSync(turnPath, "utf-8");
+    const endTurnIndex = source.indexOf('if (stopReason === "end_turn")');
+    const appendIndex = source.indexOf(
+      "appendTranscriptDeltaJsonl(",
+      endTurnIndex,
+    );
+    const launchIndex = source.indexOf(
+      "maybeLaunchPostTurnChannelReflection({",
+      endTurnIndex,
+    );
+
+    expect(endTurnIndex).toBeGreaterThanOrEqual(0);
+    expect(appendIndex).toBeGreaterThan(endTurnIndex);
+    expect(launchIndex).toBeGreaterThan(appendIndex);
   });
 });
