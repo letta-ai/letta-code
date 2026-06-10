@@ -1,3 +1,4 @@
+import { getLocalBackendCrossAgentTreeRoot } from "@/backend/local/paths";
 import { buildMemoryModeSandboxPolicy } from "@/permissions/sandbox-policy";
 import {
   detectSandboxBackend,
@@ -16,10 +17,18 @@ import { wrapLauncher } from "@/sandbox/wrap";
  * in-process Write/Edit tools, its Bash commands, and anything those spawn — so
  * the static memory shell-scoping becomes redundant for these agents.
  *
- * Gated behind `LETTA_FS_SANDBOX=1` while the per-host bring-up is validated,
- * and currently API-backend only: the local backend stores conversation state
- * and per-agent memory under one tree, which needs its own policy split before
- * it can be safely write-restricted.
+ * Gated behind `LETTA_FS_SANDBOX=1` while the per-host bring-up is validated.
+ *
+ * Both backends are covered, with different write postures:
+ *   - API/cloud: `restrictWrites:true` — writes scoped to the memory dir (the
+ *     child's conversation/state persistence is server-side, nothing local to
+ *     trap).
+ *   - Local: `restrictWrites:false` (a deny-list) against the `lc-local-backend/memfs`
+ *     tree. The child runs the backend in-process and persists its own
+ *     conversation + agent-state to disk *outside* `memfs`, so write-restriction
+ *     would trap it. The cross-agent read-deny — another agent's memory is read-
+ *     and write-blocked — still holds; only the "writes confined to memory"
+ *     blast-radius nicety is dropped (tracked as a follow-up).
  */
 
 interface SubagentLauncher {
@@ -31,12 +40,18 @@ export interface WrapSubagentLauncherInput {
   launcher: SubagentLauncher;
   /** The subagent's declared permission mode; only "memory" is wrapped. */
   permissionMode: string | undefined;
-  /** Active backend ("local" is skipped for now). */
+  /** Active backend; selects the tree + write posture ("local" vs "api"). */
   backendMode: string;
   /** Resolved memory roots the child may write to (MEMORY_DIR + siblings). */
   memoryRoots: string[];
   /** MEMORY_DIR target; folded into the writable set if not already present. */
   inheritedPrimaryRoot: string | null;
+  /**
+   * Local backend storage dir (`~/.letta/lc-local-backend`), used to locate the
+   * `memfs` cross-agent tree. Only consulted when `backendMode === "local"`;
+   * null/omitted falls back to the default storage dir.
+   */
+  localBackendStorageDir?: string | null;
   env?: NodeJS.ProcessEnv;
   /** Injectable for tests; defaults to a real host probe. */
   availability?: SandboxAvailability;
@@ -52,8 +67,8 @@ export interface WrapSubagentLauncherResult {
 
 /**
  * Wrap a subagent launcher under a memory-mode sandbox, or return null to spawn
- * it unchanged (flag off, not memory mode, local backend, no backend on host,
- * or nothing to restrict).
+ * it unchanged (flag off, not memory mode, no backend on host, or nothing to
+ * restrict).
  */
 export function wrapSubagentLauncher(
   input: WrapSubagentLauncherInput,
@@ -62,7 +77,6 @@ export function wrapSubagentLauncher(
 
   if (!isFsSandboxEnabled(env)) return null;
   if (input.permissionMode !== "memory") return null;
-  if (input.backendMode === "local") return null;
 
   const writableMemoryRoots = [...input.memoryRoots];
   if (
@@ -78,8 +92,18 @@ export function wrapSubagentLauncher(
   const availability = input.availability ?? detectSandboxBackend();
   if (!availability.backend) return null;
 
+  // Local backend: deny-list against the memfs tree (restrictWrites:false) so
+  // the in-process child can still persist its conversation/agent-state outside
+  // memfs. API/cloud: default tree + write-scoping (restrictWrites:true).
+  const isLocal = input.backendMode === "local";
   const policy = buildMemoryModeSandboxPolicy({
     memoryRoots: writableMemoryRoots,
+    agentsTreeRoot: isLocal
+      ? getLocalBackendCrossAgentTreeRoot(
+          input.localBackendStorageDir ?? undefined,
+        )
+      : undefined,
+    restrictWrites: !isLocal,
   });
 
   const wrapped = wrapLauncher(

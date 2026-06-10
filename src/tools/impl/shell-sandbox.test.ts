@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { getLocalBackendCrossAgentTreeRoot } from "@/backend/local/paths";
 import {
   canonicalizeRoot,
   getDefaultAgentsTreeRoot,
@@ -99,6 +100,35 @@ test("wraps a parent launcher: denies agents tree, carves self, sets sentinel", 
   expect(defineValue(result.launcher, "-DWRITABLE_0=")).toBe(
     canonicalizeRoot(memDir),
   );
+});
+
+test("local backend: walls off the memfs tree, not ~/.letta/agents", () => {
+  // A local-backend parent agent (LETTA_LOCAL_BACKEND_EXPERIMENTAL=1) keeps its
+  // memory under lc-local-backend/memfs; the sandbox must deny THAT tree so
+  // cross-agent isolation actually applies (denying ~/.letta/agents is a no-op).
+  const memfsTree = getLocalBackendCrossAgentTreeRoot();
+  const memDir = join(memfsTree, "local-agent-xyz", "memory");
+  const result = applyParentShellSandbox(
+    LAUNCHER,
+    REPO_CWD,
+    {
+      LETTA_FS_SANDBOX: "1",
+      LETTA_LOCAL_BACKEND_EXPERIMENTAL: "1",
+      MEMORY_DIR: memDir,
+    },
+    SEATBELT,
+  );
+
+  expect(result.backend).toBe("seatbelt");
+  const denied = defineValue(result.launcher, "-DDENIED_0=");
+  expect(denied).toBe(canonicalizeRoot(memfsTree));
+  expect(denied).not.toBe(getDefaultAgentsTreeRoot());
+  // Self agent dir carved writable (both /memory and /memory-worktrees collapse
+  // to the single agent dir).
+  const writables = result.launcher.filter((a) => a.startsWith("-DWRITABLE_"));
+  expect(writables).toEqual([
+    `-DWRITABLE_0=${canonicalizeRoot(join(memfsTree, "local-agent-xyz"))}`,
+  ]);
 });
 
 test("carves the whole self agent dir for an in-tree memory root", () => {

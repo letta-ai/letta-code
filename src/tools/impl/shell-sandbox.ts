@@ -1,7 +1,12 @@
+import {
+  getLocalBackendCrossAgentTreeRoot,
+  isLocalBackendEnvEnabled,
+} from "@/backend/local/paths";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { willSandboxParentShell } from "@/permissions/sandbox-gate";
 import {
   buildCrossAgentSandboxPolicy,
+  canonicalizeRoot,
   deriveSelfAgentRoots,
   getDefaultAgentsTreeRoot,
 } from "@/permissions/sandbox-policy";
@@ -61,7 +66,14 @@ export function applyParentShellSandbox(
   const avail = availability ?? detectSandboxBackend();
   if (!avail.backend) return unchanged;
 
-  const agentsTreeRoot = getDefaultAgentsTreeRoot();
+  // The local backend keeps memory under `lc-local-backend/memfs`, not
+  // `~/.letta/agents`; wall off that tree instead so cross-agent isolation
+  // actually applies. Resolved after the gate so the sandbox-off hot path does
+  // no filesystem work. The parent agent's cwd is the repo (outside both trees),
+  // so the gate's default-tree empty-env check stays correct either way.
+  const agentsTreeRoot = isLocalBackendEnvEnabled(env)
+    ? canonicalizeRoot(getLocalBackendCrossAgentTreeRoot())
+    : getDefaultAgentsTreeRoot();
   const memoryRoots = resolveAllowedMemoryRoots({ env }).roots;
   const selfRoots = deriveSelfAgentRoots(memoryRoots, agentsTreeRoot);
 

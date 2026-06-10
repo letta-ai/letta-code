@@ -1151,6 +1151,7 @@ async function executeSubagent(
       backendMode,
       memoryRoots: inheritedMemoryRoots.roots,
       inheritedPrimaryRoot,
+      localBackendStorageDir,
     });
     const spawnLauncher = sandbox
       ? { command: sandbox.command, args: sandbox.args }

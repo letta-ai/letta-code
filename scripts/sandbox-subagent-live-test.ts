@@ -80,13 +80,13 @@ assert(
   }) === null,
 );
 assert(
-  "local backend → not wrapped",
+  "local backend → wrapped (deny-list against the memfs tree)",
   wrapSubagentLauncher({
     ...baseInput,
     permissionMode: "memory",
     backendMode: "local",
     env: onEnv,
-  }) === null,
+  }) !== null,
 );
 
 const wrapped = wrapSubagentLauncher({

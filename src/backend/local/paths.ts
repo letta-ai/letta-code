@@ -35,3 +35,17 @@ export function getLocalBackendMemoryFilesystemRoot(
 ): string {
   return join(storageDir, "memfs", agentId, "memory");
 }
+
+/**
+ * The tree holding every local-backend agent's memory (`<storage>/memfs`) — the
+ * cross-agent boundary the filesystem sandbox walls off, analogous to
+ * `~/.letta/agents` on the API backend. Each agent's memory lives at
+ * `<this>/<agentId>/memory`, so the sandbox carves self the same way on both
+ * backends. Resolved here (in `backend/`) because the policy builders live in
+ * `permissions/`, below `backend/`, and cannot import this layer.
+ */
+export function getLocalBackendCrossAgentTreeRoot(
+  storageDir = getLocalBackendStorageDir(),
+): string {
+  return join(storageDir, "memfs");
+}

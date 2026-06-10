@@ -70,10 +70,21 @@ test("returns null for non-memory permission modes", () => {
   ).toBeNull();
 });
 
-test("returns null for the local backend (deferred)", () => {
-  expect(
-    wrapSubagentLauncher({ ...baseInput(), backendMode: "local" }),
-  ).toBeNull();
+test("wraps a memory-mode LOCAL subagent (deny-list against the memfs tree)", () => {
+  const storageDir = "/home/u/.letta/lc-local-backend";
+  const memoryRoot = `${storageDir}/memfs/parent/memory`;
+  const result = wrapSubagentLauncher({
+    ...baseInput(),
+    backendMode: "local",
+    memoryRoots: [memoryRoot],
+    inheritedPrimaryRoot: memoryRoot,
+    localBackendStorageDir: storageDir,
+  });
+  // Local is no longer skipped: the child is confined under the backend, with
+  // its policy keyed to the memfs tree (asserted in sandbox-policy.test.ts).
+  expect(result).not.toBeNull();
+  expect(result?.command).toBe(SANDBOX_EXEC_PATH);
+  expect(result?.sandboxEnv[SANDBOX_ENV_VAR]).toBe("seatbelt");
 });
 
 test("returns null when no sandbox backend is available", () => {

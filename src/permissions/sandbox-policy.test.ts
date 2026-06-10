@@ -98,6 +98,44 @@ test("memory-mode policy folds in extra writable roots but not temp dirs", () =>
   expect(policy.writableRoots).not.toContain(canonicalizeRoot("/tmp"));
 });
 
+test("memory-mode policy (local backend): custom tree + restrictWrites:false deny-list", () => {
+  // The local backend walls off `lc-local-backend/memfs` (not ~/.letta/agents)
+  // and uses a deny-list (restrictWrites:false) so the in-process child can
+  // still persist conversation/agent-state OUTSIDE the tree. Cross-agent
+  // read-deny + self carve must still hold.
+  const home = makeTempDir();
+  const memfsTree = join(home, ".letta", "lc-local-backend", "memfs");
+  const selfAgentDir = join(memfsTree, "agent-self");
+  const memoryRoot = join(selfAgentDir, "memory");
+  mkdirSync(memoryRoot, { recursive: true });
+
+  const policy = buildMemoryModeSandboxPolicy({
+    memoryRoots: [memoryRoot],
+    agentsTreeRoot: memfsTree,
+    restrictWrites: false,
+  });
+
+  // Deny-list: writes allowed by default (so conv/state outside memfs persist).
+  expect(policy.restrictWrites).toBe(false);
+  // The memfs tree is walled off (read+write) — NOT ~/.letta/agents.
+  expect(policy.deniedRoots).toEqual([canonicalizeRoot(memfsTree)]);
+  // Self agent dir carved readonly (env survival + own reads); self memory
+  // carved writable (the subagent edits its own memory).
+  expect(policy.readonlyRoots).toEqual([canonicalizeRoot(selfAgentDir)]);
+  expect(policy.writableRoots).toEqual([canonicalizeRoot(memoryRoot)]);
+});
+
+test("memory-mode policy: restrictWrites and tree default to the API/cloud shape", () => {
+  const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-default");
+  const memoryRoot = join(agentDir, "memory");
+
+  const policy = buildMemoryModeSandboxPolicy({ memoryRoots: [memoryRoot] });
+
+  // Omitting both params preserves the original API behavior exactly.
+  expect(policy.restrictWrites).toBe(true);
+  expect(policy.deniedRoots).toEqual([getDefaultAgentsTreeRoot()]);
+});
+
 test("cross-agent policy denies the agents tree and carves out self", () => {
   const home = makeTempDir();
   const agentsTree = join(home, ".letta", "agents");
