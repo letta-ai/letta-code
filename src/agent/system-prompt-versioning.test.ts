@@ -87,9 +87,36 @@ describe("system prompt versioning", () => {
     expect(decision.kind).toBe("custom");
   });
 
-  test("ignores non-Letta-Code agents without prompt provenance", () => {
+  test("tracks untagged agents when their prompt matches a current preset", () => {
     const decision = decideManagedSystemPromptUpdate({
       agent: agent(buildSystemPrompt("default", "standard"), []),
+      memoryMode: "standard",
+    });
+
+    expect(decision.kind).toBe("track");
+  });
+
+  test("updates untagged agents with a recognizable legacy Letta Code prompt", () => {
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent(
+        "You are Letta Code, a state-of-the-art coding agent running within the Letta Code CLI on a user's computer.\n\n## General",
+        [],
+      ),
+      memoryMode: "standard",
+    });
+
+    expect(decision.kind).toBe("update");
+    if (decision.kind === "update") {
+      expect(decision.nextSystemPrompt).toBe(
+        buildSystemPrompt("default", "standard"),
+      );
+      expect(decision.prompt.preset).toBe("default");
+    }
+  });
+
+  test("ignores untagged non-Letta-Code agents without prompt provenance", () => {
+    const decision = decideManagedSystemPromptUpdate({
+      agent: agent("You are a custom assistant.", []),
       memoryMode: "standard",
     });
 
