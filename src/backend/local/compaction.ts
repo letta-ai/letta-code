@@ -12,6 +12,7 @@ import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
+import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
 import { resolveAvailableLocalModelForTurn } from "./local-model-config";
@@ -585,11 +586,7 @@ export async function summarizeLocalMessagesSlidingWindow(
 }
 
 export function estimateLocalMessageTokens(messages: LocalMessage[]): number {
-  const chars = messages.reduce(
-    (total, message) => total + JSON.stringify(message).length,
-    0,
-  );
-  return Math.ceil(chars / 4);
+  return estimateLocalMessagesTokens(messages);
 }
 
 export function packageLocalSummaryMessage(
