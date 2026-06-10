@@ -20,6 +20,7 @@ const dirs = [
   "src/providers",
   "src/queue",
   "src/reminders",
+  "src/sandbox",
   "src/skills",
   "src/telemetry",
   "src/test-utils",
