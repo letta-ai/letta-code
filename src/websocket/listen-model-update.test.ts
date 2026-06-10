@@ -133,8 +133,8 @@ describe("listen-client model update status message", () => {
     expect(result.message).toBe("Model updated to Opus 4.6 (Max).");
   });
 
-  test("shows Extra-High for reasoning_effort xhigh on Opus 4.7+", () => {
-    for (const modelLabel of ["Opus 4.7", "Opus 4.8"]) {
+  test("shows Extra-High for reasoning_effort xhigh on Fable and Opus 4.7+", () => {
+    for (const modelLabel of ["Fable 5", "Opus 4.7", "Opus 4.8"]) {
       const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
         modelLabel,
         toolsetChanged: false,

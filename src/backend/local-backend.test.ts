@@ -700,9 +700,7 @@ describe("local backend pi transcript", () => {
     const fable = (await listLocalModels(storageDir)).find(
       (model) => model.handle === "anthropic/claude-fable-5",
     );
-    expect(fable?.max_context_window).toBe(
-      getModel("anthropic", "claude-fable-5")?.contextWindow,
-    );
+    expect(fable?.max_context_window).toBe(1_000_000);
   });
 
   test("lists pi catalog context windows for configured OpenRouter models", async () => {
