@@ -743,6 +743,21 @@ export function handleMemoryProtocolCommand(
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
 
+        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        if (commitResult.committed && !memorySyncMode) {
+          const { syncPendingMemoryCommitsAfterTurn } = await import(
+            "@/agent/memory-git"
+          );
+          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
+            memoryDir: memoryRoot,
+          }).catch((err) => {
+            console.warn(
+              `[write_memory_file] background push failed for ${parsed.agent_id}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
+        }
+
         // ── Notify UI so the memory view auto-refreshes ────────────────
         if (commitResult.committed) {
           safeSocketSend(
@@ -918,6 +933,21 @@ export function handleMemoryProtocolCommand(
           },
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
+
+        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        if (commitResult.committed && !memorySyncMode) {
+          const { syncPendingMemoryCommitsAfterTurn } = await import(
+            "@/agent/memory-git"
+          );
+          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
+            memoryDir: memoryRoot,
+          }).catch((err) => {
+            console.warn(
+              `[delete_memory_file] background push failed for ${parsed.agent_id}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
+        }
 
         if (commitResult.committed) {
           safeSocketSend(
