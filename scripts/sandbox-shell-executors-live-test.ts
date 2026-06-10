@@ -49,7 +49,13 @@ const selfFile = join(selfMem, "mine.md");
 let failures = 0;
 function check(label: string, output: string, expectDenied: boolean): void {
   const leaked = /TOPSECRET/.test(output);
-  const denied = /not permitted|operation not permitted/i.test(output);
+  // Seatbelt denies with "operation not permitted"; bwrap masks the path with a
+  // tmpfs so it reports as absent ("No such file or directory"). Accept both —
+  // the security criterion is that the secret never leaks (`!leaked`).
+  const denied =
+    /not permitted|operation not permitted|no such file or directory/i.test(
+      output,
+    );
   const sawSelf = /SELFDATA/.test(output);
   const pass = expectDenied ? denied && !leaked : sawSelf;
   if (!pass) failures++;

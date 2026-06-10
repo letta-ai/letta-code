@@ -108,7 +108,14 @@ async function runCommand(command: string): Promise<Outcome> {
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
-  const denied = /operation not permitted|read-only file system/i.test(text);
+  // Seatbelt denies reads with "operation not permitted" and writes with
+  // "read-only file system"; bwrap's tmpfs mask makes denied paths absent
+  // ("No such file or directory"). Accept all three so the kernel layer is
+  // recognized on both backends.
+  const denied =
+    /operation not permitted|read-only file system|no such file or directory/i.test(
+      text,
+    );
   return {
     blockedBy: result.status === "error" && denied ? "kernel" : "none",
     status: result.status,
@@ -157,9 +164,13 @@ const cases: Case[] = [
   {
     label: "attack: enumerate the agents tree",
     command: `ls ${agents} && echo LISTED`,
+    // Seatbelt denies the listing outright; bwrap lets `ls` succeed but the
+    // tmpfs mask leaves only the carved-out self agent visible (others absent).
+    // Either way the invariant is the same: another agent must never appear.
     expect: (o, g) =>
-      attackBlocked(o, g) && !/LISTED .*agent-other/.test(o.text),
-    why: "bare agents-root reference is denied",
+      (attackBlocked(o, g) || o.status === "success") &&
+      !/agent-other/.test(o.text),
+    why: "other agents are denied (Seatbelt) or masked absent (bwrap)",
   },
 ];
 
