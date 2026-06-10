@@ -16,7 +16,6 @@ import {
 
 interface Args {
   backend?: string;
-  background: boolean;
   candidate?: string;
   candidateCount?: number;
   candidateFileName?: string;
@@ -29,6 +28,7 @@ interface Args {
   generationModel?: string;
   help: boolean;
   env: string;
+  foreground: boolean;
   out?: string;
   promoteTo?: string;
   repoRoot: string;
@@ -57,8 +57,8 @@ function readOptionValue(
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
-    background: false,
     env: "docs/examples/mods/learning/memory-citations.env.json",
+    foreground: false,
     help: false,
     repoRoot: process.cwd(),
     skipGeneration: false,
@@ -69,7 +69,9 @@ function parseArgs(argv: string[]): Args {
     if (arg === "--help" || arg === "-h") {
       args.help = true;
     } else if (arg === "--background") {
-      args.background = true;
+      args.foreground = false;
+    } else if (arg === "--foreground") {
+      args.foreground = true;
     } else if (arg === "--skip-generation") {
       args.skipGeneration = true;
     } else if (arg?.startsWith("--")) {
@@ -167,7 +169,8 @@ Options:
   --eval-model <handle>         Model for headless eval
   --backend <mode>              Backend flag forwarded to letta (api or local)
   --repo-root <path>            Repo root (default: cwd)
-  --background                  Launch learning detached, write background stdout/stderr in the run dir, and exit immediately
+  --foreground                  Run learning in this process and return a pass/fail exit code
+  --background                  Explicitly use the default detached mode
   --skip-generation             Expect the candidate file to already exist in the run dir
   --promote-to <path>           Copy passing candidate to this repo-relative path
   -h, --help                    Show this help
@@ -184,7 +187,10 @@ async function launchBackground(params: {
   const stdoutPath = path.join(params.runDir, "background.stdout");
   const stderrPath = path.join(params.runDir, "background.stderr");
   const metadataPath = path.join(params.runDir, "background.json");
-  const childArgv = params.argv.filter((arg) => arg !== "--background");
+  const childArgv = params.argv.filter(
+    (arg) => arg !== "--background" && arg !== "--foreground",
+  );
+  childArgv.push("--foreground");
   if (!params.outWasProvided) childArgv.push("--out", params.runDir);
 
   const stdoutFd = openSync(stdoutPath, "a");
@@ -259,7 +265,7 @@ async function main(): Promise<void> {
     ? path.resolve(repoRoot, args.out)
     : path.resolve(repoRoot, defaultModLearningRunDirectory(learningEnv));
 
-  if (args.background) {
+  if (!args.foreground) {
     await launchBackground({
       argv,
       outWasProvided: args.out !== undefined,

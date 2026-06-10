@@ -48,9 +48,10 @@ candidate/report artifacts under `.letta/mod-learning-runs/`. It never installs
 or promotes the learned mod automatically; review the generated candidate
 before copying it into your local mod directory and running `/reload`.
 
-For shell/script usage, pass `--background` to detach the learning run and write
-`background.stdout`, `background.stderr`, and `background.json` into the run
-directory while the main process returns immediately.
+Shell/script usage also runs detached by default and writes `background.stdout`,
+`background.stderr`, and `background.json` into the run directory while the main
+process returns immediately. Pass `--foreground` when you need the script to
+block and return a pass/fail exit code, for example in CI.
 
 The default env is
 `docs/examples/mods/learning/memory-citations.env.json`. Use
