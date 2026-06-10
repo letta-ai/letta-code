@@ -289,6 +289,157 @@ describe("listen-client parseServerMessage", () => {
     });
   });
 
+  describe("listen-client agent/conversation management command handling", () => {
+    test("lists, retrieves, and creates agents and conversations", async () => {
+      const storageDir = await mkdtemp(join(os.tmpdir(), "ws-management-"));
+      try {
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        __testSetBackend(backend);
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_create",
+            request_id: "agent-create-1",
+            body: {
+              name: "WS Managed Agent",
+              model: "anthropic/claude-sonnet-4-6",
+            } as AgentCreateBody,
+          },
+          socket as unknown as WebSocket,
+        );
+
+        const agentCreateResponse = JSON.parse(
+          socket.sentPayloads.at(-1) ?? "{}",
+        );
+        expect(agentCreateResponse).toMatchObject({
+          type: "agent_create_response",
+          request_id: "agent-create-1",
+          success: true,
+          agent: {
+            name: "WS Managed Agent",
+          },
+        });
+        const agentId = agentCreateResponse.agent.id as string;
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_list",
+            request_id: "agent-list-1",
+            query: { limit: 10 },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_list_response",
+          request_id: "agent-list-1",
+          success: true,
+          agents: [expect.objectContaining({ id: agentId })],
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_retrieve",
+            request_id: "agent-retrieve-1",
+            agent_id: agentId,
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_retrieve_response",
+          request_id: "agent-retrieve-1",
+          success: true,
+          agent: { id: agentId },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_create",
+            request_id: "conversation-create-1",
+            body: { agent_id: agentId },
+          },
+          socket as unknown as WebSocket,
+        );
+        const conversationCreateResponse = JSON.parse(
+          socket.sentPayloads.at(-1) ?? "{}",
+        );
+        expect(conversationCreateResponse).toMatchObject({
+          type: "conversation_create_response",
+          request_id: "conversation-create-1",
+          success: true,
+          conversation: { agent_id: agentId },
+        });
+        const conversationId = conversationCreateResponse.conversation
+          .id as string;
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_list",
+            request_id: "conversation-list-1",
+            query: { agent_id: agentId, limit: 10 },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_list_response",
+          request_id: "conversation-list-1",
+          success: true,
+          conversations: [expect.objectContaining({ id: conversationId })],
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_retrieve",
+            request_id: "conversation-retrieve-1",
+            conversation_id: conversationId,
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_retrieve_response",
+          request_id: "conversation-retrieve-1",
+          success: true,
+          conversation: { id: conversationId },
+        });
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+
+    test("soft-fails management command backend errors", async () => {
+      const storageDir = await mkdtemp(
+        join(os.tmpdir(), "ws-management-error-"),
+      );
+      try {
+        __testSetBackend(
+          new LocalBackend({ storageDir, executionMode: "deterministic" }),
+        );
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_retrieve",
+            request_id: "agent-retrieve-missing",
+            agent_id: "agent-missing",
+          },
+          socket as unknown as WebSocket,
+        );
+
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_retrieve_response",
+          request_id: "agent-retrieve-missing",
+          success: false,
+          agent: null,
+        });
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   test("classifies invalid input approval_response payloads", () => {
     const missingResponse = parseServerMessage(
       Buffer.from(

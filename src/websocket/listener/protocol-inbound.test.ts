@@ -20,6 +20,44 @@ describe("app-server protocol hard cut", () => {
   });
 });
 
+describe("agent/conversation management protocol-inbound validators", () => {
+  test.each([
+    { type: "agent_list", request_id: "r1", query: { limit: 10 } },
+    { type: "agent_retrieve", request_id: "r2", agent_id: "agent-1" },
+    { type: "agent_create", request_id: "r3", body: { name: "Agent" } },
+    {
+      type: "conversation_list",
+      request_id: "r4",
+      query: { agent_id: "agent-1", limit: 10 },
+    },
+    {
+      type: "conversation_retrieve",
+      request_id: "r5",
+      conversation_id: "conv-1",
+    },
+    {
+      type: "conversation_create",
+      request_id: "r6",
+      body: { agent_id: "agent-1" },
+    },
+  ])("accepts $type", (message) => {
+    const parsed = parseServerMessage(Buffer.from(JSON.stringify(message)));
+    expect(parsed).toEqual(message);
+  });
+
+  test.each([
+    { type: "agent_list", request_id: "r1", query: "bad" },
+    { type: "agent_retrieve", request_id: "r2" },
+    { type: "agent_create", request_id: "r3", body: null },
+    { type: "conversation_list", request_id: "r4", query: [] },
+    { type: "conversation_retrieve", request_id: "r5" },
+    { type: "conversation_create", request_id: "r6", body: "bad" },
+  ])("rejects invalid $type", (message) => {
+    const parsed = parseServerMessage(Buffer.from(JSON.stringify(message)));
+    expect(parsed).toBeNull();
+  });
+});
+
 describe("discord protocol-inbound validators", () => {
   test("valid discord account create passes", () => {
     const msg = {

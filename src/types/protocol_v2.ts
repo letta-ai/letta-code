@@ -6,8 +6,18 @@
  * from the legacy protocol.ts surface.
  */
 
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentCreateParams,
+  AgentListParams,
+  AgentState,
+  MessageCreate,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  Conversation,
+  ConversationCreateParams,
+  ConversationListParams,
+} from "@letta-ai/letta-client/resources/conversations/conversations";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
@@ -1541,6 +1551,52 @@ export interface CreateAgentCommand {
   pin_global?: boolean;
 }
 
+export interface AgentListCommand {
+  type: "agent_list";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Query params forwarded to the Letta agents list API. */
+  query?: AgentListParams;
+}
+
+export interface AgentRetrieveCommand {
+  type: "agent_retrieve";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  agent_id: string;
+}
+
+export interface AgentCreateCommand {
+  type: "agent_create";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Body forwarded to the Letta agents create API. */
+  body: AgentCreateParams;
+}
+
+export interface ConversationListCommand {
+  type: "conversation_list";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Query params forwarded to the Letta conversations list API. */
+  query?: ConversationListParams;
+}
+
+export interface ConversationRetrieveCommand {
+  type: "conversation_retrieve";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+}
+
+export interface ConversationCreateCommand {
+  type: "conversation_create";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Body forwarded to the Letta conversations create API. */
+  body: ConversationCreateParams;
+}
+
 export interface GetCwdMapCommand {
   type: "get_cwd_map";
   /** Echoed back in the response for request correlation. */
@@ -1870,6 +1926,54 @@ export interface CreateAgentResponseMessage {
   agent_id?: string;
   name?: string;
   model?: string;
+  error?: string;
+}
+
+export interface AgentListResponseMessage {
+  type: "agent_list_response";
+  request_id: string;
+  success: boolean;
+  agents: AgentState[];
+  error?: string;
+}
+
+export interface AgentRetrieveResponseMessage {
+  type: "agent_retrieve_response";
+  request_id: string;
+  success: boolean;
+  agent: AgentState | null;
+  error?: string;
+}
+
+export interface AgentCreateResponseMessage {
+  type: "agent_create_response";
+  request_id: string;
+  success: boolean;
+  agent: AgentState | null;
+  error?: string;
+}
+
+export interface ConversationListResponseMessage {
+  type: "conversation_list_response";
+  request_id: string;
+  success: boolean;
+  conversations: Conversation[];
+  error?: string;
+}
+
+export interface ConversationRetrieveResponseMessage {
+  type: "conversation_retrieve_response";
+  request_id: string;
+  success: boolean;
+  conversation: Conversation | null;
+  error?: string;
+}
+
+export interface ConversationCreateResponseMessage {
+  type: "conversation_create_response";
+  request_id: string;
+  success: boolean;
+  conversation: Conversation | null;
   error?: string;
 }
 
@@ -2318,6 +2422,12 @@ export type WsProtocolCommand =
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
+  | AgentListCommand
+  | AgentRetrieveCommand
+  | AgentCreateCommand
+  | ConversationListCommand
+  | ConversationRetrieveCommand
+  | ConversationCreateCommand
   | GetCwdMapCommand
   | ListConversationPinsCommand
   | SetConversationPinCommand
@@ -2400,6 +2510,12 @@ export type WsProtocolMessage =
   | SkillDisableResponseMessage
   | SkillsUpdatedMessage
   | CreateAgentResponseMessage
+  | AgentListResponseMessage
+  | AgentRetrieveResponseMessage
+  | AgentCreateResponseMessage
+  | ConversationListResponseMessage
+  | ConversationRetrieveResponseMessage
+  | ConversationCreateResponseMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
   | ListConversationPinsResponseMessage
