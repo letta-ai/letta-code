@@ -686,6 +686,25 @@ describe("local backend pi transcript", () => {
     expect(handles).toContain("zai/glm-5.1");
   });
 
+  test("lists Fable 5 from the configured Anthropic pi catalog", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-anthropic-fable-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+      apiKey: "dummy",
+      storageDir,
+    });
+
+    const fable = (await listLocalModels(storageDir)).find(
+      (model) => model.handle === "anthropic/claude-fable-5",
+    );
+    expect(fable?.max_context_window).toBe(
+      getModel("anthropic", "claude-fable-5")?.contextWindow,
+    );
+  });
+
   test("lists pi catalog context windows for configured OpenRouter models", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-openrouter-context-"),
@@ -750,6 +769,42 @@ describe("local backend pi transcript", () => {
     expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
     expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
+  });
+
+  test("discovers configured Ollama models without adding guessed defaults", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-ollama-discovery-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "ollama",
+      providerName: "lc-ollama",
+      apiKey: "not-needed",
+      baseURL: "http://localhost:11434/v1",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      if (url.endsWith("/v1/models")) {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({ models: [{ name: "qwen2.5-coder:7b" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual([
+      "http://localhost:11434/v1/models",
+      "http://localhost:11434/api/tags",
+    ]);
+    expect(handles).toContain("ollama/qwen2.5-coder:7b");
+    expect(handles).not.toContain("ollama/llama2");
   });
 
   test("lists extension-registered local provider models with context windows", async () => {

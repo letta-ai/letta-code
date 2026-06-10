@@ -306,6 +306,28 @@ describe("listen subcommand auth resolution", () => {
     expect(pollForTokenMock).not.toHaveBeenCalled();
   });
 
+  test("uses a ref'ed process anchor to keep local channel listeners alive", async () => {
+    const anchor = {
+      close: mock(() => {}),
+    };
+    const createProcessAnchor = mock(() => anchor);
+
+    const keepAlive =
+      __listenSubcommandTestUtils.createListenerProcessAnchorPromise(
+        createProcessAnchor,
+      );
+
+    let resolved = false;
+    void keepAlive.then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+
+    expect(createProcessAnchor).toHaveBeenCalledTimes(1);
+    expect(anchor.close).not.toHaveBeenCalled();
+    expect(resolved).toBe(false);
+  });
+
   test("rejects self-hosted listener startup without channels", async () => {
     process.env.LETTA_BASE_URL = "http://localhost:8283";
 

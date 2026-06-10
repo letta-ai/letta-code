@@ -21,6 +21,7 @@ import {
   type LocalMessage,
 } from "@/backend/local/local-message";
 import { removeOrphanLocalToolResults } from "@/backend/local/local-message-projection";
+import { resolveAvailableLocalModelForTurn } from "@/backend/local/local-model-config";
 import type { ClientTool } from "@/tools/manager";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
@@ -315,6 +316,31 @@ function withMidConversationSystemPrompt(
   };
 }
 
+function withAnthropicOutputEffort(
+  existing: SimpleStreamOptions["onPayload"] | undefined,
+  effort: string | undefined,
+): SimpleStreamOptions["onPayload"] | undefined {
+  if (!effort) return existing;
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+    if (!isRecord(next)) return upstreamChanged ? next : undefined;
+    const outputConfig = isRecord(next.output_config) ? next.output_config : {};
+    return {
+      ...next,
+      output_config: {
+        ...outputConfig,
+        effort,
+      },
+    };
+  };
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -325,6 +351,7 @@ function boolValue(value: unknown): boolean | undefined {
 
 function thinkingLevel(value: unknown): ThinkingLevel | undefined {
   const effort = stringValue(value);
+  if (effort === "max") return "xhigh";
   return effort === "minimal" ||
     effort === "low" ||
     effort === "medium" ||
@@ -348,6 +375,19 @@ function reasoningForSettings(
     thinkingLevel(nestedReasoning?.reasoning_effort) ??
     thinkingLevel(modelSettings.effort) ??
     thinkingLevel(modelSettings.reasoning_effort)
+  );
+}
+
+function anthropicEffortForSettings(
+  modelSettings: Record<string, unknown>,
+): string | undefined {
+  const nestedReasoning = isRecord(modelSettings.reasoning)
+    ? modelSettings.reasoning
+    : undefined;
+  return (
+    stringValue(modelSettings.effort) ??
+    stringValue(nestedReasoning?.reasoning_effort) ??
+    stringValue(modelSettings.reasoning_effort)
   );
 }
 
@@ -466,9 +506,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     input: ProviderTurnInput,
   ): AsyncIterable<ProviderStreamEvent> {
     const tools = toPiTools(input.clientTools);
+    const localModel = await resolveAvailableLocalModelForTurn({
+      model: input.agent.model,
+      modelSettings: input.agent.model_settings,
+      storageDir: this.localProviderAuthStorageDir,
+    });
     const resolved = await resolvePiModelForAgent(
-      input.agent.model,
-      input.agent.model_settings,
+      localModel.model,
+      localModel.modelSettings,
       { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
     );
     const context: Context = {
@@ -520,6 +565,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         options.onPayload,
         input.midConversationSystemPrompt,
       );
+      if (
+        resolved.model.id.includes("claude-fable-5") &&
+        anthropicEffortForSettings(input.agent.model_settings) === "max"
+      ) {
+        // pi-ai's public ThinkingLevel type currently tops out at xhigh, but
+        // Anthropic accepts Fable's max effort through output_config.effort.
+        options.onPayload = withAnthropicOutputEffort(options.onPayload, "max");
+      }
     }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);

@@ -5,6 +5,7 @@
 
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
+import { MessageChannel } from "node:worker_threads";
 import { Box, render, Text } from "ink";
 import TextInput from "ink-text-input";
 import type React from "react";
@@ -27,6 +28,17 @@ import {
 } from "@/websocket/listen-register";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+
+type ListenerProcessAnchor = {
+  close: () => void;
+};
+
+type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
+
+// Keep listener process anchors reachable for the lifetime of the CLI command.
+// Without a retained reference, the MessageChannel anchor could be garbage
+// collected even though it is intended to hold channel-only listeners open.
+const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 type ListenerOAuthDeps = {
   LETTA_CLOUD_API_URL: string;
@@ -85,6 +97,34 @@ function formatTimestamp(): string {
   const s = String(now.getSeconds()).padStart(2, "0");
   const ms = String(now.getMilliseconds()).padStart(3, "0");
   return `${h}:${m}:${s}.${ms}`;
+}
+
+function createMessageChannelProcessAnchor(): ListenerProcessAnchor {
+  const { port1, port2 } = new MessageChannel();
+
+  port1.ref();
+  port2.ref();
+
+  return {
+    close: () => {
+      port1.close();
+      port2.close();
+    },
+  };
+}
+
+function createListenerProcessAnchorPromise(
+  createProcessAnchor: CreateListenerProcessAnchor = createMessageChannelProcessAnchor,
+): Promise<number> {
+  const anchor = createProcessAnchor();
+
+  activeListenerProcessAnchors.add(anchor);
+
+  return new Promise<number>(() => {
+    // Never resolves - runs until the process receives a shutdown signal.
+    // The ref'ed MessageChannel above is a zero-wakeup process anchor for
+    // channel-only listeners whose adapters may not own a persistent handle.
+  });
 }
 
 async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
@@ -286,6 +326,7 @@ async function resolveListenerRegistrationOptions(
 }
 
 export const __listenSubcommandTestUtils = {
+  createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
   getListenerServerUrl,
   resolveListenerStartupMode,
@@ -551,9 +592,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         },
       });
 
-      return new Promise<number>(() => {
-        // Never resolves - runs until Ctrl+C
-      });
+      return createListenerProcessAnchorPromise();
     }
 
     let registerOptions: RegisterOptions;
