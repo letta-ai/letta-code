@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { detectSandboxBackend } from "@/sandbox/availability";
+import { getTranscriptRoot } from "@/utils/transcript-paths";
 
 const home = realpathSync(homedir());
 if (!home.startsWith("/private/") && !home.startsWith("/tmp")) {
@@ -43,6 +44,15 @@ mkdirSync(parentMem, { recursive: true });
 mkdirSync(otherMem, { recursive: true });
 writeFileSync(join(parentMem, "mine.md"), "SELFDATA");
 writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
+
+// Transcripts are harness metadata the memory subagent persists via its headless
+// loop. They live at ~/.letta/transcripts (OUTSIDE the memory dir), so a
+// memory-only writableRoots set would silently disable transcript writes under
+// restrictWrites:true — the exact regression this probe guards against. Pin the
+// root to the throwaway HOME so the carve and the probe agree.
+delete process.env.LETTA_TRANSCRIPT_ROOT;
+const transcriptRoot = getTranscriptRoot();
+mkdirSync(transcriptRoot, { recursive: true });
 
 // Resolve the parent's memory roots exactly like the manager does.
 process.env.MEMORY_DIR = parentMem;
@@ -155,6 +165,13 @@ probe(
   "write outside memory (DENY)",
   `echo x > ${join(agents, PARENT, "sneak.md")}`,
   false,
+);
+// Regression guard: the transcript root MUST stay writable, or the memory
+// subagent's headless loop silently drops its transcript under the sandbox.
+probe(
+  "write transcript root (allow)",
+  `echo x > ${join(transcriptRoot, "t.txt")} && echo OK`,
+  true,
 );
 probe("read broad fs (allow)", "cat /etc/hosts > /dev/null && echo OK", true);
 
