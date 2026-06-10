@@ -49,16 +49,16 @@ describe("shared CLI arg schema", () => {
     expect(interactiveFlags).not.toContain("memfs-startup");
     expect(headlessFlags).toContain("agent");
     expect(interactiveFlags).toContain("agent");
-    expect(headlessFlags).toContain("no-extensions");
-    expect(interactiveFlags).toContain("no-extensions");
+    expect(headlessFlags).toContain("no-mods");
+    expect(interactiveFlags).toContain("no-mods");
   });
 
   test("rendered OPTIONS help is generated from catalog metadata", () => {
     const help = renderCliOptionsHelp();
     expect(help).toContain("-h, --help");
     expect(help).toContain("--backend <mode>");
-    expect(help).toContain("--no-extensions");
-    expect(help).toContain("LETTA_DISABLE_EXTENSIONS=1 letta");
+    expect(help).toContain("--no-mods");
+    expect(help).toContain("LETTA_DISABLE_MODS=1 letta");
     expect(help).toContain("--memfs-startup <m>");
     expect(help).toContain("Default: text");
     expect(help).not.toContain("--run");
@@ -137,12 +137,20 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["disable-memory-guard"]).toBe(true);
   });
 
-  test("recognizes no-extensions as a boolean recovery flag", () => {
+  test("recognizes no-mods as a boolean recovery flag", () => {
+    const parsed = parseCliArgs(
+      preprocessCliArgs(["node", "script", "--no-mods", "-p", "hi"]),
+      true,
+    );
+    expect(parsed.values["no-mods"]).toBe(true);
+  });
+
+  test("normalizes legacy no-extensions flag to no-mods", () => {
     const parsed = parseCliArgs(
       preprocessCliArgs(["node", "script", "--no-extensions", "-p", "hi"]),
       true,
     );
-    expect(parsed.values["no-extensions"]).toBe(true);
+    expect(parsed.values["no-mods"]).toBe(true);
   });
 
   test("validates backend mode values", () => {

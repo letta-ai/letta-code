@@ -14,7 +14,7 @@ import {
   subscribePiProviderRegistry,
   unregisterPiProvider,
   unregisterPiProvidersForOwner,
-} from "@/backend/dev/pi-provider-extension-registry";
+} from "@/backend/dev/pi-provider-mod-registry";
 import {
   createOrUpdateLocalProvider,
   localOAuthAuthFromCredentials,
@@ -42,7 +42,7 @@ describe("pi model factory", () => {
     clearRegisteredPiProviders();
   });
 
-  test("notifies subscribers when extension provider registry changes", () => {
+  test("notifies subscribers when mod provider registry changes", () => {
     const changes: string[] = [];
     const unsubscribe = subscribePiProviderRegistry(() => {
       changes.push("changed");
@@ -321,7 +321,7 @@ describe("pi model factory", () => {
     );
   });
 
-  test("uses extension-registered provider capabilities for local OpenAI-compatible models", async () => {
+  test("uses mod-registered provider capabilities for local OpenAI-compatible models", async () => {
     registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",
@@ -356,7 +356,7 @@ describe("pi model factory", () => {
     });
   });
 
-  test("uses dynamic extension provider models at turn time", async () => {
+  test("uses dynamic mod provider models at turn time", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-kilo-dynamic-"));
     try {
       const connections: unknown[] = [];
@@ -422,7 +422,7 @@ describe("pi model factory", () => {
     }
   });
 
-  test("uses extension OAuth credentials at turn time", async () => {
+  test("uses mod OAuth credentials at turn time", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-kilo-oauth-"));
     try {
       const refreshes: unknown[] = [];
@@ -501,10 +501,8 @@ describe("pi model factory", () => {
     );
   });
 
-  test("local provider connection base URL overrides extension default", async () => {
-    const storageDir = await mkdtemp(
-      join(tmpdir(), "pi-lmstudio-extension-url-"),
-    );
+  test("local provider connection base URL overrides mod default", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-lmstudio-mod-url-"));
     try {
       registerPiProvider("lmstudio", {
         baseUrl: "http://localhost:8000/v1",

@@ -57,7 +57,6 @@ import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
 import { WorktreeDiffSelector } from "@/cli/components/WorktreeDiffSelector";
 import { AnimationProvider } from "@/cli/contexts/AnimationContext";
-import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
@@ -82,6 +81,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
+import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -324,7 +324,7 @@ type AppViewProps = {
   terminalTitleData: WindowTitleData;
   onTitlePreview: (title: string | null) => void;
   onTitlePreviewEnd: () => void;
-  extensionAdapter: LocalExtensionAdapter;
+  modAdapter: LocalModAdapter;
   fileAutocompleteFdPath?: string | null;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
@@ -472,7 +472,7 @@ export function AppView(props: AppViewProps) {
     terminalTitleData,
     onTitlePreview,
     onTitlePreviewEnd,
-    extensionAdapter,
+    modAdapter,
     streaming,
     stubDescriptions,
     thinkingMessage,
@@ -762,7 +762,7 @@ export function AppView(props: AppViewProps) {
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
                 statusLinePayload={statusLinePayload}
-                extensionAdapter={extensionAdapter}
+                modAdapter={modAdapter}
                 statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
                 showInspirationalPromptHints={showInspirationalPromptHints}

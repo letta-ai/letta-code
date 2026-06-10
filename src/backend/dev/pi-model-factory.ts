@@ -21,7 +21,7 @@ import {
   type PiProviderRegistration,
   resolveRegisteredPiProviderFromModelHandle,
   stripRegisteredProviderHandlePrefix,
-} from "./pi-provider-extension-registry";
+} from "./pi-provider-mod-registry";
 import {
   expectedPiProviderList,
   getPiProviderSpec,
@@ -183,7 +183,7 @@ export function resolvePiProviderFromAgent(
     const slashIndex = model.indexOf("/");
     if (slashIndex > 0) {
       throw new Error(
-        `Model provider "${model.slice(0, slashIndex)}" is not registered. Load or repair the provider extension, or choose another model with /model.`,
+        `Model provider "${model.slice(0, slashIndex)}" is not registered. Load or repair the provider mod, or choose another model with /model.`,
       );
     }
   }

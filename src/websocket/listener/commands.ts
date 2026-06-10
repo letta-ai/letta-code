@@ -43,7 +43,7 @@ import type {
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
-import { reloadListenerExtensionAdapter } from "./extension-adapter";
+import { reloadListenerModAdapter } from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -221,7 +221,7 @@ async function handleReloadCommand(
     );
   }
 
-  await reloadListenerExtensionAdapter(listener);
+  await reloadListenerModAdapter(listener);
 
   if (conversationRuntime.agentId) {
     invalidateSecretsCacheForAgent(listener, conversationRuntime.agentId);
@@ -229,7 +229,7 @@ async function handleReloadCommand(
     await ensureSecretsHydratedForAgent(listener, conversationRuntime.agentId);
   }
 
-  return "Reloaded settings, local extensions, and agent secrets";
+  return "Reloaded settings, local mods, and agent secrets";
 }
 
 async function handleUpgradeLettaCodeCommand(opts: {

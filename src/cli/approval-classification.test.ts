@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { classifyApprovals } from "@/cli/helpers/approval-classification";
 import {
-  clearExtensionPermissions,
-  registerExtensionPermission,
-} from "@/extensions/permission-registry";
+  clearModPermissions,
+  registerModPermission,
+} from "@/mods/permission-registry";
 import { permissionMode } from "@/permissions/mode";
 import { loadTools } from "@/tools/manager";
 
@@ -11,7 +11,7 @@ describe("classifyApprovals", () => {
   const originalMemoryDir = process.env.MEMORY_DIR;
 
   afterEach(() => {
-    clearExtensionPermissions();
+    clearModPermissions();
     permissionMode.reset();
     if (originalMemoryDir === undefined) {
       delete process.env.MEMORY_DIR;
@@ -53,9 +53,9 @@ describe("classifyApprovals", () => {
     expect(denied?.permission.reason).toBe(denied?.denyReason);
   });
 
-  test("extension permission overlays deny before unrestricted auto-allow", async () => {
+  test("mod permission overlays deny before unrestricted auto-allow", async () => {
     permissionMode.setMode("unrestricted");
-    registerExtensionPermission({
+    registerModPermission({
       id: "block-dangerous-shell",
       description: "Block dangerous shell commands",
       path: "/tmp/block-dangerous-shell.ts",
@@ -98,13 +98,13 @@ describe("classifyApprovals", () => {
     expect(result.autoDenied).toHaveLength(1);
     expect(result.autoDenied[0]?.permission).toMatchObject({
       decision: "deny",
-      matchedRule: "extension permission:block-dangerous-shell",
+      matchedRule: "mod permission:block-dangerous-shell",
       reason: "rm is blocked",
     });
   });
 
-  test("extension permission overlays allow scoped tools before default ask", async () => {
-    registerExtensionPermission({
+  test("mod permission overlays allow scoped tools before default ask", async () => {
+    registerModPermission({
       id: "allow-plan-file",
       description: "Allow writes to the active plan file",
       path: "/tmp/allow-plan-file.ts",
@@ -149,7 +149,7 @@ describe("classifyApprovals", () => {
     expect(result.autoAllowed).toHaveLength(1);
     expect(result.autoAllowed[0]?.permission).toMatchObject({
       decision: "allow",
-      matchedRule: "extension permission:allow-plan-file",
+      matchedRule: "mod permission:allow-plan-file",
       reason: "active plan file",
     });
   });

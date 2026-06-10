@@ -13,7 +13,7 @@ import { INTERRUPTED_BY_USER } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   executeTool,
-  isExtensionToolParallelSafeForContext,
+  isModToolParallelSafeForContext,
   prepareCurrentToolExecutionContext,
   type ToolExecutionResult,
   type ToolReturnContent,
@@ -88,7 +88,7 @@ const PARALLEL_SAFE_TOOLS = new Set([
 function isParallelSafe(toolName: string, toolContextId?: string): boolean {
   return (
     PARALLEL_SAFE_TOOLS.has(toolName) ||
-    isExtensionToolParallelSafeForContext(toolName, toolContextId)
+    isModToolParallelSafeForContext(toolName, toolContextId)
   );
 }
 

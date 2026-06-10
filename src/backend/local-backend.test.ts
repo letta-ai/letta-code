@@ -27,7 +27,7 @@ import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor"
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
-} from "@/backend/dev/pi-provider-extension-registry";
+} from "@/backend/dev/pi-provider-mod-registry";
 import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -805,7 +805,7 @@ describe("local backend pi transcript", () => {
     expect(handles).not.toContain("ollama/llama2");
   });
 
-  test("lists extension-registered local provider models with context windows", async () => {
+  test("lists mod-registered local provider models with context windows", async () => {
     registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",
@@ -855,7 +855,7 @@ describe("local backend pi transcript", () => {
     );
   });
 
-  test("uses extension-registered context windows for local agent state", async () => {
+  test("uses mod-registered context windows for local agent state", async () => {
     registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",

@@ -35,7 +35,7 @@ export interface StatusLinePayloadBuildInput {
 }
 
 /**
- * Shared payload for built-in and extension statusline renderers.
+ * Shared payload for built-in and mod statusline renderers.
  *
  * Unsupported fields are set to null to keep the renderer context stable.
  */
