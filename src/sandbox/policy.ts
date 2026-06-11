@@ -11,24 +11,33 @@ import { isAbsolute, resolve } from "node:path";
  *
  * Enforcement semantics (both backends implement the same model):
  *
+ *   - `baseWritableRoots`  write re-allowed under these, emitted BEFORE
+ *                       `deniedRoots` so a denied root nested inside still wins.
+ *                       Used to grant a broad harness dir (e.g. all of
+ *                       `~/.letta`) while keeping the cross-agent tree denied —
+ *                       so a memory subagent may write harness state anywhere
+ *                       under `~/.letta` but not the repo/home/temp.
  *   - `deniedRoots`     read + write denied (e.g. `~/.letta/agents`).
  *   - `readonlyRoots`   read re-allowed, write stays denied. Overrides denied.
- *   - `writableRoots`   read + write re-allowed. Overrides denied and the
- *                       global write-deny below.
+ *   - `writableRoots`   read + write re-allowed. Overrides denied, the global
+ *                       write-deny, AND `baseWritableRoots` — for a self carve
+ *                       nested inside a denied root (self memory).
  *   - `restrictWrites`  when true, writes are denied *everywhere* except
- *                       `writableRoots` (memory mode). When false, writes are
- *                       allowed by default except under `deniedRoots`
- *                       (cross-agent mode — the normal agent that simply may
- *                       not touch other agents' memory).
+ *                       `baseWritableRoots`/`writableRoots` (memory mode). When
+ *                       false, writes are allowed by default except under
+ *                       `deniedRoots` (cross-agent mode — the normal agent that
+ *                       simply may not touch other agents' memory).
  *
  * Reads are never globally restricted: an agent can read the whole filesystem
  * to do its work, minus the other-agent directories in `deniedRoots`.
  *
- * Specificity is expressed through ordering, not nesting depth: a `writableRoot`
- * inside a `deniedRoot` (self memory inside the agents tree) is restored because
- * its allow rule is emitted *after* the deny.
+ * Specificity is expressed through ordering, not nesting depth. The emitted
+ * order is: global write-deny → `baseWritableRoots` → `deniedRoots` →
+ * `writableRoots` → `readonlyRoots`. So a broad base carve is overridden by a
+ * nested deny, which is in turn overridden by a still-more-specific self carve.
  */
 export interface FsSandboxPolicy {
+  baseWritableRoots: string[];
   deniedRoots: string[];
   readonlyRoots: string[];
   writableRoots: string[];
@@ -46,13 +55,19 @@ export type SandboxBackend = "seatbelt" | "bwrap";
 export const SANDBOX_ENV_VAR = "LETTA_SANDBOX";
 
 export interface BuildPolicyOptions {
+  /**
+   * Broad write carves emitted BEFORE `deniedRoots` (a nested deny still wins).
+   * e.g. all of `~/.letta` so a memory subagent can write harness state but not
+   * the repo/home/temp.
+   */
+  baseWritableRoots?: string[];
   /** Roots to wall off (read+write), e.g. `~/.letta/agents`. */
   deniedRoots?: string[];
   /** Paths to re-expose read-only (e.g. a subagent's parent memory dir). */
   readonlyRoots?: string[];
   /** Paths to re-expose read-write (self agent/memory dir, $TMPDIR, /tmp). */
   writableRoots?: string[];
-  /** Memory mode: deny writes everywhere except `writableRoots`. */
+  /** Memory mode: deny writes everywhere except the writable roots. */
   restrictWrites?: boolean;
 }
 
@@ -64,6 +79,7 @@ export function buildFsSandboxPolicy(
   options: BuildPolicyOptions,
 ): FsSandboxPolicy {
   return {
+    baseWritableRoots: normalizeRoots(options.baseWritableRoots ?? []),
     deniedRoots: normalizeRoots(options.deniedRoots ?? []),
     readonlyRoots: normalizeRoots(options.readonlyRoots ?? []),
     writableRoots: normalizeRoots(options.writableRoots ?? []),

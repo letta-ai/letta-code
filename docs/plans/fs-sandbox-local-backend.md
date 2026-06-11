@@ -8,20 +8,22 @@ OFF. This plan extends the sandbox from **API/cloud-backend** agents to
 
 ## Status
 
-**Cross-agent read-deny + write-scoping parity — DONE on both surfaces.**
-Subagents are write-scoped (`restrictWrites:true`, matching API) with the harness
-persistence dirs carved writable; parent shells get cross-agent isolation against
-the local `memfs` tree. Shipped:
+**Cross-agent read-deny + `~/.letta`-scoped writes — DONE on both surfaces.**
+Memory subagents (both backends) scope writes to the harness state dir `~/.letta`:
+they may persist memory + harness metadata (settings, logs, conversations,
+transcripts) anywhere under it, but NOT the repo/home/temp, and the cross-agent
+tree nested inside `~/.letta` stays denied. Parent shells get cross-agent
+isolation against the local `memfs` tree. Shipped:
 
-- **L1** — `buildMemoryModeSandboxPolicy` parameterized with `agentsTreeRoot?` +
-  the `agentsTreeRoot` (defaults preserve cloud behavior exactly).
+- **L1** — `buildMemoryModeSandboxPolicy` parameterized with `agentsTreeRoot?`
+  (defaults preserve cloud behavior); writes scoped via a new `baseWritableRoots`
+  policy phase = `~/.letta` (see "Write posture" below).
 - **L2** — parent shells wall off the local `memfs` tree when
   `isLocalBackendEnvEnabled(env)` (`shell-sandbox.ts`), resolved *after* the gate
   so the sandbox-off hot path does no fs work.
 - **L3** — `wrapSubagentLauncher` no longer skips local; it builds the memory-mode
-  policy against the `memfs` tree with `restrictWrites:true` (write-scoped) and
-  carves the harness persistence dirs (`getLocalBackendHarnessWritableRoots()` +
-  `getTranscriptRoot()`) via `extraWritableRoots` so the child isn't trapped.
+  policy against the `memfs` tree, with `~/.letta` as the writable base (plus any
+  harness root relocated outside `~/.letta` via `harnessWritableRoots`).
 - The backend→tree branching is single-sourced in
   `getLocalBackendCrossAgentTreeRoot()` (`backend/local/paths.ts`); the builders
   stay in `permissions/` and take a resolved path (they cannot import `backend/`).
@@ -30,9 +32,9 @@ the local `memfs` tree. Shipped:
   correct. Kept the diff minimal.
 
 Validated: unit tests, full `bun run check`, and `sandbox-local-backend-live-test.ts`
-on Seatbelt (both surfaces — other-agent memory read+write denied, self memory
-works, env survives cwd-in-tree, repo/`/tmp` writes denied for subagents, harness
-dirs still persist).
+on Seatbelt (both surfaces — other-agent memory read+write denied, self memory +
+~/.letta harness writes work, env survives cwd-in-tree, repo/`/tmp` writes denied
+for subagents) + L5 real run (settings/transcripts persist, no swallowed failure).
 **Remaining:** the Linux/bwrap host run (separate handoff). L5 (a real local turn
 with a reflection subagent) is ✅ done — see below.
 
@@ -131,24 +133,28 @@ restrictWrites:false                            // only the tree is walled off
 Parent process persistence (conversations/agents) happens in the *unsandboxed
 parent process*, not in the wrapped shell, so it's unaffected.
 
-**Subagents (local memory-mode), `restrictWrites:true` + harness carves** (the
-SHIPPED shape — supersedes the original `restrictWrites:false` deny-list). The
-child's cwd is `memfs/<self>/memory` (inside the denied tree), so it needs the
-agent-dir readonly carve for env survival (identical to the API empty-env fix):
+**Subagents (local memory-mode), `restrictWrites:true` scoped to `~/.letta`** (the
+SHIPPED shape — supersedes both the original `restrictWrites:false` deny-list and
+the intermediate per-dir harness enumeration). The child's cwd is
+`memfs/<self>/memory` (inside the denied tree), so it needs the agent-dir
+readonly carve for env survival (identical to the API empty-env fix):
 ```
-deniedRoots:  [lc-local-backend/memfs]
-readonlyRoots:[lc-local-backend/memfs/<self>]              // traversal + env survival + own reads
-writableRoots:[lc-local-backend/memfs/<self>/memory,       // self memory
-               lc-local-backend/{conversations,agents,providers},  // harness persistence
-               ~/.letta/transcripts]                       // harness metadata
-restrictWrites:true                                        // agent work scoped to memory
+baseWritableRoots:[~/.letta]                                // harness state writable (emitted BEFORE the deny)
+deniedRoots:      [lc-local-backend/memfs]                  // cross-agent tree (overrides the base)
+readonlyRoots:    [lc-local-backend/memfs/<self>]           // traversal + env survival + own reads
+writableRoots:    [lc-local-backend/memfs/<self>/memory]    // self memory re-carved (overrides the deny)
+restrictWrites:   true                                      // everything outside the above denied
 ```
-This delivers BOTH the cross-agent read-deny (another agent's memory is read- and
-write-denied) AND write-scoping parity with API: the agent's non-deterministic
-work can write only memory, not the repo/home/temp. The harness paths the child
-legitimately persists (its conversation/agent-state/auth on disk, and its
-transcript) are carved writable so write-scoping doesn't trap it — honoring the
-rule that the write policy governs the agent's work, not harness artifacts.
+This delivers BOTH the cross-agent read-deny (another agent's memory read- and
+write-denied) AND write-scoping: the agent's non-deterministic work can write
+under `~/.letta` (memory + harness metadata) but NOT the repo/home/temp. Carving
+the WHOLE `~/.letta` rather than enumerating each harness file is what makes it
+robust — the harness writes many unbounded paths under it (settings via
+`setMemfsEnabled` on startup, logs, conversations, transcripts), and a per-file
+carve silently breaks (a swallowed `Failed to persist settings`) as new writers
+appear. The cross-agent tree nested inside `~/.letta` is the only thing walled
+off; self memory (also nested) is re-carved. `harnessWritableRoots` covers a
+storage/transcript root relocated OUTSIDE `~/.letta` (env overrides).
 
 ---
 
@@ -216,18 +222,26 @@ working provider for this run.)
 
 ---
 
-## Phase 3 — Write-scoping parity ✅ DONE
+## Phase 3 — Write-scoping (writes confined to `~/.letta`) ✅ DONE
 
-Local subagents now run `restrictWrites:true`, matching API's "writes only to
-memory" property: the agent's non-deterministic work can write its memory but not
-the repo/home/temp. The trap is avoided NOT by per-conversation carving (the
-conversation dir is keyed by conversation key, unknown at spawn) but by carving
-the **parent** harness dirs writable: `lc-local-backend/{conversations,agents,providers}`
-+ `~/.letta/transcripts` (via `getLocalBackendHarnessWritableRoots()` +
-`getTranscriptRoot()`, fed through `extraWritableRoots`). This is strictly tighter
-than the deny-list it replaced — those dirs were writable there too, plus the
-repo/home/temp. The transcript carve also lands on API (harness metadata is
-client-side on both).
+Memory subagents on BOTH backends run `restrictWrites:true` with `~/.letta` as
+the writable base (new `baseWritableRoots` policy phase, emitted before the
+cross-agent deny so the nested tree still wins). The agent's non-deterministic
+work can write under `~/.letta` (memory + all harness metadata) but not the
+repo/home/temp.
+
+This **supersedes** the earlier per-dir harness enumeration
+(`lc-local-backend/{conversations,agents,providers}` + transcript via
+`extraWritableRoots`). That approach was brittle: the harness writes an unbounded
+set of paths under `~/.letta` — notably `~/.letta/.lettasettings` on the headless
+startup path (`setMemfsEnabled`, `headless.ts:1390`), whose denial was swallowed
+as a `Failed to persist settings` + `settings_persist_failed` boundary error.
+Carving the whole `~/.letta` (minus the cross-agent tree) fixes that class
+entirely without enumeration. Can't carve `~/.letta` via plain `writableRoots`
+(it would override the nested cross-agent deny — and trips the bwrap ancestor
+hazard); the `baseWritableRoots` phase exists precisely to emit it BEFORE the deny
+so the deny still masks the tree. The `restrictWrites` param was removed (always
+true for memory mode). Validated by L5 (no swallowed settings failure).
 
 ## Out of scope (call out explicitly, don't silently skip)
 

@@ -26,6 +26,16 @@ export function getDefaultAgentsTreeRoot(homeDir: string = homedir()): string {
 }
 
 /**
+ * The harness state directory, e.g. `/Users/me/.letta`. Used as the broad
+ * writable base for memory subagents: they may write harness metadata anywhere
+ * under it (settings, logs, conversations, transcripts, memory) but not the
+ * repo/home/temp — while the cross-agent tree nested inside it stays denied.
+ */
+export function getLettaHomeRoot(homeDir: string = homedir()): string {
+  return canonicalizeRoot(join(homeDir, ".letta"));
+}
+
+/**
  * Resolve a path to the real (symlink-free) path the kernel will see. The leaf
  * may not exist yet (a file about to be created), so we realpath the nearest
  * existing ancestor and re-append the missing tail.
@@ -95,13 +105,14 @@ export interface MemoryModeSandboxInput {
    */
   memoryRoots: string[];
   /**
-   * Additional writable roots folded in alongside the memory roots. The local
-   * backend passes its harness-persistence dirs here (conversation state,
-   * agent-state, provider auth) so its in-process subagent child can persist
-   * normally even though writes are otherwise scoped to memory — the API backend
-   * persists those server-side and needs none.
+   * Harness state roots configured OUTSIDE `~/.letta` to also make writable —
+   * `~/.letta` itself is always the base. The caller passes a custom
+   * `LETTA_LOCAL_BACKEND_DIR` / `LETTA_TRANSCRIPT_ROOT` here so the in-process
+   * child can still persist conversation/agent-state/transcripts when those are
+   * relocated off the default tree. Usually empty (the defaults live under
+   * `~/.letta`).
    */
-  extraWritableRoots?: string[];
+  harnessWritableRoots?: string[];
   /**
    * The agents tree to wall off + carve self out of. Defaults to
    * `~/.letta/agents` (API/cloud). The local backend passes its
@@ -118,14 +129,20 @@ export interface MemoryModeSandboxInput {
 
 /**
  * Policy for a memory-mode subagent: it may read the filesystem broadly to do
- * its work and write *only* under its memory roots (and temp), and it may not
- * read or write *other* agents' memory.
+ * its work, write only under the harness state dir (`~/.letta`), and not read or
+ * write *other* agents' memory.
  *
  * The whole subagent process runs under this policy, so it is the sole
- * enforcement for these agents — the static guard is skipped for them. That
- * means it must cover both axes:
- *   - writes: `restrictWrites` denies writes everywhere except `writableRoots`
- *     (the memory dir — no temp carve, mirroring the static memory contract).
+ * enforcement for these agents — the static guard is skipped for them. It covers
+ * both axes:
+ *   - writes: `restrictWrites` denies writes everywhere except the base
+ *     `~/.letta` carve (and self memory). This scopes the agent's
+ *     non-deterministic work — it can persist memory + harness metadata
+ *     (settings, logs, conversations, transcripts) but cannot write the repo,
+ *     home, or temp. Carving the WHOLE `~/.letta` rather than enumerating each
+ *     harness file is deliberate: the harness writes many paths under it and the
+ *     set is unbounded, so a per-file carve would silently break as new writers
+ *     appear. The cross-agent tree nested inside `~/.letta` stays denied.
  *   - cross-agent reads: the agents tree is read+write denied, with the agent's
  *     own (and inherited parent's) directory carved back out READ-only.
  *
@@ -133,18 +150,14 @@ export interface MemoryModeSandboxInput {
  * lets us deny the tree without re-triggering the empty-env bug: the subagent's
  * cwd is its memory dir inside the agents tree, and under Seatbelt a child
  * launches with an EMPTY environment if a cwd *ancestor* is read-denied. With
- * the agent dir (the cwd's immediate parent) readable, process init can
- * traverse to the cwd and the env survives. Writes always stay scoped to
- * `writableRoots` (`restrictWrites:true`) because the readonly carve only
- * re-allows reads (validated on darwin).
+ * the agent dir (the cwd's immediate parent) readable, process init can traverse
+ * to the cwd and the env survives.
  *
- * The tree is parameterized so this one builder serves both backends with the
- * SAME write-scoping property: API/cloud uses the default `~/.letta/agents` tree
- * and writes only to memory (its conversation/state persistence is server-side);
- * the local backend passes its `lc-local-backend/memfs` tree plus its harness
- * persistence dirs via `extraWritableRoots` (it persists those on disk). Either
- * way the agent's non-deterministic work can write only memory — not the repo,
- * home, or temp.
+ * The tree is parameterized so this one builder serves both backends: API/cloud
+ * uses the default `~/.letta/agents` tree; the local backend passes its
+ * `lc-local-backend/memfs` tree. Self memory is re-carved writable in
+ * `writableRoots` because it is nested inside the denied tree (the base
+ * `~/.letta` carve is overridden there by the deny).
  */
 export function buildMemoryModeSandboxPolicy(
   input: MemoryModeSandboxInput,
@@ -153,23 +166,23 @@ export function buildMemoryModeSandboxPolicy(
     ? canonicalizeRoot(input.agentsTreeRoot)
     : getDefaultAgentsTreeRoot();
 
-  // Writes are scoped to the memory roots (plus any explicit extra roots, e.g.
-  // the local backend's harness persistence dirs) — deliberately NOT a temp dir.
-  // Memory mode's static enforcement (`isScopedMemoryShellCommand`) only ever
-  // allowed writes inside the memory tree, so the kernel policy must match that
-  // contract rather than widen it. A temp carve also has a Linux-specific
-  // hazard: when the agents tree lives under a writable root (e.g. a /tmp-based
-  // throwaway HOME), bwrap's last-mount-wins re-binds the carve over the
-  // agents-tree tmpfs mask and re-exposes other agents.
-  const writableRoots = [
-    ...input.memoryRoots.map(canonicalizeRoot),
-    ...(input.extraWritableRoots ?? []).map(canonicalizeRoot),
-  ];
+  // Writes are scoped to the harness state dir. `~/.letta` is the always-on base
+  // (covers settings/logs/conversations/transcripts/memory under the defaults);
+  // `harnessWritableRoots` adds any harness root relocated OUTSIDE `~/.letta`
+  // (custom LETTA_LOCAL_BACKEND_DIR / LETTA_TRANSCRIPT_ROOT). These are emitted
+  // BEFORE the cross-agent deny, so the nested tree is still walled off.
+  const baseWritableRoots = [
+    getLettaHomeRoot(),
+    ...(input.harnessWritableRoots ?? []),
+  ].map(canonicalizeRoot);
 
   return buildFsSandboxPolicy({
+    baseWritableRoots,
     deniedRoots: [agentsTreeRoot],
     readonlyRoots: deriveSelfAgentRoots(input.memoryRoots, agentsTreeRoot),
-    writableRoots,
+    // Self memory is nested inside the denied tree; re-carve it writable so the
+    // deny (which overrides the base ~/.letta carve there) is itself overridden.
+    writableRoots: input.memoryRoots.map(canonicalizeRoot),
     restrictWrites: true,
   });
 }

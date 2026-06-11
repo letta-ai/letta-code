@@ -22,7 +22,9 @@ import type { FsSandboxPolicy } from "./policy.js";
  * backing up the process-group kill in `shell-runner.ts`.
  *
  * Mount order matters — later operations layer over earlier ones: root → dev →
- * proc → mask denied → restore readonly → restore writable.
+ * proc → base writable → mask denied → restore readonly → restore writable.
+ * The base-writable binds come BEFORE the masks so a denied root nested inside a
+ * broad base carve (the cross-agent tree under `~/.letta`) is still masked.
  */
 
 /** Default discovery name; availability probing may substitute a bundled path. */
@@ -43,6 +45,15 @@ export function buildBwrapArgs(policy: FsSandboxPolicy): string[] {
   // /proc so the masked root doesn't leak host process state.
   args.push("--dev", "/dev");
   args.push("--proc", "/proc");
+
+  // Base writable roots: re-bind a broad harness dir (~/.letta) read-write on top
+  // of the read-only root. Emitted BEFORE the masks below so a denied root nested
+  // inside (the cross-agent tree) is still masked — the ancestor-carve hazard is
+  // intentional and safe HERE precisely because the mask runs last. `-try` for
+  // the same not-yet-created tolerance as the other carves.
+  for (const root of policy.baseWritableRoots) {
+    args.push("--bind-try", root, root);
+  }
 
   // Mask each denied root with an empty tmpfs.
   //

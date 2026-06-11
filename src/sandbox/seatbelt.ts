@@ -36,14 +36,7 @@ export function buildSeatbeltProfile(policy: FsSandboxPolicy): {
   const defines: SeatbeltDefine[] = [];
   const lines: string[] = ["(version 1)", "(allow default)"];
 
-  // 1. Wall off the denied roots entirely (read + write).
-  policy.deniedRoots.forEach((root, i) => {
-    const name = `DENIED_${i}`;
-    defines.push({ name, value: root });
-    lines.push(`(deny file-read* file-write* (subpath (param "${name}")))`);
-  });
-
-  // 2. Memory mode: deny all writes globally. Keep device writes (/dev/null,
+  // 1. Memory mode: deny all writes globally. Keep device writes (/dev/null,
   //    ttys, pipes) working — countless tools depend on them and they are
   //    irrelevant to filesystem isolation.
   if (policy.restrictWrites) {
@@ -51,16 +44,32 @@ export function buildSeatbeltProfile(policy: FsSandboxPolicy): {
     lines.push('(allow file-write* (subpath "/dev"))');
   }
 
-  // 3. Restore writable roots (read + write). Emitted after every deny above
-  //    so it wins — including for a self-memory dir nested inside a denied
-  //    root, or a $TMPDIR caught by the global write-deny.
+  // 2. Base writable roots: re-allow writes under a broad harness dir (~/.letta).
+  //    Emitted AFTER the global write-deny but BEFORE the denied roots, so a
+  //    cross-agent tree nested inside still gets walled off in step 3.
+  policy.baseWritableRoots.forEach((root, i) => {
+    const name = `BASEWRITABLE_${i}`;
+    defines.push({ name, value: root });
+    lines.push(`(allow file-write* (subpath (param "${name}")))`);
+  });
+
+  // 3. Wall off the denied roots entirely (read + write). Overrides the base
+  //    writable above for the cross-agent subtree.
+  policy.deniedRoots.forEach((root, i) => {
+    const name = `DENIED_${i}`;
+    defines.push({ name, value: root });
+    lines.push(`(deny file-read* file-write* (subpath (param "${name}")))`);
+  });
+
+  // 4. Restore writable roots (read + write). Emitted after every deny above so
+  //    it wins — including for a self-memory dir nested inside a denied root.
   policy.writableRoots.forEach((root, i) => {
     const name = `WRITABLE_${i}`;
     defines.push({ name, value: root });
     lines.push(`(allow file-read* file-write* (subpath (param "${name}")))`);
   });
 
-  // 4. Restore readonly roots (read only). Wins over the read-deny; the
+  // 5. Restore readonly roots (read only). Wins over the read-deny; the
   //    corresponding write-deny still stands, so these stay read-only.
   policy.readonlyRoots.forEach((root, i) => {
     const name = `READONLY_${i}`;

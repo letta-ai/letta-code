@@ -130,11 +130,15 @@ sub("write other agent memory (DENY)", `echo x > ${join(otherMem, "evil.md")}`, 
 // escape memory — not to the repo, not to temp.
 sub("write repo file (DENY)", `echo x > ${join(repoCwd, ".sb-sub-probe")}`, false);
 sub("write /tmp (DENY)", "echo x > /tmp/sb_sub_probe.txt", false);
-// No-write-trap: the harness paths the child legitimately persists ARE carved.
+// No-write-trap: harness state under ~/.letta is writable (the base carve), so
+// the child persists conversations/agent-state/providers/transcripts AND the
+// settings file the headless startup writes (setMemfsEnabled) — none trapped.
 sub("write conversation dir (allow)", `echo x > ${join(convDir, "c.json")} && echo OK`, true);
 sub("write agent-state dir (allow)", `echo x > ${join(stateDir, "a.json")} && echo OK`, true);
 sub("write providers dir (allow)", `echo x > ${join(providersDir, "p.json")} && echo OK`, true);
 sub("write transcript root (allow)", `echo x > ${join(transcriptRoot, "t.txt")} && echo OK`, true);
+sub("write ~/.letta settings file (allow)", `echo x > ${join(home, ".letta", ".lettasettings")} && echo OK`, true);
+sub("write ~/.letta arbitrary harness file (allow)", `echo x > ${join(home, ".letta", "harness-probe.json")} && echo OK`, true);
 sub("read providers/auth.json (allow)", `cat ${join(providersDir, "auth.json")} > /dev/null && echo OK`, true);
 
 // === Surface 2: parent shell (real applyParentShellSandbox, local) ===

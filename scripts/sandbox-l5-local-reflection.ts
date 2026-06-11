@@ -115,6 +115,11 @@ const wrapped = /memory-mode child sandboxed via (\w+)/.exec(err);
 const reflLaunched = /Reflect on recent conversations/.test(both()) || Boolean(wrapped);
 const records = agentRecords();
 const reflPersisted = records.length >= 2;
+// The harness writes ~/.letta/.lettasettings on the headless startup path
+// (setMemfsEnabled). A write-scope that excluded ~/.letta swallowed that as a
+// "Failed to persist settings" + settings_persist_failed boundary error. With
+// ~/.letta as the write base, it must NOT appear.
+const settingsFail = /Failed to persist settings|settings_persist_failed/.test(both());
 
 let failures = 0;
 const check = (label: string, ok: boolean, extra = "") => {
@@ -127,6 +132,7 @@ check("reflection subagent launched", reflLaunched);
 check("reflection child was sandboxed", Boolean(wrapped), wrapped ? `via ${wrapped[1]}` : "no 'sandboxed via' marker in stderr");
 check("NO sandbox trap (no EPERM / not-permitted)", !trap, trap ? `LEAK: ${trap[0]}` : "clean");
 check("reflection child persisted its own agent-state", reflPersisted, `${records.length} agent record(s)`);
+check("NO swallowed harness-write failure (settings persisted)", !settingsFail, settingsFail ? "saw settings-persist failure" : "clean");
 
 console.log(`\n${failures === 0 ? "✓ L5: real reflection subagent runs sandboxed without trapping" : `✗ L5: ${failures} check(s) failed`}\n`);
 process.exit(failures === 0 ? 0 : 1);

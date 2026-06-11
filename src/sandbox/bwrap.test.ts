@@ -16,6 +16,14 @@ const MEMORY_MODE = buildFsSandboxPolicy({
   restrictWrites: true,
 });
 
+const LETTA_SCOPED = buildFsSandboxPolicy({
+  baseWritableRoots: ["/home/u/.letta"],
+  deniedRoots: ["/home/u/.letta/agents"],
+  readonlyRoots: ["/home/u/.letta/agents/self"],
+  writableRoots: ["/home/u/.letta/agents/self/memory"],
+  restrictWrites: true,
+});
+
 /** Find the index of a flag+operands triple in the bwrap arg list. */
 function tripleIndex(args: string[], flag: string, a: string, b: string) {
   for (let i = 0; i < args.length - 2; i++) {
@@ -58,6 +66,29 @@ test("carveouts are restored after the tmpfs mask (with -try so missing roots do
   );
   expect(writableIdx).toBeGreaterThan(maskIdx);
   expect(readonlyIdx).toBeGreaterThan(maskIdx);
+});
+
+test("base writable is bound BEFORE the tmpfs mask, self memory after", () => {
+  const args = buildBwrapArgs(LETTA_SCOPED);
+  const base = tripleIndex(
+    args,
+    "--bind-try",
+    "/home/u/.letta",
+    "/home/u/.letta",
+  );
+  const mask = args.indexOf("--tmpfs");
+  const self = tripleIndex(
+    args,
+    "--bind-try",
+    "/home/u/.letta/agents/self/memory",
+    "/home/u/.letta/agents/self/memory",
+  );
+  expect(base).toBeGreaterThan(-1);
+  // Base ~/.letta bound rw FIRST; the tmpfs mask runs AFTER so the nested
+  // cross-agent tree is still masked (the ancestor carve is safe here)...
+  expect(mask).toBeGreaterThan(base);
+  // ...and self memory is re-bound AFTER the mask so it reappears.
+  expect(self).toBeGreaterThan(mask);
 });
 
 test("network is not unshared and parent death tears down the sandbox", () => {

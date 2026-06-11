@@ -49,20 +49,3 @@ export function getLocalBackendCrossAgentTreeRoot(
 ): string {
   return join(storageDir, "memfs");
 }
-
-/**
- * The local-backend persistence dirs OUTSIDE the memfs tree that the in-process
- * backend writes as harness metadata: conversation state, agent-state files, and
- * provider auth. Under the write-scoped (restrictWrites:true) memory-mode
- * sandbox these must be carved writable so the subagent child can persist
- * normally — the API backend does this server-side, so it needs no equivalent.
- */
-export function getLocalBackendHarnessWritableRoots(
-  storageDir = getLocalBackendStorageDir(),
-): string[] {
-  return [
-    join(storageDir, "conversations"),
-    join(storageDir, "agents"),
-    join(storageDir, "providers"),
-  ];
-}

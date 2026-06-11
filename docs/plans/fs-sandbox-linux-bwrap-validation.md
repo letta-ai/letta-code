@@ -241,47 +241,54 @@ filesystem probe for the agent itself.
 
 ---
 
-## DELTA — local-backend sandbox + write-scope parity (NEEDS bwrap mirror)
+## DELTA — local-backend sandbox + `~/.letta`-scoped writes (NEEDS bwrap mirror)
 
 Everything above validated the **API/cloud** sandbox on bwrap. After that
 sign-off the sandbox was extended to the **local backend** and the memory-mode
-write posture changed. These commits are NOT yet bwrap-validated — only
-darwin/Seatbelt:
+write posture changed twice (settling on `~/.letta`-scoped). These commits are
+NOT yet bwrap-validated — only darwin/Seatbelt:
 
 - `1eb9affb` cross-agent read-deny → local backend (both surfaces)
-- `a18f1e3b` write-scope parity for local memory subagents
-- `7963ca22` L5 — real local reflection subagent under write-scoping
-- `4c61393d` guard cloud transcript writes under the sandbox
+- `a18f1e3b` write-scope parity for local memory subagents (intermediate)
+- `7963ca22` L5 — real local reflection subagent
+- `4c61393d` guard cloud transcript writes
+- (final) memory-mode writes scoped to `~/.letta` via `baseWritableRoots`
 
 **What changed (so you know what to stress):** local memory lives under
 `~/.letta/lc-local-backend/memfs/<id>/memory`, not `~/.letta/agents`, so both
-sandbox surfaces now wall off the `memfs` tree when local. Memory subagents are
-`restrictWrites:true` on BOTH backends now (write-scope parity); the harness
-paths the child legitimately persists are carved via `extraWritableRoots` —
-`lc-local-backend/{conversations,agents,providers}` (local) + `~/.letta/transcripts`
-(both backends). See `docs/plans/fs-sandbox-local-backend.md`.
+sandbox surfaces wall off the `memfs` tree when local. Memory subagents (both
+backends) are `restrictWrites:true` with **`~/.letta` as the writable base** — a
+NEW policy field `baseWritableRoots` emitted BEFORE the denied-root masks. So a
+subagent may write anywhere under `~/.letta` (memory + harness state: settings,
+logs, conversations, transcripts) but not the repo/home/temp; the cross-agent
+tree nested inside `~/.letta` is still masked. `bwrap.ts` binds `baseWritableRoots`
+rw right after `--proc`, BEFORE the `--tmpfs` masks. See
+`docs/plans/fs-sandbox-local-backend.md`.
 
 ### Tasks (bwrap mirror of the Seatbelt validation)
 
 1. **`scripts/sandbox-local-backend-live-test.ts`** (synthetic, both surfaces,
    auto-detects bwrap). Assert: local subagent → other-agent memory read+write
    DENIED, self memory writable, **repo + /tmp writes DENIED** (write-scoping),
-   harness dirs (conversations/agents/providers + transcript root) writable, env
-   survives cwd inside the masked `memfs` tree. Local parent shell → other-agent
-   denied, self memory + repo writable.
+   **`~/.letta/.lettasettings` + arbitrary `~/.letta` file writable** (the harness
+   base) + conversations/agents/providers/transcript writable, env survives cwd
+   inside the masked `memfs` tree. Local parent shell → other-agent denied, self
+   memory + repo writable.
 
-2. **`scripts/sandbox-subagent-live-test.ts`** — now has a `write transcript root
-   (allow)` probe on the API path. Confirm it passes on bwrap (a memory-only
-   writable set would fail it). Exit-status check, so backend-agnostic.
+2. **`scripts/sandbox-subagent-live-test.ts`** — now has `write transcript root
+   (allow)` + `write ~/.letta settings file (allow)` + `write /tmp (DENY)` probes
+   on the API path. Confirm on bwrap. Exit-status checks, so backend-agnostic.
 
-3. **bwrap ancestor-carve / last-mount-wins re-check (the real risk here).**
-   Write-scope parity adds SEVERAL extra writable carves under `restrictWrites:true`
-   while denying the `memfs` tree. The known bwrap hazard (a carve that is an
-   *ancestor* of a denied root un-masks it; see `src/sandbox/bwrap.ts`) must be
-   re-verified: the harness carves are SIBLINGS of `memfs` (not ancestors), so
-   they should be safe — but CONFIRM cross-agent memory stays denied in the local
-   subagent test with all carves active, especially with a /tmp-based throwaway
-   HOME (agents tree under a writable root).
+3. **bwrap base-bind-BEFORE-mask ordering — THE critical correctness check.**
+   `~/.letta` (the base) is now an *ancestor* of the masked `memfs`/`agents` tree.
+   This is the exact ancestor-carve hazard from the section above, but used
+   DELIBERATELY and safely: the base `--bind ~/.letta` is emitted BEFORE the
+   `--tmpfs` mask, so last-mount-wins keeps the nested tree masked. VERIFY on bwrap
+   that cross-agent memory is STILL denied with the broad `~/.letta` bind active
+   (the `LETTA_SCOPED` unit test in `bwrap.test.ts` asserts the arg order; the live
+   test asserts the kernel outcome). A /tmp-based throwaway HOME puts `~/.letta`
+   under a writable root — exercise that case explicitly. If the order were ever
+   flipped, the broad bind would re-expose every agent's memory.
 
 4. **L5 real runs on a Linux host (spend tokens):**
    - `scripts/sandbox-l5-local-reflection.ts` — `ANTHROPIC_API_KEY` set, `unset

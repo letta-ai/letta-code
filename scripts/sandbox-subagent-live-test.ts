@@ -166,13 +166,21 @@ probe(
   `echo x > ${join(agents, PARENT, "sneak.md")}`,
   false,
 );
-// Regression guard: the transcript root MUST stay writable, or the memory
-// subagent's headless loop silently drops its transcript under the sandbox.
+// Regression guard: harness state under ~/.letta MUST stay writable, or the
+// memory subagent silently drops its transcript / fails its startup settings
+// write (setMemfsEnabled) under the sandbox.
 probe(
   "write transcript root (allow)",
   `echo x > ${join(transcriptRoot, "t.txt")} && echo OK`,
   true,
 );
+probe(
+  "write ~/.letta settings file (allow)",
+  `echo x > ${join(home, ".letta", ".lettasettings")} && echo OK`,
+  true,
+);
+// But writes still can't escape ~/.letta to the repo/temp (the scoping).
+probe("write /tmp (DENY)", "echo x > /tmp/sb_api_probe.txt", false);
 probe("read broad fs (allow)", "cat /etc/hosts > /dev/null && echo OK", true);
 
 rmSync(join(home, ".letta"), { recursive: true, force: true });

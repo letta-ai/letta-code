@@ -20,6 +20,16 @@ const MEMORY_MODE = buildFsSandboxPolicy({
   restrictWrites: true,
 });
 
+// Writes scoped to ~/.letta: base carve, cross-agent tree denied inside it, self
+// memory re-carved. The three must be emitted in nesting order to layer right.
+const LETTA_SCOPED = buildFsSandboxPolicy({
+  baseWritableRoots: ["/home/u/.letta"],
+  deniedRoots: ["/home/u/.letta/agents"],
+  readonlyRoots: ["/home/u/.letta/agents/self"],
+  writableRoots: ["/home/u/.letta/agents/self/memory"],
+  restrictWrites: true,
+});
+
 test("profile is allow-default with a denied root walled off", () => {
   const { profile } = buildSeatbeltProfile(CROSS_AGENT);
   expect(profile).toContain("(version 1)");
@@ -59,6 +69,27 @@ test("memory mode denies all writes but keeps /dev and restores writables", () =
   expect(devIdx).toBeGreaterThan(globalDenyIdx);
   // Writable roots restored after the global write-deny.
   expect(writableIdx).toBeGreaterThan(globalDenyIdx);
+});
+
+test("base writable is layered: after global write-deny, before the deny, self after", () => {
+  const { profile } = buildSeatbeltProfile(LETTA_SCOPED);
+  const globalDeny = profile.indexOf('(deny file-write* (subpath "/"))');
+  const base = profile.indexOf(
+    '(allow file-write* (subpath (param "BASEWRITABLE_0")))',
+  );
+  const deny = profile.indexOf(
+    '(deny file-read* file-write* (subpath (param "DENIED_0")))',
+  );
+  const self = profile.indexOf(
+    '(allow file-read* file-write* (subpath (param "WRITABLE_0")))',
+  );
+  expect(globalDeny).toBeGreaterThan(-1);
+  // ~/.letta becomes writable AFTER the global write-deny...
+  expect(base).toBeGreaterThan(globalDeny);
+  // ...the cross-agent tree deny comes AFTER the base (so the nested tree wins)...
+  expect(deny).toBeGreaterThan(base);
+  // ...and self memory is re-carved AFTER the deny (so self wins again).
+  expect(self).toBeGreaterThan(deny);
 });
 
 test("defines map every param referenced in the profile", () => {
