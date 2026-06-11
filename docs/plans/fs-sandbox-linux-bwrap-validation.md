@@ -238,3 +238,70 @@ subagent spawn through the live agent loop with an LLM round-trip.
 `sandbox-subagent-live-test.ts` exercises the real spawn path
 (`wrapSubagentLauncher` + the manager's spawn shape) but substitutes a `/bin/bash`
 filesystem probe for the agent itself.
+
+---
+
+## DELTA — local-backend sandbox + write-scope parity (NEEDS bwrap mirror)
+
+Everything above validated the **API/cloud** sandbox on bwrap. After that
+sign-off the sandbox was extended to the **local backend** and the memory-mode
+write posture changed. These commits are NOT yet bwrap-validated — only
+darwin/Seatbelt:
+
+- `1eb9affb` cross-agent read-deny → local backend (both surfaces)
+- `a18f1e3b` write-scope parity for local memory subagents
+- `7963ca22` L5 — real local reflection subagent under write-scoping
+- `4c61393d` guard cloud transcript writes under the sandbox
+
+**What changed (so you know what to stress):** local memory lives under
+`~/.letta/lc-local-backend/memfs/<id>/memory`, not `~/.letta/agents`, so both
+sandbox surfaces now wall off the `memfs` tree when local. Memory subagents are
+`restrictWrites:true` on BOTH backends now (write-scope parity); the harness
+paths the child legitimately persists are carved via `extraWritableRoots` —
+`lc-local-backend/{conversations,agents,providers}` (local) + `~/.letta/transcripts`
+(both backends). See `docs/plans/fs-sandbox-local-backend.md`.
+
+### Tasks (bwrap mirror of the Seatbelt validation)
+
+1. **`scripts/sandbox-local-backend-live-test.ts`** (synthetic, both surfaces,
+   auto-detects bwrap). Assert: local subagent → other-agent memory read+write
+   DENIED, self memory writable, **repo + /tmp writes DENIED** (write-scoping),
+   harness dirs (conversations/agents/providers + transcript root) writable, env
+   survives cwd inside the masked `memfs` tree. Local parent shell → other-agent
+   denied, self memory + repo writable.
+
+2. **`scripts/sandbox-subagent-live-test.ts`** — now has a `write transcript root
+   (allow)` probe on the API path. Confirm it passes on bwrap (a memory-only
+   writable set would fail it). Exit-status check, so backend-agnostic.
+
+3. **bwrap ancestor-carve / last-mount-wins re-check (the real risk here).**
+   Write-scope parity adds SEVERAL extra writable carves under `restrictWrites:true`
+   while denying the `memfs` tree. The known bwrap hazard (a carve that is an
+   *ancestor* of a denied root un-masks it; see `src/sandbox/bwrap.ts`) must be
+   re-verified: the harness carves are SIBLINGS of `memfs` (not ancestors), so
+   they should be safe — but CONFIRM cross-agent memory stays denied in the local
+   subagent test with all carves active, especially with a /tmp-based throwaway
+   HOME (agents tree under a writable root).
+
+4. **L5 real runs on a Linux host (spend tokens):**
+   - `scripts/sandbox-l5-local-reflection.ts` — `ANTHROPIC_API_KEY` set, `unset
+     OPENAI_API_KEY` (gpt-5-mini llm_errors via local pi-ai — use Anthropic).
+     Expect reflection child sandboxed (now "via bwrap"), no trap, 2nd agent
+     record + memfs commits.
+   - `scripts/sandbox-l5-cloud-reflection.ts` — `LETTA_API_KEY` set. Expect
+     reflection sandboxed via bwrap, no trap, transcript files persisted.
+   - **⚠ trap-detection caveat:** both L5 drivers detect a trap via the regex
+     `operation not permitted|EPERM|not permitted` — Seatbelt's wording. On bwrap
+     a blocked write surfaces as `Read-only file system` (EROFS) or `No such file
+     or directory` (ENOENT), so the regex can MISS a bwrap trap and report a false
+     PASS. The local L5's positive check (2nd agent record) still catches a trap;
+     the cloud L5's transcript check does NOT (those are parent-written,
+     unsandboxed). So on bwrap, lean on synthetic tasks 1–2 (exit-status,
+     backend-agnostic) as primary, and consider widening the L5 trap regex to
+     include EROFS/ENOENT before trusting its green.
+
+5. **`bun run check` on Linux** — madge/boundaries are platform-agnostic but run
+   it to confirm nothing macOS-specific snuck in.
+
+6. SIGTERM propagation (task 3 in the section above) is unchanged and still
+   applies — `--die-with-parent` / process-group kill through bwrap.
