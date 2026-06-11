@@ -21,6 +21,12 @@ const DEFAULT_TARGET = "memory-citations";
 const DEFAULT_MODEL = "auto";
 const DEFAULT_OPTIMIZATION_ITERATIONS = 10;
 const MOD_OPTIMIZATION_PULSE = BRAILLE_ANIMATIONS.pulse;
+const MOD_OPTIMIZATION_RUNNING_LABELS = [
+  "running",
+  "running.",
+  "running..",
+  "running...",
+];
 const MOD_OPTIMIZATION_SPINNER_INTERVAL_MS = MOD_OPTIMIZATION_PULSE.intervalMs;
 
 type RunModLearning = typeof runModLearning;
@@ -323,12 +329,18 @@ function formatScoreValue(score: number, maxScore: number | undefined): string {
   return `${score}/${maxScore} (${percentage}%)`;
 }
 
-function formatScoreStatus(point: ScorePoint): string {
+function formatScoreStatus(
+  point: ScorePoint,
+  runningLabel = "running",
+): string {
   if (point.completed) return "done";
-  return "running";
+  return runningLabel;
 }
 
-function formatScoreGraph(points: ScorePoint[], pulseFrame = ""): string[] {
+function formatScoreGraph(
+  points: ScorePoint[],
+  runningLabel = "running",
+): string[] {
   if (points.length === 0) return [];
 
   const visiblePoints = points.slice(-MAX_SCORE_BARS);
@@ -339,11 +351,7 @@ function formatScoreGraph(points: ScorePoint[], pulseFrame = ""): string[] {
       (point) => formatScoreValue(point.score, point.maxScore).length,
     ),
   );
-  const statusWidth = "running".length;
-  const pulseWidth = Math.max(
-    MOD_OPTIMIZATION_PULSE.cellWidth,
-    pulseFrame.length,
-  );
+  const statusWidth = "running...".length;
   const stepWidth = Math.max(
     1,
     ...visiblePoints.map((point) => String(point.step).length),
@@ -359,11 +367,11 @@ function formatScoreGraph(points: ScorePoint[], pulseFrame = ""): string[] {
         Math.round((point.score / maxScore) * SCORE_BAR_WIDTH),
       );
       const bar = filled > 0 ? "█".repeat(filled) : "·";
-      const pulse = point.completed
-        ? " ".repeat(pulseWidth)
-        : pulseFrame.padEnd(pulseWidth, " ");
-      const status = formatScoreStatus(point).padEnd(statusWidth, " ");
-      return `  ${pulse} iter ${String(point.step).padStart(stepWidth, " ")} ${status} ${formatScoreValue(point.score, point.maxScore).padStart(scoreWidth, " ")} │ ${bar}`;
+      const status = formatScoreStatus(point, runningLabel).padEnd(
+        statusWidth,
+        " ",
+      );
+      return `  iter ${String(point.step).padStart(stepWidth, " ")} ${status} ${formatScoreValue(point.score, point.maxScore).padStart(scoreWidth, " ")} │ ${bar}`;
     }),
   ];
 }
@@ -392,13 +400,13 @@ function formatProgressScoreGraph(
   points: ScorePoint[],
   currentStep: number | undefined,
   totalSteps: number | undefined,
-  pulseFrame = "",
+  runningLabel = "running",
 ): string[] {
   const timeline = formatOptimizationTimeline(currentStep, totalSteps);
   if (points.length > 0) {
     return [
       ...(timeline ? [timeline] : []),
-      ...formatScoreGraph(points, pulseFrame),
+      ...formatScoreGraph(points, runningLabel),
     ];
   }
   return [
@@ -488,6 +496,7 @@ function formatProgress(
   progress: ModLearningProgress,
   cwd: string,
   pulseFrame: string = MOD_OPTIMIZATION_PULSE.frames[0] ?? "⠀⠶⠀",
+  runningLabel = "running",
   elapsedMs?: number,
 ): string {
   const stepLine = progress.candidateIndex
@@ -497,7 +506,7 @@ function formatProgress(
   const scoreHistoryLine = scorePoints.length
     ? `Score history: ${scorePoints
         .map((point) => {
-          const status = formatScoreStatus(point);
+          const status = formatScoreStatus(point, runningLabel);
           return `iter ${point.step}${status ? ` ${status}` : ""} ${formatScoreValue(point.score, point.maxScore)}`;
         })
         .join(" → ")}`
@@ -534,7 +543,7 @@ function formatProgress(
       scorePoints,
       progress.candidateIndex,
       progress.candidateCount,
-      pulseFrame,
+      runningLabel,
     ),
     `Run directory: ${displayPath(progress.runDir, cwd)}`,
     ...(progress.candidateRunDir && progress.candidateRunDir !== progress.runDir
@@ -670,12 +679,17 @@ async function runLearnCommand(
       MOD_OPTIMIZATION_PULSE.frames[pulseFrameIndex] ??
       MOD_OPTIMIZATION_PULSE.frames[0] ??
       "⠀⠶⠀";
+    const runningLabel =
+      MOD_OPTIMIZATION_RUNNING_LABELS[
+        pulseFrameIndex % MOD_OPTIMIZATION_RUNNING_LABELS.length
+      ] ?? "running";
     command.update({
       output: formatProgress(
         learn,
         progress,
         ctx.cwd,
         pulseFrame,
+        runningLabel,
         Date.now() - progressStartedAt,
       ),
       phase: "running",

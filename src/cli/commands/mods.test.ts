@@ -324,8 +324,8 @@ describe("/mods command", () => {
       "Optimization progress: ●●○○○○○○○○ 2/10",
     );
     expect(updates.at(-1)?.output).toContain("Score graph: ▁█");
-    expect(updates.at(-1)?.output).toContain("iter 1 done    2/6 (33%) │");
-    expect(updates.at(-1)?.output).toContain("iter 2 running 4/6 (67%) │");
+    expect(updates.at(-1)?.output).toContain("iter 1 done       2/6 (33%) │");
+    expect(updates.at(-1)?.output).toContain("iter 2 running    4/6 (67%) │");
 
     resolveLearning?.();
     if (result.handled) await result.done;
