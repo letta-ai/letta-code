@@ -73,12 +73,20 @@ function assert(label: string, cond: boolean): void {
 // --- 1. Gating: wrapSubagentLauncher must only wrap memory-mode/api/flag-on ---
 console.log("\n=== gating (the real production guard) ===");
 assert(
-  "flag OFF → not wrapped (spawn unchanged)",
+  "flag explicitly OFF (LETTA_FS_SANDBOX=0) → not wrapped (spawn unchanged)",
+  wrapSubagentLauncher({
+    ...baseInput,
+    permissionMode: "memory",
+    env: { LETTA_FS_SANDBOX: "0" },
+  }) === null,
+);
+assert(
+  "flag unset → wrapped (sandbox is on by default)",
   wrapSubagentLauncher({
     ...baseInput,
     permissionMode: "memory",
     env: {},
-  }) === null,
+  }) !== null,
 );
 const onEnv = { LETTA_FS_SANDBOX: "1" };
 assert(
