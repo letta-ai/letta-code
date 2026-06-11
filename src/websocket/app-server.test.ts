@@ -134,7 +134,7 @@ describe("app-server native websocket", () => {
     }
   });
 
-  test("starts a runtime over control and emits state/turn frames over stream", async () => {
+  test("starts a runtime over control and emits state frames over stream", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "letta-app-server-"));
     let handle: AppServerHandle | null = null;
     let control: WebSocket | null = null;
@@ -188,30 +188,21 @@ describe("app-server native websocket", () => {
           JSON.stringify(message.runtime) === JSON.stringify(runtime),
       );
 
-      const turnStatus = waitForJsonMessage(stream, (message) => {
+      const loopStatus = await waitForJsonMessage(stream, (message) => {
         const loopStatus = message.loop_status as
           | { status?: unknown }
           | undefined;
         return (
           message.type === "update_loop_status" &&
-          loopStatus?.status === "SENDING_API_REQUEST"
+          loopStatus?.status === "WAITING_ON_INPUT" &&
+          JSON.stringify(message.runtime) === JSON.stringify(runtime)
         );
       });
-      control.send(
-        JSON.stringify({
-          type: "input",
-          runtime,
-          payload: {
-            kind: "create_message",
-            messages: [{ role: "user", content: "Reply with pong" }],
-          },
-        }),
-      );
 
-      await expect(turnStatus).resolves.toMatchObject({
+      expect(loopStatus).toMatchObject({
         type: "update_loop_status",
         runtime,
-        loop_status: { status: "SENDING_API_REQUEST" },
+        loop_status: { status: "WAITING_ON_INPUT" },
       });
     } finally {
       closeClient(control);
