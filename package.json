@@ -14,6 +14,8 @@
     "scripts",
     "skills",
     "vendor",
+    "dist/app-server-client.js",
+    "dist/app-server-client.js.map",
     "dist/types",
     "docs"
   ],
@@ -21,6 +23,10 @@
     ".": "./letta.js",
     "./app-server-protocol": {
       "types": "./dist/types/app-server-protocol.d.ts"
+    },
+    "./app-server-client": {
+      "types": "./dist/types/app-server-client.d.ts",
+      "import": "./dist/app-server-client.js"
     },
     "./protocol": {
       "types": "./dist/types/protocol.d.ts"
