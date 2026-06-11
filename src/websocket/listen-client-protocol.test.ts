@@ -32,6 +32,10 @@ import {
   backgroundTasks,
 } from "@/tools/impl/process_manager";
 import { LIMITS } from "@/tools/impl/truncation";
+import {
+  clearExternalTools,
+  prepareToolExecutionContextForModel,
+} from "@/tools/manager";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
   __listenClientTestUtils,
@@ -88,6 +92,7 @@ const actualChannelsService = await import("@/channels/service");
 
 afterEach(() => {
   __testSetBackend(null);
+  clearExternalTools();
   __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
   mock.restore();
 });
@@ -684,6 +689,18 @@ describe("listen-client parseServerMessage", () => {
             request_id: "runtime-start-resume",
             agent_id: agent.id,
             conversation_id: conversation.id,
+            external_tools: [
+              {
+                scope_id: "scope-1",
+                tools: [
+                  {
+                    name: "RemoteLookup",
+                    description: "Lookup a remote resource",
+                    parameters: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            ],
             recover_approvals: false,
           },
           socket as unknown as WebSocket,
@@ -702,6 +719,21 @@ describe("listen-client parseServerMessage", () => {
           conversation: { id: conversation.id },
           created: { agent: false, conversation: false },
         });
+
+        const prepared = await prepareToolExecutionContextForModel(
+          "anthropic/claude-sonnet-4",
+          {
+            clientToolAllowlist: ["RemoteLookup"],
+            externalToolScopeIds: ["scope-1"],
+            runtimeContext: {
+              agentId: agent.id,
+              conversationId: conversation.id,
+            },
+          },
+        );
+        expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+          "RemoteLookup",
+        ]);
       } finally {
         await rm(storageDir, { recursive: true, force: true });
       }
@@ -842,6 +874,7 @@ describe("listen-client parseServerMessage", () => {
             kind: "create_message",
             messages: [],
             client_tool_allowlist: ["Read", "Grep"],
+            external_tool_scope_ids: ["scope-1"],
           },
         }),
       ),
@@ -858,6 +891,7 @@ describe("listen-client parseServerMessage", () => {
     expect(msg?.type).toBe("input");
     if (msg?.type === "input" && msg.payload.kind === "create_message") {
       expect(msg.payload.client_tool_allowlist).toEqual(["Read", "Grep"]);
+      expect(msg.payload.external_tool_scope_ids).toEqual(["scope-1"]);
     }
     expect(changeDeviceState?.type).toBe("change_device_state");
   });
@@ -881,6 +915,30 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("__invalid_input");
     if (parsed?.type === "__invalid_input") {
       expect(parsed.reason).toContain("client_tool_allowlist must be string[]");
+    }
+  });
+
+  test("rejects input create_message with invalid external tool scope ids", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            external_tool_scope_ids: ["scope-1", 42],
+          },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain(
+        "external_tool_scope_ids must be string[]",
+      );
     }
   });
 

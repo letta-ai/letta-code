@@ -113,6 +113,15 @@ describe("app-server protocol export", () => {
         conversation: null,
         created: { agent: false, conversation: false },
       },
+      {
+        type: "external_tool_call_request",
+        request_id: "req",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        scope_id: "scope-1",
+        tool_call_id: "call-1",
+        tool_name: "lookup_ticket",
+        input: { id: "ABC-123" },
+      },
     ] satisfies WsProtocolMessage[];
 
     expect(messages.map((message) => message.type)).toEqual([
@@ -134,6 +143,7 @@ describe("app-server protocol export", () => {
       "conversation_messages_list_response",
       "conversation_compact_response",
       "runtime_start_response",
+      "external_tool_call_request",
     ]);
   });
 });

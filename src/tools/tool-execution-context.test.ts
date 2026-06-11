@@ -409,6 +409,78 @@ describe("tool execution context snapshot", () => {
     expect(prepared.clientTools).toEqual([]);
   });
 
+  test("runtime-owned external tools stay scoped to their runtime", async () => {
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "External tool for first runtime",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+      {
+        name: "RemoteBar",
+        description: "External tool for second runtime",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-2" },
+      },
+    ]);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["RemoteFoo", "RemoteBar"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "RemoteFoo",
+    ]);
+  });
+
+  test("scoped runtime external tools stay hidden unless selected", async () => {
+    registerExternalTools([
+      {
+        name: "AlwaysOnRemote",
+        description: "Unscoped runtime tool",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+      {
+        name: "ScopedRemote",
+        description: "Scoped runtime tool",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-1" },
+        scopeId: "scope-1",
+      },
+    ]);
+
+    const base = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["AlwaysOnRemote", "ScopedRemote"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+    expect(base.clientTools.map((tool) => tool.name)).toEqual([
+      "AlwaysOnRemote",
+    ]);
+
+    const selected = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["AlwaysOnRemote", "ScopedRemote"],
+        externalToolScopeIds: ["scope-1"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+    expect(selected.clientTools.map((tool) => tool.name)).toEqual([
+      "AlwaysOnRemote",
+      "ScopedRemote",
+    ]);
+  });
+
   test("prepares and executes mod tools from turn snapshots", async () => {
     const controller = new AbortController();
     registerEchoModTool(controller.signal);
