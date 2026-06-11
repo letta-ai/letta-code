@@ -163,7 +163,92 @@ describe("PiStreamAdapter", () => {
     expect(events.some((event) => event.type === "local-message")).toBe(true);
   });
 
-  test("classifies transport failures on oversized payloads as overflow instead of retrying", async () => {
+  test("elides image payloads in-memory before retrying oversized transport failures", async () => {
+    let providerCalls = 0;
+    const contexts: Context[] = [];
+    const stream: PiStreamFunction = (_model, context) => {
+      providerCalls += 1;
+      contexts.push(context);
+      if (providerCalls === 1) {
+        const error = assistantErrorMessage(
+          "WebSocket closed 1006 Connection ended\nretry-after-ms: 0",
+        );
+        return streamFromEvents(
+          [{ type: "error", reason: "error", error }],
+          error,
+        );
+      }
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({
+      stream,
+      onContextWindowOverflow: async () => {
+        throw new Error("Compaction should not run before image elision");
+      },
+    });
+    const baseInput = input();
+    const events = await collectEvents(
+      adapter.stream({
+        ...baseInput,
+        // Semantic image cost is tiny (1200 tokens), but the raw base64 body is
+        // oversized. After a real transport failure, retry with provider-only
+        // image elision instead of persisting a compaction that may not shed the
+        // kept image bytes.
+        uiMessages: [
+          {
+            id: "ui-msg-large-image",
+            role: "user",
+            content: [
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: "a".repeat(8_000_001),
+              },
+            ],
+            timestamp: Date.now(),
+          },
+        ],
+      }),
+    );
+
+    expect(providerCalls).toBe(2);
+    expect(contexts[0]?.messages[0]?.content).toEqual([
+      {
+        type: "image",
+        mimeType: "image/png",
+        data: "a".repeat(8_000_001),
+      },
+    ]);
+    expect(contexts[1]?.messages[0]?.content).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining("Image omitted"),
+      }),
+    ]);
+    const retryEvents = events.filter(
+      (event) =>
+        event.type === "letta-chunk" &&
+        (event.chunk as { event_type?: string }).event_type === "retry",
+    );
+    expect(retryEvents).toHaveLength(0);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "letta-chunk",
+        chunk: expect.objectContaining({
+          message_type: "event_message",
+          event_type: "context_image_elision",
+        }),
+      }),
+    );
+    expect(events.some((event) => event.type === "local-message")).toBe(true);
+  });
+
+  test("classifies non-image oversized transport failures as overflow instead of retrying", async () => {
     let providerCalls = 0;
     const stream: PiStreamFunction = () => {
       providerCalls += 1;
@@ -197,7 +282,7 @@ describe("PiStreamAdapter", () => {
               timestamp: Date.now(),
             },
           ],
-          summary: "compacted images",
+          summary: "compacted oversized text",
         };
       },
     });
@@ -205,20 +290,11 @@ describe("PiStreamAdapter", () => {
     const events = await collectEvents(
       adapter.stream({
         ...baseInput,
-        // Semantic image cost is tiny (1200 tokens) and there is no clean
-        // overflow error, so only the oversized-payload transport classifier
-        // can route this into compaction.
         uiMessages: [
           {
-            id: "ui-msg-large-image",
+            id: "ui-msg-large-text",
             role: "user",
-            content: [
-              {
-                type: "image",
-                mimeType: "image/png",
-                data: "a".repeat(8_000_001),
-              },
-            ],
+            content: "x".repeat(8_000_001),
             timestamp: Date.now(),
           },
         ],
@@ -279,15 +355,9 @@ describe("PiStreamAdapter", () => {
         ...baseInput,
         uiMessages: [
           {
-            id: "ui-msg-large-image",
+            id: "ui-msg-large-text",
             role: "user",
-            content: [
-              {
-                type: "image",
-                mimeType: "image/png",
-                data: "a".repeat(8_000_001),
-              },
-            ],
+            content: "x".repeat(8_000_001),
             timestamp: Date.now(),
           },
         ],
