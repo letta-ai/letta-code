@@ -123,8 +123,11 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
 // These pi-ai providers are intentionally absent from Pi TUI's
 // `defaultModelPerProvider`. Keep the omission explicit so newly added pi-ai
 // providers cannot silently inherit catalog-order defaults without review.
-export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<KnownProvider> =
-  new Set(["ant-ling", "nvidia", "zai-coding-cn"]);
+export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  "ant-ling",
+  "nvidia",
+  "zai-coding-cn",
+]);
 
 const PI_PROVIDER_OVERRIDES: Partial<
   Record<KnownProvider, PiProviderOverride>
