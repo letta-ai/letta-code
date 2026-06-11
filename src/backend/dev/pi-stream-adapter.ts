@@ -22,6 +22,7 @@ import {
 import { removeOrphanLocalToolResults } from "@/backend/local/local-message-projection";
 import { resolveAvailableLocalModelForTurn } from "@/backend/local/local-model-config";
 import type { ClientTool } from "@/tools/manager";
+import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
@@ -813,6 +814,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         ) {
           const imageElision = elideImagePayloadsForProviderRetry(activeInput);
           if (imageElision) {
+            debugLog(
+              "pi-stream",
+              "oversized payload transport failure: elided %d image(s) (%d -> %d bytes, target %d) from provider retry context",
+              imageElision.elidedImages,
+              imageElision.beforeBytes,
+              imageElision.afterBytes,
+              LOCAL_PROVIDER_REQUEST_BYTE_TARGET,
+            );
             activeInput = imageElision.input;
             yield* this.emitImageElisionChunks(imageElision);
             continue;
