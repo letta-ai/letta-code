@@ -163,6 +163,7 @@ export interface ChannelPluginAccountPatch {
   allowedGroups?: string[];
   mentionPatterns?: string[];
   transcribeVoice?: boolean;
+  richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
 }

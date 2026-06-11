@@ -70,6 +70,7 @@ import { extractTelemetryInputText } from "@/telemetry/input";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import { createTelegramRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -400,6 +401,10 @@ export async function handleIncomingMessage(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
+  const richDraftStreamer = createTelegramRichDraftStreamer({
+    batchId: dequeuedBatchId,
+    sources: msg.channelTurnSources,
+  });
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
@@ -761,6 +766,10 @@ export async function handleIncomingMessage(
             }
           }
 
+          richDraftStreamer?.handleChunk(
+            chunk as unknown as LettaStreamingResponse,
+          );
+
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
@@ -789,6 +798,9 @@ export async function handleIncomingMessage(
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
+      if (stopReason === "requires_approval") {
+        await richDraftStreamer?.flushPending();
+      }
       lastApprovalContinuationAccepted = false;
 
       if (stopReason === "end_turn" && runtime.cancelRequested) {
@@ -1298,6 +1310,8 @@ export async function handleIncomingMessage(
   } finally {
     // Prune lean defaults only at turn-finalization boundaries (never during
     // mid-turn mode changes), then persist the canonical map.
+    richDraftStreamer?.dispose();
+
     pruneConversationPermissionModeStateIfDefault(
       runtime.listener,
       normalizedAgentId,

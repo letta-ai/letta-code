@@ -1,0 +1,546 @@
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import { getChannelAccount } from "@/channels/accounts";
+import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelAdapter, ChannelTurnSource } from "@/channels/types";
+import { isTelegramChannelAccount } from "@/channels/types";
+import { debugWarn } from "@/utils/debug";
+
+const MESSAGE_CHANNEL_TOOL_NAMES = new Set([
+  "MessageChannel",
+  "message_channel",
+]);
+const DEFAULT_DRAFT_DEBOUNCE_MS = 750;
+const MIN_DRAFT_TEXT_LENGTH = 1;
+
+type TelegramDraftSource = ChannelTurnSource & {
+  channel: "telegram";
+  accountId: string;
+};
+
+type ToolCallFragment = {
+  toolCallId: string;
+  name?: string;
+  argumentsDelta?: string;
+};
+
+type DraftIntent = {
+  chatId: string;
+  accountId: string;
+  threadId: string | null;
+  message: string;
+};
+
+type DraftCallState = {
+  toolCallId: string;
+  name?: string;
+  argumentsText: string;
+  draftId: number;
+  pendingMessage?: string;
+  lastSentMessage?: string;
+  timer: ReturnType<typeof setTimeout> | null;
+  inFlight: Promise<void> | null;
+};
+
+type UnknownRecord = Record<string, unknown>;
+
+export type TelegramRichDraftStreamer = {
+  handleChunk(chunk: LettaStreamingResponse): void;
+  flushPending(): Promise<void>;
+  dispose(): void;
+};
+
+export function createTelegramRichDraftStreamer(options: {
+  batchId: string;
+  sources?: ChannelTurnSource[];
+  debounceMs?: number;
+}): TelegramRichDraftStreamer | null {
+  const source = resolveSingleTelegramDraftSource(options.sources ?? []);
+  if (!source) {
+    return null;
+  }
+
+  const account = getChannelAccount("telegram", source.accountId);
+  if (
+    !account ||
+    !isTelegramChannelAccount(account) ||
+    account.richDraftStreaming !== true
+  ) {
+    return null;
+  }
+
+  const adapter = getChannelRegistry()?.getAdapter(
+    "telegram",
+    source.accountId,
+  );
+  if (!adapter?.sendRichMessageDraft || !adapter.isRunning()) {
+    return null;
+  }
+
+  return new TelegramRichDraftStreamerImpl({
+    adapter,
+    batchId: options.batchId,
+    source,
+    debounceMs: options.debounceMs ?? DEFAULT_DRAFT_DEBOUNCE_MS,
+  });
+}
+
+function resolveSingleTelegramDraftSource(
+  sources: ChannelTurnSource[],
+): TelegramDraftSource | null {
+  const telegramSources = sources.filter(
+    (source): source is TelegramDraftSource =>
+      source.channel === "telegram" &&
+      typeof source.accountId === "string" &&
+      source.accountId.trim().length > 0,
+  );
+  if (telegramSources.length === 0) {
+    return null;
+  }
+
+  const byRoute = new Map<string, TelegramDraftSource>();
+  for (const source of telegramSources) {
+    byRoute.set(
+      [
+        source.accountId.trim(),
+        source.chatId,
+        source.threadId ?? "",
+        source.agentId,
+        source.conversationId,
+      ].join(":"),
+      { ...source, accountId: source.accountId.trim() },
+    );
+  }
+
+  return byRoute.size === 1 ? ([...byRoute.values()][0] ?? null) : null;
+}
+
+class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
+  private readonly adapter: ChannelAdapter;
+  private readonly batchId: string;
+  private readonly source: TelegramDraftSource;
+  private readonly debounceMs: number;
+  private readonly calls = new Map<string, DraftCallState>();
+  private disposed = false;
+
+  constructor(options: {
+    adapter: ChannelAdapter;
+    batchId: string;
+    source: TelegramDraftSource;
+    debounceMs: number;
+  }) {
+    this.adapter = options.adapter;
+    this.batchId = options.batchId;
+    this.source = options.source;
+    this.debounceMs = Math.max(0, Math.trunc(options.debounceMs));
+  }
+
+  handleChunk(chunk: LettaStreamingResponse): void {
+    if (this.disposed) {
+      return;
+    }
+
+    const record = asRecord(chunk);
+    const messageType = stringValue(record?.message_type);
+
+    if (messageType === "tool_return_message") {
+      const toolCallId = stringValue(record?.tool_call_id);
+      if (toolCallId) {
+        this.finishCall(toolCallId);
+      }
+      return;
+    }
+
+    if (
+      messageType !== "approval_request_message" &&
+      messageType !== "tool_call_message"
+    ) {
+      return;
+    }
+
+    for (const fragment of extractToolCallFragments(record)) {
+      const state = this.getOrCreateCall(fragment.toolCallId);
+      if (fragment.name) {
+        state.name = fragment.name;
+      }
+      if (fragment.argumentsDelta) {
+        state.argumentsText += fragment.argumentsDelta;
+      }
+
+      this.maybeScheduleDraft(state);
+    }
+  }
+
+  async flushPending(): Promise<void> {
+    const flushes: Promise<void>[] = [];
+    for (const state of this.calls.values()) {
+      if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = null;
+      }
+      if (
+        state.pendingMessage &&
+        state.pendingMessage !== state.lastSentMessage
+      ) {
+        flushes.push(this.sendDraft(state));
+      } else if (state.inFlight) {
+        flushes.push(state.inFlight);
+      }
+    }
+    await Promise.allSettled(flushes);
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    for (const state of this.calls.values()) {
+      if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = null;
+      }
+    }
+    this.calls.clear();
+  }
+
+  private getOrCreateCall(toolCallId: string): DraftCallState {
+    const existing = this.calls.get(toolCallId);
+    if (existing) {
+      return existing;
+    }
+    const state: DraftCallState = {
+      toolCallId,
+      argumentsText: "",
+      draftId: buildDraftId(`${this.batchId}:${toolCallId}`),
+      timer: null,
+      inFlight: null,
+    };
+    this.calls.set(toolCallId, state);
+    return state;
+  }
+
+  private finishCall(toolCallId: string): void {
+    const state = this.calls.get(toolCallId);
+    if (!state) {
+      return;
+    }
+    if (state.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+    this.calls.delete(toolCallId);
+  }
+
+  private maybeScheduleDraft(state: DraftCallState): void {
+    if (!state.name || !MESSAGE_CHANNEL_TOOL_NAMES.has(state.name)) {
+      return;
+    }
+
+    const intent = extractTelegramSendRichDraftIntent(
+      state.argumentsText,
+      this.source,
+    );
+    if (!intent) {
+      return;
+    }
+
+    const message = intent.message.trimEnd();
+    if (
+      message.trim().length < MIN_DRAFT_TEXT_LENGTH ||
+      message === state.pendingMessage ||
+      message === state.lastSentMessage
+    ) {
+      return;
+    }
+
+    state.pendingMessage = message;
+    if (state.timer) {
+      clearTimeout(state.timer);
+    }
+    if (this.debounceMs === 0) {
+      state.timer = null;
+      void this.sendDraft(state);
+      return;
+    }
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      void this.sendDraft(state);
+    }, this.debounceMs);
+  }
+
+  private sendDraft(state: DraftCallState): Promise<void> {
+    const message = state.pendingMessage;
+    if (!message || message === state.lastSentMessage) {
+      return state.inFlight ?? Promise.resolve();
+    }
+
+    state.lastSentMessage = message;
+    const draft = {
+      channel: "telegram",
+      accountId: this.source.accountId,
+      chatId: this.source.chatId,
+      threadId: this.source.threadId ?? null,
+      draftId: state.draftId,
+      richMessage: { markdown: message },
+    };
+
+    let inFlight: Promise<void> = Promise.resolve();
+    inFlight = (async () => {
+      try {
+        await this.adapter.sendRichMessageDraft?.(draft);
+      } catch (error) {
+        debugWarn(
+          "channels",
+          `[Telegram] Rich draft update failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      } finally {
+        if (state.inFlight === inFlight) {
+          state.inFlight = null;
+        }
+      }
+    })();
+    state.inFlight = inFlight;
+    return inFlight;
+  }
+}
+
+export function extractTelegramSendRichDraftIntent(
+  argumentsText: string,
+  source: ChannelTurnSource & { channel: "telegram"; accountId: string },
+): DraftIntent | null {
+  const action = extractStringField(argumentsText, "action", false)?.value;
+  if (action?.trim().toLowerCase() !== "send-rich") {
+    return null;
+  }
+
+  const channel = extractStringField(argumentsText, "channel", false)?.value;
+  if (channel?.trim().toLowerCase() !== "telegram") {
+    return null;
+  }
+
+  const rawChatId = extractStringField(argumentsText, "chat_id", false)?.value;
+  const chatId = rawChatId ? normalizeChatTarget(rawChatId) : null;
+  if (!chatId || chatId !== source.chatId) {
+    return null;
+  }
+
+  const target = extractStringField(argumentsText, "target", false)?.value;
+  if (target?.trim()) {
+    return null;
+  }
+
+  const accountId = extractStringField(
+    argumentsText,
+    "accountId",
+    false,
+  )?.value;
+  if (accountId?.trim() && accountId.trim() !== source.accountId) {
+    return null;
+  }
+
+  const threadIdField = extractStringField(argumentsText, "threadId", false);
+  const requestedThreadId = threadIdField?.value.trim() || null;
+  const sourceThreadId = source.threadId ?? null;
+  if (requestedThreadId !== null && requestedThreadId !== sourceThreadId) {
+    return null;
+  }
+
+  const media = extractStringField(argumentsText, "media", false)?.value;
+  if (media?.trim()) {
+    return null;
+  }
+
+  const message = extractStringField(argumentsText, "message", true)?.value;
+  if (!message?.trim()) {
+    return null;
+  }
+
+  return {
+    accountId: source.accountId,
+    chatId,
+    threadId: sourceThreadId,
+    message,
+  };
+}
+
+function extractToolCallFragments(
+  record: UnknownRecord | null,
+): ToolCallFragment[] {
+  if (!record) {
+    return [];
+  }
+  const rawToolCalls = Array.isArray(record.tool_calls)
+    ? record.tool_calls
+    : record.tool_call
+      ? [record.tool_call]
+      : [];
+
+  const fragments: ToolCallFragment[] = [];
+  for (const rawToolCall of rawToolCalls) {
+    const toolCall = asRecord(rawToolCall);
+    const toolCallId = stringValue(toolCall?.tool_call_id);
+    if (!toolCallId) {
+      continue;
+    }
+    fragments.push({
+      toolCallId,
+      name: stringValue(toolCall?.name),
+      argumentsDelta: stringValue(toolCall?.arguments),
+    });
+  }
+  return fragments;
+}
+
+function extractStringField(
+  input: string,
+  field: string,
+  allowPartialValue: boolean,
+): { value: string; complete: boolean } | null {
+  let index = 0;
+  while (index < input.length) {
+    const quoteIndex = input.indexOf('"', index);
+    if (quoteIndex === -1) {
+      return null;
+    }
+
+    const key = readJsonStringAt(input, quoteIndex, false);
+    if (!key) {
+      return null;
+    }
+
+    index = key.end;
+    let cursor = skipWhitespace(input, key.end);
+    if (input[cursor] !== ":") {
+      continue;
+    }
+    cursor = skipWhitespace(input, cursor + 1);
+    if (key.value !== field) {
+      index = cursor;
+      continue;
+    }
+    if (input[cursor] !== '"') {
+      return null;
+    }
+    return readJsonStringAt(input, cursor, allowPartialValue);
+  }
+  return null;
+}
+
+function readJsonStringAt(
+  input: string,
+  quoteIndex: number,
+  allowPartial: boolean,
+): { value: string; end: number; complete: boolean } | null {
+  if (input[quoteIndex] !== '"') {
+    return null;
+  }
+
+  let raw = "";
+  let cursor = quoteIndex + 1;
+  while (cursor < input.length) {
+    const char = input[cursor];
+    if (char === "\\") {
+      if (cursor + 1 >= input.length) {
+        return allowPartial
+          ? {
+              value: decodeJsonStringFragment(raw, false),
+              end: input.length,
+              complete: false,
+            }
+          : null;
+      }
+      raw += input.slice(cursor, cursor + 2);
+      cursor += 2;
+      continue;
+    }
+    if (char === '"') {
+      return {
+        value: decodeJsonStringFragment(raw, true),
+        end: cursor + 1,
+        complete: true,
+      };
+    }
+    raw += char;
+    cursor += 1;
+  }
+
+  return allowPartial
+    ? {
+        value: decodeJsonStringFragment(raw, false),
+        end: input.length,
+        complete: false,
+      }
+    : null;
+}
+
+function decodeJsonStringFragment(raw: string, complete: boolean): string {
+  let candidate = raw;
+  if (!complete) {
+    candidate = candidate.replace(/\\u[0-9a-fA-F]{0,3}$/, "");
+    if (candidate.endsWith("\\")) {
+      candidate = candidate.slice(0, -1);
+    }
+  }
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      return JSON.parse(`"${candidate}"`) as string;
+    } catch {
+      if (candidate.length === 0) {
+        break;
+      }
+      candidate = candidate.slice(0, -1);
+    }
+  }
+
+  return candidate
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");
+}
+
+function skipWhitespace(input: string, index: number): number {
+  let cursor = index;
+  while (cursor < input.length && /\s/.test(input[cursor] ?? "")) {
+    cursor += 1;
+  }
+  return cursor;
+}
+
+function normalizeChatTarget(value: string): string {
+  const trimmed = value.trim();
+  const parts = trimmed
+    .split(":")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 2 && /^[a-z_-]+$/i.test(parts[0] ?? "")) {
+    return parts[1] ?? trimmed;
+  }
+  if (
+    parts.length === 3 &&
+    /^[a-z_-]+$/i.test(parts[0] ?? "") &&
+    /^[a-z_-]+$/i.test(parts[1] ?? "")
+  ) {
+    return parts[2] ?? trimmed;
+  }
+  return trimmed;
+}
+
+function buildDraftId(seed: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  const positive = hash >>> 1;
+  return positive === 0 ? 1 : positive;
+}
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return value && typeof value === "object" ? (value as UnknownRecord) : null;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}

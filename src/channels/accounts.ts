@@ -46,6 +46,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
   remove_stale_routes: "removeStaleRoutes",
+  rich_draft_streaming: "richDraftStreaming",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
 };
@@ -338,6 +339,7 @@ function makeDefaultLegacyAccount(
       dmPolicy: config.dmPolicy,
       allowedUsers: [...config.allowedUsers],
       transcribeVoice: config.transcribeVoice === true,
+      richDraftStreaming: config.richDraftStreaming === true,
       binding: {
         agentId: null,
         conversationId: null,

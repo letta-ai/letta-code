@@ -150,6 +150,13 @@ export interface ChannelAdapter {
   sendMessage(msg: OutboundChannelMessage): Promise<{ messageId: string }>;
 
   /**
+   * Optionally stream an ephemeral rich-message draft while a final rich
+   * message is being generated. Drafts are best-effort previews; callers must
+   * still send a final persistent message with sendMessage().
+   */
+  sendRichMessageDraft?(draft: OutboundChannelRichMessageDraft): Promise<void>;
+
+  /**
    * Send a direct reply on the platform (for pairing codes, no-route
    * messages, etc.) without going through the agent.
    */
@@ -275,6 +282,21 @@ export interface OutboundChannelMessage {
   targetMessageId?: string;
 }
 
+export interface OutboundChannelRichMessageDraft {
+  /** Platform identifier. */
+  channel: string;
+  /** Channel account that should send the draft. */
+  accountId?: string;
+  /** Target chat/conversation ID. */
+  chatId: string;
+  /** Optional: canonical thread identifier used for threaded channels. */
+  threadId?: string | null;
+  /** Stable non-zero platform draft identifier for animated updates. */
+  draftId: number;
+  /** Rich structured message payload for the draft preview. */
+  richMessage: ChannelRichMessage;
+}
+
 // ── Routing ───────────────────────────────────────────────────────
 
 export interface ChannelRoute {
@@ -336,6 +358,8 @@ export interface TelegramChannelConfig {
   groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /** When true, stream hidden Telegram rich-message drafts during generation. */
+  richDraftStreaming?: boolean;
 }
 
 export interface SlackChannelConfig {
@@ -447,6 +471,11 @@ export interface TelegramChannelAccount extends ChannelAccountBase {
   groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /**
+   * When true, Telegram channel turns may stream hidden rich-message drafts
+   * while the agent is preparing a final MessageChannel send-rich call.
+   */
+  richDraftStreaming?: boolean;
   /**
    * Optional debounce window (ms) for inbound group/topic messages. When
    * greater than `0`, short back-to-back text messages in the same chat/topic

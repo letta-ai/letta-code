@@ -28,6 +28,7 @@ import type {
   ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
+  OutboundChannelRichMessageDraft,
   TelegramChannelAccount,
 } from "@/channels/types";
 import {
@@ -69,10 +70,18 @@ type TelegramRichMessagePayload = {
   rich_message: TelegramInputRichMessage;
 };
 
+type TelegramRichMessageDraftPayload = Omit<
+  TelegramRichMessagePayload,
+  "reply_parameters"
+> & {
+  draft_id: number;
+};
+
 type TelegramRichMessageRawApi = {
   sendRichMessage(
     args: TelegramRichMessagePayload,
   ): Promise<{ message_id: string | number }>;
+  sendRichMessageDraft(args: TelegramRichMessageDraftPayload): Promise<boolean>;
 };
 type TelegramReactionType =
   | {
@@ -375,6 +384,23 @@ function buildTelegramRichMessagePayload(
     payload.reply_parameters = {
       message_id: Number(msg.replyToMessageId),
     };
+  }
+  return payload;
+}
+
+function buildTelegramRichMessageDraftPayload(
+  draft: Pick<
+    OutboundChannelRichMessageDraft,
+    "chatId" | "threadId" | "draftId" | "richMessage"
+  >,
+): TelegramRichMessageDraftPayload {
+  const payload: TelegramRichMessageDraftPayload = {
+    chat_id: draft.chatId,
+    draft_id: draft.draftId,
+    rich_message: toTelegramInputRichMessage(draft.richMessage),
+  };
+  if (draft.threadId) {
+    payload.message_thread_id = Number(draft.threadId);
   }
   return payload;
 }
@@ -1270,6 +1296,16 @@ export function createTelegramAdapter(
 
     isRunning(): boolean {
       return running;
+    },
+
+    async sendRichMessageDraft(
+      draft: OutboundChannelRichMessageDraft,
+    ): Promise<void> {
+      const telegramBot = await ensureBot();
+      const raw = telegramBot.api.raw as unknown as TelegramRichMessageRawApi;
+      await raw.sendRichMessageDraft(
+        buildTelegramRichMessageDraftPayload(draft),
+      );
     },
 
     async sendMessage(

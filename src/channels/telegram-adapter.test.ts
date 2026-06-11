@@ -69,6 +69,7 @@ class FakeBot {
     getFile: mock(async (fileId: string) => FakeBot.nextGetFileImpl(fileId)),
     raw: {
       sendRichMessage: mock(async () => ({ message_id: 2001 })),
+      sendRichMessageDraft: mock(async () => true),
     },
   };
   catchHandler:
@@ -501,6 +502,7 @@ test("telegram channel modifies config while running and keeps the adapter live"
       dmPolicy: "pairing",
       groupMode: "open",
       transcribeVoice: false,
+      richDraftStreaming: false,
       inboundDebounceMs: 100,
     },
     { accountId: "telegram-running-config" },
@@ -530,6 +532,7 @@ test("telegram channel modifies config while running and keeps the adapter live"
       config: {
         group_mode: "mention-only",
         transcribe_voice: true,
+        rich_draft_streaming: true,
         inbound_debounce_ms: 750,
       },
     },
@@ -547,6 +550,7 @@ test("telegram channel modifies config while running and keeps the adapter live"
       has_token: true,
       group_mode: "mention-only",
       transcribe_voice: true,
+      rich_draft_streaming: true,
       inbound_debounce_ms: 750,
       binding: {
         agent_id: "agent-telegram",
@@ -561,6 +565,7 @@ test("telegram channel modifies config while running and keeps the adapter live"
     running: true,
     dmPolicy: "allowlist",
     allowedUsers: ["456"],
+    richDraftStreaming: true,
   });
   expect(FakeBot.instances).toHaveLength(2);
   expect(FakeBot.instances[1]?.token).toBe("test-token");
@@ -804,6 +809,34 @@ test("telegram adapter sends rich messages through the raw Bot API", async () =>
     rich_message: { markdown: "# Title\n\n- item" },
   });
   expect(bot?.api.sendMessage).not.toHaveBeenCalled();
+});
+
+test("telegram adapter streams rich message drafts through the raw Bot API", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendRichMessageDraft?.({
+    channel: "telegram",
+    chatId: "123",
+    threadId: "42",
+    draftId: 8765,
+    richMessage: { markdown: "# Draft\n\nStill thinking" },
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.raw.sendRichMessageDraft).toHaveBeenCalledWith({
+    chat_id: "123",
+    message_thread_id: 42,
+    draft_id: 8765,
+    rich_message: { markdown: "# Draft\n\nStill thinking" },
+  });
 });
 
 test("telegram adapter falls back to sendMessage when rich parsing fails", async () => {

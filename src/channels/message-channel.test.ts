@@ -448,7 +448,9 @@ describe("MessageChannel", () => {
   test("passes common Telegram rich Markdown constructs through unchanged", async () => {
     const registry = new ChannelRegistry();
 
-    const sendMessage = mock(async () => ({ messageId: "telegram-rich-fixture" }));
+    const sendMessage = mock(async () => ({
+      messageId: "telegram-rich-fixture",
+    }));
 
     const adapter: ChannelAdapter = {
       id: "telegram:account-1",

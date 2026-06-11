@@ -49,4 +49,4 @@ Telegram rich messages:
   - footnotes: `text[^id]` with `[^id]: definition`
 - Prefer dollar-delimited math. `\(...\)` and `\[...\]` do not reliably render as formulas in Telegram rich Markdown.
 - Do not use `send-rich` for local file uploads. Use `upload-file`; rich Markdown media blocks only support HTTP/HTTPS URLs.
-- Rich messages currently send complete messages. Streaming drafts and editing existing rich messages are not exposed by MessageChannel yet.
+- Rich messages persist only when the final `send-rich` call executes. If Telegram draft streaming is enabled for the account, the channel runtime may show ephemeral previews automatically; do not try to manage draft lifecycle from the tool call.
