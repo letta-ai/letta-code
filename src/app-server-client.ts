@@ -12,10 +12,19 @@ import type {
 
 export type AppServerChannel = "control" | "stream";
 
+/**
+ * Receives every parsed protocol frame from both app-server websocket channels.
+ * Treat this as the primary event stream: app-server may emit replay or turn
+ * updates on the same channel that sent the triggering command, not only on the
+ * stream channel. The channel argument is diagnostic/routing context.
+ */
 export type AppServerMessageHandler = (
   message: WsProtocolMessage,
   channel: AppServerChannel,
 ) => void;
+
+/** Called synchronously before a protocol command is written to the control socket. */
+export type AppServerSendHandler = (command: WsProtocolCommand) => void;
 
 export interface AppServerSocketLike {
   readyState: number;
@@ -45,6 +54,19 @@ export interface AppServerRequestOptions<TMessage extends WsProtocolMessage> {
   timeoutMs?: number;
   predicate?: (message: WsProtocolMessage) => message is TMessage;
 }
+
+export type AppServerRequestCommand = Extract<
+  WsProtocolCommand,
+  { request_id?: string }
+>;
+
+export type AppServerRequestCommandWithId = AppServerRequestCommand & {
+  request_id: string;
+};
+
+export type AppServerRequestBody = Record<string, unknown> & {
+  request_id?: string;
+};
 
 type PendingRequest = {
   resolve: (message: WsProtocolMessage) => void;
@@ -178,6 +200,7 @@ export class AppServerClient {
   private readonly requestTimeoutMs: number;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
+  private readonly sendHandlers = new Set<AppServerSendHandler>();
   private nextRequestNumber = 0;
 
   constructor(options: AppServerClientOptions) {
@@ -226,19 +249,59 @@ export class AppServerClient {
     return () => this.messageHandlers.delete(handler);
   }
 
+  onSend(handler: AppServerSendHandler): () => void {
+    this.sendHandlers.add(handler);
+    return () => this.sendHandlers.delete(handler);
+  }
+
   nextRequestId(prefix = "req"): string {
     this.nextRequestNumber += 1;
     return `${prefix}-${this.nextRequestNumber}`;
   }
 
   send(command: WsProtocolCommand): void {
+    for (const handler of this.sendHandlers) {
+      handler(command);
+    }
     this.control.send(JSON.stringify(command));
   }
 
   request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
-    command: WsProtocolCommand & { request_id: string },
-    options: AppServerRequestOptions<TMessage> = {},
+    command: AppServerRequestCommandWithId,
+    options?: AppServerRequestOptions<TMessage>,
+  ): Promise<TMessage>;
+
+  request<
+    TType extends AppServerRequestCommand["type"],
+    TMessage extends WsProtocolMessage = WsProtocolMessage,
+  >(
+    type: TType,
+    body?: AppServerRequestBody,
+    options?: AppServerRequestOptions<TMessage>,
+  ): Promise<TMessage>;
+
+  request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
+    commandOrType:
+      | AppServerRequestCommandWithId
+      | AppServerRequestCommand["type"],
+    bodyOrOptions:
+      | AppServerRequestBody
+      | AppServerRequestOptions<TMessage> = {},
+    maybeOptions: AppServerRequestOptions<TMessage> = {},
   ): Promise<TMessage> {
+    const isTypeRequest = typeof commandOrType === "string";
+    const command = isTypeRequest
+      ? ({
+          type: commandOrType,
+          request_id:
+            (bodyOrOptions as { request_id?: string }).request_id ??
+            this.nextRequestId(commandOrType),
+          ...(bodyOrOptions as object),
+        } as AppServerRequestCommandWithId)
+      : commandOrType;
+    const options = isTypeRequest
+      ? maybeOptions
+      : (bodyOrOptions as AppServerRequestOptions<TMessage>);
     const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
 
     return new Promise((resolve, reject) => {

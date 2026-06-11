@@ -64,7 +64,7 @@ function createFakeClient() {
   return { client, control, stream };
 }
 
-describe("app-server client helper", () => {
+describe("app-server client", () => {
   afterEach(() => {
     FakeSocket.instances = [];
   });
@@ -140,6 +140,11 @@ describe("app-server client helper", () => {
     stream.open();
     await client.connect();
 
+    const sent: string[] = [];
+    client.onSend((command) => {
+      sent.push(command.type);
+    });
+
     const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
     const syncPromise = client.sync({
       runtime,
@@ -185,6 +190,35 @@ describe("app-server client helper", () => {
       type: "input",
       runtime,
       payload: { kind: "create_message" },
+    });
+    expect(sent).toEqual(["sync", "abort_message", "input"]);
+  });
+
+  test("supports ergonomic request construction", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const responsePromise = client.request("agent_list", {
+      query: { limit: 10 },
+    });
+    expect(JSON.parse(control.sent[0] ?? "{}")).toMatchObject({
+      type: "agent_list",
+      request_id: "agent_list-1",
+      query: { limit: 10 },
+    });
+
+    control.receive({
+      type: "agent_list_response",
+      request_id: "agent_list-1",
+      success: true,
+      agents: [],
+    });
+
+    expect(await responsePromise).toMatchObject({
+      type: "agent_list_response",
+      success: true,
     });
   });
 
