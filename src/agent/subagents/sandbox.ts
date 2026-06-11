@@ -18,7 +18,8 @@ import { getTranscriptRoot } from "@/utils/transcript-paths";
  * tools, its Bash commands, and anything those spawn — so the static memory
  * shell-scoping becomes redundant for these agents.
  *
- * Gated behind `LETTA_FS_SANDBOX=1` while the per-host bring-up is validated.
+ * Enabled by default; set `LETTA_FS_SANDBOX=0` to opt out. No-ops when the host
+ * has no sandbox backend.
  *
  * Both backends scope writes to the harness state dir (`~/.letta`): a memory
  * subagent may persist memory + harness metadata (settings, logs, conversations,

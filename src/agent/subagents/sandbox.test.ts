@@ -30,12 +30,18 @@ function baseInput() {
   };
 }
 
-test("isFsSandboxEnabled honors 1/true and rejects everything else", () => {
+test("isFsSandboxEnabled is on by default and only an explicit off-switch disables it", () => {
+  // Default on (unset / empty).
+  expect(isFsSandboxEnabled({})).toBe(true);
+  expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "" })).toBe(true);
+  // Explicit on values still on.
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "1" })).toBe(true);
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "true" })).toBe(true);
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "TRUE" })).toBe(true);
+  // Only the off-switch turns it off.
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "0" })).toBe(false);
-  expect(isFsSandboxEnabled({})).toBe(false);
+  expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "false" })).toBe(false);
+  expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "FALSE" })).toBe(false);
 });
 
 test("wraps a memory-mode API subagent under the backend", () => {

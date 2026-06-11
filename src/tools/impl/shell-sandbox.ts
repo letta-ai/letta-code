@@ -28,12 +28,13 @@ import { wrapLauncher } from "@/sandbox/wrap";
  * Gemini `run_shell_command` path (`shell.ts`) — so the kernel owns the whole
  * shell surface, not just one dialect.
  *
- * This is the kernel-enforced backstop for the static cross-agent guard: it
- * closes the bypasses static command analysis can't (symlinks, command
- * substitution, globbing, subprocesses) because the kernel resolves real paths
- * regardless of how the command spelled them.
+ * This is the SOLE cross-agent enforcement for spawned shells: the static
+ * cross-agent guard no longer analyzes shell commands (it was bypassable by
+ * symlinks, command substitution, globbing, and subprocesses). The kernel
+ * resolves real paths regardless of how the command spelled them.
  *
- * Gated behind `LETTA_FS_SANDBOX=1` while the per-host bring-up is validated.
+ * Enabled by default; set `LETTA_FS_SANDBOX=0` to opt out. No-ops when the host
+ * has no sandbox backend.
  */
 
 export interface ParentShellSandboxResult {

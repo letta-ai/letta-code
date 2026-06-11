@@ -49,7 +49,12 @@ export function resetSandboxAvailabilityCache(): void {
 }
 
 /**
- * Whether filesystem sandboxing is opted in via the `LETTA_FS_SANDBOX` flag.
+ * Whether filesystem sandboxing is enabled. It is **on by default** now that the
+ * kernel backends (Seatbelt + bwrap) are validated; set `LETTA_FS_SANDBOX=0`
+ * (or `false`) to opt out. When no backend is available on the host,
+ * {@link detectSandboxBackend} returns `{backend:null}` and every sandbox entry
+ * point no-ops regardless of this flag.
+ *
  * Lives in this leaf so both subagent spawning (agent layer) and parent Bash
  * wrapping (tools layer) gate on the same check without importing each other.
  */
@@ -57,7 +62,8 @@ export function isFsSandboxEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   const value = env.LETTA_FS_SANDBOX?.trim().toLowerCase();
-  return value === "1" || value === "true";
+  // Default on: only an explicit off-switch disables it.
+  return value !== "0" && value !== "false";
 }
 
 function probe(platform: NodeJS.Platform): SandboxAvailability {
