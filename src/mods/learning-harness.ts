@@ -629,6 +629,22 @@ function maxEvaluationScore(
   );
 }
 
+function specForScenarioLimit(
+  spec: ModLearningSpec,
+  scenarioLimit: number | undefined,
+): ModLearningSpec {
+  if (scenarioLimit === undefined || !spec.evaluation.scenarios?.length) {
+    return spec;
+  }
+  return {
+    ...spec,
+    evaluation: {
+      ...spec.evaluation,
+      scenarios: spec.evaluation.scenarios.slice(0, scenarioLimit),
+    },
+  };
+}
+
 function prefixMarkerChecks(
   name: string,
   checks: MarkerCheck[],
@@ -2012,7 +2028,7 @@ async function runModLearningCandidate(
     if (params.proposerGuidePath)
       promptHistory.proposerGuidePath = params.proposerGuidePath;
     const generationPrompt = buildModLearningPrompt(
-      options.spec,
+      specForScenarioLimit(options.spec, options.scenarioLimit),
       candidatePath,
       promptHistory,
     );

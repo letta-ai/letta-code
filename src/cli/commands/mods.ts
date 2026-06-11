@@ -473,11 +473,22 @@ function extractCommandFailureMessage(
   );
 }
 
+function formatElapsed(elapsedMs: number | undefined): string | null {
+  if (elapsedMs === undefined) return null;
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0
+    ? `${minutes}m ${seconds}s elapsed`
+    : `${seconds}s elapsed`;
+}
+
 function formatProgress(
   learn: LearnCommand,
   progress: ModLearningProgress,
   cwd: string,
   pulseFrame: string = MOD_OPTIMIZATION_PULSE.frames[0] ?? "⠀⠶⠀",
+  elapsedMs?: number,
 ): string {
   const stepLine = progress.candidateIndex
     ? `Optimization iteration: ${progress.candidateIndex}${progress.candidateCount ? `/${progress.candidateCount}` : ""}`
@@ -511,9 +522,10 @@ function formatProgress(
     progress.candidateCount > 1
       ? `Target mod: ${path.basename(progress.candidatePath)} (${displayPath(progress.candidatePath, cwd)})`
       : `Target mod: ${path.basename(progress.candidatePath)}`;
+  const elapsed = formatElapsed(elapsedMs);
   return [
     `${pulseFrame} Background mod optimization: ${learn.targetLabel}`,
-    `Phase: ${progress.message}`,
+    `Phase: ${progress.message}${elapsed ? ` · ${elapsed}` : ""}`,
     ...(stepLine ? [stepLine] : []),
     ...(currentScoreLine ? [currentScoreLine] : []),
     ...(bestScoreLine ? [bestScoreLine] : []),
@@ -646,13 +658,26 @@ async function runLearnCommand(
   const optimizationIterations = effectiveOptimizationIterations(learn.options);
   let lastProgress: ModLearningProgress | null = null;
   let pulseFrameIndex = 0;
+  let progressStartedAt = Date.now();
+  let progressKey: string | null = null;
   const renderProgress = (progress: ModLearningProgress) => {
+    const nextProgressKey = `${progress.phase}:${progress.candidateIndex ?? ""}:${progress.message}`;
+    if (nextProgressKey !== progressKey) {
+      progressKey = nextProgressKey;
+      progressStartedAt = Date.now();
+    }
     const pulseFrame =
       MOD_OPTIMIZATION_PULSE.frames[pulseFrameIndex] ??
       MOD_OPTIMIZATION_PULSE.frames[0] ??
       "⠀⠶⠀";
     command.update({
-      output: formatProgress(learn, progress, ctx.cwd, pulseFrame),
+      output: formatProgress(
+        learn,
+        progress,
+        ctx.cwd,
+        pulseFrame,
+        Date.now() - progressStartedAt,
+      ),
       phase: "running",
     });
   };

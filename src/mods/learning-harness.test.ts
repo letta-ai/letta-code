@@ -410,6 +410,65 @@ describe("mod learning harness", () => {
     });
   });
 
+  test("limits scenarios in smoke evals and generation prompts", async () => {
+    const repoRoot = createTempDir();
+    const runDir = path.join(repoRoot, ".letta", "mod-learning-runs", "smoke");
+    const candidatePath = path.join(runDir, "mods", "memory-citations.ts");
+    let generationPrompt = "";
+    const spec: ModLearningSpec = {
+      ...createSpec(),
+      evaluation: {
+        scenarios: [
+          {
+            assertions: [{ type: "mod_loads", expectedLoadedCount: 1 }],
+            name: "mod-loads",
+          },
+          {
+            assertions: [
+              {
+                contains: ["cite", "memory"],
+                type: "turn_start_injects_message",
+              },
+            ],
+            name: "turn-start-reminder",
+          },
+        ],
+      },
+    };
+    const runner: CommandRunner = async (command, args, options) => {
+      generationPrompt = args[args.indexOf("-p") + 1] ?? "";
+      await mkdir(path.dirname(candidatePath), { recursive: true });
+      writeFileSync(candidatePath, "export function activate() {}\n");
+      return {
+        args,
+        command,
+        cwd: options.cwd,
+        durationMs: 1,
+        exitCode: 0,
+        stderr: "",
+        stdout: JSON.stringify({ result: "wrote candidate" }),
+        timedOut: false,
+      };
+    };
+
+    const report = await runModLearning({
+      candidateFileName: "memory-citations.ts",
+      commandRunner: runner,
+      env: {},
+      repoRoot,
+      runDir,
+      scenarioLimit: 1,
+      spec,
+    });
+
+    expect(generationPrompt).toContain("mod_loads");
+    expect(generationPrompt).not.toContain("turn_start_injects_message");
+    expect(
+      report.evaluation.scenarioResults?.map((scenario) => scenario.name),
+    ).toEqual(["mod-loads"]);
+    expect(report.maxScore).toBe(1);
+  });
+
   test("runs executable mod assertions without a headless marker run", async () => {
     const repoRoot = createTempDir();
     const runDir = path.join(
