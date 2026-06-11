@@ -707,6 +707,52 @@ describe("listen-client parseServerMessage", () => {
       }
     });
 
+    test("starts an agent default conversation", async () => {
+      const storageDir = await mkdtemp(
+        join(os.tmpdir(), "ws-runtime-start-default-"),
+      );
+      try {
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        __testSetBackend(backend);
+        const agent = await backend.createAgent({
+          name: "Runtime Default Agent",
+          model: "anthropic/claude-sonnet-4-6",
+        } as AgentCreateBody);
+        const listener = __listenClientTestUtils.createListenerRuntime();
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: "runtime-start-default",
+            agent_id: agent.id,
+            conversation_id: "default",
+            recover_approvals: false,
+          },
+          socket as unknown as WebSocket,
+          listener,
+        );
+
+        expect(JSON.parse(socket.sentPayloads[0] ?? "{}")).toMatchObject({
+          type: "runtime_start_response",
+          request_id: "runtime-start-default",
+          success: true,
+          runtime: {
+            agent_id: agent.id,
+            conversation_id: "default",
+          },
+          agent: { id: agent.id },
+          conversation: { id: "default", agent_id: agent.id },
+          created: { agent: false, conversation: false },
+        });
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+
     test("soft-fails invalid runtime_start combinations", async () => {
       const storageDir = await mkdtemp(
         join(os.tmpdir(), "ws-runtime-start-error-"),

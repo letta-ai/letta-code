@@ -45,6 +45,21 @@ type CreatedResources = {
   conversation: boolean;
 };
 
+function buildDefaultConversation(agent: AgentState): Conversation {
+  const now = new Date().toISOString();
+  return {
+    id: "default",
+    agent_id: agent.id,
+    archived: false,
+    archived_at: null,
+    created_at: now,
+    updated_at: now,
+    last_message_at: null,
+    summary: null,
+    in_context_message_ids: [],
+  } as Conversation;
+}
+
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -136,6 +151,9 @@ async function resolveRuntimeStartConversation(
 ): Promise<Conversation> {
   const backend = getBackend();
   if (hasString(parsed.conversation_id)) {
+    if (parsed.conversation_id === "default") {
+      return buildDefaultConversation(agent);
+    }
     const conversation = await backend.retrieveConversation(
       parsed.conversation_id,
     );
