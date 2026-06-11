@@ -40,10 +40,11 @@ def format_permissions(
     all_settings: list[tuple[str, dict]], as_json: bool
 ) -> dict | None:
     """Collect permissions from all scopes with sources."""
-    rules: dict[str, list[tuple[str, str]]] = {"allow": [], "deny": [], "ask": []}
+    rule_types = ["allow", "deny", "ask", "alwaysAsk"]
+    rules: dict[str, list[tuple[str, str]]] = {rule_type: [] for rule_type in rule_types}
     for scope, settings in all_settings:
         perms = settings.get("permissions", {})
-        for rule_type in ["allow", "deny", "ask"]:
+        for rule_type in rule_types:
             for rule in perms.get(rule_type, []):
                 rules[rule_type].append((rule, scope))
 
@@ -59,7 +60,7 @@ def format_permissions(
     if total == 0:
         print("  (none)")
     else:
-        for rule_type in ["allow", "deny", "ask"]:
+        for rule_type in rule_types:
             if rules[rule_type]:
                 print(f"\n  {rule_type.upper()}:")
                 for rule, scope in rules[rule_type]:

@@ -818,7 +818,9 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           (r) => r.permission.decision === "allow",
         );
         const stillNeedAsking = recheckResults.filter(
-          (r) => r.permission.decision === "ask",
+          (r) =>
+            r.permission.decision === "ask" ||
+            r.permission.decision === "alwaysAsk",
         );
 
         // Only auto-handle if ALL remaining are now allowed

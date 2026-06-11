@@ -122,7 +122,11 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
   if (!envFlagEnabled("LETTA_PERMISSION_TRACE")) {
     return false;
   }
-  return result.decision === "ask" || result.decision === "deny";
+  return (
+    result.decision === "ask" ||
+    result.decision === "alwaysAsk" ||
+    result.decision === "deny"
+  );
 }
 
 /**
@@ -345,6 +349,52 @@ function checkPermissionForEngine(
         },
         trace,
       };
+    }
+  }
+
+  if (sessionRules.alwaysAsk) {
+    for (const pattern of sessionRules.alwaysAsk) {
+      const matched = matchesPattern(
+        toolName,
+        query,
+        pattern,
+        workingDirectory,
+        engine,
+      );
+      traceEvent(trace, "session-always-ask-rule", undefined, pattern, matched);
+      if (matched) {
+        return {
+          result: {
+            decision: "alwaysAsk",
+            matchedRule: `${pattern} (session)`,
+            reason: "Matched alwaysAsk rule",
+          },
+          trace,
+        };
+      }
+    }
+  }
+
+  if (permissions.alwaysAsk) {
+    for (const pattern of permissions.alwaysAsk) {
+      const matched = matchesPattern(
+        toolName,
+        query,
+        pattern,
+        workingDirectory,
+        engine,
+      );
+      traceEvent(trace, "always-ask-rule", undefined, pattern, matched);
+      if (matched) {
+        return {
+          result: {
+            decision: "alwaysAsk",
+            matchedRule: pattern,
+            reason: "Matched alwaysAsk rule",
+          },
+          trace,
+        };
+      }
     }
   }
 
@@ -861,11 +911,13 @@ export async function checkPermissionWithHooks(
       modPermissions,
     );
     if (modDecision) {
-      result = {
-        decision: modDecision.decision,
-        matchedRule: modDecision.matchedRule,
-        reason: modDecision.reason ?? `Matched ${modDecision.matchedRule}`,
-      };
+      if (result.decision !== "alwaysAsk" || modDecision.decision === "deny") {
+        result = {
+          decision: modDecision.decision,
+          matchedRule: modDecision.matchedRule,
+          reason: modDecision.reason ?? `Matched ${modDecision.matchedRule}`,
+        };
+      }
     }
   }
 
