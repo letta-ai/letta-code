@@ -308,24 +308,24 @@ describe("/mods command", () => {
       "Background mod optimization: memory-citations",
     );
     expect(updates.at(-1)?.output).toMatch(
-      /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Background mod optimization/,
+      /[⠀⠶⠰⣿⠆⢾⣉⡷⣏⣹⡁⢈]+ Background mod optimization/,
     );
     expect(updates.at(-1)?.output).toContain("Optimization iteration: 2/10");
     expect(updates.at(-1)?.output).toContain(
-      "Current partial score: 4/6 (67%)",
+      "Current running score: 4/6 (67%)",
     );
     expect(updates.at(-1)?.output).toContain(
       "Best completed score: 2/6 (33%) at iteration 1",
     );
     expect(updates.at(-1)?.output).toContain(
-      "Score history: iter 1 2/6 (33%) → iter 2 4/6 (67%) partial",
+      "Score history: iter 1 done 2/6 (33%) → iter 2 running 4/6 (67%)",
     );
     expect(updates.at(-1)?.output).toContain(
       "Optimization progress: ●●○○○○○○○○ 2/10",
     );
     expect(updates.at(-1)?.output).toContain("Score graph: ▁█");
-    expect(updates.at(-1)?.output).toContain("iter 1         2/6 (33%) │");
-    expect(updates.at(-1)?.output).toContain("iter 2 4/6 (67%) partial │");
+    expect(updates.at(-1)?.output).toContain("iter 1 done    2/6 (33%) │");
+    expect(updates.at(-1)?.output).toContain("iter 2 running 4/6 (67%) │");
 
     resolveLearning?.();
     if (result.handled) await result.done;

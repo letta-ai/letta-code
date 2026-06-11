@@ -2,7 +2,7 @@ import path from "node:path";
 import memoryCitationsEnvJson from "@/../docs/examples/mods/learning/memory-citations.env.json";
 import type { AppCommandRunner } from "@/cli/app/types";
 import type { CommandHandle } from "@/cli/commands/runner";
-import { TERMINAL_TITLE_SPINNER_FRAMES } from "@/cli/helpers/window-title-config";
+import { BRAILLE_ANIMATIONS } from "@/cli/components/spinners/animations";
 import { parseModCommandArgv } from "@/cli/mods/command-runtime";
 import type {
   CommandRunner,
@@ -20,7 +20,8 @@ import {
 const DEFAULT_TARGET = "memory-citations";
 const DEFAULT_MODEL = "auto";
 const DEFAULT_OPTIMIZATION_ITERATIONS = 10;
-const MOD_OPTIMIZATION_SPINNER_INTERVAL_MS = 120;
+const MOD_OPTIMIZATION_PULSE = BRAILLE_ANIMATIONS.pulse;
+const MOD_OPTIMIZATION_SPINNER_INTERVAL_MS = MOD_OPTIMIZATION_PULSE.intervalMs;
 
 type RunModLearning = typeof runModLearning;
 
@@ -322,18 +323,26 @@ function formatScoreValue(score: number, maxScore: number | undefined): string {
   return `${score}/${maxScore} (${percentage}%)`;
 }
 
-function formatScorePoint(point: ScorePoint): string {
-  return `${formatScoreValue(point.score, point.maxScore)}${point.completed ? "" : " partial"}`;
+function formatScoreStatus(point: ScorePoint): string {
+  if (point.completed) return "done";
+  return "running";
 }
 
-function formatScoreGraph(points: ScorePoint[]): string[] {
+function formatScoreGraph(points: ScorePoint[], pulseFrame = ""): string[] {
   if (points.length === 0) return [];
 
   const visiblePoints = points.slice(-MAX_SCORE_BARS);
   const maxScore = Math.max(...points.map((point) => point.score), 1);
   const scoreWidth = Math.max(
     1,
-    ...visiblePoints.map((point) => formatScorePoint(point).length),
+    ...visiblePoints.map(
+      (point) => formatScoreValue(point.score, point.maxScore).length,
+    ),
+  );
+  const statusWidth = "running".length;
+  const pulseWidth = Math.max(
+    MOD_OPTIMIZATION_PULSE.cellWidth,
+    pulseFrame.length,
   );
   const stepWidth = Math.max(
     1,
@@ -350,7 +359,11 @@ function formatScoreGraph(points: ScorePoint[]): string[] {
         Math.round((point.score / maxScore) * SCORE_BAR_WIDTH),
       );
       const bar = filled > 0 ? "█".repeat(filled) : "·";
-      return `  iter ${String(point.step).padStart(stepWidth, " ")} ${formatScorePoint(point).padStart(scoreWidth, " ")} │ ${bar}`;
+      const pulse = point.completed
+        ? " ".repeat(pulseWidth)
+        : pulseFrame.padEnd(pulseWidth, " ");
+      const status = formatScoreStatus(point).padEnd(statusWidth, " ");
+      return `  ${pulse} iter ${String(point.step).padStart(stepWidth, " ")} ${status} ${formatScoreValue(point.score, point.maxScore).padStart(scoreWidth, " ")} │ ${bar}`;
     }),
   ];
 }
@@ -379,10 +392,14 @@ function formatProgressScoreGraph(
   points: ScorePoint[],
   currentStep: number | undefined,
   totalSteps: number | undefined,
+  pulseFrame = "",
 ): string[] {
   const timeline = formatOptimizationTimeline(currentStep, totalSteps);
   if (points.length > 0) {
-    return [...(timeline ? [timeline] : []), ...formatScoreGraph(points)];
+    return [
+      ...(timeline ? [timeline] : []),
+      ...formatScoreGraph(points, pulseFrame),
+    ];
   }
   return [
     ...(timeline ? [timeline] : []),
@@ -460,7 +477,7 @@ function formatProgress(
   learn: LearnCommand,
   progress: ModLearningProgress,
   cwd: string,
-  spinnerFrame: string = TERMINAL_TITLE_SPINNER_FRAMES[0] ?? "⠋",
+  pulseFrame: string = MOD_OPTIMIZATION_PULSE.frames[0] ?? "⠀⠶⠀",
 ): string {
   const stepLine = progress.candidateIndex
     ? `Optimization iteration: ${progress.candidateIndex}${progress.candidateCount ? `/${progress.candidateCount}` : ""}`
@@ -468,7 +485,10 @@ function formatProgress(
   const scorePoints = progressScorePoints(progress);
   const scoreHistoryLine = scorePoints.length
     ? `Score history: ${scorePoints
-        .map((point) => `iter ${point.step} ${formatScorePoint(point)}`)
+        .map((point) => {
+          const status = formatScoreStatus(point);
+          return `iter ${point.step}${status ? ` ${status}` : ""} ${formatScoreValue(point.score, point.maxScore)}`;
+        })
         .join(" → ")}`
     : null;
   const completedScorePoints = scorePoints.filter((point) => point.completed);
@@ -484,7 +504,7 @@ function formatProgress(
   const currentScoreLine =
     progress.score === undefined
       ? null
-      : `${scorePoints.find((point) => point.step === progress.candidateIndex)?.completed ? "Current score" : "Current partial score"}: ${formatScoreValue(progress.score, progress.maxScore)}`;
+      : `${scorePoints.find((point) => point.step === progress.candidateIndex)?.completed ? "Current score" : "Current running score"}: ${formatScoreValue(progress.score, progress.maxScore)}`;
   const candidateLine =
     progress.candidateIndex &&
     progress.candidateCount &&
@@ -492,7 +512,7 @@ function formatProgress(
       ? `Target mod: ${path.basename(progress.candidatePath)} (${displayPath(progress.candidatePath, cwd)})`
       : `Target mod: ${path.basename(progress.candidatePath)}`;
   return [
-    `${spinnerFrame} Background mod optimization: ${learn.targetLabel}`,
+    `${pulseFrame} Background mod optimization: ${learn.targetLabel}`,
     `Phase: ${progress.message}`,
     ...(stepLine ? [stepLine] : []),
     ...(currentScoreLine ? [currentScoreLine] : []),
@@ -502,6 +522,7 @@ function formatProgress(
       scorePoints,
       progress.candidateIndex,
       progress.candidateCount,
+      pulseFrame,
     ),
     `Run directory: ${displayPath(progress.runDir, cwd)}`,
     ...(progress.candidateRunDir && progress.candidateRunDir !== progress.runDir
@@ -520,7 +541,10 @@ export function formatModLearningSummary(
   const scorePoints = reportScorePoints(report);
   const scoreHistory = scorePoints.length
     ? `Score history: ${scorePoints
-        .map((point) => `iter ${point.step} ${formatScorePoint(point)}`)
+        .map(
+          (point) =>
+            `iter ${point.step} done ${formatScoreValue(point.score, point.maxScore)}`,
+        )
         .join(" → ")}`
     : null;
   const lines = [
@@ -621,21 +645,21 @@ async function runLearnCommand(
   const model = learn.options.model ?? DEFAULT_MODEL;
   const optimizationIterations = effectiveOptimizationIterations(learn.options);
   let lastProgress: ModLearningProgress | null = null;
-  let spinnerFrameIndex = 0;
+  let pulseFrameIndex = 0;
   const renderProgress = (progress: ModLearningProgress) => {
-    const spinnerFrame =
-      TERMINAL_TITLE_SPINNER_FRAMES[spinnerFrameIndex] ??
-      TERMINAL_TITLE_SPINNER_FRAMES[0] ??
-      "⠋";
+    const pulseFrame =
+      MOD_OPTIMIZATION_PULSE.frames[pulseFrameIndex] ??
+      MOD_OPTIMIZATION_PULSE.frames[0] ??
+      "⠀⠶⠀";
     command.update({
-      output: formatProgress(learn, progress, ctx.cwd, spinnerFrame),
+      output: formatProgress(learn, progress, ctx.cwd, pulseFrame),
       phase: "running",
     });
   };
   const heartbeat = setInterval(() => {
     if (!lastProgress) return;
-    spinnerFrameIndex =
-      (spinnerFrameIndex + 1) % TERMINAL_TITLE_SPINNER_FRAMES.length;
+    pulseFrameIndex =
+      (pulseFrameIndex + 1) % MOD_OPTIMIZATION_PULSE.frames.length;
     renderProgress(lastProgress);
   }, MOD_OPTIMIZATION_SPINNER_INTERVAL_MS);
 
