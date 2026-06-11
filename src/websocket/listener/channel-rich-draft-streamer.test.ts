@@ -1,15 +1,21 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   clearChannelAccountStores,
   upsertChannelAccount,
 } from "@/channels/accounts";
+import { __testOverrideChannelsRoot } from "@/channels/config";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter, ChannelTurnSource } from "@/channels/types";
 import {
   createTelegramRichDraftStreamer,
   extractTelegramSendRichDraftIntent,
 } from "./channel-rich-draft-streamer";
+
+let channelRoot: string | null = null;
 
 function telegramSource(
   overrides: Partial<ChannelTurnSource> = {},
@@ -67,12 +73,23 @@ function registerTelegramAdapter(sendRichMessageDraft = mock(async () => {})) {
 }
 
 describe("Telegram rich draft streamer", () => {
+  beforeEach(() => {
+    channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-rich-draft-"));
+    __testOverrideChannelsRoot(channelRoot);
+    clearChannelAccountStores();
+  });
+
   afterEach(async () => {
     const registry = getChannelRegistry();
     if (registry) {
       await registry.stopAll();
     }
     clearChannelAccountStores();
+    __testOverrideChannelsRoot(null);
+    if (channelRoot) {
+      rmSync(channelRoot, { recursive: true, force: true });
+      channelRoot = null;
+    }
   });
 
   test("stays disabled unless the Telegram account opts in", () => {
