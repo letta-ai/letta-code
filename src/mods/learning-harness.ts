@@ -280,6 +280,13 @@ interface ModLearningEvaluatorContext {
   cliArgsPrefix: string[];
   cliCommand: string;
   evalModel?: string;
+  onScenarioProgress?: (progress: {
+    evaluation: ModLearningEvaluationResult;
+    scenarioCount: number;
+    scenarioIndex: number;
+    scenarioName: string;
+    score: number;
+  }) => void;
   repoRoot: string;
   runDir: string;
   runner: CommandRunner;
@@ -1722,6 +1729,16 @@ function createScenarioSuiteEvaluator(params: {
           name: scenario.name,
           timedOut: scenarioTimedOut,
         });
+        const partialEvaluation = hasConfiguredScenarios
+          ? aggregateScenarioEvaluations(scenarioResults)
+          : (scenarioResults[0] ?? scenarioEvaluation);
+        context.onScenarioProgress?.({
+          evaluation: partialEvaluation,
+          scenarioCount: scenarios.length,
+          scenarioIndex: scenarioIndex + 1,
+          scenarioName: scenario.name,
+          score: markerScore(partialEvaluation),
+        });
       }
 
       const evaluation = hasConfiguredScenarios
@@ -1868,6 +1885,7 @@ interface RunModLearningCandidateParams {
   historyManifestPath?: string;
   historyPath?: string;
   options: RunModLearningOptions;
+  previousAttempts: ModLearningAttemptSummary[];
   previousAttemptDirs: string[];
   proposerGuidePath?: string;
   repoRoot: string;
@@ -1891,6 +1909,9 @@ async function runModLearningCandidate(
     extra: Partial<ModLearningProgress> = {},
   ) => {
     options.onProgress?.({
+      ...(params.previousAttempts.length > 0
+        ? { attempts: [...params.previousAttempts] }
+        : {}),
       candidateCount: params.candidateCount,
       candidateIndex: params.candidateIndex,
       candidatePath,
@@ -2007,6 +2028,20 @@ async function runModLearningCandidate(
       cliArgsPrefix: params.cliArgsPrefix,
       cliCommand: params.cliCommand,
       evalModel: options.evalModel,
+      onScenarioProgress: (progress) => {
+        emitProgress(
+          "evaluating",
+          `${
+            params.candidateCount > 1
+              ? `Evaluating optimization iteration ${params.candidateIndex}/${params.candidateCount}`
+              : "Evaluating candidate mod"
+          }: scenario ${progress.scenarioIndex}/${progress.scenarioCount} ${progress.scenarioName}`,
+          {
+            passed: progress.evaluation.passed,
+            score: progress.score,
+          },
+        );
+      },
       repoRoot,
       runDir,
       runner: params.runner,
@@ -2099,6 +2134,7 @@ export async function runModLearning(
       cliArgsPrefix,
       cliCommand,
       options,
+      previousAttempts: [],
       previousAttemptDirs: [],
       repoRoot,
       runner,
@@ -2151,6 +2187,7 @@ export async function runModLearning(
       historyManifestPath,
       historyPath,
       options: { ...options, promoteToPath: undefined },
+      previousAttempts: attempts,
       previousAttemptDirs: reports.map((attempt) => attempt.runDir),
       proposerGuidePath,
       repoRoot,

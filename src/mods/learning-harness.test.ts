@@ -251,6 +251,7 @@ describe("mod learning harness", () => {
       "preparing",
       "generating",
       "evaluating",
+      "evaluating",
       "writing-report",
       "done",
     ]);
@@ -373,11 +374,15 @@ describe("mod learning harness", () => {
         timedOut: false,
       };
     };
+    const progress: Array<{ message: string; score?: number }> = [];
 
     const report = await runModLearning({
       candidateFileName: "memory-citations.ts",
       commandRunner: runner,
       env: {},
+      onProgress: (update) => {
+        progress.push({ message: update.message, score: update.score });
+      },
       repoRoot,
       runDir,
       spec,
@@ -394,6 +399,15 @@ describe("mod learning harness", () => {
     expect(existsSync(path.join(runDir, "eval", "002-negative-control"))).toBe(
       true,
     );
+    expect(progress).toContainEqual({
+      message:
+        "Evaluating candidate mod: scenario 1/2 implicit-memory-citation",
+      score: 4,
+    });
+    expect(progress).toContainEqual({
+      message: "Evaluating candidate mod: scenario 2/2 negative-control",
+      score: 8,
+    });
   });
 
   test("runs executable mod assertions without a headless marker run", async () => {
@@ -588,6 +602,12 @@ describe("mod learning harness", () => {
     );
     const generationPrompts: string[] = [];
     const evalDirs: string[] = [];
+    const progress: Array<{
+      attempts?: number;
+      candidateIndex?: number;
+      message: string;
+      score?: number;
+    }> = [];
     const candidatePathPattern = /Candidate file, absolute path: (.+)/;
     const runner: CommandRunner = async (command, args, options) => {
       const promptArg = args[args.indexOf("-p") + 1] ?? "";
@@ -649,6 +669,14 @@ describe("mod learning harness", () => {
       candidateFileName: "memory-citations.ts",
       commandRunner: runner,
       env: {},
+      onProgress: (update) => {
+        progress.push({
+          attempts: update.attempts?.length,
+          candidateIndex: update.candidateIndex,
+          message: update.message,
+          score: update.score,
+        });
+      },
       repoRoot,
       runDir,
       spec: createSpec(),
@@ -677,6 +705,12 @@ describe("mod learning harness", () => {
       path.join(runDir, "candidates", "001", "mods"),
       path.join(runDir, "candidates", "002", "mods"),
     ]);
+    expect(progress).toContainEqual({
+      attempts: 1,
+      candidateIndex: 2,
+      message: "Generating optimization iteration 2/2",
+      score: undefined,
+    });
     expect(existsSync(path.join(runDir, "history.md"))).toBe(true);
     expect(existsSync(path.join(runDir, "history.json"))).toBe(true);
     expect(existsSync(path.join(runDir, "proposer-guide.md"))).toBe(true);
