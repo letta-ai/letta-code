@@ -1,6 +1,7 @@
 // src/permissions/mode.ts
 // Permission mode management (unrestricted, standard, acceptEdits, memory)
 
+import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import { extractApplyPatchPaths } from "./cross-agent-guard";
 import { classifyMemoryBashDenial } from "./memory-denial-reason";
 import {
@@ -201,6 +202,21 @@ class PermissionModeManager {
         return null;
 
       case "memory": {
+        // Memory mode is consumed only by memory subagents (reflection, memory,
+        // init, history-analyzer), which are wrapped as a whole process by the
+        // kernel filesystem sandbox. When that sandbox is confining us (sentinel
+        // set), it is the sole enforcement — writes are capped at ~/.letta and
+        // every other agent's memory is masked at the kernel, covering the whole
+        // process (in-process file tools, Bash, and anything they spawn). The
+        // static checks below are the pre-sandbox stand-in, so defer to the
+        // kernel and auto-allow (also avoids approval hangs). This intentionally
+        // relaxes the static-only constraints (writes anywhere under ~/.letta,
+        // non-read-only and network shells) in favor of kernel confinement.
+        // Falls through to the static checks when no backend confined us.
+        if (process.env[SANDBOX_ENV_VAR]) {
+          return { decision: "allow" };
+        }
+
         const allowedMemoryRoots = resolveAllowedMemoryRoots().roots;
         const allowedReadOnlyTools = [
           // Anthropic toolset
