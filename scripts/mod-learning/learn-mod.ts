@@ -25,6 +25,7 @@ interface Args {
   out?: string;
   promoteTo?: string;
   repoRoot: string;
+  scenarioLimit?: number;
   skipGeneration: boolean;
 }
 
@@ -108,6 +109,9 @@ function parseArgs(argv: string[]): Args {
         case "--repo-root":
           args.repoRoot = value;
           break;
+        case "--scenario-limit":
+          args.scenarioLimit = Number(value);
+          break;
         default:
           throw new Error(`Unknown argument: ${arg}`);
       }
@@ -135,6 +139,7 @@ Options:
   --generation-model <handle>   Model for candidate generation
   --eval-model <handle>         Model for headless eval
   --backend <mode>              Backend flag forwarded to letta (api or local)
+  --scenario-limit <n>          Evaluate only the first N scenarios (fast smoke testing)
   --repo-root <path>            Repo root (default: cwd)
   --foreground                  Run learning in this process and return a pass/fail exit code
   --background                  Explicitly use the default detached mode
@@ -245,6 +250,7 @@ async function main(): Promise<void> {
     promoteToPath: args.promoteTo,
     repoRoot,
     runDir,
+    scenarioLimit: args.scenarioLimit,
     skipGeneration: args.skipGeneration,
     spec: learningEnv,
   });

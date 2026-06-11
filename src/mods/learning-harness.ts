@@ -148,6 +148,7 @@ export interface RunModLearningOptions {
   promoteToPath?: string;
   repoRoot: string;
   runDir?: string;
+  scenarioLimit?: number;
   skipGeneration?: boolean;
   spec: ModLearningSpec;
 }
@@ -167,6 +168,7 @@ export interface ModLearningProgress {
   candidateRunDir?: string;
   candidateCount?: number;
   message: string;
+  maxScore?: number;
   passed?: boolean;
   phase: ModLearningProgressPhase;
   runDir: string;
@@ -186,6 +188,7 @@ export interface ModLearningAttemptSummary {
   presentForbiddenTraceMarkers: string[];
   reportPath: string;
   runDir: string;
+  maxScore?: number;
   score: number;
 }
 
@@ -261,6 +264,7 @@ export interface ModLearningReport {
   promotedToPath: string | null;
   reportPath: string;
   runDir: string;
+  maxScore?: number;
   score?: number;
   selectedCandidateIndex?: number;
   spec: ModLearningSpec;
@@ -583,6 +587,46 @@ function evaluationScenarios(
       },
     };
   });
+}
+
+function normalizeScenarioLimit(
+  scenarioLimit: number | undefined,
+): number | undefined {
+  if (scenarioLimit === undefined) return undefined;
+  if (!Number.isInteger(scenarioLimit) || scenarioLimit < 1) {
+    throw new Error("scenarioLimit must be a positive integer");
+  }
+  return scenarioLimit;
+}
+
+function limitedEvaluationScenarios(
+  evaluation: ModLearningEvaluationSpec,
+  scenarioLimit: number | undefined,
+): Array<{ name: string; spec: ModLearningEvaluationScenarioSpec }> {
+  const scenarios = evaluationScenarios(evaluation);
+  return scenarioLimit === undefined
+    ? scenarios
+    : scenarios.slice(0, scenarioLimit);
+}
+
+function maxScenarioScore(scenario: ModLearningEvaluationScenarioSpec): number {
+  return (
+    (scenario.assertions?.length ?? 0) +
+    (scenario.requiredResultMarkers?.length ?? 0) +
+    (scenario.requiredTraceMarkers?.length ?? 0) +
+    (scenario.forbiddenResultMarkers?.length ?? 0) +
+    (scenario.forbiddenTraceMarkers?.length ?? 0)
+  );
+}
+
+function maxEvaluationScore(
+  evaluation: ModLearningEvaluationSpec,
+  scenarioLimit: number | undefined,
+): number {
+  return limitedEvaluationScenarios(evaluation, scenarioLimit).reduce(
+    (total, scenario) => total + maxScenarioScore(scenario.spec),
+    0,
+  );
 }
 
 function prefixMarkerChecks(
@@ -1233,6 +1277,7 @@ function summarizeAttempt(
     ),
     reportPath: report.reportPath,
     runDir: report.runDir,
+    maxScore: report.maxScore,
     score: report.score ?? markerScore(report.evaluation),
   };
 }
@@ -1601,6 +1646,7 @@ export async function defaultCommandRunner(
 
 function createScenarioSuiteEvaluator(params: {
   runDir: string;
+  scenarioLimit?: number;
   spec: ModLearningSpec;
 }): ModLearningEvaluator {
   const hasConfiguredScenarios =
@@ -1608,7 +1654,10 @@ function createScenarioSuiteEvaluator(params: {
   const artifactsDir = hasConfiguredScenarios
     ? path.join(params.runDir, "eval")
     : path.join(params.runDir, "eval-memory");
-  const scenarios = evaluationScenarios(params.spec.evaluation);
+  const scenarios = limitedEvaluationScenarios(
+    params.spec.evaluation,
+    params.scenarioLimit,
+  );
 
   return {
     artifactsDir,
@@ -1769,6 +1818,7 @@ function createModLearningEvaluator(params: {
 }): ModLearningEvaluator {
   return createScenarioSuiteEvaluator({
     runDir: params.runDir,
+    scenarioLimit: params.options.scenarioLimit,
     spec: params.options.spec,
   });
 }
@@ -1816,7 +1866,7 @@ function renderMarkdownReport(report: ModLearningReport): string {
     `- Eval memory dir: ${report.evalMemoryDir}`,
     `- Generation exit: ${report.generationResult?.exitCode ?? "skipped"}`,
     `- Eval exit: ${report.evalResult?.exitCode ?? "not run"}`,
-    `- Marker score: ${report.score ?? markerScore(report.evaluation)}`,
+    `- Marker score: ${report.score ?? markerScore(report.evaluation)}${report.maxScore !== undefined ? `/${report.maxScore}` : ""}`,
     `- Promoted to: ${report.promotedToPath ?? "not promoted"}`,
     "",
     ...(report.attempts && report.attempts.length > 0
@@ -1902,6 +1952,10 @@ async function runModLearningCandidate(
   const candidatePath = path.join(candidateDir, params.candidateFileName);
   const evaluator = createModLearningEvaluator({ options, runDir });
   const evalMemoryDir = evaluator.artifactsDir;
+  const maxScore = maxEvaluationScore(
+    options.spec.evaluation,
+    options.scenarioLimit,
+  );
 
   const emitProgress = (
     phase: ModLearningProgressPhase,
@@ -1916,6 +1970,7 @@ async function runModLearningCandidate(
       candidateIndex: params.candidateIndex,
       candidatePath,
       candidateRunDir: runDir,
+      maxScore,
       message,
       phase,
       runDir: topLevelRunDir,
@@ -2070,6 +2125,7 @@ async function runModLearningCandidate(
     evalResult,
     evaluation,
     generationResult,
+    maxScore,
     passed,
     promotedToPath,
     reportPath,
@@ -2086,6 +2142,7 @@ async function runModLearningCandidate(
       ? `Optimization iteration ${params.candidateIndex}/${params.candidateCount} complete`
       : "mod optimization complete",
     {
+      attempts: [...params.previousAttempts, summarizeAttempt(report)],
       passed: report.passed,
       score,
     },
@@ -2097,6 +2154,11 @@ export async function runModLearning(
   options: RunModLearningOptions,
 ): Promise<ModLearningReport> {
   const candidateCount = normalizeCandidateCount(options.candidateCount);
+  const scenarioLimit = normalizeScenarioLimit(options.scenarioLimit);
+  const normalizedOptions: RunModLearningOptions = {
+    ...options,
+    scenarioLimit,
+  };
   if (candidateCount > 1 && options.candidateSourcePath) {
     throw new Error("--candidates cannot be combined with --candidate");
   }
@@ -2109,21 +2171,25 @@ export async function runModLearning(
     repoRoot,
     options.runDir ??
       defaultModLearningRunDirectory(
-        options.spec,
-        options.outputBaseDir ?? path.join(".letta", "mod-learning-runs"),
+        normalizedOptions.spec,
+        normalizedOptions.outputBaseDir ??
+          path.join(".letta", "mod-learning-runs"),
       ),
   );
   const candidateFileName = normalizeCandidateFileName(
-    options.spec,
-    options.candidateFileName,
+    normalizedOptions.spec,
+    normalizedOptions.candidateFileName,
   );
-  const runner = options.commandRunner ?? defaultCommandRunner;
-  const cliCommand = options.cliCommand ?? "bun";
-  const cliArgsPrefix = options.cliArgsPrefix ?? ["run", "dev"];
-  const baseEnv = options.env ?? process.env;
+  const runner = normalizedOptions.commandRunner ?? defaultCommandRunner;
+  const cliCommand = normalizedOptions.cliCommand ?? "bun";
+  const cliArgsPrefix = normalizedOptions.cliArgsPrefix ?? ["run", "dev"];
+  const baseEnv = normalizedOptions.env ?? process.env;
 
   await mkdir(runDir, { recursive: true });
-  await writeJsonArtifact(path.join(runDir, "env.snapshot.json"), options.spec);
+  await writeJsonArtifact(
+    path.join(runDir, "env.snapshot.json"),
+    normalizedOptions.spec,
+  );
 
   if (candidateCount === 1) {
     const report = await runModLearningCandidate({
@@ -2133,7 +2199,7 @@ export async function runModLearning(
       candidateIndex: 1,
       cliArgsPrefix,
       cliCommand,
-      options,
+      options: normalizedOptions,
       previousAttempts: [],
       previousAttemptDirs: [],
       repoRoot,
@@ -2148,7 +2214,7 @@ export async function runModLearning(
       proposerGuidePath: path.join(runDir, "proposer-guide.md"),
       runDir,
       selectedCandidateIndex: report.candidateIndex ?? 1,
-      spec: options.spec,
+      spec: normalizedOptions.spec,
     });
     return report;
   }
@@ -2164,7 +2230,7 @@ export async function runModLearning(
     historyPath,
     proposerGuidePath,
     runDir,
-    spec: options.spec,
+    spec: normalizedOptions.spec,
   });
 
   for (
@@ -2186,7 +2252,7 @@ export async function runModLearning(
       cliCommand,
       historyManifestPath,
       historyPath,
-      options: { ...options, promoteToPath: undefined },
+      options: { ...normalizedOptions, promoteToPath: undefined },
       previousAttempts: attempts,
       previousAttemptDirs: reports.map((attempt) => attempt.runDir),
       proposerGuidePath,
@@ -2203,14 +2269,15 @@ export async function runModLearning(
       historyPath,
       proposerGuidePath,
       runDir,
-      spec: options.spec,
+      spec: normalizedOptions.spec,
     });
-    options.onProgress?.({
+    normalizedOptions.onProgress?.({
       attempts: [...attempts],
       candidateCount,
       candidateIndex,
       candidatePath: report.candidatePath,
       candidateRunDir: report.runDir,
+      maxScore: report.maxScore,
       message: `Optimization iteration ${candidateIndex}/${candidateCount} complete`,
       passed: report.passed,
       phase: "evaluating",
@@ -2222,20 +2289,21 @@ export async function runModLearning(
   const selectedReport = selectBestReport(reports);
   const selectedCandidateIndex = selectedReport.candidateIndex ?? 1;
   let promotedToPath: string | null = null;
-  if (selectedReport.passed && options.promoteToPath) {
-    options.onProgress?.({
+  if (selectedReport.passed && normalizedOptions.promoteToPath) {
+    normalizedOptions.onProgress?.({
       attempts,
       candidateCount,
       candidateIndex: selectedCandidateIndex,
       candidatePath: selectedReport.candidatePath,
       candidateRunDir: selectedReport.runDir,
+      maxScore: selectedReport.maxScore,
       message: "Promoting selected candidate mod",
       phase: "promoting",
       runDir,
       score: selectedReport.score ?? markerScore(selectedReport.evaluation),
       selectedCandidateIndex,
     });
-    promotedToPath = path.resolve(repoRoot, options.promoteToPath);
+    promotedToPath = path.resolve(repoRoot, normalizedOptions.promoteToPath);
     await mkdir(path.dirname(promotedToPath), { recursive: true });
     await copyFile(selectedReport.candidatePath, promotedToPath);
   }
@@ -2250,12 +2318,13 @@ export async function runModLearning(
     runDir,
     selectedCandidateIndex,
   };
-  options.onProgress?.({
+  normalizedOptions.onProgress?.({
     candidateCount,
     candidateIndex: selectedCandidateIndex,
     candidatePath: report.candidatePath,
     candidateRunDir: selectedReport.runDir,
     attempts,
+    maxScore: report.maxScore,
     message: "Writing mod learning summary report",
     phase: "writing-report",
     runDir,
@@ -2269,16 +2338,17 @@ export async function runModLearning(
     proposerGuidePath,
     runDir,
     selectedCandidateIndex,
-    spec: options.spec,
+    spec: normalizedOptions.spec,
   });
   await writeJsonArtifact(path.join(runDir, "report.json"), report);
   await writeFile(reportPath, renderMarkdownReport(report), "utf8");
-  options.onProgress?.({
+  normalizedOptions.onProgress?.({
     candidateCount,
     candidateIndex: selectedCandidateIndex,
     candidatePath: report.candidatePath,
     candidateRunDir: selectedReport.runDir,
     attempts,
+    maxScore: report.maxScore,
     message: "mod optimization complete",
     passed: report.passed,
     phase: "done",

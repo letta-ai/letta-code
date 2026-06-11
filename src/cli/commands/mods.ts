@@ -39,6 +39,7 @@ type LearnCommandOptions = {
   generationModel?: string;
   model?: string;
   out?: string;
+  scenarioLimit?: number;
   skipGeneration: boolean;
   target: string;
 };
@@ -93,6 +94,7 @@ function formatModsUsage(error?: string): string {
     "  --backend <api|local>          Backend flag forwarded to headless runs",
     "  --candidate <path>            Evaluate an existing candidate instead of generating",
     "  --candidates <n>              Run N optimization iterations for one learned mod (default: 10)",
+    "  --scenario-limit <n>          Evaluate only the first N scenarios (fast smoke testing)",
     "  --candidate-file-name <name>  Candidate filename in the eval mod dir",
     "  --out <dir>                   Artifact directory (default: .letta/mod-learning-runs/<target>-<timestamp>)",
     "  --skip-generation             Expect the candidate file to already exist in the run dir",
@@ -208,6 +210,9 @@ export function parseModsCommand(
           case "--out":
             options.out = value;
             break;
+          case "--scenario-limit":
+            options.scenarioLimit = Number(value);
+            break;
           case "--env":
             options.envPath = value;
             break;
@@ -271,7 +276,12 @@ function displayPath(filePath: string, cwd: string): string {
   return filePath;
 }
 
-type ScorePoint = { score: number; step: number };
+type ScorePoint = {
+  completed: boolean;
+  maxScore?: number;
+  score: number;
+  step: number;
+};
 
 const SPARKLINE_BLOCKS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 const SCORE_BAR_WIDTH = 12;
@@ -306,6 +316,16 @@ function formatSparkline(points: ScorePoint[]): string {
     .join("");
 }
 
+function formatScoreValue(score: number, maxScore: number | undefined): string {
+  if (maxScore === undefined) return String(score);
+  const percentage = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+  return `${score}/${maxScore} (${percentage}%)`;
+}
+
+function formatScorePoint(point: ScorePoint): string {
+  return `${formatScoreValue(point.score, point.maxScore)}${point.completed ? "" : " partial"}`;
+}
+
 function formatScoreGraph(points: ScorePoint[]): string[] {
   if (points.length === 0) return [];
 
@@ -313,7 +333,7 @@ function formatScoreGraph(points: ScorePoint[]): string[] {
   const maxScore = Math.max(...points.map((point) => point.score), 1);
   const scoreWidth = Math.max(
     1,
-    ...visiblePoints.map((point) => String(point.score).length),
+    ...visiblePoints.map((point) => formatScorePoint(point).length),
   );
   const stepWidth = Math.max(
     1,
@@ -323,16 +343,14 @@ function formatScoreGraph(points: ScorePoint[]): string[] {
 
   return [
     `Score graph: ${formatSparkline(points)}`,
-    ...(hiddenCount > 0 ? [`  … ${hiddenCount} earlier step(s)`] : []),
+    ...(hiddenCount > 0 ? [`  … ${hiddenCount} earlier iteration(s)`] : []),
     ...visiblePoints.map((point) => {
       const filled = Math.max(
         point.score > 0 ? 1 : 0,
         Math.round((point.score / maxScore) * SCORE_BAR_WIDTH),
       );
       const bar = filled > 0 ? "█".repeat(filled) : "·";
-      return `  #${String(point.step).padStart(stepWidth, " ")} ${String(
-        point.score,
-      ).padStart(scoreWidth, " ")} │ ${bar}`;
+      return `  iter ${String(point.step).padStart(stepWidth, " ")} ${formatScorePoint(point).padStart(scoreWidth, " ")} │ ${bar}`;
     }),
   ];
 }
@@ -373,26 +391,69 @@ function formatProgressScoreGraph(
 }
 
 function progressScorePoints(progress: ModLearningProgress): ScorePoint[] {
-  const scoreByStep = new Map<number, number>();
+  const scoreByStep = new Map<number, ScorePoint>();
   for (const attempt of progress.attempts ?? []) {
-    scoreByStep.set(attempt.candidateIndex, attempt.score);
+    scoreByStep.set(attempt.candidateIndex, {
+      completed: true,
+      maxScore: attempt.maxScore ?? progress.maxScore,
+      score: attempt.score,
+      step: attempt.candidateIndex,
+    });
   }
   if (progress.candidateIndex && progress.score !== undefined) {
-    scoreByStep.set(progress.candidateIndex, progress.score);
+    const completed = scoreByStep.has(progress.candidateIndex);
+    scoreByStep.set(progress.candidateIndex, {
+      completed,
+      maxScore: progress.maxScore,
+      score: progress.score,
+      step: progress.candidateIndex,
+    });
   }
-  return [...scoreByStep.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([step, score]) => ({ score, step }));
+  return [...scoreByStep.values()].sort((a, b) => a.step - b.step);
 }
 
 function reportScorePoints(report: ModLearningReport): ScorePoint[] {
   if (report.attempts?.length) {
     return report.attempts.map((attempt) => ({
+      completed: true,
+      maxScore: attempt.maxScore ?? report.maxScore,
       score: attempt.score,
       step: attempt.candidateIndex,
     }));
   }
-  return [{ score: report.score ?? 0, step: report.candidateIndex ?? 1 }];
+  return [
+    {
+      completed: true,
+      maxScore: report.maxScore,
+      score: report.score ?? 0,
+      step: report.candidateIndex ?? 1,
+    },
+  ];
+}
+
+function extractCommandFailureMessage(
+  stderr: string | undefined,
+): string | null {
+  if (!stderr?.trim()) return null;
+  const trimmed = stderr.trim();
+  const jsonText = trimmed.startsWith("Error: ")
+    ? trimmed.slice("Error: ".length)
+    : trimmed;
+  try {
+    const parsed = JSON.parse(jsonText) as {
+      error?: { error?: { detail?: unknown; message?: unknown } };
+    };
+    const message = parsed.error?.error?.detail ?? parsed.error?.error?.message;
+    if (typeof message === "string" && message.trim()) return message.trim();
+  } catch {
+    // Fall through to a concise first-line stderr summary.
+  }
+  return (
+    trimmed
+      .split("\n")
+      .find((line) => line.trim())
+      ?.trim() ?? null
+  );
 }
 
 function formatProgress(
@@ -407,20 +468,23 @@ function formatProgress(
   const scorePoints = progressScorePoints(progress);
   const scoreHistoryLine = scorePoints.length
     ? `Score history: ${scorePoints
-        .map((point) => `#${point.step} ${point.score}`)
+        .map((point) => `iter ${point.step} ${formatScorePoint(point)}`)
         .join(" → ")}`
     : null;
-  const bestScore = scorePoints.reduce<
+  const completedScorePoints = scorePoints.filter((point) => point.completed);
+  const bestScore = completedScorePoints.reduce<
     { score: number; step: number } | undefined
   >((best, point) => {
     if (!best || point.score > best.score) return point;
     return best;
   }, undefined);
   const bestScoreLine = bestScore
-    ? `Best score: ${bestScore.score} at step ${bestScore.step}`
+    ? `Best completed score: ${formatScoreValue(bestScore.score, progress.maxScore)} at iteration ${bestScore.step}`
     : null;
   const currentScoreLine =
-    progress.score === undefined ? null : `Current score: ${progress.score}`;
+    progress.score === undefined
+      ? null
+      : `${scorePoints.find((point) => point.step === progress.candidateIndex)?.completed ? "Current score" : "Current partial score"}: ${formatScoreValue(progress.score, progress.maxScore)}`;
   const candidateLine =
     progress.candidateIndex &&
     progress.candidateCount &&
@@ -456,7 +520,7 @@ export function formatModLearningSummary(
   const scorePoints = reportScorePoints(report);
   const scoreHistory = scorePoints.length
     ? `Score history: ${scorePoints
-        .map((point) => `#${point.step} ${point.score}`)
+        .map((point) => `iter ${point.step} ${formatScorePoint(point)}`)
         .join(" → ")}`
     : null;
   const lines = [
@@ -469,11 +533,21 @@ export function formatModLearningSummary(
       : []),
     `Target mod: ${path.basename(report.candidatePath)} (${displayPath(report.candidatePath, cwd)})`,
     `Run directory: ${displayPath(report.runDir, cwd)}`,
-    `Score: ${report.score ?? 0}`,
+    `Score: ${formatScoreValue(report.score ?? 0, report.maxScore)}`,
     ...(scoreHistory ? [scoreHistory] : []),
     ...formatScoreGraph(scorePoints),
     `Generation exit: ${report.generationResult?.exitCode ?? "skipped"}`,
+    ...(report.generationResult && report.generationResult.exitCode !== 0
+      ? [
+          `Generation failed: ${extractCommandFailureMessage(report.generationResult.stderr) ?? "see generation.stderr"}`,
+        ]
+      : []),
     `Eval exit: ${report.evalResult?.exitCode ?? "not run"}`,
+    ...(report.evalResult && report.evalResult.exitCode !== 0
+      ? [
+          `Eval failed: ${extractCommandFailureMessage(report.evalResult.stderr) ?? "see eval.stderr"}`,
+        ]
+      : []),
     "",
     report.passed
       ? "Review the candidate source before installing it. This command did not promote or load the mod."
@@ -581,6 +655,7 @@ async function runLearnCommand(
       runDir: learn.options.out
         ? path.resolve(ctx.cwd, learn.options.out)
         : undefined,
+      scenarioLimit: learn.options.scenarioLimit,
       skipGeneration: learn.options.skipGeneration,
       spec: learningEnv,
       onProgress: (progress) => {

@@ -75,12 +75,13 @@ describe("/mods command", () => {
 
   test("parses multi-candidate learning option", () => {
     const parsed = parseModsCommand(
-      "/mods learn memory-citations --candidates 3 --model auto",
+      "/mods learn memory-citations --candidates 3 --scenario-limit 2 --model auto",
     );
 
     expect(parsed?.command).toBe("learn");
     if (parsed?.command !== "learn") return;
     expect(parsed.learn.options.candidateCount).toBe(3);
+    expect(parsed.learn.options.scenarioLimit).toBe(2);
   });
 
   test("runs learning in the background and finishes with report summary", async () => {
@@ -112,6 +113,7 @@ describe("/mods command", () => {
           expect(options.evalModel).toBe("openai/gpt-5.5");
           expect(options.runDir).toBe(path.join(cwd, ".letta", "test-run"));
           expect(options.candidateCount).toBe(10);
+          expect(options.scenarioLimit).toBeUndefined();
           options.onProgress?.({
             candidateCount: 10,
             candidateIndex: 1,
@@ -148,6 +150,7 @@ describe("/mods command", () => {
                 presentForbiddenTraceMarkers: [],
                 reportPath: path.join(cwd, ".letta", "test-run", "report.md"),
                 runDir: path.join(cwd, ".letta", "test-run"),
+                maxScore: 6,
                 score: 2,
               },
             ],
@@ -162,8 +165,9 @@ describe("/mods command", () => {
               "mods",
               "memory-citations.ts",
             ),
-            message: "Optimization iteration 2/10 complete",
-            passed: true,
+            maxScore: 6,
+            message:
+              "Evaluating optimization iteration 2/10: scenario 1/7 mod-loads",
             phase: "evaluating",
             runDir: path.join(cwd, ".letta", "test-run"),
             score: 4,
@@ -213,6 +217,7 @@ describe("/mods command", () => {
                   "candidates",
                   "001",
                 ),
+                maxScore: 6,
                 score: 2,
               },
               {
@@ -248,6 +253,7 @@ describe("/mods command", () => {
                   "candidates",
                   "002",
                 ),
+                maxScore: 6,
                 score: 4,
               },
             ],
@@ -269,6 +275,7 @@ describe("/mods command", () => {
             promotedToPath: null,
             reportPath: path.join(cwd, ".letta", "test-run", "report.md"),
             runDir: path.join(cwd, ".letta", "test-run"),
+            maxScore: 6,
             selectedCandidateIndex: 2,
             score: 4,
             spec: options.spec,
@@ -296,9 +303,7 @@ describe("/mods command", () => {
     );
     expect(updates[1]?.output).toContain("Target mod: memory-citations.ts");
     expect(updates.at(-1)).toMatchObject({ phase: "running" });
-    expect(updates.at(-1)?.output).toContain(
-      "Optimization iteration 2/10 complete",
-    );
+    expect(updates.at(-1)?.output).toContain("scenario 1/7 mod-loads");
     expect(updates.at(-1)?.output).toContain(
       "Background mod optimization: memory-citations",
     );
@@ -306,15 +311,21 @@ describe("/mods command", () => {
       /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Background mod optimization/,
     );
     expect(updates.at(-1)?.output).toContain("Optimization iteration: 2/10");
-    expect(updates.at(-1)?.output).toContain("Current score: 4");
-    expect(updates.at(-1)?.output).toContain("Best score: 4 at step 2");
-    expect(updates.at(-1)?.output).toContain("Score history: #1 2 → #2 4");
+    expect(updates.at(-1)?.output).toContain(
+      "Current partial score: 4/6 (67%)",
+    );
+    expect(updates.at(-1)?.output).toContain(
+      "Best completed score: 2/6 (33%) at iteration 1",
+    );
+    expect(updates.at(-1)?.output).toContain(
+      "Score history: iter 1 2/6 (33%) → iter 2 4/6 (67%) partial",
+    );
     expect(updates.at(-1)?.output).toContain(
       "Optimization progress: ●●○○○○○○○○ 2/10",
     );
     expect(updates.at(-1)?.output).toContain("Score graph: ▁█");
-    expect(updates.at(-1)?.output).toContain("#1 2 │");
-    expect(updates.at(-1)?.output).toContain("#2 4 │");
+    expect(updates.at(-1)?.output).toContain("iter 1         2/6 (33%) │");
+    expect(updates.at(-1)?.output).toContain("iter 2 4/6 (67%) partial │");
 
     resolveLearning?.();
     if (result.handled) await result.done;
@@ -324,7 +335,7 @@ describe("/mods command", () => {
       success: true,
     });
     expect(updates.at(-1)?.output).toContain("Finished mod learning");
-    expect(updates.at(-1)?.output).toContain("Score: 4");
+    expect(updates.at(-1)?.output).toContain("Score: 4/6 (67%)");
     expect(updates.at(-1)?.output).toContain("Score graph: ▁█");
     expect(updates.at(-1)?.output).toContain("did not promote or load");
   });
