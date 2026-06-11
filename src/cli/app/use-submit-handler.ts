@@ -215,7 +215,9 @@ type SubmitHandlerContext = {
   generateConversationDescription: (options?: {
     force?: boolean;
   }) => Promise<void>;
-  generateConversationTitle: () => Promise<string | null>;
+  generateConversationTitle: (options?: {
+    fullHistory?: boolean;
+  }) => Promise<string | null>;
   handleAgentSelect: (
     targetAgentId: string,
     opts?: {
@@ -2222,7 +2224,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             try {
               const backend = getBackend();
               if (shouldAutoGenerate) {
-                const conversationTitle = await generateConversationTitle();
+                const conversationTitle = await generateConversationTitle({
+                  fullHistory: true,
+                });
                 if (!conversationTitle) {
                   cmd.fail(
                     "No conversation content available to generate a title",
