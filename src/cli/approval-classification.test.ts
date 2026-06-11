@@ -14,7 +14,7 @@ import {
   savePermissionRule,
 } from "@/permissions/loader";
 import { permissionMode } from "@/permissions/mode";
-import { loadTools } from "@/tools/manager";
+import { loadTools, prepareCurrentToolExecutionContext } from "@/tools/manager";
 
 describe("classifyApprovals", () => {
   const originalMemoryDir = process.env.MEMORY_DIR;
@@ -287,6 +287,33 @@ describe("classifyApprovals", () => {
       matchedRule: "mod tool:exit_plan_mode",
       reason: "Mod tool requires explicit approval",
     });
+  });
+
+  test("mod tool alwaysAsk policy uses captured tool context", async () => {
+    permissionMode.setMode("unrestricted");
+    registerTestModTool("exit_plan_mode", { approvalPolicy: "alwaysAsk" });
+    const prepared = await prepareCurrentToolExecutionContext({
+      workingDirectory: "/tmp/project",
+    });
+    clearModTools();
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call-exit-plan-mode",
+          toolName: "exit_plan_mode",
+          toolArgs: JSON.stringify({}),
+        },
+      ],
+      {
+        workingDirectory: "/tmp/project",
+        toolContextId: prepared.contextId,
+      },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(1);
   });
 
   test("mod tool default ask policy still allows unrestricted auto-approval", async () => {
