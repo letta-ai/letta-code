@@ -2,8 +2,11 @@ import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
   InputCommand,
+  LoopStatusUpdateMessage,
+  RuntimeScope,
   RuntimeStartCommand,
   RuntimeStartResponseMessage,
+  StreamDeltaMessage,
   SyncCommand,
   SyncResponseMessage,
   WsProtocolCommand,
@@ -74,6 +77,29 @@ type PendingRequest = {
   predicate?: (message: WsProtocolMessage) => boolean;
   timeout: ReturnType<typeof setTimeout>;
 };
+
+export type AppServerTurnCompletionSource =
+  | "stop_reason"
+  | "loop_status_waiting_fallback";
+
+export interface AppServerTurnResult {
+  runtime: RuntimeScope;
+  stopReason: string | null;
+  runIds: string[];
+  clientMessageIds: string[];
+  completedBy: AppServerTurnCompletionSource;
+  terminalMessage: WsProtocolMessage;
+}
+
+export interface AppServerRunTurnOptions {
+  timeoutMs?: number;
+  /**
+   * Prefer explicit stream terminal events. This fallback is only used after
+   * the client has seen stream/run evidence for this runtime, never from idle
+   * loop status alone.
+   */
+  allowLoopStatusFallback?: boolean;
+}
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const WEBSOCKET_OPEN_STATE = 1;
@@ -191,6 +217,43 @@ function messageDataToString(data: unknown): string {
 
 function parseProtocolMessage(event: unknown): WsProtocolMessage {
   return JSON.parse(messageDataToString(event)) as WsProtocolMessage;
+}
+
+function sameRuntime(a: RuntimeScope | undefined, b: RuntimeScope): boolean {
+  return a?.agent_id === b.agent_id && a?.conversation_id === b.conversation_id;
+}
+
+function isWaitingLoopStatus(message: LoopStatusUpdateMessage): boolean {
+  return message.loop_status.status === "WAITING_ON_INPUT";
+}
+
+function streamDeltaRunId(message: StreamDeltaMessage): string | null {
+  const runId = (message.delta as { run_id?: unknown }).run_id;
+  return typeof runId === "string" ? runId : null;
+}
+
+function streamDeltaMessageType(message: StreamDeltaMessage): string | null {
+  const messageType = (message.delta as { message_type?: unknown })
+    .message_type;
+  return typeof messageType === "string" ? messageType : null;
+}
+
+function streamDeltaStopReason(message: StreamDeltaMessage): string | null {
+  const stopReason = (message.delta as { stop_reason?: unknown }).stop_reason;
+  return typeof stopReason === "string" ? stopReason : null;
+}
+
+function streamDeltaErrorMessage(message: StreamDeltaMessage): string {
+  const delta = message.delta as {
+    message?: unknown;
+    api_error?: { message?: unknown; detail?: unknown };
+  };
+  const apiMessage = delta.api_error?.message ?? delta.api_error?.detail;
+  if (typeof apiMessage === "string" && apiMessage.length > 0)
+    return apiMessage;
+  if (typeof delta.message === "string" && delta.message.length > 0)
+    return delta.message;
+  return "App-server turn failed";
 }
 
 export class AppServerClient {
@@ -396,6 +459,130 @@ export class AppServerClient {
 
   input(command: Omit<InputCommand, "type">): void {
     this.send({ type: "input", ...command });
+  }
+
+  runTurn(
+    command: Omit<InputCommand, "type">,
+    options: AppServerRunTurnOptions = {},
+  ): Promise<AppServerTurnResult> {
+    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
+    const commandWithIds = this.withClientMessageIds(command);
+    const runIds = new Set<string>();
+    let observedTurnEvidence = false;
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(
+          new Error(
+            `Timed out waiting for app-server turn on ${command.runtime.agent_id}/${command.runtime.conversation_id}`,
+          ),
+        );
+      }, timeoutMs);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        offMessage();
+      };
+
+      const finish = (
+        completedBy: AppServerTurnCompletionSource,
+        terminalMessage: WsProtocolMessage,
+        stopReason: string | null,
+      ) => {
+        cleanup();
+        resolve({
+          runtime: command.runtime,
+          stopReason,
+          runIds: [...runIds],
+          clientMessageIds: commandWithIds.clientMessageIds,
+          completedBy,
+          terminalMessage,
+        });
+      };
+
+      const fail = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+
+      const offMessage = this.onMessage((message) => {
+        if (
+          !sameRuntime(
+            (message as { runtime?: RuntimeScope }).runtime,
+            command.runtime,
+          )
+        ) {
+          return;
+        }
+
+        if (message.type === "stream_delta") {
+          observedTurnEvidence = true;
+          const runId = streamDeltaRunId(message);
+          if (runId) runIds.add(runId);
+
+          const messageType = streamDeltaMessageType(message);
+          if (messageType === "loop_error" || messageType === "error_message") {
+            fail(new Error(streamDeltaErrorMessage(message)));
+            return;
+          }
+          if (messageType === "stop_reason") {
+            finish("stop_reason", message, streamDeltaStopReason(message));
+          }
+          return;
+        }
+
+        if (message.type === "update_loop_status") {
+          for (const runId of message.loop_status.active_run_ids) {
+            observedTurnEvidence = true;
+            runIds.add(runId);
+          }
+          if (
+            options.allowLoopStatusFallback === true &&
+            observedTurnEvidence &&
+            isWaitingLoopStatus(message)
+          ) {
+            finish("loop_status_waiting_fallback", message, null);
+          }
+        }
+      });
+
+      try {
+        this.input(commandWithIds.command);
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  private withClientMessageIds(command: Omit<InputCommand, "type">): {
+    command: Omit<InputCommand, "type">;
+    clientMessageIds: string[];
+  } {
+    if (command.payload.kind !== "create_message") {
+      return { command, clientMessageIds: [] };
+    }
+
+    const clientMessageIds: string[] = [];
+    const messages = command.payload.messages.map((message) => {
+      if (message.role !== "user") return message;
+      const existing = (message as { client_message_id?: unknown })
+        .client_message_id;
+      const clientMessageId =
+        typeof existing === "string" && existing.length > 0
+          ? existing
+          : this.nextRequestId("client-message");
+      clientMessageIds.push(clientMessageId);
+      return { ...message, client_message_id: clientMessageId };
+    });
+
+    return {
+      command: {
+        ...command,
+        payload: { ...command.payload, messages },
+      },
+      clientMessageIds,
+    };
   }
 
   private handleMessage(event: unknown, channel: AppServerChannel): void {

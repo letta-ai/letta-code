@@ -194,6 +194,177 @@ describe("app-server client", () => {
     expect(sent).toEqual(["sync", "abort_message", "input"]);
   });
 
+  test("runTurn injects client message ids and resolves on stop_reason", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn({
+      runtime,
+      payload: {
+        kind: "create_message",
+        messages: [{ role: "user", content: "hello" }],
+      },
+    });
+
+    const sent = JSON.parse(control.sent[0] ?? "{}");
+    expect(sent).toMatchObject({
+      type: "input",
+      runtime,
+      payload: { kind: "create_message" },
+    });
+    expect(sent.payload.messages[0].client_message_id).toStartWith(
+      "client-message-",
+    );
+
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "stream-1",
+      delta: {
+        type: "message",
+        message_type: "assistant_message",
+        run_id: "run-1",
+        content: [{ type: "text", text: "pong" }],
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 2,
+      emitted_at: "2026-06-11T00:00:00.001Z",
+      idempotency_key: "stream-2",
+      delta: {
+        type: "message",
+        message_type: "stop_reason",
+        run_id: "run-1",
+        stop_reason: "end_turn",
+      },
+    });
+
+    expect(await turn).toMatchObject({
+      runtime,
+      stopReason: "end_turn",
+      runIds: ["run-1"],
+      completedBy: "stop_reason",
+    });
+  });
+
+  test("runTurn does not treat idle status alone as terminal", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn(
+      {
+        runtime,
+        payload: {
+          kind: "create_message",
+          messages: [{ role: "user", content: "hello" }],
+        },
+      },
+      { timeoutMs: 25, allowLoopStatusFallback: true },
+    );
+
+    stream.receive({
+      type: "update_loop_status",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "loop-1",
+      loop_status: { status: "WAITING_ON_INPUT", active_run_ids: [] },
+    });
+
+    await expect(turn).rejects.toThrow("Timed out waiting for app-server turn");
+  });
+
+  test("runTurn can use guarded loop-status fallback after run evidence", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn(
+      {
+        runtime,
+        payload: {
+          kind: "create_message",
+          messages: [{ role: "user", content: "hello" }],
+        },
+      },
+      { allowLoopStatusFallback: true },
+    );
+
+    stream.receive({
+      type: "update_loop_status",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "loop-1",
+      loop_status: {
+        status: "PROCESSING_API_RESPONSE",
+        active_run_ids: ["run-1"],
+      },
+    });
+    stream.receive({
+      type: "update_loop_status",
+      runtime,
+      event_seq: 2,
+      emitted_at: "2026-06-11T00:00:00.001Z",
+      idempotency_key: "loop-2",
+      loop_status: { status: "WAITING_ON_INPUT", active_run_ids: [] },
+    });
+
+    expect(await turn).toMatchObject({
+      runtime,
+      stopReason: null,
+      runIds: ["run-1"],
+      completedBy: "loop_status_waiting_fallback",
+    });
+  });
+
+  test("runTurn rejects on loop_error stream delta", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn({
+      runtime,
+      payload: {
+        kind: "create_message",
+        messages: [{ role: "user", content: "hello" }],
+      },
+    });
+
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "stream-1",
+      delta: {
+        id: "message-1",
+        date: "2026-06-11T00:00:00.000Z",
+        message_type: "loop_error",
+        run_id: "run-1",
+        message: "No API key for provider",
+        stop_reason: "llm_api_error",
+        is_terminal: false,
+      },
+    });
+
+    await expect(turn).rejects.toThrow("No API key for provider");
+  });
+
   test("supports ergonomic request construction", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
