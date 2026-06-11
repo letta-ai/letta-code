@@ -14,6 +14,7 @@ import {
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
+import { debugWarn } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
 import { resolveAvailableLocalModelForTurn } from "./local-model-config";
@@ -431,40 +432,82 @@ async function summarizeLocalMessagesWithPrompt(
   try {
     result = await runGenerateText(input, primaryTranscript, defaultPrompt);
   } catch (error) {
-    if (!isContextWindowOverflowError(error)) throw error;
-    let overflowError: unknown = error;
-    let previousTranscript: string | undefined;
-    for (const maxChars of TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS) {
-      const fallbackTranscript = formatLocalMessagesForSummary(input.messages, {
-        truncationChars: LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
-        maxChars,
-      });
-      if (fallbackTranscript === previousTranscript) continue;
-      previousTranscript = fallbackTranscript;
-      try {
-        result = await runGenerateText(
-          input,
-          fallbackTranscript,
-          defaultPrompt,
+    if (isContextWindowOverflowError(error)) {
+      let previousTranscript: string | undefined;
+      for (const maxChars of TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS) {
+        const fallbackTranscript = formatLocalMessagesForSummary(
+          input.messages,
+          {
+            truncationChars: LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
+            maxChars,
+          },
         );
-        break;
-      } catch (fallbackError) {
-        if (!isContextWindowOverflowError(fallbackError)) throw fallbackError;
-        overflowError = fallbackError;
+        if (fallbackTranscript === previousTranscript) continue;
+        previousTranscript = fallbackTranscript;
+        try {
+          result = await runGenerateText(
+            input,
+            fallbackTranscript,
+            defaultPrompt,
+          );
+          break;
+        } catch (fallbackError) {
+          if (!isContextWindowOverflowError(fallbackError)) {
+            // Terminal failure while shrinking the transcript (e.g. a provider
+            // safety refusal surfaced as "An unknown error occurred"). Degrade
+            // rather than brick the conversation.
+            return degradedCompactionSummary(
+              input.messages.length,
+              fallbackError,
+            );
+          }
+        }
       }
+    } else {
+      // Terminal, non-overflow summarizer failure. The most common cause is a
+      // provider refusal that pi-ai masks as "An unknown error occurred". A
+      // failed summary must never be fatal: compaction exists to shed context,
+      // so degrade to a placeholder summary and let eviction proceed instead of
+      // leaving the conversation permanently un-compactable.
+      return degradedCompactionSummary(input.messages.length, error);
     }
-    if (!result) throw overflowError;
   }
 
   if (!result) {
-    throw new Error("Compaction summarizer did not return a result.");
+    // Overflow-shrink loop exhausted every fallback without a summary.
+    return degradedCompactionSummary(input.messages.length);
   }
   let summary = result.text.trim();
+  if (!summary) {
+    return degradedCompactionSummary(input.messages.length);
+  }
   const clipChars = input.clipChars === undefined ? 50000 : input.clipChars;
   if (clipChars !== null && summary.length > clipChars) {
     summary = `${summary.slice(0, clipChars)}${SUMMARY_TRUNCATION_SUFFIX}`;
   }
   return summary;
+}
+
+/**
+ * Fallback summary used when the summarization model cannot produce one — for
+ * example when a provider safety classifier refuses the request (pi-ai surfaces
+ * this as "An unknown error occurred"). Compaction must always be able to shed
+ * context, so returning a placeholder lets older messages be evicted (and stay
+ * retrievable via message search) instead of bricking the conversation.
+ */
+function degradedCompactionSummary(
+  messageCount: number,
+  error?: unknown,
+): string {
+  if (error !== undefined) {
+    debugWarn(
+      "compaction",
+      `summarizer failed; degrading to placeholder summary (${
+        error instanceof Error ? error.message : String(error)
+      })`,
+    );
+  }
+  return `Note: ${messageCount} earlier messages were automatically condensed to free context, but an in-context summary could not be generated (the summarization model was unavailable or declined the request). The prior messages were elided from the active context; they remain persisted and can be retrieved with message search if needed.`;
 }
 
 export async function summarizeLocalMessagesAll(

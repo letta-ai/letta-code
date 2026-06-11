@@ -23,6 +23,17 @@ function summaryAssistantMessage(): AssistantMessage {
   };
 }
 
+function refusedAssistantMessage(): AssistantMessage {
+  // Mirrors how pi-ai surfaces an Anthropic safety refusal: the stream ends
+  // with stopReason "error" and the masked message "An unknown error occurred".
+  return {
+    ...summaryAssistantMessage(),
+    content: [],
+    stopReason: "error",
+    errorMessage: "An unknown error occurred",
+  };
+}
+
 describe("local compaction summarizer options", () => {
   test("passes settings-derived reasoning to the summarization request", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-compaction-"));
@@ -121,6 +132,52 @@ describe("local compaction summarizer options", () => {
       });
 
       expect(capturedOptions?.reasoning).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("degrades to a placeholder summary when the summarizer fails (refusal)", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-compaction-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "anthropic",
+        providerName: "lc-anthropic",
+        apiKey: "secret-key",
+      });
+
+      // A summarizer refusal must never throw — compaction must still produce a
+      // summary so older messages can be evicted and the conversation is not
+      // permanently bricked.
+      const summary = await summarizeLocalMessagesAll({
+        agent: {
+          id: "agent-local-1",
+          name: "Local",
+          description: null,
+          system: "",
+          tags: [],
+          model: "anthropic/claude-fable-5",
+          model_settings: {
+            provider_type: "anthropic",
+            effort: "high",
+            thinking: { type: "enabled" },
+          },
+        },
+        messages: [
+          {
+            id: "ui-msg-1",
+            role: "user",
+            content: "please summarize this conversation",
+            timestamp: Date.now(),
+          },
+        ],
+        localProviderAuthStorageDir: storageDir,
+        complete: async () => refusedAssistantMessage(),
+      });
+
+      expect(summary).toContain("could not be generated");
+      expect(summary).toContain("message search");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
