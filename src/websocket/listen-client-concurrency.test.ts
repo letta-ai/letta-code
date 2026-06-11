@@ -195,6 +195,11 @@ const classifyApprovalsMock = mock(async () => ({
 const executeApprovalBatchMock = mock(async () => []);
 const fetchRunErrorDetailMock = mock(async () => null);
 const realStreamModule = await import("@/cli/helpers/stream");
+const realDrainStreamWithResume = realStreamModule.drainStreamWithResume;
+const realAgentMessageModule = await import("@/agent/message");
+const realSendMessageStream = realAgentMessageModule.sendMessageStream;
+const realGetStreamToolContextId =
+  realAgentMessageModule.getStreamToolContextId;
 // Capture real implementations BEFORE applying `mock.module(...)` so they
 // can be restored in afterAll. Bun's `mock.restore()` only resets mock
 // function state — it does NOT undo `mock.module()` swaps, so mocked modules
@@ -446,6 +451,19 @@ describe("listen-client multi-worker concurrency", () => {
     // biome-ignore lint/suspicious/noExplicitAny: see above
     (fetchRunErrorDetailMock as any).mockImplementation(
       realFetchRunErrorDetail,
+    );
+    sendMessageStreamMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (sendMessageStreamMock as any).mockImplementation(realSendMessageStream);
+    getStreamToolContextIdMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (getStreamToolContextIdMock as any).mockImplementation(
+      realGetStreamToolContextId,
+    );
+    drainStreamWithResumeMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (drainStreamWithResumeMock as any).mockImplementation(
+      realDrainStreamWithResume,
     );
     mock.restore();
   });

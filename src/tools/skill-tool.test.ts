@@ -9,9 +9,8 @@ import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
 const TEST_AGENT_ID = "agent-skill-memfs-test";
 let currentSkillsDirectory: string | null = null;
 
-const { renderSkillContent, skill, wrapSkillContent } = await import(
-  "@/tools/impl/skill"
-);
+const { readSkillContent, renderSkillContent, skill, wrapSkillContent } =
+  await import("@/tools/impl/skill");
 
 function withSkillContext<T>(fn: () => Promise<T>) {
   return runWithRuntimeContext(
@@ -80,6 +79,20 @@ describe("Skill tool memory filesystem lookup", () => {
     }
 
     rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  test("does not load bundled image generation skill for local agents", async () => {
+    process.env.MEMORY_DIR = join(tempRoot, "empty-memory");
+    process.env.LETTA_MEMORY_DIR = join(tempRoot, "empty-letta-memory");
+    process.env.HOME = tempRoot;
+
+    await expect(
+      readSkillContent(
+        "image-generation",
+        currentSkillsDirectory ?? join(tempRoot, ".skills"),
+        "agent-local-skill-test",
+      ),
+    ).rejects.toThrow('Skill "image-generation" not found');
   });
 
   test("loads skills from MEMORY_DIR/skills", async () => {

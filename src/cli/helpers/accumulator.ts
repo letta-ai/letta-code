@@ -581,16 +581,19 @@ export function markIncompleteToolsAsCancelled(
 
 /**
  * Remove incomplete tool calls from the buffer entirely.
- * Used at end_turn to clean up orphaned tool calls without showing "Cancelled".
+ * Used to clean up orphaned/failed-run tool calls without showing "Cancelled".
  * Returns true if any tools were removed.
  */
-export function removeIncompleteTools(b: Buffers): boolean {
+export function removeIncompleteTools(
+  b: Buffers,
+  reason = "end_turn",
+): boolean {
   let anyToolsRemoved = false;
   for (const [id, line] of b.byId.entries()) {
     if (line.kind === "tool_call" && line.phase !== "finished") {
       debugLog(
         "accumulator",
-        `[REMOVED_ORPHANED_TOOL] name=${line.name ?? "?"} phase=${line.phase} diagnosis=${diagnoseOrphanedTool(line, b)} toolCallId=${line.toolCallId ?? "?"}`,
+        `[REMOVED_ORPHANED_TOOL] name=${line.name ?? "?"} phase=${line.phase} diagnosis=${diagnoseOrphanedTool(line, b)} reason=${reason} toolCallId=${line.toolCallId ?? "?"}`,
       );
       b.byId.delete(id);
       b.order = b.order.filter((oid) => oid !== id);

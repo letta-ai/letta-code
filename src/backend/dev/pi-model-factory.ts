@@ -1,4 +1,4 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getModel, getModels } from "@earendil-works/pi-ai";
 import {
   getOAuthProvider,
@@ -14,13 +14,14 @@ import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { isRecord } from "@/utils/type-guards";
 import {
   getRegisteredPiProvider,
   type PiProviderModelRegistration,
   type PiProviderRegistration,
   resolveRegisteredPiProviderFromModelHandle,
   stripRegisteredProviderHandlePrefix,
-} from "./pi-provider-extension-registry";
+} from "./pi-provider-mod-registry";
 import {
   expectedPiProviderList,
   getPiProviderSpec,
@@ -39,7 +40,56 @@ import {
 } from "./registered-pi-provider-runtime";
 
 export const DEFAULT_PI_PROVIDER = "openai" satisfies PiProvider;
+export const UNSELECTED_LOCAL_MODEL_HANDLE = "local/default";
 export type { PiProvider } from "./pi-provider-registry";
+
+export function isUnselectedLocalModelHandle(model: unknown): boolean {
+  return (
+    typeof model !== "string" ||
+    model.length === 0 ||
+    model === "auto" ||
+    model === UNSELECTED_LOCAL_MODEL_HANDLE ||
+    model.startsWith("letta/")
+  );
+}
+
+function settingString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
+  const effort = settingString(value);
+  if (effort === "max") return "xhigh";
+  return effort === "minimal" ||
+    effort === "low" ||
+    effort === "medium" ||
+    effort === "high" ||
+    effort === "xhigh"
+    ? effort
+    : undefined;
+}
+
+// Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
+// call against a reasoning-capable model must pass this when available:
+// pi-ai sends `thinking: {type: "disabled"}` for reasoning models when
+// `options.reasoning` is absent, and adaptive-thinking models (for example
+// claude-fable-5) reject that with a 400 invalid_request_error.
+export function reasoningForSettings(
+  modelSettings: Record<string, unknown>,
+): ThinkingLevel | undefined {
+  const thinking = isRecord(modelSettings.thinking)
+    ? modelSettings.thinking
+    : undefined;
+  if (thinking?.type === "disabled") return undefined;
+  const nestedReasoning = isRecord(modelSettings.reasoning)
+    ? modelSettings.reasoning
+    : undefined;
+  return (
+    thinkingLevelSetting(nestedReasoning?.reasoning_effort) ??
+    thinkingLevelSetting(modelSettings.effort) ??
+    thinkingLevelSetting(modelSettings.reasoning_effort)
+  );
+}
 
 export interface PiModelSettings {
   provider_type?: unknown;
@@ -129,11 +179,11 @@ export function resolvePiProviderFromAgent(
   );
   if (settingsProvider) return settingsProvider;
 
-  if (model) {
+  if (model && !isUnselectedLocalModelHandle(model)) {
     const slashIndex = model.indexOf("/");
     if (slashIndex > 0) {
       throw new Error(
-        `Model provider "${model.slice(0, slashIndex)}" is not registered. Load or repair the provider extension, or choose another model with /model.`,
+        `Model provider "${model.slice(0, slashIndex)}" is not registered. Load or repair the provider mod, or choose another model with /model.`,
       );
     }
   }
@@ -439,19 +489,26 @@ export async function resolvePiModelForAgent(
   modelSettings: PiModelSettings = {},
   options: PiModelFactoryOptions = {},
 ): Promise<ResolvedPiModel> {
+  const concreteModelHandle = isUnselectedLocalModelHandle(modelHandle)
+    ? undefined
+    : modelHandle;
   const provider = options.provider
     ? resolvePiProvider(options.provider)
-    : resolvePiProviderFromAgent(modelHandle, modelSettings);
+    : resolvePiProviderFromAgent(concreteModelHandle, modelSettings);
   const registeredProvider = getRegisteredPiProvider(provider);
   const spec = isPiProvider(provider) ? getPiProviderSpec(provider) : undefined;
   const modelId =
     options.model ??
     (registeredProvider
-      ? stripRegisteredProviderHandlePrefix(modelHandle, provider)
+      ? stripRegisteredProviderHandlePrefix(concreteModelHandle, provider)
       : undefined) ??
-    (spec ? resolvePiModelFromAgent(modelHandle, spec.id) : undefined) ??
+    (spec
+      ? resolvePiModelFromAgent(concreteModelHandle, spec.id)
+      : undefined) ??
     registeredProvider?.config.models?.[0]?.id ??
-    (spec ? resolvePiModelFromAgent(spec.defaultModel, spec.id) : undefined) ??
+    (spec?.defaultModel
+      ? resolvePiModelFromAgent(spec.defaultModel, spec.id)
+      : undefined) ??
     process.env.LETTA_CODE_DEV_PI_MODEL ??
     "";
   const storageDir = options.localProviderAuthStorageDir;
@@ -582,6 +639,11 @@ export async function resolvePiModelForAgent(
         "Register the provider with models before using it.",
     );
   } else if (spec.createCustomModel) {
+    if (!modelId) {
+      throw new Error(
+        `No model selected for provider "${provider}". Choose an available model with /model.`,
+      );
+    }
     model = customOpenAICompatibleModel({
       provider: spec.id,
       modelId,

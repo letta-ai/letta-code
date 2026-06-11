@@ -1,14 +1,14 @@
-# Statusline Extension API
+# Statusline Mod API
 
-Use this reference when creating or editing `~/.letta/extensions/statusline.tsx`.
+Use this reference when creating or editing `~/.letta/mods/statusline.tsx`.
 
 ## Location
 
 ```text
-~/.letta/extensions/statusline.tsx
+~/.letta/mods/statusline.tsx
 ```
 
-This is a trusted, user-owned global extension file. Project extensions are intentionally unsupported for now.
+This is a trusted, user-owned global mod file. Project mods are intentionally unsupported for now.
 
 ## Activation
 
@@ -59,7 +59,7 @@ letta.ui.setStatuslineRenderer((context) => {
 
 ## Async state pattern
 
-Use Node/Bun APIs directly from the trusted extension file. Do not assume helper methods like `letta.shell` exist.
+Use Node/Bun APIs directly from the trusted mod file. Do not assume helper methods like `letta.shell` exist.
 
 ```tsx
 import { execFile } from "node:child_process";
@@ -117,7 +117,7 @@ Common fields:
 
 ```ts
 context.components      // Display components such as Text, Box, Spacer
-context.statuses        // evaluated extension status strings
+context.statuses        // evaluated mod status strings
 context.app.version
 context.workspace.cwd
 context.workspace.currentDir
@@ -159,10 +159,10 @@ return (
 
 ## Reload behavior
 
-After editing `~/.letta/extensions/statusline.tsx`, tell the user to run:
+After editing `~/.letta/mods/statusline.tsx`, tell the user to run:
 
 ```text
 /reload
 ```
 
-The runtime tracks extension loading separately from “no custom statusline,” so a custom statusline should not flash back to the built-in default during reload.
+The runtime tracks mod loading separately from “no custom statusline,” so a custom statusline should not flash back to the built-in default during reload.

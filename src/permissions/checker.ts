@@ -3,13 +3,13 @@
 
 import { resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
-import {
-  checkExtensionPermissions,
-  type ExtensionPermissionDefinition,
-  getAvailableExtensionPermissionsRegistry,
-} from "@/extensions/permission-registry";
-import { extensionToolRequiresApproval } from "@/extensions/tool-registry";
 import { runPermissionRequestHooks } from "@/hooks";
+import {
+  checkModPermissions,
+  getAvailableModPermissionsRegistry,
+  type ModPermissionDefinition,
+} from "@/mods/permission-registry";
+import { modToolRequiresApproval } from "@/mods/tool-registry";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
@@ -97,7 +97,7 @@ const FILE_TOOLS_V1 = [
 
 type ToolArgs = Record<string, unknown>;
 
-interface ExtensionPermissionCheckOptions {
+interface ModPermissionCheckOptions {
   conversationId?: string | null;
   phase?: "approval" | "execution";
   toolCallId?: string | null;
@@ -122,7 +122,11 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
   if (!envFlagEnabled("LETTA_PERMISSION_TRACE")) {
     return false;
   }
-  return result.decision === "ask" || result.decision === "deny";
+  return (
+    result.decision === "ask" ||
+    result.decision === "alwaysAsk" ||
+    result.decision === "deny"
+  );
 }
 
 /**
@@ -345,6 +349,52 @@ function checkPermissionForEngine(
         },
         trace,
       };
+    }
+  }
+
+  if (sessionRules.alwaysAsk) {
+    for (const pattern of sessionRules.alwaysAsk) {
+      const matched = matchesPattern(
+        toolName,
+        query,
+        pattern,
+        workingDirectory,
+        engine,
+      );
+      traceEvent(trace, "session-always-ask-rule", undefined, pattern, matched);
+      if (matched) {
+        return {
+          result: {
+            decision: "alwaysAsk",
+            matchedRule: `${pattern} (session)`,
+            reason: "Matched alwaysAsk rule",
+          },
+          trace,
+        };
+      }
+    }
+  }
+
+  if (permissions.alwaysAsk) {
+    for (const pattern of permissions.alwaysAsk) {
+      const matched = matchesPattern(
+        toolName,
+        query,
+        pattern,
+        workingDirectory,
+        engine,
+      );
+      traceEvent(trace, "always-ask-rule", undefined, pattern, matched);
+      if (matched) {
+        return {
+          result: {
+            decision: "alwaysAsk",
+            matchedRule: pattern,
+            reason: "Matched alwaysAsk rule",
+          },
+          trace,
+        };
+      }
     }
   }
 
@@ -744,9 +794,9 @@ function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
 ): PermissionDecision {
-  const extensionRequiresApproval = extensionToolRequiresApproval(toolName);
-  if (extensionRequiresApproval !== undefined) {
-    return extensionRequiresApproval ? "ask" : "allow";
+  const modRequiresApproval = modToolRequiresApproval(toolName);
+  if (modRequiresApproval !== undefined) {
+    return modRequiresApproval ? "ask" : "allow";
   }
 
   // Check TOOL_PERMISSIONS to determine if tool requires approval
@@ -829,11 +879,11 @@ export async function checkPermissionWithHooks(
   workingDirectory: string = process.cwd(),
   modeState?: PermissionModeState,
   agentId?: string,
-  extensionPermissions: Map<
+  modPermissions: Map<
     string,
-    ExtensionPermissionDefinition
-  > = getAvailableExtensionPermissionsRegistry(),
-  extensionPermissionOptions: ExtensionPermissionCheckOptions = {},
+    ModPermissionDefinition
+  > = getAvailableModPermissionsRegistry(),
+  modPermissionOptions: ModPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
   let result = checkPermission(
@@ -846,28 +896,28 @@ export async function checkPermissionWithHooks(
   );
 
   if (result.decision !== "deny") {
-    const extensionDecision = await checkExtensionPermissions(
+    const modDecision = await checkModPermissions(
       {
         agentId: agentId ?? null,
-        conversationId: extensionPermissionOptions.conversationId ?? null,
-        toolCallId: extensionPermissionOptions.toolCallId ?? null,
+        conversationId: modPermissionOptions.conversationId ?? null,
+        toolCallId: modPermissionOptions.toolCallId ?? null,
         toolName,
         args: toolArgs,
         cwd: workingDirectory,
         workingDirectory,
         permissionMode: modeState?.mode ?? permissionMode.getMode(),
-        phase: extensionPermissionOptions.phase ?? "approval",
+        phase: modPermissionOptions.phase ?? "approval",
       },
-      extensionPermissions,
+      modPermissions,
     );
-    if (extensionDecision) {
-      result = {
-        decision: extensionDecision.decision,
-        matchedRule: extensionDecision.matchedRule,
-        reason:
-          extensionDecision.reason ??
-          `Matched ${extensionDecision.matchedRule}`,
-      };
+    if (modDecision) {
+      if (result.decision !== "alwaysAsk" || modDecision.decision === "deny") {
+        result = {
+          decision: modDecision.decision,
+          matchedRule: modDecision.matchedRule,
+          reason: modDecision.reason ?? `Matched ${modDecision.matchedRule}`,
+        };
+      }
     }
   }
 

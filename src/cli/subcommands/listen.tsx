@@ -5,6 +5,7 @@
 
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
+import { MessageChannel } from "node:worker_threads";
 import { Box, render, Text } from "ink";
 import TextInput from "ink-text-input";
 import type React from "react";
@@ -27,6 +28,17 @@ import {
 } from "@/websocket/listen-register";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+
+type ListenerProcessAnchor = {
+  close: () => void;
+};
+
+type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
+
+// Keep listener process anchors reachable for the lifetime of the CLI command.
+// Without a retained reference, the MessageChannel anchor could be garbage
+// collected even though it is intended to hold channel-only listeners open.
+const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
 
 type ListenerOAuthDeps = {
   LETTA_CLOUD_API_URL: string;
@@ -87,6 +99,34 @@ function formatTimestamp(): string {
   return `${h}:${m}:${s}.${ms}`;
 }
 
+function createMessageChannelProcessAnchor(): ListenerProcessAnchor {
+  const { port1, port2 } = new MessageChannel();
+
+  port1.ref();
+  port2.ref();
+
+  return {
+    close: () => {
+      port1.close();
+      port2.close();
+    },
+  };
+}
+
+function createListenerProcessAnchorPromise(
+  createProcessAnchor: CreateListenerProcessAnchor = createMessageChannelProcessAnchor,
+): Promise<number> {
+  const anchor = createProcessAnchor();
+
+  activeListenerProcessAnchors.add(anchor);
+
+  return new Promise<number>(() => {
+    // Never resolves - runs until the process receives a shutdown signal.
+    // The ref'ed MessageChannel above is a zero-wakeup process anchor for
+    // channel-only listeners whose adapters may not own a persistent handle.
+  });
+}
+
 async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
   try {
     telemetry.trackSessionEnd(undefined, exitReason);
@@ -133,6 +173,14 @@ async function resolveListenerStartupMode(
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
+  // When running under the desktop app (which sets LETTA_DESKTOP_DEBUG_PANEL),
+  // the local proxy has a full environment server that expects device
+  // registration. Treat it as "remote" so the listener registers and connects
+  // via WebSocket, even when channels are active.
+  if (process.env.LETTA_DESKTOP_DEBUG_PANEL === "1") {
+    return { kind: "remote", serverUrl };
+  }
+
   if (isLocalBackendEnvEnabled() && channelNames.length > 0) {
     return {
       kind: "local-channels",
@@ -142,14 +190,6 @@ async function resolveListenerStartupMode(
   }
 
   if (isCloudListenerServerUrl(serverUrl)) {
-    return { kind: "remote", serverUrl };
-  }
-
-  // When running under the desktop app (which sets LETTA_DESKTOP_DEBUG_PANEL),
-  // the local proxy has a full environment server that expects device
-  // registration. Treat it as "remote" so the listener registers and connects
-  // via WebSocket, even when channels are active.
-  if (process.env.LETTA_DESKTOP_DEBUG_PANEL === "1") {
     return { kind: "remote", serverUrl };
   }
 
@@ -286,6 +326,7 @@ async function resolveListenerRegistrationOptions(
 }
 
 export const __listenSubcommandTestUtils = {
+  createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
   getListenerServerUrl,
   resolveListenerStartupMode,
@@ -551,9 +592,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         },
       });
 
-      return new Promise<number>(() => {
-        // Never resolves - runs until Ctrl+C
-      });
+      return createListenerProcessAnchorPromise();
     }
 
     let registerOptions: RegisterOptions;

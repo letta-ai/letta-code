@@ -127,4 +127,49 @@ describe("local model updates", () => {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
+
+  test("preserves Fable xhigh as a distinct Anthropic effort", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-fable-effort-"));
+    try {
+      await createOrUpdateLocalProvider({
+        providerType: "anthropic",
+        providerName: "lc-anthropic",
+        apiKey: "dummy",
+        storageDir,
+      });
+
+      await withLocalBackendStorage(storageDir, async () => {
+        const backend = getBackend();
+        const agent = await backend.createAgent({
+          name: "Local Fable",
+          model: "anthropic/claude-fable-5",
+          model_settings: {
+            provider_type: "anthropic",
+            effort: "high",
+          },
+          max_tokens: 128000,
+          context_window_limit: 1000000,
+        } as never);
+
+        const updated = await updateAgentLLMConfig(
+          agent.id,
+          "anthropic/claude-fable-5",
+          {
+            context_window: 1000000,
+            max_output_tokens: 128000,
+            enable_reasoner: true,
+            reasoning_effort: "xhigh",
+            parallel_tool_calls: true,
+          },
+        );
+
+        expect(updated.model_settings).toMatchObject({
+          provider_type: "anthropic",
+          effort: "xhigh",
+        });
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
 });

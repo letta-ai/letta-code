@@ -28,6 +28,8 @@ const ALLOWED_PROPERTIES = new Set([
   "allowed-tools",
 ]);
 
+export const MAX_SKILL_NAME_LENGTH = 64;
+
 type BunYamlRuntime = {
   Bun?: {
     YAML?: {
@@ -234,11 +236,11 @@ export function validateSkill(skillPath: string): ValidationResult {
         message: `Name '${trimmedName}' cannot start/end with hyphen or contain consecutive hyphens`,
       };
     }
-    // Check name length (max 64 characters)
-    if (trimmedName.length > 64) {
+    // Check name length
+    if (trimmedName.length > MAX_SKILL_NAME_LENGTH) {
       return {
         valid: false,
-        message: `Name is too long (${trimmedName.length} characters). Maximum is 64 characters.`,
+        message: `Name is too long (${trimmedName.length} characters). Maximum is ${MAX_SKILL_NAME_LENGTH} characters.`,
       };
     }
 

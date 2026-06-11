@@ -1,18 +1,44 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { classifyApprovals } from "@/cli/helpers/approval-classification";
 import {
-  clearExtensionPermissions,
-  registerExtensionPermission,
-} from "@/extensions/permission-registry";
+  clearModPermissions,
+  registerModPermission,
+} from "@/mods/permission-registry";
+import {
+  resetPermissionLoaderCacheForTests,
+  savePermissionRule,
+} from "@/permissions/loader";
 import { permissionMode } from "@/permissions/mode";
 import { loadTools } from "@/tools/manager";
 
 describe("classifyApprovals", () => {
   const originalMemoryDir = process.env.MEMORY_DIR;
+  const tempDirs: string[] = [];
 
-  afterEach(() => {
-    clearExtensionPermissions();
+  async function createTempProjectWithAlwaysAskRule(): Promise<string> {
+    const projectDir = await mkdtemp(join(tmpdir(), "letta-always-ask-"));
+    tempDirs.push(projectDir);
+    await savePermissionRule(
+      "Bash(git push:*)",
+      "alwaysAsk",
+      "local",
+      projectDir,
+    );
+    return projectDir;
+  }
+
+  afterEach(async () => {
+    clearModPermissions();
+    resetPermissionLoaderCacheForTests();
     permissionMode.reset();
+    await Promise.all(
+      tempDirs
+        .splice(0)
+        .map((dir) => rm(dir, { recursive: true, force: true })),
+    );
     if (originalMemoryDir === undefined) {
       delete process.env.MEMORY_DIR;
     } else {
@@ -53,9 +79,9 @@ describe("classifyApprovals", () => {
     expect(denied?.permission.reason).toBe(denied?.denyReason);
   });
 
-  test("extension permission overlays deny before unrestricted auto-allow", async () => {
+  test("mod permission overlays deny before unrestricted auto-allow", async () => {
     permissionMode.setMode("unrestricted");
-    registerExtensionPermission({
+    registerModPermission({
       id: "block-dangerous-shell",
       description: "Block dangerous shell commands",
       path: "/tmp/block-dangerous-shell.ts",
@@ -98,13 +124,13 @@ describe("classifyApprovals", () => {
     expect(result.autoDenied).toHaveLength(1);
     expect(result.autoDenied[0]?.permission).toMatchObject({
       decision: "deny",
-      matchedRule: "extension permission:block-dangerous-shell",
+      matchedRule: "mod permission:block-dangerous-shell",
       reason: "rm is blocked",
     });
   });
 
-  test("extension permission overlays allow scoped tools before default ask", async () => {
-    registerExtensionPermission({
+  test("mod permission overlays allow scoped tools before default ask", async () => {
+    registerModPermission({
       id: "allow-plan-file",
       description: "Allow writes to the active plan file",
       path: "/tmp/allow-plan-file.ts",
@@ -149,8 +175,57 @@ describe("classifyApprovals", () => {
     expect(result.autoAllowed).toHaveLength(1);
     expect(result.autoAllowed[0]?.permission).toMatchObject({
       decision: "allow",
-      matchedRule: "extension permission:allow-plan-file",
+      matchedRule: "mod permission:allow-plan-file",
       reason: "active plan file",
     });
+  });
+
+  test("alwaysAsk rules require user input in unrestricted mode", async () => {
+    permissionMode.setMode("unrestricted");
+    const projectDir = await createTempProjectWithAlwaysAskRule();
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call-git-push",
+          toolName: "Bash",
+          toolArgs: JSON.stringify({ command: "git push origin main" }),
+        },
+      ],
+      { workingDirectory: projectDir },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(1);
+    expect(result.needsUserInput[0]?.permission).toMatchObject({
+      decision: "alwaysAsk",
+      matchedRule: "Bash(git push:*)",
+      reason: "Matched alwaysAsk rule",
+    });
+  });
+
+  test("treatAskAsDeny also denies alwaysAsk rules", async () => {
+    permissionMode.setMode("unrestricted");
+    const projectDir = await createTempProjectWithAlwaysAskRule();
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call-git-push",
+          toolName: "Bash",
+          toolArgs: JSON.stringify({ command: "git push origin main" }),
+        },
+      ],
+      { workingDirectory: projectDir, treatAskAsDeny: true },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(1);
+    expect(result.autoDenied[0]?.permission.decision).toBe("alwaysAsk");
+    expect(result.autoDenied[0]?.denyReason).toBe(
+      "Tool requires approval (headless mode)",
+    );
   });
 });

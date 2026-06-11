@@ -233,7 +233,9 @@ function formatEffortSuffix(
   const effort = updateArgs.reasoning_effort;
   if (typeof effort !== "string" || effort.length === 0) return "";
   const xhighLabel =
-    modelLabel.includes("Opus 4.7") || modelLabel.includes("Opus 4.8")
+    modelLabel.includes("Fable 5") ||
+    modelLabel.includes("Opus 4.7") ||
+    modelLabel.includes("Opus 4.8")
       ? "Extra-High"
       : "Max";
   const labels: Record<string, string> = {

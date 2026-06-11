@@ -494,6 +494,15 @@ describe("getModelHandleFromAgent", () => {
     ).toBe("ollama/llama3.1:8b");
   });
 
+  test("reconstructs provider-qualified handles from model settings", () => {
+    expect(
+      getModelHandleFromAgent({
+        model: "llama3.1:8b",
+        model_settings: { provider_type: "ollama" },
+      }),
+    ).toBe("ollama/llama3.1:8b");
+  });
+
   test("falls back to llm_config endpoint and model for server agents", () => {
     expect(
       getModelHandleFromAgent({

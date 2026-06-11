@@ -33,7 +33,7 @@ export interface PiProviderSpec {
   providerTypes: readonly string[];
   handlePrefixes: readonly string[];
   localProviderNames: readonly string[];
-  defaultModel: string;
+  defaultModel?: string;
   defaultBaseURL?: string;
   apiKeyEnv?: () => string | undefined;
   baseUrlEnv?: () => string | undefined;
@@ -49,7 +49,6 @@ interface PiProviderOverride {
   providerTypes?: readonly string[];
   handlePrefixes?: readonly string[];
   localProviderNames?: readonly string[];
-  defaultModel?: string;
   defaultBaseURL?: string;
   apiKeyEnv?: () => string | undefined;
   baseUrlEnv?: () => string | undefined;
@@ -81,6 +80,55 @@ const PI_PROVIDER_ALIASES: Record<string, PiProvider> = {
   "kimi-code": "kimi-coding",
 };
 
+// Keep LC's built-in provider defaults aligned with Pi TUI's
+// `defaultModelPerProvider` until Pi exposes this through a narrow runtime
+// package/API. Local endpoint providers intentionally have no default here;
+// they must resolve to explicit or discovered local models.
+export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
+  {
+    "amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
+    anthropic: "claude-opus-4-7",
+    openai: "gpt-5.4",
+    "azure-openai-responses": "gpt-5.4",
+    "openai-codex": "gpt-5.5",
+    deepseek: "deepseek-v4-pro",
+    google: "gemini-3.1-pro-preview",
+    "google-vertex": "gemini-3.1-pro-preview",
+    "github-copilot": "gpt-5.4",
+    openrouter: "moonshotai/kimi-k2.6",
+    "vercel-ai-gateway": "zai/glm-5.1",
+    xai: "grok-4.20-0309-reasoning",
+    groq: "openai/gpt-oss-120b",
+    cerebras: "zai-glm-4.7",
+    zai: "glm-5.1",
+    mistral: "devstral-medium-latest",
+    minimax: "MiniMax-M2.7",
+    "minimax-cn": "MiniMax-M2.7",
+    moonshotai: "kimi-k2.6",
+    "moonshotai-cn": "kimi-k2.6",
+    huggingface: "moonshotai/Kimi-K2.6",
+    fireworks: "accounts/fireworks/models/kimi-k2p6",
+    together: "moonshotai/Kimi-K2.6",
+    opencode: "kimi-k2.6",
+    "opencode-go": "kimi-k2.6",
+    "kimi-coding": "kimi-for-coding",
+    "cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
+    "cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
+    xiaomi: "mimo-v2.5-pro",
+    "xiaomi-token-plan-cn": "mimo-v2.5-pro",
+    "xiaomi-token-plan-ams": "mimo-v2.5-pro",
+    "xiaomi-token-plan-sgp": "mimo-v2.5-pro",
+  };
+
+// These pi-ai providers are intentionally absent from Pi TUI's
+// `defaultModelPerProvider`. Keep the omission explicit so newly added pi-ai
+// providers cannot silently inherit catalog-order defaults without review.
+export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  "ant-ling",
+  "nvidia",
+  "zai-coding-cn",
+]);
+
 const PI_PROVIDER_OVERRIDES: Partial<
   Record<KnownProvider, PiProviderOverride>
 > = {
@@ -88,15 +136,12 @@ const PI_PROVIDER_OVERRIDES: Partial<
     providerTypes: ["openai", "openai-responses"],
     handlePrefixes: ["openai/", "openai-responses/"],
     localProviderNames: ["openai", LOCAL_OPENAI_PROVIDER_NAME],
-    defaultModel: "openai/gpt-5.5",
   },
   anthropic: {
     localProviderNames: ["anthropic", LOCAL_ANTHROPIC_PROVIDER_NAME],
-    defaultModel: "anthropic/claude-sonnet-4-6",
   },
   openrouter: {
     localProviderNames: ["openrouter", LOCAL_OPENROUTER_PROVIDER_NAME],
-    defaultModel: "openrouter/deepseek/deepseek-v4-pro",
     baseUrlEnv: () => process.env.OPENROUTER_BASE_URL,
     headers: () => ({ "X-Title": "Letta Code" }),
   },
@@ -108,7 +153,6 @@ const PI_PROVIDER_OVERRIDES: Partial<
       LOCAL_ZAI_PROVIDER_NAME,
       LOCAL_ZAI_CODING_PROVIDER_NAME,
     ],
-    defaultModel: "zai/glm-5.1",
     envConfigured: () =>
       getEnvApiKey("zai") !== undefined ||
       hasEnvValue(process.env.ZHIPU_API_KEY) ||
@@ -116,27 +160,23 @@ const PI_PROVIDER_OVERRIDES: Partial<
   },
   minimax: {
     localProviderNames: ["minimax", LOCAL_MINIMAX_PROVIDER_NAME],
-    defaultModel: "minimax/MiniMax-M2.7",
     baseUrlEnv: () => process.env.MINIMAX_BASE_URL,
   },
   moonshotai: {
     providerTypes: ["moonshotai", "moonshot"],
     handlePrefixes: ["moonshotai/", "moonshot/"],
     localProviderNames: ["moonshotai", LOCAL_MOONSHOT_PROVIDER_NAME],
-    defaultModel: "moonshotai/kimi-k2.5",
     baseUrlEnv: () => process.env.MOONSHOT_BASE_URL,
   },
   "kimi-coding": {
     providerTypes: ["kimi-coding", "moonshot_coding"],
     handlePrefixes: ["kimi-coding/", "moonshot_coding/"],
     localProviderNames: ["kimi-coding", LOCAL_KIMI_CODE_PROVIDER_NAME],
-    defaultModel: "kimi-coding/kimi-for-coding",
   },
   google: {
     providerTypes: ["google", "google_ai"],
     handlePrefixes: ["google/", "google_ai/"],
     localProviderNames: ["google", LOCAL_GOOGLE_AI_PROVIDER_NAME],
-    defaultModel: "google/gemini-3.1-pro-preview",
     apiKeyEnv: () =>
       process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? getEnvApiKey("google"),
     baseUrlEnv: () => process.env.GOOGLE_GENERATIVE_AI_BASE_URL,
@@ -148,13 +188,11 @@ const PI_PROVIDER_OVERRIDES: Partial<
     providerTypes: ["amazon-bedrock", "bedrock"],
     handlePrefixes: ["amazon-bedrock/", "bedrock/"],
     localProviderNames: ["amazon-bedrock", LOCAL_BEDROCK_PROVIDER_NAME],
-    defaultModel: "amazon-bedrock/us.anthropic.claude-sonnet-4-6",
   },
   "openai-codex": {
     providerTypes: ["openai-codex", "chatgpt_oauth"],
     handlePrefixes: ["openai-codex/", "chatgpt-plus-pro/"],
     localProviderNames: ["openai-codex", LOCAL_CHATGPT_PROVIDER_NAME],
-    defaultModel: "openai-codex/gpt-5.5",
   },
 };
 
@@ -162,6 +200,10 @@ function defaultModelForProvider(
   provider: KnownProvider,
   handlePrefix: string,
 ): string {
+  const piTuiDefault = PI_TUI_DEFAULT_MODEL_IDS[provider];
+  if (piTuiDefault) return `${handlePrefix}${piTuiDefault}`;
+  // Match Pi TUI's no-explicit-default behavior for providers omitted from its
+  // default map: use catalog order as the generic fallback.
   const model = getModels(provider)[0] as Model<Api> | undefined;
   return model ? `${handlePrefix}${model.id}` : `${handlePrefix}model`;
 }
@@ -178,9 +220,7 @@ function makePiProviderSpec(provider: KnownProvider): PiProviderSpec {
     providerTypes,
     handlePrefixes,
     localProviderNames,
-    defaultModel:
-      override.defaultModel ??
-      defaultModelForProvider(provider, primaryHandlePrefix),
+    defaultModel: defaultModelForProvider(provider, primaryHandlePrefix),
     ...(override.defaultBaseURL
       ? { defaultBaseURL: override.defaultBaseURL }
       : {}),
@@ -210,7 +250,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     providerTypes: ["ollama"],
     handlePrefixes: ["ollama/"],
     localProviderNames: ["ollama", LOCAL_OLLAMA_PROVIDER_NAME],
-    defaultModel: "ollama/llama2",
     defaultBaseURL: "http://localhost:11434/v1",
     apiKeyEnv: () => process.env.OLLAMA_LOCAL_API_KEY,
     baseUrlEnv: () => process.env.OLLAMA_BASE_URL,
@@ -226,7 +265,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     providerTypes: ["ollama_cloud"],
     handlePrefixes: ["ollama-cloud/"],
     localProviderNames: ["ollama-cloud", LOCAL_OLLAMA_CLOUD_PROVIDER_NAME],
-    defaultModel: "ollama-cloud/gpt-oss:20b",
     defaultBaseURL: "https://ollama.com/v1",
     apiKeyEnv: () => process.env.OLLAMA_API_KEY,
     baseUrlEnv: () => process.env.OLLAMA_CLOUD_BASE_URL,
@@ -242,7 +280,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     ],
     handlePrefixes: ["lmstudio/"],
     localProviderNames: ["lmstudio", LOCAL_LMSTUDIO_PROVIDER_NAME],
-    defaultModel: "lmstudio/google/gemma-3n-e4b",
     defaultBaseURL: "http://127.0.0.1:1234/v1",
     apiKeyEnv: () => process.env.LMSTUDIO_API_KEY,
     baseUrlEnv: () => process.env.LMSTUDIO_BASE_URL,
@@ -258,7 +295,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     providerTypes: ["llama_cpp", "llama.cpp"],
     handlePrefixes: ["llama.cpp/", "llama-cpp/"],
     localProviderNames: ["llama-cpp", LOCAL_LLAMA_CPP_PROVIDER_NAME],
-    defaultModel: "llama.cpp/model",
     defaultBaseURL: "http://localhost:8080/v1",
     apiKeyEnv: () => process.env.LLAMA_CPP_API_KEY,
     baseUrlEnv: () =>
@@ -360,7 +396,7 @@ export function localModelHandle(provider: PiProvider, model: string): string {
   return prefix ? `${prefix}${model}` : model;
 }
 
-export function resolveLocalModel(provider: PiProvider): string {
+export function resolveLocalModel(provider: PiProvider): string | undefined {
   return getPiProviderSpec(provider).defaultModel;
 }
 

@@ -144,13 +144,29 @@ export function getReasoningTierOptionsForHandle(
   const byEffort = new Map<ModelReasoningEffort, string>();
   const registryHandle =
     normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  const effectiveContextWindow =
+    contextWindow ??
+    (() => {
+      const contextWindows = models
+        .filter((model) => model.handle === registryHandle)
+        .map(
+          (model) =>
+            (model.updateArgs as { context_window?: number } | null)
+              ?.context_window,
+        )
+        .filter((value): value is number => typeof value === "number");
+      const uniqueContextWindows = [...new Set(contextWindows)];
+      return uniqueContextWindows.length > 1
+        ? Math.min(...uniqueContextWindows)
+        : undefined;
+    })();
 
   for (const model of models) {
     if (model.handle !== registryHandle) continue;
-    if (contextWindow !== undefined) {
+    if (effectiveContextWindow !== undefined) {
       const mCtx = (model.updateArgs as { context_window?: number } | null)
         ?.context_window;
-      if (mCtx !== contextWindow) continue;
+      if (mCtx !== effectiveContextWindow) continue;
     }
     const effort = (model.updateArgs as { reasoning_effort?: unknown } | null)
       ?.reasoning_effort;

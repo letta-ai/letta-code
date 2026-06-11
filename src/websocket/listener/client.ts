@@ -11,6 +11,10 @@ import {
   resolveRecoveryBatchId,
 } from "./approval";
 import {
+  handleAgentConversationManagementCommand,
+  handleAgentConversationManagementProtocolCommand,
+} from "./commands/agents-conversations";
+import {
   handleChannelRegistryEvent,
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
@@ -25,6 +29,10 @@ import {
   buildModelUpdateStatusMessage,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
+import {
+  handleRuntimeStartCommand,
+  handleRuntimeStartProtocolCommand,
+} from "./commands/runtime-start";
 import {
   handleExperimentCommand,
   handleReflectionSettingsCommand,
@@ -506,6 +514,65 @@ export const __listenClientTestUtils = {
     socket: Parameters<typeof handleChannelRegistryEvent>[1],
     runtime: ListenerRuntime,
   ) => handleChannelRegistryEvent(event, socket, runtime, safeSocketSend),
+  handleAgentConversationManagementCommand: (
+    parsed: Parameters<typeof handleAgentConversationManagementCommand>[0],
+    socket: WebSocket,
+  ) => handleAgentConversationManagementCommand(parsed, socket, safeSocketSend),
+  handleAgentConversationManagementProtocolCommand: (
+    parsed: Parameters<
+      typeof handleAgentConversationManagementProtocolCommand
+    >[0],
+    socket: WebSocket,
+  ) =>
+    handleAgentConversationManagementProtocolCommand(parsed, {
+      socket,
+      safeSocketSend,
+      runDetachedListenerTask,
+    }),
+  handleRuntimeStartCommand: (
+    parsed: Parameters<typeof handleRuntimeStartCommand>[0],
+    socket: WebSocket,
+    runtime: ListenerRuntime,
+  ) =>
+    handleRuntimeStartCommand(parsed, {
+      socket,
+      runtime,
+      safeSocketSend,
+      runDetachedListenerTask,
+      getOrCreateScopedRuntime,
+      replaySyncStateForRuntime: (
+        listenerRuntime,
+        runtimeSocket,
+        scope,
+        opts,
+      ) =>
+        replaySyncStateForRuntime(listenerRuntime, runtimeSocket, scope, {
+          ...opts,
+          scheduleWarmupsAfterSync: () => {},
+        }),
+    }),
+  handleRuntimeStartProtocolCommand: (
+    parsed: Parameters<typeof handleRuntimeStartProtocolCommand>[0],
+    socket: WebSocket,
+    runtime: ListenerRuntime,
+  ) =>
+    handleRuntimeStartProtocolCommand(parsed, {
+      socket,
+      runtime,
+      safeSocketSend,
+      runDetachedListenerTask,
+      getOrCreateScopedRuntime,
+      replaySyncStateForRuntime: (
+        listenerRuntime,
+        runtimeSocket,
+        scope,
+        opts,
+      ) =>
+        replaySyncStateForRuntime(listenerRuntime, runtimeSocket, scope, {
+          ...opts,
+          scheduleWarmupsAfterSync: () => {},
+        }),
+    }),
   handleSkillCommand: (
     parsed: Parameters<typeof handleSkillCommand>[0],
     socket: WebSocket,

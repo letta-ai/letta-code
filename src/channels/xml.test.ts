@@ -70,6 +70,12 @@ describe("formatChannelNotification", () => {
       "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
     );
     expect(reminder).toContain(
+      'For lightweight acknowledgement, prefer MessageChannel action="react" when supported.',
+    );
+    expect(reminder).toContain(
+      "If the useful response belongs later, schedule the follow-up instead of sending a placeholder.",
+    );
+    expect(reminder).toContain(
       "Do not produce a plain text assistant response as the user-visible reply.",
     );
     expect(reminder).toContain('action="react"');

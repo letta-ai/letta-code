@@ -23,8 +23,6 @@ import {
   getBuiltinStatuslineRenderer,
 } from "@/cli/display/statusline/registry";
 import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
-import { evaluateLocalExtensionStatuses } from "@/cli/extensions/local-extension-loader";
-import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
@@ -36,6 +34,8 @@ import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
 import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
+import { evaluateLocalModStatuses } from "@/cli/mods/local-mod-loader";
+import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
   TOKEN_DISPLAY_THRESHOLD,
@@ -47,8 +47,8 @@ import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { colors } from "./colors";
-import { ExtensionPanelRow } from "./ExtensionPanelRow";
 import { InputAssist } from "./InputAssist";
+import { ModPanelRow } from "./ModPanelRow";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { ProductStatusRow } from "./ProductStatusRow";
 import { QueuedMessages } from "./QueuedMessages";
@@ -440,7 +440,7 @@ function BlankStatuslineRow({
 
 /**
  * Bottom statusline slot. Safety states and transient host hints may preempt the
- * row; otherwise custom extensions own the idle row before the built-in default.
+ * row; otherwise custom mods own the idle row before the built-in default.
  */
 const StatuslineSlot = memo(function StatuslineSlot({
   ctrlCPressed,
@@ -458,7 +458,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hideFooter,
   rightColumnWidth,
   statusLinePayload,
-  extensionAdapter,
+  modAdapter,
   transientHint,
 }: {
   ctrlCPressed: boolean;
@@ -476,7 +476,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hideFooter: boolean;
   rightColumnWidth: number;
   statusLinePayload: StatusLinePayload;
-  extensionAdapter: LocalExtensionAdapter;
+  modAdapter: LocalModAdapter;
   transientHint?: StatuslineTransientHint | null;
 }) {
   const hideFooterContent = hideFooter;
@@ -500,24 +500,23 @@ const StatuslineSlot = memo(function StatuslineSlot({
   });
   const statuslineContext = {
     ...baseStatuslineContext,
-    statuses: evaluateLocalExtensionStatuses(
-      extensionAdapter.registry,
+    statuses: evaluateLocalModStatuses(
+      modAdapter.registry,
       baseStatuslineContext,
     ),
   };
-  extensionAdapter.updateContext(statuslineContext);
+  modAdapter.updateContext(statuslineContext);
 
   const builtInStatuslineRenderer = getBuiltinStatuslineRenderer(
     DEFAULT_STATUSLINE_RENDERER_ID,
   );
   const localStatuslineRenderer =
-    extensionAdapter.registry?.ui.statuslineRenderer ?? null;
-  const extensionStatuslineLoading =
-    extensionAdapter.isLoading &&
-    (extensionAdapter.hasExtensionSources ||
-      extensionAdapter.hadStatuslineRenderer);
+    modAdapter.registry?.ui.statuslineRenderer ?? null;
+  const modStatuslineLoading =
+    modAdapter.isLoading &&
+    (modAdapter.hasModSources || modAdapter.hadStatuslineRenderer);
   const customStatuslineActive = Boolean(
-    localStatuslineRenderer || extensionStatuslineLoading,
+    localStatuslineRenderer || modStatuslineLoading,
   );
   const idleSlotAvailable = !hideFooterContent && !preemption && !transientHint;
 
@@ -526,7 +525,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
       return localStatuslineRenderer.render(statuslineContext);
     } catch (error) {
       debugLog(
-        "extensions",
+        "mods",
         "statusline renderer %s failed: %s",
         localStatuslineRenderer.id,
         error instanceof Error ? error.message : String(error),
@@ -534,7 +533,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
     }
   }
 
-  if (idleSlotAvailable && extensionStatuslineLoading) {
+  if (idleSlotAvailable && modStatuslineLoading) {
     return <BlankStatuslineRow rightColumnWidth={rightColumnWidth} />;
   }
 
@@ -929,7 +928,7 @@ export function Input({
   terminalWidth,
   shouldAnimate = true,
   statusLinePayload,
-  extensionAdapter,
+  modAdapter,
   statusLinePrompt,
   onCycleReasoningEffort,
   footerNotification,
@@ -982,7 +981,7 @@ export function Input({
   terminalWidth: number;
   shouldAnimate?: boolean;
   statusLinePayload: StatusLinePayload;
-  extensionAdapter: LocalExtensionAdapter;
+  modAdapter: LocalModAdapter;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
@@ -1928,8 +1927,8 @@ export function Input({
         {interactionEnabled ? (
           <Box flexDirection="column">
             {!suppressDividers && (
-              <ExtensionPanelRow
-                panels={extensionAdapter.registry?.ui.panels}
+              <ModPanelRow
+                panels={modAdapter.registry?.ui.panels}
                 terminalWidth={terminalWidth}
               />
             )}
@@ -2012,7 +2011,7 @@ export function Input({
                 serverUrl={serverUrl}
                 workingDirectory={process.cwd()}
                 conversationId={conversationId}
-                extensionCommands={extensionAdapter.registry?.commands}
+                modCommands={modAdapter.registry?.commands}
               />
             )}
 
@@ -2038,7 +2037,7 @@ export function Input({
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
                 statusLinePayload={statusLinePayload}
-                extensionAdapter={extensionAdapter}
+                modAdapter={modAdapter}
                 transientHint={statuslineTransientHint}
               />
             )}
@@ -2087,7 +2086,7 @@ export function Input({
     reserveInputSpace,
     inputChromeHeight,
     statusLinePayload,
-    extensionAdapter,
+    modAdapter,
 
     goalStatusText,
     promptChar,
