@@ -235,6 +235,13 @@ export function extractFilePath(toolArgs: ToolArgs): string | null {
   ) {
     return toolArgs.notebook_path;
   }
+  // Gemini's glob_gemini / search_file_content / list_directory pass their search
+  // root as `dir_path` (the handler renames it to `path` only at execution time,
+  // after this approval-time check). Read it here so cross-agent enumeration via
+  // those tools is caught for every toolset.
+  if (typeof toolArgs.dir_path === "string" && toolArgs.dir_path.length > 0) {
+    return toolArgs.dir_path;
+  }
   return null;
 }
 

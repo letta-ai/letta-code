@@ -882,3 +882,57 @@ describe("local-backend memfs tree", () => {
     expect(result?.offendingAgentIds).toContain(OTHER);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Toolset alignment: the guard covers Codex/Gemini file tools (not just Claude)
+// on BOTH the API and local trees. Tool names are canonicalized; path args
+// converge on file_path / path / notebook_path / dir_path / patch input.
+// ---------------------------------------------------------------------------
+
+describe("toolset alignment (Codex / Gemini file tools)", () => {
+  const localMemfs = (id: string, rel = ""): string =>
+    join(HOME, ".letta", "lc-local-backend", "memfs", id, "memory", rel);
+
+  beforeEach(() => {
+    cliPermissions.setMemoryGuardDisabled(false);
+  });
+
+  // [toolName, args] pairs that each target OTHER's memory, for both trees.
+  const cases: Array<[string, (target: string) => Record<string, unknown>]> = [
+    ["read_file_gemini", (t) => ({ file_path: t })],
+    ["write_file_gemini", (t) => ({ file_path: t })],
+    ["replace", (t) => ({ file_path: t })], // Gemini edit
+    ["read_file", (t) => ({ file_path: t })], // Codex read
+    ["list_directory", (t) => ({ dir_path: t })], // Gemini list (dir_path!)
+    ["glob_gemini", (t) => ({ pattern: "**/*.md", dir_path: t })],
+    ["search_file_content", (t) => ({ pattern: "secret", dir_path: t })],
+    [
+      "apply_patch",
+      (t) => ({
+        input: `*** Begin Patch\n*** Update File: ${t}\n*** End Patch`,
+      }),
+    ],
+  ];
+
+  for (const [toolName, makeArgs] of cases) {
+    test(`${toolName} → another agent's API memory is denied`, () => {
+      const result = evaluateCrossAgentGuard(
+        toolName,
+        makeArgs(otherMemory("system/persona.md")),
+        "/tmp",
+      );
+      expect(result).not.toBeNull();
+      expect(result?.offendingAgentIds).toContain(OTHER);
+    });
+
+    test(`${toolName} → another agent's LOCAL memory is denied`, () => {
+      const result = evaluateCrossAgentGuard(
+        toolName,
+        makeArgs(localMemfs(OTHER, "system/persona.md")),
+        "/tmp",
+      );
+      expect(result).not.toBeNull();
+      expect(result?.offendingAgentIds).toContain(OTHER);
+    });
+  }
+});
