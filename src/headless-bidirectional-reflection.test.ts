@@ -10,9 +10,9 @@ import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 type JsonObject = Record<string, unknown>;
 
 interface ReflectionTranscriptState {
-  total_completed_turns?: number;
-  reflected_completed_turns?: number;
-  turns_since_last_successful_reflection?: number;
+  total_completed_steps?: number;
+  reflected_completed_steps?: number;
+  steps_since_last_successful_reflection?: number;
   last_reflection_started_at?: string;
   last_reflection_succeeded_at?: string;
   reflected_through_message_id?: string;
@@ -81,15 +81,15 @@ describe("headless bidirectional auto-reflection", () => {
       summary.payloadFiles.length,
       formatSummary(summary),
     ).toBeGreaterThanOrEqual(2);
-    expect(summary.state?.total_completed_turns, formatSummary(summary)).toBe(
+    expect(summary.state?.total_completed_steps, formatSummary(summary)).toBe(
       3,
     );
     expect(
-      summary.state?.reflected_completed_turns,
+      summary.state?.reflected_completed_steps,
       formatSummary(summary),
     ).toBe(2);
     expect(
-      summary.state?.turns_since_last_successful_reflection,
+      summary.state?.steps_since_last_successful_reflection,
       formatSummary(summary),
     ).toBe(1);
     expect(
@@ -195,7 +195,7 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
     if (closeScheduled) return;
     closeScheduled = true;
     void waitForReflectionProgress(transcriptDir, {
-      reflectedCompletedTurns: 2,
+      reflectedCompletedSteps: 2,
       payloadCount: 2,
       timeoutMs: 10_000,
     }).finally(() => {
@@ -252,7 +252,7 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
           // reflection finishes; otherwise the active-reflection guard correctly
           // skips duplicate launches and this test would only verify one cycle.
           void waitForReflectionProgress(transcriptDir, {
-            reflectedCompletedTurns: 1,
+            reflectedCompletedSteps: 1,
             payloadCount: 1,
             timeoutMs: 10_000,
           }).finally(() => sendUser("hello three"));
@@ -317,7 +317,7 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
 async function waitForReflectionProgress(
   getTranscriptDir: () => string | null,
   options: {
-    reflectedCompletedTurns: number;
+    reflectedCompletedSteps: number;
     payloadCount: number;
     timeoutMs: number;
   },
@@ -328,8 +328,8 @@ async function waitForReflectionProgress(
     const state = dir ? readReflectionState(dir) : null;
     const payloadCount = dir ? readPayloadFiles(dir).length : 0;
     if (
-      (state?.reflected_completed_turns ?? 0) >=
-        options.reflectedCompletedTurns &&
+      (state?.reflected_completed_steps ?? 0) >=
+        options.reflectedCompletedSteps &&
       payloadCount >= options.payloadCount
     ) {
       return;

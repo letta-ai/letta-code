@@ -29,9 +29,9 @@ interface Args {
 interface ReflectionTranscriptState {
   schema_version?: string;
   reflected_through_message_id?: string;
-  total_completed_turns?: number;
-  reflected_completed_turns?: number;
-  turns_since_last_successful_reflection?: number;
+  total_completed_steps?: number;
+  reflected_completed_steps?: number;
+  steps_since_last_successful_reflection?: number;
   last_reflection_started_at?: string;
   last_reflection_succeeded_at?: string;
 }
@@ -288,7 +288,7 @@ async function waitForLaunchArtifacts(
     const state = dir ? await readReflectionState(dir) : null;
     const payloadFiles = dir ? await readPayloadFiles(dir) : [];
     if (
-      (state?.total_completed_turns ?? 0) >= 2 &&
+      (state?.total_completed_steps ?? 0) >= 2 &&
       state?.last_reflection_started_at &&
       payloadFiles.length >= 1
     ) {
@@ -449,7 +449,7 @@ function assertScenario(summary: LiveReflectionSummary): void {
   assertTrue(summary.conversationId, `Missing conversation id.\n${details}`);
   assertTrue(
     summary.resultCount >= 2,
-    `Expected at least two completed turns.\n${details}`,
+    `Expected at least two completed steps.\n${details}`,
   );
   assertTrue(
     summary.reflectionLaunchCount >= 1,
@@ -472,12 +472,12 @@ function assertScenario(summary: LiveReflectionSummary): void {
     `Expected at least one auto reflection payload.\n${details}`,
   );
   assertTrue(
-    summary.state?.schema_version === "v2_message_id",
+    summary.state?.schema_version === "v3_assistant_steps",
     `Unexpected reflection state schema.\n${details}`,
   );
   assertTrue(
-    (summary.state?.total_completed_turns ?? 0) >= 2,
-    `Reflection state did not record completed turns.\n${details}`,
+    (summary.state?.total_completed_steps ?? 0) >= 2,
+    `Reflection state did not record completed steps.\n${details}`,
   );
   assertTrue(
     summary.state?.last_reflection_started_at,
