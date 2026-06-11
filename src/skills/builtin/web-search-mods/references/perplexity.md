@@ -92,7 +92,8 @@ export default function activate(letta) {
       if (!apiKey) {
         return {
           status: "error",
-          content: "PERPLEXITY_API_KEY is not set. Export it, then run /reload.",
+          content:
+            "PERPLEXITY_API_KEY is not set in the Letta Code process environment. Restart Letta Code with PERPLEXITY_API_KEY set.",
         };
       }
 

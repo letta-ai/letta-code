@@ -117,7 +117,8 @@ export default function activate(letta) {
       if (!apiKey) {
         return {
           status: "error",
-          content: "EXA_API_KEY is not set. Export it, then run /reload.",
+          content:
+            "EXA_API_KEY is not set in the Letta Code process environment. Restart Letta Code with EXA_API_KEY set.",
         };
       }
 

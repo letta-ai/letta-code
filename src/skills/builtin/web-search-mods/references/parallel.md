@@ -115,7 +115,8 @@ export default function activate(letta) {
       if (!apiKey) {
         return {
           status: "error",
-          content: "PARALLEL_API_KEY is not set. Export it, then run /reload.",
+          content:
+            "PARALLEL_API_KEY is not set in the Letta Code process environment. Restart Letta Code with PARALLEL_API_KEY set.",
         };
       }
 
