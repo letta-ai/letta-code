@@ -284,6 +284,39 @@ describe("app-server client", () => {
     await expect(turn).rejects.toThrow("Timed out waiting for app-server turn");
   });
 
+  test("runTurn rejects concurrent turns for the same runtime", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const first = client.runTurn(
+      {
+        runtime,
+        payload: {
+          kind: "create_message",
+          messages: [{ role: "user", content: "hello" }],
+        },
+      },
+      { timeoutMs: 25 },
+    );
+
+    await expect(
+      client.runTurn({
+        runtime,
+        payload: {
+          kind: "create_message",
+          messages: [{ role: "user", content: "again" }],
+        },
+      }),
+    ).rejects.toThrow("A turn is already in flight for agent-1/conv-1");
+
+    await expect(first).rejects.toThrow(
+      "Timed out waiting for app-server turn",
+    );
+  });
+
   test("runTurn can use guarded loop-status fallback after run evidence", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();

@@ -264,6 +264,7 @@ export class AppServerClient {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly sendHandlers = new Set<AppServerSendHandler>();
+  private readonly activeTurnRuntimes = new Set<string>();
   private nextRequestNumber = 0;
 
   constructor(options: AppServerClientOptions) {
@@ -465,6 +466,13 @@ export class AppServerClient {
     command: Omit<InputCommand, "type">,
     options: AppServerRunTurnOptions = {},
   ): Promise<AppServerTurnResult> {
+    const runtimeKey = `${command.runtime.agent_id}/${command.runtime.conversation_id}`;
+    if (this.activeTurnRuntimes.has(runtimeKey)) {
+      return Promise.reject(
+        new Error(`A turn is already in flight for ${runtimeKey}`),
+      );
+    }
+    this.activeTurnRuntimes.add(runtimeKey);
     const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
     const commandWithIds = this.withClientMessageIds(command);
     const runIds = new Set<string>();
@@ -482,6 +490,7 @@ export class AppServerClient {
 
       const cleanup = () => {
         clearTimeout(timeout);
+        this.activeTurnRuntimes.delete(runtimeKey);
         offMessage();
       };
 
