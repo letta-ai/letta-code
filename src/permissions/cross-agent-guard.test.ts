@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { homedir } from "node:os";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, parse } from "node:path";
 
 import { checkPermission } from "@/permissions/checker";
@@ -11,6 +19,7 @@ import {
   resolveAllowedAgents,
 } from "@/permissions/cross-agent-guard";
 import { permissionMode } from "@/permissions/mode";
+import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 
 const HOME = homedir();
 const SELF = "agent-self";
@@ -40,6 +49,7 @@ const ENV_KEYS_TO_RESET = [
   "LETTA_CODE_AGENT_ROLE",
   "MEMORY_DIR",
   "LETTA_MEMORY_DIR",
+  "LETTA_LOCAL_BACKEND_DIR",
 ] as const;
 
 function snapshotEnv(): Partial<
@@ -225,42 +235,16 @@ describe("extractTargetAgentPaths", () => {
     expect(result.agentIds).toEqual(new Set([OTHER]));
   });
 
-  test("Bash command referencing another agent's memory literally", () => {
+  test("shell tools are not path-analyzed (the kernel sandbox confines spawned shells)", () => {
+    // Shell command analysis was removed: spawned shells run inside the kernel
+    // filesystem sandbox, so the guard no longer tokenizes shell commands.
     const result = extractTargetAgentPaths(
       "Bash",
       { command: `cat ${otherMemory("system/persona.md")}` },
       "/tmp",
     );
-    expect(result.anyAgentScoped).toBe(true);
-    expect(result.agentIds).toEqual(new Set([OTHER]));
-  });
-
-  test("Bash command with MEMORY_DIR env var pointing at another agent", () => {
-    const result = extractTargetAgentPaths(
-      "Bash",
-      { command: "rm -rf $MEMORY_DIR/system" },
-      "/tmp",
-      { ...process.env, MEMORY_DIR: otherMemory() } as NodeJS.ProcessEnv,
-    );
-    expect(result.agentIds).toEqual(new Set([OTHER]));
-  });
-
-  test("Bash read-only inspection against another agent's memory still trips the guard", () => {
-    const result = extractTargetAgentPaths(
-      "Bash",
-      { command: `ls ${otherMemory()}` },
-      "/tmp",
-    );
-    expect(result.agentIds).toEqual(new Set([OTHER]));
-  });
-
-  test("Bash command against /tmp does not trip the guard", () => {
-    const result = extractTargetAgentPaths(
-      "Bash",
-      { command: "ls /tmp && echo ok" },
-      "/tmp",
-    );
     expect(result.anyAgentScoped).toBe(false);
+    expect(result.agentIds.size).toBe(0);
   });
 
   test("Glob/Grep against another agent's memory", () => {
@@ -269,30 +253,6 @@ describe("extractTargetAgentPaths", () => {
     ).toEqual(new Set([OTHER]));
     expect(
       extractTargetAgentPaths("Grep", { path: otherMemory() }, "/tmp").agentIds,
-    ).toEqual(new Set([OTHER]));
-  });
-
-  test("shell tool aliases (run_shell_command, shell_command, exec_command) work", () => {
-    expect(
-      extractTargetAgentPaths(
-        "run_shell_command",
-        { command: `cat ${otherMemory()}/x.md` },
-        "/tmp",
-      ).agentIds,
-    ).toEqual(new Set([OTHER]));
-    expect(
-      extractTargetAgentPaths(
-        "shell_command",
-        { command: `ls ${otherMemory()}` },
-        "/tmp",
-      ).agentIds,
-    ).toEqual(new Set([OTHER]));
-    expect(
-      extractTargetAgentPaths(
-        "exec_command",
-        { cmd: `ls ${otherMemory()}` },
-        "/tmp",
-      ).agentIds,
     ).toEqual(new Set([OTHER]));
   });
 });
@@ -395,13 +355,13 @@ describe("evaluateCrossAgentGuard", () => {
     expect(result).not.toBeNull();
   });
 
-  test("bash read-only against other agent's memory is gated", () => {
+  test("bash against another agent's memory defers to the kernel sandbox (guard returns null)", () => {
     const result = evaluateCrossAgentGuard(
       "Bash",
       { command: `cat ${otherMemory()}/system/x.md` },
       "/tmp",
     );
-    expect(result).not.toBeNull();
+    expect(result).toBeNull();
   });
 });
 
@@ -521,7 +481,7 @@ describe("checkPermission integration", () => {
     }
   });
 
-  test("bash against another agent's memory is denied even in unrestricted", () => {
+  test("bash against another agent's memory is NOT guard-denied (kernel sandbox confines spawned shells)", () => {
     permissionMode.setMode("unrestricted");
     const result = checkPermission(
       "Bash",
@@ -529,8 +489,9 @@ describe("checkPermission integration", () => {
       permissions,
       "/tmp",
     );
-    expect(result.decision).toBe("deny");
-    expect(result.matchedRule).toBe("cross-agent guard");
+    // The static guard no longer analyzes shell commands; the kernel filesystem
+    // sandbox confines the spawned shell instead.
+    expect(result.matchedRule).not.toBe("cross-agent guard");
   });
 
   test("CLI --disable-memory-guard opens access in acceptEdits mode", () => {
@@ -544,117 +505,6 @@ describe("checkPermission integration", () => {
     );
     // acceptEdits allows writes, and the guard is intentionally disabled.
     expect(result.decision).toBe("allow");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Regression tests: known bypass patterns (from real exploit attempts)
-//
-// Command fixtures below contain shell brace-variable syntax inside plain
-// strings. Biome's noTemplateCurlyInString rule flags these, but they are
-// intentional: they're shell commands, not mistaken template literals.
-// ---------------------------------------------------------------------------
-
-describe("shell bypass regression tests", () => {
-  beforeEach(() => {
-    cliPermissions.setMemoryGuardDisabled(false);
-  });
-
-  test("enumeration: ls ~/.letta/agents is denied", () => {
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      { command: "ls ~/.letta/agents" },
-      "/tmp",
-    );
-    expect(result).not.toBeNull();
-    expect(result?.matchedRule).toBe("cross-agent guard");
-  });
-
-  test("enumeration: find over the whole agents tree is denied", () => {
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      {
-        command: `find "\${HOME}/.letta/agents" -mindepth 1 -maxdepth 1 -type d`,
-      },
-      "/tmp",
-    );
-    expect(result).not.toBeNull();
-  });
-
-  test("command substitution: assigning a computed target path is denied", () => {
-    // Exploit variant 1 (finds another agent via dynamic path resolution).
-    const command = [
-      'CURRENT="$AGENT_ID"',
-      `BASE="\${HOME}/.letta/agents"`,
-      'TARGET="$(find "$BASE" -mindepth 1 -maxdepth 1 -type d ! -name "$CURRENT" | sort | head -n 1)"',
-      'cat "$TARGET/memory/system/persona.md"',
-    ].join("\n");
-    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).not.toBeNull();
-  });
-
-  test("command substitution variant 2 (find -name memory) is denied", () => {
-    const command = [
-      'CURRENT="$AGENT_ID"',
-      `BASE="\${HOME}/.letta/agents"`,
-      'TARGET="$(find "$BASE" -mindepth 2 -maxdepth 2 -type d -name memory | grep -v "/$CURRENT/" | sort | head -n 1)"',
-      'cat "$TARGET/system/persona.md"',
-    ].join("\n");
-    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).not.toBeNull();
-  });
-
-  test("literal-but-unknown agent ID in quoted assignment is denied", () => {
-    // Exploit variant 3 — the one that actually succeeded previously
-    // because the quote-wrapping on the assignment value broke the
-    // anchored path regex.
-    const command = [
-      `TARGET="\${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"`,
-      'sed -n "1,80p" "$TARGET/system/persona.md"',
-    ].join("\n");
-    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).not.toBeNull();
-    expect(result?.offendingAgentIds).toContain(
-      "agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada",
-    );
-  });
-
-  test("tilde-expansion with unknown agent ID is denied", () => {
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      { command: "cat ~/.letta/agents/agent-victim/memory/system/persona.md" },
-      "/tmp",
-    );
-    expect(result).not.toBeNull();
-  });
-
-  test(`self-targeting references using \${AGENT_ID} pass through`, () => {
-    process.env.AGENT_ID = SELF;
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      {
-        command: `cat "\${HOME}/.letta/agents/\${AGENT_ID}/memory/system/persona.md"`,
-      },
-      "/tmp",
-    );
-    expect(result).toBeNull();
-  });
-
-  test("raw-command access passes through when parent disables the guard", () => {
-    cliPermissions.setMemoryGuardDisabled(true);
-    const command = `TARGET="\${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"
-cat "$TARGET/system/persona.md"`;
-    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).toBeNull();
-  });
-
-  test("legitimate bash touching nothing under .letta/agents is not denied", () => {
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      { command: "ls /tmp && echo ok" },
-      "/tmp",
-    );
-    expect(result).toBeNull();
   });
 });
 
@@ -801,4 +651,288 @@ describe("Grep/Glob ancestor-path regression tests", () => {
     );
     expect(result).not.toBeNull();
   });
+});
+
+describe("symlink-escape (realpath classification of in-process file tools)", () => {
+  // Real temp dirs with real symlinks: the realpath classification only has
+  // teeth when the paths actually exist on disk. Each test builds a throwaway
+  // home (~/.letta/agents/<id>/memory) and injects it as the guard's homeDir.
+  const tempHomes: string[] = [];
+
+  function makeTempHome(): string {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "xa-guard-")));
+    tempHomes.push(home);
+    return home;
+  }
+
+  function agentMemory(home: string, id: string, rel = ""): string {
+    return join(home, ".letta", "agents", id, "memory", rel);
+  }
+
+  afterEach(() => {
+    while (tempHomes.length) {
+      rmSync(tempHomes.pop() as string, { recursive: true, force: true });
+    }
+  });
+
+  test("Read through a symlink into another agent's memory is attributed to that agent", () => {
+    const home = makeTempHome();
+    const otherMem = agentMemory(home, "agent-other");
+    mkdirSync(otherMem, { recursive: true });
+    writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
+
+    // A benign-looking symlink in the user's project pointing into other's memory.
+    const projectDir = join(home, "project");
+    mkdirSync(projectDir, { recursive: true });
+    const link = join(projectDir, "link");
+    symlinkSync(otherMem, link);
+
+    const targets = extractTargetAgentPaths(
+      "Read",
+      { file_path: join(link, "secret.md") },
+      projectDir,
+      {},
+      home,
+    );
+
+    expect(targets.anyAgentScoped).toBe(true);
+    expect([...targets.agentIds]).toContain("agent-other");
+  });
+
+  test("Writing a not-yet-existing file through a symlinked dir still resolves to the agent", () => {
+    const home = makeTempHome();
+    const otherMem = agentMemory(home, "agent-other");
+    mkdirSync(otherMem, { recursive: true });
+    const link = join(home, "link-to-other");
+    symlinkSync(otherMem, link);
+
+    const targets = extractTargetAgentPaths(
+      "Write",
+      { file_path: join(link, "implanted.md") }, // leaf does not exist yet
+      home,
+      {},
+      home,
+    );
+
+    expect([...targets.agentIds]).toContain("agent-other");
+  });
+
+  test("a symlink from inside self's own memory into another agent is still caught", () => {
+    const home = makeTempHome();
+    const selfMem = agentMemory(home, "agent-self");
+    const otherMem = agentMemory(home, "agent-other");
+    mkdirSync(selfMem, { recursive: true });
+    mkdirSync(otherMem, { recursive: true });
+    writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
+
+    // The hole that a lexical-only check (or a realpath check skipped when the
+    // lexical path already looks like self) would miss.
+    const sneaky = join(selfMem, "sneaky");
+    symlinkSync(otherMem, sneaky);
+
+    const targets = extractTargetAgentPaths(
+      "Read",
+      { file_path: join(sneaky, "secret.md") },
+      selfMem,
+      {},
+      home,
+    );
+
+    // Lexically this is agent-self (allowed); realpath reveals agent-other.
+    expect([...targets.agentIds]).toContain("agent-self");
+    expect([...targets.agentIds]).toContain("agent-other");
+  });
+
+  test("evaluateCrossAgentGuard denies a symlink escape end-to-end", () => {
+    const home = makeTempHome();
+    const otherMem = agentMemory(home, "agent-other");
+    mkdirSync(otherMem, { recursive: true });
+    writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
+    const link = join(home, "escape");
+    symlinkSync(otherMem, link);
+
+    const result = evaluateCrossAgentGuard(
+      "Read",
+      { file_path: join(link, "secret.md") },
+      home,
+      {
+        env: { HOME: home } as NodeJS.ProcessEnv,
+        currentAgentId: "agent-self",
+        disableMemoryGuard: false,
+      },
+    );
+
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toContain("agent-other");
+  });
+
+  test("a plain (non-symlinked) path outside the tree is not a false positive", () => {
+    const home = makeTempHome();
+    const projectDir = join(home, "project");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, "notes.md"), "hi");
+
+    const targets = extractTargetAgentPaths(
+      "Read",
+      { file_path: join(projectDir, "notes.md") },
+      projectDir,
+      {},
+      home,
+    );
+
+    expect(targets.anyAgentScoped).toBe(false);
+    expect([...targets.agentIds]).toHaveLength(0);
+  });
+});
+
+describe("sandboxed subagent defers entirely to the kernel", () => {
+  // A subagent confined as a whole process by the kernel sandbox (sentinel set)
+  // gets cross-agent isolation enforced for every tool, so the guard skips.
+  const subagentEnv = {
+    LETTA_CODE_AGENT_ROLE: "subagent",
+    LETTA_PARENT_AGENT_ID: "agent-parent",
+  } as NodeJS.ProcessEnv;
+  const crossAgentRead = { file_path: otherMemory("secret.md") };
+
+  test("without the sandbox sentinel the guard still denies the cross-agent read", () => {
+    const result = evaluateCrossAgentGuard("Read", crossAgentRead, "/tmp", {
+      env: subagentEnv,
+      currentAgentId: "agent-self",
+    });
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toContain(OTHER);
+  });
+
+  test("with the sentinel the guard defers (the kernel owns the whole process)", () => {
+    const result = evaluateCrossAgentGuard("Read", crossAgentRead, "/tmp", {
+      env: { ...subagentEnv, [SANDBOX_ENV_VAR]: "seatbelt" },
+      currentAgentId: "agent-self",
+    });
+    expect(result).toBeNull();
+  });
+});
+
+describe("local-backend memfs tree", () => {
+  // Local-backend memory lives at ~/.letta/lc-local-backend/memfs/<id>/memory,
+  // not ~/.letta/agents. The kernel sandbox confines local subagents and shells,
+  // but the parent agent's in-process Read/Edit/Write never fork, so this guard
+  // is their only cross-agent backstop on local too.
+  const localMemfs = (id: string, rel = ""): string =>
+    join(HOME, ".letta", "lc-local-backend", "memfs", id, "memory", rel);
+
+  beforeEach(() => {
+    cliPermissions.setMemoryGuardDisabled(false);
+  });
+
+  test("extractTargetAgentPaths attributes a local memfs path to its agent", () => {
+    const result = extractTargetAgentPaths(
+      "Write",
+      { file_path: localMemfs(OTHER, "system/persona.md") },
+      "/tmp",
+    );
+    expect(result.anyAgentScoped).toBe(true);
+    expect(result.agentIds).toEqual(new Set([OTHER]));
+  });
+
+  test("Read of another local agent's memory is denied", () => {
+    const result = evaluateCrossAgentGuard(
+      "Read",
+      { file_path: localMemfs(OTHER, "system/persona.md") },
+      "/tmp",
+    );
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toContain(OTHER);
+  });
+
+  test("own local memory passes", () => {
+    process.env.AGENT_ID = SELF;
+    const result = evaluateCrossAgentGuard(
+      "Write",
+      { file_path: localMemfs(SELF, "note.md") },
+      "/tmp",
+    );
+    expect(result).toBeNull();
+  });
+
+  test("enumerating the local memfs tree root is denied", () => {
+    const result = evaluateCrossAgentGuard(
+      "ListDir",
+      { path: join(HOME, ".letta", "lc-local-backend", "memfs") },
+      "/tmp",
+    );
+    expect(result).not.toBeNull();
+  });
+
+  test("honors the LETTA_LOCAL_BACKEND_DIR storage override", () => {
+    const customStorage = join(HOME, "custom-letta-store");
+    const result = evaluateCrossAgentGuard(
+      "Read",
+      { file_path: join(customStorage, "memfs", OTHER, "memory", "x.md") },
+      "/tmp",
+      {
+        env: {
+          HOME,
+          AGENT_ID: SELF,
+          LETTA_LOCAL_BACKEND_DIR: customStorage,
+        } as NodeJS.ProcessEnv,
+        currentAgentId: SELF,
+      },
+    );
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toContain(OTHER);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Toolset alignment: the guard covers Codex/Gemini file tools (not just Claude)
+// on BOTH the API and local trees. Tool names are canonicalized; path args
+// converge on file_path / path / notebook_path / dir_path / patch input.
+// ---------------------------------------------------------------------------
+
+describe("toolset alignment (Codex / Gemini file tools)", () => {
+  const localMemfs = (id: string, rel = ""): string =>
+    join(HOME, ".letta", "lc-local-backend", "memfs", id, "memory", rel);
+
+  beforeEach(() => {
+    cliPermissions.setMemoryGuardDisabled(false);
+  });
+
+  // [toolName, args] pairs that each target OTHER's memory, for both trees.
+  const cases: Array<[string, (target: string) => Record<string, unknown>]> = [
+    ["read_file_gemini", (t) => ({ file_path: t })],
+    ["write_file_gemini", (t) => ({ file_path: t })],
+    ["replace", (t) => ({ file_path: t })], // Gemini edit
+    ["read_file", (t) => ({ file_path: t })], // Codex read
+    ["list_directory", (t) => ({ dir_path: t })], // Gemini list (dir_path!)
+    ["glob_gemini", (t) => ({ pattern: "**/*.md", dir_path: t })],
+    ["search_file_content", (t) => ({ pattern: "secret", dir_path: t })],
+    [
+      "apply_patch",
+      (t) => ({
+        input: `*** Begin Patch\n*** Update File: ${t}\n*** End Patch`,
+      }),
+    ],
+  ];
+
+  for (const [toolName, makeArgs] of cases) {
+    test(`${toolName} → another agent's API memory is denied`, () => {
+      const result = evaluateCrossAgentGuard(
+        toolName,
+        makeArgs(otherMemory("system/persona.md")),
+        "/tmp",
+      );
+      expect(result).not.toBeNull();
+      expect(result?.offendingAgentIds).toContain(OTHER);
+    });
+
+    test(`${toolName} → another agent's LOCAL memory is denied`, () => {
+      const result = evaluateCrossAgentGuard(
+        toolName,
+        makeArgs(localMemfs(OTHER, "system/persona.md")),
+        "/tmp",
+      );
+      expect(result).not.toBeNull();
+      expect(result?.offendingAgentIds).toContain(OTHER);
+    });
+  }
 });
