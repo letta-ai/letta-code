@@ -567,6 +567,46 @@ export class LocalBackend extends HeadlessBackend {
       : undefined;
   }
 
+  /**
+   * Resolve the model that compaction should use for a conversation.
+   *
+   * A normal turn runs on the conversation's model override (set via `/model`),
+   * but compaction previously read only the agent's base model — so switching
+   * a conversation's model never changed which model compaction (and its
+   * summarizer) used. This overlays the conversation's `model` / `model_settings`
+   * onto the agent record so compaction mirrors the turn path.
+   */
+  private effectiveAgentForConversation(
+    conversationId: string,
+    agentId: string,
+  ): LocalAgentRecord {
+    const agent = this.store.retrieveAgentRecord(agentId);
+    const conversation = this.store.retrieveConversation(
+      conversationId,
+      agentId,
+    ) as { model?: unknown; model_settings?: unknown };
+    const model =
+      typeof conversation.model === "string" ? conversation.model : undefined;
+    const conversationModelSettings = isRecord(conversation.model_settings)
+      ? conversation.model_settings
+      : undefined;
+    if (model === undefined && conversationModelSettings === undefined) {
+      return agent;
+    }
+    return {
+      ...agent,
+      ...(model !== undefined ? { model } : {}),
+      ...(conversationModelSettings !== undefined
+        ? {
+            model_settings: {
+              ...agent.model_settings,
+              ...conversationModelSettings,
+            },
+          }
+        : {}),
+    };
+  }
+
   private resolveCompactionSettings(
     agent: LocalAgentRecord,
     body?: ConversationMessageCompactBody,
@@ -635,7 +675,7 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats: LocalCompactionStats;
   }> {
-    const agent = this.store.retrieveAgentRecord(agentId);
+    const agent = this.effectiveAgentForConversation(conversationId, agentId);
     const settings = this.resolveCompactionSettings(agent, body);
     let result: {
       numMessagesBefore: number;

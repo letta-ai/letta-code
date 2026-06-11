@@ -670,6 +670,82 @@ describe("local backend pi transcript", () => {
     expect(systemPrompts[1]).not.toBe(systemPrompts[0]);
   });
 
+  test("compaction follows the conversation model override, not the agent base", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-model-"),
+    );
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "anthropic",
+        providerName: "lc-anthropic",
+        apiKey: "secret-key",
+      });
+
+      const executor: HeadlessTurnExecutor = {
+        async execute() {
+          return lettaStreamFromChunks([
+            {
+              message_type: "assistant_message",
+              content: [{ type: "text", text: "ok" }],
+            } as LettaStreamingResponse,
+            {
+              message_type: "stop_reason",
+              stop_reason: "end_turn",
+            } as LettaStreamingResponse,
+          ]);
+        },
+      };
+
+      let summarizerModelId: string | undefined;
+      const complete = async (
+        ...args: unknown[]
+      ): Promise<AssistantMessage> => {
+        summarizerModelId = (args[0] as { id?: string } | undefined)?.id;
+        return assistantMessage({
+          responseId: "summary-response",
+          stopReason: "stop",
+          content: [{ type: "text", text: "Compacted summary." }],
+        });
+      };
+
+      const backend = new LocalBackend({
+        storageDir,
+        executor,
+        complete,
+        memfsEnabled: false,
+      });
+      const agent = await backend.createAgent({
+        name: "Local",
+        model: "anthropic/claude-fable-5",
+        model_settings: { provider_type: "anthropic" },
+      } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: { provider_type: "anthropic" },
+      } as never);
+
+      await drain(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "first" }],
+        } as ConversationMessageCreateBody),
+      );
+
+      await backend.compactConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never);
+
+      // Agent base model is Fable; the conversation override is Sonnet 4.6.
+      // Compaction (and its summarizer) must follow the conversation, not the
+      // agent base model.
+      expect(summarizerModelId).toBe("claude-sonnet-4-6");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("lists pi catalog models for configured zAI coding provider", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-pi-zai-"));
     await createOrUpdateLocalProvider({
