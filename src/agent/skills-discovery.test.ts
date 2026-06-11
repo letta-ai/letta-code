@@ -6,8 +6,25 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
-import { discoverSkills } from "@/agent/skills";
+import { dirname, join } from "node:path";
+import { discoverSkills, getBundledSkills } from "@/agent/skills";
+
+describe("bundled web search mod skill", () => {
+  test("includes Perplexity, Exa, and Parallel provider references", async () => {
+    const bundledSkills = await getBundledSkills();
+    const skill = bundledSkills.find((item) => item.id === "web-search-mods");
+
+    expect(skill).toBeDefined();
+    expect(skill?.description).toContain("Perplexity");
+    expect(skill?.description).toContain("Exa");
+    expect(skill?.description).toContain("Parallel");
+
+    const skillRoot = dirname(skill?.path ?? "");
+    for (const fileName of ["perplexity.md", "exa.md", "parallel.md"]) {
+      expect(existsSync(join(skillRoot, "references", fileName))).toBe(true);
+    }
+  });
+});
 
 describe.skipIf(process.platform === "win32")(
   "skills discovery with symlinks",
