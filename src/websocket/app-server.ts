@@ -6,6 +6,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { loadTools } from "@/tools/manager";
+import { installExternalToolBridge } from "@/websocket/listener/external-tools";
 import {
   attachOpenListenerSocket,
   createRuntime,
@@ -203,6 +204,7 @@ async function startControlSession(params: {
   runtime.onWsEvent = undefined;
   runtime.connectionId = `app-server-${crypto.randomUUID()}`;
   runtime.connectionName = params.connectionName;
+  installExternalToolBridge(runtime);
   setActiveRuntime(runtime);
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();

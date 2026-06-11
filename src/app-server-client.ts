@@ -1,6 +1,10 @@
 import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
+  ExternalToolCallRequestMessage,
+  ExternalToolCallResult,
+  ExternalToolsRegisterCommand,
+  ExternalToolsRegisterResponseMessage,
   InputCommand,
   LoopStatusUpdateMessage,
   RuntimeScope,
@@ -28,6 +32,10 @@ export type AppServerMessageHandler = (
 
 /** Called synchronously before a protocol command is written to the control socket. */
 export type AppServerSendHandler = (command: WsProtocolCommand) => void;
+
+export type AppServerExternalToolCallHandler = (
+  request: ExternalToolCallRequestMessage,
+) => ExternalToolCallResult | Promise<ExternalToolCallResult>;
 
 export interface AppServerSocketLike {
   readyState: number;
@@ -456,6 +464,57 @@ export class AppServerClient {
           message.type === "abort_message_response",
       },
     );
+  }
+
+  registerExternalTools(
+    command: Omit<ExternalToolsRegisterCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<ExternalToolsRegisterResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<ExternalToolsRegisterResponseMessage> {
+    return this.request(
+      {
+        type: "external_tools_register",
+        request_id:
+          command.request_id ?? this.nextRequestId("external-tools-register"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (message): message is ExternalToolsRegisterResponseMessage =>
+          message.type === "external_tools_register_response",
+      },
+    );
+  }
+
+  onExternalToolCall(handler: AppServerExternalToolCallHandler): () => void {
+    return this.onMessage((message, channel) => {
+      if (
+        channel !== "control" ||
+        message.type !== "external_tool_call_request"
+      ) {
+        return;
+      }
+
+      void Promise.resolve(handler(message))
+        .then((result) => {
+          this.send({
+            type: "external_tool_call_response",
+            request_id: message.request_id,
+            result,
+          });
+        })
+        .catch((error) => {
+          this.send({
+            type: "external_tool_call_response",
+            request_id: message.request_id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    });
   }
 
   input(command: Omit<InputCommand, "type">): void {

@@ -700,6 +700,12 @@ export interface InputCreateMessagePayload {
    * client tools for this turn.
    */
   client_tool_allowlist?: string[];
+  /**
+   * Optional scoped external-tool registrations to expose for this turn.
+   * Scoped registrations stay hidden unless selected here; unscoped external
+   * tools preserve the existing SDK behavior and remain available normally.
+   */
+  external_tool_scope_ids?: string[];
 }
 
 export type InputApprovalResponsePayload = {
@@ -795,6 +801,62 @@ export interface RuntimeStartCommand {
   recover_approvals?: boolean;
   /** Force the initial state replay to include update_device_status. Defaults to true. */
   force_device_status?: boolean;
+}
+
+export interface ExternalToolDefinitionPayload {
+  name: string;
+  label?: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface ExternalToolsRegisterCommand {
+  type: "external_tools_register";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Hidden controller-defined scope used to select these tools on input turns. */
+  scope_id?: string;
+  /** Optional runtime this registration is intended for. Used for diagnostics/callbacks. */
+  runtime?: RuntimeScope;
+  tools: ExternalToolDefinitionPayload[];
+}
+
+export interface ExternalToolsRegisterResponseMessage {
+  type: "external_tools_register_response";
+  request_id: string;
+  success: boolean;
+  scope_id?: string;
+  tool_names: string[];
+  error?: string;
+}
+
+export interface ExternalToolCallRequestMessage {
+  type: "external_tool_call_request";
+  request_id: string;
+  runtime?: RuntimeScope;
+  scope_id?: string;
+  tool_call_id: string;
+  tool_name: string;
+  input: Record<string, unknown>;
+}
+
+export interface ExternalToolCallResultContent {
+  type: string;
+  text?: string;
+  data?: string;
+  mimeType?: string;
+}
+
+export interface ExternalToolCallResult {
+  content: ExternalToolCallResultContent[];
+  is_error?: boolean;
+}
+
+export interface ExternalToolCallResponseCommand {
+  type: "external_tool_call_response";
+  request_id: string;
+  result?: ExternalToolCallResult;
+  error?: string;
 }
 
 export interface TerminalSpawnCommand {
@@ -2600,6 +2662,8 @@ export type WsProtocolCommand =
   | AbortMessageCommand
   | SyncCommand
   | RuntimeStartCommand
+  | ExternalToolsRegisterCommand
+  | ExternalToolCallResponseCommand
   | TerminalSpawnCommand
   | TerminalInputCommand
   | TerminalResizeCommand
@@ -2750,6 +2814,8 @@ export type WsProtocolMessage =
   | ConversationMessagesListResponseMessage
   | ConversationCompactResponseMessage
   | RuntimeStartResponseMessage
+  | ExternalToolsRegisterResponseMessage
+  | ExternalToolCallRequestMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
   | ListConversationPinsResponseMessage

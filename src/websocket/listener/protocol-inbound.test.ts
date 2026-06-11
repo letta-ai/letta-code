@@ -20,6 +20,59 @@ describe("app-server protocol hard cut", () => {
   });
 });
 
+describe("app-server external tool protocol", () => {
+  test("accepts external tool registration and call responses", () => {
+    const registration = {
+      type: "external_tools_register" as const,
+      request_id: "register-1",
+      scope_id: "council-1",
+      runtime: { agent_id: "agent-1", conversation_id: "default" },
+      tools: [
+        {
+          name: "council-write",
+          label: "Council Write",
+          description: "Write council opinion",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+      ],
+    };
+    const response = {
+      type: "external_tool_call_response" as const,
+      request_id: "tool-call-1",
+      result: {
+        content: [{ type: "text", text: "ok" }],
+        is_error: false,
+      },
+    };
+
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(registration))),
+    ).toEqual(registration);
+    expect(parseServerMessage(Buffer.from(JSON.stringify(response)))).toEqual(
+      response,
+    );
+  });
+
+  test("rejects malformed external tool registration and call responses", () => {
+    const invalidRegistration = {
+      type: "external_tools_register",
+      request_id: "register-1",
+      tools: [{ name: "missing-description", parameters: {} }],
+    };
+    const invalidResponse = {
+      type: "external_tool_call_response",
+      request_id: "tool-call-1",
+    };
+
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(invalidRegistration))),
+    ).toBeNull();
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(invalidResponse))),
+    ).toBeNull();
+  });
+});
+
 describe("agent/conversation management protocol-inbound validators", () => {
   test.each([
     {

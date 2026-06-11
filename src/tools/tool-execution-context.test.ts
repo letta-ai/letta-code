@@ -52,6 +52,7 @@ import {
   prepareToolExecutionContextForSpecificTools,
   refreshDynamicChannelToolsInLoadedRegistry,
   registerExternalTools,
+  setExternalToolExecutor,
 } from "@/tools/manager";
 import {
   prepareToolExecutionContextForScope,
@@ -407,6 +408,71 @@ describe("tool execution context snapshot", () => {
 
     expect(prepared.loadedToolNames).toEqual([]);
     expect(prepared.clientTools).toEqual([]);
+  });
+
+  test("scoped external tools stay hidden unless their scope is selected", async () => {
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "Unscoped external tool",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+      {
+        name: "CouncilWrite",
+        description: "Council tool for scope a",
+        parameters: { type: "object", properties: {}, required: [] },
+        scopeId: "council-a",
+      },
+      {
+        name: "CouncilWrite",
+        description: "Council tool for scope b",
+        parameters: { type: "object", properties: {}, required: [] },
+        scopeId: "council-b",
+      },
+    ]);
+
+    const withoutScope = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      { clientToolAllowlist: ["RemoteFoo", "CouncilWrite"] },
+    );
+    expect(withoutScope.clientTools.map((tool) => tool.name)).toEqual([
+      "RemoteFoo",
+    ]);
+
+    const withScope = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["CouncilWrite"],
+        externalToolScopeIds: ["council-b"],
+      },
+    );
+    expect(withScope.clientTools).toEqual([
+      {
+        name: "CouncilWrite",
+        description: "Council tool for scope b",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+
+    setExternalToolExecutor(
+      async (_toolCallId, _toolName, _input, context) => ({
+        content: [
+          {
+            type: "text",
+            text: `scope:${context?.tool.scopeId ?? "none"}`,
+          },
+        ],
+        isError: false,
+      }),
+    );
+
+    const result = await executeTool(
+      "CouncilWrite",
+      {},
+      { toolContextId: withScope.contextId },
+    );
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("scope:council-b");
   });
 
   test("prepares and executes mod tools from turn snapshots", async () => {

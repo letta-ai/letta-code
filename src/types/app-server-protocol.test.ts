@@ -113,6 +113,19 @@ describe("app-server protocol export", () => {
         conversation: null,
         created: { agent: false, conversation: false },
       },
+      {
+        type: "external_tools_register_response",
+        request_id: "req",
+        success: true,
+        tool_names: ["council-write"],
+      },
+      {
+        type: "external_tool_call_request",
+        request_id: "req",
+        tool_call_id: "call-1",
+        tool_name: "council-write",
+        input: {},
+      },
     ] satisfies WsProtocolMessage[];
 
     expect(messages.map((message) => message.type)).toEqual([
@@ -134,6 +147,8 @@ describe("app-server protocol export", () => {
       "conversation_messages_list_response",
       "conversation_compact_response",
       "runtime_start_response",
+      "external_tools_register_response",
+      "external_tool_call_request",
     ]);
   });
 });

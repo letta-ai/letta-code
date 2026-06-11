@@ -55,6 +55,7 @@ import {
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
 import { loadPersistedCwdMap } from "./cwd";
+import { rejectPendingExternalToolCalls } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
 import { createListenerMessageHandler } from "./message-router";
 import {
@@ -782,6 +783,7 @@ export function createRuntime(): ListenerRuntime {
     connectionName: null,
     conversationRuntimes: new Map(),
     approvalRuntimeKeyByRequestId: new Map(),
+    pendingExternalToolCalls: new Map(),
     memfsSyncedAgents: new Map(),
     secretsHydrationByAgent: new Map(),
     secretsHydrationFreshnessByAgent: new Map(),
@@ -812,6 +814,7 @@ export function stopRuntime(
   }
   runtime.conversationRuntimes.clear();
   runtime.approvalRuntimeKeyByRequestId.clear();
+  rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
   clearListenerWarmState(runtime);
   runtime.reminderStateByConversation.clear();
   runtime.contextTrackerByConversation.clear();

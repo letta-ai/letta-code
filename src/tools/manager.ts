@@ -327,16 +327,28 @@ function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
 function filterExternalToolsByClientAllowlist(
   externalTools: Map<string, ExternalToolDefinition>,
   clientToolAllowlist?: string[],
+  externalToolScopeIds?: string[],
 ): Map<string, ExternalToolDefinition> {
+  const scopeSet =
+    externalToolScopeIds === undefined
+      ? undefined
+      : new Set(externalToolScopeIds);
+  const scopeFiltered = Array.from(externalTools.values()).filter((tool) => {
+    if (tool.scopeId === undefined) {
+      return true;
+    }
+    return scopeSet?.has(tool.scopeId) ?? false;
+  });
+
   if (clientToolAllowlist === undefined) {
-    return new Map(externalTools);
+    return new Map(scopeFiltered.map((tool) => [tool.name, tool]));
   }
 
   const allowSet = new Set(clientToolAllowlist);
   return new Map(
-    Array.from(externalTools.entries()).filter(([internalName, tool]) =>
-      matchesClientToolAllowlistEntry(allowSet, tool.name, internalName),
-    ),
+    scopeFiltered
+      .filter((tool) => matchesClientToolAllowlistEntry(allowSet, tool.name))
+      .map((tool) => [tool.name, tool]),
   );
 }
 
@@ -821,6 +833,14 @@ export interface ExternalToolDefinition {
   label?: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
+  /** Hidden registration scope used by app-server dynamic external tools. */
+  scopeId?: string;
+  /** Optional runtime metadata for app-server callbacks and diagnostics. */
+  runtime?: { agent_id: string; conversation_id: string };
+}
+
+export interface ExternalToolExecutionContext {
+  tool: ExternalToolDefinition;
 }
 
 /**
@@ -830,6 +850,7 @@ export type ExternalToolExecutor = (
   toolCallId: string,
   toolName: string,
   input: Record<string, unknown>,
+  context?: ExternalToolExecutionContext,
 ) => Promise<{
   content: Array<{
     type: string;
@@ -857,13 +878,35 @@ function getExternalToolsRegistry(): Map<string, ExternalToolDefinition> {
   return global[EXTERNAL_TOOLS_KEY];
 }
 
+function getExternalToolRegistryKey(tool: ExternalToolDefinition): string {
+  return tool.scopeId === undefined
+    ? tool.name
+    : `scope:${tool.scopeId}:tool:${tool.name}`;
+}
+
 /**
  * Register external tools from SDK
  */
 export function registerExternalTools(tools: ExternalToolDefinition[]): void {
   const registry = getExternalToolsRegistry();
   for (const tool of tools) {
-    registry.set(tool.name, tool);
+    registry.set(getExternalToolRegistryKey(tool), tool);
+  }
+}
+
+export function unregisterExternalToolsForScope(scopeId: string): void {
+  const registry = getExternalToolsRegistry();
+  for (const [key, tool] of registry.entries()) {
+    if (tool.scopeId === scopeId) {
+      registry.delete(key);
+    }
+  }
+}
+
+export function unregisterExternalTools(tools: ExternalToolDefinition[]): void {
+  const registry = getExternalToolsRegistry();
+  for (const tool of tools) {
+    registry.delete(getExternalToolRegistryKey(tool));
   }
 }
 
@@ -906,11 +949,13 @@ export function getExternalToolDefinition(
  * Get all external tools as ClientTool format
  */
 export function getExternalToolsAsClientTools(): ClientTool[] {
-  return Array.from(getExternalToolsRegistry().values()).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-  }));
+  return Array.from(getExternalToolsRegistry().values())
+    .filter((tool) => tool.scopeId === undefined)
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }));
 }
 
 /**
@@ -921,6 +966,7 @@ export async function executeExternalTool(
   toolName: string,
   input: Record<string, unknown>,
   executorOverride?: ExternalToolExecutor,
+  context?: ExternalToolExecutionContext,
 ): Promise<ToolExecutionResult> {
   const executor = executorOverride ?? getExternalToolExecutor();
   if (!executor) {
@@ -931,7 +977,7 @@ export async function executeExternalTool(
   }
 
   try {
-    const result = await executor(toolCallId, toolName, input);
+    const result = await executor(toolCallId, toolName, input, context);
 
     // Convert external tool result to ToolExecutionResult format
     const textContent = result.content
@@ -1026,6 +1072,7 @@ function capturePreparedToolExecutionContext(
   },
   options?: {
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     modEvents?: ModEvents;
@@ -1046,6 +1093,7 @@ function capturePreparedToolExecutionContext(
     externalTools: filterExternalToolsByClientAllowlist(
       snapshot.externalTools,
       options?.clientToolAllowlist,
+      options?.externalToolScopeIds,
     ),
     externalExecutor: snapshot.externalExecutor,
     modEvents: options?.modEvents ?? snapshot.modEvents,
@@ -1130,6 +1178,7 @@ export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -1161,6 +1210,7 @@ export async function prepareToolExecutionContextForModel(
     exclude?: ToolName[];
     include?: ToolName[];
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -2344,6 +2394,13 @@ export async function executeTool(
       name,
       eventArgs as Record<string, unknown>,
       activeExternalExecutor,
+      {
+        tool: activeExternalTools.get(name) ?? {
+          name,
+          description: "",
+          parameters: {},
+        },
+      },
     );
   }
 

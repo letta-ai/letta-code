@@ -21,6 +21,7 @@ import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
   ControlRequest,
+  ExternalToolCallResult,
   LoopStatus,
   RuntimeScope,
   WsProtocolCommand,
@@ -61,6 +62,7 @@ export interface IncomingMessage {
   conversationId?: string;
   channelTurnSources?: ChannelTurnSource[];
   clientToolAllowlist?: string[];
+  externalToolScopeIds?: string[];
   messages: Array<
     (MessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
@@ -108,6 +110,12 @@ export type PendingApprovalResolver = {
   resolve: (response: ApprovalResponseBody) => void;
   reject: (reason: Error) => void;
   controlRequest?: ControlRequest;
+};
+
+export type PendingExternalToolCall = {
+  resolve: (result: ExternalToolCallResult) => void;
+  reject: (reason: Error) => void;
+  timeout: NodeJS.Timeout;
 };
 
 export type RecoveredPendingApproval = {
@@ -212,6 +220,7 @@ export type ListenerRuntime = {
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
   approvalRuntimeKeyByRequestId: Map<string, string>;
+  pendingExternalToolCalls?: Map<string, PendingExternalToolCall>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
   worktreeWatcherByConversation: Map<
     string,

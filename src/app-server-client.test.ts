@@ -194,6 +194,69 @@ describe("app-server client", () => {
     expect(sent).toEqual(["sync", "abort_message", "input"]);
   });
 
+  test("registers external tools and responds to external tool calls", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const registerPromise = client.registerExternalTools({
+      scope_id: "council-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      tools: [
+        {
+          name: "council-write",
+          description: "Write council opinion",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+      ],
+    });
+
+    expect(JSON.parse(control.sent[0] ?? "{}")).toMatchObject({
+      type: "external_tools_register",
+      request_id: "external-tools-register-1",
+      scope_id: "council-1",
+      tools: [{ name: "council-write" }],
+    });
+
+    control.receive({
+      type: "external_tools_register_response",
+      request_id: "external-tools-register-1",
+      success: true,
+      scope_id: "council-1",
+      tool_names: ["council-write"],
+    });
+    expect((await registerPromise).tool_names).toEqual(["council-write"]);
+
+    client.onExternalToolCall((request) => ({
+      content: [
+        {
+          type: "text",
+          text: `handled:${request.tool_name}:${request.scope_id}`,
+        },
+      ],
+    }));
+
+    control.receive({
+      type: "external_tool_call_request",
+      request_id: "tool-call-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      scope_id: "council-1",
+      tool_call_id: "call-1",
+      tool_name: "council-write",
+      input: { side: "thesis" },
+    });
+
+    await Promise.resolve();
+    expect(JSON.parse(control.sent[1] ?? "{}")).toEqual({
+      type: "external_tool_call_response",
+      request_id: "tool-call-1",
+      result: {
+        content: [{ type: "text", text: "handled:council-write:council-1" }],
+      },
+    });
+  });
+
   test("runTurn injects client message ids and resolves on stop_reason", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();

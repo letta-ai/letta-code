@@ -35,6 +35,10 @@ import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
 import {
+  handleExternalToolCallResponseCommand,
+  handleExternalToolsRegisterCommand,
+} from "./external-tools";
+import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
   parseServerMessage,
@@ -243,6 +247,16 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "external_tools_register") {
+        handleExternalToolsRegisterCommand(runtime, parsed, socket);
+        return;
+      }
+
+      if (parsed.type === "external_tool_call_response") {
+        handleExternalToolCallResponseCommand(runtime, parsed);
+        return;
+      }
+
       if (parsed.type === "sync") {
         console.log(
           `[Listen V2] Received sync command for runtime=${parsed.runtime.agent_id}/${parsed.runtime.conversation_id}`,
@@ -348,6 +362,7 @@ export function createListenerMessageHandler(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
+          externalToolScopeIds: inputPayload.external_tool_scope_ids,
           messages: inputPayload.messages,
         };
         const hasApprovalPayload = incoming.messages.some(
