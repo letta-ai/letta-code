@@ -27,6 +27,10 @@
 
 import { homedir } from "node:os";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
+import {
+  getLocalBackendCrossAgentTreeRoot,
+  getLocalBackendStorageDir,
+} from "@/utils/local-backend-paths";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { deriveAgentId, resolveMemoryTargetPath } from "./memory-paths";
@@ -89,9 +93,9 @@ export interface CrossAgentTargets {
   /** Agent IDs extracted from any path references in the tool args. */
   agentIds: Set<string>;
   /**
-   * True iff at least one target path resolved under
-   * ~/.letta/agents/<id>/memory(-worktrees)?/... — the only case where
-   * the guard is concerned at all.
+   * True iff at least one target path resolved under a cross-agent memory tree
+   * (`~/.letta/agents/<id>/...` on API, `<storage>/memfs/<id>/...` on local) —
+   * the only case where the guard is concerned at all.
    */
   anyAgentScoped: boolean;
 }
@@ -124,16 +128,16 @@ function normalizePathForCompare(path: string): string {
 }
 
 /**
- * Classification of a path relative to the agents tree:
- *  - `outside`     — path is unrelated to the agents tree.
- *  - `agents-root` — path is exactly `<home>/.letta/agents` (enumeration of
- *                    every agent on the machine).
- *  - `ancestor`    — path is an ancestor of the agents tree (e.g. `$HOME`,
- *                    `/`). Recursive tools (Glob/ListDir) entering this path
- *                    would walk into other agents' directories.
- *  - `agent`       — path is inside a specific agent's directory (any
- *                    depth, including the bare agent dir, not just
- *                    `/memory`). The `id` is the agent ID component.
+ * Classification of a path relative to a cross-agent memory tree:
+ *  - `outside`     — path is unrelated to the tree.
+ *  - `agents-root` — path is exactly the tree root (enumeration of every agent
+ *                    on the machine).
+ *  - `ancestor`    — path is an ancestor of the tree root (e.g. `$HOME`, `/`).
+ *                    Recursive tools (Glob/ListDir) entering this path would
+ *                    walk into other agents' directories.
+ *  - `agent`       — path is inside a specific agent's directory (any depth,
+ *                    including the bare agent dir). The `id` is the agent ID
+ *                    component (the segment right under the tree root).
  */
 export type AgentsTreeClassification =
   | { kind: "outside" }
@@ -142,43 +146,34 @@ export type AgentsTreeClassification =
   | { kind: "agent"; id: string };
 
 /**
- * Classify a path relative to the agents tree. See
- * {@link AgentsTreeClassification} for the kinds.
+ * Every cross-agent memory tree on this machine, normalized. A target under any
+ * of these (and not belonging to self/parent) is denied:
+ *   - API backend:   `<home>/.letta/agents`
+ *   - local backend: `<storage>/memfs` — storage is `$LETTA_LOCAL_BACKEND_DIR`
+ *     or `<home>/.letta/lc-local-backend`
+ * Both share the `<root>/<agentId>/...` shape, so {@link classifyPathUnderRoot}
+ * resolves the agent id regardless of backend. The local root is always included
+ * (a no-op when local backend is unused — no files live there) so a single agent
+ * can't read a *local* peer's memory via in-process Read/Edit/Write even though
+ * the kernel sandbox can't see those non-forking tools.
  */
-export function classifyAgentsTreePath(
-  path: string,
+function getCrossAgentTreeRoots(
   homeDir: string,
-): AgentsTreeClassification {
-  return classifyPathUnderRoot(
-    normalizePathForCompare(path),
+  env: NodeJS.ProcessEnv,
+): string[] {
+  return [
     getAgentsTreeRoot(homeDir),
-  );
-}
-
-/**
- * Symlink-aware variant of {@link classifyAgentsTreePath}: realpath-canonicalize
- * both the target and the agents-tree root (resolving symlinks, tolerating a
- * not-yet-existing leaf for the create-file case) before the structural compare.
- *
- * This is what closes the symlink bypass for in-process file tools: a path like
- * `~/proj/link/secret.md`, where `link` points into another agent's memory,
- * classifies as `outside` lexically but as that agent once symlinks are
- * resolved. The kernel sandbox catches this for spawned shells; in-process
- * Read/Write/Edit/Glob never fork, so the guard must resolve it itself.
- */
-function classifyAgentsTreePathByRealpath(
-  path: string,
-  homeDir: string,
-): AgentsTreeClassification {
-  return classifyPathUnderRoot(
-    canonicalizeRoot(path),
-    canonicalizeRoot(getAgentsTreeRoot(homeDir)),
-  );
+    normalizePathForCompare(
+      getLocalBackendCrossAgentTreeRoot(
+        getLocalBackendStorageDir(homeDir, env),
+      ),
+    ),
+  ];
 }
 
 /**
  * Structural classification of a normalized path relative to a normalized
- * agents-tree root. Both inputs must already be canonical (forward slashes, no
+ * tree root. Both inputs must already be canonical (forward slashes, no
  * trailing slash) — the caller decides whether that means lexical or realpath.
  */
 function classifyPathUnderRoot(
@@ -275,12 +270,16 @@ export function extractTargetAgentPaths(
   toolName: string,
   toolArgs: ToolArgs,
   workingDirectory: string,
-  _env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = process.env,
   homeDir: string = homedir(),
 ): CrossAgentTargets {
   const agentIds = new Set<string>();
   let anyAgentScoped = false;
   const recursive = isRecursivePathTool(toolName);
+  // Both the API and local-backend cross-agent trees, plus their realpath form
+  // (resolving symlinks; tolerating a not-yet-existing leaf for create-file).
+  const treeRoots = getCrossAgentTreeRoots(homeDir, env);
+  const realTreeRoots = treeRoots.map((root) => canonicalizeRoot(root));
 
   const applyClassification = (classification: AgentsTreeClassification) => {
     switch (classification.kind) {
@@ -311,14 +310,19 @@ export function extractTargetAgentPaths(
     if (!rawPath || typeof rawPath !== "string") return;
     const resolvedPath = resolveMemoryTargetPath(rawPath, workingDirectory);
     if (!resolvedPath) return;
-    // Lexical classification preserves the existing behavior; the realpath
-    // classification follows symlinks so a link whose real target lands in
-    // another agent's memory can't slip past string matching. The two union
-    // via the shared `agentIds` set — realpath can only add denials.
-    applyClassification(classifyAgentsTreePath(resolvedPath, homeDir));
-    applyClassification(
-      classifyAgentsTreePathByRealpath(resolvedPath, homeDir),
-    );
+    // Classify against every cross-agent tree (API + local). The lexical pass
+    // preserves string-match behavior; the realpath pass follows symlinks so a
+    // link whose real target lands in another agent's memory can't slip past.
+    // Everything unions via the shared `agentIds` set — extra passes only add
+    // denials, never remove them.
+    const lexical = normalizePathForCompare(resolvedPath);
+    const real = canonicalizeRoot(resolvedPath);
+    for (const root of treeRoots) {
+      applyClassification(classifyPathUnderRoot(lexical, root));
+    }
+    for (const root of realTreeRoots) {
+      applyClassification(classifyPathUnderRoot(real, root));
+    }
   };
 
   // Patch tools: extract every file directive.

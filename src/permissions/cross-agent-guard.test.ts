@@ -49,6 +49,7 @@ const ENV_KEYS_TO_RESET = [
   "LETTA_CODE_AGENT_ROLE",
   "MEMORY_DIR",
   "LETTA_MEMORY_DIR",
+  "LETTA_LOCAL_BACKEND_DIR",
 ] as const;
 
 function snapshotEnv(): Partial<
@@ -808,5 +809,76 @@ describe("sandboxed subagent defers entirely to the kernel", () => {
       currentAgentId: "agent-self",
     });
     expect(result).toBeNull();
+  });
+});
+
+describe("local-backend memfs tree", () => {
+  // Local-backend memory lives at ~/.letta/lc-local-backend/memfs/<id>/memory,
+  // not ~/.letta/agents. The kernel sandbox confines local subagents and shells,
+  // but the parent agent's in-process Read/Edit/Write never fork, so this guard
+  // is their only cross-agent backstop on local too.
+  const localMemfs = (id: string, rel = ""): string =>
+    join(HOME, ".letta", "lc-local-backend", "memfs", id, "memory", rel);
+
+  beforeEach(() => {
+    cliPermissions.setMemoryGuardDisabled(false);
+  });
+
+  test("extractTargetAgentPaths attributes a local memfs path to its agent", () => {
+    const result = extractTargetAgentPaths(
+      "Write",
+      { file_path: localMemfs(OTHER, "system/persona.md") },
+      "/tmp",
+    );
+    expect(result.anyAgentScoped).toBe(true);
+    expect(result.agentIds).toEqual(new Set([OTHER]));
+  });
+
+  test("Read of another local agent's memory is denied", () => {
+    const result = evaluateCrossAgentGuard(
+      "Read",
+      { file_path: localMemfs(OTHER, "system/persona.md") },
+      "/tmp",
+    );
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toContain(OTHER);
+  });
+
+  test("own local memory passes", () => {
+    process.env.AGENT_ID = SELF;
+    const result = evaluateCrossAgentGuard(
+      "Write",
+      { file_path: localMemfs(SELF, "note.md") },
+      "/tmp",
+    );
+    expect(result).toBeNull();
+  });
+
+  test("enumerating the local memfs tree root is denied", () => {
+    const result = evaluateCrossAgentGuard(
+      "ListDir",
+      { path: join(HOME, ".letta", "lc-local-backend", "memfs") },
+      "/tmp",
+    );
+    expect(result).not.toBeNull();
+  });
+
+  test("honors the LETTA_LOCAL_BACKEND_DIR storage override", () => {
+    const customStorage = join(HOME, "custom-letta-store");
+    const result = evaluateCrossAgentGuard(
+      "Read",
+      { file_path: join(customStorage, "memfs", OTHER, "memory", "x.md") },
+      "/tmp",
+      {
+        env: {
+          HOME,
+          AGENT_ID: SELF,
+          LETTA_LOCAL_BACKEND_DIR: customStorage,
+        } as NodeJS.ProcessEnv,
+        currentAgentId: SELF,
+      },
+    );
+    expect(result).not.toBeNull();
+    expect(result?.offendingAgentIds).toContain(OTHER);
   });
 });
