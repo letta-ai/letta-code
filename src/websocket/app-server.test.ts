@@ -12,7 +12,7 @@ import {
   startAppServer,
 } from "@/websocket/app-server";
 
-const TEST_TIMEOUT_MS = 10000;
+const TEST_TIMEOUT_MS = 5000;
 
 function waitForOpen(socket: WebSocket): Promise<void> {
   if (socket.readyState === WebSocket.OPEN) {
@@ -188,10 +188,15 @@ describe("app-server native websocket", () => {
           JSON.stringify(message.runtime) === JSON.stringify(runtime),
       );
 
-      const streamDelta = waitForJsonMessage(
-        stream,
-        (message) => message.type === "stream_delta",
-      );
+      const turnStatus = waitForJsonMessage(stream, (message) => {
+        const loopStatus = message.loop_status as
+          | { status?: unknown }
+          | undefined;
+        return (
+          message.type === "update_loop_status" &&
+          loopStatus?.status === "SENDING_API_REQUEST"
+        );
+      });
       control.send(
         JSON.stringify({
           type: "input",
@@ -203,9 +208,10 @@ describe("app-server native websocket", () => {
         }),
       );
 
-      await expect(streamDelta).resolves.toMatchObject({
-        type: "stream_delta",
+      await expect(turnStatus).resolves.toMatchObject({
+        type: "update_loop_status",
         runtime,
+        loop_status: { status: "SENDING_API_REQUEST" },
       });
     } finally {
       closeClient(control);
