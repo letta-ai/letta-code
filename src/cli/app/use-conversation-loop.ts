@@ -202,9 +202,7 @@ type ConversationLoopContext = {
     force?: boolean;
   }) => Promise<void>;
   modAdapter: LocalModAdapter;
-  generateConversationTitle: (options?: {
-    fullHistory?: boolean;
-  }) => Promise<string | null>;
+  generateConversationTitle: () => Promise<string | null>;
   hasConversationModelOverrideRef: MutableRefObject<boolean>;
   interruptQueuedRef: MutableRefObject<boolean>;
   isAutoConversationTitleInFlightRef: MutableRefObject<boolean>;

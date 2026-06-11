@@ -1184,9 +1184,6 @@ export function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
-  const autoConversationTitleStartIndexRef = useRef<number | null>(
-    !resumedExistingConversation ? 0 : null,
-  );
   const shouldAutoGenerateConversationDescriptionRef = useRef(
     !resumedExistingConversation,
   );
@@ -1196,9 +1193,6 @@ export function App({
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
-      autoConversationTitleStartIndexRef.current = enabled
-        ? buffersRef.current.order.length
-        : null;
       shouldAutoGenerateConversationDescriptionRef.current = enabled;
       isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
@@ -1224,77 +1218,69 @@ export function App({
 
     return null;
   }, []);
-  const generateConversationTitle = useCallback(
-    async (options?: { fullHistory?: boolean }) => {
-      const fallback = deriveAutoConversationTitle();
+  const generateConversationTitle = useCallback(async () => {
+    const fallback = deriveAutoConversationTitle();
 
-      // Heuristic-only when the experiment is off, on local backends, or for
-      // the agent-direct "default" conversation (which can't be forked safely).
-      if (!getConversationTitleSettings().enabled) {
-        return fallback;
-      }
-      if (getBackend().capabilities.localModelCatalog) {
-        return fallback;
-      }
-      const conversationId = conversationIdRef.current;
-      if (!conversationId || conversationId === "default") {
-        return fallback;
-      }
+    // Heuristic-only when the experiment is off, on local backends, or for
+    // the agent-direct "default" conversation (which can't be forked safely).
+    if (!getConversationTitleSettings().enabled) {
+      return fallback;
+    }
+    if (getBackend().capabilities.localModelCatalog) {
+      return fallback;
+    }
+    const conversationId = conversationIdRef.current;
+    if (!conversationId || conversationId === "default") {
+      return fallback;
+    }
 
-      try {
-        const messages: ConversationTitleMessage[] = [];
-        const startIndex = options?.fullHistory
-          ? 0
-          : (autoConversationTitleStartIndexRef.current ?? 0);
-        const titleLineIds = buffersRef.current.order.slice(
-          Math.min(startIndex, buffersRef.current.order.length),
-        );
-        for (const lineId of titleLineIds) {
-          const line = buffersRef.current.byId.get(lineId);
-          if (line?.kind === "user" || line?.kind === "assistant") {
-            const content = line.text.trim();
-            if (content) {
-              messages.push({ role: line.kind, content });
-            }
+    try {
+      const messages: ConversationTitleMessage[] = [];
+      const titleLineIds = buffersRef.current.order;
+      for (const lineId of titleLineIds) {
+        const line = buffersRef.current.byId.get(lineId);
+        if (line?.kind === "user" || line?.kind === "assistant") {
+          const content = line.text.trim();
+          if (content) {
+            messages.push({ role: line.kind, content });
           }
         }
-
-        let summaryModel: string | undefined;
-        if (currentModelLabel) {
-          try {
-            const providers = await listProviders();
-            const byokProviderAliases = buildByokProviderAliases(providers);
-            summaryModel = isByokHandleForSelector(
-              currentModelLabel,
-              byokProviderAliases,
-            )
-              ? currentModelLabel
-              : undefined;
-          } catch {
-            const byokProviderAliases = buildByokProviderAliases([]);
-            summaryModel = isByokHandleForSelector(
-              currentModelLabel,
-              byokProviderAliases,
-            )
-              ? currentModelLabel
-              : undefined;
-          }
-        }
-        const aiTitle = await generateConversationTitleFromSummary(
-          conversationId,
-          messages,
-          summaryModel,
-        );
-        return aiTitle ?? fallback;
-      } catch (err) {
-        if (isDebugEnabled()) {
-          console.error("[DEBUG] generateConversationTitle failed:", err);
-        }
-        return fallback;
       }
-    },
-    [deriveAutoConversationTitle, currentModelLabel],
-  );
+
+      let summaryModel: string | undefined;
+      if (currentModelLabel) {
+        try {
+          const providers = await listProviders();
+          const byokProviderAliases = buildByokProviderAliases(providers);
+          summaryModel = isByokHandleForSelector(
+            currentModelLabel,
+            byokProviderAliases,
+          )
+            ? currentModelLabel
+            : undefined;
+        } catch {
+          const byokProviderAliases = buildByokProviderAliases([]);
+          summaryModel = isByokHandleForSelector(
+            currentModelLabel,
+            byokProviderAliases,
+          )
+            ? currentModelLabel
+            : undefined;
+        }
+      }
+      const aiTitle = await generateConversationTitleFromSummary(
+        conversationId,
+        messages,
+        summaryModel,
+      );
+      return aiTitle ?? fallback;
+    } catch (err) {
+      if (isDebugEnabled()) {
+        console.error("[DEBUG] generateConversationTitle failed:", err);
+      }
+      return fallback;
+    }
+  }, [deriveAutoConversationTitle, currentModelLabel]);
   const generateConversationDescription = useCallback(
     async (options?: { force?: boolean }) => {
       if (!experimentManager.isEnabled("desktop_conversation_bootstrap")) {
