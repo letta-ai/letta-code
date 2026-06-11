@@ -731,6 +731,24 @@ function normalizeModToolParameters(
   return parameters;
 }
 
+function normalizeModToolApprovalPolicy(
+  tool: ModToolRegistration,
+): ModTool["approvalPolicy"] {
+  if (tool.approvalPolicy !== undefined) {
+    if (
+      tool.approvalPolicy === "auto" ||
+      tool.approvalPolicy === "ask" ||
+      tool.approvalPolicy === "alwaysAsk"
+    ) {
+      return tool.approvalPolicy;
+    }
+    throw new Error(
+      `Mod tool '${tool.name}' approvalPolicy must be "auto", "ask", or "alwaysAsk"`,
+    );
+  }
+  return tool.requiresApproval === false ? "auto" : "ask";
+}
+
 function normalizeModTool(tool: ModToolRegistration, owner: ModOwner): ModTool {
   validateModToolName(tool.name);
   if (!tool.description.trim()) {
@@ -740,13 +758,16 @@ function normalizeModTool(tool: ModToolRegistration, owner: ModOwner): ModTool {
     throw new Error(`Mod tool '${tool.name}' must include run()`);
   }
 
+  const approvalPolicy = normalizeModToolApprovalPolicy(tool);
+
   return {
     name: tool.name,
     description: tool.description,
     parameters: normalizeModToolParameters(tool.parameters),
     owner,
     path: owner.path,
-    requiresApproval: tool.requiresApproval !== false,
+    requiresApproval: approvalPolicy !== "auto",
+    approvalPolicy,
     parallelSafe: tool.parallelSafe === true,
     ...(tool.isEnabled ? { isEnabled: tool.isEnabled } : {}),
     run: tool.run,

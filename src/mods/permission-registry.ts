@@ -20,7 +20,7 @@ export interface ModPermissionDefinition extends ModPermission {
 }
 
 export interface ModPermissionDecisionResult {
-  decision: "allow" | "ask" | "deny";
+  decision: "allow" | "ask" | "alwaysAsk" | "deny";
   matchedRule: string;
   reason?: string;
 }
@@ -102,6 +102,7 @@ function normalizePermissionResult(
   if (
     result.decision === "allow" ||
     result.decision === "ask" ||
+    result.decision === "alwaysAsk" ||
     result.decision === "deny"
   ) {
     return result;
@@ -114,6 +115,7 @@ function composePermissionDecision(
 ): ModPermissionDecisionResult | undefined {
   return (
     decisions.find((result) => result.decision === "deny") ??
+    decisions.find((result) => result.decision === "alwaysAsk") ??
     decisions.find((result) => result.decision === "ask") ??
     decisions.find((result) => result.decision === "allow")
   );

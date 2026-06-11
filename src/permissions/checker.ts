@@ -9,7 +9,11 @@ import {
   getAvailableModPermissionsRegistry,
   type ModPermissionDefinition,
 } from "@/mods/permission-registry";
-import { modToolRequiresApproval } from "@/mods/tool-registry";
+import {
+  getAvailableModToolsRegistry,
+  modToolApprovalPolicy,
+  type ModToolDefinition,
+} from "@/mods/tool-registry";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
@@ -160,6 +164,7 @@ export function checkPermission(
   workingDirectory: string = process.cwd(),
   modeState?: PermissionModeState,
   agentId?: string,
+  modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): PermissionCheckResult {
   const engine: PermissionEngine = isPermissionsV2Enabled() ? "v2" : "v1";
   const primary = checkPermissionForEngine(
@@ -170,6 +175,7 @@ export function checkPermission(
     workingDirectory,
     modeState,
     agentId,
+    modTools,
   );
 
   let result: PermissionCheckResult = primary.result;
@@ -201,6 +207,7 @@ export function checkPermission(
       workingDirectory,
       modeState,
       agentId,
+      modTools,
     );
 
     const mismatch =
@@ -277,6 +284,7 @@ function checkPermissionForEngine(
   workingDirectory: string,
   modeState?: PermissionModeState,
   agentId?: string,
+  modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): { result: PermissionCheckResult; trace: PermissionCheckTrace } {
   const canonicalTool = canonicalToolName(toolName);
   const queryTool = engine === "v2" ? canonicalTool : toolName;
@@ -396,6 +404,22 @@ function checkPermissionForEngine(
         };
       }
     }
+  }
+
+  if (modToolApprovalPolicy(toolName, modTools) === "alwaysAsk") {
+    traceEvent(
+      trace,
+      "mod-tool-always-ask",
+      "Mod tool requires explicit approval",
+    );
+    return {
+      result: {
+        decision: "alwaysAsk",
+        matchedRule: `mod tool:${toolName}`,
+        reason: "Mod tool requires explicit approval",
+      },
+      trace,
+    };
   }
 
   // Use the scoped permission mode state when available (listener/remote mode),
@@ -586,7 +610,7 @@ function checkPermissionForEngine(
     }
   }
 
-  const defaultDecision = getDefaultDecision(toolName, toolArgs);
+  const defaultDecision = getDefaultDecision(toolName, toolArgs, modTools);
   traceEvent(trace, "default-decision", `Default: ${defaultDecision}`);
   return {
     result: {
@@ -793,10 +817,13 @@ const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
 function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
+  modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): PermissionDecision {
-  const modRequiresApproval = modToolRequiresApproval(toolName);
-  if (modRequiresApproval !== undefined) {
-    return modRequiresApproval ? "ask" : "allow";
+  const modApprovalPolicy = modToolApprovalPolicy(toolName, modTools);
+  if (modApprovalPolicy !== undefined) {
+    if (modApprovalPolicy === "auto") return "allow";
+    if (modApprovalPolicy === "alwaysAsk") return "alwaysAsk";
+    return "ask";
   }
 
   // Check TOOL_PERMISSIONS to determine if tool requires approval
@@ -883,6 +910,7 @@ export async function checkPermissionWithHooks(
     string,
     ModPermissionDefinition
   > = getAvailableModPermissionsRegistry(),
+  modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
   modPermissionOptions: ModPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
@@ -893,6 +921,7 @@ export async function checkPermissionWithHooks(
     workingDirectory,
     modeState,
     agentId,
+    modTools,
   );
 
   if (result.decision !== "deny") {

@@ -37,10 +37,10 @@ import {
   getModToolDefinition,
   isModToolParallelSafe,
   type ModToolDefinition,
-  modToolRequiresApproval,
+  modToolApprovalPolicy,
   runModTool,
 } from "@/mods/tool-registry";
-import type { ModToolRunContext } from "@/mods/types";
+import type { ModToolRunContext, ToolApprovalPolicy } from "@/mods/types";
 import {
   permissionMode as globalPermissionMode,
   type PermissionMode,
@@ -441,7 +441,10 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
 ];
 
 // Tool permissions configuration
-const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
+const TOOL_PERMISSIONS: Record<
+  ToolName,
+  { requiresApproval: boolean; approvalPolicy?: ToolApprovalPolicy }
+> = {
   AskUserQuestion: { requiresApproval: true },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
@@ -1189,11 +1192,25 @@ export async function prepareToolExecutionContextForModel(
  * @returns Tool permissions object with requiresApproval flag
  */
 export function getToolPermissions(toolName: string) {
-  const modRequiresApproval = modToolRequiresApproval(toolName);
-  if (modRequiresApproval !== undefined) {
-    return { requiresApproval: modRequiresApproval };
-  }
-  return TOOL_PERMISSIONS[toolName as ToolName] || { requiresApproval: false };
+  const approvalPolicy = getToolApprovalPolicy(toolName);
+  return { requiresApproval: approvalPolicy !== "auto", approvalPolicy };
+}
+
+export function getToolApprovalPolicy(
+  toolName: string,
+  contextId?: string | null,
+): ToolApprovalPolicy {
+  const context = contextId ? getExecutionContextById(contextId) : undefined;
+  const modPolicy = modToolApprovalPolicy(
+    toolName,
+    context?.modTools ?? getAvailableModToolsRegistry(),
+  );
+  if (modPolicy) return modPolicy;
+
+  const toolPermission = TOOL_PERMISSIONS[toolName as ToolName];
+  if (!toolPermission) return "auto";
+  if (toolPermission.approvalPolicy) return toolPermission.approvalPolicy;
+  return toolPermission.requiresApproval ? "ask" : "auto";
 }
 
 export function isModToolParallelSafeForContext(
@@ -1283,6 +1300,7 @@ export async function checkToolPermission(
         effectivePermissionModeState,
         effectiveAgentId,
         context?.modPermissions ?? getAvailableModPermissionsRegistry(),
+        context?.modTools ?? getAvailableModToolsRegistry(),
         {
           conversationId: context?.runtimeContext.conversationId ?? null,
           phase: "approval",
@@ -1978,7 +1996,8 @@ function cloneToolArgsForModEvent(args: ToolArgs): ToolArgs {
 function createModPermissionToolResult(
   decision: ModPermissionDecisionResult,
 ): ToolExecutionResult {
-  const isApprovalRequest = decision.decision === "ask";
+  const isApprovalRequest =
+    decision.decision === "ask" || decision.decision === "alwaysAsk";
   const action = isApprovalRequest ? "blocked" : "denied";
   const fallbackReason = isApprovalRequest
     ? "Approval requested but cannot reopen during execution."

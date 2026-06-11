@@ -426,12 +426,15 @@ export interface ModToolRunContext {
   getContext: () => ModContext;
 }
 
+export type ToolApprovalPolicy = "auto" | "ask" | "alwaysAsk";
+
 export interface ModToolRegistration {
   name: string;
   description: string;
   parameters?: Record<string, unknown>;
   override?: boolean;
   requiresApproval?: boolean;
+  approvalPolicy?: ToolApprovalPolicy;
   parallelSafe?: boolean;
   isEnabled?: (context: ModContext) => boolean;
   run: (
@@ -446,12 +449,13 @@ export interface ModTool {
   owner?: ModOwner;
   path: string;
   requiresApproval: boolean;
+  approvalPolicy: ToolApprovalPolicy;
   parallelSafe: boolean;
   isEnabled?: ModToolRegistration["isEnabled"];
   run: ModToolRegistration["run"];
 }
 
-export type ModPermissionDecision = "allow" | "ask" | "deny";
+export type ModPermissionDecision = "allow" | "ask" | "alwaysAsk" | "deny";
 
 export type ModPermissionCheckPhase = "approval" | "execution";
 

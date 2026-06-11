@@ -43,6 +43,7 @@ function registerTestModTool(name: string): void {
     parameters: { type: "object", properties: {} },
     parallelSafe: false,
     path: `${name}.ts`,
+    approvalPolicy: "auto",
     requiresApproval: false,
     run: () => "test",
   });

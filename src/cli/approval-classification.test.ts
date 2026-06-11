@@ -7,6 +7,8 @@ import {
   clearModPermissions,
   registerModPermission,
 } from "@/mods/permission-registry";
+import { clearModTools, registerModTool } from "@/mods/tool-registry";
+import type { ToolApprovalPolicy } from "@/mods/types";
 import {
   resetPermissionLoaderCacheForTests,
   savePermissionRule,
@@ -30,8 +32,41 @@ describe("classifyApprovals", () => {
     return projectDir;
   }
 
+  function registerTestModTool(
+    name: string,
+    options: {
+      approvalPolicy?: ToolApprovalPolicy;
+      requiresApproval?: boolean;
+    } = {},
+  ) {
+    registerModTool({
+      name,
+      description: `${name} test tool`,
+      parameters: { type: "object", properties: {} },
+      owner: {
+        id: `global:/tmp/${name}.ts`,
+        path: `/tmp/${name}.ts`,
+        scope: "global",
+        generation: 1,
+      },
+      path: `/tmp/${name}.ts`,
+      requiresApproval: options.requiresApproval ?? true,
+      approvalPolicy:
+        options.approvalPolicy ??
+        (options.requiresApproval === false ? "auto" : "ask"),
+      parallelSafe: false,
+      activationSignal: new AbortController().signal,
+      getContext: () => {
+        throw new Error("unused");
+      },
+      isAvailable: () => true,
+      run: () => "ok",
+    });
+  }
+
   afterEach(async () => {
     clearModPermissions();
+    clearModTools();
     resetPermissionLoaderCacheForTests();
     permissionMode.reset();
     await Promise.all(
@@ -227,5 +262,96 @@ describe("classifyApprovals", () => {
     expect(result.autoDenied[0]?.denyReason).toBe(
       "Tool requires approval (headless mode)",
     );
+  });
+
+  test("mod tool alwaysAsk policy requires user input in unrestricted mode", async () => {
+    permissionMode.setMode("unrestricted");
+    registerTestModTool("exit_plan_mode", { approvalPolicy: "alwaysAsk" });
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call-exit-plan-mode",
+          toolName: "exit_plan_mode",
+          toolArgs: JSON.stringify({}),
+        },
+      ],
+      { workingDirectory: "/tmp/project" },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(1);
+    expect(result.needsUserInput[0]?.permission).toMatchObject({
+      decision: "alwaysAsk",
+      matchedRule: "mod tool:exit_plan_mode",
+      reason: "Mod tool requires explicit approval",
+    });
+  });
+
+  test("mod tool default ask policy still allows unrestricted auto-approval", async () => {
+    permissionMode.setMode("unrestricted");
+    registerTestModTool("format_file", { approvalPolicy: "ask" });
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call-format-file",
+          toolName: "format_file",
+          toolArgs: JSON.stringify({}),
+        },
+      ],
+      { workingDirectory: "/tmp/project" },
+    );
+
+    expect(result.autoAllowed).toHaveLength(1);
+    expect(result.needsUserInput).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(0);
+  });
+
+  test("deny overrides mod tool alwaysAsk policy", async () => {
+    permissionMode.setMode("unrestricted");
+    registerTestModTool("exit_plan_mode", { approvalPolicy: "alwaysAsk" });
+    registerModPermission({
+      id: "deny-exit-plan-mode",
+      path: "/tmp/deny-exit-plan-mode.ts",
+      owner: {
+        id: "global:/tmp/deny-exit-plan-mode.ts",
+        path: "/tmp/deny-exit-plan-mode.ts",
+        scope: "global",
+        generation: 1,
+      },
+      activationSignal: new AbortController().signal,
+      getContext: () => {
+        throw new Error("unused");
+      },
+      isAvailable: () => true,
+      check(event) {
+        if (event.toolName === "exit_plan_mode") {
+          return { decision: "deny", reason: "still planning" };
+        }
+        return undefined;
+      },
+    });
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call-exit-plan-mode",
+          toolName: "exit_plan_mode",
+          toolArgs: JSON.stringify({}),
+        },
+      ],
+      { workingDirectory: "/tmp/project" },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(1);
+    expect(result.autoDenied[0]?.permission).toMatchObject({
+      decision: "deny",
+      matchedRule: "mod permission:deny-exit-plan-mode",
+      reason: "still planning",
+    });
   });
 });
