@@ -111,17 +111,62 @@ describe("/mods command", () => {
           expect(options.generationModel).toBe("openai/gpt-5.5");
           expect(options.evalModel).toBe("openai/gpt-5.5");
           expect(options.runDir).toBe(path.join(cwd, ".letta", "test-run"));
+          expect(options.candidateCount).toBe(10);
           options.onProgress?.({
+            candidateCount: 10,
+            candidateIndex: 1,
             candidatePath: path.join(
               cwd,
               ".letta",
               "test-run",
+              "candidates",
+              "001",
               "mods",
               "memory-citations.ts",
             ),
-            message: "Generating candidate mod",
+            message: "Generating optimization iteration 1/10",
             phase: "generating",
             runDir: path.join(cwd, ".letta", "test-run"),
+          });
+          options.onProgress?.({
+            attempts: [
+              {
+                candidateIndex: 1,
+                candidatePath: path.join(
+                  cwd,
+                  ".letta",
+                  "test-run",
+                  "mods",
+                  "memory-citations.ts",
+                ),
+                evalExit: "not run",
+                generationExit: "skipped",
+                missingRequiredResultMarkers: [],
+                missingRequiredTraceMarkers: [],
+                passed: true,
+                presentForbiddenResultMarkers: [],
+                presentForbiddenTraceMarkers: [],
+                reportPath: path.join(cwd, ".letta", "test-run", "report.md"),
+                runDir: path.join(cwd, ".letta", "test-run"),
+                score: 2,
+              },
+            ],
+            candidateCount: 10,
+            candidateIndex: 2,
+            candidatePath: path.join(
+              cwd,
+              ".letta",
+              "test-run",
+              "candidates",
+              "002",
+              "mods",
+              "memory-citations.ts",
+            ),
+            message: "Optimization iteration 2/10 complete",
+            passed: true,
+            phase: "evaluating",
+            runDir: path.join(cwd, ".letta", "test-run"),
+            score: 4,
           });
           await learningGate;
           return {
@@ -129,9 +174,85 @@ describe("/mods command", () => {
               cwd,
               ".letta",
               "test-run",
+              "candidates",
+              "002",
               "mods",
               "memory-citations.ts",
             ),
+            attempts: [
+              {
+                candidateIndex: 1,
+                candidatePath: path.join(
+                  cwd,
+                  ".letta",
+                  "test-run",
+                  "candidates",
+                  "001",
+                  "mods",
+                  "memory-citations.ts",
+                ),
+                evalExit: "not run",
+                generationExit: 0,
+                missingRequiredResultMarkers: [],
+                missingRequiredTraceMarkers: [],
+                passed: false,
+                presentForbiddenResultMarkers: [],
+                presentForbiddenTraceMarkers: [],
+                reportPath: path.join(
+                  cwd,
+                  ".letta",
+                  "test-run",
+                  "candidates",
+                  "001",
+                  "report.md",
+                ),
+                runDir: path.join(
+                  cwd,
+                  ".letta",
+                  "test-run",
+                  "candidates",
+                  "001",
+                ),
+                score: 2,
+              },
+              {
+                candidateIndex: 2,
+                candidatePath: path.join(
+                  cwd,
+                  ".letta",
+                  "test-run",
+                  "candidates",
+                  "002",
+                  "mods",
+                  "memory-citations.ts",
+                ),
+                evalExit: "not run",
+                generationExit: 0,
+                missingRequiredResultMarkers: [],
+                missingRequiredTraceMarkers: [],
+                passed: true,
+                presentForbiddenResultMarkers: [],
+                presentForbiddenTraceMarkers: [],
+                reportPath: path.join(
+                  cwd,
+                  ".letta",
+                  "test-run",
+                  "candidates",
+                  "002",
+                  "report.md",
+                ),
+                runDir: path.join(
+                  cwd,
+                  ".letta",
+                  "test-run",
+                  "candidates",
+                  "002",
+                ),
+                score: 4,
+              },
+            ],
+            candidateCount: 10,
+            candidateIndex: 2,
             evalMemoryDir: path.join(cwd, ".letta", "test-run", "eval-memory"),
             evalResult: null,
             evaluation: {
@@ -148,6 +269,8 @@ describe("/mods command", () => {
             promotedToPath: null,
             reportPath: path.join(cwd, ".letta", "test-run", "report.md"),
             runDir: path.join(cwd, ".letta", "test-run"),
+            selectedCandidateIndex: 2,
+            score: 4,
             spec: options.spec,
           } satisfies ModLearningReport;
         },
@@ -159,8 +282,39 @@ describe("/mods command", () => {
       await Promise.resolve();
     }
     expect(learningStarted).toBe(true);
+    expect(updates[0]?.output).toContain(
+      "Starting background mod optimization: memory-citations (10 iterations)",
+    );
+    expect(updates[1]?.output).toContain(
+      "Generating optimization iteration 1/10",
+    );
+    expect(updates[1]?.output).toContain(
+      "Optimization progress: ●○○○○○○○○○ 1/10",
+    );
+    expect(updates[1]?.output).toContain(
+      "Score graph: waiting for first evaluation…",
+    );
+    expect(updates[1]?.output).toContain("Target mod: memory-citations.ts");
     expect(updates.at(-1)).toMatchObject({ phase: "running" });
-    expect(updates.at(-1)?.output).toContain("Generating candidate mod");
+    expect(updates.at(-1)?.output).toContain(
+      "Optimization iteration 2/10 complete",
+    );
+    expect(updates.at(-1)?.output).toContain(
+      "Background mod optimization: memory-citations",
+    );
+    expect(updates.at(-1)?.output).toMatch(
+      /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Background mod optimization/,
+    );
+    expect(updates.at(-1)?.output).toContain("Optimization iteration: 2/10");
+    expect(updates.at(-1)?.output).toContain("Current score: 4");
+    expect(updates.at(-1)?.output).toContain("Best score: 4 at step 2");
+    expect(updates.at(-1)?.output).toContain("Score history: #1 2 → #2 4");
+    expect(updates.at(-1)?.output).toContain(
+      "Optimization progress: ●●○○○○○○○○ 2/10",
+    );
+    expect(updates.at(-1)?.output).toContain("Score graph: ▁█");
+    expect(updates.at(-1)?.output).toContain("#1 2 │");
+    expect(updates.at(-1)?.output).toContain("#2 4 │");
 
     resolveLearning?.();
     if (result.handled) await result.done;
@@ -169,7 +323,9 @@ describe("/mods command", () => {
       phase: "finished",
       success: true,
     });
-    expect(updates.at(-1)?.output).toContain("PASS mod learning");
+    expect(updates.at(-1)?.output).toContain("Finished mod learning");
+    expect(updates.at(-1)?.output).toContain("Score: 4");
+    expect(updates.at(-1)?.output).toContain("Score graph: ▁█");
     expect(updates.at(-1)?.output).toContain("did not promote or load");
   });
 });

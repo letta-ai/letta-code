@@ -83,16 +83,22 @@ describe("mod learning harness", () => {
       {
         candidateCount: 3,
         candidateIndex: 2,
+        historyManifestPath: "/tmp/run/history.json",
         historyPath: "/tmp/run/history.md",
+        proposerGuidePath: "/tmp/run/proposer-guide.md",
         previousAttemptDirs: ["/tmp/run/candidates/001"],
       },
     );
 
-    expect(prompt).toContain("Candidate attempt: 2 of 3");
+    expect(prompt).toContain("Optimization iteration: 2 of 3");
     expect(prompt).toContain("Candidate diversity");
     expect(prompt).toContain("// Proposal:");
     expect(prompt).toContain("Use a strict path parser");
+    expect(prompt).toContain("/tmp/run/proposer-guide.md");
+    expect(prompt).toContain("/tmp/run/history.json");
     expect(prompt).toContain("/tmp/run/history.md");
+    expect(prompt).toContain("manifest.json");
+    expect(prompt).toContain("rg");
   });
 
   test("extracts result text and evaluates stream-json markers", () => {
@@ -251,7 +257,35 @@ describe("mod learning harness", () => {
     expect(existsSync(candidatePath)).toBe(true);
     expect(existsSync(path.join(runDir, "generation-prompt.md"))).toBe(true);
     expect(existsSync(path.join(runDir, "eval.stdout"))).toBe(true);
+    expect(existsSync(path.join(runDir, "manifest.json"))).toBe(true);
+    expect(existsSync(path.join(runDir, "history.json"))).toBe(true);
+    expect(existsSync(path.join(runDir, "proposer-guide.md"))).toBe(true);
     expect(existsSync(path.join(runDir, "report.md"))).toBe(true);
+    const manifest = JSON.parse(
+      readFileSync(path.join(runDir, "manifest.json"), "utf8"),
+    ) as {
+      artifacts: {
+        candidatePath: string;
+        generationPromptPath?: string;
+        reportJsonPath: string;
+      };
+      kind: string;
+    };
+    expect(manifest.kind).toBe("mod_learning_candidate_manifest");
+    expect(manifest.artifacts.candidatePath).toBe(candidatePath);
+    expect(manifest.artifacts.generationPromptPath).toBe(
+      path.join(runDir, "generation-prompt.md"),
+    );
+    expect(manifest.artifacts.reportJsonPath).toBe(
+      path.join(runDir, "report.json"),
+    );
+    const historyManifest = JSON.parse(
+      readFileSync(path.join(runDir, "history.json"), "utf8"),
+    ) as { attemptCount: number; attempts: Array<{ manifestPath: string }> };
+    expect(historyManifest.attemptCount).toBe(1);
+    expect(historyManifest.attempts[0]?.manifestPath).toBe(
+      path.join(runDir, "manifest.json"),
+    );
     expect(
       readFileSync(
         path.join(runDir, "eval-memory", "reference", "mod-learning.md"),
@@ -630,7 +664,12 @@ describe("mod learning harness", () => {
     expect(generationPrompts).toHaveLength(2);
     expect(generationPrompts[0]).not.toContain("Prior candidate feedback");
     expect(generationPrompts[1]).toContain("Prior candidate feedback");
+    expect(generationPrompts[1]).toContain(
+      path.join(runDir, "proposer-guide.md"),
+    );
+    expect(generationPrompts[1]).toContain(path.join(runDir, "history.json"));
     expect(generationPrompts[1]).toContain(path.join(runDir, "history.md"));
+    expect(generationPrompts[1]).toContain("manifest.json");
     expect(generationPrompts[1]).toContain(
       path.join(runDir, "candidates", "001"),
     );
@@ -639,9 +678,67 @@ describe("mod learning harness", () => {
       path.join(runDir, "candidates", "002", "mods"),
     ]);
     expect(existsSync(path.join(runDir, "history.md"))).toBe(true);
+    expect(existsSync(path.join(runDir, "history.json"))).toBe(true);
+    expect(existsSync(path.join(runDir, "proposer-guide.md"))).toBe(true);
+    expect(
+      existsSync(path.join(runDir, "candidates", "001", "manifest.json")),
+    ).toBe(true);
+    expect(
+      existsSync(path.join(runDir, "candidates", "002", "manifest.json")),
+    ).toBe(true);
     expect(existsSync(path.join(runDir, "report.md"))).toBe(true);
+    const historyManifest = JSON.parse(
+      readFileSync(path.join(runDir, "history.json"), "utf8"),
+    ) as {
+      attemptCount: number;
+      attempts: Array<{
+        candidateIndex: number;
+        manifestPath: string;
+        reportJsonPath: string;
+      }>;
+      proposerGuidePath: string;
+      selectedCandidateIndex?: number;
+    };
+    expect(historyManifest.attemptCount).toBe(2);
+    expect(historyManifest.selectedCandidateIndex).toBe(2);
+    expect(historyManifest.proposerGuidePath).toBe(
+      path.join(runDir, "proposer-guide.md"),
+    );
+    expect(
+      historyManifest.attempts.map((attempt) => attempt.candidateIndex),
+    ).toEqual([1, 2]);
+    expect(historyManifest.attempts[0]?.manifestPath).toBe(
+      path.join(runDir, "candidates", "001", "manifest.json"),
+    );
+    const firstCandidateManifest = JSON.parse(
+      readFileSync(
+        path.join(runDir, "candidates", "001", "manifest.json"),
+        "utf8",
+      ),
+    ) as {
+      artifacts: {
+        candidatePath: string;
+        evalDir: string;
+        generationPromptPath?: string;
+        reportMarkdownPath: string;
+      };
+      kind: string;
+    };
+    expect(firstCandidateManifest.kind).toBe("mod_learning_candidate_manifest");
+    expect(firstCandidateManifest.artifacts.candidatePath).toBe(
+      path.join(runDir, "candidates", "001", "mods", "memory-citations.ts"),
+    );
+    expect(firstCandidateManifest.artifacts.generationPromptPath).toBe(
+      path.join(runDir, "candidates", "001", "generation-prompt.md"),
+    );
+    expect(firstCandidateManifest.artifacts.reportMarkdownPath).toBe(
+      path.join(runDir, "candidates", "001", "report.md"),
+    );
     expect(readFileSync(path.join(runDir, "history.md"), "utf8")).toContain(
       "Selected candidate: 2",
     );
+    expect(
+      readFileSync(path.join(runDir, "proposer-guide.md"), "utf8"),
+    ).toContain("eval/**/eval.stdout");
   });
 });

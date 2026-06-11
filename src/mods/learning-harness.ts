@@ -161,13 +161,17 @@ export type ModLearningProgressPhase =
   | "done";
 
 export interface ModLearningProgress {
+  attempts?: ModLearningAttemptSummary[];
   candidateIndex?: number;
   candidatePath: string;
   candidateRunDir?: string;
   candidateCount?: number;
   message: string;
+  passed?: boolean;
   phase: ModLearningProgressPhase;
   runDir: string;
+  score?: number;
+  selectedCandidateIndex?: number;
 }
 
 export interface ModLearningAttemptSummary {
@@ -183,6 +187,65 @@ export interface ModLearningAttemptSummary {
   reportPath: string;
   runDir: string;
   score: number;
+}
+
+interface ModLearningScenarioArtifactManifest {
+  assertionsResultPath?: string;
+  evalCommandPath?: string;
+  evalMemoryDir: string;
+  evalResultPath?: string;
+  evalStderrPath?: string;
+  evalStdoutPath?: string;
+  index: number;
+  name: string;
+  promptPath?: string;
+  runDir: string;
+}
+
+interface ModLearningCandidateManifest {
+  artifacts: {
+    candidatePath: string;
+    envSnapshotPath?: string;
+    evalDir: string;
+    generationCommandPath?: string;
+    generationPromptPath?: string;
+    generationResultPath?: string;
+    generationStderrPath?: string;
+    generationStdoutPath?: string;
+    reportJsonPath: string;
+    reportMarkdownPath: string;
+    scenarioArtifacts: ModLearningScenarioArtifactManifest[];
+  };
+  candidateIndex: number;
+  evalExit: number | null | "not run";
+  generationExit: number | null | "skipped";
+  kind: "mod_learning_candidate_manifest";
+  passed: boolean;
+  runDir: string;
+  score: number;
+  version: 1;
+}
+
+interface ModLearningHistoryManifest {
+  attemptCount: number;
+  attempts: Array<
+    ModLearningAttemptSummary & {
+      manifestPath: string;
+      reportJsonPath: string;
+    }
+  >;
+  historyMarkdownPath: string;
+  historyManifestPath: string;
+  kind: "mod_learning_history_manifest";
+  proposerGuidePath: string;
+  runDir: string;
+  selectedCandidateIndex?: number;
+  spec: {
+    name: string;
+    slug?: string;
+    targetModName?: string;
+  };
+  version: 1;
 }
 
 export interface ModLearningReport {
@@ -240,7 +303,9 @@ interface ModLearningEvaluator {
 export interface ModLearningPromptHistory {
   candidateCount?: number;
   candidateIndex?: number;
+  historyManifestPath?: string;
   historyPath?: string;
+  proposerGuidePath?: string;
   previousAttemptDirs?: string[];
 }
 
@@ -549,6 +614,10 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+async function existingPath(filePath: string): Promise<string | undefined> {
+  return (await fileExists(filePath)) ? filePath : undefined;
+}
+
 async function writeJsonArtifact(
   filePath: string,
   value: unknown,
@@ -673,7 +742,7 @@ export function buildModLearningPrompt(
   const candidateIndex = history?.candidateIndex ?? 1;
   const attemptLabel =
     candidateCount > 1
-      ? `\nCandidate attempt: ${candidateIndex} of ${candidateCount}`
+      ? `\nOptimization iteration: ${candidateIndex} of ${candidateCount}`
       : "";
   const diversityHints = spec.candidateDiversityHints ?? [];
   const assignedDiversityHint =
@@ -686,9 +755,11 @@ export function buildModLearningPrompt(
       : "";
   const historySection =
     previousAttemptDirs.length > 0
-      ? `\nPrior candidate feedback is available on disk. Before writing this candidate, inspect the previous report(s), candidate source, stdout/stderr, and eval artifacts to avoid repeating failures. Treat these files as read-only.\n${history?.historyPath ? `\nPrior attempt summary file: ${history.historyPath}\n` : ""}\nPrior attempt directories:\n${previousAttemptDirs
+      ? `\nPrior candidate feedback is available on disk. Before writing this candidate, inspect the previous report(s), candidate source, stdout/stderr, assertion results, and eval artifacts to avoid repeating failures. Treat these files as read-only.\n${history?.proposerGuidePath ? `\nStart with the proposer filesystem guide: ${history.proposerGuidePath}\n` : ""}${history?.historyManifestPath ? `\nMachine-readable history manifest: ${history.historyManifestPath}\n` : ""}${history?.historyPath ? `\nHuman summary file: ${history.historyPath}\n` : ""}\nPrior attempt directories (each contains manifest.json, report.md, report.json, mods/, generation logs, and eval artifacts):\n${previousAttemptDirs
           .map((attemptDir, index) => `${index + 1}. ${attemptDir}`)
-          .join("\n")}\n`
+          .join(
+            "\n",
+          )}\n\nUse \`cat\`, \`rg\`, \`ls\`, and \`diff\` to inspect the filesystem. Prefer reading the most relevant failed scenario artifacts over relying only on this prompt summary.\n`
       : "";
   const evaluationSummary = renderEvaluationSummaryForPrompt(spec);
 
@@ -1159,6 +1230,113 @@ function summarizeAttempt(
   };
 }
 
+function candidateManifestPath(runDir: string): string {
+  return path.join(runDir, "manifest.json");
+}
+
+async function scenarioArtifactManifest(params: {
+  index: number;
+  report: ModLearningReport;
+  scenario: ModLearningScenarioEvaluationResult;
+}): Promise<ModLearningScenarioArtifactManifest> {
+  const scenarioSuiteRunDir = path.join(
+    params.report.runDir,
+    "eval",
+    `${candidateDirectoryName(params.index + 1)}-${slugify(params.scenario.name)}`,
+  );
+  const hasScenarioSuiteDir = await fileExists(scenarioSuiteRunDir);
+  const scenarioRunDir = hasScenarioSuiteDir
+    ? scenarioSuiteRunDir
+    : params.report.runDir;
+  const evalPrefix = path.join(scenarioRunDir, "eval");
+  const assertionsResultPath = await existingPath(
+    path.join(scenarioRunDir, "assertions.result.json"),
+  );
+  const evalCommandPath = await existingPath(`${evalPrefix}.command.txt`);
+  const evalResultPath = await existingPath(`${evalPrefix}.result.json`);
+  const evalStderrPath = await existingPath(`${evalPrefix}.stderr`);
+  const evalStdoutPath = await existingPath(`${evalPrefix}.stdout`);
+  const promptPath = await existingPath(
+    hasScenarioSuiteDir
+      ? path.join(scenarioRunDir, "prompt.md")
+      : path.join(scenarioRunDir, "eval-prompt.md"),
+  );
+
+  return {
+    ...(assertionsResultPath ? { assertionsResultPath } : {}),
+    ...(evalCommandPath ? { evalCommandPath } : {}),
+    evalMemoryDir: params.scenario.evalMemoryDir,
+    ...(evalResultPath ? { evalResultPath } : {}),
+    ...(evalStderrPath ? { evalStderrPath } : {}),
+    ...(evalStdoutPath ? { evalStdoutPath } : {}),
+    index: params.index + 1,
+    name: params.scenario.name,
+    ...(promptPath ? { promptPath } : {}),
+    runDir: scenarioRunDir,
+  };
+}
+
+async function buildCandidateManifest(
+  report: ModLearningReport,
+): Promise<ModLearningCandidateManifest> {
+  const scenarioArtifacts = await Promise.all(
+    (report.evaluation.scenarioResults ?? []).map((scenario, index) =>
+      scenarioArtifactManifest({ index, report, scenario }),
+    ),
+  );
+  const envSnapshotPath = await existingPath(
+    path.join(report.runDir, "env.snapshot.json"),
+  );
+  const generationCommandPath = await existingPath(
+    path.join(report.runDir, "generation.command.txt"),
+  );
+  const generationPromptPath = await existingPath(
+    path.join(report.runDir, "generation-prompt.md"),
+  );
+  const generationResultPath = await existingPath(
+    path.join(report.runDir, "generation.result.json"),
+  );
+  const generationStderrPath = await existingPath(
+    path.join(report.runDir, "generation.stderr"),
+  );
+  const generationStdoutPath = await existingPath(
+    path.join(report.runDir, "generation.stdout"),
+  );
+
+  return {
+    artifacts: {
+      candidatePath: report.candidatePath,
+      ...(envSnapshotPath ? { envSnapshotPath } : {}),
+      evalDir: report.evalMemoryDir,
+      ...(generationCommandPath ? { generationCommandPath } : {}),
+      ...(generationPromptPath ? { generationPromptPath } : {}),
+      ...(generationResultPath ? { generationResultPath } : {}),
+      ...(generationStderrPath ? { generationStderrPath } : {}),
+      ...(generationStdoutPath ? { generationStdoutPath } : {}),
+      reportJsonPath: path.join(report.runDir, "report.json"),
+      reportMarkdownPath: report.reportPath,
+      scenarioArtifacts,
+    },
+    candidateIndex: report.candidateIndex ?? 1,
+    evalExit: report.evalResult?.exitCode ?? "not run",
+    generationExit: report.generationResult?.exitCode ?? "skipped",
+    kind: "mod_learning_candidate_manifest",
+    passed: report.passed,
+    runDir: report.runDir,
+    score: report.score ?? markerScore(report.evaluation),
+    version: 1,
+  };
+}
+
+async function writeCandidateManifest(
+  report: ModLearningReport,
+): Promise<void> {
+  await writeJsonArtifact(
+    candidateManifestPath(report.runDir),
+    await buildCandidateManifest(report),
+  );
+}
+
 function candidateDirectoryName(candidateIndex: number): string {
   return String(candidateIndex).padStart(3, "0");
 }
@@ -1182,6 +1360,8 @@ function selectBestReport(reports: ModLearningReport[]): ModLearningReport {
 
 function renderHistoryIndex(params: {
   attempts: ModLearningAttemptSummary[];
+  historyManifestPath?: string;
+  proposerGuidePath?: string;
   selectedCandidateIndex?: number;
   spec: ModLearningSpec;
 }): string {
@@ -1190,6 +1370,12 @@ function renderHistoryIndex(params: {
     "",
     `- Attempts: ${params.attempts.length}`,
     `- Selected candidate: ${params.selectedCandidateIndex ?? "not selected yet"}`,
+    ...(params.historyManifestPath
+      ? [`- Machine-readable history: ${params.historyManifestPath}`]
+      : []),
+    ...(params.proposerGuidePath
+      ? [`- Proposer filesystem guide: ${params.proposerGuidePath}`]
+      : []),
     "",
   ];
 
@@ -1199,6 +1385,7 @@ function renderHistoryIndex(params: {
       "",
       `- Score: ${attempt.score}`,
       `- Directory: ${attempt.runDir}`,
+      `- Manifest: ${candidateManifestPath(attempt.runDir)}`,
       `- Candidate: ${attempt.candidatePath}`,
       `- Report: ${attempt.reportPath}`,
       `- Generation exit: ${attempt.generationExit}`,
@@ -1230,9 +1417,107 @@ function renderHistoryIndex(params: {
   return `${lines.join("\n")}\n`;
 }
 
-async function writeHistoryIndex(params: {
+function buildHistoryManifest(params: {
   attempts: ModLearningAttemptSummary[];
+  historyManifestPath: string;
   historyPath: string;
+  proposerGuidePath: string;
+  runDir: string;
+  selectedCandidateIndex?: number;
+  spec: ModLearningSpec;
+}): ModLearningHistoryManifest {
+  return {
+    attemptCount: params.attempts.length,
+    attempts: params.attempts.map((attempt) => ({
+      ...attempt,
+      manifestPath: candidateManifestPath(attempt.runDir),
+      reportJsonPath: path.join(attempt.runDir, "report.json"),
+    })),
+    historyMarkdownPath: params.historyPath,
+    historyManifestPath: params.historyManifestPath,
+    kind: "mod_learning_history_manifest",
+    proposerGuidePath: params.proposerGuidePath,
+    runDir: params.runDir,
+    ...(params.selectedCandidateIndex !== undefined
+      ? { selectedCandidateIndex: params.selectedCandidateIndex }
+      : {}),
+    spec: {
+      name: params.spec.name,
+      ...(params.spec.slug ? { slug: params.spec.slug } : {}),
+      ...(params.spec.targetModName
+        ? { targetModName: params.spec.targetModName }
+        : {}),
+    },
+    version: 1,
+  };
+}
+
+function renderProposerGuide(params: {
+  attempts: ModLearningAttemptSummary[];
+  historyManifestPath: string;
+  historyPath: string;
+  runDir: string;
+  selectedCandidateIndex?: number;
+  spec: ModLearningSpec;
+}): string {
+  const lines = [
+    `# Mod learning proposer guide: ${params.spec.name}`,
+    "",
+    "This run directory is meant to be read by the next candidate proposer. Treat all prior candidate artifacts as read-only diagnostic context.",
+    "",
+    "## Start here",
+    "",
+    `1. Machine-readable history manifest: ${params.historyManifestPath}`,
+    `2. Human summary: ${params.historyPath}`,
+    "3. Per-candidate manifests: `<candidate run dir>/manifest.json`",
+    "",
+    "## How to inspect prior attempts",
+    "",
+    "Use normal filesystem tools (`cat`, `rg`, `ls`, `diff`) to inspect only the artifacts you need. Good first reads are:",
+    "",
+    "- `manifest.json` for each prior candidate: paths to source, report, generation logs, eval logs, and assertion results.",
+    "- `report.md` / `report.json`: pass/fail, score, failed markers, failed assertions.",
+    "- `mods/<candidate>.ts`: the candidate source to avoid repeating implementation mistakes.",
+    "- `generation-prompt.md`, `generation.stdout`, `generation.stderr`: how the candidate was produced.",
+    "- `eval/**/assertions.result.json`: deterministic mod API failures.",
+    "- `eval/**/eval.stdout` and `eval/**/eval.stderr`: full headless traces for prompt scenarios.",
+    "",
+    "Prefer diagnosing a concrete failed scenario or assertion before writing the next candidate. Do not rely only on aggregate score.",
+    "",
+    "## Prior candidates",
+    "",
+  ];
+
+  if (params.attempts.length === 0) {
+    lines.push("No prior candidates yet.", "");
+  } else {
+    for (const attempt of params.attempts) {
+      lines.push(
+        `- Candidate ${attempt.candidateIndex}: ${attempt.passed ? "PASS" : "FAIL"}, score ${attempt.score}`,
+        `  - dir: ${attempt.runDir}`,
+        `  - manifest: ${candidateManifestPath(attempt.runDir)}`,
+        `  - source: ${attempt.candidatePath}`,
+        `  - report: ${attempt.reportPath}`,
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push(
+    `Selected candidate: ${params.selectedCandidateIndex ?? "not selected yet"}`,
+    `Run directory: ${params.runDir}`,
+    "",
+  );
+
+  return `${lines.join("\n")}\n`;
+}
+
+async function writeHistoryArtifacts(params: {
+  attempts: ModLearningAttemptSummary[];
+  historyManifestPath: string;
+  historyPath: string;
+  proposerGuidePath: string;
+  runDir: string;
   selectedCandidateIndex?: number;
   spec: ModLearningSpec;
 }): Promise<void> {
@@ -1240,9 +1525,20 @@ async function writeHistoryIndex(params: {
     params.historyPath,
     renderHistoryIndex({
       attempts: params.attempts,
+      historyManifestPath: params.historyManifestPath,
+      proposerGuidePath: params.proposerGuidePath,
       selectedCandidateIndex: params.selectedCandidateIndex,
       spec: params.spec,
     }),
+    "utf8",
+  );
+  await writeJsonArtifact(
+    params.historyManifestPath,
+    buildHistoryManifest(params),
+  );
+  await writeFile(
+    params.proposerGuidePath,
+    renderProposerGuide(params),
     "utf8",
   );
 }
@@ -1569,9 +1865,11 @@ interface RunModLearningCandidateParams {
   candidateIndex: number;
   cliArgsPrefix: string[];
   cliCommand: string;
+  historyManifestPath?: string;
   historyPath?: string;
   options: RunModLearningOptions;
   previousAttemptDirs: string[];
+  proposerGuidePath?: string;
   repoRoot: string;
   runner: CommandRunner;
   runDir: string;
@@ -1587,7 +1885,11 @@ async function runModLearningCandidate(
   const evaluator = createModLearningEvaluator({ options, runDir });
   const evalMemoryDir = evaluator.artifactsDir;
 
-  const emitProgress = (phase: ModLearningProgressPhase, message: string) => {
+  const emitProgress = (
+    phase: ModLearningProgressPhase,
+    message: string,
+    extra: Partial<ModLearningProgress> = {},
+  ) => {
     options.onProgress?.({
       candidateCount: params.candidateCount,
       candidateIndex: params.candidateIndex,
@@ -1596,13 +1898,14 @@ async function runModLearningCandidate(
       message,
       phase,
       runDir: topLevelRunDir,
+      ...extra,
     });
   };
 
   emitProgress(
     "preparing",
     params.candidateCount > 1
-      ? `Preparing candidate ${params.candidateIndex}/${params.candidateCount}`
+      ? `Preparing optimization iteration ${params.candidateIndex}/${params.candidateCount}`
       : "Preparing mod learning run",
   );
   await mkdir(candidateDir, { recursive: true });
@@ -1619,7 +1922,7 @@ async function runModLearningCandidate(
     emitProgress(
       "generating",
       params.candidateCount > 1
-        ? `Generating candidate mod ${params.candidateIndex}/${params.candidateCount}`
+        ? `Generating optimization iteration ${params.candidateIndex}/${params.candidateCount}`
         : "Generating candidate mod",
     );
     const promptHistory: ModLearningPromptHistory = {
@@ -1628,6 +1931,10 @@ async function runModLearningCandidate(
       previousAttemptDirs: params.previousAttemptDirs,
     };
     if (params.historyPath) promptHistory.historyPath = params.historyPath;
+    if (params.historyManifestPath)
+      promptHistory.historyManifestPath = params.historyManifestPath;
+    if (params.proposerGuidePath)
+      promptHistory.proposerGuidePath = params.proposerGuidePath;
     const generationPrompt = buildModLearningPrompt(
       options.spec,
       candidatePath,
@@ -1684,7 +1991,7 @@ async function runModLearningCandidate(
       "evaluating",
       `${
         params.candidateCount > 1
-          ? `Evaluating candidate mod ${params.candidateIndex}/${params.candidateCount}`
+          ? `Evaluating optimization iteration ${params.candidateIndex}/${params.candidateCount}`
           : "Evaluating candidate mod"
       } with ${evaluator.label}`,
     );
@@ -1737,13 +2044,16 @@ async function runModLearningCandidate(
   };
   await writeJsonArtifact(path.join(runDir, "report.json"), report);
   await writeFile(reportPath, renderMarkdownReport(report), "utf8");
+  await writeCandidateManifest(report);
   emitProgress(
     "done",
     params.candidateCount > 1
-      ? `Candidate ${params.candidateIndex}/${params.candidateCount} ${report.passed ? "passed" : "failed"}`
-      : report.passed
-        ? "mod learning passed"
-        : "mod learning failed",
+      ? `Optimization iteration ${params.candidateIndex}/${params.candidateCount} complete`
+      : "mod optimization complete",
+    {
+      passed: report.passed,
+      score,
+    },
   );
   return report;
 }
@@ -1781,7 +2091,7 @@ export async function runModLearning(
   await writeJsonArtifact(path.join(runDir, "env.snapshot.json"), options.spec);
 
   if (candidateCount === 1) {
-    return runModLearningCandidate({
+    const report = await runModLearningCandidate({
       baseEnv,
       candidateCount,
       candidateFileName,
@@ -1795,12 +2105,31 @@ export async function runModLearning(
       runDir,
       topLevelRunDir: runDir,
     });
+    await writeHistoryArtifacts({
+      attempts: [summarizeAttempt(report)],
+      historyManifestPath: path.join(runDir, "history.json"),
+      historyPath: path.join(runDir, "history.md"),
+      proposerGuidePath: path.join(runDir, "proposer-guide.md"),
+      runDir,
+      selectedCandidateIndex: report.candidateIndex ?? 1,
+      spec: options.spec,
+    });
+    return report;
   }
 
   const historyPath = path.join(runDir, "history.md");
+  const historyManifestPath = path.join(runDir, "history.json");
+  const proposerGuidePath = path.join(runDir, "proposer-guide.md");
   const attempts: ModLearningAttemptSummary[] = [];
   const reports: ModLearningReport[] = [];
-  await writeHistoryIndex({ attempts, historyPath, spec: options.spec });
+  await writeHistoryArtifacts({
+    attempts,
+    historyManifestPath,
+    historyPath,
+    proposerGuidePath,
+    runDir,
+    spec: options.spec,
+  });
 
   for (
     let candidateIndex = 1;
@@ -1819,9 +2148,11 @@ export async function runModLearning(
       candidateIndex,
       cliArgsPrefix,
       cliCommand,
+      historyManifestPath,
       historyPath,
       options: { ...options, promoteToPath: undefined },
       previousAttemptDirs: reports.map((attempt) => attempt.runDir),
+      proposerGuidePath,
       repoRoot,
       runner,
       runDir: candidateRunDir,
@@ -1829,7 +2160,26 @@ export async function runModLearning(
     });
     reports.push(report);
     attempts.push(summarizeAttempt(report));
-    await writeHistoryIndex({ attempts, historyPath, spec: options.spec });
+    await writeHistoryArtifacts({
+      attempts,
+      historyManifestPath,
+      historyPath,
+      proposerGuidePath,
+      runDir,
+      spec: options.spec,
+    });
+    options.onProgress?.({
+      attempts: [...attempts],
+      candidateCount,
+      candidateIndex,
+      candidatePath: report.candidatePath,
+      candidateRunDir: report.runDir,
+      message: `Optimization iteration ${candidateIndex}/${candidateCount} complete`,
+      passed: report.passed,
+      phase: "evaluating",
+      runDir,
+      score: report.score ?? markerScore(report.evaluation),
+    });
   }
 
   const selectedReport = selectBestReport(reports);
@@ -1837,6 +2187,7 @@ export async function runModLearning(
   let promotedToPath: string | null = null;
   if (selectedReport.passed && options.promoteToPath) {
     options.onProgress?.({
+      attempts,
       candidateCount,
       candidateIndex: selectedCandidateIndex,
       candidatePath: selectedReport.candidatePath,
@@ -1844,6 +2195,8 @@ export async function runModLearning(
       message: "Promoting selected candidate mod",
       phase: "promoting",
       runDir,
+      score: selectedReport.score ?? markerScore(selectedReport.evaluation),
+      selectedCandidateIndex,
     });
     promotedToPath = path.resolve(repoRoot, options.promoteToPath);
     await mkdir(path.dirname(promotedToPath), { recursive: true });
@@ -1865,13 +2218,19 @@ export async function runModLearning(
     candidateIndex: selectedCandidateIndex,
     candidatePath: report.candidatePath,
     candidateRunDir: selectedReport.runDir,
+    attempts,
     message: "Writing mod learning summary report",
     phase: "writing-report",
     runDir,
+    score: report.score ?? markerScore(report.evaluation),
+    selectedCandidateIndex,
   });
-  await writeHistoryIndex({
+  await writeHistoryArtifacts({
     attempts,
+    historyManifestPath,
     historyPath,
+    proposerGuidePath,
+    runDir,
     selectedCandidateIndex,
     spec: options.spec,
   });
@@ -1882,9 +2241,13 @@ export async function runModLearning(
     candidateIndex: selectedCandidateIndex,
     candidatePath: report.candidatePath,
     candidateRunDir: selectedReport.runDir,
-    message: report.passed ? "mod learning passed" : "mod learning failed",
+    attempts,
+    message: "mod optimization complete",
+    passed: report.passed,
     phase: "done",
     runDir,
+    score: report.score ?? markerScore(report.evaluation),
+    selectedCandidateIndex,
   });
   return report;
 }

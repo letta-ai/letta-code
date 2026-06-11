@@ -10,6 +10,8 @@ import {
   runModLearning,
 } from "../../src/mods/learning-harness.ts";
 
+const DEFAULT_OPTIMIZATION_STEPS = 10;
+
 interface Args {
   backend?: string;
   candidate?: string;
@@ -127,7 +129,7 @@ Options:
   --env <path>                  Learning env JSON (default: memory-citations env)
   --out <dir>                   Run artifact directory (default: .letta/mod-learning-runs/<slug>-<timestamp>)
   --candidate <path>            Use an existing candidate mod instead of generation
-  --candidates <n>              Generate/evaluate N candidates, each seeing prior attempts (default: 1)
+  --candidates <n>              Run N optimization iterations for one learned mod (default: 10 for generated runs)
   --candidate-file-name <name>  Candidate filename inside the eval mod directory
   --model <handle>              Model for generation and eval
   --generation-model <handle>   Model for candidate generation
@@ -231,7 +233,11 @@ async function main(): Promise<void> {
 
   const report = await runModLearning({
     backend: args.backend,
-    candidateCount: args.candidateCount,
+    candidateCount:
+      args.candidateCount ??
+      (args.candidate || args.skipGeneration
+        ? undefined
+        : DEFAULT_OPTIMIZATION_STEPS),
     candidateFileName: args.candidateFileName,
     candidateSourcePath: args.candidate,
     evalModel: args.evalModel,
