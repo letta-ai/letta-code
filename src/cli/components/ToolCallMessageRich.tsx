@@ -114,6 +114,7 @@ import {
 import { TodoRenderer } from "./TodoRenderer.js";
 
 const LIVE_SHELL_ARGS_MAX_LINES = 2;
+const RESULT_RIGHT_PADDING = 1;
 
 /** Render an array of StyledSpans as inline <Text> elements */
 function renderSpans(spans: StyledSpan[]): ReactNode {
@@ -384,7 +385,10 @@ export const ToolCallMessage = memo(
         const extractedText = extractMessageFromResult(line.resultText);
         const prefix = `  ${CLI_GLYPHS.result}  `; // 2 spaces, glyph, 2 spaces
         const prefixWidth = 5; // Total width of prefix
-        const contentWidth = Math.max(0, columns - prefixWidth);
+        const contentWidth = Math.max(
+          0,
+          columns - prefixWidth - RESULT_RIGHT_PADDING,
+        );
 
         // Special cases from old ToolReturnBlock (check before truncation)
         if (line.resultText === "Running...") {
@@ -393,7 +397,11 @@ export const ToolCallMessage = memo(
               <Box width={prefixWidth} flexShrink={0}>
                 <Text>{prefix}</Text>
               </Box>
-              <Box flexGrow={1} width={contentWidth}>
+              <Box
+                flexGrow={1}
+                width={contentWidth}
+                paddingRight={RESULT_RIGHT_PADDING}
+              >
                 <Text dimColor>Running...</Text>
               </Box>
             </Box>
@@ -406,7 +414,11 @@ export const ToolCallMessage = memo(
               <Box width={prefixWidth} flexShrink={0}>
                 <Text>{prefix}</Text>
               </Box>
-              <Box flexGrow={1} width={contentWidth}>
+              <Box
+                flexGrow={1}
+                width={contentWidth}
+                paddingRight={RESULT_RIGHT_PADDING}
+              >
                 <Text color={colors.status.interrupt}>
                   {INTERRUPTED_BY_USER}
                 </Text>
@@ -563,7 +575,11 @@ export const ToolCallMessage = memo(
                     <Box width={prefixWidth} flexShrink={0}>
                       <Text>{prefix}</Text>
                     </Box>
-                    <Box flexGrow={1} width={contentWidth}>
+                    <Box
+                      flexGrow={1}
+                      width={contentWidth}
+                      paddingRight={RESULT_RIGHT_PADDING}
+                    >
                       <Text wrap="wrap">
                         <Text dimColor>·</Text> {qa.question}{" "}
                         <Text dimColor>→</Text> {qa.answer}
@@ -802,7 +818,11 @@ export const ToolCallMessage = memo(
                 <Box width={prefixWidth} flexShrink={0}>
                   <Text>{prefix}</Text>
                 </Box>
-                <Box flexGrow={1} width={contentWidth}>
+                <Box
+                  flexGrow={1}
+                  width={contentWidth}
+                  paddingRight={RESULT_RIGHT_PADDING}
+                >
                   <Text>
                     Read <Text bold>1</Text> image
                   </Text>
@@ -818,7 +838,11 @@ export const ToolCallMessage = memo(
               <Box width={prefixWidth} flexShrink={0}>
                 <Text>{prefix}</Text>
               </Box>
-              <Box flexGrow={1} width={contentWidth}>
+              <Box
+                flexGrow={1}
+                width={contentWidth}
+                paddingRight={RESULT_RIGHT_PADDING}
+              >
                 <Text>
                   Read <Text bold>{lineCount}</Text> line
                   {lineCount !== 1 ? "s" : ""}
@@ -847,7 +871,11 @@ export const ToolCallMessage = memo(
                 <Box width={prefixWidth} flexShrink={0}>
                   <Text>{prefix}</Text>
                 </Box>
-                <Box flexGrow={1} width={contentWidth}>
+                <Box
+                  flexGrow={1}
+                  width={contentWidth}
+                  paddingRight={RESULT_RIGHT_PADDING}
+                >
                   <Text>
                     Found <Text bold>{count}</Text> file{count !== 1 ? "s" : ""}
                   </Text>
@@ -860,7 +888,11 @@ export const ToolCallMessage = memo(
                 <Box width={prefixWidth} flexShrink={0}>
                   <Text>{prefix}</Text>
                 </Box>
-                <Box flexGrow={1} width={contentWidth}>
+                <Box
+                  flexGrow={1}
+                  width={contentWidth}
+                  paddingRight={RESULT_RIGHT_PADDING}
+                >
                   <Text>
                     Found <Text bold>0</Text>{" "}
                     {noFilesMatch ? "files" : "matches"}
@@ -876,7 +908,11 @@ export const ToolCallMessage = memo(
                 <Box width={prefixWidth} flexShrink={0}>
                   <Text>{prefix}</Text>
                 </Box>
-                <Box flexGrow={1} width={contentWidth}>
+                <Box
+                  flexGrow={1}
+                  width={contentWidth}
+                  paddingRight={RESULT_RIGHT_PADDING}
+                >
                   <Text>
                     Found <Text bold>{lineCount}</Text> line
                     {lineCount !== 1 ? "s" : ""}
@@ -900,7 +936,11 @@ export const ToolCallMessage = memo(
                 <Box width={prefixWidth} flexShrink={0}>
                   <Text>{prefix}</Text>
                 </Box>
-                <Box flexGrow={1} width={contentWidth}>
+                <Box
+                  flexGrow={1}
+                  width={contentWidth}
+                  paddingRight={RESULT_RIGHT_PADDING}
+                >
                   <Text>
                     Found <Text bold>{count}</Text> file{count !== 1 ? "s" : ""}
                   </Text>
@@ -913,7 +953,11 @@ export const ToolCallMessage = memo(
                 <Box width={prefixWidth} flexShrink={0}>
                   <Text>{prefix}</Text>
                 </Box>
-                <Box flexGrow={1} width={contentWidth}>
+                <Box
+                  flexGrow={1}
+                  width={contentWidth}
+                  paddingRight={RESULT_RIGHT_PADDING}
+                >
                   <Text>
                     Found <Text bold>0</Text> files
                   </Text>
@@ -951,7 +995,11 @@ export const ToolCallMessage = memo(
             <Box width={prefixWidth} flexShrink={0}>
               <Text>{prefix}</Text>
             </Box>
-            <Box flexGrow={1} width={contentWidth}>
+            <Box
+              flexGrow={1}
+              width={contentWidth}
+              paddingRight={RESULT_RIGHT_PADDING}
+            >
               {isError ? (
                 <Text color={colors.status.error}>{displayText}</Text>
               ) : (

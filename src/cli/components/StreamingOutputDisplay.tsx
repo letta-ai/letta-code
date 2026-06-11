@@ -5,6 +5,8 @@ import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { Text } from "./Text";
 
+const RIGHT_PADDING = 1;
+
 interface StreamingOutputDisplayProps {
   streaming: StreamingState;
   /** Show "(esc to interrupt)" hint - used by bash mode (LET-7199) */
@@ -28,7 +30,7 @@ export const StreamingOutputDisplay = memo(
     const elapsed = Math.floor((Date.now() - streaming.startTime) / 1000);
     const { tailLines, totalLineCount } = streaming;
     const hiddenCount = Math.max(0, totalLineCount - tailLines.length);
-    const contentWidth = Math.max(10, columns - 5);
+    const contentWidth = Math.max(10, columns - 5 - RIGHT_PADDING);
 
     const clipToWidth = (text: string): string => {
       if (text.length <= contentWidth) {

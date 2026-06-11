@@ -7,6 +7,7 @@ import { Text } from "./Text";
 
 const DEFAULT_COLLAPSED_LINES = 3;
 const PREFIX_WIDTH = 5; // `  └  ` or `     `
+const RIGHT_PADDING = 1;
 
 interface CollapsedOutputDisplayProps {
   output: string; // Full output from completion
@@ -31,7 +32,7 @@ export const CollapsedOutputDisplay = memo(
     isLast = false,
   }: CollapsedOutputDisplayProps) => {
     const columns = useTerminalWidth();
-    const contentWidth = Math.max(0, columns - PREFIX_WIDTH);
+    const contentWidth = Math.max(0, columns - PREFIX_WIDTH - RIGHT_PADDING);
 
     let displayOutput = output;
     let clippedByChars = false;
@@ -68,7 +69,7 @@ export const CollapsedOutputDisplay = memo(
           <Box width={PREFIX_WIDTH} flexShrink={0}>
             <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
           </Box>
-          <Box flexGrow={1} width={contentWidth}>
+          <Box flexGrow={1} width={contentWidth} paddingRight={RIGHT_PADDING}>
             <MarkdownDisplay text={visibleLines[0] ?? ""} />
           </Box>
         </Box>
@@ -79,7 +80,7 @@ export const CollapsedOutputDisplay = memo(
             <Box width={PREFIX_WIDTH} flexShrink={0}>
               <Text>{"     "}</Text>
             </Box>
-            <Box flexGrow={1} width={contentWidth}>
+            <Box flexGrow={1} width={contentWidth} paddingRight={RIGHT_PADDING}>
               <MarkdownDisplay text={line} />
             </Box>
           </Box>
@@ -90,7 +91,7 @@ export const CollapsedOutputDisplay = memo(
             <Box width={PREFIX_WIDTH} flexShrink={0}>
               <Text>{"     "}</Text>
             </Box>
-            <Box flexGrow={1} width={contentWidth}>
+            <Box flexGrow={1} width={contentWidth} paddingRight={RIGHT_PADDING}>
               <Text dimColor>
                 … +{hiddenCount} lines{isLast ? " (ctrl+o to expand)" : ""}
               </Text>
@@ -103,7 +104,7 @@ export const CollapsedOutputDisplay = memo(
             <Box width={PREFIX_WIDTH} flexShrink={0}>
               <Text>{"     "}</Text>
             </Box>
-            <Box flexGrow={1} width={contentWidth}>
+            <Box flexGrow={1} width={contentWidth} paddingRight={RIGHT_PADDING}>
               <Text dimColor>(ctrl+o to collapse)</Text>
             </Box>
           </Box>
@@ -114,7 +115,7 @@ export const CollapsedOutputDisplay = memo(
             <Box width={PREFIX_WIDTH} flexShrink={0}>
               <Text>{"     "}</Text>
             </Box>
-            <Box flexGrow={1} width={contentWidth}>
+            <Box flexGrow={1} width={contentWidth} paddingRight={RIGHT_PADDING}>
               <Text dimColor>
                 … output clipped{isLast ? " (ctrl+o to expand)" : ""}
               </Text>
