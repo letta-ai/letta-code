@@ -316,7 +316,7 @@ async function maybeLaunchPostTurnChannelReflection(params: {
       );
       if (
         !shouldFireStepCountTrigger(
-          transcriptState.turns_since_last_successful_reflection,
+          transcriptState.steps_since_last_successful_reflection,
           params.reflectionSettings,
         )
       ) {

@@ -2541,8 +2541,8 @@ describe("listen-client multi-worker concurrency", () => {
     );
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(1);
+    expect(state.total_completed_steps).toBe(0);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
 
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
     const transcriptRows = (await readFile(paths.transcriptPath, "utf-8"))

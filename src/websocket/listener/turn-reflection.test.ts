@@ -45,9 +45,9 @@ describe("post-turn channel reflection", () => {
         contextTracker: createContextTracker(),
         getTranscriptState: mock(async () => ({
           schema_version: REFLECTION_STATE_SCHEMA_VERSION,
-          total_completed_turns: 3,
-          reflected_completed_turns: 0,
-          turns_since_last_successful_reflection: 3,
+          total_completed_steps: 3,
+          reflected_completed_steps: 0,
+          steps_since_last_successful_reflection: 3,
         })),
         launch: mock(async (trigger) => {
           launches.push(trigger);
@@ -100,9 +100,9 @@ describe("post-turn channel reflection", () => {
         contextTracker: createContextTracker(),
         getTranscriptState: mock(async () => ({
           schema_version: REFLECTION_STATE_SCHEMA_VERSION,
-          total_completed_turns: 1,
-          reflected_completed_turns: 0,
-          turns_since_last_successful_reflection: 1,
+          total_completed_steps: 1,
+          reflected_completed_steps: 0,
+          steps_since_last_successful_reflection: 1,
         })),
         launch,
       });
