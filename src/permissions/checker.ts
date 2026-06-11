@@ -144,13 +144,14 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  *    passed --disable-memory-guard.
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
- * 3. Check permission mode (--permission-mode flag) → ALLOW or DENY
- * 4. Check CLI allowedTools (--allowedTools flag) → ALLOW
- * 5. For Read/Glob/Grep within working directory → ALLOW
- * 6. Check session allow rules (first match wins) → ALLOW
- * 7. Check allow rules from settings (first match wins) → ALLOW
- * 8. Check ask rules from settings (first match wins) → ASK
- * 9. Fall back to default behavior for tool → ASK or ALLOW
+ * 3. Check alwaysAsk rules and mod tool alwaysAsk policy → ALWAYS_ASK
+ * 4. Check permission mode (--permission-mode flag) → ALLOW or DENY
+ * 5. Check CLI allowedTools (--allowedTools flag) → ALLOW
+ * 6. For Read/Glob/Grep within working directory → ALLOW
+ * 7. Check session allow rules (first match wins) → ALLOW
+ * 8. Check allow rules from settings (first match wins) → ALLOW
+ * 9. Check ask rules from settings (first match wins) → ASK
+ * 10. Fall back to default behavior for tool → ASK or ALLOW
  *
  * @param toolName - Name of the tool (e.g., "Read", "Bash", "Write")
  * @param toolArgs - Tool arguments (contains file paths, commands, etc.)
