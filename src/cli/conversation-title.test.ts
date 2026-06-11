@@ -3,8 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildConversationTitleMessages,
   CONVERSATION_TITLE_MAX_LENGTH,
   getConversationTitleSettings,
+  listConversationTitleMessages,
   normalizeConversationTitle,
   setConversationTitleSettings,
 } from "@/cli/helpers/conversation-title";
@@ -120,5 +122,74 @@ describe("conversation title settings", () => {
     await settingsManager.initialize();
 
     expect(getConversationTitleSettings()).toEqual({ enabled: true });
+  });
+});
+
+describe("buildConversationTitleMessages", () => {
+  test("extracts user and assistant text only", () => {
+    expect(
+      buildConversationTitleMessages([
+        { message_type: "user_message", content: [{ text: "hello" }] },
+        { message_type: "assistant_message", content: [{ text: "hi" }] },
+        { message_type: "reasoning_message", content: "hidden" },
+      ] as never),
+    ).toEqual([
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+    ]);
+  });
+});
+
+describe("listConversationTitleMessages", () => {
+  test("fetches all message pages and returns chronological title messages", async () => {
+    const calls: unknown[] = [];
+    const pages = [
+      [
+        { id: "msg-4", message_type: "assistant_message", content: "answer 2" },
+        { id: "msg-3", message_type: "user_message", content: "question 2" },
+      ],
+      [
+        { id: "msg-2", message_type: "assistant_message", content: "answer 1" },
+        { id: "msg-1", message_type: "user_message", content: "question 1" },
+      ],
+      [],
+    ];
+    const backend = {
+      listConversationMessages: async (
+        _conversationId: string,
+        body: unknown,
+      ) => {
+        calls.push(body);
+        return pages.shift() ?? [];
+      },
+    };
+
+    await expect(
+      listConversationTitleMessages(backend as never, "conv-1"),
+    ).resolves.toEqual([
+      { role: "user", content: "question 1" },
+      { role: "assistant", content: "answer 1" },
+      { role: "user", content: "question 2" },
+      { role: "assistant", content: "answer 2" },
+    ]);
+    expect(calls).toEqual([
+      {
+        limit: 100,
+        order: "desc",
+        include_return_message_types: ["user_message", "assistant_message"],
+      },
+      {
+        limit: 100,
+        order: "desc",
+        include_return_message_types: ["user_message", "assistant_message"],
+        before: "msg-3",
+      },
+      {
+        limit: 100,
+        order: "desc",
+        include_return_message_types: ["user_message", "assistant_message"],
+        before: "msg-1",
+      },
+    ]);
   });
 });

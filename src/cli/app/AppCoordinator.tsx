@@ -73,9 +73,9 @@ import {
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
 import {
-  type ConversationTitleMessage,
   generateConversationTitleFromSummary,
   getConversationTitleSettings,
+  listConversationTitleMessages,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
@@ -1235,17 +1235,10 @@ export function App({
     }
 
     try {
-      const messages: ConversationTitleMessage[] = [];
-      const titleLineIds = buffersRef.current.order;
-      for (const lineId of titleLineIds) {
-        const line = buffersRef.current.byId.get(lineId);
-        if (line?.kind === "user" || line?.kind === "assistant") {
-          const content = line.text.trim();
-          if (content) {
-            messages.push({ role: line.kind, content });
-          }
-        }
-      }
+      const messages = await listConversationTitleMessages(
+        getBackend(),
+        conversationId,
+      );
 
       let summaryModel: string | undefined;
       if (currentModelLabel) {
