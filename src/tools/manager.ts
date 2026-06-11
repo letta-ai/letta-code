@@ -58,6 +58,7 @@ import {
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import type { ClientToolPolicy } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import {
@@ -288,20 +289,86 @@ function matchesClientToolAllowlistEntry(
   );
 }
 
+function normalizeClientToolPolicies(options?: {
+  clientToolAllowlist?: string[];
+  clientToolPolicies?: ClientToolPolicy[];
+}): ClientToolPolicy[] {
+  const policies = [...(options?.clientToolPolicies ?? [])];
+  if (options?.clientToolAllowlist !== undefined) {
+    policies.push({ mode: "allow", tools: options.clientToolAllowlist });
+  }
+  return policies;
+}
+
+function matchesClientToolPolicyEntry(
+  tools: string[],
+  serverToolName: string,
+  internalToolName?: string,
+): boolean {
+  const toolSet = new Set(tools);
+  return matchesClientToolAllowlistEntry(
+    toolSet,
+    serverToolName,
+    internalToolName,
+  );
+}
+
+function isClientToolAllowedByPolicies(
+  serverToolName: string,
+  internalToolName: string | undefined,
+  policies: ClientToolPolicy[],
+): boolean {
+  for (const policy of policies) {
+    switch (policy.mode) {
+      case "all":
+        break;
+      case "none":
+        return false;
+      case "allow":
+        if (
+          !matchesClientToolPolicyEntry(
+            policy.tools,
+            serverToolName,
+            internalToolName,
+          )
+        ) {
+          return false;
+        }
+        break;
+      case "deny":
+        if (
+          matchesClientToolPolicyEntry(
+            policy.tools,
+            serverToolName,
+            internalToolName,
+          )
+        ) {
+          return false;
+        }
+        break;
+    }
+  }
+  return true;
+}
+
 export function filterBuiltInToolNamesByClientAllowlist(
   toolNames: ToolName[],
   clientToolAllowlist?: string[],
+  clientToolPolicies?: ClientToolPolicy[],
 ): ToolName[] {
-  if (clientToolAllowlist === undefined) {
+  const policies = normalizeClientToolPolicies({
+    clientToolAllowlist,
+    clientToolPolicies,
+  });
+  if (policies.length === 0) {
     return toolNames;
   }
 
-  const allowSet = new Set(clientToolAllowlist);
   return toolNames.filter((toolName) =>
-    matchesClientToolAllowlistEntry(
-      allowSet,
+    isClientToolAllowedByPolicies(
       getServerToolName(toolName),
       toolName,
+      policies,
     ),
   );
 }
@@ -328,6 +395,7 @@ function filterExternalToolsByClientAllowlist(
   externalTools: Map<string, ExternalToolDefinition>,
   clientToolAllowlist?: string[],
   externalToolScopeIds?: string[],
+  clientToolPolicies?: ClientToolPolicy[],
 ): Map<string, ExternalToolDefinition> {
   const scopeSet =
     externalToolScopeIds === undefined
@@ -340,14 +408,19 @@ function filterExternalToolsByClientAllowlist(
     return scopeSet?.has(tool.scopeId) ?? false;
   });
 
-  if (clientToolAllowlist === undefined) {
+  const policies = normalizeClientToolPolicies({
+    clientToolAllowlist,
+    clientToolPolicies,
+  });
+  if (policies.length === 0) {
     return new Map(scopeFiltered.map((tool) => [tool.name, tool]));
   }
 
-  const allowSet = new Set(clientToolAllowlist);
   return new Map(
     scopeFiltered
-      .filter((tool) => matchesClientToolAllowlistEntry(allowSet, tool.name))
+      .filter((tool) =>
+        isClientToolAllowedByPolicies(tool.name, undefined, policies),
+      )
       .map((tool) => [tool.name, tool]),
   );
 }
@@ -355,15 +428,19 @@ function filterExternalToolsByClientAllowlist(
 function filterModToolsByClientAllowlist(
   modTools: Map<string, ModToolDefinition>,
   clientToolAllowlist?: string[],
+  clientToolPolicies?: ClientToolPolicy[],
 ): Map<string, ModToolDefinition> {
-  if (clientToolAllowlist === undefined) {
+  const policies = normalizeClientToolPolicies({
+    clientToolAllowlist,
+    clientToolPolicies,
+  });
+  if (policies.length === 0) {
     return new Map(modTools);
   }
 
-  const allowSet = new Set(clientToolAllowlist);
   return new Map(
     Array.from(modTools.entries()).filter(([name, tool]) =>
-      matchesClientToolAllowlistEntry(allowSet, tool.name, name),
+      isClientToolAllowedByPolicies(tool.name, name, policies),
     ),
   );
 }
@@ -1072,6 +1149,7 @@ function capturePreparedToolExecutionContext(
   },
   options?: {
     clientToolAllowlist?: string[];
+    clientToolPolicies?: ClientToolPolicy[];
     externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
@@ -1094,6 +1172,7 @@ function capturePreparedToolExecutionContext(
       snapshot.externalTools,
       options?.clientToolAllowlist,
       options?.externalToolScopeIds,
+      options?.clientToolPolicies,
     ),
     externalExecutor: snapshot.externalExecutor,
     modEvents: options?.modEvents ?? snapshot.modEvents,
@@ -1101,6 +1180,7 @@ function capturePreparedToolExecutionContext(
     modTools: filterModToolsByClientAllowlist(
       snapshot.modTools,
       options?.clientToolAllowlist,
+      options?.clientToolPolicies,
     ),
     workingDirectory:
       runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
@@ -1178,6 +1258,7 @@ export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
     clientToolAllowlist?: string[];
+    clientToolPolicies?: ClientToolPolicy[];
     externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
@@ -1210,6 +1291,7 @@ export async function prepareToolExecutionContextForModel(
     exclude?: ToolName[];
     include?: ToolName[];
     clientToolAllowlist?: string[];
+    clientToolPolicies?: ClientToolPolicy[];
     externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
@@ -1506,6 +1588,7 @@ async function resolveBaseToolNamesForModel(
     exclude?: ToolName[];
     include?: ToolName[];
     clientToolAllowlist?: string[];
+    clientToolPolicies?: ClientToolPolicy[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolName[]> {
@@ -1551,6 +1634,7 @@ async function resolveBaseToolNamesForModel(
   baseToolNames = filterBuiltInToolNamesByClientAllowlist(
     baseToolNames,
     options?.clientToolAllowlist,
+    options?.clientToolPolicies,
   );
 
   return baseToolNames;
@@ -1562,6 +1646,7 @@ async function buildRegistryForModel(
     exclude?: ToolName[];
     include?: ToolName[];
     clientToolAllowlist?: string[];
+    clientToolPolicies?: ClientToolPolicy[];
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
   },
 ): Promise<ToolRegistry> {

@@ -361,6 +361,7 @@ export function createListenerMessageHandler(
           type: "message",
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
+          toolPolicy: inputPayload.tool_policy,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
           messages: inputPayload.messages,

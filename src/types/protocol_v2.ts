@@ -695,6 +695,11 @@ export interface InputCreateMessagePayload {
   kind: "create_message";
   messages: Array<MessageCreate & { client_message_id?: string }>;
   /**
+   * Optional request-scoped tool policy. This can only narrow any runtime-level
+   * tool_policy established by runtime_start.
+   */
+  tool_policy?: ClientToolPolicy;
+  /**
    * Optional request-scoped allowlist for locally executed client tools.
    * Undefined preserves the listener's normal toolset; an empty array means no
    * client tools for this turn.
@@ -779,6 +784,12 @@ export interface RuntimeStartClientInfo {
   version?: string;
 }
 
+export type ClientToolPolicy =
+  | { mode: "all" }
+  | { mode: "none" }
+  | { mode: "allow"; tools: string[] }
+  | { mode: "deny"; tools: string[] };
+
 export interface RuntimeStartCommand {
   type: "runtime_start";
   /** Echoed back in the response for request correlation. */
@@ -795,6 +806,8 @@ export interface RuntimeStartCommand {
   cwd?: string | null;
   /** Initial permission mode for this runtime scope. */
   mode?: DevicePermissionMode;
+  /** Default client-tool policy for this runtime scope. Input policies only narrow this. */
+  tool_policy?: ClientToolPolicy;
   /** Optional client metadata for diagnostics/future protocol negotiation. */
   client_info?: RuntimeStartClientInfo;
   /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */

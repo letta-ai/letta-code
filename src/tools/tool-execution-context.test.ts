@@ -366,6 +366,42 @@ describe("tool execution context snapshot", () => {
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Agent"]);
   });
 
+  test("client tool policies can deny tools by server-facing aliases", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolPolicies: [
+          { mode: "deny", tools: ["AskUserQuestion", "Agent"] },
+        ],
+      },
+    );
+
+    expect(prepared.loadedToolNames).not.toContain("AskUserQuestion");
+    expect(prepared.loadedToolNames).not.toContain("Task");
+    expect(prepared.clientTools.map((tool) => tool.name)).not.toContain(
+      "AskUserQuestion",
+    );
+    expect(prepared.clientTools.map((tool) => tool.name)).not.toContain(
+      "Agent",
+    );
+    expect(prepared.loadedToolNames).toContain("Read");
+  });
+
+  test("runtime policies cannot be widened by input policies", async () => {
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolPolicies: [
+          { mode: "deny", tools: ["AskUserQuestion"] },
+          { mode: "allow", tools: ["AskUserQuestion"] },
+        ],
+      },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools).toEqual([]);
+  });
+
   test("request-scoped allowlist filters external tools by name", async () => {
     registerExternalTools([
       {
@@ -408,6 +444,34 @@ describe("tool execution context snapshot", () => {
 
     expect(prepared.loadedToolNames).toEqual([]);
     expect(prepared.clientTools).toEqual([]);
+  });
+
+  test("client tool policies filter external and mod tools", async () => {
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "External tool",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+    const controller = new AbortController();
+    registerEchoModTool(controller.signal);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolPolicies: [
+          { mode: "deny", tools: ["RemoteFoo", "local_echo"] },
+        ],
+      },
+    );
+
+    expect(prepared.clientTools.map((tool) => tool.name)).not.toContain(
+      "RemoteFoo",
+    );
+    expect(prepared.clientTools.map((tool) => tool.name)).not.toContain(
+      "local_echo",
+    );
   });
 
   test("scoped external tools stay hidden unless their scope is selected", async () => {

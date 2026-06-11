@@ -56,6 +56,7 @@ import {
   getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
 } from "@/websocket/listener/recoverable-notices";
+import { getConversationToolPolicy } from "@/websocket/listener/tool-policy";
 
 class MockSocket {
   readyState: number;
@@ -600,6 +601,7 @@ describe("listen-client parseServerMessage", () => {
             },
             cwd: cwdDir,
             mode: "acceptEdits",
+            tool_policy: { mode: "deny", tools: ["AskUserQuestion"] },
             recover_approvals: false,
           },
           socket as unknown as WebSocket,
@@ -631,6 +633,13 @@ describe("listen-client parseServerMessage", () => {
             runtimeScope.conversation_id,
           ),
         ).toBe(cwdDir);
+        expect(
+          getConversationToolPolicy(
+            listener,
+            runtimeScope.agent_id,
+            runtimeScope.conversation_id,
+          ),
+        ).toEqual({ mode: "deny", tools: ["AskUserQuestion"] });
         expect(messages).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
@@ -841,6 +850,7 @@ describe("listen-client parseServerMessage", () => {
           payload: {
             kind: "create_message",
             messages: [],
+            tool_policy: { mode: "deny", tools: ["AskUserQuestion"] },
             client_tool_allowlist: ["Read", "Grep"],
             external_tool_scope_ids: ["council-1"],
           },
@@ -858,6 +868,10 @@ describe("listen-client parseServerMessage", () => {
     );
     expect(msg?.type).toBe("input");
     if (msg?.type === "input" && msg.payload.kind === "create_message") {
+      expect(msg.payload.tool_policy).toEqual({
+        mode: "deny",
+        tools: ["AskUserQuestion"],
+      });
       expect(msg.payload.client_tool_allowlist).toEqual(["Read", "Grep"]);
       expect(msg.payload.external_tool_scope_ids).toEqual(["council-1"]);
     }
@@ -883,6 +897,28 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("__invalid_input");
     if (parsed?.type === "__invalid_input") {
       expect(parsed.reason).toContain("client_tool_allowlist must be string[]");
+    }
+  });
+
+  test("rejects input create_message with invalid tool policy", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            tool_policy: { mode: "deny" },
+          },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain("tool_policy must be a valid");
     }
   });
 

@@ -168,6 +168,7 @@ function isInputCommand(value: unknown): value is InputCommand {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
+    tool_policy?: unknown;
     client_tool_allowlist?: unknown;
     external_tool_scope_ids?: unknown;
     request_id?: unknown;
@@ -177,6 +178,8 @@ function isInputCommand(value: unknown): value is InputCommand {
   if (payload.kind === "create_message") {
     return (
       Array.isArray(payload.messages) &&
+      (payload.tool_policy === undefined ||
+        isClientToolPolicy(payload.tool_policy)) &&
       (payload.client_tool_allowlist === undefined ||
         isStringArray(payload.client_tool_allowlist)) &&
       (payload.external_tool_scope_ids === undefined ||
@@ -213,6 +216,7 @@ function getInvalidInputReason(value: unknown): {
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
+    tool_policy?: unknown;
     client_tool_allowlist?: unknown;
     external_tool_scope_ids?: unknown;
     request_id?: unknown;
@@ -225,6 +229,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.kind=create_message requires payload.messages[]",
+      };
+    }
+    if (
+      payload.tool_policy !== undefined &&
+      !isClientToolPolicy(payload.tool_policy)
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.tool_policy must be a valid client tool policy",
       };
     }
     if (
@@ -398,6 +412,7 @@ export function isRuntimeStartCommand(
     create_conversation?: unknown;
     cwd?: unknown;
     mode?: unknown;
+    tool_policy?: unknown;
     client_info?: unknown;
     recover_approvals?: unknown;
     force_device_status?: unknown;
@@ -414,12 +429,25 @@ export function isRuntimeStartCommand(
       isRuntimeStartCreateConversationOptions(c.create_conversation)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.tool_policy === undefined || isClientToolPolicy(c.tool_policy)) &&
     (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&
     (c.force_device_status === undefined ||
       typeof c.force_device_status === "boolean")
   );
+}
+
+function isClientToolPolicy(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  const mode = value.mode;
+  if (mode === "all" || mode === "none") {
+    return value.tools === undefined;
+  }
+  if (mode === "allow" || mode === "deny") {
+    return Array.isArray(value.tools) && isStringArray(value.tools);
+  }
+  return false;
 }
 
 function isExternalToolDefinitionPayload(value: unknown): boolean {

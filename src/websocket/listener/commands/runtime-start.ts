@@ -14,6 +14,7 @@ import {
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
 import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { setConversationToolPolicy } from "@/websocket/listener/tool-policy";
 import type {
   ConversationRuntime,
   ListenerRuntime,
@@ -205,6 +206,13 @@ async function applyRuntimeStartState(
       statusSocket: context.socket,
     });
   }
+
+  setConversationToolPolicy(
+    context.runtime,
+    scope.agent_id,
+    scope.conversation_id,
+    parsed.tool_policy,
+  );
 }
 
 export async function handleRuntimeStartCommand(

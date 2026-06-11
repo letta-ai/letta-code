@@ -14,6 +14,7 @@ import {
   type RuntimeContextSnapshot,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import type { ClientToolPolicy } from "@/types/protocol_v2";
 import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
 import {
@@ -193,6 +194,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   toolsetPreference: ToolsetPreference;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
+  clientToolPolicies?: ClientToolPolicy[];
   externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
@@ -206,6 +208,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     toolsetPreference,
     exclude,
     clientToolAllowlist,
+    clientToolPolicies,
     externalToolScopeIds,
     workingDirectory,
     permissionModeState,
@@ -233,6 +236,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
           ? getGoalToolNamesForToolset(derivedToolset)
           : undefined,
         clientToolAllowlist,
+        clientToolPolicies,
         externalToolScopeIds,
         workingDirectory,
         permissionModeState,
@@ -262,9 +266,11 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
           : [],
       ),
       clientToolAllowlist,
+      clientToolPolicies,
     ),
     {
       clientToolAllowlist,
+      clientToolPolicies,
       externalToolScopeIds,
       workingDirectory,
       permissionModeState,
@@ -434,6 +440,7 @@ export async function prepareToolExecutionContextForScope(params: {
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
+  clientToolPolicies?: ClientToolPolicy[];
   externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
@@ -448,6 +455,7 @@ export async function prepareToolExecutionContextForScope(params: {
     cachedEffectiveModel,
     exclude,
     clientToolAllowlist,
+    clientToolPolicies,
     externalToolScopeIds,
     workingDirectory,
     permissionModeState,
@@ -511,6 +519,7 @@ export async function prepareToolExecutionContextForScope(params: {
     toolsetPreference,
     exclude,
     clientToolAllowlist,
+    clientToolPolicies,
     externalToolScopeIds,
     workingDirectory,
     permissionModeState,

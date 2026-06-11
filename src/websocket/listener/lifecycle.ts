@@ -775,6 +775,7 @@ export function createRuntime(): ListenerRuntime {
     workingDirectoryByConversation: loadPersistedCwdMap(),
     worktreeWatcherByConversation: new Map(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
+    toolPolicyByConversation: new Map(),
     reminderStateByConversation: new Map(),
     contextTrackerByConversation: new Map(),
     systemPromptRecompileByConversation: new Map(),
@@ -817,6 +818,7 @@ export function stopRuntime(
   rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
   clearListenerWarmState(runtime);
   runtime.reminderStateByConversation.clear();
+  runtime.toolPolicyByConversation?.clear();
   runtime.contextTrackerByConversation.clear();
   runtime.systemPromptRecompileByConversation.clear();
   runtime.queuedSystemPromptRecompileByConversation.clear();

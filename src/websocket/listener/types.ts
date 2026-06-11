@@ -20,6 +20,7 @@ import type { SharedReminderState } from "@/reminders/state";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
+  ClientToolPolicy,
   ControlRequest,
   ExternalToolCallResult,
   LoopStatus,
@@ -61,6 +62,7 @@ export interface IncomingMessage {
   agentId?: string;
   conversationId?: string;
   channelTurnSources?: ChannelTurnSource[];
+  toolPolicy?: ClientToolPolicy;
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
   messages: Array<
@@ -209,6 +211,8 @@ export type ListenerRuntime = {
     string,
     import("@/websocket/listener/permission-mode").ConversationPermissionModeState
   >;
+  /** Per-conversation default client-tool policy supplied by app-server runtime_start. */
+  toolPolicyByConversation?: Map<string, ClientToolPolicy>;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
   /** Per-conversation context tracker survives ConversationRuntime eviction. */

@@ -125,6 +125,7 @@ import {
   sendMessageStreamWithRetry,
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
+import { getConversationToolPolicy } from "./tool-policy";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import type {
@@ -620,10 +621,19 @@ export async function handleIncomingMessage(
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
     ];
+    const runtimeToolPolicy = getConversationToolPolicy(
+      runtime.listener,
+      normalizedAgentId,
+      conversationId,
+    );
+    const clientToolPolicies = [runtimeToolPolicy, msg.toolPolicy].filter(
+      (policy): policy is NonNullable<typeof policy> => policy !== undefined,
+    );
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
       clientToolAllowlist: msg.clientToolAllowlist,
+      clientToolPolicies,
       externalToolScopeIds: msg.externalToolScopeIds,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,

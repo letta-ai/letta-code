@@ -82,6 +82,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       create_conversation: { body: { summary: "New conversation" } },
       cwd: "/tmp/project",
       mode: "acceptEdits",
+      tool_policy: { mode: "deny", tools: ["AskUserQuestion"] },
       client_info: { name: "test", title: "Test", version: "1.0.0" },
     },
     { type: "agent_list", request_id: "r1", query: { limit: 10 } },
@@ -141,7 +142,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
     },
   ])("accepts $type", (message) => {
     const parsed = parseServerMessage(Buffer.from(JSON.stringify(message)));
-    expect(parsed).toEqual(message);
+    expect(parsed as unknown).toEqual(message);
   });
 
   test.each([
@@ -157,6 +158,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       agent_id: "agent-1",
       mode: "bad",
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      tool_policy: { mode: "deny" },
     },
     {
       type: "runtime_start",
