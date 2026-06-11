@@ -321,6 +321,80 @@ describe("PiStreamAdapter", () => {
     }
   });
 
+  test("adaptively elides images after repeated transport failures below byte limit", async () => {
+    let providerCalls = 0;
+    const contexts: Context[] = [];
+    const stream: PiStreamFunction = (_model, context) => {
+      providerCalls += 1;
+      contexts.push(context);
+      if (providerCalls <= 3) {
+        const error = assistantErrorMessage(
+          "WebSocket closed 1006 Connection ended\nretry-after-ms: 0",
+        );
+        return streamFromEvents(
+          [{ type: "error", reason: "error", error }],
+          error,
+        );
+      }
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({ stream });
+    const baseInput = input();
+    const events = await collectEvents(
+      adapter.stream({
+        ...baseInput,
+        uiMessages: [
+          {
+            id: "ui-msg-under-limit-image",
+            role: "user",
+            content: [
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: "a".repeat(3_000_001),
+              },
+            ],
+            timestamp: Date.now(),
+          },
+        ],
+      }),
+    );
+
+    expect(providerCalls).toBe(4);
+    expect(
+      contexts.slice(0, 3).map((context) => context.messages[0]?.content),
+    ).toEqual([
+      [expect.objectContaining({ type: "image" })],
+      [expect.objectContaining({ type: "image" })],
+      [expect.objectContaining({ type: "image" })],
+    ]);
+    expect(contexts[3]?.messages[0]?.content).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining("Image omitted"),
+      }),
+    ]);
+    const retryEvents = events.filter(
+      (event) =>
+        event.type === "letta-chunk" &&
+        (event.chunk as { event_type?: string }).event_type === "retry",
+    );
+    expect(retryEvents).toHaveLength(2);
+    const imageElisionEvents = events.filter(
+      (event) =>
+        event.type === "letta-chunk" &&
+        (event.chunk as { event_type?: string }).event_type ===
+          "context_image_elision",
+    );
+    expect(imageElisionEvents).toHaveLength(0);
+    expect(events.some((event) => event.type === "local-message")).toBe(true);
+  });
+
   test("classifies non-image oversized transport failures as overflow instead of retrying", async () => {
     let providerCalls = 0;
     const stream: PiStreamFunction = () => {

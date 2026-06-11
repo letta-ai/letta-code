@@ -48,6 +48,8 @@ import {
 } from "./provider-turn-executor";
 
 const LOCAL_PROVIDER_MAX_RETRIES = 3;
+const LOCAL_PROVIDER_ADAPTIVE_IMAGE_ELISION_AFTER_RETRIES =
+  LOCAL_PROVIDER_MAX_RETRIES - 1;
 const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 // Classifier threshold for oversized request payloads. This is a transport
 // limit, not a token limit: providers accept image-heavy requests whose
@@ -563,13 +565,22 @@ function elideImagePayload(
 
 function elideImagePayloadsForProviderRetry(
   input: ProviderTurnInput,
+  options: { allowUnderLimit?: boolean } = {},
 ): ImagePayloadElision | null {
   const beforeBytes = estimateProviderRequestBytes(input);
   const requestByteLimit = localProviderRequestByteLimit();
-  if (beforeBytes === undefined || beforeBytes <= requestByteLimit) {
+  if (
+    beforeBytes === undefined ||
+    (!options.allowUnderLimit && beforeBytes <= requestByteLimit)
+  ) {
     return null;
   }
-  const requestByteTarget = localProviderRequestByteTarget(requestByteLimit);
+  const requestByteTarget = options.allowUnderLimit
+    ? Math.min(
+        localProviderRequestByteTarget(requestByteLimit),
+        Math.floor(beforeBytes * 0.75),
+      )
+    : localProviderRequestByteTarget(requestByteLimit);
 
   const candidates = imageElisionCandidates(input.uiMessages);
   if (candidates.length === 0) return null;
@@ -825,6 +836,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
               imageElision.requestByteTarget,
             );
             activeInput = imageElision.input;
+            transientRetries = 0;
             continue;
           }
 
@@ -848,6 +860,35 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
               compaction,
               "context_window_overflow",
             );
+            continue;
+          }
+        }
+
+        // Adaptive image elision: a fixed byte limit cannot capture a user's
+        // current uplink. If a retryable transport error repeats before any
+        // model output, shed provider-context-only image bytes even when the
+        // request is below the configured classifier threshold.
+        if (
+          retryableTransportError &&
+          !emittedModelOutput &&
+          transientRetries >=
+            LOCAL_PROVIDER_ADAPTIVE_IMAGE_ELISION_AFTER_RETRIES
+        ) {
+          const imageElision = elideImagePayloadsForProviderRetry(activeInput, {
+            allowUnderLimit: true,
+          });
+          if (imageElision) {
+            debugLog(
+              "pi-stream",
+              "retryable transport failures persisted: adaptively elided %d image(s) (%d -> %d bytes, limit %d, target %d) from provider retry context",
+              imageElision.elidedImages,
+              imageElision.beforeBytes,
+              imageElision.afterBytes,
+              imageElision.requestByteLimit,
+              imageElision.requestByteTarget,
+            );
+            activeInput = imageElision.input;
+            transientRetries = 0;
             continue;
           }
         }
