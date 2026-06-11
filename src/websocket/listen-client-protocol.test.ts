@@ -857,6 +857,7 @@ describe("listen-client parseServerMessage", () => {
       Buffer.from(
         JSON.stringify({
           type: "sync",
+          request_id: "sync-1",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
           recover_approvals: false,
           force_device_status: true,
@@ -869,6 +870,7 @@ describe("listen-client parseServerMessage", () => {
     }
     expect(sync.recover_approvals).toBe(false);
     expect(sync.force_device_status).toBe(true);
+    expect(sync.request_id).toBe("sync-1");
   });
 
   test("parses cron CRUD commands", () => {

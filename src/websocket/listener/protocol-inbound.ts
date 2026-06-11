@@ -322,12 +322,15 @@ function isSyncCommand(value: unknown): value is SyncCommand {
   const candidate = value as {
     type?: unknown;
     runtime?: unknown;
+    request_id?: unknown;
     recover_approvals?: unknown;
     force_device_status?: unknown;
   };
   return (
     candidate.type === "sync" &&
     isRuntimeScope(candidate.runtime) &&
+    (candidate.request_id === undefined ||
+      typeof candidate.request_id === "string") &&
     (candidate.recover_approvals === undefined ||
       typeof candidate.recover_approvals === "boolean") &&
     (candidate.force_device_status === undefined ||

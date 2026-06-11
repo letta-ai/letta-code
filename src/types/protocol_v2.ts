@@ -732,6 +732,7 @@ export interface ChangeDeviceStateCommand {
 export interface AbortMessageCommand {
   type: "abort_message";
   runtime: RuntimeScope;
+  /** When provided, app-server sends abort_message_response on the control channel. */
   request_id?: string;
   run_id?: string | null;
 }
@@ -739,6 +740,8 @@ export interface AbortMessageCommand {
 export interface SyncCommand {
   type: "sync";
   runtime: RuntimeScope;
+  /** When provided, app-server sends sync_response after replaying state. */
+  request_id?: string;
   /**
    * Whether the device should probe backend state for stale pending approvals.
    * Defaults to true for older clients. Lightweight status/recovery syncs should
@@ -837,6 +840,25 @@ export interface TerminalExitedMessage {
   type: "terminal_exited";
   terminal_id: string;
   exitCode: number;
+  error?: string;
+}
+
+export interface AbortMessageResponseMessage {
+  type: "abort_message_response";
+  request_id: string;
+  runtime: RuntimeScope;
+  /** True when an active turn or pending approval was interrupted. */
+  aborted: boolean;
+  success: boolean;
+  error?: string;
+}
+
+export interface SyncResponseMessage {
+  type: "sync_response";
+  request_id: string;
+  runtime: RuntimeScope;
+  success: boolean;
+  error?: string;
 }
 
 export interface SearchFilesCommand {
@@ -2672,6 +2694,8 @@ export type WsProtocolMessage =
   | QueueUpdateMessage
   | StreamDeltaMessage
   | SubagentStateUpdateMessage
+  | AbortMessageResponseMessage
+  | SyncResponseMessage
   | TerminalOutputMessage
   | TerminalSpawnedMessage
   | TerminalExitedMessage
