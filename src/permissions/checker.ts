@@ -11,8 +11,8 @@ import {
 } from "@/mods/permission-registry";
 import {
   getAvailableModToolsRegistry,
-  modToolApprovalPolicy,
   type ModToolDefinition,
+  modToolApprovalPolicy,
 } from "@/mods/tool-registry";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
