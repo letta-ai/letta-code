@@ -61,6 +61,7 @@ const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 // 8MB keeps headroom under Anthropic's documented 32MB cap while staying
 // above known-good payloads.
 const LOCAL_PROVIDER_REQUEST_BYTE_LIMIT = 8_000_000;
+const LOCAL_PROVIDER_REQUEST_BYTE_TARGET = 6_000_000;
 
 export type PiStreamFunction = (
   model: Model<string>,
@@ -463,6 +464,122 @@ function isOversizedPayloadTransportFailure(input: ProviderTurnInput): boolean {
   );
 }
 
+interface ImageElisionCandidate {
+  messageIndex: number;
+  blockIndex: number;
+  mimeType?: string;
+  bytes: number;
+}
+
+interface ImagePayloadElision {
+  input: ProviderTurnInput;
+  beforeBytes: number;
+  afterBytes: number;
+  elidedImages: number;
+  elidedBytes: number;
+}
+
+function imagePayloadBytes(data: unknown): number {
+  return typeof data === "string" ? data.length : 0;
+}
+
+function imageElisionPlaceholder(mimeType: string | undefined, bytes: number) {
+  const mb = (bytes / 1_000_000).toFixed(1);
+  return `[Image omitted from this provider retry to reduce local request size: ${
+    mimeType ?? "image"
+  }, ~${mb}MB. The original image remains stored in conversation history.]`;
+}
+
+function imageElisionCandidates(
+  messages: readonly LocalMessage[],
+): ImageElisionCandidate[] {
+  const candidates: ImageElisionCandidate[] = [];
+  messages.forEach((message, messageIndex) => {
+    if (message.role !== "user" && message.role !== "toolResult") return;
+    if (!Array.isArray(message.content)) return;
+    message.content.forEach((block, blockIndex) => {
+      if (block.type !== "image") return;
+      const bytes = imagePayloadBytes(block.data);
+      if (bytes <= 0) return;
+      candidates.push({
+        messageIndex,
+        blockIndex,
+        mimeType: block.mimeType,
+        bytes,
+      });
+    });
+  });
+  // Prefer removing older images first; within a single message, remove larger
+  // blobs first. If the request is still too large, this naturally proceeds to
+  // newer images as needed.
+  return candidates.sort(
+    (a, b) =>
+      a.messageIndex - b.messageIndex ||
+      b.bytes - a.bytes ||
+      a.blockIndex - b.blockIndex,
+  );
+}
+
+function elideImagePayload(
+  messages: readonly LocalMessage[],
+  candidate: ImageElisionCandidate,
+): LocalMessage[] {
+  const message = messages[candidate.messageIndex];
+  if (!message) return [...messages];
+  if (message.role !== "user" && message.role !== "toolResult") {
+    return [...messages];
+  }
+  if (!Array.isArray(message.content)) return [...messages];
+  const block = message.content[candidate.blockIndex];
+  if (block?.type !== "image") return [...messages];
+
+  const content = [...message.content];
+  content[candidate.blockIndex] = {
+    type: "text",
+    text: imageElisionPlaceholder(candidate.mimeType, candidate.bytes),
+  };
+  const next = [...messages];
+  next[candidate.messageIndex] = { ...message, content } as LocalMessage;
+  return next;
+}
+
+function elideImagePayloadsForProviderRetry(
+  input: ProviderTurnInput,
+): ImagePayloadElision | null {
+  const beforeBytes = estimateProviderRequestBytes(input);
+  if (
+    beforeBytes === undefined ||
+    beforeBytes <= LOCAL_PROVIDER_REQUEST_BYTE_LIMIT
+  ) {
+    return null;
+  }
+
+  const candidates = imageElisionCandidates(input.uiMessages);
+  if (candidates.length === 0) return null;
+
+  let uiMessages = input.uiMessages;
+  let afterBytes = beforeBytes;
+  let elidedImages = 0;
+  let elidedBytes = 0;
+  for (const candidate of candidates) {
+    if (afterBytes <= LOCAL_PROVIDER_REQUEST_BYTE_TARGET) break;
+    uiMessages = elideImagePayload(uiMessages, candidate);
+    elidedImages += 1;
+    elidedBytes += candidate.bytes;
+    afterBytes =
+      estimateProviderRequestBytes({ ...input, uiMessages }) ?? afterBytes;
+  }
+
+  if (elidedImages === 0 || afterBytes >= beforeBytes) return null;
+  return {
+    input: { ...input, uiMessages },
+    beforeBytes,
+    afterBytes,
+    elidedImages,
+    elidedBytes,
+  };
+}
+
 function defaultStream(
   model: Model<string>,
   context: Context,
@@ -503,6 +620,23 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       message_type: "summary_message",
       summary: compaction.summary,
       ...(compaction.stats ? { compaction_stats: compaction.stats } : {}),
+    } as never);
+  }
+
+  private async *emitImageElisionChunks(
+    elision: ImagePayloadElision,
+  ): AsyncIterable<ProviderStreamEvent> {
+    yield providerLettaChunk({
+      message_type: "event_message",
+      event_type: "context_image_elision",
+      event_data: {
+        trigger: "oversized_payload_transport_failure",
+        images_elided: elision.elidedImages,
+        image_bytes_elided: elision.elidedBytes,
+        request_bytes_before: elision.beforeBytes,
+        request_bytes_after: elision.afterBytes,
+        request_byte_target: LOCAL_PROVIDER_REQUEST_BYTE_TARGET,
+      },
     } as never);
   }
 
@@ -677,6 +811,13 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           contextOverflowCompactions < LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS &&
           isOversizedPayloadTransportFailure(activeInput)
         ) {
+          const imageElision = elideImagePayloadsForProviderRetry(activeInput);
+          if (imageElision) {
+            activeInput = imageElision.input;
+            yield* this.emitImageElisionChunks(imageElision);
+            continue;
+          }
+
           // Unlike the provider-reported overflow branch above, the original
           // error here is retryable. If compaction itself fails (for example
           // the summarizer model call errors), fall back to the normal
