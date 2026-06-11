@@ -28,7 +28,25 @@ describe("subcommand router", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("routes app-server help without starting the server", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["app-server", "--help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("Usage: letta app-server");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("identifies backend-aware subcommands for early backend selection", () => {
+    expect(subcommandNeedsEarlyBackendMode("app-server")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("connect")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("server")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("memory")).toBe(true);
