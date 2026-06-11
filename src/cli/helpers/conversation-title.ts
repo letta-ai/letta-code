@@ -105,9 +105,15 @@ function extractAssistantText(content: unknown): string {
   return "";
 }
 
+function stripSystemReminders(content: string): string {
+  return content
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .trim();
+}
+
 function extractUserText(content: unknown): string {
   if (typeof content === "string") {
-    return content;
+    return stripSystemReminders(content);
   }
   if (Array.isArray(content)) {
     const parts: string[] = [];
@@ -120,7 +126,7 @@ function extractUserText(content: unknown): string {
         parts.push("[image]");
       }
     }
-    return parts.join("\n");
+    return stripSystemReminders(parts.join("\n"));
   }
   return "";
 }
@@ -152,49 +158,21 @@ export function buildConversationTitleMessages(
   return titleMessages;
 }
 
-const CONVERSATION_TITLE_MESSAGE_PAGE_LIMIT = 100;
+const CONVERSATION_TITLE_MESSAGE_LIMIT = 10_000;
 
 export async function listConversationTitleMessages(
   backend: Pick<Backend, "listConversationMessages">,
   conversationId: string,
 ): Promise<ConversationTitleMessage[]> {
-  const collected: Message[] = [];
-  const seenIds = new Set<string>();
-  let cursorBefore: string | undefined;
+  const page = await backend.listConversationMessages(conversationId, {
+    limit: CONVERSATION_TITLE_MESSAGE_LIMIT,
+    order: "desc",
+    include_return_message_types: ["user_message", "assistant_message"],
+  } as ConversationMessageListBody);
 
-  while (true) {
-    const page = await backend.listConversationMessages(conversationId, {
-      limit: CONVERSATION_TITLE_MESSAGE_PAGE_LIMIT,
-      order: "desc",
-      include_return_message_types: ["user_message", "assistant_message"],
-      ...(cursorBefore ? { before: cursorBefore } : {}),
-    } as ConversationMessageListBody);
-    const items = paginatedItems(page as PaginatedItems<Message>);
-    if (items.length === 0) {
-      break;
-    }
-
-    let newItems = 0;
-    for (const item of items) {
-      const id = item.id;
-      if (!id || seenIds.has(id)) {
-        continue;
-      }
-      seenIds.add(id);
-      collected.push(item);
-      newItems += 1;
-    }
-
-    if (newItems === 0) {
-      break;
-    }
-    cursorBefore = items[items.length - 1]?.id;
-    if (!cursorBefore) {
-      break;
-    }
-  }
-
-  return buildConversationTitleMessages(collected.reverse());
+  return buildConversationTitleMessages(
+    paginatedItems(page as PaginatedItems<Message>).reverse(),
+  );
 }
 
 export async function generateConversationTitleFromSummary(

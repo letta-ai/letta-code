@@ -129,7 +129,14 @@ describe("buildConversationTitleMessages", () => {
   test("extracts user and assistant text only", () => {
     expect(
       buildConversationTitleMessages([
-        { message_type: "user_message", content: [{ text: "hello" }] },
+        {
+          message_type: "user_message",
+          content: [
+            {
+              text: "<system-reminder>noise</system-reminder>\nhello",
+            },
+          ],
+        },
         { message_type: "assistant_message", content: [{ text: "hi" }] },
         { message_type: "reasoning_message", content: "hidden" },
       ] as never),
@@ -141,26 +148,28 @@ describe("buildConversationTitleMessages", () => {
 });
 
 describe("listConversationTitleMessages", () => {
-  test("fetches all message pages and returns chronological title messages", async () => {
+  test("fetches persisted messages and returns chronological title messages", async () => {
     const calls: unknown[] = [];
-    const pages = [
-      [
-        { id: "msg-4", message_type: "assistant_message", content: "answer 2" },
-        { id: "msg-3", message_type: "user_message", content: "question 2" },
-      ],
-      [
-        { id: "msg-2", message_type: "assistant_message", content: "answer 1" },
-        { id: "msg-1", message_type: "user_message", content: "question 1" },
-      ],
-      [],
-    ];
     const backend = {
       listConversationMessages: async (
         _conversationId: string,
         body: unknown,
       ) => {
         calls.push(body);
-        return pages.shift() ?? [];
+        return [
+          {
+            id: "msg-4",
+            message_type: "assistant_message",
+            content: "answer 2",
+          },
+          { id: "msg-3", message_type: "user_message", content: "question 2" },
+          {
+            id: "msg-2",
+            message_type: "assistant_message",
+            content: "answer 1",
+          },
+          { id: "msg-1", message_type: "user_message", content: "question 1" },
+        ];
       },
     };
 
@@ -174,21 +183,9 @@ describe("listConversationTitleMessages", () => {
     ]);
     expect(calls).toEqual([
       {
-        limit: 100,
+        limit: 10_000,
         order: "desc",
         include_return_message_types: ["user_message", "assistant_message"],
-      },
-      {
-        limit: 100,
-        order: "desc",
-        include_return_message_types: ["user_message", "assistant_message"],
-        before: "msg-3",
-      },
-      {
-        limit: 100,
-        order: "desc",
-        include_return_message_types: ["user_message", "assistant_message"],
-        before: "msg-1",
       },
     ]);
   });
