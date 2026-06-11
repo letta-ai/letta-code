@@ -20,7 +20,11 @@ import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
-import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
+import {
+  getListenerTelemetrySurface,
+  type ListenerStartupData,
+  telemetry,
+} from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
@@ -136,6 +140,14 @@ async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
   }
 }
 
+function getListenerStartupCommand(): ListenerStartupData["command"] {
+  const command = process.argv[2];
+  if (command === "server" || command === "remote") {
+    return command;
+  }
+  return "unknown";
+}
+
 function getListenerServerUrl(settings: {
   env?: Record<string, string>;
 }): string {
@@ -155,6 +167,23 @@ type ListenerStartupMode =
       backend: "local" | "self-hosted";
     }
   | { kind: "unsupported-self-hosted"; serverUrl: string };
+
+type ListenerStartupTelemetryMode = NonNullable<
+  ListenerStartupData["startup_mode"]
+>;
+
+function mapListenerStartupMode(
+  startupMode: ListenerStartupMode,
+): ListenerStartupTelemetryMode {
+  switch (startupMode.kind) {
+    case "remote":
+      return "remote";
+    case "local-channels":
+      return "local_channels";
+    case "unsupported-self-hosted":
+      return "unsupported_self_hosted";
+  }
+}
 
 function normalizeListenerBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
@@ -342,6 +371,8 @@ export const __listenSubcommandTestUtils = {
 };
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
+  const listenerStartupStartedAt = Date.now();
+
   // Parse arguments
   const { values } = parseArgs({
     args: argv,
@@ -448,6 +479,38 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       ? (await import("@/channels/service")).listEnabledChannelIds()
       : [];
 
+  let listenerStartupTracked = false;
+  let listenerStartupMode: ListenerStartupTelemetryMode | undefined;
+  let listenerRegistrationDurationMs: number | undefined;
+  let listenerConnectionStartedAt: number | undefined;
+  let listenerRegistrationRetryCount = 0;
+  let listenerConnectionRetryCount = 0;
+  let listenerSupportsSplitStatusChannels: boolean | undefined;
+  const trackListenerStartup = (options: {
+    success: boolean;
+    failureReason?: string;
+    connectionDurationMs?: number;
+  }): void => {
+    if (listenerStartupTracked) {
+      return;
+    }
+    listenerStartupTracked = true;
+    telemetry.trackListenerStartup({
+      success: options.success,
+      duration_ms: Math.max(0, Date.now() - listenerStartupStartedAt),
+      command: getListenerStartupCommand(),
+      startup_mode: listenerStartupMode,
+      debug: debugMode,
+      channel_count: channelNames.length,
+      registration_duration_ms: listenerRegistrationDurationMs,
+      connection_duration_ms: options.connectionDurationMs,
+      registration_retry_count: listenerRegistrationRetryCount,
+      connection_retry_count: listenerConnectionRetryCount,
+      supports_split_status_channels: listenerSupportsSplitStatusChannels,
+      failure_reason: options.failureReason,
+    });
+  };
+
   if (channelNames.length > 0) {
     if (values.channels && values["install-channel-runtimes"]) {
       const { ensureChannelRuntimeInstalled } = await import(
@@ -462,6 +525,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           console.error(
             `Unknown channel "${channelName}" passed to --channels.`,
           );
+          trackListenerStartup({
+            success: false,
+            failureReason: "listener_unknown_channel",
+          });
+          await flushListenerTelemetryEnd("listener_unknown_channel");
           return 1;
         }
         await ensureChannelRuntimeInstalled(channelName);
@@ -478,6 +546,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       });
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));
+      trackListenerStartup({
+        success: false,
+        failureReason: "listener_channel_start_failed",
+      });
       await flushListenerTelemetryEnd("listener_channel_start_failed");
       return 1;
     }
@@ -528,6 +600,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
     const startupMode = await resolveListenerStartupMode(channelNames);
+    listenerStartupMode = mapListenerStartupMode(startupMode);
 
     if (
       startupMode.kind === "unsupported-self-hosted" &&
@@ -539,6 +612,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       console.error(
         "Start with --channels to run local channel adapters, or unset LETTA_BASE_URL to use Letta API remote environments.",
       );
+      trackListenerStartup({
+        success: false,
+        failureReason: "listener_self_hosted_no_channels",
+      });
       await flushListenerTelemetryEnd("listener_self_hosted_no_channels");
       return 1;
     }
@@ -562,6 +639,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         "@/websocket/listen-client"
       );
 
+      listenerConnectionStartedAt = Date.now();
       await startLocalChannelListener({
         connectionId,
         deviceId,
@@ -579,6 +657,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           }
         },
         onConnected: () => {
+          const connectionDurationMs = listenerConnectionStartedAt
+            ? Math.max(0, Date.now() - listenerConnectionStartedAt)
+            : undefined;
+          trackListenerStartup({ success: true, connectionDurationMs });
+          void telemetry.flush();
           sessionLog.log("Local channel listener ready.");
           if (debugMode) {
             console.log(`[${formatTimestamp()}] Local channel listener ready.`);
@@ -588,6 +671,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         onError: (error: Error) => {
           sessionLog.log(`Error: ${error.message}`);
           console.error(`[${formatTimestamp()}] Error: ${error.message}`);
+          trackListenerStartup({
+            success: false,
+            failureReason: "listener_error",
+          });
           void exitWithTelemetry(1, "listener_error");
         },
       });
@@ -598,14 +685,23 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     let registerOptions: RegisterOptions;
 
     try {
+      const registrationStartedAt = Date.now();
       registerOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
+      );
+      listenerRegistrationDurationMs = Math.max(
+        0,
+        Date.now() - registrationStartedAt,
       );
     } catch (authErr) {
       if (authErr instanceof MissingListenerApiKeyError) {
         console.error("Error: LETTA_API_KEY not found");
         console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
+        trackListenerStartup({
+          success: false,
+          failureReason: "listener_missing_api_key",
+        });
         await flushListenerTelemetryEnd("listener_missing_api_key");
         return 1;
       }
@@ -614,6 +710,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         "OAuth login failed:",
         authErr instanceof Error ? authErr.message : String(authErr),
       );
+      trackListenerStartup({
+        success: false,
+        failureReason: "listener_oauth_failed",
+      });
       await flushListenerTelemetryEnd("listener_oauth_failed");
       return 1;
     }
@@ -629,9 +729,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       `Registering with ${registerOptions.serverUrl}/v1/environments/register`,
     );
 
+    const registrationStartedAt = Date.now();
     const { connectionId, wsUrl, supportsSplitStatusChannels } =
       await registerWithCloudRetry(registerOptions, {
         onRetry: (attempt, delayMs, error) => {
+          listenerRegistrationRetryCount = Math.max(
+            listenerRegistrationRetryCount,
+            attempt,
+          );
           sessionLog.log(
             `Initial registration retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
           );
@@ -642,6 +747,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           }
         },
       });
+    listenerRegistrationDurationMs = Math.max(
+      0,
+      Date.now() - registrationStartedAt,
+    );
+    listenerSupportsSplitStatusChannels = supportsSplitStatusChannels;
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
@@ -715,6 +825,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         url: string,
         nextSupportsSplitStatusChannels: boolean,
       ): Promise<void> => {
+        listenerConnectionStartedAt = Date.now();
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
@@ -731,6 +842,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             console.log(`[${formatTimestamp()}] ${message}`);
           },
           onConnected: () => {
+            const connectionDurationMs = listenerConnectionStartedAt
+              ? Math.max(0, Date.now() - listenerConnectionStartedAt)
+              : undefined;
+            trackListenerStartup({ success: true, connectionDurationMs });
+            void telemetry.flush();
             sessionLog.log("Connected. Awaiting instructions.");
             console.log(
               `[${formatTimestamp()}] Connected. Awaiting instructions.`,
@@ -738,6 +854,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             console.log("");
           },
           onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+            listenerConnectionRetryCount = Math.max(
+              listenerConnectionRetryCount,
+              attempt,
+            );
             sessionLog.log(
               `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
             );
@@ -763,17 +883,29 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               console.error(
                 `[${formatTimestamp()}] Re-registration failed: ${msg}`,
               );
+              trackListenerStartup({
+                success: false,
+                failureReason: "listener_reregister_failed",
+              });
               await exitWithTelemetry(1, "listener_reregister_failed");
             }
           },
           onDisconnected: () => {
             sessionLog.log("Disconnected.");
             console.log(`[${formatTimestamp()}] Disconnected.`);
+            trackListenerStartup({
+              success: false,
+              failureReason: "listener_disconnected",
+            });
             void exitWithTelemetry(1, "listener_disconnected");
           },
           onError: (error: Error) => {
             sessionLog.log(`Error: ${error.message}`);
             console.error(`[${formatTimestamp()}] Error: ${error.message}`);
+            trackListenerStartup({
+              success: false,
+              failureReason: "listener_error",
+            });
             void exitWithTelemetry(1, "listener_error");
           },
         });
@@ -808,6 +940,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         url: string,
         nextSupportsSplitStatusChannels: boolean,
       ): Promise<void> => {
+        listenerConnectionStartedAt = Date.now();
         await startListenerClient({
           connectionId: connId,
           wsUrl: url,
@@ -825,11 +958,20 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             console.log(`[${formatTimestamp()}] ${message}`);
           },
           onConnected: () => {
+            const connectionDurationMs = listenerConnectionStartedAt
+              ? Math.max(0, Date.now() - listenerConnectionStartedAt)
+              : undefined;
+            trackListenerStartup({ success: true, connectionDurationMs });
+            void telemetry.flush();
             sessionLog.log("Connected. Awaiting instructions.");
             clearRetryStatusCallback?.();
             updateStatusCallback?.("idle");
           },
           onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+            listenerConnectionRetryCount = Math.max(
+              listenerConnectionRetryCount,
+              attempt,
+            );
             sessionLog.log(
               `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
             );
@@ -850,6 +992,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               sessionLog.log(`Re-registration failed: ${msg}`);
               unmount();
               console.error(`\n\u2717 Re-registration failed: ${msg}\n`);
+              trackListenerStartup({
+                success: false,
+                failureReason: "listener_reregister_failed",
+              });
               await exitWithTelemetry(1, "listener_reregister_failed");
             }
           },
@@ -858,12 +1004,20 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             unmount();
             console.log("\n\u2717 Listener disconnected");
             console.log("Connection to Letta Cloud was lost.\n");
+            trackListenerStartup({
+              success: false,
+              failureReason: "listener_disconnected",
+            });
             void exitWithTelemetry(1, "listener_disconnected");
           },
           onError: (error: Error) => {
             sessionLog.log(`Error: ${error.message}`);
             unmount();
             console.error(`\n\u2717 Listener error: ${error.message}\n`);
+            trackListenerStartup({
+              success: false,
+              failureReason: "listener_error",
+            });
             void exitWithTelemetry(1, "listener_error");
           },
         });
@@ -879,6 +1033,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const msg = error instanceof Error ? error.message : String(error);
     sessionLog.log(`FATAL: ${msg}`);
     console.error(`Failed to start listener: ${msg}`);
+    trackListenerStartup({
+      success: false,
+      failureReason: "listener_start_failed",
+    });
     await flushListenerTelemetryEnd("listener_start_failed");
     return 1;
   }

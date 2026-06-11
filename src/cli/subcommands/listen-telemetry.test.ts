@@ -23,6 +23,7 @@ describe("listen subcommand telemetry", () => {
     process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
 
   const originalTrackSessionEnd = telemetry.trackSessionEnd;
+  const originalTrackListenerStartup = telemetry.trackListenerStartup;
   const originalFlush = telemetry.flush;
 
   beforeEach(() => {
@@ -91,14 +92,18 @@ describe("listen subcommand telemetry", () => {
 
     __listenSubcommandTestUtils.setOAuthDepsForTests(null);
     telemetry.trackSessionEnd = originalTrackSessionEnd;
+    telemetry.trackListenerStartup = originalTrackListenerStartup;
     telemetry.flush = originalFlush;
   });
 
   test("tracks and flushes session end for unsupported self-hosted listener startup", async () => {
     const trackSessionEndMock = mock(() => {});
+    const trackListenerStartupMock = mock(() => {});
     const flushMock = mock(async () => {});
     telemetry.trackSessionEnd =
       trackSessionEndMock as typeof telemetry.trackSessionEnd;
+    telemetry.trackListenerStartup =
+      trackListenerStartupMock as typeof telemetry.trackListenerStartup;
     telemetry.flush = flushMock as typeof telemetry.flush;
     process.env.LETTA_BASE_URL = "https://self-hosted.example.com";
 
@@ -108,6 +113,13 @@ describe("listen subcommand telemetry", () => {
     expect(trackSessionEndMock).toHaveBeenCalledWith(
       undefined,
       "listener_self_hosted_no_channels",
+    );
+    expect(trackListenerStartupMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        startup_mode: "unsupported_self_hosted",
+        failure_reason: "listener_self_hosted_no_channels",
+      }),
     );
     expect(flushMock).toHaveBeenCalledTimes(1);
   });

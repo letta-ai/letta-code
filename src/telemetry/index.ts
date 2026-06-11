@@ -110,6 +110,21 @@ export interface ReflectionEndData {
   duration_ms?: number;
 }
 
+export interface ListenerStartupData {
+  success: boolean;
+  duration_ms: number;
+  command: "server" | "remote" | "unknown";
+  startup_mode?: "remote" | "local_channels" | "unsupported_self_hosted";
+  debug: boolean;
+  channel_count: number;
+  registration_duration_ms?: number;
+  connection_duration_ms?: number;
+  registration_retry_count?: number;
+  connection_retry_count?: number;
+  supports_split_status_channels?: boolean;
+  failure_reason?: string;
+}
+
 export function isLettaCodeDesktopRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
@@ -437,7 +452,8 @@ class TelemetryManager {
       | ErrorData
       | UserInputData
       | ReflectionStartData
-      | ReflectionEndData,
+      | ReflectionEndData
+      | ListenerStartupData,
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
@@ -756,6 +772,18 @@ class TelemetryManager {
       duration_ms: options?.durationMs,
     };
     this.track("reflection_end", data);
+  }
+
+  trackListenerStartup(data: ListenerStartupData) {
+    const toolName = data.startup_mode
+      ? `listener_startup:${data.startup_mode}`
+      : "listener_startup";
+    this.track("tool_usage", {
+      tool_name: toolName,
+      success: data.success,
+      duration: data.duration_ms,
+      error_type: data.failure_reason,
+    });
   }
 
   /** Concurrent callers share one in-flight POST (prevents 429 double-flush race on shutdown). */

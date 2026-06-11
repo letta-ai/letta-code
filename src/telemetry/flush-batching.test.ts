@@ -139,6 +139,39 @@ describe("telemetry flush batching", () => {
     // 500 → submitTelemetryMetadata throws → performFlush re-queues.
     expect(telemetryState.events).toHaveLength(1);
   });
+
+  test("tracks listener startup timing as tool usage", () => {
+    telemetry.trackListenerStartup({
+      success: true,
+      duration_ms: 1234,
+      command: "remote",
+      startup_mode: "remote",
+      debug: false,
+      channel_count: 0,
+      registration_duration_ms: 200,
+      connection_duration_ms: 300,
+      registration_retry_count: 1,
+      connection_retry_count: 2,
+      supports_split_status_channels: true,
+    });
+
+    expect(telemetryState.events).toHaveLength(1);
+    type ListenerStartupEvent = {
+      type: string;
+      data: {
+        tool_name: string;
+        success: boolean;
+        duration: number;
+      };
+    };
+    const event = telemetryState.events[0] as ListenerStartupEvent | undefined;
+    expect(event?.type).toBe("tool_usage");
+    expect(event?.data).toMatchObject({
+      tool_name: "listener_startup:remote",
+      success: true,
+      duration: 1234,
+    });
+  });
 });
 
 describe("reflection telemetry correlation", () => {
