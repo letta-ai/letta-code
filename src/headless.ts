@@ -4321,7 +4321,7 @@ async function runBidirectionalMode(
             }
 
             for (const ac of needsUserInput) {
-              // permission.decision === "ask" - request permission from SDK
+              // permission.decision is ask/alwaysAsk - request permission from SDK
               const permResponse = await requestPermission(
                 ac.approval.toolCallId,
                 ac.approval.toolName,

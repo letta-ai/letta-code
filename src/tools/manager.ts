@@ -45,6 +45,10 @@ import {
   permissionMode as globalPermissionMode,
   type PermissionMode,
 } from "@/permissions/mode";
+import type {
+  PermissionDecision,
+  PermissionRuleType,
+} from "@/permissions/types";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   getCurrentWorkingDirectory,
@@ -1235,7 +1239,7 @@ async function checkModPermissionForContext(options: {
  * @param toolName - Name of the tool
  * @param toolArgs - Tool arguments
  * @param workingDirectory - Current working directory (defaults to process.cwd())
- * @returns Permission decision: "allow", "deny", or "ask"
+ * @returns Permission decision: "allow", "deny", "ask", or "alwaysAsk"
  */
 export async function checkToolPermission(
   toolName: string,
@@ -1246,7 +1250,7 @@ export async function checkToolPermission(
   toolContextIdArg?: string | null,
   toolCallIdArg?: string | null,
 ): Promise<{
-  decision: "allow" | "deny" | "ask";
+  decision: PermissionDecision;
   matchedRule?: string;
   reason?: string;
 }> {
@@ -1291,13 +1295,13 @@ export async function checkToolPermission(
 /**
  * Save a permission rule to settings
  * @param rule - Permission rule (e.g., "Read(src/**)")
- * @param ruleType - Type of rule ("allow", "deny", or "ask")
+ * @param ruleType - Type of rule ("allow", "deny", "ask", or "alwaysAsk")
  * @param scope - Where to save ("project", "local", "user", or "session")
  * @param workingDirectory - Current working directory
  */
 export async function savePermissionRule(
   rule: string,
-  ruleType: "allow" | "deny" | "ask",
+  ruleType: PermissionRuleType,
   scope: "project" | "local" | "user" | "session",
   workingDirectory: string = process.cwd(),
 ): Promise<void> {
