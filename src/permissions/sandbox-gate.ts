@@ -12,10 +12,9 @@ import { canonicalizeRoot, getDefaultAgentsTreeRoot } from "./sandbox-policy";
  * cross-agent sandbox — i.e. exactly the conditions under which
  * `applyParentShellSandbox` wraps the launcher.
  *
- * This is the single source of truth shared by the wrapper (which acts on it)
- * and the cross-agent guard (which uses it to safely defer its bypassable
- * static shell analysis to the kernel). Keeping one predicate means the guard's
- * belief about what is confined can never drift from what actually gets wrapped.
+ * The kernel sandbox is the sole cross-agent enforcement for spawned shells (the
+ * static cross-agent guard no longer analyzes shell commands), so this predicate
+ * is what the wrapper consults to decide whether to wrap.
  */
 export function willSandboxParentShell(
   cwd: string,

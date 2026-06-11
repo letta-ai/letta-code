@@ -234,42 +234,16 @@ describe("extractTargetAgentPaths", () => {
     expect(result.agentIds).toEqual(new Set([OTHER]));
   });
 
-  test("Bash command referencing another agent's memory literally", () => {
+  test("shell tools are not path-analyzed (the kernel sandbox confines spawned shells)", () => {
+    // Shell command analysis was removed: spawned shells run inside the kernel
+    // filesystem sandbox, so the guard no longer tokenizes shell commands.
     const result = extractTargetAgentPaths(
       "Bash",
       { command: `cat ${otherMemory("system/persona.md")}` },
       "/tmp",
     );
-    expect(result.anyAgentScoped).toBe(true);
-    expect(result.agentIds).toEqual(new Set([OTHER]));
-  });
-
-  test("Bash command with MEMORY_DIR env var pointing at another agent", () => {
-    const result = extractTargetAgentPaths(
-      "Bash",
-      { command: "rm -rf $MEMORY_DIR/system" },
-      "/tmp",
-      { ...process.env, MEMORY_DIR: otherMemory() } as NodeJS.ProcessEnv,
-    );
-    expect(result.agentIds).toEqual(new Set([OTHER]));
-  });
-
-  test("Bash read-only inspection against another agent's memory still trips the guard", () => {
-    const result = extractTargetAgentPaths(
-      "Bash",
-      { command: `ls ${otherMemory()}` },
-      "/tmp",
-    );
-    expect(result.agentIds).toEqual(new Set([OTHER]));
-  });
-
-  test("Bash command against /tmp does not trip the guard", () => {
-    const result = extractTargetAgentPaths(
-      "Bash",
-      { command: "ls /tmp && echo ok" },
-      "/tmp",
-    );
     expect(result.anyAgentScoped).toBe(false);
+    expect(result.agentIds.size).toBe(0);
   });
 
   test("Glob/Grep against another agent's memory", () => {
@@ -278,30 +252,6 @@ describe("extractTargetAgentPaths", () => {
     ).toEqual(new Set([OTHER]));
     expect(
       extractTargetAgentPaths("Grep", { path: otherMemory() }, "/tmp").agentIds,
-    ).toEqual(new Set([OTHER]));
-  });
-
-  test("shell tool aliases (run_shell_command, shell_command, exec_command) work", () => {
-    expect(
-      extractTargetAgentPaths(
-        "run_shell_command",
-        { command: `cat ${otherMemory()}/x.md` },
-        "/tmp",
-      ).agentIds,
-    ).toEqual(new Set([OTHER]));
-    expect(
-      extractTargetAgentPaths(
-        "shell_command",
-        { command: `ls ${otherMemory()}` },
-        "/tmp",
-      ).agentIds,
-    ).toEqual(new Set([OTHER]));
-    expect(
-      extractTargetAgentPaths(
-        "exec_command",
-        { cmd: `ls ${otherMemory()}` },
-        "/tmp",
-      ).agentIds,
     ).toEqual(new Set([OTHER]));
   });
 });
@@ -404,13 +354,13 @@ describe("evaluateCrossAgentGuard", () => {
     expect(result).not.toBeNull();
   });
 
-  test("bash read-only against other agent's memory is gated", () => {
+  test("bash against another agent's memory defers to the kernel sandbox (guard returns null)", () => {
     const result = evaluateCrossAgentGuard(
       "Bash",
       { command: `cat ${otherMemory()}/system/x.md` },
       "/tmp",
     );
-    expect(result).not.toBeNull();
+    expect(result).toBeNull();
   });
 });
 
@@ -530,7 +480,7 @@ describe("checkPermission integration", () => {
     }
   });
 
-  test("bash against another agent's memory is denied even in unrestricted", () => {
+  test("bash against another agent's memory is NOT guard-denied (kernel sandbox confines spawned shells)", () => {
     permissionMode.setMode("unrestricted");
     const result = checkPermission(
       "Bash",
@@ -538,8 +488,9 @@ describe("checkPermission integration", () => {
       permissions,
       "/tmp",
     );
-    expect(result.decision).toBe("deny");
-    expect(result.matchedRule).toBe("cross-agent guard");
+    // The static guard no longer analyzes shell commands; the kernel filesystem
+    // sandbox confines the spawned shell instead.
+    expect(result.matchedRule).not.toBe("cross-agent guard");
   });
 
   test("CLI --disable-memory-guard opens access in acceptEdits mode", () => {
@@ -553,117 +504,6 @@ describe("checkPermission integration", () => {
     );
     // acceptEdits allows writes, and the guard is intentionally disabled.
     expect(result.decision).toBe("allow");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Regression tests: known bypass patterns (from real exploit attempts)
-//
-// Command fixtures below contain shell brace-variable syntax inside plain
-// strings. Biome's noTemplateCurlyInString rule flags these, but they are
-// intentional: they're shell commands, not mistaken template literals.
-// ---------------------------------------------------------------------------
-
-describe("shell bypass regression tests", () => {
-  beforeEach(() => {
-    cliPermissions.setMemoryGuardDisabled(false);
-  });
-
-  test("enumeration: ls ~/.letta/agents is denied", () => {
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      { command: "ls ~/.letta/agents" },
-      "/tmp",
-    );
-    expect(result).not.toBeNull();
-    expect(result?.matchedRule).toBe("cross-agent guard");
-  });
-
-  test("enumeration: find over the whole agents tree is denied", () => {
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      {
-        command: `find "\${HOME}/.letta/agents" -mindepth 1 -maxdepth 1 -type d`,
-      },
-      "/tmp",
-    );
-    expect(result).not.toBeNull();
-  });
-
-  test("command substitution: assigning a computed target path is denied", () => {
-    // Exploit variant 1 (finds another agent via dynamic path resolution).
-    const command = [
-      'CURRENT="$AGENT_ID"',
-      `BASE="\${HOME}/.letta/agents"`,
-      'TARGET="$(find "$BASE" -mindepth 1 -maxdepth 1 -type d ! -name "$CURRENT" | sort | head -n 1)"',
-      'cat "$TARGET/memory/system/persona.md"',
-    ].join("\n");
-    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).not.toBeNull();
-  });
-
-  test("command substitution variant 2 (find -name memory) is denied", () => {
-    const command = [
-      'CURRENT="$AGENT_ID"',
-      `BASE="\${HOME}/.letta/agents"`,
-      'TARGET="$(find "$BASE" -mindepth 2 -maxdepth 2 -type d -name memory | grep -v "/$CURRENT/" | sort | head -n 1)"',
-      'cat "$TARGET/system/persona.md"',
-    ].join("\n");
-    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).not.toBeNull();
-  });
-
-  test("literal-but-unknown agent ID in quoted assignment is denied", () => {
-    // Exploit variant 3 — the one that actually succeeded previously
-    // because the quote-wrapping on the assignment value broke the
-    // anchored path regex.
-    const command = [
-      `TARGET="\${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"`,
-      'sed -n "1,80p" "$TARGET/system/persona.md"',
-    ].join("\n");
-    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).not.toBeNull();
-    expect(result?.offendingAgentIds).toContain(
-      "agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada",
-    );
-  });
-
-  test("tilde-expansion with unknown agent ID is denied", () => {
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      { command: "cat ~/.letta/agents/agent-victim/memory/system/persona.md" },
-      "/tmp",
-    );
-    expect(result).not.toBeNull();
-  });
-
-  test(`self-targeting references using \${AGENT_ID} pass through`, () => {
-    process.env.AGENT_ID = SELF;
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      {
-        command: `cat "\${HOME}/.letta/agents/\${AGENT_ID}/memory/system/persona.md"`,
-      },
-      "/tmp",
-    );
-    expect(result).toBeNull();
-  });
-
-  test("raw-command access passes through when parent disables the guard", () => {
-    cliPermissions.setMemoryGuardDisabled(true);
-    const command = `TARGET="\${HOME}/.letta/agents/agent-0037d3d9-389b-4c02-82ae-d77aa29d1ada/memory"
-cat "$TARGET/system/persona.md"`;
-    const result = evaluateCrossAgentGuard("Bash", { command }, "/tmp");
-    expect(result).toBeNull();
-  });
-
-  test("legitimate bash touching nothing under .letta/agents is not denied", () => {
-    const result = evaluateCrossAgentGuard(
-      "Bash",
-      { command: "ls /tmp && echo ok" },
-      "/tmp",
-    );
-    expect(result).toBeNull();
   });
 });
 
