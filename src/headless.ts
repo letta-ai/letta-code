@@ -2373,6 +2373,7 @@ ${SYSTEM_REMINDER_CLOSE}
               alwaysRequiresUserInput: isInteractiveApprovalTool,
               requireArgsForAutoApprove: true,
               missingNameReason: "Tool call incomplete - missing name",
+              toolContextId: turnToolContextId ?? undefined,
             });
 
             const [approval] = autoAllowed;
@@ -2517,6 +2518,7 @@ ${SYSTEM_REMINDER_CLOSE}
             alwaysRequiresUserInput: isInteractiveApprovalTool,
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
+            toolContextId: turnToolContextId ?? undefined,
           });
 
         const decisions: Decision[] = [
@@ -4282,6 +4284,7 @@ async function runBidirectionalMode(
                 alwaysRequiresUserInput: isInteractiveApprovalTool,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
+                toolContextId: turnToolContextId ?? undefined,
               });
 
             const decisions: Decision[] = [
