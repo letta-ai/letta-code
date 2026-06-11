@@ -67,6 +67,9 @@ class FakeBot {
     sendAnimation: mock(async () => ({ message_id: 1006 })),
     sendChatAction: mock(async () => true),
     getFile: mock(async (fileId: string) => FakeBot.nextGetFileImpl(fileId)),
+    raw: {
+      sendRichMessage: mock(async () => ({ message_id: 2001 })),
+    },
   };
   catchHandler:
     | ((error: {
@@ -770,6 +773,103 @@ test("telegram adapter sends messages into forum topics", async () => {
       parse_mode: "HTML",
     },
   );
+});
+
+test("telegram adapter sends rich messages through the raw Bot API", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "telegram",
+    chatId: "123",
+    text: "<b>fallback</b>",
+    parseMode: "HTML",
+    replyToMessageId: "456",
+    threadId: "42",
+    richMessage: { markdown: "# Title\n\n- item" },
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot?.api.raw.sendRichMessage).toHaveBeenCalledWith({
+    chat_id: "123",
+    message_thread_id: 42,
+    reply_parameters: { message_id: 456 },
+    rich_message: { markdown: "# Title\n\n- item" },
+  });
+  expect(bot?.api.sendMessage).not.toHaveBeenCalled();
+});
+
+test("telegram adapter falls back to sendMessage when rich parsing fails", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const bot = FakeBot.instances[0];
+  bot?.api.raw.sendRichMessage.mockRejectedValueOnce(
+    new Error("Bad Request: can't parse entities"),
+  );
+
+  await adapter.sendMessage({
+    channel: "telegram",
+    chatId: "123",
+    text: "<b>fallback</b>",
+    parseMode: "HTML",
+    replyToMessageId: "456",
+    threadId: "42",
+    richMessage: { markdown: "# Title\n\n- item" },
+  });
+
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith("123", "<b>fallback</b>", {
+    message_thread_id: 42,
+    parse_mode: "HTML",
+    reply_parameters: { message_id: 456 },
+  });
+  expect(consoleWarnSpy).toHaveBeenCalledWith(
+    "[Telegram] sendRichMessage failed; falling back to sendMessage:",
+    "Bad Request: can't parse entities",
+  );
+});
+
+test("telegram adapter does not fallback on ambiguous rich send failures", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const bot = FakeBot.instances[0];
+  bot?.api.raw.sendRichMessage.mockRejectedValueOnce(
+    new Error("network timeout after request dispatch"),
+  );
+
+  await expect(
+    adapter.sendMessage({
+      channel: "telegram",
+      chatId: "123",
+      text: "<b>fallback</b>",
+      parseMode: "HTML",
+      richMessage: { markdown: "# Title" },
+    }),
+  ).rejects.toThrow("network timeout after request dispatch");
+
+  expect(bot?.api.sendMessage).not.toHaveBeenCalled();
 });
 
 test("telegram adapter uploads outbound media with a caption", async () => {

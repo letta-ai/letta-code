@@ -233,6 +233,17 @@ export interface InboundChannelMessage {
   threadContext?: ChannelThreadContext;
 }
 
+export interface ChannelRichMessage {
+  /** Rich-message HTML content. Exactly one of html or markdown should be provided. */
+  html?: string;
+  /** Rich-message Markdown content. Exactly one of html or markdown should be provided. */
+  markdown?: string;
+  /** Optional: render the rich message right-to-left. */
+  isRtl?: boolean;
+  /** Optional: disable Telegram's automatic entity detection. */
+  skipEntityDetection?: boolean;
+}
+
 export interface OutboundChannelMessage {
   /** Platform identifier. */
   channel: string;
@@ -248,6 +259,8 @@ export interface OutboundChannelMessage {
   threadId?: string | null;
   /** Optional: parse mode hint for the adapter (e.g. "HTML", "MarkdownV2"). */
   parseMode?: string;
+  /** Optional: rich structured message payload for channels that support it. */
+  richMessage?: ChannelRichMessage;
   /** Optional: attach a local file/media path for channels that support uploads. */
   mediaPath?: string;
   /** Optional: override the uploaded filename for media attachments. */

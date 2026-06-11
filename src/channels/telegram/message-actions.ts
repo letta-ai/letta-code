@@ -3,7 +3,7 @@ import type { ChannelMessageActionAdapter } from "@/channels/plugin-types";
 export const telegramMessageActions: ChannelMessageActionAdapter = {
   describeMessageTool() {
     return {
-      actions: ["send", "react", "upload-file"],
+      actions: ["send", "send-rich", "react", "upload-file"],
     };
   },
 
@@ -12,6 +12,7 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
 
     if (
       request.action !== "send" &&
+      request.action !== "send-rich" &&
       request.action !== "react" &&
       request.action !== "upload-file"
     ) {
@@ -40,6 +41,14 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
         : `Reaction added on telegram (message_id: ${result.messageId})`;
     }
 
+    if (request.action === "send-rich") {
+      if (!request.message?.trim()) {
+        return "Error: Telegram send-rich requires message.";
+      }
+      if (request.mediaPath?.trim()) {
+        return "Error: Telegram send-rich does not support local media uploads; use upload-file instead.";
+      }
+    }
     if (!request.message?.trim() && !request.mediaPath?.trim()) {
       return "Error: Telegram send requires message or media.";
     }
@@ -62,6 +71,9 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
       fileName: request.filename,
       title: request.title,
       parseMode: formatted.parseMode,
+      ...(request.action === "send-rich"
+        ? { richMessage: { markdown: request.message ?? "" } }
+        : {}),
     });
 
     return request.mediaPath
