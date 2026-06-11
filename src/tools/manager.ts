@@ -67,6 +67,7 @@ import {
   scrubSecretsFromString,
 } from "./secret-substitution";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import { getToolPermissionMetadata } from "./tool-metadata";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -1219,6 +1220,7 @@ async function checkModPermissionForContext(options: {
       conversationId: runtimeContext?.conversationId ?? null,
       toolCallId: options.toolCallId ?? null,
       toolName: options.toolName,
+      tool: getToolPermissionMetadata(options.toolName, options.args),
       args: options.args,
       cwd: options.workingDirectory,
       workingDirectory: options.workingDirectory,

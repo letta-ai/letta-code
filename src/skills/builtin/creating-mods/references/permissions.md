@@ -20,7 +20,7 @@ export default function activate(letta) {
     check(event) {
       if (!isPlanModeActive(event.conversationId)) return;
 
-      if (isReadOnlyTool(event.toolName, event.args)) {
+      if (event.tool?.permissionEffect === "read") {
         return { decision: "allow" };
       }
 
@@ -45,6 +45,10 @@ export default function activate(letta) {
   conversationId: string | null;
   toolCallId: string | null;
   toolName: string;
+  tool?: {
+    name: string;
+    permissionEffect: "read" | "write" | "shell" | "unknown";
+  };
   args: Record<string, unknown>;
   cwd: string;
   workingDirectory: string;
@@ -52,6 +56,10 @@ export default function activate(letta) {
   phase: "approval" | "execution";
 }
 ```
+
+Use `event.tool?.permissionEffect` for broad tool-family policy. It is the
+harness-provided tool metadata and avoids duplicating every provider-specific
+read tool alias in local mod code.
 
 ## Return values
 

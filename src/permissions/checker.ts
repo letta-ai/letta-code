@@ -11,6 +11,7 @@ import {
 } from "@/mods/permission-registry";
 import { modToolRequiresApproval } from "@/mods/tool-registry";
 import type { PermissionModeState } from "@/tools/manager";
+import { getToolPermissionMetadata } from "@/tools/tool-metadata";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
@@ -852,6 +853,7 @@ export async function checkPermissionWithHooks(
         conversationId: modPermissionOptions.conversationId ?? null,
         toolCallId: modPermissionOptions.toolCallId ?? null,
         toolName,
+        tool: getToolPermissionMetadata(toolName, toolArgs),
         args: toolArgs,
         cwd: workingDirectory,
         workingDirectory,

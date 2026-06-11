@@ -455,11 +455,19 @@ export type ModPermissionDecision = "allow" | "ask" | "deny";
 
 export type ModPermissionCheckPhase = "approval" | "execution";
 
+export type ModPermissionToolEffect = "read" | "write" | "shell" | "unknown";
+
+export interface ModPermissionToolMetadata {
+  name: string;
+  permissionEffect: ModPermissionToolEffect;
+}
+
 export interface ModPermissionCheckEvent {
   agentId: string | null;
   conversationId: string | null;
   toolCallId: string | null;
   toolName: string;
+  tool?: ModPermissionToolMetadata;
   args: Record<string, unknown>;
   cwd: string;
   workingDirectory: string;

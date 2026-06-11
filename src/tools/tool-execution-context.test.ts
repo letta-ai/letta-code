@@ -197,6 +197,7 @@ describe("tool execution context snapshot", () => {
 
   test("rechecks mod permission overlays after tool_start arg transforms", async () => {
     await loadSpecificTools(["Read"]);
+    let observedToolMetadata: unknown;
     registerModPermission({
       id: "execution-gate",
       description: "Deny mutated reads",
@@ -213,6 +214,9 @@ describe("tool execution context snapshot", () => {
       },
       isAvailable: () => true,
       check(event) {
+        if (event.phase === "execution" && event.toolName === "Read") {
+          observedToolMetadata = event.tool;
+        }
         if (
           event.phase === "execution" &&
           event.toolName === "Read" &&
@@ -250,6 +254,10 @@ describe("tool execution context snapshot", () => {
       "mod permission:execution-gate",
     );
     expect(asText(result.toolReturn)).toContain("mutated path blocked");
+    expect(observedToolMetadata).toEqual({
+      name: "Read",
+      permissionEffect: "read",
+    });
   });
 
   test("reports execution-phase ask decisions as blocked approval requests", async () => {

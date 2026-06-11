@@ -180,32 +180,14 @@ if (letta.capabilities.events.turns) {
 
 ## Permission overlay
 
-Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, `read_file`, `ReadFile`, `SearchFileContent`, etc.). Keep pure read-only tools separate from planning coordination tools like `AskUserQuestion` and todo/plan updates so the policy stays honest.
+Use a permission overlay, not `tool_start`, for policy. Use the
+harness-provided `event.tool?.permissionEffect` for broad tool families; it
+classifies tools as `read`, `write`, `shell`, or `unknown` and avoids duplicating
+provider-specific read aliases. Keep only narrow name-based allowlists for
+tools that are not read-only but are intentionally part of the planning flow,
+like `AskUserQuestion` and todo/plan updates.
 
 ```ts
-const readOnlyToolNames = new Set([
-  "glob",
-  "globgemini",
-  "grep",
-  "grepfiles",
-  "list",
-  "listdir",
-  "listdirectory",
-  "ls",
-  "notebookread",
-  "read",
-  "readfile",
-  "readfilegemini",
-  "readlsp",
-  "readmanyfiles",
-  "search",
-  "searchfilecontent",
-  "searchfiles",
-  "skill",
-  "taskoutput",
-  "viewimage",
-]);
-
 const planningToolNames = new Set([
   "askuserquestion",
   "enterplanmode",
@@ -219,10 +201,6 @@ const readOnlySubagentTypes = new Set(["recall"]);
 
 function normalizedToolName(toolName) {
   return toolName.replace(/[^a-z0-9]/gi, "").toLowerCase();
-}
-
-function isReadOnlyToolName(toolName) {
-  return readOnlyToolNames.has(normalizedToolName(toolName));
 }
 
 function isPlanningToolName(toolName) {
@@ -250,7 +228,9 @@ if (letta.capabilities.permissions) {
       const toolName = String(event.toolName);
       const args = event.args ?? {};
 
-      if (isReadOnlyToolName(toolName)) return { decision: "allow" };
+      if (event.tool?.permissionEffect === "read") {
+        return { decision: "allow" };
+      }
       if (isPlanningToolName(toolName)) return { decision: "allow", reason: "planning" };
 
       const normalized = normalizedToolName(toolName);

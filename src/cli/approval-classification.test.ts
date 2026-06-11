@@ -103,6 +103,55 @@ describe("classifyApprovals", () => {
     });
   });
 
+  test("passes tool metadata to mod permission overlays", async () => {
+    const seen: Array<{ toolName: string; tool: unknown }> = [];
+    registerModPermission({
+      id: "capture-tool-metadata",
+      description: "Capture tool metadata",
+      path: "/tmp/capture-tool-metadata.ts",
+      owner: {
+        id: "global:/tmp/capture-tool-metadata.ts",
+        path: "/tmp/capture-tool-metadata.ts",
+        scope: "global",
+        generation: 1,
+      },
+      activationSignal: new AbortController().signal,
+      getContext: () => {
+        throw new Error("unused");
+      },
+      isAvailable: () => true,
+      check(event) {
+        seen.push({ toolName: event.toolName, tool: event.tool });
+        return undefined;
+      },
+    });
+
+    await classifyApprovals(
+      [
+        {
+          toolCallId: "call-read",
+          toolName: "Read",
+          toolArgs: JSON.stringify({ file_path: "README.md" }),
+        },
+        {
+          toolCallId: "call-write",
+          toolName: "Write",
+          toolArgs: JSON.stringify({ file_path: "README.md", content: "x" }),
+        },
+      ],
+      { workingDirectory: "/tmp/project" },
+    );
+
+    expect(seen).toContainEqual({
+      toolName: "Read",
+      tool: { name: "Read", permissionEffect: "read" },
+    });
+    expect(seen).toContainEqual({
+      toolName: "Write",
+      tool: { name: "Write", permissionEffect: "write" },
+    });
+  });
+
   test("mod permission overlays allow scoped tools before default ask", async () => {
     registerModPermission({
       id: "allow-plan-file",
