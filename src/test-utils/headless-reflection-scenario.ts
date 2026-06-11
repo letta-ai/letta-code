@@ -1,4 +1,12 @@
-import { describe, expect, test } from "bun:test";
+#!/usr/bin/env bun
+/**
+ * Headless bidirectional reflection scenario.
+ *
+ * Intended for CI as a dedicated Reflection / Headless check. It exercises the
+ * authenticated API headless bidirectional path with MemFS enabled and verifies
+ * that auto-reflection creates the right transcript metadata and payload.
+ */
+
 import { spawn } from "node:child_process";
 import {
   mkdir,
@@ -11,8 +19,12 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
-import { formatCapturedOutput } from "./process-diagnostics";
+import { formatCapturedOutput } from "@/integration-tests/process-diagnostics";
+import { createAuthenticatedCliTestEnv } from "./test-process-env";
+
+interface Args {
+  model: string;
+}
 
 interface ReflectionTranscriptState {
   schema_version?: string;
@@ -50,75 +62,27 @@ interface LiveReflectionSummary {
 const TURN_ONE_MARKER = "LIVE_REFLECTION_TURN_ONE_MARKER";
 const TURN_TWO_MARKER = "LIVE_REFLECTION_TURN_TWO_MARKER";
 
-describe("headless bidirectional reflection integration", () => {
-  test(
-    "launches reflection with the newly recorded transcript payload",
-    async () => {
-      if (!process.env.LETTA_API_KEY) {
-        console.log("SKIP: Missing LETTA_API_KEY");
-        return;
-      }
-
-      const summary = await runLiveBidirectionalReflectionSmoke();
-
-      expect(summary.code, formatSummary(summary)).toBe(0);
-      expect(summary.signal, formatSummary(summary)).toBeNull();
-      expect(summary.agentId, formatSummary(summary)).toBeTruthy();
-      expect(summary.conversationId, formatSummary(summary)).toBeTruthy();
-      expect(
-        summary.resultCount,
-        formatSummary(summary),
-      ).toBeGreaterThanOrEqual(2);
-      expect(
-        summary.reflectionLaunchCount,
-        formatSummary(summary),
-      ).toBeGreaterThanOrEqual(1);
-
-      expect(
-        summary.transcriptLines.length,
-        formatSummary(summary),
-      ).toBeGreaterThanOrEqual(4);
-      expect(
-        summary.transcriptLines.join("\n"),
-        formatSummary(summary),
-      ).toContain(TURN_ONE_MARKER);
-      expect(
-        summary.transcriptLines.join("\n"),
-        formatSummary(summary),
-      ).toContain(TURN_TWO_MARKER);
-      expect(
-        summary.payloadFiles.length,
-        formatSummary(summary),
-      ).toBeGreaterThanOrEqual(1);
-
-      expect(summary.state?.schema_version, formatSummary(summary)).toBe(
-        "v2_message_id",
+function parseArgs(argv: string[]): Args {
+  const args: Args = { model: "auto" };
+  for (let i = 0; i < argv.length; i += 1) {
+    const value = argv[i];
+    if (value === "--model") {
+      args.model = argv[++i] ?? args.model;
+    } else if (value === "--help" || value === "-h") {
+      console.log(
+        "Usage: bun run src/test-utils/headless-reflection-scenario.ts [--model auto]",
       );
-      expect(
-        summary.state?.total_completed_turns,
-        formatSummary(summary),
-      ).toBeGreaterThanOrEqual(2);
-      expect(
-        summary.state?.last_reflection_started_at,
-        formatSummary(summary),
-      ).toBeTruthy();
+      process.exit(0);
+    } else {
+      throw new Error(`Unknown argument: ${value}`);
+    }
+  }
+  return args;
+}
 
-      const firstPayload = parsePayload(summary.firstPayloadText);
-      expect(firstPayload.roles, formatSummary(summary)).toContain("system");
-      expect(firstPayload.roles, formatSummary(summary)).toContain("user");
-      expect(firstPayload.roles, formatSummary(summary)).toContain("assistant");
-      expect(firstPayload.text, formatSummary(summary)).toContain(
-        TURN_ONE_MARKER,
-      );
-      expect(firstPayload.text, formatSummary(summary)).not.toContain(
-        TURN_TWO_MARKER,
-      );
-    },
-    { timeout: 180_000 },
-  );
-});
-
-async function runLiveBidirectionalReflectionSmoke(): Promise<LiveReflectionSummary> {
+async function runLiveBidirectionalReflectionSmoke(
+  args: Args,
+): Promise<LiveReflectionSummary> {
   const tmpRoot = await mkdtemp(join(tmpdir(), "letta-live-bidir-reflection-"));
   const homeDir = join(tmpRoot, "home");
   const projectDir = join(tmpRoot, "project");
@@ -149,6 +113,7 @@ async function runLiveBidirectionalReflectionSmoke(): Promise<LiveReflectionSumm
       homeDir,
       projectDir,
       transcriptRoot,
+      model: args.model,
     });
   } finally {
     await rm(tmpRoot, { recursive: true, force: true });
@@ -160,6 +125,7 @@ async function runLiveBidirectionalCli(paths: {
   homeDir: string;
   projectDir: string;
   transcriptRoot: string;
+  model: string;
 }): Promise<LiveReflectionSummary> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -182,7 +148,7 @@ async function runLiveBidirectionalCli(paths: {
         "--no-system-info-reminder",
         "--yolo",
         "-m",
-        "auto",
+        paths.model,
       ],
       {
         cwd: process.cwd(),
@@ -299,7 +265,6 @@ async function runLiveBidirectionalCli(paths: {
         code,
         signal,
         tmpRoot: paths.tmpRoot,
-        transcriptRoot: paths.transcriptRoot,
         transcriptDir: transcriptDir(),
         agentId,
         conversationId,
@@ -337,7 +302,6 @@ async function buildSummary(args: {
   code: number | null;
   signal: NodeJS.Signals | null;
   tmpRoot: string;
-  transcriptRoot: string;
   transcriptDir: string | null;
   agentId: string | null;
   conversationId: string | null;
@@ -470,3 +434,92 @@ function formatSummary(summary: LiveReflectionSummary): string {
     2,
   );
 }
+
+function assertTrue(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+function assertScenario(summary: LiveReflectionSummary): void {
+  const details = formatSummary(summary);
+  assertTrue(summary.code === 0, `Expected exit code 0.\n${details}`);
+  assertTrue(summary.signal === null, `Expected no signal.\n${details}`);
+  assertTrue(summary.agentId, `Missing agent id.\n${details}`);
+  assertTrue(summary.conversationId, `Missing conversation id.\n${details}`);
+  assertTrue(
+    summary.resultCount >= 2,
+    `Expected at least two completed turns.\n${details}`,
+  );
+  assertTrue(
+    summary.reflectionLaunchCount >= 1,
+    `Expected reflection launch log.\n${details}`,
+  );
+  assertTrue(
+    summary.transcriptLines.length >= 4,
+    `Expected user/assistant transcript rows.\n${details}`,
+  );
+  assertTrue(
+    summary.transcriptLines.join("\n").includes(TURN_ONE_MARKER),
+    `Transcript missing first marker.\n${details}`,
+  );
+  assertTrue(
+    summary.transcriptLines.join("\n").includes(TURN_TWO_MARKER),
+    `Transcript missing second marker.\n${details}`,
+  );
+  assertTrue(
+    summary.payloadFiles.length >= 1,
+    `Expected at least one auto reflection payload.\n${details}`,
+  );
+  assertTrue(
+    summary.state?.schema_version === "v2_message_id",
+    `Unexpected reflection state schema.\n${details}`,
+  );
+  assertTrue(
+    (summary.state?.total_completed_turns ?? 0) >= 2,
+    `Reflection state did not record completed turns.\n${details}`,
+  );
+  assertTrue(
+    summary.state?.last_reflection_started_at,
+    `Reflection state did not record launch timestamp.\n${details}`,
+  );
+
+  const firstPayload = parsePayload(summary.firstPayloadText);
+  assertTrue(
+    firstPayload.roles.includes("system"),
+    `Payload missing system message.\n${details}`,
+  );
+  assertTrue(
+    firstPayload.roles.includes("user"),
+    `Payload missing user message.\n${details}`,
+  );
+  assertTrue(
+    firstPayload.roles.includes("assistant"),
+    `Payload missing assistant message.\n${details}`,
+  );
+  assertTrue(
+    firstPayload.text.includes(TURN_ONE_MARKER),
+    `Payload missing first marker.\n${details}`,
+  );
+  assertTrue(
+    !firstPayload.text.includes(TURN_TWO_MARKER),
+    `Payload should not include second marker from after the launch snapshot.\n${details}`,
+  );
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  if (!process.env.LETTA_API_KEY) {
+    console.log("SKIP: Missing env LETTA_API_KEY");
+    return;
+  }
+
+  const summary = await runLiveBidirectionalReflectionSmoke(args);
+  assertScenario(summary);
+  console.log(`OK: reflection / headless / ${args.model}`);
+}
+
+main().catch((error) => {
+  console.error(String(error?.stack || error));
+  process.exit(1);
+});
