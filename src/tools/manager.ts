@@ -19,35 +19,36 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
-import {
-  type ExtensionEvents,
-  emitExtensionEvent,
-} from "@/extensions/event-emitter";
-import {
-  checkExtensionPermissions,
-  type ExtensionPermissionDecisionResult,
-  type ExtensionPermissionDefinition,
-  getAvailableExtensionPermissionsRegistry,
-} from "@/extensions/permission-registry";
-import {
-  type ExtensionToolDefinition,
-  extensionToolRequiresApproval,
-  getAvailableExtensionToolsRegistry,
-  getExtensionToolDefinition,
-  isExtensionToolParallelSafe,
-  runExtensionTool,
-} from "@/extensions/tool-registry";
-import type { ExtensionToolRunContext } from "@/extensions/types";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from "@/hooks";
+import { createModConversationHandle } from "@/mods/conversation-handle";
+import { emitModEvent, type ModEvents } from "@/mods/event-emitter";
+import {
+  checkModPermissions,
+  getAvailableModPermissionsRegistry,
+  type ModPermissionDecisionResult,
+  type ModPermissionDefinition,
+} from "@/mods/permission-registry";
+import {
+  getAvailableModToolsRegistry,
+  getModToolDefinition,
+  isModToolParallelSafe,
+  type ModToolDefinition,
+  modToolApprovalPolicy,
+  runModTool,
+} from "@/mods/tool-registry";
+import type { ModToolRunContext, ToolApprovalPolicy } from "@/mods/types";
 import {
   permissionMode as globalPermissionMode,
   type PermissionMode,
 } from "@/permissions/mode";
+import type {
+  PermissionDecision,
+  PermissionRuleType,
+} from "@/permissions/types";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   getCurrentWorkingDirectory,
@@ -339,17 +340,62 @@ function filterExternalToolsByClientAllowlist(
   );
 }
 
-function filterExtensionToolsByClientAllowlist(
-  extensionTools: Map<string, ExtensionToolDefinition>,
+function filterExternalToolsByRuntimeContext(
+  externalTools: Map<string, ExternalToolDefinition>,
+  runtimeContext: RuntimeContextSnapshot,
+): Map<string, ExternalToolDefinition> {
+  return new Map(
+    Array.from(externalTools.entries()).filter(([, tool]) => {
+      if (!tool.runtime) {
+        return true;
+      }
+      return (
+        tool.runtime.agentId === runtimeContext.agentId &&
+        tool.runtime.conversationId === runtimeContext.conversationId
+      );
+    }),
+  );
+}
+
+function filterExternalToolsByScopeIds(
+  externalTools: Map<string, ExternalToolDefinition>,
+  externalToolScopeIds?: string[],
+): Map<string, ExternalToolDefinition> {
+  const selectedScopes = new Set(externalToolScopeIds ?? []);
+  return new Map(
+    Array.from(externalTools.entries()).filter(([, tool]) => {
+      if (tool.scopeId === undefined) {
+        return true;
+      }
+      return selectedScopes.has(tool.scopeId);
+    }),
+  );
+}
+
+function toModelFacingExternalToolMap(
+  externalTools: Map<string, ExternalToolDefinition>,
+): Map<string, ExternalToolDefinition> {
+  const modelFacingTools = new Map<string, ExternalToolDefinition>();
+  for (const tool of externalTools.values()) {
+    // MVP: if one runtime exposes duplicate model-facing names, the later
+    // registration wins. We keep cross-runtime registrations isolated by using
+    // namespaced internal keys before this final model-facing collapse.
+    modelFacingTools.set(tool.name, tool);
+  }
+  return modelFacingTools;
+}
+
+function filterModToolsByClientAllowlist(
+  modTools: Map<string, ModToolDefinition>,
   clientToolAllowlist?: string[],
-): Map<string, ExtensionToolDefinition> {
+): Map<string, ModToolDefinition> {
   if (clientToolAllowlist === undefined) {
-    return new Map(extensionTools);
+    return new Map(modTools);
   }
 
   const allowSet = new Set(clientToolAllowlist);
   return new Map(
-    Array.from(extensionTools.entries()).filter(([name, tool]) =>
+    Array.from(modTools.entries()).filter(([name, tool]) =>
       matchesClientToolAllowlistEntry(allowSet, tool.name, name),
     ),
   );
@@ -440,7 +486,10 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
 ];
 
 // Tool permissions configuration
-const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
+const TOOL_PERMISSIONS: Record<
+  ToolName,
+  { requiresApproval: boolean; approvalPolicy?: ToolApprovalPolicy }
+> = {
   AskUserQuestion: { requiresApproval: true },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
@@ -594,9 +643,9 @@ type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
-  extensionEvents?: ExtensionEvents;
-  extensionPermissions: Map<string, ExtensionPermissionDefinition>;
-  extensionTools: Map<string, ExtensionToolDefinition>;
+  modEvents?: ModEvents;
+  modPermissions: Map<string, ModPermissionDefinition>;
+  modTools: Map<string, ModToolDefinition>;
   workingDirectory: string;
   runtimeContext: RuntimeContextSnapshot;
   permissionModeState: PermissionModeState;
@@ -817,6 +866,15 @@ export interface ExternalToolDefinition {
   label?: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
+  /** Internal registration key; model-facing calls still use name. */
+  registrationKey?: string;
+  /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
+  scopeId?: string;
+  /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
+  runtime?: {
+    agentId?: string;
+    conversationId?: string;
+  };
 }
 
 /**
@@ -826,6 +884,7 @@ export type ExternalToolExecutor = (
   toolCallId: string,
   toolName: string,
   input: Record<string, unknown>,
+  context?: { tool: ExternalToolDefinition },
 ) => Promise<{
   content: Array<{
     type: string;
@@ -859,7 +918,17 @@ function getExternalToolsRegistry(): Map<string, ExternalToolDefinition> {
 export function registerExternalTools(tools: ExternalToolDefinition[]): void {
   const registry = getExternalToolsRegistry();
   for (const tool of tools) {
-    registry.set(tool.name, tool);
+    registry.set(tool.registrationKey ?? tool.name, tool);
+  }
+}
+
+export function unregisterExternalTools(tools: ExternalToolDefinition[]): void {
+  const registry = getExternalToolsRegistry();
+  for (const tool of tools) {
+    const registrationKey = tool.registrationKey ?? tool.name;
+    if (registry.get(registrationKey) === tool) {
+      registry.delete(registrationKey);
+    }
   }
 }
 
@@ -902,7 +971,11 @@ export function getExternalToolDefinition(
  * Get all external tools as ClientTool format
  */
 export function getExternalToolsAsClientTools(): ClientTool[] {
-  return Array.from(getExternalToolsRegistry().values()).map((tool) => ({
+  return Array.from(
+    toModelFacingExternalToolMap(
+      filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
+    ).values(),
+  ).map((tool) => ({
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
@@ -917,6 +990,7 @@ export async function executeExternalTool(
   toolName: string,
   input: Record<string, unknown>,
   executorOverride?: ExternalToolExecutor,
+  toolDefinition?: ExternalToolDefinition,
 ): Promise<ToolExecutionResult> {
   const executor = executorOverride ?? getExternalToolExecutor();
   if (!executor) {
@@ -927,7 +1001,13 @@ export async function executeExternalTool(
   }
 
   try {
-    const result = await executor(toolCallId, toolName, input);
+    const tool = toolDefinition ?? getExternalToolDefinition(toolName);
+    const result = await executor(
+      toolCallId,
+      toolName,
+      input,
+      tool ? { tool } : undefined,
+    );
 
     // Convert external tool result to ToolExecutionResult format
     const textContent = result.content
@@ -951,49 +1031,49 @@ export async function executeExternalTool(
 /**
  * Get all loaded tools in the format expected by the Letta API's client_tools field.
  * Maps internal tool names to server-facing names for proper tool invocation.
- * Includes built-in, external, and extension tools.
+ * Includes built-in, external, and mod tools.
  */
 export function getClientToolsFromRegistry(): ClientTool[] {
   return buildClientToolsFromSnapshot(
     withDynamicMessageChannelCache(toolRegistry),
-    getExternalToolsRegistry(),
-    getAvailableExtensionToolsRegistry(),
+    toModelFacingExternalToolMap(
+      filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
+    ),
+    getAvailableModToolsRegistry(),
   );
 }
 
 function buildClientToolsFromSnapshot(
   registry: ToolRegistry,
   externalTools: Map<string, ExternalToolDefinition>,
-  extensionTools: Map<string, ExtensionToolDefinition>,
+  modTools: Map<string, ModToolDefinition>,
 ): ClientTool[] {
   const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
     serializeFunctionOnlyToolPayload(getServerToolName(name), tool.modelForm),
   );
   for (const name of externalTools.keys()) {
-    if (extensionTools.has(name)) {
+    if (modTools.has(name)) {
       debugLog(
         "tools",
-        "extension tool %s shadows external tool with same name",
+        "mod tool %s shadows external tool with same name",
         name,
       );
     }
   }
   const externalClientTools = Array.from(externalTools.values())
-    .filter((tool) => !extensionTools.has(tool.name))
+    .filter((tool) => !modTools.has(tool.name))
     .map((tool) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
     }));
-  const extensionClientTools = Array.from(extensionTools.values()).map(
-    (tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    }),
-  );
+  const modClientTools = Array.from(modTools.values()).map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+  }));
 
-  return [...builtInTools, ...externalClientTools, ...extensionClientTools];
+  return [...builtInTools, ...externalClientTools, ...modClientTools];
 }
 
 function getEffectivePermissionModeState(
@@ -1018,15 +1098,16 @@ function capturePreparedToolExecutionContext(
     toolRegistry: ToolRegistry;
     externalTools: Map<string, ExternalToolDefinition>;
     externalExecutor?: ExternalToolExecutor;
-    extensionEvents?: ExtensionEvents;
-    extensionPermissions: Map<string, ExtensionPermissionDefinition>;
-    extensionTools: Map<string, ExtensionToolDefinition>;
+    modEvents?: ModEvents;
+    modPermissions: Map<string, ModPermissionDefinition>;
+    modTools: Map<string, ModToolDefinition>;
   },
   options?: {
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
-    extensionEvents?: ExtensionEvents;
+    modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
@@ -1041,15 +1122,23 @@ function capturePreparedToolExecutionContext(
   }
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
-    externalTools: filterExternalToolsByClientAllowlist(
-      snapshot.externalTools,
-      options?.clientToolAllowlist,
+    externalTools: toModelFacingExternalToolMap(
+      filterExternalToolsByClientAllowlist(
+        filterExternalToolsByScopeIds(
+          filterExternalToolsByRuntimeContext(
+            snapshot.externalTools,
+            runtimeContext,
+          ),
+          options?.externalToolScopeIds,
+        ),
+        options?.clientToolAllowlist,
+      ),
     ),
     externalExecutor: snapshot.externalExecutor,
-    extensionEvents: options?.extensionEvents ?? snapshot.extensionEvents,
-    extensionPermissions: snapshot.extensionPermissions,
-    extensionTools: filterExtensionToolsByClientAllowlist(
-      snapshot.extensionTools,
+    modEvents: options?.modEvents ?? snapshot.modEvents,
+    modPermissions: snapshot.modPermissions,
+    modTools: filterModToolsByClientAllowlist(
+      snapshot.modTools,
       options?.clientToolAllowlist,
     ),
     workingDirectory:
@@ -1067,7 +1156,7 @@ function capturePreparedToolExecutionContext(
     clientTools: buildClientToolsFromSnapshot(
       executionSnapshot.toolRegistry,
       executionSnapshot.externalTools,
-      executionSnapshot.extensionTools,
+      executionSnapshot.modTools,
     ),
     loadedToolNames: Array.from(executionSnapshot.toolRegistry.keys()),
   };
@@ -1087,8 +1176,8 @@ export function captureToolExecutionContext(
       toolRegistry: new Map(toolRegistry),
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
-      extensionTools: getAvailableExtensionToolsRegistry(),
+      modPermissions: getAvailableModPermissionsRegistry(),
+      modTools: getAvailableModToolsRegistry(),
     },
     {
       workingDirectory,
@@ -1103,7 +1192,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: ChannelTurnSource[];
-  extensionEvents?: ExtensionEvents;
+  modEvents?: ModEvents;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -1116,9 +1205,9 @@ export async function prepareCurrentToolExecutionContext(options?: {
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEvents: options?.extensionEvents,
-      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
-      extensionTools: getAvailableExtensionToolsRegistry(),
+      modEvents: options?.modEvents,
+      modPermissions: getAvailableModPermissionsRegistry(),
+      modTools: getAvailableModToolsRegistry(),
     },
     options,
   );
@@ -1128,11 +1217,12 @@ export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
-    extensionEvents?: ExtensionEvents;
+    modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1145,9 +1235,9 @@ export async function prepareToolExecutionContextForSpecificTools(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEvents: options?.extensionEvents,
-      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
-      extensionTools: getAvailableExtensionToolsRegistry(),
+      modEvents: options?.modEvents,
+      modPermissions: getAvailableModPermissionsRegistry(),
+      modTools: getAvailableModToolsRegistry(),
     },
     options,
   );
@@ -1159,11 +1249,12 @@ export async function prepareToolExecutionContextForModel(
     exclude?: ToolName[];
     include?: ToolName[];
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
-    extensionEvents?: ExtensionEvents;
+    modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1176,9 +1267,9 @@ export async function prepareToolExecutionContextForModel(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEvents: options?.extensionEvents,
-      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
-      extensionTools: getAvailableExtensionToolsRegistry(),
+      modEvents: options?.modEvents,
+      modPermissions: getAvailableModPermissionsRegistry(),
+      modTools: getAvailableModToolsRegistry(),
     },
     options,
   );
@@ -1190,35 +1281,49 @@ export async function prepareToolExecutionContextForModel(
  * @returns Tool permissions object with requiresApproval flag
  */
 export function getToolPermissions(toolName: string) {
-  const extensionRequiresApproval = extensionToolRequiresApproval(toolName);
-  if (extensionRequiresApproval !== undefined) {
-    return { requiresApproval: extensionRequiresApproval };
-  }
-  return TOOL_PERMISSIONS[toolName as ToolName] || { requiresApproval: false };
+  const approvalPolicy = getToolApprovalPolicy(toolName);
+  return { requiresApproval: approvalPolicy !== "auto", approvalPolicy };
 }
 
-export function isExtensionToolParallelSafeForContext(
+export function getToolApprovalPolicy(
+  toolName: string,
+  contextId?: string | null,
+): ToolApprovalPolicy {
+  const context = contextId ? getExecutionContextById(contextId) : undefined;
+  const modPolicy = modToolApprovalPolicy(
+    toolName,
+    context?.modTools ?? getAvailableModToolsRegistry(),
+  );
+  if (modPolicy) return modPolicy;
+
+  const toolPermission = TOOL_PERMISSIONS[toolName as ToolName];
+  if (!toolPermission) return "auto";
+  if (toolPermission.approvalPolicy) return toolPermission.approvalPolicy;
+  return toolPermission.requiresApproval ? "ask" : "auto";
+}
+
+export function isModToolParallelSafeForContext(
   toolName: string,
   contextId?: string,
 ): boolean {
   const context = contextId ? getExecutionContextById(contextId) : undefined;
-  return isExtensionToolParallelSafe(
+  return isModToolParallelSafe(
     toolName,
-    context?.extensionTools ?? getAvailableExtensionToolsRegistry(),
+    context?.modTools ?? getAvailableModToolsRegistry(),
   );
 }
 
-async function checkExtensionPermissionForContext(options: {
+async function checkModPermissionForContext(options: {
   args: ToolArgs;
   context?: ToolExecutionContextSnapshot;
   phase: "approval" | "execution";
   toolCallId?: string | null;
   toolName: string;
   workingDirectory: string;
-}): Promise<ExtensionPermissionDecisionResult | undefined> {
+}): Promise<ModPermissionDecisionResult | undefined> {
   const runtimeContext = options.context?.runtimeContext;
   const permissionModeState = options.context?.permissionModeState;
-  return checkExtensionPermissions(
+  return checkModPermissions(
     {
       agentId: runtimeContext?.agentId ?? null,
       conversationId: runtimeContext?.conversationId ?? null,
@@ -1231,8 +1336,7 @@ async function checkExtensionPermissionForContext(options: {
         permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
       phase: options.phase,
     },
-    options.context?.extensionPermissions ??
-      getAvailableExtensionPermissionsRegistry(),
+    options.context?.modPermissions ?? getAvailableModPermissionsRegistry(),
   );
 }
 
@@ -1241,7 +1345,7 @@ async function checkExtensionPermissionForContext(options: {
  * @param toolName - Name of the tool
  * @param toolArgs - Tool arguments
  * @param workingDirectory - Current working directory (defaults to process.cwd())
- * @returns Permission decision: "allow", "deny", or "ask"
+ * @returns Permission decision: "allow", "deny", "ask", or "alwaysAsk"
  */
 export async function checkToolPermission(
   toolName: string,
@@ -1252,7 +1356,7 @@ export async function checkToolPermission(
   toolContextIdArg?: string | null,
   toolCallIdArg?: string | null,
 ): Promise<{
-  decision: "allow" | "deny" | "ask";
+  decision: PermissionDecision;
   matchedRule?: string;
   reason?: string;
 }> {
@@ -1284,8 +1388,8 @@ export async function checkToolPermission(
         effectiveWorkingDirectory,
         effectivePermissionModeState,
         effectiveAgentId,
-        context?.extensionPermissions ??
-          getAvailableExtensionPermissionsRegistry(),
+        context?.modPermissions ?? getAvailableModPermissionsRegistry(),
+        context?.modTools ?? getAvailableModToolsRegistry(),
         {
           conversationId: context?.runtimeContext.conversationId ?? null,
           phase: "approval",
@@ -1298,13 +1402,13 @@ export async function checkToolPermission(
 /**
  * Save a permission rule to settings
  * @param rule - Permission rule (e.g., "Read(src/**)")
- * @param ruleType - Type of rule ("allow", "deny", or "ask")
+ * @param ruleType - Type of rule ("allow", "deny", "ask", or "alwaysAsk")
  * @param scope - Where to save ("project", "local", "user", or "session")
  * @param workingDirectory - Current working directory
  */
 export async function savePermissionRule(
   rule: string,
-  ruleType: "allow" | "deny" | "ask",
+  ruleType: PermissionRuleType,
   scope: "project" | "local" | "user" | "session",
   workingDirectory: string = process.cwd(),
 ): Promise<void> {
@@ -1884,7 +1988,7 @@ function createLinkedAbortSignal(signals: Array<AbortSignal | undefined>): {
   };
 }
 
-function getExtensionToolStatus(result: unknown): "success" | "error" {
+function getModToolStatus(result: unknown): "success" | "error" {
   if (!isRecord(result)) return "success";
   if (result.status === "error" || result.isError === true) return "error";
   if (result.success === false) return "error";
@@ -1970,7 +2074,7 @@ function appendHookFeedbackToToolReturn(
   return [...toolReturn, { type: "text" as const, text: feedbackMessage }];
 }
 
-function cloneToolArgsForExtensionEvent(args: ToolArgs): ToolArgs {
+function cloneToolArgsForModEvent(args: ToolArgs): ToolArgs {
   try {
     return structuredClone(args);
   } catch {
@@ -1978,10 +2082,11 @@ function cloneToolArgsForExtensionEvent(args: ToolArgs): ToolArgs {
   }
 }
 
-function createExtensionPermissionToolResult(
-  decision: ExtensionPermissionDecisionResult,
+function createModPermissionToolResult(
+  decision: ModPermissionDecisionResult,
 ): ToolExecutionResult {
-  const isApprovalRequest = decision.decision === "ask";
+  const isApprovalRequest =
+    decision.decision === "ask" || decision.decision === "alwaysAsk";
   const action = isApprovalRequest ? "blocked" : "denied";
   const fallbackReason = isApprovalRequest
     ? "Approval requested but cannot reopen during execution."
@@ -1998,7 +2103,7 @@ function isToolStartArgs(value: unknown): value is ToolArgs {
 
 async function emitToolStartEvent(options: {
   args: ToolArgs;
-  events?: ExtensionEvents;
+  events?: ModEvents;
   executionScope: RuntimeContextSnapshot;
   toolCallId?: string;
   toolName: string;
@@ -2008,22 +2113,22 @@ async function emitToolStartEvent(options: {
     conversationId: options.executionScope.conversationId ?? null,
     toolCallId: options.toolCallId ?? null,
     toolName: options.toolName,
-    args: cloneToolArgsForExtensionEvent(options.args),
+    args: cloneToolArgsForModEvent(options.args),
   };
 
   try {
-    await emitExtensionEvent(options.events, "tool_start", event);
+    await emitModEvent(options.events, "tool_start", event);
   } catch (error) {
-    debugLog("extensions", "tool_start event failed", error);
+    debugLog("mods", "tool_start event failed", error);
     return { args: options.args };
   }
 
   return { args: isToolStartArgs(event.args) ? event.args : options.args };
 }
 
-async function executeExtensionTool(
+async function executeModTool(
   toolName: string,
-  tool: ExtensionToolDefinition,
+  tool: ModToolDefinition,
   args: ToolArgs,
   executionScope: RuntimeContextSnapshot,
   options: {
@@ -2059,7 +2164,7 @@ async function executeExtensionTool(
 
     try {
       const backend = getBackend();
-      const context: ExtensionToolRunContext = {
+      const context: ModToolRunContext = {
         args: args as Record<string, unknown>,
         cwd: options.workingDirectory,
         workingDirectory: options.workingDirectory,
@@ -2079,7 +2184,7 @@ async function executeExtensionTool(
           : {}),
         permissionMode: executionScope.permissionMode ?? null,
         agent: { id: executionScope.agentId ?? null },
-        conversation: createExtensionConversationHandle({
+        conversation: createModConversationHandle({
           agentId: executionScope.agentId,
           backend,
           conversationId: executionScope.conversationId,
@@ -2093,7 +2198,7 @@ async function executeExtensionTool(
         }),
         getContext: tool.getContext,
       };
-      const result = await runExtensionTool(tool, context);
+      const result = await runModTool(tool, context);
       const duration = Date.now() - startTime;
       const recordResult = isRecord(result) ? result : undefined;
       const stdout = isStringArray(recordResult?.stdout)
@@ -2102,7 +2207,7 @@ async function executeExtensionTool(
       const stderr = isStringArray(recordResult?.stderr)
         ? recordResult.stderr
         : undefined;
-      const toolStatus = getExtensionToolStatus(result);
+      const toolStatus = getModToolStatus(result);
       const flattenedResponse = flattenToolResponse(result);
       const responseSize =
         typeof flattenedResponse === "string"
@@ -2121,7 +2226,7 @@ async function executeExtensionTool(
       const hookFeedback = await collectPostToolHookFeedback(
         {
           args: args as Record<string, unknown>,
-          debugLabel: "extension tool result path",
+          debugLabel: "mod tool result path",
           scopedAgentId: options.scopedAgentId,
           toolCallId: options.toolCallId,
           toolName,
@@ -2179,7 +2284,7 @@ async function executeExtensionTool(
       const hookFeedback = await collectPostToolHookFeedback(
         {
           args: args as Record<string, unknown>,
-          debugLabel: "extension tool exception path",
+          debugLabel: "mod tool exception path",
           scopedAgentId: options.scopedAgentId,
           toolCallId: options.toolCallId,
           toolName,
@@ -2248,9 +2353,8 @@ export async function executeTool(
     context?.externalTools ?? getExternalToolsRegistry();
   const activeExternalExecutor =
     context?.externalExecutor ?? getExternalToolExecutor();
-  const activeExtensionTools =
-    context?.extensionTools ?? getAvailableExtensionToolsRegistry();
-  const extensionEvents = context?.extensionEvents;
+  const activeModTools = context?.modTools ?? getAvailableModToolsRegistry();
+  const modEvents = context?.modEvents;
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
         workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
@@ -2265,22 +2369,22 @@ export async function executeTool(
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
 
-  if (activeExtensionTools.has(name)) {
-    const extensionTool = activeExtensionTools.get(name);
-    if (!extensionTool) {
+  if (activeModTools.has(name)) {
+    const modTool = activeModTools.get(name);
+    if (!modTool) {
       return {
-        toolReturn: `Extension tool not found: ${name}`,
+        toolReturn: `Mod tool not found: ${name}`,
         status: "error",
       };
     }
     const { args: eventArgs } = await emitToolStartEvent({
       args,
-      events: extensionEvents,
+      events: modEvents,
       executionScope,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
-    const permissionDecision = await checkExtensionPermissionForContext({
+    const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
       phase: "execution",
@@ -2290,34 +2394,29 @@ export async function executeTool(
     });
     if (permissionDecision?.decision !== undefined) {
       if (permissionDecision.decision !== "allow") {
-        return createExtensionPermissionToolResult(permissionDecision);
+        return createModPermissionToolResult(permissionDecision);
       }
     }
-    return executeExtensionTool(
-      name,
-      extensionTool,
-      eventArgs,
-      executionScope,
-      {
-        signal: options?.signal,
-        toolCallId: options?.toolCallId,
-        onOutput: options?.onOutput,
-        workingDirectory,
-        scopedAgentId,
-      },
-    );
+    return executeModTool(name, modTool, eventArgs, executionScope, {
+      signal: options?.signal,
+      toolCallId: options?.toolCallId,
+      onOutput: options?.onOutput,
+      workingDirectory,
+      scopedAgentId,
+    });
   }
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
+    const externalTool = activeExternalTools.get(name);
     const { args: eventArgs } = await emitToolStartEvent({
       args,
-      events: extensionEvents,
+      events: modEvents,
       executionScope,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
-    const permissionDecision = await checkExtensionPermissionForContext({
+    const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
       phase: "execution",
@@ -2327,7 +2426,7 @@ export async function executeTool(
     });
     if (permissionDecision?.decision !== undefined) {
       if (permissionDecision.decision !== "allow") {
-        return createExtensionPermissionToolResult(permissionDecision);
+        return createModPermissionToolResult(permissionDecision);
       }
     }
     return executeExternalTool(
@@ -2335,6 +2434,7 @@ export async function executeTool(
       name,
       eventArgs as Record<string, unknown>,
       activeExternalExecutor,
+      externalTool,
     );
   }
 
@@ -2343,7 +2443,7 @@ export async function executeTool(
     const availableTools = [
       ...Array.from(activeRegistry.keys()),
       ...Array.from(activeExternalTools.keys()),
-      ...Array.from(activeExtensionTools.keys()),
+      ...Array.from(activeModTools.keys()),
     ];
     return {
       toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
@@ -2356,7 +2456,7 @@ export async function executeTool(
     const availableTools = [
       ...Array.from(activeRegistry.keys()),
       ...Array.from(activeExternalTools.keys()),
-      ...Array.from(activeExtensionTools.keys()),
+      ...Array.from(activeModTools.keys()),
     ];
     return {
       toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
@@ -2366,13 +2466,13 @@ export async function executeTool(
 
   const { args: eventArgs } = await emitToolStartEvent({
     args,
-    events: extensionEvents,
+    events: modEvents,
     executionScope,
     toolCallId: options?.toolCallId,
     toolName: internalName,
   });
   args = eventArgs;
-  const permissionDecision = await checkExtensionPermissionForContext({
+  const permissionDecision = await checkModPermissionForContext({
     args,
     context,
     phase: "execution",
@@ -2382,7 +2482,7 @@ export async function executeTool(
   });
   if (permissionDecision?.decision !== undefined) {
     if (permissionDecision.decision !== "allow") {
-      return createExtensionPermissionToolResult(permissionDecision);
+      return createModPermissionToolResult(permissionDecision);
     }
   }
   const startTime = Date.now();
@@ -2695,14 +2795,14 @@ export function getToolSchemas(): ToolSchema[] {
   const builtInSchemas = Array.from(
     withDynamicMessageChannelCache(toolRegistry).values(),
   ).map((tool) => tool.schema);
-  const extensionSchemas = Array.from(
-    getAvailableExtensionToolsRegistry().values(),
-  ).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.parameters as JsonSchema,
-  }));
-  return [...builtInSchemas, ...extensionSchemas];
+  const modSchemas = Array.from(getAvailableModToolsRegistry().values()).map(
+    (tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.parameters as JsonSchema,
+    }),
+  );
+  return [...builtInSchemas, ...modSchemas];
 }
 
 /**
@@ -2717,12 +2817,12 @@ export function getToolSchema(name: string): ToolSchema | undefined {
     return withDynamicMessageChannelCache(toolRegistry).get(internalName)
       ?.schema;
   }
-  const extensionTool = getExtensionToolDefinition(name);
-  if (extensionTool) {
+  const modTool = getModToolDefinition(name);
+  if (modTool) {
     return {
-      name: extensionTool.name,
-      description: extensionTool.description,
-      input_schema: extensionTool.parameters as JsonSchema,
+      name: modTool.name,
+      description: modTool.description,
+      input_schema: modTool.parameters as JsonSchema,
     };
   }
   const externalTool = getExternalToolDefinition(name);

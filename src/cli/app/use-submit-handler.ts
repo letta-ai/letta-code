@@ -44,17 +44,6 @@ import { getClient } from "@/backend/api/client";
 import type { CustomCommand } from "@/cli/commands/custom";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
-import {
-  buildExtensionCommandPrompt,
-  parseExtensionCommandArgv,
-  parseExtensionSlashCommand,
-  runExtensionCommandWithTimeout,
-} from "@/cli/extensions/command-runtime";
-import type {
-  ExtensionCommandContext,
-  ExtensionConversationCloseReason,
-} from "@/cli/extensions/types";
-import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
@@ -98,18 +87,29 @@ import {
 } from "@/cli/helpers/system-prompt-warning.ts";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import {
+  buildModCommandPrompt,
+  parseModCommandArgv,
+  parseModSlashCommand,
+  runModCommandWithTimeout,
+} from "@/cli/mods/command-runtime";
+import type {
+  ModCommandContext,
+  ModConversationCloseReason,
+} from "@/cli/mods/types";
+import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
+import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
   runSessionStartHooks,
   runUserPromptSubmitHooks,
 } from "@/hooks";
+import { createModConversationHandle } from "@/mods/conversation-handle";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
@@ -209,7 +209,7 @@ type SubmitHandlerContext = {
   currentModelProvider: string | null;
   effectiveContextWindowSize: number | undefined;
   emittedIdsRef: MutableRefObject<Set<string>>;
-  extensionAdapter: LocalExtensionAdapter;
+  modAdapter: LocalModAdapter;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
   generateConversationDescription: (options?: {
@@ -255,7 +255,7 @@ type SubmitHandlerContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
+  runEndHooks: (reason?: ModConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;
@@ -354,7 +354,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
-    extensionAdapter,
+    modAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort,
     generateConversationDescription,
@@ -580,15 +580,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       const isSlashCommand = userTextForInput.startsWith("/");
-      const parsedExtensionCommand = isSlashCommand
-        ? parseExtensionSlashCommand(userTextForInput.trim())
+      const parsedModCommand = isSlashCommand
+        ? parseModSlashCommand(userTextForInput.trim())
         : null;
-      const parsedSlashCommandName = parsedExtensionCommand?.command ?? null;
+      const parsedSlashCommandName = parsedModCommand?.command ?? null;
       const matchedCustomCommand = parsedSlashCommandName
         ? await findCustomCommandByName(parsedSlashCommandName)
         : undefined;
-      const matchedExtensionCommand = parsedSlashCommandName
-        ? extensionAdapter.registry?.commands[parsedSlashCommandName]
+      const matchedModCommand = parsedSlashCommandName
+        ? modAdapter.registry?.commands[parsedSlashCommandName]
         : undefined;
       // Interactive/non-state slash commands bypass queueing so menus stay responsive
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
@@ -596,9 +596,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         isSlashCommand &&
         shouldSlashCommandBypassQueue(userTextForInput, {
           hasCustomCommand: Boolean(matchedCustomCommand),
-          ...(matchedExtensionCommand
-            ? { extensionCommand: matchedExtensionCommand }
-            : {}),
+          ...(matchedModCommand ? { modCommand: matchedModCommand } : {}),
         });
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
@@ -632,7 +630,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       if (aliasedMsg.startsWith("/")) {
         const trimmed = aliasedMsg.trim();
 
-        // Custom commands and extension commands override built-ins.
+        // Custom commands and mod commands override built-ins.
         if (matchedCustomCommand) {
           const { substituteArguments, expandBashCommands } = await import(
             "@/cli/commands/custom.js"
@@ -692,69 +690,66 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        if (parsedExtensionCommand && matchedExtensionCommand) {
-          const showInTranscript = matchedExtensionCommand.showInTranscript;
-          const shouldLockCommand = !matchedExtensionCommand.runWhenBusy;
+        if (parsedModCommand && matchedModCommand) {
+          const showInTranscript = matchedModCommand.showInTranscript;
+          const shouldLockCommand = !matchedModCommand.runWhenBusy;
           const cmd = showInTranscript
             ? commandRunner.start(
                 trimmed,
-                `Running /${matchedExtensionCommand.id}...`,
+                `Running /${matchedModCommand.id}...`,
               )
             : null;
           const getFeedbackCommand = () =>
             cmd ??
-            commandRunner.start(
-              trimmed,
-              `Running /${matchedExtensionCommand.id}...`,
-            );
+            commandRunner.start(trimmed, `Running /${matchedModCommand.id}...`);
           if (shouldLockCommand) {
             setCommandRunning(true);
           }
 
           try {
-            const extensionContext = extensionAdapter.getContext();
+            const modContext = modAdapter.getContext();
             const cwd = getCurrentWorkingDirectory();
-            const conversation = createExtensionConversationHandle({
+            const conversation = createModConversationHandle({
               agentId,
-              backend: extensionAdapter.getBackend(),
+              backend: modAdapter.getBackend(),
               conversationId: conversationIdRef.current,
               sendMessageStream: sendMessageStreamWithBackend,
               workingDirectory: cwd,
             });
-            const commandContext: ExtensionCommandContext = {
+            const commandContext: ModCommandContext = {
               agent: { id: agentId, name: agentName },
-              args: parsedExtensionCommand.args,
-              argv: parseExtensionCommandArgv(parsedExtensionCommand.args),
-              command: parsedExtensionCommand.command,
+              args: parsedModCommand.args,
+              argv: parseModCommandArgv(parsedModCommand.args),
+              command: parsedModCommand.command,
               conversation: { ...conversation, id: conversationIdRef.current },
               cwd,
-              getContext: extensionAdapter.getContext,
+              getContext: modAdapter.getContext,
               model: {
                 id:
                   currentModelId ??
                   llmConfigRef.current?.model ??
-                  extensionContext.model.id,
-                displayName: extensionContext.model.displayName,
+                  modContext.model.id,
+                displayName: modContext.model.displayName,
               },
-              permissionMode: extensionContext.permissionMode,
+              permissionMode: modContext.permissionMode,
               rawInput: trimmed,
             };
-            const result = await runExtensionCommandWithTimeout(
-              matchedExtensionCommand,
+            const result = await runModCommandWithTimeout(
+              matchedModCommand,
               commandContext,
             );
 
             if (result.type === "prompt") {
               if (!showInTranscript) {
                 getFeedbackCommand().fail(
-                  `/${matchedExtensionCommand.id} returned a prompt with showInTranscript: false. Hidden extension commands must return output or handled and own their UI.`,
+                  `/${matchedModCommand.id} returned a prompt with showInTranscript: false. Hidden mod commands must return output or handled and own their UI.`,
                 );
                 return { submitted: true };
               }
 
-              if (matchedExtensionCommand.runWhenBusy && isAgentBusy()) {
+              if (matchedModCommand.runWhenBusy && isAgentBusy()) {
                 getFeedbackCommand().fail(
-                  `/${matchedExtensionCommand.id} returned a prompt while the agent is running. Busy-safe extension commands must handle their own SDK calls or return output.`,
+                  `/${matchedModCommand.id} returned a prompt while the agent is running. Busy-safe mod commands must handle their own SDK calls or return output.`,
                 );
                 return { submitted: true };
               }
@@ -763,17 +758,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 await checkPendingApprovalsForSlashCommand();
               if (approvalCheck.blocked) {
                 getFeedbackCommand().fail(
-                  `Pending approval(s). Resolve approvals before running /${matchedExtensionCommand.id}.`,
+                  `Pending approval(s). Resolve approvals before running /${matchedModCommand.id}.`,
                 );
                 return { submitted: false };
               }
 
-              cmd?.finish(`Running /${matchedExtensionCommand.id}...`, true);
+              cmd?.finish(`Running /${matchedModCommand.id}...`, true);
               await processConversationWithQueuedApprovals([
                 {
                   type: "message",
                   role: "user",
-                  content: buildTextParts(buildExtensionCommandPrompt(result)),
+                  content: buildTextParts(buildModCommandPrompt(result)),
                   otid: randomUUID(),
                 },
               ]);
@@ -788,7 +783,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
             getFeedbackCommand().fail(
-              `Failed to run /${matchedExtensionCommand.id}: ${errorDetails}`,
+              `Failed to run /${matchedModCommand.id}: ${errorDetails}`,
             );
           } finally {
             if (shouldLockCommand) {
@@ -980,7 +975,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           if (onReload) {
             const cmd = commandRunner.start(
               "/reload",
-              "Reloading settings and local extensions...",
+              "Reloading settings and local mods...",
             );
             setCommandRunning(true);
             // Defer the reload to let the command UI render first
@@ -988,7 +983,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               void (async () => {
                 try {
                   await onReload();
-                  cmd.finish("Reloaded settings and local extensions", true);
+                  cmd.finish("Reloaded settings and local mods", true);
                 } catch (error) {
                   const errorDetails = formatErrorDetails(error, agentId);
                   cmd.fail(`Failed: ${errorDetails}`);
@@ -1257,7 +1252,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               },
             );
             const request = args
-              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline extension.`
+              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline mod.`
               : "The user ran `/statusline` without arguments. Use the loaded skill's bare `/statusline` behavior.";
 
             cmd.finish("Running statusline setup...", true);
@@ -1632,7 +1627,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.events.emit("conversation_open", {
+            void modAdapter.events.emit("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -1730,7 +1725,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.events.emit("conversation_open", {
+            void modAdapter.events.emit("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: forked.id,
@@ -1846,7 +1841,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.events.emit("conversation_open", {
+            void modAdapter.events.emit("conversation_open", {
               agentId,
               agentName: agentName ?? null,
               conversationId: conversation.id,
@@ -3538,7 +3533,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversationId,
       currentModelHandle,
       currentModelId,
-      extensionAdapter,
+      modAdapter,
       effectiveContextWindowSize,
       commandRunner,
       handleExit,

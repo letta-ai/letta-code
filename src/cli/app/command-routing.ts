@@ -74,10 +74,10 @@ export function shouldSlashCommandBypassQueue(
   msg: string,
   options: {
     hasCustomCommand?: boolean;
-    extensionCommand?: { runWhenBusy: boolean };
+    modCommand?: { runWhenBusy: boolean };
   } = {},
 ): boolean {
   if (options.hasCustomCommand) return false;
-  if (options.extensionCommand) return options.extensionCommand.runWhenBusy;
+  if (options.modCommand) return options.modCommand.runWhenBusy;
   return isInteractiveCommand(msg) || isNonStateCommand(msg);
 }

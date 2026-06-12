@@ -1,7 +1,7 @@
 // src/permissions/session.ts
 // In-memory permission store for session-only rules
 
-import type { PermissionRules } from "./types";
+import type { PermissionRules, PermissionRuleType } from "./types";
 
 /**
  * Session-only permissions that are not persisted to disk.
@@ -12,12 +12,13 @@ class SessionPermissions {
     allow: [],
     deny: [],
     ask: [],
+    alwaysAsk: [],
   };
 
   /**
    * Add a permission rule for this session only
    */
-  addRule(rule: string, type: "allow" | "deny" | "ask"): void {
+  addRule(rule: string, type: PermissionRuleType): void {
     const rules = this.sessionRules[type];
     if (rules && !rules.includes(rule)) {
       rules.push(rule);
@@ -32,6 +33,7 @@ class SessionPermissions {
       allow: [...(this.sessionRules.allow || [])],
       deny: [...(this.sessionRules.deny || [])],
       ask: [...(this.sessionRules.ask || [])],
+      alwaysAsk: [...(this.sessionRules.alwaysAsk || [])],
     };
   }
 
@@ -43,13 +45,14 @@ class SessionPermissions {
       allow: [],
       deny: [],
       ask: [],
+      alwaysAsk: [],
     };
   }
 
   /**
    * Check if a rule exists in session permissions
    */
-  hasRule(rule: string, type: "allow" | "deny" | "ask"): boolean {
+  hasRule(rule: string, type: PermissionRuleType): boolean {
     return this.sessionRules[type]?.includes(rule) || false;
   }
 }

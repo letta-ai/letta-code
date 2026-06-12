@@ -1,6 +1,6 @@
 # Statusline Examples
 
-Use these as patterns, not mandatory templates. Keep the final extension focused on the user's request.
+Use these as patterns, not mandatory templates. Keep the final mod focused on the user's request.
 
 ## Agent and model
 

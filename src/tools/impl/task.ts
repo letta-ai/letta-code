@@ -399,6 +399,7 @@ export function spawnBackgroundSubagentTask(
     forkedContext,
     parentAgentIdForSpawn,
     transcriptPath,
+    resolvedParentScope?.conversationId,
   )
     .then(async (result) => {
       bgTask.status = result.success ? "completed" : "failed";
@@ -752,6 +753,8 @@ export async function task(args: TaskArgs): Promise<string> {
       args.max_turns,
       config.fork,
       parentAgentIdForSpawn,
+      undefined,
+      resolvedParentScope?.conversationId,
     );
 
     // Mark subagent as completed in state store

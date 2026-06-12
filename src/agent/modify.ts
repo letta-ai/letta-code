@@ -22,6 +22,7 @@ type ModelSettings =
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return (
+    modelHandle.includes("claude-fable-5") ||
     modelHandle.includes("claude-opus-4-7") ||
     modelHandle.includes("claude-opus-4-8")
   );
@@ -99,7 +100,7 @@ function buildModelSettings(
     if (effort === "low" || effort === "medium" || effort === "high") {
       anthropicSettings.effort = effort;
     } else if (effort === "xhigh") {
-      // "xhigh" is distinct on Opus 4.7+; older Anthropic models map it to backend "max".
+      // "xhigh" is distinct on Fable and Opus 4.7+; older Anthropic models map it to backend "max".
       (anthropicSettings as Record<string, unknown>).effort = hasDistinctXHigh
         ? "xhigh"
         : "max";

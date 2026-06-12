@@ -217,7 +217,7 @@ describe("memoryReminder", () => {
     expect(reminder).toBe(MEMORY_CHECK_REMINDER);
   });
 
-  test("evaluates step-count trigger from turns since successful reflection", () => {
+  test("evaluates step-count trigger from steps since successful reflection", () => {
     expect(
       shouldFireStepCountTrigger(10, {
         trigger: "step-count",

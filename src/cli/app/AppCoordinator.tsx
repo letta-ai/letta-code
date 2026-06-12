@@ -43,7 +43,7 @@ import {
 import { getBackend, isLocalBackendEnabled } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { getBillingTier } from "@/backend/api/metadata";
-import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-extension-registry";
+import { subscribePiProviderRegistry } from "@/backend/dev/pi-provider-mod-registry";
 import {
   cancelActiveConnectOperation,
   isActiveConnectOperationCancellable,
@@ -58,11 +58,6 @@ import type { BtwState } from "@/cli/components/BtwPane";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import { TerminalTitleWriter } from "@/cli/components/TerminalTitleWriter";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
-import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
-import {
-  type LocalExtensionAdapter,
-  useLocalExtensionAdapter,
-} from "@/cli/extensions/use-local-extension-adapter";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -78,9 +73,9 @@ import {
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
 import {
-  type ConversationTitleMessage,
   generateConversationTitleFromSummary,
   getConversationTitleSettings,
+  listConversationTitleMessages,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
@@ -120,6 +115,11 @@ import {
   useTerminalWidth,
 } from "@/cli/hooks/use-terminal-width";
 import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
+import type { ModConversationCloseReason } from "@/cli/mods/types";
+import {
+  type LocalModAdapter,
+  useLocalModAdapter,
+} from "@/cli/mods/use-local-mod-adapter";
 import {
   getTask,
   handleMissedOneShot,
@@ -341,7 +341,7 @@ export function App({
   releaseNotes = null,
   updateNotification = null,
   systemInfoReminderEnabled = true,
-  extensionsDisabled = false,
+  modsDisabled = false,
 }: AppProps) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -1026,8 +1026,8 @@ export function App({
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
-  const sessionExtensionStartAttemptedRef = useRef(false);
-  const extensionAdapterRef = useRef<LocalExtensionAdapter | null>(null);
+  const sessionModStartAttemptedRef = useRef(false);
+  const modAdapterRef = useRef<LocalModAdapter | null>(null);
 
   // Initialize chunk log for this agent + session (clears buffer, GCs old files).
   // Re-runs when agentId changes (e.g. agent switch via /agents).
@@ -1129,7 +1129,7 @@ export function App({
 
   // Run SessionEnd hooks helper
   const runEndHooks = useCallback(
-    async (reason: ExtensionConversationCloseReason = "quit") => {
+    async (reason: ModConversationCloseReason = "quit") => {
       const durationMs = Date.now() - sessionStartTimeRef.current;
       try {
         await runSessionEndHooks(
@@ -1143,10 +1143,10 @@ export function App({
         // Silently ignore hook errors
       }
 
-      const extensionAdapter = extensionAdapterRef.current;
-      if (extensionAdapter) {
+      const modAdapter = modAdapterRef.current;
+      if (modAdapter) {
         try {
-          await extensionAdapter.events.emit("conversation_close", {
+          await modAdapter.events.emit("conversation_close", {
             agentId: agentIdRef.current ?? null,
             conversationId: conversationIdRef.current ?? null,
             durationMs,
@@ -1155,7 +1155,7 @@ export function App({
             toolCallCount: telemetry.getToolCallCount(),
           });
         } catch {
-          // Extension lifecycle events are best-effort on shutdown.
+          // Mod lifecycle events are best-effort on shutdown.
         }
       }
     },
@@ -1184,9 +1184,6 @@ export function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
-  const autoConversationTitleStartIndexRef = useRef<number | null>(
-    !resumedExistingConversation ? 0 : null,
-  );
   const shouldAutoGenerateConversationDescriptionRef = useRef(
     !resumedExistingConversation,
   );
@@ -1196,9 +1193,6 @@ export function App({
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
-      autoConversationTitleStartIndexRef.current = enabled
-        ? buffersRef.current.order.length
-        : null;
       shouldAutoGenerateConversationDescriptionRef.current = enabled;
       isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
@@ -1241,20 +1235,10 @@ export function App({
     }
 
     try {
-      const messages: ConversationTitleMessage[] = [];
-      const startIndex = autoConversationTitleStartIndexRef.current ?? 0;
-      const titleLineIds = buffersRef.current.order.slice(
-        Math.min(startIndex, buffersRef.current.order.length),
+      const messages = await listConversationTitleMessages(
+        getBackend(),
+        conversationId,
       );
-      for (const lineId of titleLineIds) {
-        const line = buffersRef.current.byId.get(lineId);
-        if (line?.kind === "user" || line?.kind === "assistant") {
-          const content = line.text.trim();
-          if (content) {
-            messages.push({ role: line.kind, content });
-          }
-        }
-      }
 
       let summaryModel: string | undefined;
       if (currentModelLabel) {
@@ -1629,7 +1613,7 @@ export function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
-          extensionEvents: extensionAdapterRef.current?.events,
+          modEvents: modAdapterRef.current?.events,
         });
       }
 
@@ -1637,7 +1621,7 @@ export function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
-          extensionEvents: extensionAdapterRef.current?.events,
+          modEvents: modAdapterRef.current?.events,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
         });
@@ -1646,7 +1630,7 @@ export function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
-        extensionEvents: extensionAdapterRef.current?.events,
+        modEvents: modAdapterRef.current?.events,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
       });
@@ -2322,7 +2306,7 @@ export function App({
       duration_ms: Date.now() - a.startTime,
     })),
   });
-  const extensionContext = useMemo(
+  const modContext = useMemo(
     () =>
       buildStatuslineRenderContext({
         payload: statusLinePayload,
@@ -2351,28 +2335,28 @@ export function App({
       statusLinePayload,
     ],
   );
-  const extensionAdapter = useLocalExtensionAdapter(extensionContext, {
-    disabled: extensionsDisabled,
+  const modAdapter = useLocalModAdapter(modContext, {
+    disabled: modsDisabled,
   });
 
   useEffect(() => {
-    extensionAdapterRef.current = extensionAdapter;
-  }, [extensionAdapter]);
+    modAdapterRef.current = modAdapter;
+  }, [modAdapter]);
 
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
-    if (sessionExtensionStartAttemptedRef.current) return;
-    if (extensionAdapter.isLoading) return;
-    if (!extensionAdapter.hasExtensionSources) return;
+    if (sessionModStartAttemptedRef.current) return;
+    if (modAdapter.isLoading) return;
+    if (!modAdapter.hasModSources) return;
 
-    sessionExtensionStartAttemptedRef.current = true;
-    void extensionAdapter.events.emit("conversation_open", {
+    sessionModStartAttemptedRef.current = true;
+    void modAdapter.events.emit("conversation_open", {
       agentId,
       agentName: agentName ?? null,
       conversationId: conversationIdRef.current ?? null,
       reason: "startup",
     });
-  }, [agentId, agentName, extensionAdapter]);
+  }, [agentId, agentName, modAdapter]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
@@ -2593,7 +2577,7 @@ export function App({
     }
 
     const durationMs = Date.now() - sessionStartTimeRef.current;
-    void extensionAdapter.events.emit("conversation_close", {
+    void modAdapter.events.emit("conversation_close", {
       agentId,
       conversationId: conversationIdRef.current ?? null,
       durationMs,
@@ -2601,8 +2585,8 @@ export function App({
       reason: "reload",
       toolCallCount: telemetry.getToolCallCount(),
     });
-    await extensionAdapter.reload();
-    void extensionAdapter.events.emit("conversation_open", {
+    await modAdapter.reload();
+    void modAdapter.events.emit("conversation_open", {
       agentId,
       agentName: agentName ?? null,
       conversationId: conversationIdRef.current ?? null,
@@ -2610,7 +2594,7 @@ export function App({
     });
     setTerminalTitleConfigRefreshEpoch((epoch) => epoch + 1);
     refreshDerived();
-  }, [agentId, agentName, extensionAdapter, refreshDerived]);
+  }, [agentId, agentName, modAdapter, refreshDerived]);
 
   const recordCommandReminder = useCallback((event: CommandFinishedEvent) => {
     let input = event.input.trim();
@@ -3141,7 +3125,7 @@ export function App({
     return undefined;
   }, [loadingState, agentId, initialAgentState]);
 
-  // Extension provider metadata can arrive after the first local AgentState
+  // Mod provider metadata can arrive after the first local AgentState
   // projection on cold boot. Re-project the active local agent when the provider
   // registry changes so statusline context windows reflect registered models.
   useEffect(() => {
@@ -3214,7 +3198,7 @@ export function App({
       });
     };
 
-    if (!extensionAdapter.isLoading) {
+    if (!modAdapter.isLoading) {
       refreshAgentFromRegisteredProviderMetadata();
     }
 
@@ -3227,7 +3211,7 @@ export function App({
     };
   }, [
     agentId,
-    extensionAdapter.isLoading,
+    modAdapter.isLoading,
     hasConversationModelOverrideRef,
     isLocalBackend,
     loadingState,
@@ -3704,7 +3688,7 @@ export function App({
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
     generateConversationDescription,
-    extensionAdapter,
+    modAdapter,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -4023,7 +4007,7 @@ export function App({
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
-    extensionAdapter,
+    modAdapter,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
@@ -4112,7 +4096,7 @@ export function App({
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
-    extensionAdapter,
+    modAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort: () => flushPendingReasoningEffort(),
     generateConversationDescription,
@@ -5050,7 +5034,7 @@ export function App({
         terminalTitleData={terminalTitleData}
         onTitlePreview={setTerminalTitlePreviewOverride}
         onTitlePreviewEnd={clearTerminalTitlePreviewOverride}
-        extensionAdapter={extensionAdapter}
+        modAdapter={modAdapter}
         streaming={streaming}
         stubDescriptions={stubDescriptions}
         thinkingMessage={thinkingMessage}

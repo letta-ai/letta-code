@@ -320,6 +320,36 @@ describe("CreateWorktree tool", () => {
     expect(remoteFile.replace(/\r\n/g, "\n")).toBe("latest remote\n");
   });
 
+  test("creates a worktree from repo_path when current cwd is outside a git repository", async () => {
+    const repo = await trackRepo();
+    const dir = await mkdtemp(
+      path.join(tmpdir(), "letta-create-worktree-empty-"),
+    );
+    tempDirs.push(dir);
+
+    const result = await runWithRuntimeContext({ workingDirectory: dir }, () =>
+      create_worktree({
+        name: "Repo Path Feature",
+        repo_path: repo,
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    expect(result.worktree_path).toBe(
+      path.join(repo, ".letta", "worktrees", "repo-path-feature"),
+    );
+    if (!result.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+    expect(
+      path.normalize(
+        git(["rev-parse", "--show-toplevel"], result.worktree_path),
+      ),
+    ).toBe(result.worktree_path);
+  });
+
   test("returns an error outside a git repository", async () => {
     const dir = await mkdtemp(
       path.join(tmpdir(), "letta-create-worktree-empty-"),
@@ -331,6 +361,9 @@ describe("CreateWorktree tool", () => {
     );
 
     expect(result.status).toBe("error");
-    expect(result.content[0]?.text).toContain("rev-parse");
+    expect(result.content[0]?.text).toContain(
+      "Current working directory is not inside a git repository",
+    );
+    expect(result.content[0]?.text).toContain("repo_path");
   });
 });

@@ -144,6 +144,72 @@ describe("MessageChannel", () => {
     });
   });
 
+  test("inherits active Slack turn thread when route is channel-scoped", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "slack-msg-3" }));
+
+    const adapter: ChannelAdapter = {
+      id: "slack:account-1",
+      channelId: "slack",
+      accountId: "account-1",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("slack", {
+      accountId: "account-1",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-channel",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "slack",
+      chat_id: "C123",
+      message: "hello from active turn",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-channel",
+      },
+      channelTurnSources: [
+        {
+          channel: "slack",
+          accountId: "account-1",
+          chatId: "C123",
+          chatType: "channel",
+          messageId: "1712790000.000050",
+          threadId: "1712790000.000050",
+          agentId: "agent-1",
+          conversationId: "conv-channel",
+        },
+      ],
+    });
+
+    expect(result).toContain("Message sent to slack");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "slack",
+      accountId: "account-1",
+      chatId: "C123",
+      text: "hello from active turn",
+      replyToMessageId: undefined,
+      threadId: "1712790000.000050",
+      parseMode: undefined,
+    });
+  });
+
   test("passes Slack reactions through MessageChannel with the routed account", async () => {
     const registry = new ChannelRegistry();
 

@@ -289,7 +289,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/reload": {
-    desc: "Reload settings and local extensions",
+    desc: "Reload settings and local mods",
     order: 27.2,
     noArgs: true,
     handler: () => {

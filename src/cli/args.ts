@@ -266,12 +266,12 @@ export const CLI_FLAG_CATALOG = {
         "Disable first-turn environment reminder (device/git/cwd context)",
     },
   },
-  "no-extensions": {
+  "no-mods": {
     parser: { type: "boolean" },
     mode: "both",
     help: {
-      description: "Disable local extensions for this session",
-      continuationLines: ["Recovery alias: LETTA_DISABLE_EXTENSIONS=1 letta"],
+      description: "Disable local mods for this session",
+      continuationLines: ["Recovery alias: LETTA_DISABLE_MODS=1 letta"],
     },
   },
   "reflection-trigger": {
@@ -381,7 +381,11 @@ export function renderCliOptionsHelp(): string {
 }
 
 export function preprocessCliArgs(args: string[]): string[] {
-  return args.map((arg) => (arg === "--conv" ? "--conversation" : arg));
+  return args.map((arg) => {
+    if (arg === "--conv") return "--conversation";
+    if (arg === "--no-extensions") return "--no-mods";
+    return arg;
+  });
 }
 
 export function parseCliArgs(args: string[], strict: boolean) {

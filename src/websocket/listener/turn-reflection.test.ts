@@ -1,4 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createBuffers, toLines } from "@/cli/helpers/accumulator";
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { REFLECTION_STATE_SCHEMA_VERSION } from "@/cli/helpers/reflection-transcript";
@@ -45,9 +47,9 @@ describe("post-turn channel reflection", () => {
         contextTracker: createContextTracker(),
         getTranscriptState: mock(async () => ({
           schema_version: REFLECTION_STATE_SCHEMA_VERSION,
-          total_completed_turns: 3,
-          reflected_completed_turns: 0,
-          turns_since_last_successful_reflection: 3,
+          total_completed_steps: 3,
+          reflected_completed_steps: 0,
+          steps_since_last_successful_reflection: 3,
         })),
         launch: mock(async (trigger) => {
           launches.push(trigger);
@@ -100,14 +102,32 @@ describe("post-turn channel reflection", () => {
         contextTracker: createContextTracker(),
         getTranscriptState: mock(async () => ({
           schema_version: REFLECTION_STATE_SCHEMA_VERSION,
-          total_completed_turns: 1,
-          reflected_completed_turns: 0,
-          turns_since_last_successful_reflection: 1,
+          total_completed_steps: 1,
+          reflected_completed_steps: 0,
+          steps_since_last_successful_reflection: 1,
         })),
         launch,
       });
 
     expect(didLaunch).toBe(false);
     expect(launch).not.toHaveBeenCalled();
+  });
+
+  test("records listener transcript rows before evaluating post-turn reflection", () => {
+    const turnPath = fileURLToPath(new URL("./turn.ts", import.meta.url));
+    const source = readFileSync(turnPath, "utf-8");
+    const endTurnIndex = source.indexOf('if (stopReason === "end_turn")');
+    const appendIndex = source.indexOf(
+      "appendTranscriptDeltaJsonl(",
+      endTurnIndex,
+    );
+    const launchIndex = source.indexOf(
+      "maybeLaunchPostTurnChannelReflection({",
+      endTurnIndex,
+    );
+
+    expect(endTurnIndex).toBeGreaterThanOrEqual(0);
+    expect(appendIndex).toBeGreaterThan(endTurnIndex);
+    expect(launchIndex).toBeGreaterThan(appendIndex);
   });
 });

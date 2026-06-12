@@ -9,7 +9,7 @@
 
 import { spawn } from "node:child_process";
 import { getAvailableModelHandles } from "@/agent/available-models";
-import { getCurrentAgentId } from "@/agent/context";
+import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getDefaultModelForTier, resolveModel } from "@/agent/model";
 import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
@@ -121,11 +121,16 @@ interface ExecutionState {
  */
 export function getModelHandleFromAgent(agent: {
   model?: string | null;
+  model_settings?: { provider_type?: unknown } | null;
   llm_config?: { model_endpoint_type?: string | null; model?: string | null };
 }): string | null {
   const directModel = agent.model;
   if (directModel?.includes("/")) {
     return directModel;
+  }
+  const settingsProvider = agent.model_settings?.provider_type;
+  if (typeof settingsProvider === "string" && directModel) {
+    return `${settingsProvider}/${directModel}`;
   }
   const endpoint = agent.llm_config?.model_endpoint_type;
   const model = agent.llm_config?.model;
@@ -135,17 +140,33 @@ export function getModelHandleFromAgent(agent: {
   return directModel || model || null;
 }
 
-async function getPrimaryAgentModelHandle(): Promise<{
+async function getPrimaryAgentModelHandle(
+  scope: { agentId?: string | null; conversationId?: string | null } = {},
+): Promise<{
   handle: string | null;
   agent: {
     model?: string | null;
     name?: string | null;
+    model_settings?: { provider_type?: unknown } | null;
     llm_config?: { model_endpoint_type?: string | null; model?: string | null };
   } | null;
 }> {
   try {
-    const agentId = getCurrentAgentId();
+    const agentId = scope.agentId ?? getCurrentAgentId();
     const agent = await getBackend().retrieveAgent(agentId);
+    const conversationId = scope.conversationId;
+    if (conversationId && conversationId !== "default") {
+      try {
+        const conversation =
+          await getBackend().retrieveConversation(conversationId);
+        const conversationHandle = getModelHandleFromAgent(conversation);
+        if (conversationHandle) {
+          return { handle: conversationHandle, agent };
+        }
+      } catch {
+        // Fall back to the agent default if the conversation is not available.
+      }
+    }
     return { handle: getModelHandleFromAgent(agent), agent };
   } catch {
     return { handle: null, agent: null };
@@ -1229,7 +1250,9 @@ async function executeSubagent(
     if (exitCode !== 0) {
       // Check if this is a provider-not-supported error and we haven't retried yet
       if (!isRetry && isProviderNotSupportedError(stderr)) {
-        const { handle: primaryModel } = await getPrimaryAgentModelHandle();
+        const { handle: primaryModel } = await getPrimaryAgentModelHandle({
+          agentId: parentAgentIdOverride,
+        });
         if (primaryModel) {
           // Retry with the primary agent's model
           return executeSubagent(
@@ -1433,6 +1456,7 @@ export async function spawnSubagent(
   forkedContext?: boolean,
   parentAgentId?: string,
   transcriptPath?: string,
+  parentConversationId?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -1454,8 +1478,29 @@ export async function spawnSubagent(
   const backendMode: BackendMode = activeBackend.capabilities.localMemfs
     ? "local"
     : "api";
+  // Resolve parent scope before model selection so local subagents inherit the
+  // active conversation's model override, not just the agent default.
+  let resolvedParentAgentId = parentAgentId;
+  if (!resolvedParentAgentId) {
+    try {
+      resolvedParentAgentId = getCurrentAgentId();
+    } catch {
+      // Context unavailable — carry forward undefined.
+    }
+  }
+  let resolvedParentConversationId = parentConversationId;
+  if (!resolvedParentConversationId) {
+    try {
+      resolvedParentConversationId = getConversationId() ?? undefined;
+    } catch {
+      // Context unavailable — carry forward undefined.
+    }
+  }
   const { handle: parentModelHandle, agent: parentAgent } =
-    await getPrimaryAgentModelHandle();
+    await getPrimaryAgentModelHandle({
+      agentId: resolvedParentAgentId,
+      conversationId: resolvedParentConversationId,
+    });
   const billingTier = await getCurrentBillingTier();
 
   // For existing agents, don't override model; for new agents, use provided or config default
@@ -1470,18 +1515,6 @@ export async function spawnSubagent(
         backendMode,
       });
   const baseURL = getBaseURL();
-
-  // Resolve parent agent ID: prefer the explicit value captured at the
-  // synchronous call site; fall back to the in-process context only when
-  // the caller didn't provide one.
-  let resolvedParentAgentId = parentAgentId;
-  if (!resolvedParentAgentId) {
-    try {
-      resolvedParentAgentId = getCurrentAgentId();
-    } catch {
-      // Context unavailable — carry forward undefined.
-    }
-  }
 
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;

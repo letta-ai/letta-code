@@ -206,14 +206,14 @@ export function getMemoryReminderMode(
 }
 
 export function shouldFireStepCountTrigger(
-  turnsSinceLastSuccessfulReflection: number,
+  stepsSinceLastSuccessfulReflection: number,
   settings: ReflectionSettings = getReflectionSettings(),
 ): boolean {
   if (settings.trigger !== "step-count") {
     return false;
   }
   const stepCount = normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
-  return turnsSinceLastSuccessfulReflection >= stepCount;
+  return stepsSinceLastSuccessfulReflection >= stepCount;
 }
 
 function shouldFireLegacyTurnCountReminder(

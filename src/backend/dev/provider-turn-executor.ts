@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import {
+  contextTokensFromLocalUsage,
+  estimateLocalContextTokens,
+} from "@/backend/local/local-context-estimate";
 import type { LocalMessage } from "@/backend/local/local-message";
 import type {
   LocalAgentRecord,
@@ -127,37 +131,8 @@ function createProviderErrorChunks(error: unknown): LettaStreamingResponse[] {
   ];
 }
 
-function positiveUsageNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : undefined;
-}
-
 export function contextTokensFromUsage(usage: Usage): number | undefined {
-  const totalTokens = positiveUsageNumber(usage.totalTokens);
-  if (totalTokens !== undefined) return totalTokens;
-
-  const inputTokens = typeof usage.input === "number" ? usage.input : undefined;
-  const outputTokens =
-    typeof usage.output === "number" ? usage.output : undefined;
-  const cacheRead =
-    typeof usage.cacheRead === "number" ? usage.cacheRead : undefined;
-  const cacheWrite =
-    typeof usage.cacheWrite === "number" ? usage.cacheWrite : undefined;
-  if (
-    inputTokens !== undefined ||
-    outputTokens !== undefined ||
-    cacheRead !== undefined ||
-    cacheWrite !== undefined
-  ) {
-    const contextTokens =
-      (inputTokens ?? 0) +
-      (outputTokens ?? 0) +
-      (cacheRead ?? 0) +
-      (cacheWrite ?? 0);
-    if (contextTokens > 0) return contextTokens;
-  }
-  return undefined;
+  return contextTokensFromLocalUsage(usage);
 }
 
 function estimateSerializedTokens(value: unknown): number {
@@ -174,12 +149,46 @@ function estimateSerializedTokens(value: unknown): number {
 export function estimateProviderContextTokens(
   input: ProviderTurnInput,
 ): number | undefined {
+  const contextEstimate = estimateLocalContextTokens(input.uiMessages);
+  if (contextEstimate.lastUsageIndex !== null) {
+    return contextEstimate.tokens > 0 ? contextEstimate.tokens : undefined;
+  }
+
   const systemPromptTokens = estimateSerializedTokens(
     input.systemPrompt ?? input.agent.system,
   );
-  const messageTokens = estimateSerializedTokens(input.uiMessages);
+  const messageTokens = contextEstimate.tokens;
   const toolTokens = estimateSerializedTokens(input.clientTools);
   const total = systemPromptTokens + messageTokens + toolTokens;
+  return total > 0 ? total : undefined;
+}
+
+function serializedLength(value: unknown): number {
+  if (value === undefined || value === null) return 0;
+  try {
+    const serialized =
+      typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+    return serialized.length;
+  } catch {
+    return 0;
+  }
+}
+
+// Approximate request payload size in bytes (serialized chars ~= bytes for the
+// dominant base64/ASCII content). This intentionally measures bytes, not
+// tokens: image/base64 payloads are cheap in provider tokens but can break
+// provider transports when the raw request body grows too large. Slightly
+// overcounts versus the real request because local message wrappers
+// (ids/timestamps/metadata) are included.
+export function estimateProviderRequestBytes(
+  input: ProviderTurnInput,
+): number | undefined {
+  const systemPromptBytes = serializedLength(
+    input.systemPrompt ?? input.agent.system,
+  );
+  const messageBytes = serializedLength(input.uiMessages);
+  const toolBytes = serializedLength(input.clientTools);
+  const total = systemPromptBytes + messageBytes + toolBytes;
   return total > 0 ? total : undefined;
 }
 

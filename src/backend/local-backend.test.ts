@@ -27,7 +27,7 @@ import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor"
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
-} from "@/backend/dev/pi-provider-extension-registry";
+} from "@/backend/dev/pi-provider-mod-registry";
 import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -670,6 +670,82 @@ describe("local backend pi transcript", () => {
     expect(systemPrompts[1]).not.toBe(systemPrompts[0]);
   });
 
+  test("compaction follows the conversation model override, not the agent base", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-model-"),
+    );
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "anthropic",
+        providerName: "lc-anthropic",
+        apiKey: "secret-key",
+      });
+
+      const executor: HeadlessTurnExecutor = {
+        async execute() {
+          return lettaStreamFromChunks([
+            {
+              message_type: "assistant_message",
+              content: [{ type: "text", text: "ok" }],
+            } as LettaStreamingResponse,
+            {
+              message_type: "stop_reason",
+              stop_reason: "end_turn",
+            } as LettaStreamingResponse,
+          ]);
+        },
+      };
+
+      let summarizerModelId: string | undefined;
+      const complete = async (
+        ...args: unknown[]
+      ): Promise<AssistantMessage> => {
+        summarizerModelId = (args[0] as { id?: string } | undefined)?.id;
+        return assistantMessage({
+          responseId: "summary-response",
+          stopReason: "stop",
+          content: [{ type: "text", text: "Compacted summary." }],
+        });
+      };
+
+      const backend = new LocalBackend({
+        storageDir,
+        executor,
+        complete,
+        memfsEnabled: false,
+      });
+      const agent = await backend.createAgent({
+        name: "Local",
+        model: "anthropic/claude-fable-5",
+        model_settings: { provider_type: "anthropic" },
+      } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: { provider_type: "anthropic" },
+      } as never);
+
+      await drain(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "first" }],
+        } as ConversationMessageCreateBody),
+      );
+
+      await backend.compactConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never);
+
+      // Agent base model is Fable; the conversation override is Sonnet 4.6.
+      // Compaction (and its summarizer) must follow the conversation, not the
+      // agent base model.
+      expect(summarizerModelId).toBe("claude-sonnet-4-6");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("lists pi catalog models for configured zAI coding provider", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-pi-zai-"));
     await createOrUpdateLocalProvider({
@@ -684,6 +760,23 @@ describe("local backend pi transcript", () => {
     );
     expect(handles).toContain("zai/glm-4.5-air");
     expect(handles).toContain("zai/glm-5.1");
+  });
+
+  test("lists Fable 5 from the configured Anthropic pi catalog", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-anthropic-fable-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+      apiKey: "dummy",
+      storageDir,
+    });
+
+    const fable = (await listLocalModels(storageDir)).find(
+      (model) => model.handle === "anthropic/claude-fable-5",
+    );
+    expect(fable?.max_context_window).toBe(1_000_000);
   });
 
   test("lists pi catalog context windows for configured OpenRouter models", async () => {
@@ -752,7 +845,43 @@ describe("local backend pi transcript", () => {
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
   });
 
-  test("lists extension-registered local provider models with context windows", async () => {
+  test("discovers configured Ollama models without adding guessed defaults", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-ollama-discovery-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "ollama",
+      providerName: "lc-ollama",
+      apiKey: "not-needed",
+      baseURL: "http://localhost:11434/v1",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      if (url.endsWith("/v1/models")) {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({ models: [{ name: "qwen2.5-coder:7b" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual([
+      "http://localhost:11434/v1/models",
+      "http://localhost:11434/api/tags",
+    ]);
+    expect(handles).toContain("ollama/qwen2.5-coder:7b");
+    expect(handles).not.toContain("ollama/llama2");
+  });
+
+  test("lists mod-registered local provider models with context windows", async () => {
     registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",
@@ -802,7 +931,7 @@ describe("local backend pi transcript", () => {
     );
   });
 
-  test("uses extension-registered context windows for local agent state", async () => {
+  test("uses mod-registered context windows for local agent state", async () => {
     registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",

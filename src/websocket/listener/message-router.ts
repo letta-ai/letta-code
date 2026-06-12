@@ -12,6 +12,7 @@ import type {
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
+import { getErrorMessage } from "@/utils/error";
 import {
   handleTerminalInput,
   handleTerminalKill,
@@ -19,6 +20,7 @@ import {
   handleTerminalSpawn,
 } from "@/websocket/terminal-handler";
 import { handleExecuteCommand } from "./commands";
+import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
 import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
@@ -28,9 +30,11 @@ import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import { handleMemoryProtocolCommand } from "./commands/memory";
 import { handleModelToolsetCommand } from "./commands/model-toolset";
+import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
+import { handleExternalToolCallResponseCommand } from "./external-tools";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -227,18 +231,82 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (
+        handleRuntimeStartProtocolCommand(parsed, {
+          socket,
+          runtime,
+          safeSocketSend,
+          runDetachedListenerTask,
+          getOrCreateScopedRuntime,
+          replaySyncStateForRuntime,
+        })
+      ) {
+        return;
+      }
+
+      if (parsed.type === "external_tool_call_response") {
+        handleExternalToolCallResponseCommand(runtime, parsed);
+        return;
+      }
+
       if (parsed.type === "sync") {
         console.log(
           `[Listen V2] Received sync command for runtime=${parsed.runtime.agent_id}/${parsed.runtime.conversation_id}`,
         );
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
           console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "sync_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                success: false,
+                error: "Runtime is no longer active",
+              },
+              "sync_response",
+              "sync",
+            );
+          }
           return;
         }
-        await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
-          recoverApprovals: parsed.recover_approvals !== false,
-          forceDeviceStatus: parsed.force_device_status === true,
-        });
+        try {
+          await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
+            recoverApprovals: parsed.recover_approvals !== false,
+            forceDeviceStatus: parsed.force_device_status === true,
+          });
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "sync_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                success: true,
+              },
+              "sync_response",
+              "sync",
+            );
+          }
+        } catch (error) {
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "sync_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                success: false,
+                error: getErrorMessage(error),
+              },
+              "sync_response",
+              "sync",
+            );
+            return;
+          }
+          throw error;
+        }
         return;
       }
 
@@ -286,6 +354,7 @@ export function createListenerMessageHandler(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
+          externalToolScopeIds: inputPayload.external_tool_scope_ids,
           messages: inputPayload.messages,
         };
         const hasApprovalPayload = incoming.messages.some(
@@ -428,15 +497,67 @@ export function createListenerMessageHandler(
       }
 
       if (parsed.type === "abort_message") {
-        await handleAbortMessageInput(runtime, {
-          command: parsed,
-          socket,
-          opts: {
-            onStatusChange: opts.onStatusChange,
-            connectionId: opts.connectionId,
-          },
-          processQueuedTurn,
-        });
+        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "abort_message_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                aborted: false,
+                success: false,
+                error: "Runtime is no longer active",
+              },
+              "abort_message_response",
+              "abort_message",
+            );
+          }
+          return;
+        }
+        try {
+          const aborted = await handleAbortMessageInput(runtime, {
+            command: parsed,
+            socket,
+            opts: {
+              onStatusChange: opts.onStatusChange,
+              connectionId: opts.connectionId,
+            },
+            processQueuedTurn,
+          });
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "abort_message_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                aborted,
+                success: true,
+              },
+              "abort_message_response",
+              "abort_message",
+            );
+          }
+        } catch (error) {
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "abort_message_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                aborted: false,
+                success: false,
+                error: getErrorMessage(error),
+              },
+              "abort_message_response",
+              "abort_message",
+            );
+            return;
+          }
+          throw error;
+        }
         return;
       }
 
@@ -507,6 +628,16 @@ export function createListenerMessageHandler(
 
       if (
         handleCronProtocolCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
+        return;
+      }
+
+      if (
+        handleAgentConversationManagementProtocolCommand(parsed, {
           socket,
           safeSocketSend,
           runDetachedListenerTask,

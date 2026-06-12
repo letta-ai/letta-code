@@ -28,6 +28,12 @@ export function OverlayShell({
 }: OverlayShellProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
+  const renderedFooter =
+    typeof footer === "string" || typeof footer === "number" ? (
+      <Text dimColor>{footer}</Text>
+    ) : (
+      footer
+    );
 
   return (
     <Box flexDirection="column">
@@ -44,7 +50,7 @@ export function OverlayShell({
 
       {children}
 
-      {footer && <Box marginTop={1}>{footer}</Box>}
+      {footer && <Box marginTop={1}>{renderedFooter}</Box>}
     </Box>
   );
 }

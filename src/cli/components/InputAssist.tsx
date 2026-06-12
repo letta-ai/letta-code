@@ -4,7 +4,7 @@ import type { ModelReasoningEffort } from "@/agent/model";
 import { AgentInfoBar } from "./AgentInfoBar";
 import { FileAutocomplete } from "./FileAutocomplete";
 import { SlashCommandAutocomplete } from "./SlashCommandAutocomplete";
-import type { ExtensionCommandAutocompleteItem } from "./types/autocomplete";
+import type { ModCommandAutocompleteItem } from "./types/autocomplete";
 
 interface InputAssistProps {
   currentInput: string;
@@ -21,7 +21,7 @@ interface InputAssistProps {
   serverUrl?: string;
   workingDirectory?: string;
   conversationId?: string;
-  extensionCommands?: Record<string, ExtensionCommandAutocompleteItem>;
+  modCommands?: Record<string, ModCommandAutocompleteItem>;
 }
 
 /**
@@ -45,7 +45,7 @@ export function InputAssist({
   serverUrl,
   workingDirectory,
   conversationId,
-  extensionCommands,
+  modCommands,
 }: InputAssistProps) {
   const showFileAutocomplete = currentInput.includes("@");
   const showCommandAutocomplete =
@@ -87,7 +87,7 @@ export function InputAssist({
           onActiveChange={onAutocompleteActiveChange}
           agentId={agentId}
           workingDirectory={workingDirectory}
-          extensionCommands={extensionCommands}
+          modCommands={modCommands}
         />
         <AgentInfoBar
           agentId={agentId}

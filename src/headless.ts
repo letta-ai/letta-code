@@ -102,18 +102,15 @@ import {
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import {
-  disableExtensionsForProcess,
-  shouldDisableExtensions,
-} from "./extensions/disable";
-import type { ExtensionAdapter } from "./extensions/extension-adapter";
-import type { ExtensionConversationOpenReason } from "./extensions/types";
-import {
-  createHeadlessExtensionAdapter,
-  createHeadlessExtensionContext,
+  createHeadlessModAdapter,
+  createHeadlessModContext,
   emitHeadlessConversationClose,
   emitHeadlessConversationOpen,
-} from "./headless-extension-adapter";
+} from "./headless-mod-adapter";
 import { computeDiffPreviews } from "./helpers/diff-preview";
+import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
+import type { ModAdapter } from "./mods/mod-adapter";
+import type { ModConversationOpenReason } from "./mods/types";
 import { formatPermissionDenial } from "./permissions/format-denial";
 import { applyStartupPermissionMode } from "./permissions/startup";
 import { QueueRuntime } from "./queue/queue-runtime";
@@ -482,7 +479,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   conversationId: string;
   overrideModel?: string | null;
   cachedAgent?: AgentState | null;
-  extensionEvents?: ExtensionAdapter["events"];
+  modEvents?: ModAdapter["events"];
 }): Promise<{
   preparedToolContext: Awaited<
     ReturnType<typeof prepareToolExecutionContextForScope>
@@ -496,7 +493,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
     cachedAgent: params.cachedAgent,
-    extensionEvents: params.extensionEvents,
+    modEvents: params.modEvents,
   });
 
   return {
@@ -520,7 +517,7 @@ async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
   input: Array<MessageCreate | ApprovalCreate>;
-  adapter: ExtensionAdapter;
+  adapter: ModAdapter;
 }): Promise<Array<MessageCreate | ApprovalCreate>> {
   try {
     const event = {
@@ -531,7 +528,7 @@ async function emitHeadlessTurnStart(options: {
     await options.adapter.events.emit("turn_start", event);
     return isTurnInputArray(event.input) ? event.input : options.input;
   } catch {
-    // Extension turn_start handlers should not block sending the turn.
+    // Mod turn_start handlers should not block sending the turn.
     return options.input;
   }
 }
@@ -540,12 +537,12 @@ async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
   approvalMessages: Array<MessageCreate | ApprovalCreate>;
-  extensionEvents?: ExtensionAdapter["events"];
+  modEvents?: ModAdapter["events"];
 }): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   const approvalToolContext = await prepareHeadlessToolExecutionContext({
     agentId: params.agentId,
     conversationId: params.conversationId,
-    extensionEvents: params.extensionEvents,
+    modEvents: params.modEvents,
   });
 
   return await sendMessageStream(
@@ -599,11 +596,11 @@ export async function handleHeadlessCommand(
 ) {
   const { values, positionals } = parsedArgs;
   telemetry.setSurface(getTerminalTelemetrySurface(true));
-  const extensionsDisabled = shouldDisableExtensions({
-    cliFlag: values["no-extensions"],
+  const modsDisabled = shouldDisableMods({
+    cliFlag: values["no-mods"],
   });
-  if (extensionsDisabled) {
-    disableExtensionsForProcess();
+  if (modsDisabled) {
+    disableModsForProcess();
   }
 
   // Set tool filter if provided (controls which tools are loaded)
@@ -1402,7 +1399,7 @@ export async function handleHeadlessCommand(
 
   // Determine which conversation to use
   let conversationId: string;
-  let conversationOpenReason: ExtensionConversationOpenReason = "startup";
+  let conversationOpenReason: ModConversationOpenReason = "startup";
   let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
@@ -1714,25 +1711,25 @@ export async function handleHeadlessCommand(
 
   const sessionStats = new SessionStats();
   const headlessPermissionMode = startupPermissionMode.mode;
-  const headlessExtensionAdapter = createHeadlessExtensionAdapter({
+  const headlessModAdapter = createHeadlessModAdapter({
     agent,
     backend,
     conversationId,
     permissionMode: headlessPermissionMode,
     reflectionSettings: effectiveReflectionSettings,
     sessionStats,
-    disabled: extensionsDisabled,
+    disabled: modsDisabled,
   });
-  await headlessExtensionAdapter.reload();
+  await headlessModAdapter.reload();
   try {
     await emitHeadlessConversationOpen({
       agent,
       conversationId,
       reason: conversationOpenReason,
-      adapter: headlessExtensionAdapter,
+      adapter: headlessModAdapter,
     });
   } catch {
-    // Extension lifecycle events should not block headless startup.
+    // Mod lifecycle events should not block headless startup.
   }
 
   let availableTools =
@@ -1750,7 +1747,7 @@ export async function handleHeadlessCommand(
       agentId: agent.id,
       conversationId,
       cachedAgent: agent as AgentState,
-      extensionEvents: headlessExtensionAdapter.events,
+      modEvents: headlessModAdapter.events,
     });
     availableTools = initialToolContext.availableTools;
     cachedAgent = initialToolContext.preparedToolContext.agent;
@@ -1769,7 +1766,7 @@ export async function handleHeadlessCommand(
       resolvedSkillSources,
       systemInfoReminderEnabled,
       effectiveReflectionSettings,
-      headlessExtensionAdapter,
+      headlessModAdapter,
     );
     return;
   }
@@ -1790,8 +1787,8 @@ export async function handleHeadlessCommand(
     try {
       if (!headlessConversationClosed) {
         headlessConversationClosed = true;
-        headlessExtensionAdapter.updateContext(
-          createHeadlessExtensionContext({
+        headlessModAdapter.updateContext(
+          createHeadlessModContext({
             agent,
             conversationId,
             lastRunId: lastKnownRunId,
@@ -1805,16 +1802,16 @@ export async function handleHeadlessCommand(
             agent,
             conversationId,
             durationMs: sessionStats.getSnapshot().totalWallMs,
-            adapter: headlessExtensionAdapter,
+            adapter: headlessModAdapter,
           });
         } catch {
-          // Extension lifecycle events should not block headless shutdown.
+          // Mod lifecycle events should not block headless shutdown.
         }
       }
       telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
       await telemetry.flush();
     } finally {
-      headlessExtensionAdapter.dispose();
+      headlessModAdapter.dispose();
       telemetry.setSessionStatsGetter(undefined);
     }
     return await flushAndExit(code);
@@ -1922,7 +1919,7 @@ export async function handleHeadlessCommand(
         agentId: agent.id,
         conversationId,
         approvalMessages,
-        extensionEvents: headlessExtensionAdapter.events,
+        modEvents: headlessModAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -2082,8 +2079,8 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
-  headlessExtensionAdapter.updateContext(
-    createHeadlessExtensionContext({
+  headlessModAdapter.updateContext(
+    createHeadlessModContext({
       agent,
       conversationId,
       permissionMode: headlessPermissionMode,
@@ -2095,7 +2092,7 @@ ${SYSTEM_REMINDER_CLOSE}
     agent,
     conversationId,
     input: currentInput,
-    adapter: headlessExtensionAdapter,
+    adapter: headlessModAdapter,
   });
 
   // Track lastRunId outside the while loop so it's available in catch block
@@ -2172,7 +2169,7 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId,
           overrideModel: overrideModelHandle ?? preparedEffectiveModel,
           cachedAgent,
-          extensionEvents: headlessExtensionAdapter.events,
+          modEvents: headlessModAdapter.events,
         });
         availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
@@ -2429,6 +2426,7 @@ ${SYSTEM_REMINDER_CLOSE}
               alwaysRequiresUserInput: isInteractiveApprovalTool,
               requireArgsForAutoApprove: true,
               missingNameReason: "Tool call incomplete - missing name",
+              toolContextId: turnToolContextId ?? undefined,
             });
 
             const [approval] = autoAllowed;
@@ -2573,6 +2571,7 @@ ${SYSTEM_REMINDER_CLOSE}
             alwaysRequiresUserInput: isInteractiveApprovalTool,
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
+            toolContextId: turnToolContextId ?? undefined,
           });
 
         const decisions: Decision[] = [
@@ -3177,7 +3176,7 @@ async function runBidirectionalMode(
   skillSources: SkillSource[],
   systemInfoReminderEnabled: boolean,
   reflectionSettings: ReflectionSettings,
-  headlessExtensionAdapter: ExtensionAdapter,
+  headlessModAdapter: ModAdapter,
 ): Promise<void> {
   const sessionId = agent.id;
   const backend = getBackend();
@@ -3198,16 +3197,16 @@ async function runBidirectionalMode(
             agent,
             conversationId,
             durationMs: null,
-            adapter: headlessExtensionAdapter,
+            adapter: headlessModAdapter,
           });
         } catch {
-          // Extension lifecycle events should not block headless shutdown.
+          // Mod lifecycle events should not block headless shutdown.
         }
       }
       telemetry.trackSessionEnd(undefined, exitReason);
       await telemetry.flush();
     } finally {
-      headlessExtensionAdapter.dispose();
+      headlessModAdapter.dispose();
     }
     return await flushAndExit(code);
   };
@@ -3330,7 +3329,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId,
         approvalMessages,
-        extensionEvents: headlessExtensionAdapter.events,
+        modEvents: headlessModAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -3768,7 +3767,7 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId: targetConversationId,
         approvalMessages: [approvalInput],
-        extensionEvents: headlessExtensionAdapter.events,
+        modEvents: headlessModAdapter.events,
       });
 
       const drainResult = await drainStreamWithResume(
@@ -4186,8 +4185,8 @@ async function runBidirectionalMode(
           skillSources,
           maybeLaunchReflectionSubagent,
         });
-        headlessExtensionAdapter.updateContext(
-          createHeadlessExtensionContext({
+        headlessModAdapter.updateContext(
+          createHeadlessModContext({
             agent,
             conversationId,
             reflectionSettings,
@@ -4205,7 +4204,7 @@ async function runBidirectionalMode(
           agent,
           conversationId,
           input: currentInput,
-          adapter: headlessExtensionAdapter,
+          adapter: headlessModAdapter,
         });
 
         // If the previous turn was interrupted mid-tool-call, the agent may be
@@ -4267,7 +4266,7 @@ async function runBidirectionalMode(
             const turnToolContext = await prepareHeadlessToolExecutionContext({
               agentId: agent.id,
               conversationId,
-              extensionEvents: headlessExtensionAdapter.events,
+              modEvents: headlessModAdapter.events,
             });
             availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {
@@ -4461,6 +4460,7 @@ async function runBidirectionalMode(
                 alwaysRequiresUserInput: isInteractiveApprovalTool,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
+                toolContextId: turnToolContextId ?? undefined,
               });
 
             const decisions: Decision[] = [
@@ -4500,7 +4500,7 @@ async function runBidirectionalMode(
             }
 
             for (const ac of needsUserInput) {
-              // permission.decision === "ask" - request permission from SDK
+              // permission.decision is ask/alwaysAsk - request permission from SDK
               const permResponse = await requestPermission(
                 ac.approval.toolCallId,
                 ac.approval.toolName,

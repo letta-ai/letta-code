@@ -97,6 +97,129 @@ describe("skills extraction from .af files", () => {
     expect(existsSync(join(skillsDir, "slack", "scripts", "slack"))).toBe(true);
   });
 
+  test("accepts imported skill names with letters, numbers, dots, underscores, and hyphens", async () => {
+    const afContent = {
+      agents: [],
+      blocks: [],
+      sources: [],
+      tools: [],
+      mcp_servers: [],
+      skills: [
+        {
+          name: "Skill_1.2-rc",
+          files: {
+            "SKILL.md": "# Valid Skill Name",
+          },
+        },
+      ],
+    };
+
+    writeFileSync(afPath, JSON.stringify(afContent, null, 2));
+
+    const extracted = await extractSkillsFromAf(afPath, skillsDir);
+
+    expect(extracted).toEqual(["Skill_1.2-rc"]);
+    expect(existsSync(join(skillsDir, "Skill_1.2-rc", "SKILL.md"))).toBe(true);
+  });
+
+  test.each([
+    ["../outside"],
+    ["nested/skill"],
+    ["nested\\skill"],
+    ["."],
+    [".."],
+    ["skill name"],
+    ["skill\nname"],
+    ["skill;touch-owned"],
+    ["review-pr\u200b"],
+    ["review\u202epr"],
+    [""],
+  ])("rejects unsafe imported skill name %p", async (skillName) => {
+    const afContent = {
+      agents: [],
+      blocks: [],
+      sources: [],
+      tools: [],
+      mcp_servers: [],
+      skills: [
+        {
+          name: skillName,
+          files: {
+            "SKILL.md": "# Unsafe Skill Name",
+          },
+        },
+      ],
+    };
+
+    writeFileSync(afPath, JSON.stringify(afContent, null, 2));
+
+    await expect(extractSkillsFromAf(afPath, skillsDir)).rejects.toThrow(
+      "Invalid imported skill name",
+    );
+  });
+
+  test("rejects excessively long imported skill names", async () => {
+    const afContent = {
+      agents: [],
+      blocks: [],
+      sources: [],
+      tools: [],
+      mcp_servers: [],
+      skills: [
+        {
+          name: "a".repeat(65),
+          files: {
+            "SKILL.md": "# Too Long",
+          },
+        },
+      ],
+    };
+
+    writeFileSync(afPath, JSON.stringify(afContent, null, 2));
+
+    await expect(extractSkillsFromAf(afPath, skillsDir)).rejects.toThrow(
+      "Invalid imported skill name",
+    );
+  });
+
+  test.each([
+    ["parent traversal", "../../outside-marker.txt"],
+    ["nested parent traversal", "nested/../outside-marker.txt"],
+    ["absolute path", join(testDir, "outside-marker.txt")],
+    ["windows absolute path", "C:\\temp\\outside-marker.txt"],
+    ["windows separator", "nested\\outside-marker.txt"],
+    ["empty path", ""],
+    ["current directory", "."],
+    ["trailing slash", "scripts/"],
+  ])(
+    "rejects unsafe embedded skill file path: %s",
+    async (_label, filePath) => {
+      const outsideMarkerPath = join(testDir, "outside-marker.txt");
+      const afContent = {
+        agents: [],
+        blocks: [],
+        sources: [],
+        tools: [],
+        mcp_servers: [],
+        skills: [
+          {
+            name: "safe-skill",
+            files: {
+              [filePath]: "SHOULD_NOT_WRITE",
+            },
+          },
+        ],
+      };
+
+      writeFileSync(afPath, JSON.stringify(afContent, null, 2));
+
+      await expect(extractSkillsFromAf(afPath, skillsDir)).rejects.toThrow(
+        "Invalid imported skill file path",
+      );
+      expect(existsSync(outsideMarkerPath)).toBe(false);
+    },
+  );
+
   test("overwrites existing skills", async () => {
     mkdirSync(join(skillsDir, "existing-skill"), { recursive: true });
     writeFileSync(

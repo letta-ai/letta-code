@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type WebSocket from "ws";
+import { createSharedReminderState } from "@/reminders/state";
 import {
+  __testOverrideSecretsBackend,
   clearSecretsCache,
   initSecretsFromServer,
   loadSecrets,
 } from "@/utils/secrets-store";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { handleSecretsCommand } from "@/websocket/listener/commands/secrets";
 import {
   __testOverrideRefreshSecretsForAgent,
   __testSetFreshnessMs,
@@ -32,8 +36,10 @@ describe("listener secrets sync", () => {
 
   afterEach(() => {
     __testOverrideRefreshSecretsForAgent(null);
+    __testOverrideSecretsBackend(null);
     __testSetFreshnessMs(null);
     clearSecretsCache("agent-listener-secret");
+    clearSecretsCache("agent-other-secret");
   });
 
   test("hydrates the agent-scoped secrets cache from the server", async () => {
@@ -197,6 +203,74 @@ describe("listener secrets sync", () => {
     expect(loadSecrets("agent-listener-secret")).toEqual({
       WS_SECRET_TOKEN: "updated",
     });
+  });
+
+  test("secret_apply schedules fresh secrets reminders for existing conversations", async () => {
+    await initSecretsFromServer("agent-listener-secret", {
+      secrets: [{ key: "WS_SECRET_TOKEN", value: "first" }],
+    });
+    const updateAgentMock = mock(() => Promise.resolve({}));
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      retrieveAgent: retrieveMock,
+      updateAgent: updateAgentMock,
+    });
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const state = createSharedReminderState();
+    state.hasSentSecretsInfo = true;
+    const otherAgentState = createSharedReminderState();
+    otherAgentState.hasSentSecretsInfo = true;
+    listener.reminderStateByConversation.set(
+      "agent:agent-listener-secret::conversation:conv-a",
+      state,
+    );
+    listener.reminderStateByConversation.set(
+      "agent:agent-other-secret::conversation:conv-b",
+      otherAgentState,
+    );
+    const sent: unknown[] = [];
+    const tasks: Promise<void>[] = [];
+
+    const handled = handleSecretsCommand(
+      {
+        type: "secret_apply",
+        request_id: "req-secret-apply",
+        agent_id: "agent-listener-secret",
+        set: { WS_SECRET_TOKEN: "updated" },
+        unset: [],
+      },
+      {
+        socket: {} as WebSocket,
+        runtime: listener,
+        safeSocketSend: (_socket, message) => {
+          sent.push(message);
+          return true;
+        },
+        runDetachedListenerTask: (_name, task) => {
+          tasks.push(task());
+        },
+      },
+    );
+
+    expect(handled).toBe(true);
+    await Promise.all(tasks);
+
+    expect(updateAgentMock).toHaveBeenCalledWith("agent-listener-secret", {
+      secrets: { WS_SECRET_TOKEN: "updated" },
+    });
+    expect(listener.secretsDirtyAgents.has("agent-listener-secret")).toBe(true);
+    expect(state.hasSentSecretsInfo).toBe(false);
+    expect(state.pendingSecretsInfoRefresh).toBe(true);
+    expect(otherAgentState.hasSentSecretsInfo).toBe(true);
+    expect(otherAgentState.pendingSecretsInfoRefresh).toBe(false);
+    expect(sent).toEqual([
+      {
+        type: "secret_apply_response",
+        request_id: "req-secret-apply",
+        success: true,
+        names: ["WS_SECRET_TOKEN"],
+      },
+    ]);
   });
 
   test("approval reuse: same-turn call after preflight hits cache", async () => {

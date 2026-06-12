@@ -77,6 +77,18 @@ await Bun.write(outputPath, withShebang);
 // Make executable
 await Bun.$`chmod +x letta.js`;
 
+await Bun.build({
+  entrypoints: ["./src/app-server-client.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "app-server-client.js",
+  },
+});
+
 // Copy bundled skills to skills/ directory for shipping
 const bundledSkillsSrc = join(__dirname, "src/skills/builtin");
 const bundledSkillsDst = join(__dirname, "skills");
@@ -97,4 +109,5 @@ console.log("   Output: dist/types/protocol.d.ts");
 
 console.log("✅ Build complete!");
 console.log(`   Output: letta.js`);
+console.log("   Output: dist/app-server-client.js");
 console.log(`   Size: ${(Bun.file(outputPath).size / 1024).toFixed(0)}KB`);

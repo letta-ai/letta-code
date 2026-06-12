@@ -21,8 +21,8 @@ Letta Code is a frontier coding agent and can also be used as a long-lived perso
 
 | Feature | Description |
 |---|---|
-| [Self-improvement & Learning](https://docs.letta.com/letta-code/self-improvement) | Agents programmatically rewrite their context to improve and adapt over time, including system prompt learning (through [memory blocks](https://www.letta.com/blog/memory-blocks)) and [skill learning](https://www.letta.com/blog/skill-learning). Configure periodic dreaming with `/sleeptime`, audit memory quality with `/doctor`, and view memory with `/palace` |
-| [Message search](https://docs.letta.com/letta-code/conversation-search) | Search across all messages and agents with `/search`. Agent can also search their own conversations or the conversations of other agents |
+| [Self-improvement & Learning](https://docs.letta.com/letta-code/memory) | Agents programmatically rewrite their context to improve and adapt over time, including system prompt learning (through [memory blocks](https://www.letta.com/blog/memory-blocks)) and [skill learning](https://www.letta.com/blog/skill-learning). Configure periodic dreaming with `/sleeptime`, audit memory quality with `/doctor`, and view memory with `/palace` |
+| [Message search](https://docs.letta.com/letta-code/slash-commands) | Search across all messages and agents with `/search`. Agent can also search their own conversations or the conversations of other agents |
 | [MemFS](https://docs.letta.com/letta-code/memfs) | All context (including memory blocks) is tracked via git. Sync context to a custom GitHub repository by setting `/memory-repository set git@github.com:...` |
 | [Skills](https://docs.letta.com/letta-code/skills) | Loads global skills (`~/.letta`), project-scoped skills (`.agents/skills`), and agent-scoped skills (stored in MemFS). View skills with `/skills` and create with `/skill-creator` |
 | [Subagents & Multi-agent](https://docs.letta.com/letta-code/subagents) | Call built-in subagents (general-purpose, forked, recall, history-analyzer) async or sync. Agents can call any other agent (including themselves) as subagents |

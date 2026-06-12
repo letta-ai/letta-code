@@ -364,7 +364,10 @@ function sortChronological(messages: Message[]): Message[] {
   });
 }
 
-function collectResumeTailMessages(tailMessages: Message[]): Message[] {
+function collectResumeTailMessages(
+  tailMessages: Message[],
+  options: { warnIfMissingAssistant?: boolean } = {},
+): Message[] {
   const seen = new Set<string>();
   let assistantCount = 0;
   const collected: Message[] = [];
@@ -386,7 +389,10 @@ function collectResumeTailMessages(tailMessages: Message[]): Message[] {
     if (m.message_type === "assistant_message") assistantCount += 1;
   }
 
-  if (assistantCount < BACKFILL_MIN_ASSISTANT) {
+  if (
+    options.warnIfMissingAssistant &&
+    assistantCount < BACKFILL_MIN_ASSISTANT
+  ) {
     debugWarn(
       "check-approval",
       `Backfill scan found 0 assistant messages in last ${collected.length} messages (tool-heavy conversation?)`,
@@ -412,9 +418,14 @@ async function fetchResumeTail(
       includeReturnMessageTypes: RESUME_BACKFILL_MESSAGE_TYPES,
     },
   );
+  const warnIfMissingAssistant =
+    limit >= BACKFILL_PAGE_LIMIT && tail.messages.length >= limit;
+
   return {
     conversation: tail.conversation,
-    messages: collectResumeTailMessages(tail.messages),
+    messages: collectResumeTailMessages(tail.messages, {
+      warnIfMissingAssistant,
+    }),
   };
 }
 

@@ -42,7 +42,8 @@ import type {
   StreamDelta,
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
-import { reloadListenerExtensionAdapter } from "./extension-adapter";
+import { markSecretsReminderRefreshPending } from "./commands/secrets";
+import { reloadListenerModAdapter } from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -52,12 +53,12 @@ import {
   emitCanonicalMessageDelta,
 } from "./protocol-outbound";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
+import {
+  ensureSecretsHydratedForAgent,
+  invalidateSecretsCacheForAgent,
+} from "./secrets-sync";
 import { handleIncomingMessage } from "./turn";
-import type {
-  ConversationRuntime,
-  ListenerRuntime,
-  StartListenerOptions,
-} from "./types";
+import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 
@@ -141,7 +142,7 @@ export async function handleExecuteCommand(
         break;
 
       case "reload":
-        output = await handleReloadCommand(conversationRuntime.listener);
+        output = await handleReloadCommand(conversationRuntime);
         break;
 
       case "context-limit":
@@ -202,7 +203,10 @@ export async function handleExecuteCommand(
   }
 }
 
-async function handleReloadCommand(listener: ListenerRuntime): Promise<string> {
+async function handleReloadCommand(
+  conversationRuntime: ConversationRuntime,
+): Promise<string> {
+  const { listener } = conversationRuntime;
   settingsManager.clearCaches();
   await settingsManager.loadProjectSettings();
   await settingsManager.loadLocalProjectSettings();
@@ -217,9 +221,15 @@ async function handleReloadCommand(listener: ListenerRuntime): Promise<string> {
     );
   }
 
-  await reloadListenerExtensionAdapter(listener);
+  await reloadListenerModAdapter(listener);
 
-  return "Reloaded settings and local extensions";
+  if (conversationRuntime.agentId) {
+    invalidateSecretsCacheForAgent(listener, conversationRuntime.agentId);
+    markSecretsReminderRefreshPending(listener, conversationRuntime.agentId);
+    await ensureSecretsHydratedForAgent(listener, conversationRuntime.agentId);
+  }
+
+  return "Reloaded settings, local mods, and agent secrets";
 }
 
 async function handleUpgradeLettaCodeCommand(opts: {

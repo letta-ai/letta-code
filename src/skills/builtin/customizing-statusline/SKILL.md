@@ -1,14 +1,14 @@
 ---
 name: customizing-statusline
-description: Creates, edits, and migrates Letta Code statusline extensions. Use when handling the /statusline command or continuing work started by /statusline.
+description: Creates, edits, and migrates Letta Code statusline mods. Use when handling the /statusline command or continuing work started by /statusline.
 ---
 
 # Customizing Statusline
 
-Use this skill to create or update the global Letta Code statusline extension:
+Use this skill to create or update the global Letta Code statusline mod:
 
 ```text
-~/.letta/extensions/statusline.tsx
+~/.letta/mods/statusline.tsx
 ```
 
 The statusline is a full-row idle renderer. Host UI can still temporarily preempt it for safety confirmations and transient hints.
@@ -18,7 +18,7 @@ The statusline is a full-row idle renderer. Host UI can still temporarily preemp
 ```text
 safety preemption
 else transient host hint
-else custom statusline extension
+else custom statusline mod
 else built-in default statusline
 ```
 
@@ -26,14 +26,14 @@ A custom statusline owns the whole idle row. Do not preserve legacy left/right s
 
 ## Workflow
 
-1. Check whether `~/.letta/extensions/statusline.tsx` exists.
+1. Check whether `~/.letta/mods/statusline.tsx` exists.
 2. If it exists, read it before editing and preserve unrelated code.
 3. If it does not exist, start from the built-in default template or synthesize a focused starter for the user's request.
 4. If the user asks to migrate, import a `.sh` file, or match a shell prompt, read `references/migration.md`.
 5. If API details or concrete patterns are needed, read `references/api.md` and `references/examples.md`.
-6. If the request combines statusline work with commands, tools, events, panels, or stateful extension behavior, also use `creating-extensions` and its `references/architecture.md`.
+6. If the request combines statusline work with commands, tools, events, panels, or stateful mod behavior, also use `creating-mods` and its `references/architecture.md`.
 7. Guard statusline-specific behavior with `letta.capabilities.ui.customStatuslineRenderer` when writing new files.
-8. Edit `~/.letta/extensions/statusline.tsx`.
+8. Edit `~/.letta/mods/statusline.tsx`.
 9. Summarize the absolute file path changed and tell the user to run `/reload` unless the command can reload automatically.
 
 ## Bare `/statusline` behavior
@@ -52,8 +52,8 @@ Keep this conversational. Do not build a menu UI unless the product command expl
 
 ## Rules
 
-- Global-only for now. Do not create project extensions.
-- Keep the extension single-file for MVP.
+- Global-only for now. Do not create project mods.
+- Keep the mod single-file for MVP.
 - Do not assume extra npm packages are available.
 - Do not use relative multi-file imports yet.
 - Keep renderers synchronous. Do not shell, fetch, or await inside render.
@@ -61,11 +61,11 @@ Keep this conversational. Do not build a menu UI unless the product command expl
 - Use `letta.ui.setStatus` for data and `setStatuslineRenderer` for drawing that data.
 - Guard optional APIs with `letta.capabilities.ui.statusValues` and `letta.capabilities.ui.customStatuslineRenderer` in new files.
 - Return a disposer that clears timers/subscriptions.
-- Preserve existing extension code unless the user asks to reset.
+- Preserve existing mod code unless the user asks to reset.
 - Do not delete legacy command statusline files or settings unless the user explicitly asks.
 
 ## Useful references
 
-- `references/api.md` - extension API, render context, lifecycle rules
+- `references/api.md` - mod API, render context, lifecycle rules
 - `references/examples.md` - common statusline patterns
 - `references/migration.md` - legacy command `.sh` and PS1 migration

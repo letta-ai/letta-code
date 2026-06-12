@@ -28,14 +28,11 @@ import {
 } from "@/channels/routing";
 import type { ChannelAdapter } from "@/channels/types";
 import {
-  clearExtensionPermissions,
-  registerExtensionPermission,
-} from "@/extensions/permission-registry";
-import {
-  clearExtensionTools,
-  registerExtensionTool,
-} from "@/extensions/tool-registry";
-import type { ExtensionToolStartEvent } from "@/extensions/types";
+  clearModPermissions,
+  registerModPermission,
+} from "@/mods/permission-registry";
+import { clearModTools, registerModTool } from "@/mods/tool-registry";
+import type { ModToolStartEvent } from "@/mods/types";
 import {
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
   runWithRuntimeContext,
@@ -89,10 +86,10 @@ describe("tool execution context snapshot", () => {
     };
   }
 
-  function registerEchoExtensionTool(signal: AbortSignal): void {
-    registerExtensionTool({
+  function registerEchoModTool(signal: AbortSignal): void {
+    registerModTool({
       name: "local_echo",
-      description: "Echo input from a local extension",
+      description: "Echo input from a local mod",
       parameters: {
         type: "object",
         properties: { message: { type: "string" } },
@@ -105,6 +102,7 @@ describe("tool execution context snapshot", () => {
         generation: 1,
       },
       path: "/tmp/local-echo.ts",
+      approvalPolicy: "auto",
       requiresApproval: false,
       parallelSafe: true,
       activationSignal: signal,
@@ -128,8 +126,8 @@ describe("tool execution context snapshot", () => {
     clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
     clearExternalTools();
-    clearExtensionPermissions();
-    clearExtensionTools();
+    clearModPermissions();
+    clearModTools();
     clearAllRoutes();
     __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
@@ -147,8 +145,8 @@ describe("tool execution context snapshot", () => {
 
   afterAll(async () => {
     clearExternalTools();
-    clearExtensionPermissions();
-    clearExtensionTools();
+    clearModPermissions();
+    clearModTools();
     if (initialTools.length > 0) {
       await loadSpecificTools(initialTools);
     } else {
@@ -198,9 +196,9 @@ describe("tool execution context snapshot", () => {
     expect(withContext.status).toBe("success");
   });
 
-  test("rechecks extension permission overlays after tool_start arg transforms", async () => {
+  test("rechecks mod permission overlays after tool_start arg transforms", async () => {
     await loadSpecificTools(["Read"]);
-    registerExtensionPermission({
+    registerModPermission({
       id: "execution-gate",
       description: "Deny mutated reads",
       path: "/tmp/execution-gate.ts",
@@ -228,10 +226,10 @@ describe("tool execution context snapshot", () => {
     });
 
     const prepared = await prepareCurrentToolExecutionContext({
-      extensionEvents: {
+      modEvents: {
         async emit(name, event) {
           if (name === "tool_start") {
-            const toolStartEvent = event as ExtensionToolStartEvent;
+            const toolStartEvent = event as ModToolStartEvent;
             toolStartEvent.args = {
               ...toolStartEvent.args,
               file_path: "package.json",
@@ -250,14 +248,14 @@ describe("tool execution context snapshot", () => {
 
     expect(result.status).toBe("error");
     expect(asText(result.toolReturn)).toContain(
-      "extension permission:execution-gate",
+      "mod permission:execution-gate",
     );
     expect(asText(result.toolReturn)).toContain("mutated path blocked");
   });
 
   test("reports execution-phase ask decisions as blocked approval requests", async () => {
     await loadSpecificTools(["Read"]);
-    registerExtensionPermission({
+    registerModPermission({
       id: "execution-ask",
       description: "Ask before execution",
       path: "/tmp/execution-ask.ts",
@@ -289,11 +287,11 @@ describe("tool execution context snapshot", () => {
 
     const text = asText(result.toolReturn);
     expect(result.status).toBe("error");
-    expect(text).toContain("blocked by extension permission:execution-ask");
+    expect(text).toContain("blocked by mod permission:execution-ask");
     expect(text).toContain(
       "Approval requested but cannot reopen during execution.",
     );
-    expect(text).not.toContain("denied by extension permission:execution-ask");
+    expect(text).not.toContain("denied by mod permission:execution-ask");
   });
 
   test("prepares explicit tool snapshots without reading the global registry", async () => {
@@ -411,9 +409,81 @@ describe("tool execution context snapshot", () => {
     expect(prepared.clientTools).toEqual([]);
   });
 
-  test("prepares and executes extension tools from turn snapshots", async () => {
+  test("runtime-owned external tools stay scoped to their runtime", async () => {
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "External tool for first runtime",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+      {
+        name: "RemoteBar",
+        description: "External tool for second runtime",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-2" },
+      },
+    ]);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["RemoteFoo", "RemoteBar"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "RemoteFoo",
+    ]);
+  });
+
+  test("scoped runtime external tools stay hidden unless selected", async () => {
+    registerExternalTools([
+      {
+        name: "AlwaysOnRemote",
+        description: "Unscoped runtime tool",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+      {
+        name: "ScopedRemote",
+        description: "Scoped runtime tool",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-1" },
+        scopeId: "scope-1",
+      },
+    ]);
+
+    const base = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["AlwaysOnRemote", "ScopedRemote"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+    expect(base.clientTools.map((tool) => tool.name)).toEqual([
+      "AlwaysOnRemote",
+    ]);
+
+    const selected = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["AlwaysOnRemote", "ScopedRemote"],
+        externalToolScopeIds: ["scope-1"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+    expect(selected.clientTools.map((tool) => tool.name)).toEqual([
+      "AlwaysOnRemote",
+      "ScopedRemote",
+    ]);
+  });
+
+  test("prepares and executes mod tools from turn snapshots", async () => {
     const controller = new AbortController();
-    registerEchoExtensionTool(controller.signal);
+    registerEchoModTool(controller.signal);
 
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
@@ -425,7 +495,7 @@ describe("tool execution context snapshot", () => {
       "local_echo",
     ]);
 
-    clearExtensionTools();
+    clearModTools();
 
     const result = await executeTool(
       "local_echo",
@@ -437,7 +507,7 @@ describe("tool execution context snapshot", () => {
     expect(asText(result.toolReturn)).toBe("echo:hi");
   });
 
-  test("exposes recent conversation history to extension tools", async () => {
+  test("exposes recent conversation history to mod tools", async () => {
     const newestFirstMessages = [
       {
         id: "msg-2",
@@ -466,7 +536,7 @@ describe("tool execution context snapshot", () => {
     } as unknown as Backend);
 
     const controller = new AbortController();
-    registerExtensionTool({
+    registerModTool({
       name: "history_echo",
       description: "Echo conversation history ids",
       parameters: { type: "object", properties: {}, required: [] },
@@ -477,6 +547,7 @@ describe("tool execution context snapshot", () => {
         generation: 1,
       },
       path: "/tmp/history-echo.ts",
+      approvalPolicy: "auto",
       requiresApproval: false,
       parallelSafe: true,
       activationSignal: controller.signal,
@@ -510,7 +581,7 @@ describe("tool execution context snapshot", () => {
     ]);
   });
 
-  test("captures backend once for extension tool conversation handles", async () => {
+  test("captures backend once for mod tool conversation handles", async () => {
     const calls: string[] = [];
     const backendA = {
       forkConversation: async (
@@ -547,7 +618,7 @@ describe("tool execution context snapshot", () => {
     __testSetBackend(backendA);
 
     const controller = new AbortController();
-    registerExtensionTool({
+    registerModTool({
       name: "fork_history",
       description: "Fork conversation and read fork history",
       parameters: { type: "object", properties: {}, required: [] },
@@ -558,6 +629,7 @@ describe("tool execution context snapshot", () => {
         generation: 1,
       },
       path: "/tmp/fork-history.ts",
+      approvalPolicy: "auto",
       requiresApproval: false,
       parallelSafe: true,
       activationSignal: controller.signal,
@@ -593,7 +665,7 @@ describe("tool execution context snapshot", () => {
     ]);
   });
 
-  test("extension tools take precedence over external tools with the same name", async () => {
+  test("mod tools take precedence over external tools with the same name", async () => {
     registerExternalTools([
       {
         name: "local_echo",
@@ -602,7 +674,7 @@ describe("tool execution context snapshot", () => {
       },
     ]);
     const controller = new AbortController();
-    registerEchoExtensionTool(controller.signal);
+    registerEchoModTool(controller.signal);
 
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
@@ -623,9 +695,9 @@ describe("tool execution context snapshot", () => {
     expect(asText(result.toolReturn)).toBe("echo:hi");
   });
 
-  test("aborted extension activations stop captured tool execution", async () => {
+  test("aborted mod activations stop captured tool execution", async () => {
     const controller = new AbortController();
-    registerEchoExtensionTool(controller.signal);
+    registerEchoModTool(controller.signal);
 
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
