@@ -85,6 +85,7 @@ import {
   type ReflectionSettings,
   type ReflectionTrigger,
 } from "./cli/helpers/memory-reminder";
+import { maybeLaunchPostTurnReflection } from "./cli/helpers/post-turn-reflection";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
@@ -125,7 +126,6 @@ import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
 import {
   createSharedReminderState,
   enqueueMemoryGitSyncReminder,
-  syncReminderStateFromContextTracker,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
@@ -1937,10 +1937,6 @@ ${SYSTEM_REMINDER_CLOSE}
     pushPart(systemReminder);
   }
 
-  syncReminderStateFromContextTracker(
-    sharedReminderState,
-    reminderContextTracker,
-  );
   const lastRunAt = (agent as { last_run_completion?: string })
     .last_run_completion;
   const { parts: sharedReminderParts } = await buildSharedReminderParts({
@@ -1955,7 +1951,6 @@ ${SYSTEM_REMINDER_CLOSE}
     state: sharedReminderState,
     systemInfoReminderEnabled,
     workingDirectory: getCurrentWorkingDirectory(),
-    reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
   });
   for (const part of sharedReminderParts) {
@@ -4009,10 +4004,6 @@ async function runBidirectionalMode(
         let sawStreamError = false; // Track if we emitted an error during streaming
         let preStreamTransientRetries = 0;
 
-        syncReminderStateFromContextTracker(
-          sharedReminderState,
-          reminderContextTracker,
-        );
         const lastRunAt = (agent as { last_run_completion?: string })
           .last_run_completion;
         const { parts: sharedReminderParts } = await buildSharedReminderParts({
@@ -4027,9 +4018,7 @@ async function runBidirectionalMode(
           state: sharedReminderState,
           systemInfoReminderEnabled,
           workingDirectory: getCurrentWorkingDirectory(),
-          reflectionSettings,
           skillSources,
-          maybeLaunchReflectionSubagent,
         });
         headlessModAdapter.updateContext(
           createHeadlessModContext({
@@ -4454,6 +4443,26 @@ async function runBidirectionalMode(
                 transcriptError instanceof Error
                   ? transcriptError.message
                   : String(transcriptError)
+              }`,
+            );
+          }
+          try {
+            await maybeLaunchPostTurnReflection({
+              agentId: agent.id,
+              conversationId,
+              memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+              reflectionSettings,
+              reminderState: sharedReminderState,
+              contextTracker: reminderContextTracker,
+              launch: maybeLaunchReflectionSubagent,
+            });
+          } catch (reflectionError) {
+            debugWarn(
+              "memory",
+              `Failed to evaluate post-turn reflection: ${
+                reflectionError instanceof Error
+                  ? reflectionError.message
+                  : String(reflectionError)
               }`,
             );
           }

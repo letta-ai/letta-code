@@ -21,6 +21,7 @@ import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import {
   CHATGPT_FAST_SERVICE_TIER,
   getChatGptFastRegistryHandleForModelHandle,
@@ -84,10 +85,15 @@ import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
+import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
   buildContentFromQueueBatch,
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
+import {
+  AUTO_REFLECTION_DESCRIPTION,
+  launchReflectionSubagent,
+} from "@/cli/helpers/reflection-launcher";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
 import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
@@ -3668,6 +3674,59 @@ export function App({
   // Note: Old memFS conflict resolution overlay (handleMemorySyncConflictSubmit/Cancel)
   // removed. Git-backed memory uses standard git merge conflict resolution via the agent.
 
+  const maybeRunPostTurnReflection = useCallback(async (): Promise<void> => {
+    const reflectionAgentId = agentIdRef.current;
+    if (!reflectionAgentId || reflectionAgentId === "loading") {
+      return;
+    }
+    try {
+      await maybeLaunchPostTurnReflection({
+        agentId: reflectionAgentId,
+        conversationId: conversationIdRef.current ?? "default",
+        memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
+        reflectionSettings: getReflectionSettings(reflectionAgentId),
+        reminderState: sharedReminderStateRef.current,
+        contextTracker: contextTrackerRef.current,
+        launch: async (triggerSource) => {
+          const result = await launchReflectionSubagent({
+            agentId: reflectionAgentId,
+            conversationId: conversationIdRef.current ?? "default",
+            memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
+            triggerSource,
+            description: AUTO_REFLECTION_DESCRIPTION,
+            completionConversationId: () => conversationIdRef.current,
+            recompileByConversation:
+              _systemPromptRecompileByConversationRef.current,
+            recompileQueuedByConversation:
+              _queuedSystemPromptRecompileByConversationRef.current,
+            onCompletionMessage: (completionMessage) => {
+              appendTaskNotificationEvents([completionMessage]);
+            },
+            feedbackContext: {
+              parentAgentName: agentName,
+              parentAgentDescription: agentDescription,
+              surface: "letta_code_tui",
+              model: currentModelId,
+            },
+          });
+          return result.launched;
+        },
+      });
+    } catch (error) {
+      debugWarn(
+        "memory",
+        `Failed to evaluate post-turn reflection: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }, [
+    agentName,
+    agentDescription,
+    currentModelId,
+    appendTaskNotificationEvents,
+  ]);
+
   const processConversation = useConversationLoop({
     abortControllerRef,
     agentIdRef,
@@ -3698,6 +3757,7 @@ export function App({
     lastSentInputRef,
     llmApiErrorRetriesRef,
     llmConfigRef,
+    maybeRunPostTurnReflection,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,
