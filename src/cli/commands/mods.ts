@@ -343,6 +343,19 @@ function formatScoreGraph(
 ): string[] {
   if (points.length === 0) return [];
 
+  const allCompleted = points.every((point) => point.completed);
+  const allSameScore = points.every(
+    (point) => point.score === points[0]?.score,
+  );
+  if (points.length > 1 && allCompleted && allSameScore) {
+    const first = points[0];
+    return first
+      ? [
+          `Score graph: all ${points.length} completed iteration(s) scored ${formatScoreValue(first.score, first.maxScore)}`,
+        ]
+      : [];
+  }
+
   const visiblePoints = points.slice(-MAX_SCORE_BARS);
   const maxScore = Math.max(...points.map((point) => point.score), 1);
   const scoreWidth = Math.max(
@@ -481,6 +494,70 @@ function extractCommandFailureMessage(
   );
 }
 
+function isAssertionOnlyReport(report: ModLearningReport): boolean {
+  if (report.evalResult !== null) return false;
+  if (report.generationResult && report.generationResult.exitCode !== 0) {
+    return false;
+  }
+  const scenarioResults = report.evaluation.scenarioResults ?? [];
+  if (scenarioResults.length > 0) {
+    return scenarioResults.every(
+      (scenario) =>
+        scenario.evalExit === null && scenario.assertionChecks.length > 0,
+    );
+  }
+  return report.evaluation.assertionChecks.length > 0;
+}
+
+function formatEvalSummaryLine(report: ModLearningReport): string {
+  if (isAssertionOnlyReport(report)) return "Eval: assertions only";
+  return `Eval exit: ${report.evalResult?.exitCode ?? "not run"}`;
+}
+
+function formatSelectionReason(report: ModLearningReport): string | null {
+  if (report.stoppedEarlyAt) {
+    return `${report.stoppedEarlyReason ?? "complete"}; stopped early`;
+  }
+  const score = report.score ?? 0;
+  if (
+    report.maxScore !== undefined &&
+    report.maxScore > 0 &&
+    score >= report.maxScore
+  ) {
+    return "earliest perfect score";
+  }
+  const attempts = report.attempts ?? [];
+  const selectedIndex = report.selectedCandidateIndex ?? report.candidateIndex;
+  const selectedAttempt = attempts.find(
+    (attempt) => attempt.candidateIndex === selectedIndex,
+  );
+  if (!selectedAttempt) return null;
+  const tiedBestCount = attempts.filter(
+    (attempt) => attempt.score === selectedAttempt.score,
+  ).length;
+  return tiedBestCount > 1 ? "earliest best score" : "best score";
+}
+
+function formatScoreHistory(points: ScorePoint[]): string | null {
+  if (points.length === 0) return null;
+  const allCompleted = points.every((point) => point.completed);
+  const allSameScore = points.every(
+    (point) => point.score === points[0]?.score,
+  );
+  if (points.length > 1 && allCompleted && allSameScore) {
+    const first = points[0];
+    return first
+      ? `Score history: all ${points.length} iteration(s) scored ${formatScoreValue(first.score, first.maxScore)}`
+      : null;
+  }
+  return `Score history: ${points
+    .map(
+      (point) =>
+        `iter ${point.step} done ${formatScoreValue(point.score, point.maxScore)}`,
+    )
+    .join(" → ")}`;
+}
+
 function formatElapsed(elapsedMs: number | undefined): string | null {
   if (elapsedMs === undefined) return null;
   const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
@@ -560,20 +637,19 @@ export function formatModLearningSummary(
   cwd: string,
 ): string {
   const scorePoints = reportScorePoints(report);
-  const scoreHistory = scorePoints.length
-    ? `Score history: ${scorePoints
-        .map(
-          (point) =>
-            `iter ${point.step} done ${formatScoreValue(point.score, point.maxScore)}`,
-        )
-        .join(" → ")}`
-    : null;
+  const scoreHistory = formatScoreHistory(scorePoints);
+  const selectionReason = formatSelectionReason(report);
   const lines = [
     `Finished mod learning: ${report.spec.name}`,
     `Report: ${displayPath(report.reportPath, cwd)}`,
     ...(report.candidateCount && report.candidateCount > 1
       ? [
-          `Selected iteration: ${report.selectedCandidateIndex ?? report.candidateIndex}/${report.candidateCount}`,
+          `Selected iteration: ${report.selectedCandidateIndex ?? report.candidateIndex}/${report.candidateCount}${selectionReason ? ` (${selectionReason})` : ""}`,
+          ...(report.stoppedEarlyAt
+            ? [
+                `Stopped early: ${report.stoppedEarlyReason ?? "complete"} at iteration ${report.stoppedEarlyAt}`,
+              ]
+            : []),
         ]
       : []),
     `Target mod: ${path.basename(report.candidatePath)} (${displayPath(report.candidatePath, cwd)})`,
@@ -587,7 +663,7 @@ export function formatModLearningSummary(
           `Generation failed: ${extractCommandFailureMessage(report.generationResult.stderr) ?? "see generation.stderr"}`,
         ]
       : []),
-    `Eval exit: ${report.evalResult?.exitCode ?? "not run"}`,
+    formatEvalSummaryLine(report),
     ...(report.evalResult && report.evalResult.exitCode !== 0
       ? [
           `Eval failed: ${extractCommandFailureMessage(report.evalResult.stderr) ?? "see eval.stderr"}`,

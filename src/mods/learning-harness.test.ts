@@ -595,6 +595,70 @@ describe("mod learning harness", () => {
     expect(readFileSync(path.join(runDir, "report.md"), "utf8")).toContain(
       "Assertion checks",
     );
+    expect(readFileSync(path.join(runDir, "report.md"), "utf8")).toContain(
+      "- Eval: assertions only",
+    );
+  });
+
+  test("stops multi-iteration learning after a perfect score", async () => {
+    const repoRoot = createTempDir();
+    const runDir = path.join(
+      repoRoot,
+      ".letta",
+      "mod-learning-runs",
+      "early-stop",
+    );
+    let generationCount = 0;
+    const candidatePathPattern = /Candidate file, absolute path: (.+)/;
+    const runner: CommandRunner = async (command, args, options) => {
+      generationCount += 1;
+      const promptArg = args[args.indexOf("-p") + 1] ?? "";
+      const candidatePath = candidatePathPattern.exec(promptArg)?.[1];
+      if (!candidatePath) throw new Error("Missing candidate path in prompt");
+      await mkdir(path.dirname(candidatePath), { recursive: true });
+      writeFileSync(candidatePath, "export function activate() {}\n");
+      return {
+        args,
+        command,
+        cwd: options.cwd,
+        durationMs: 1,
+        exitCode: 0,
+        stderr: "",
+        stdout: JSON.stringify({ result: "wrote candidate" }),
+        timedOut: false,
+      };
+    };
+
+    const report = await runModLearning({
+      candidateCount: 3,
+      candidateFileName: "perfect.ts",
+      commandRunner: runner,
+      env: {},
+      repoRoot,
+      runDir,
+      spec: {
+        name: "perfect assertion env",
+        objective: "Stop once the assertion passes.",
+        requirements: ["Load cleanly"],
+        evaluation: {
+          scenarios: [
+            {
+              assertions: [{ type: "mod_loads", expectedLoadedCount: 1 }],
+              name: "mod-loads",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(generationCount).toBe(1);
+    expect(report.attempts).toHaveLength(1);
+    expect(report.stoppedEarlyAt).toBe(1);
+    expect(report.stoppedEarlyReason).toBe("perfect score");
+    expect(report.score).toBe(report.maxScore);
+    expect(readFileSync(path.join(runDir, "report.md"), "utf8")).toContain(
+      "Candidate attempts: 1/3 (stopped early: perfect score)",
+    );
   });
 
   test("fails executable assertions when tool args are not rewritten", async () => {

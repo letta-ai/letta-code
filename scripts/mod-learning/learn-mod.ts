@@ -6,6 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   defaultModLearningRunDirectory,
+  type ModLearningProgress,
+  type ModLearningReport,
   readModLearningEnv,
   runModLearning,
 } from "../../src/mods/learning-harness.ts";
@@ -207,7 +209,34 @@ async function launchBackground(params: {
   console.log(`PID ${childPid ?? "unknown"}`);
   console.log(`stdout ${stdoutPath}`);
   console.log(`stderr ${stderrPath}`);
+  console.log(`progress tail -f ${stdoutPath}`);
   console.log(`report ${path.join(params.runDir, "report.md")}`);
+}
+
+function formatScore(
+  score: number | undefined,
+  maxScore: number | undefined,
+): string {
+  if (score === undefined) return "";
+  if (maxScore === undefined) return ` score ${score}`;
+  const percentage = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+  return ` score ${score}/${maxScore} (${percentage}%)`;
+}
+
+function progressPrefix(progress: ModLearningProgress): string {
+  if (progress.candidateIndex && progress.candidateCount) {
+    return `[${progress.candidateIndex}/${progress.candidateCount}]`;
+  }
+  if (progress.candidateIndex) return `[${progress.candidateIndex}]`;
+  return `[${progress.phase}]`;
+}
+
+function formatProgressLine(progress: ModLearningProgress): string {
+  return `${progressPrefix(progress)} ${progress.message}${formatScore(progress.score, progress.maxScore)}`;
+}
+
+function candidateForPromote(report: ModLearningReport): string {
+  return report.candidatePath;
 }
 
 async function main(): Promise<void> {
@@ -236,6 +265,7 @@ async function main(): Promise<void> {
     return;
   }
 
+  let lastProgressLine = "";
   const report = await runModLearning({
     backend: args.backend,
     candidateCount:
@@ -253,10 +283,20 @@ async function main(): Promise<void> {
     scenarioLimit: args.scenarioLimit,
     skipGeneration: args.skipGeneration,
     spec: learningEnv,
+    onProgress: (progress) => {
+      const line = formatProgressLine(progress);
+      if (line === lastProgressLine) return;
+      lastProgressLine = line;
+      console.log(line);
+    },
   });
 
   const status = report.passed ? "PASS" : "FAIL";
   console.log(`${status} ${report.reportPath}`);
+  console.log(`candidate ${candidateForPromote(report)}`);
+  if (report.passed) {
+    console.log(`promote letta mods promote ${candidateForPromote(report)}`);
+  }
   if (!report.passed) process.exit(1);
 }
 

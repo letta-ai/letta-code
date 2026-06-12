@@ -179,7 +179,7 @@ export interface ModLearningProgress {
 export interface ModLearningAttemptSummary {
   candidateIndex: number;
   candidatePath: string;
-  evalExit: number | null | "not run";
+  evalExit: number | null | "assertions only" | "not run";
   generationExit: number | null | "skipped";
   missingRequiredResultMarkers: string[];
   missingRequiredTraceMarkers: string[];
@@ -220,7 +220,7 @@ interface ModLearningCandidateManifest {
     scenarioArtifacts: ModLearningScenarioArtifactManifest[];
   };
   candidateIndex: number;
-  evalExit: number | null | "not run";
+  evalExit: number | null | "assertions only" | "not run";
   generationExit: number | null | "skipped";
   kind: "mod_learning_candidate_manifest";
   passed: boolean;
@@ -268,6 +268,8 @@ export interface ModLearningReport {
   score?: number;
   selectedCandidateIndex?: number;
   spec: ModLearningSpec;
+  stoppedEarlyAt?: number;
+  stoppedEarlyReason?: string;
 }
 
 interface ModLearningCandidateDescriptor {
@@ -1237,6 +1239,45 @@ function markerScore(evaluation: ModLearningEvaluationResult): number {
   ].filter(Boolean).length;
 }
 
+function reportScore(report: ModLearningReport): number {
+  return report.score ?? markerScore(report.evaluation);
+}
+
+function isPerfectReport(report: ModLearningReport): boolean {
+  return (
+    report.passed &&
+    report.maxScore !== undefined &&
+    report.maxScore > 0 &&
+    reportScore(report) >= report.maxScore
+  );
+}
+
+function isAssertionOnlyReport(report: ModLearningReport): boolean {
+  if (report.evalResult !== null) return false;
+  if (report.generationResult && report.generationResult.exitCode !== 0)
+    return false;
+  const scenarioResults = report.evaluation.scenarioResults ?? [];
+  if (scenarioResults.length > 0) {
+    return scenarioResults.every(
+      (scenario) =>
+        scenario.evalExit === null && scenario.assertionChecks.length > 0,
+    );
+  }
+  return report.evaluation.assertionChecks.length > 0;
+}
+
+function evalStatusLabel(
+  report: ModLearningReport,
+): number | null | "assertions only" | "not run" {
+  if (isAssertionOnlyReport(report)) return "assertions only";
+  return report.evalResult?.exitCode ?? "not run";
+}
+
+function evalReportLine(report: ModLearningReport): string {
+  if (isAssertionOnlyReport(report)) return "- Eval: assertions only";
+  return `- Eval exit: ${report.evalResult?.exitCode ?? "not run"}`;
+}
+
 function compareScenarioReports(
   candidate: ModLearningReport,
   incumbent: ModLearningReport,
@@ -1248,8 +1289,8 @@ function compareScenarioReports(
     return (incumbent.candidateIndex ?? 0) - (candidate.candidateIndex ?? 0);
   }
 
-  const candidateScore = candidate.score ?? markerScore(candidate.evaluation);
-  const incumbentScore = incumbent.score ?? markerScore(incumbent.evaluation);
+  const candidateScore = reportScore(candidate);
+  const incumbentScore = reportScore(incumbent);
   if (candidateScore !== incumbentScore) return candidateScore - incumbentScore;
 
   return (candidate.candidateIndex ?? 0) - (incumbent.candidateIndex ?? 0);
@@ -1276,7 +1317,7 @@ function summarizeAttempt(
   return {
     candidateIndex: report.candidateIndex ?? 1,
     candidatePath: report.candidatePath,
-    evalExit: report.evalResult?.exitCode ?? "not run",
+    evalExit: evalStatusLabel(report),
     generationExit: report.generationResult?.exitCode ?? "skipped",
     missingRequiredResultMarkers: missingMarkers(
       report.evaluation.requiredResultMarkers,
@@ -1294,7 +1335,7 @@ function summarizeAttempt(
     reportPath: report.reportPath,
     runDir: report.runDir,
     maxScore: report.maxScore,
-    score: report.score ?? markerScore(report.evaluation),
+    score: reportScore(report),
   };
 }
 
@@ -1386,12 +1427,12 @@ async function buildCandidateManifest(
       scenarioArtifacts,
     },
     candidateIndex: report.candidateIndex ?? 1,
-    evalExit: report.evalResult?.exitCode ?? "not run",
+    evalExit: evalStatusLabel(report),
     generationExit: report.generationResult?.exitCode ?? "skipped",
     kind: "mod_learning_candidate_manifest",
     passed: report.passed,
     runDir: report.runDir,
-    score: report.score ?? markerScore(report.evaluation),
+    score: reportScore(report),
     version: 1,
   };
 }
@@ -1874,15 +1915,15 @@ function renderMarkdownReport(report: ModLearningReport): string {
     `- Run directory: ${report.runDir}`,
     ...(report.candidateCount && report.candidateCount > 1
       ? [
-          `- Candidate attempts: ${report.candidateCount}`,
-          `- Selected candidate: ${report.selectedCandidateIndex ?? report.candidateIndex}`,
+          `- Candidate attempts: ${report.attempts?.length ?? report.candidateCount}/${report.candidateCount}${report.stoppedEarlyAt ? ` (stopped early: ${report.stoppedEarlyReason ?? "complete"})` : ""}`,
+          `- Selected candidate: ${report.selectedCandidateIndex ?? report.candidateIndex}${report.stoppedEarlyAt ? " (perfect score)" : ""}`,
         ]
       : []),
     `- Candidate: ${report.candidatePath}`,
     `- Eval memory dir: ${report.evalMemoryDir}`,
     `- Generation exit: ${report.generationResult?.exitCode ?? "skipped"}`,
-    `- Eval exit: ${report.evalResult?.exitCode ?? "not run"}`,
-    `- Marker score: ${report.score ?? markerScore(report.evaluation)}${report.maxScore !== undefined ? `/${report.maxScore}` : ""}`,
+    evalReportLine(report),
+    `- Marker score: ${reportScore(report)}${report.maxScore !== undefined ? `/${report.maxScore}` : ""}`,
     `- Promoted to: ${report.promotedToPath ?? "not promoted"}`,
     "",
     ...(report.attempts && report.attempts.length > 0
@@ -2240,6 +2281,8 @@ export async function runModLearning(
   const proposerGuidePath = path.join(runDir, "proposer-guide.md");
   const attempts: ModLearningAttemptSummary[] = [];
   const reports: ModLearningReport[] = [];
+  let stoppedEarlyAt: number | undefined;
+  let stoppedEarlyReason: string | undefined;
   await writeHistoryArtifacts({
     attempts,
     historyManifestPath,
@@ -2298,8 +2341,13 @@ export async function runModLearning(
       passed: report.passed,
       phase: "evaluating",
       runDir,
-      score: report.score ?? markerScore(report.evaluation),
+      score: reportScore(report),
     });
+    if (isPerfectReport(report)) {
+      stoppedEarlyAt = candidateIndex;
+      stoppedEarlyReason = "perfect score";
+      break;
+    }
   }
 
   const selectedReport = selectBestReport(reports);
@@ -2333,6 +2381,8 @@ export async function runModLearning(
     reportPath,
     runDir,
     selectedCandidateIndex,
+    ...(stoppedEarlyAt ? { stoppedEarlyAt } : {}),
+    ...(stoppedEarlyReason ? { stoppedEarlyReason } : {}),
   };
   normalizedOptions.onProgress?.({
     candidateCount,
@@ -2344,7 +2394,7 @@ export async function runModLearning(
     message: "Writing mod learning summary report",
     phase: "writing-report",
     runDir,
-    score: report.score ?? markerScore(report.evaluation),
+    score: reportScore(report),
     selectedCandidateIndex,
   });
   await writeHistoryArtifacts({
@@ -2369,7 +2419,7 @@ export async function runModLearning(
     passed: report.passed,
     phase: "done",
     runDir,
-    score: report.score ?? markerScore(report.evaluation),
+    score: reportScore(report),
     selectedCandidateIndex,
   });
   return report;

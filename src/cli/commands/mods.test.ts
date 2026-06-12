@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import type { CommandHandle, CommandUpdate } from "@/cli/commands/runner";
 import type { ModLearningReport } from "@/mods/learning-harness";
-import { handleModsCommand, parseModsCommand } from "./mods";
+import {
+  formatModLearningSummary,
+  handleModsCommand,
+  parseModsCommand,
+} from "./mods";
 
 function createFakeCommandRunner() {
   const updates: Array<CommandUpdate & { input?: string }> = [];
@@ -82,6 +86,96 @@ describe("/mods command", () => {
     if (parsed?.command !== "learn") return;
     expect(parsed.learn.options.candidateCount).toBe(3);
     expect(parsed.learn.options.scenarioLimit).toBe(2);
+  });
+
+  test("formats assertion-only perfect-score summaries clearly", () => {
+    const cwd = path.resolve("/tmp/letta-mod-command-test");
+    const summary = formatModLearningSummary(
+      {
+        attempts: [
+          {
+            candidateIndex: 1,
+            candidatePath: path.join(cwd, "candidates", "001", "mods", "uv.ts"),
+            evalExit: "assertions only",
+            generationExit: 0,
+            maxScore: 11,
+            missingRequiredResultMarkers: [],
+            missingRequiredTraceMarkers: [],
+            passed: true,
+            presentForbiddenResultMarkers: [],
+            presentForbiddenTraceMarkers: [],
+            reportPath: path.join(cwd, "candidates", "001", "report.md"),
+            runDir: path.join(cwd, "candidates", "001"),
+            score: 11,
+          },
+        ],
+        candidateCount: 10,
+        candidateIndex: 1,
+        candidatePath: path.join(cwd, "candidates", "001", "mods", "uv.ts"),
+        evalMemoryDir: path.join(cwd, "candidates", "001", "eval"),
+        evalResult: null,
+        evaluation: {
+          assertionChecks: [
+            {
+              label: "mod-loads",
+              message: "loaded",
+              passed: true,
+            },
+          ],
+          forbiddenResultMarkers: [],
+          forbiddenTraceMarkers: [],
+          passed: true,
+          requiredResultMarkers: [],
+          requiredTraceMarkers: [],
+          resultText: "PASS",
+          scenarioResults: [
+            {
+              assertionChecks: [
+                {
+                  label: "1. mod_loads",
+                  message: "loaded",
+                  passed: true,
+                },
+              ],
+              evalExit: null,
+              evalMemoryDir: path.join(cwd, "candidates", "001", "eval"),
+              forbiddenResultMarkers: [],
+              forbiddenTraceMarkers: [],
+              name: "mod-loads",
+              passed: true,
+              requiredResultMarkers: [],
+              requiredTraceMarkers: [],
+              resultText: "PASS",
+              timedOut: false,
+            },
+          ],
+        },
+        generationResult: null,
+        maxScore: 11,
+        passed: true,
+        promotedToPath: null,
+        reportPath: path.join(cwd, "report.md"),
+        runDir: cwd,
+        score: 11,
+        selectedCandidateIndex: 1,
+        spec: {
+          name: "Use uv instead of pip",
+          objective: "Use uv pip install.",
+          requirements: [],
+          evaluation: { assertions: [{ type: "mod_loads" }] },
+        },
+        stoppedEarlyAt: 1,
+        stoppedEarlyReason: "perfect score",
+      },
+      cwd,
+    );
+
+    expect(summary).toContain(
+      "Selected iteration: 1/10 (perfect score; stopped early)",
+    );
+    expect(summary).toContain("Stopped early: perfect score at iteration 1");
+    expect(summary).toContain("Eval: assertions only");
+    expect(summary).not.toContain("Eval exit: not run");
   });
 
   test("runs learning in the background and finishes with report summary", async () => {
