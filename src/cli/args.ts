@@ -279,7 +279,8 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: {
       argLabel: "<mode>",
-      description: "Sleeptime trigger: off, step-count, compaction-event",
+      description:
+        "Sleeptime trigger: off, step-count, compaction-event (requires memfs unless off)",
     },
   },
   "reflection-step-count": {
