@@ -4,6 +4,9 @@ import { shouldSlashCommandBypassQueue } from "./command-routing";
 describe("command routing", () => {
   test("uses source precedence for slash command queue bypass", () => {
     expect(shouldSlashCommandBypassQueue("/reload")).toBe(true);
+    expect(shouldSlashCommandBypassQueue("/mods learn memory-citations")).toBe(
+      true,
+    );
 
     expect(
       shouldSlashCommandBypassQueue("/reload", {
