@@ -3,7 +3,6 @@ import {
   getModelInfoForLlmConfig,
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
-import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 
 type CarryoverLlmConfig = LlmConfig & {
   enable_reasoner?: boolean | null;
@@ -13,10 +12,6 @@ type CarryoverLlmConfig = LlmConfig & {
 export function normalizeConversationModelCarryoverHandle(
   rawModelHandle: string,
 ): string {
-  const [provider, ...modelParts] = rawModelHandle.split("/");
-  if (provider === "chatgpt_oauth" && modelParts.length > 0) {
-    return `${OPENAI_CODEX_PROVIDER_NAME}/${modelParts.join("/")}`;
-  }
   return normalizeModelHandleForRegistry(rawModelHandle) ?? rawModelHandle;
 }
 
