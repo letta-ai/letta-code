@@ -2143,7 +2143,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             cmd.finish(outputLines.join("\n"), true);
 
             // Manual /compact bypasses stream compaction events, so trigger
-            // post-compaction reflection reminder/auto-launch on the next user turn.
+            // post-compaction reflection auto-launch on the next user turn.
             contextTrackerRef.current.pendingReflectionTrigger = true;
             void generateConversationDescription({ force: true });
           } catch (error) {

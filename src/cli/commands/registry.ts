@@ -123,7 +123,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/sleeptime": {
-    desc: "Configure reflection reminder trigger settings",
+    desc: "Configure sleep-time reflection trigger settings",
     order: 15.5,
     noArgs: true,
     handler: () => {
