@@ -1659,6 +1659,18 @@
       }
     },
     {
+      "id": "kimi-k2.7-code",
+      "handle": "moonshot/kimi-k2.7-code",
+      "label": "Kimi K2.7 Code",
+      "description": "Moonshot AI's long-context coding and agent model",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 32768,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "deepseek-chat-v3.1",
       "handle": "openrouter/deepseek/deepseek-chat-v3.1",
       "label": "DeepSeek Chat V3.1",
