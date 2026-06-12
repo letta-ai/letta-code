@@ -1170,7 +1170,7 @@ function capturePreparedToolExecutionContext(
     ),
     loadedToolNames: buildClientToolsFromSnapshot(
       executionSnapshot.toolRegistry,
-      executionSnapshot.externalTools,
+      new Map(),
       executionSnapshot.modTools,
     ).map((tool) => tool.name),
   };

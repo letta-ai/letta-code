@@ -372,7 +372,7 @@ describe("tool execution context snapshot", () => {
       { clientToolAllowlist: ["Read", "RemoteFoo"] },
     );
 
-    expect(prepared.loadedToolNames).toEqual(["Read", "RemoteFoo"]);
+    expect(prepared.loadedToolNames).toEqual(["Read"]);
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
       "Read",
       "RemoteFoo",
