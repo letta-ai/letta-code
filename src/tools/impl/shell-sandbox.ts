@@ -1,5 +1,6 @@
 import {
   getLocalBackendCrossAgentTreeRoot,
+  getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
 } from "@/backend/local/paths";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
@@ -72,8 +73,11 @@ export function applyParentShellSandbox(
   // actually applies. Resolved after the gate so the sandbox-off hot path does
   // no filesystem work. The parent agent's cwd is the repo (outside both trees),
   // so the gate's default-tree empty-env check stays correct either way.
+  const localBackendStorageDir = getLocalBackendStorageDir(undefined, env);
   const agentsTreeRoot = isLocalBackendEnvEnabled(env)
-    ? canonicalizeRoot(getLocalBackendCrossAgentTreeRoot())
+    ? canonicalizeRoot(
+        getLocalBackendCrossAgentTreeRoot(localBackendStorageDir),
+      )
     : getDefaultAgentsTreeRoot();
   const memoryRoots = resolveAllowedMemoryRoots({ env }).roots;
   const selfRoots = deriveSelfAgentRoots(memoryRoots, agentsTreeRoot);

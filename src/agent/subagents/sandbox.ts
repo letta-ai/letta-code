@@ -4,6 +4,7 @@ import {
   detectSandboxBackend,
   isFsSandboxEnabled,
   type SandboxAvailability,
+  warnSandboxBackendUnavailable,
 } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR, type SandboxBackend } from "@/sandbox/policy";
 import { wrapLauncher } from "@/sandbox/wrap";
@@ -89,7 +90,10 @@ export function wrapSubagentLauncher(
   if (writableMemoryRoots.length === 0) return null;
 
   const availability = input.availability ?? detectSandboxBackend();
-  if (!availability.backend) return null;
+  if (!availability.backend) {
+    warnSandboxBackendUnavailable(availability, "memory-mode subagent sandbox");
+    return null;
+  }
 
   // Writes are scoped to the harness state dir (~/.letta) by the policy: the
   // child can persist memory + harness metadata (settings, logs, conversations,

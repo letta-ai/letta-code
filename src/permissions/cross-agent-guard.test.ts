@@ -129,16 +129,23 @@ describe("resolveAllowedAgents", () => {
     expect(isMemoryGuardDisabled()).toBe(false);
   });
 
-  test("parent memory guard is disabled by default", () => {
-    expect(isMemoryGuardDisabled()).toBe(true);
-  });
-
-  test("headless parent startup clears the disabled bit", () => {
-    cliPermissions.setMemoryGuardDisabled(false);
+  test("parent memory guard is enabled by default", () => {
     expect(isMemoryGuardDisabled()).toBe(false);
   });
 
-  test("subagents ignore the parent disabled default", () => {
+  test("explicit parent disable flag sets the disabled bit", () => {
+    cliPermissions.setMemoryGuardDisabled(true);
+    expect(isMemoryGuardDisabled()).toBe(true);
+  });
+
+  test("clearing CLI overrides restores the enabled default", () => {
+    cliPermissions.setMemoryGuardDisabled(true);
+    cliPermissions.clear();
+    expect(isMemoryGuardDisabled()).toBe(false);
+  });
+
+  test("subagents ignore the parent disabled override", () => {
+    cliPermissions.setMemoryGuardDisabled(true);
     process.env.LETTA_CODE_AGENT_ROLE = "subagent";
     expect(isMemoryGuardDisabled()).toBe(false);
   });
@@ -266,14 +273,14 @@ describe("evaluateCrossAgentGuard", () => {
     cliPermissions.setMemoryGuardDisabled(false);
   });
 
-  test("parent processes skip the guard unless headless startup enables it", () => {
-    cliPermissions.setMemoryGuardDisabled(true);
+  test("parent processes apply the guard by default", () => {
     const result = evaluateCrossAgentGuard(
       "Write",
       { file_path: otherMemory("system/a.md") },
       "/tmp",
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.matchedRule).toBe("cross-agent guard");
   });
 
   test("returns null for own memory", () => {

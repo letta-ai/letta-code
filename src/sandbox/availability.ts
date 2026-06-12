@@ -20,6 +20,7 @@ export interface DetectOptions {
 }
 
 let cached: SandboxAvailability | null = null;
+const warnedUnavailableContexts = new Set<string>();
 
 /**
  * Detect which filesystem-sandbox backend works on this host, probing for real
@@ -64,6 +65,27 @@ export function isFsSandboxEnabled(
   const value = env.LETTA_FS_SANDBOX?.trim().toLowerCase();
   // Default on: only an explicit off-switch disables it.
   return value !== "0" && value !== "false";
+}
+
+/**
+ * Emit a loud, once-per-process warning when sandboxing was requested but this
+ * host cannot provide a kernel backend. We intentionally continue rather than
+ * fail closed: users can still work, but should know filesystem isolation is
+ * degraded on this host.
+ */
+export function warnSandboxBackendUnavailable(
+  availability: SandboxAvailability,
+  context: string,
+): void {
+  if (availability.backend) return;
+  const key = `${context}:${availability.reason}`;
+  if (warnedUnavailableContexts.has(key)) return;
+  warnedUnavailableContexts.add(key);
+  console.warn(
+    `[sandbox] WARNING: ${context} requested filesystem isolation, but no ` +
+      `kernel sandbox backend is available (${availability.reason}). ` +
+      `Continuing without filesystem sandbox isolation.`,
+  );
 }
 
 function probe(platform: NodeJS.Platform): SandboxAvailability {
