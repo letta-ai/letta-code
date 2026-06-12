@@ -3,7 +3,7 @@ import { getChannelAccount } from "@/channels/accounts";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter, ChannelTurnSource } from "@/channels/types";
 import { isTelegramChannelAccount } from "@/channels/types";
-import { debugWarn } from "@/utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 
 const MESSAGE_CHANNEL_TOOL_NAMES = new Set([
   "MessageChannel",
@@ -56,6 +56,10 @@ export function createTelegramRichDraftStreamer(options: {
 }): TelegramRichDraftStreamer | null {
   const source = resolveSingleTelegramDraftSource(options.sources ?? []);
   if (!source) {
+    debugLog(
+      "channels",
+      "Telegram rich draft streamer disabled: no single Telegram source",
+    );
     return null;
   }
 
@@ -65,6 +69,11 @@ export function createTelegramRichDraftStreamer(options: {
     !isTelegramChannelAccount(account) ||
     account.richDraftStreaming !== true
   ) {
+    debugLog(
+      "channels",
+      "Telegram rich draft streamer disabled: account not opted in (%s)",
+      source.accountId,
+    );
     return null;
   }
 
@@ -73,8 +82,21 @@ export function createTelegramRichDraftStreamer(options: {
     source.accountId,
   );
   if (!adapter?.sendRichMessageDraft || !adapter.isRunning()) {
+    debugLog(
+      "channels",
+      "Telegram rich draft streamer disabled: adapter unavailable (%s)",
+      source.accountId,
+    );
     return null;
   }
+
+  debugLog(
+    "channels",
+    "Telegram rich draft streamer enabled for account=%s chat=%s thread=%s",
+    source.accountId,
+    source.chatId,
+    source.threadId ?? "",
+  );
 
   return new TelegramRichDraftStreamerImpl({
     adapter,
@@ -166,6 +188,15 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
         state.argumentsText += fragment.argumentsDelta;
       }
 
+      if (state.name && MESSAGE_CHANNEL_TOOL_NAMES.has(state.name)) {
+        debugLog(
+          "channels",
+          "Telegram rich draft streamer saw MessageChannel args: call=%s bytes=%d",
+          state.toolCallId,
+          state.argumentsText.length,
+        );
+      }
+
       this.maybeScheduleDraft(state);
     }
   }
@@ -238,6 +269,12 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
       this.source,
     );
     if (!intent) {
+      debugLog(
+        "channels",
+        "Telegram rich draft streamer waiting for routable intent: call=%s bytes=%d",
+        state.toolCallId,
+        state.argumentsText.length,
+      );
       return;
     }
 
@@ -247,6 +284,12 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
       message === state.pendingMessage ||
       message === state.lastSentMessage
     ) {
+      debugLog(
+        "channels",
+        "Telegram rich draft streamer skipped unchanged/empty draft: call=%s chars=%d",
+        state.toolCallId,
+        message.length,
+      );
       return;
     }
 
@@ -254,7 +297,9 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     if (state.timer) {
       clearTimeout(state.timer);
     }
-    if (this.debounceMs === 0) {
+
+    const isFirstDraft = !state.lastSentMessage;
+    if (this.debounceMs === 0 || isFirstDraft) {
       state.timer = null;
       void this.sendDraft(state);
       return;
@@ -272,6 +317,13 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     }
 
     state.lastSentMessage = message;
+    debugLog(
+      "channels",
+      "Telegram rich draft streamer sending draft: call=%s draft=%d chars=%d",
+      state.toolCallId,
+      state.draftId,
+      message.length,
+    );
     const draft = {
       channel: "telegram",
       accountId: this.source.accountId,
@@ -309,22 +361,39 @@ export function extractTelegramSendRichDraftIntent(
 ): DraftIntent | null {
   const action = extractStringField(argumentsText, "action", false)?.value;
   if (action?.trim().toLowerCase() !== "send-rich") {
+    debugLog(
+      "channels",
+      "Telegram rich draft intent rejected: action=%s",
+      action ?? "",
+    );
     return null;
   }
 
   const channel = extractStringField(argumentsText, "channel", false)?.value;
   if (channel?.trim().toLowerCase() !== "telegram") {
+    debugLog(
+      "channels",
+      "Telegram rich draft intent rejected: channel=%s",
+      channel ?? "",
+    );
     return null;
   }
 
   const rawChatId = extractStringField(argumentsText, "chat_id", false)?.value;
   const chatId = rawChatId ? normalizeChatTarget(rawChatId) : null;
   if (!chatId || chatId !== source.chatId) {
+    debugLog(
+      "channels",
+      "Telegram rich draft intent rejected: chat=%s source=%s",
+      chatId ?? "",
+      source.chatId,
+    );
     return null;
   }
 
   const target = extractStringField(argumentsText, "target", false)?.value;
   if (target?.trim()) {
+    debugLog("channels", "Telegram rich draft intent rejected: target present");
     return null;
   }
 
@@ -334,6 +403,12 @@ export function extractTelegramSendRichDraftIntent(
     false,
   )?.value;
   if (accountId?.trim() && accountId.trim() !== source.accountId) {
+    debugLog(
+      "channels",
+      "Telegram rich draft intent rejected: account=%s source=%s",
+      accountId.trim(),
+      source.accountId,
+    );
     return null;
   }
 
@@ -341,16 +416,27 @@ export function extractTelegramSendRichDraftIntent(
   const requestedThreadId = threadIdField?.value.trim() || null;
   const sourceThreadId = source.threadId ?? null;
   if (requestedThreadId !== null && requestedThreadId !== sourceThreadId) {
+    debugLog(
+      "channels",
+      "Telegram rich draft intent rejected: thread=%s source=%s",
+      requestedThreadId,
+      sourceThreadId ?? "",
+    );
     return null;
   }
 
   const media = extractStringField(argumentsText, "media", false)?.value;
   if (media?.trim()) {
+    debugLog("channels", "Telegram rich draft intent rejected: media present");
     return null;
   }
 
   const message = extractStringField(argumentsText, "message", true)?.value;
   if (!message?.trim()) {
+    debugLog(
+      "channels",
+      "Telegram rich draft intent rejected: message missing",
+    );
     return null;
   }
 
