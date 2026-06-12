@@ -61,15 +61,12 @@ export function buildConversationModelCarryoverUpdate(params: {
   }
 
   const modelPresetContextWindow = updateArgs.context_window;
-  const currentConfigContextWindow = carryoverLlmConfig?.context_window;
   const contextWindow =
     typeof activeConversationContextWindowLimit === "number"
       ? activeConversationContextWindowLimit
       : typeof modelPresetContextWindow === "number"
         ? modelPresetContextWindow
-        : typeof currentConfigContextWindow === "number"
-          ? currentConfigContextWindow
-          : undefined;
+        : undefined;
   if (typeof contextWindow === "number") {
     updateArgs.context_window = contextWindow;
   }

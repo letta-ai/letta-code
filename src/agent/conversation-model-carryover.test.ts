@@ -41,4 +41,19 @@ describe("conversation model carryover", () => {
       context_window: 100000,
     });
   });
+
+  test("does not copy stale llm_config context when the model preset is unknown", () => {
+    const carryover = buildConversationModelCarryoverUpdate({
+      rawModelHandle: "openai/custom-model",
+      currentLlmConfig: {
+        model: "custom-model",
+        model_endpoint_type: "openai",
+        context_window: 128000,
+      } as LlmConfig,
+      activeConversationContextWindowLimit: null,
+    });
+
+    expect(carryover?.modelHandle).toBe("openai/custom-model");
+    expect(carryover?.updateArgs).toBeUndefined();
+  });
 });
