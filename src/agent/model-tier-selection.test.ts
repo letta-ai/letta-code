@@ -88,6 +88,20 @@ describe("getModelInfoForLlmConfig", () => {
     expect(info?.label).toBe("GPT-5.5 Fast (ChatGPT)");
   });
 
+  test("uses ChatGPT metadata for Codex Spark and Pro local ChatGPT OAuth handles", () => {
+    const spark = getModelInfoForLlmConfig("openai-codex/gpt-5.3-codex-spark", {
+      reasoning_effort: "medium",
+    });
+    expect(spark?.id).toBe("gpt-5.3-codex-spark-plus-pro-medium");
+    expect(spark?.label).toBe("GPT-5.3 Codex Spark (ChatGPT)");
+
+    const pro = getModelInfoForLlmConfig("openai-codex/gpt-5.4-pro", {
+      reasoning_effort: "high",
+    });
+    expect(pro?.id).toBe("gpt-5.4-pro-plus-pro-high");
+    expect(pro?.label).toBe("GPT-5.4 Pro (ChatGPT)");
+  });
+
   test("does not treat synthetic local ChatGPT Fast handles as registry models", () => {
     const info = getModelInfoForLlmConfig("openai-codex/gpt-5.5-fast", {
       reasoning_effort: "high",
@@ -223,6 +237,40 @@ describe("getReasoningTierOptionsForHandle", () => {
       "gpt-5.5-plus-pro-medium",
       "gpt-5.5-plus-pro-high",
       "gpt-5.5-plus-pro-xhigh",
+    ]);
+  });
+
+  test("returns byok reasoning options for newer chatgpt-plus-pro handles", () => {
+    const sparkOptions = getReasoningTierOptionsForHandle(
+      "chatgpt-plus-pro/gpt-5.3-codex-spark",
+    );
+    expect(sparkOptions.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(sparkOptions.map((option) => option.modelId)).toEqual([
+      "gpt-5.3-codex-spark-plus-pro-none",
+      "gpt-5.3-codex-spark-plus-pro-low",
+      "gpt-5.3-codex-spark-plus-pro-medium",
+      "gpt-5.3-codex-spark-plus-pro-high",
+      "gpt-5.3-codex-spark-plus-pro-xhigh",
+    ]);
+
+    const proOptions = getReasoningTierOptionsForHandle(
+      "chatgpt-plus-pro/gpt-5.4-pro",
+    );
+    expect(proOptions.map((option) => option.effort)).toEqual([
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(proOptions.map((option) => option.modelId)).toEqual([
+      "gpt-5.4-pro-plus-pro-medium",
+      "gpt-5.4-pro-plus-pro-high",
+      "gpt-5.4-pro-plus-pro-xhigh",
     ]);
   });
 

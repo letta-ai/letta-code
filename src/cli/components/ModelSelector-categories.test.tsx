@@ -107,4 +107,22 @@ describe("toSelectorModelForHandle", () => {
       label: "GPT-5.5 (ChatGPT)",
     });
   });
+
+  test("uses ChatGPT labels for newer ChatGPT OAuth handles", () => {
+    expect(
+      toSelectorModelForHandle("openai-codex/gpt-5.3-codex-spark"),
+    ).toMatchObject({
+      id: "openai-codex/gpt-5.3-codex-spark",
+      handle: "openai-codex/gpt-5.3-codex-spark",
+      registryHandle: "chatgpt-plus-pro/gpt-5.3-codex-spark",
+      label: "GPT-5.3 Codex Spark (ChatGPT)",
+    });
+
+    expect(toSelectorModelForHandle("openai-codex/gpt-5.4-pro")).toMatchObject({
+      id: "openai-codex/gpt-5.4-pro",
+      handle: "openai-codex/gpt-5.4-pro",
+      registryHandle: "chatgpt-plus-pro/gpt-5.4-pro",
+      label: "GPT-5.4 Pro (ChatGPT)",
+    });
+  });
 });
