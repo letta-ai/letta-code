@@ -1337,7 +1337,7 @@ export async function handleHeadlessCommand(
             agent.id,
             presetRefresh.modelHandle,
             resumeRefreshUpdateArgs,
-            { preserveContextWindow: true },
+            { avoidOverwritingExistingContextWindow: true },
           );
         }
       }

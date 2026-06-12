@@ -333,7 +333,7 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       model.handle,
       updateArgsForRequest,
-      { preserveContextWindow: shouldPreserveContextWindow },
+      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       (updatedAgent.model_settings as
@@ -346,7 +346,7 @@ export async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgsForRequest,
-      { preserveContextWindow: shouldPreserveContextWindow },
+      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       ((
