@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -475,7 +475,7 @@ export function buildDeviceStatus(
       : getPendingControlRequests(listener, scope),
     experiments: experimentManager.list(),
     memory_directory: scopedAgentId
-      ? getMemoryFilesystemRoot(scopedAgentId)
+      ? getScopedMemoryFilesystemRoot(scopedAgentId)
       : null,
     ...(!scope
       ? {
