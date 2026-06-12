@@ -383,9 +383,9 @@ async function applyReflectionOverrides(
   }
 
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  if (!memfsEnabled && merged.trigger === "compaction-event") {
+  if (!memfsEnabled && merged.trigger !== "off") {
     throw new Error(
-      "--reflection-trigger compaction-event requires memfs enabled for this agent.",
+      `--reflection-trigger ${merged.trigger} requires memfs enabled for this agent.`,
     );
   }
 
