@@ -282,15 +282,6 @@ export const CLI_FLAG_CATALOG = {
       description: "Sleeptime trigger: off, step-count, compaction-event",
     },
   },
-  "reflection-behavior": {
-    parser: { type: "string" },
-    mode: "both",
-    help: {
-      argLabel: "<mode>",
-      description:
-        "DEPRECATED: reflection always auto-launches subagents (flag accepted for compatibility)",
-    },
-  },
   "reflection-step-count": {
     parser: { type: "string" },
     mode: "both",

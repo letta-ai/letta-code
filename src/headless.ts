@@ -320,7 +320,6 @@ export const __headlessTestUtils = {
 
 type ReflectionOverrides = {
   trigger?: ReflectionTrigger;
-  deprecatedBehaviorRaw?: string;
   stepCount?: number;
 };
 
@@ -328,10 +327,9 @@ function parseReflectionOverrides(
   values: ParsedCliArgs["values"],
 ): ReflectionOverrides {
   const triggerRaw = values["reflection-trigger"];
-  const behaviorRaw = values["reflection-behavior"];
   const stepCountRaw = values["reflection-step-count"];
 
-  if (!triggerRaw && !behaviorRaw && !stepCountRaw) {
+  if (!triggerRaw && !stepCountRaw) {
     return {};
   }
 
@@ -348,15 +346,6 @@ function parseReflectionOverrides(
       );
     }
     overrides.trigger = triggerRaw;
-  }
-
-  if (behaviorRaw !== undefined) {
-    if (behaviorRaw !== "reminder" && behaviorRaw !== "auto-launch") {
-      throw new Error(
-        `Invalid --reflection-behavior "${behaviorRaw}". Valid values: reminder, auto-launch`,
-      );
-    }
-    overrides.deprecatedBehaviorRaw = behaviorRaw;
   }
 
   if (stepCountRaw !== undefined) {
@@ -376,11 +365,7 @@ function parseReflectionOverrides(
 }
 
 function hasReflectionOverrides(overrides: ReflectionOverrides): boolean {
-  return (
-    overrides.trigger !== undefined ||
-    overrides.deprecatedBehaviorRaw !== undefined ||
-    overrides.stepCount !== undefined
-  );
+  return overrides.trigger !== undefined || overrides.stepCount !== undefined;
 }
 
 async function applyReflectionOverrides(
@@ -395,12 +380,6 @@ async function applyReflectionOverrides(
 
   if (!hasReflectionOverrides(overrides)) {
     return merged;
-  }
-
-  if (overrides.deprecatedBehaviorRaw !== undefined) {
-    console.warn(
-      "Warning: --reflection-behavior is deprecated and ignored. Reflection now always auto-launches subagents.",
-    );
   }
 
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
