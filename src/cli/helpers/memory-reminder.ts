@@ -2,7 +2,6 @@
 // Handles periodic memory reminder logic and preference parsing
 
 import { settingsManager } from "@/settings-manager";
-import { debugLog } from "@/utils/debug";
 
 // Memory reminder interval presets
 const MEMORY_INTERVAL_FREQUENT = 5;
@@ -214,70 +213,6 @@ export function shouldFireStepCountTrigger(
   }
   const stepCount = normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
   return stepsSinceLastSuccessfulReflection >= stepCount;
-}
-
-function shouldFireLegacyTurnCountReminder(
-  turnCount: number,
-  settings: ReflectionSettings,
-): boolean {
-  if (settings.trigger !== "step-count") {
-    return false;
-  }
-  const stepCount = normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
-  return turnCount > 0 && turnCount % stepCount === 0;
-}
-
-async function buildMemfsAwareMemoryReminder(
-  agentId: string,
-  trigger: "interval" | "compaction",
-): Promise<string> {
-  debugLog(
-    "memory",
-    `${settingsManager.isMemfsEnabled(agentId) ? "Memfs" : "Memory"} check reminder fired (${trigger}, agent ${agentId})`,
-  );
-  const { MEMORY_CHECK_REMINDER } = await import("@/agent/prompt-assets.js");
-  return MEMORY_CHECK_REMINDER;
-}
-
-/**
- * Build a compaction-triggered memory reminder. Uses the same memfs-aware
- * selection as interval reminders.
- */
-export async function buildCompactionMemoryReminder(
-  agentId: string,
-): Promise<string> {
-  return buildMemfsAwareMemoryReminder(agentId, "compaction");
-}
-
-/**
- * Build a memory check reminder if the turn count matches the interval.
- *
- * Returns MEMORY_CHECK_REMINDER when the interval trigger fires.
- * Reflection subagent launch is handled by runtime orchestration, not reminder text.
- *
- * @param turnCount - Current conversation turn count
- * @param agentId - Current agent ID (needed to check MemFS status)
- * @returns Promise resolving to the reminder string (empty if not applicable)
- */
-export async function buildMemoryReminder(
-  turnCount: number,
-  agentId: string,
-  workingDirectory?: string,
-): Promise<string> {
-  const reflectionSettings = getReflectionSettings(agentId, workingDirectory);
-  if (reflectionSettings.trigger !== "step-count") {
-    return "";
-  }
-
-  if (shouldFireLegacyTurnCountReminder(turnCount, reflectionSettings)) {
-    debugLog(
-      "memory",
-      `Turn-based memory reminder fired (turn ${turnCount}, interval ${reflectionSettings.stepCount}, agent ${agentId})`,
-    );
-    return buildMemfsAwareMemoryReminder(agentId, "interval");
-  }
-
-  return "";
 }
 
 type PersistReflectionSettingsOptions = {
