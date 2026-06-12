@@ -2,10 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MEMORY_CHECK_REMINDER } from "@/agent/prompt-assets";
 import {
-  buildCompactionMemoryReminder,
-  buildMemoryReminder,
   getReflectionSettings,
   persistReflectionSettingsForAgent,
   reflectionSettingsToLegacyMode,
@@ -149,45 +146,6 @@ describe("memoryReminder", () => {
     });
   });
 
-  test("disables turn-based reminders for non-step-count trigger", async () => {
-    (settingsManager as typeof settingsManager).getLocalProjectSettings = () =>
-      ({
-        reflectionTrigger: "compaction-event",
-      }) as ReturnType<typeof settingsManager.getLocalProjectSettings>;
-    (settingsManager as typeof settingsManager).getSettings = (() =>
-      ({
-        memoryReminderInterval: 5,
-        reflectionTrigger: "step-count",
-        reflectionStepCount: 25,
-      }) as ReturnType<
-        typeof settingsManager.getSettings
-      >) as typeof settingsManager.getSettings;
-
-    const reminder = await buildMemoryReminder(10, "agent-1");
-    expect(reminder).toBe("");
-  });
-
-  test("keeps existing numeric interval behavior", async () => {
-    (settingsManager as typeof settingsManager).getLocalProjectSettings = () =>
-      ({
-        reflectionTrigger: "step-count",
-        reflectionStepCount: 5,
-      }) as ReturnType<typeof settingsManager.getLocalProjectSettings>;
-    (settingsManager as typeof settingsManager).getSettings = (() =>
-      ({
-        memoryReminderInterval: 10,
-        reflectionTrigger: "step-count",
-        reflectionStepCount: 25,
-      }) as ReturnType<
-        typeof settingsManager.getSettings
-      >) as typeof settingsManager.getSettings;
-    (settingsManager as typeof settingsManager).isMemfsEnabled = (() =>
-      false) as typeof settingsManager.isMemfsEnabled;
-
-    const reminder = await buildMemoryReminder(10, "agent-1");
-    expect(reminder).toBe(MEMORY_CHECK_REMINDER);
-  });
-
   test("maps split reflection settings back to legacy mode", () => {
     expect(
       reflectionSettingsToLegacyMode({
@@ -207,14 +165,6 @@ describe("memoryReminder", () => {
         stepCount: 25,
       }),
     ).toBe("auto-compaction");
-  });
-
-  test("builds compaction reminder using memory-check content", async () => {
-    (settingsManager as typeof settingsManager).isMemfsEnabled = (() =>
-      true) as typeof settingsManager.isMemfsEnabled;
-
-    const reminder = await buildCompactionMemoryReminder("agent-1");
-    expect(reminder).toBe(MEMORY_CHECK_REMINDER);
   });
 
   test("evaluates step-count trigger from steps since successful reflection", () => {
@@ -446,14 +396,37 @@ describe("reflection trigger orchestration", () => {
     });
   });
 
-  test("non-memfs step-count trigger falls back to memory-check reminder", async () => {
+  test("non-memfs step-count trigger emits no reminder and launches nothing", async () => {
+    const launches: Array<"step-count" | "compaction-event"> = [];
     const context = buildReflectionContext({
       memfsEnabled: false,
-      callback: undefined,
+      callback: async (trigger) => {
+        launches.push(trigger);
+        return true;
+      },
     });
 
     const reminder = await stepProvider(context);
-    expect(reminder).toBe(MEMORY_CHECK_REMINDER);
+    expect(reminder).toBeNull();
+    expect(launches).toEqual([]);
+  });
+
+  test("non-memfs compaction trigger emits no reminder and launches nothing", async () => {
+    const launches: Array<"step-count" | "compaction-event"> = [];
+    const context = buildReflectionContext({
+      trigger: "compaction-event",
+      memfsEnabled: false,
+      callback: async (trigger) => {
+        launches.push(trigger);
+        return true;
+      },
+      pendingReflectionTrigger: true,
+    });
+
+    const reminder = await compactionProvider(context);
+    expect(reminder).toBeNull();
+    expect(launches).toEqual([]);
+    expect(context.state.pendingReflectionTrigger).toBe(false);
   });
 
   test("memfs compaction trigger with no callback emits no reminder", async () => {

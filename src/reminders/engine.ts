@@ -3,8 +3,6 @@ import type { SkillSource } from "@/agent/skills";
 import { buildAgentInfo } from "@/cli/helpers/agent-info";
 import { buildConversationBootstrapReminder } from "@/cli/helpers/conversation-bootstrap";
 import {
-  buildCompactionMemoryReminder,
-  buildMemoryReminder,
   type ReflectionSettings,
   shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
@@ -243,40 +241,33 @@ async function buildMemoryGitSyncReminder(
 async function buildReflectionStepReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
-  let reminder: string | null = null;
-
-  if (context.reflectionSettings.trigger === "step-count") {
-    if (memfsEnabled) {
-      const transcriptState = await getReflectionTranscriptState(
-        context.agent.id,
-        context.agent.conversationId ?? "default",
-      );
-      const shouldFireStepTrigger = shouldFireStepCountTrigger(
-        transcriptState.steps_since_last_successful_reflection,
-        context.reflectionSettings,
-      );
-      if (shouldFireStepTrigger) {
-        if (context.maybeLaunchReflectionSubagent) {
-          await context.maybeLaunchReflectionSubagent("step-count");
-        } else {
-          debugLog(
-            "memory",
-            `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-          );
-        }
+  if (
+    context.reflectionSettings.trigger === "step-count" &&
+    settingsManager.isMemfsEnabled(context.agent.id)
+  ) {
+    const transcriptState = await getReflectionTranscriptState(
+      context.agent.id,
+      context.agent.conversationId ?? "default",
+    );
+    const shouldFireStepTrigger = shouldFireStepCountTrigger(
+      transcriptState.steps_since_last_successful_reflection,
+      context.reflectionSettings,
+    );
+    if (shouldFireStepTrigger) {
+      if (context.maybeLaunchReflectionSubagent) {
+        await context.maybeLaunchReflectionSubagent("step-count");
+      } else {
+        debugLog(
+          "memory",
+          `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
+        );
       }
-    } else {
-      reminder = await buildMemoryReminder(
-        context.state.turnCount,
-        context.agent.id,
-      );
     }
   }
 
-  // Keep turn-based cadence aligned across modes by incrementing once per user turn.
+  // turnCount feeds the status line; increment once per user turn.
   context.state.turnCount += 1;
-  return reminder;
+  return null;
 }
 
 async function buildReflectionCompactionReminder(
@@ -292,20 +283,19 @@ async function buildReflectionCompactionReminder(
     return null;
   }
 
-  const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
-  if (memfsEnabled) {
-    if (context.maybeLaunchReflectionSubagent) {
-      await context.maybeLaunchReflectionSubagent("compaction-event");
-    } else {
-      debugLog(
-        "memory",
-        `Compaction reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-      );
-    }
+  if (!settingsManager.isMemfsEnabled(context.agent.id)) {
     return null;
   }
 
-  return buildCompactionMemoryReminder(context.agent.id);
+  if (context.maybeLaunchReflectionSubagent) {
+    await context.maybeLaunchReflectionSubagent("compaction-event");
+  } else {
+    debugLog(
+      "memory",
+      `Compaction reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
+    );
+  }
+  return null;
 }
 
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
