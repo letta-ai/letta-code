@@ -42,6 +42,24 @@ describe("conversation model carryover", () => {
     });
   });
 
+  test("uses centralized normalization for ChatGPT fast handles", () => {
+    const carryover = buildConversationModelCarryoverUpdate({
+      rawModelHandle: "chatgpt_oauth/gpt-5.5-fast",
+      currentLlmConfig: {
+        model: "gpt-5.5-fast",
+        model_endpoint_type: "chatgpt_oauth",
+        reasoning_effort: "high",
+      } as LlmConfig,
+      activeConversationContextWindowLimit: null,
+    });
+
+    expect(carryover?.modelHandle).toBe("chatgpt-plus-pro/gpt-5.5-fast");
+    expect(carryover?.updateArgs).toMatchObject({
+      reasoning_effort: "high",
+      context_window: 272000,
+    });
+  });
+
   test("does not copy stale llm_config context when the model preset is unknown", () => {
     const carryover = buildConversationModelCarryoverUpdate({
       rawModelHandle: "openai/custom-model",
