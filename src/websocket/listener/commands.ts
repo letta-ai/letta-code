@@ -6,7 +6,7 @@ import {
   formatSetMaxContextResult,
 } from "@/agent/max-context";
 import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
@@ -557,7 +557,7 @@ async function handleDoctorCommand(
 
   const { context: gitContext } = gatherInitGitContext();
   const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getMemoryFilesystemRoot(agentId)
+    ? getScopedMemoryFilesystemRoot(agentId)
     : undefined;
 
   const doctorMessage = buildDoctorMessage({ gitContext, memoryDir });
@@ -609,7 +609,7 @@ async function handleInitCommand(
 
   const { context: gitContext } = gatherInitGitContext();
   const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getMemoryFilesystemRoot(agentId)
+    ? getScopedMemoryFilesystemRoot(agentId)
     : undefined;
 
   const initMessage = buildInitMessage({ gitContext, memoryDir });

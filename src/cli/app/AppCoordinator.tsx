@@ -20,6 +20,7 @@ import { prefetchAvailableModelHandles } from "@/agent/available-models";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
+import { buildConversationModelCarryoverUpdate } from "@/agent/conversation-model-carryover";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import {
@@ -827,6 +828,13 @@ export function App({
     conversationOverrideContextWindowLimit,
     setConversationOverrideContextWindowLimit,
   ] = useState<number | null>(null);
+  const conversationOverrideContextWindowLimitRef = useRef(
+    conversationOverrideContextWindowLimit,
+  );
+  useEffect(() => {
+    conversationOverrideContextWindowLimitRef.current =
+      conversationOverrideContextWindowLimit;
+  }, [conversationOverrideContextWindowLimit]);
   const agentStateRef = useRef(agentState);
   useEffect(() => {
     agentStateRef.current = agentState;
@@ -3427,51 +3435,21 @@ export function App({
         return;
       }
 
-      // Keep provider naming aligned with model handles used by /model.
-      const [provider, ...modelParts] = rawModelHandle.split("/");
-      const modelHandle =
-        provider === "chatgpt_oauth" && modelParts.length > 0
-          ? `${OPENAI_CODEX_PROVIDER_NAME}/${modelParts.join("/")}`
-          : rawModelHandle;
-
-      const modelInfo = getModelInfoForLlmConfig(modelHandle, {
-        reasoning_effort: currentLlmConfig?.reasoning_effort ?? null,
-        enable_reasoner:
-          (currentLlmConfig as { enable_reasoner?: boolean | null } | null)
-            ?.enable_reasoner ?? null,
+      const carryover = buildConversationModelCarryoverUpdate({
+        rawModelHandle,
+        currentLlmConfig,
+        activeConversationContextWindowLimit:
+          conversationOverrideContextWindowLimitRef.current,
       });
-
-      const updateArgs: Record<string, unknown> = {
-        ...((modelInfo?.updateArgs as Record<string, unknown> | undefined) ??
-          {}),
-      };
-      const reasoningEffort = currentLlmConfig?.reasoning_effort;
-      if (
-        typeof reasoningEffort === "string" &&
-        updateArgs.reasoning_effort === undefined
-      ) {
-        updateArgs.reasoning_effort = reasoningEffort;
-      }
-      const enableReasoner = (
-        currentLlmConfig as { enable_reasoner?: boolean | null } | null
-      )?.enable_reasoner;
-      if (
-        typeof enableReasoner === "boolean" &&
-        updateArgs.enable_reasoner === undefined
-      ) {
-        updateArgs.enable_reasoner = enableReasoner;
-      }
-      if (typeof currentLlmConfig?.context_window === "number") {
-        updateArgs.context_window = currentLlmConfig.context_window;
-      }
+      if (!carryover) return;
 
       try {
         const { updateConversationLLMConfig } = await import("@/agent/modify");
         await updateConversationLLMConfig(
           targetConversationId,
-          modelHandle,
-          Object.keys(updateArgs).length > 0 ? updateArgs : undefined,
-          { preserveContextWindow: true },
+          carryover.modelHandle,
+          carryover.updateArgs,
+          { avoidOverwritingExistingContextWindow: true },
         );
       } catch (error) {
         debugWarn(
