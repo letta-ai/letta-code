@@ -2,17 +2,18 @@
 // Cross-agent guard: hard-denies an in-process file tool whose target path
 // resolves under another agent's memory directory.
 //
-// SCOPE — this guard now exists ONLY for the parent agent's IN-PROCESS file
+// SCOPE — this guard now exists ONLY for agent-process IN-PROCESS file
 // tools: Read / Write / Edit / MultiEdit / NotebookEdit / Glob / ListDir, the
 // apply_patch family, and their Codex/Gemini aliases (all canonicalized via
 // `canonicalToolName`, all carrying an explicit absolute path). These never
 // fork, so the kernel filesystem sandbox (src/sandbox/) cannot see them.
 //
-// Spawned shell commands and spawned subagent *processes* ARE confined by the
-// kernel sandbox, which supersedes this guard for them — so shell commands are
-// intentionally no longer analyzed here (the old token/raw-command scanner is
-// gone), and a kernel-confined subagent skips the guard entirely. The guard is
-// the in-process safety net; the kernel is the enforcement boundary for spawns.
+// Spawned shell commands ARE confined by the kernel sandbox, which supersedes
+// this guard for them — so shell commands are intentionally no longer analyzed
+// here (the old token/raw-command scanner is gone). Memory-mode subagents are
+// also confined as whole processes and skip the guard entirely when the
+// sandbox sentinel is set. The guard is the in-process safety net; the kernel
+// is the enforcement boundary for spawned shells and process-confined subagents.
 //
 // The guard runs BEFORE any other permission logic (decision step 0 in
 // checkPermission). Its deny is unbypassable by modes and permission rules.
@@ -21,9 +22,9 @@
 //   - self:   current AGENT_ID
 //   - parent: explicit LETTA_PARENT_AGENT_ID for subagent processes
 //
-// Enabled by default for headless parent processes and subagents. Interactive
-// parent processes leave it off by default. --disable-memory-guard is
-// parent-process only; subagents always evaluate the guard.
+// Enabled by default for parent processes and subagents. --disable-memory-guard
+// is parent-process only; subagents always evaluate the guard unless they are
+// already kernel-confined as whole processes.
 
 import { homedir } from "node:os";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";

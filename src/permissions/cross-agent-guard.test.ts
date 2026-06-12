@@ -383,7 +383,7 @@ describe("checkPermission integration", () => {
     cliPermissions.setMemoryGuardDisabled(false);
   });
 
-  test("parent processes use normal permissions when guard is not enabled", () => {
+  test("parent processes use normal permissions when guard is explicitly disabled", () => {
     cliPermissions.setMemoryGuardDisabled(true);
     permissionMode.setMode("acceptEdits");
     const result = checkPermission(

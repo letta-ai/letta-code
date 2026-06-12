@@ -129,11 +129,10 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  * Check permission for a tool execution.
  *
  * Decision logic:
- * 0. Cross-agent guard (enabled by default for headless + subagents,
- *    unbypassable when enabled) → DENY any tool call targeting another
- *    agent's memory dir unless it targets the current agent, targets an
- *    explicit parent agent for a subagent process, or the parent process
- *    passed --disable-memory-guard.
+ * 0. Cross-agent guard (enabled by default and unbypassable when enabled) →
+ *    DENY any in-process file-tool call targeting another agent's memory dir
+ *    unless it targets the current agent, targets an explicit parent agent for
+ *    a subagent process, or the parent process passed --disable-memory-guard.
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
  * 3. Check permission mode (--permission-mode flag) → ALLOW or DENY
