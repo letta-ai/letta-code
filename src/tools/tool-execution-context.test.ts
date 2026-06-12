@@ -106,10 +106,6 @@ describe("tool execution context snapshot", () => {
       requiresApproval: false,
       parallelSafe: true,
       activationSignal: signal,
-      getContext: () => {
-        throw new Error("context should not be needed for this test");
-      },
-      isAvailable: () => true,
       run: (ctx) => `echo:${ctx.args.message}`,
     });
   }
@@ -209,10 +205,6 @@ describe("tool execution context snapshot", () => {
         generation: 1,
       },
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       check(event) {
         if (
           event.phase === "execution" &&
@@ -266,10 +258,6 @@ describe("tool execution context snapshot", () => {
         generation: 1,
       },
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       check(event) {
         if (event.phase === "execution" && event.toolName === "Read") {
           return { decision: "ask" };
@@ -361,7 +349,7 @@ describe("tool execution context snapshot", () => {
       { clientToolAllowlist: ["Agent"] },
     );
 
-    expect(prepared.loadedToolNames).toEqual(["Task"]);
+    expect(prepared.loadedToolNames).toEqual(["Agent"]);
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Agent"]);
   });
 
@@ -384,7 +372,7 @@ describe("tool execution context snapshot", () => {
       { clientToolAllowlist: ["Read", "RemoteFoo"] },
     );
 
-    expect(prepared.loadedToolNames).toEqual(["Read"]);
+    expect(prepared.loadedToolNames).toEqual(["Read", "RemoteFoo"]);
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
       "Read",
       "RemoteFoo",
@@ -418,7 +406,7 @@ describe("tool execution context snapshot", () => {
       { clientToolAllowlist: ["local_echo"] },
     );
 
-    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.loadedToolNames).toEqual(["local_echo"]);
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
       "local_echo",
     ]);
@@ -433,6 +421,70 @@ describe("tool execution context snapshot", () => {
 
     expect(result.status).toBe("success");
     expect(asText(result.toolReturn)).toBe("echo:hi");
+  });
+
+  test("passes scoped invocation context to mod tool availability and execution", async () => {
+    __testSetBackend(
+      new FakeHeadlessBackend(
+        "agent-1",
+        undefined,
+        {},
+        {
+          modelHandle: "anthropic/claude-sonnet-4-6",
+        },
+      ),
+    );
+    const controller = new AbortController();
+    registerModTool({
+      name: "scoped_echo",
+      description: "Only available for the resolved scope",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/scoped-echo.ts",
+        path: "/tmp/scoped-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/scoped-echo.ts",
+      approvalPolicy: "auto",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      isEnabled: (ctx) =>
+        ctx.agent.id === "agent-1" &&
+        ctx.cwd === "/tmp/listener-workspace" &&
+        ctx.model.provider === "xai-build" &&
+        ctx.permissionMode === "standard" &&
+        ctx.toolset === "default",
+      run: (ctx) =>
+        [ctx.agent.id, ctx.cwd, ctx.model.provider, ctx.permissionMode].join(
+          ":",
+        ),
+    });
+
+    const prepared = await prepareToolExecutionContextForScope({
+      agentId: "agent-1",
+      conversationId: "default",
+      overrideModel: "xai-build/grok-build",
+      clientToolAllowlist: ["scoped_echo"],
+      workingDirectory: "/tmp/listener-workspace",
+      permissionModeState: { mode: "standard" },
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toEqual([
+      "scoped_echo",
+    ]);
+
+    const result = await executeTool(
+      "scoped_echo",
+      {},
+      { toolContextId: prepared.preparedToolContext.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe(
+      "agent-1:/tmp/listener-workspace:xai-build:standard",
+    );
   });
 
   test("exposes recent conversation history to mod tools", async () => {
@@ -479,10 +531,6 @@ describe("tool execution context snapshot", () => {
       requiresApproval: false,
       parallelSafe: true,
       activationSignal: controller.signal,
-      getContext: () => {
-        throw new Error("context should not be needed for this test");
-      },
-      isAvailable: () => true,
       run: async (ctx) => {
         const history = await ctx.conversation.getHistory({ limit: 2 });
         return history.map((message) => message.id).join(",");
@@ -561,10 +609,6 @@ describe("tool execution context snapshot", () => {
       requiresApproval: false,
       parallelSafe: true,
       activationSignal: controller.signal,
-      getContext: () => {
-        throw new Error("context should not be needed for this test");
-      },
-      isAvailable: () => true,
       run: async (ctx) => {
         const fork = await ctx.conversation.fork({ hidden: true });
         __testSetBackend(backendB);

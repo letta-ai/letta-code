@@ -7,7 +7,9 @@ import { getSupportedChannelIds } from "@/channels/plugin-registry";
 import { getChannelRegistry } from "@/channels/registry";
 import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
 import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
+import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
+import type { ModContext } from "@/mods/types";
 import {
   type InheritedChannelContextPayload,
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
@@ -196,8 +198,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
+  modContext?: ModContext;
   modEvents?: ModEvents;
   runtimeContext?: Partial<RuntimeContextSnapshot>;
+  agent?: AgentState | null;
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
@@ -208,8 +212,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     workingDirectory,
     permissionModeState,
     channelToolScope,
+    modContext,
     modEvents,
     runtimeContext,
+    agent,
   } = params;
   const effectiveModel =
     modelIdentifier && modelIdentifier.length > 0
@@ -220,6 +226,16 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     const derivedToolset = effectiveModel
       ? deriveToolsetFromModel(effectiveModel)
       : "default";
+    const scopedModContext = buildModInvocationContext({
+      agent,
+      base: modContext,
+      conversationId,
+      modelIdentifier: effectiveModel,
+      permissionMode:
+        permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
+      toolset: derivedToolset,
+      workingDirectory,
+    });
     const preparedToolContext = await prepareToolExecutionContextForModel(
       effectiveModel ?? undefined,
       {
@@ -234,6 +250,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
         workingDirectory,
         permissionModeState,
         channelToolScope,
+        modContext: scopedModContext,
         modEvents,
         runtimeContext,
       },
@@ -248,6 +265,16 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     };
   }
 
+  const scopedModContext = buildModInvocationContext({
+    agent,
+    base: modContext,
+    conversationId,
+    modelIdentifier: effectiveModel,
+    permissionMode:
+      permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
+    toolset: toolsetPreference,
+    workingDirectory,
+  });
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     filterBuiltInToolNamesByClientAllowlist(
       appendUniqueTools(
@@ -265,6 +292,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       workingDirectory,
       permissionModeState,
       channelToolScope,
+      modContext: scopedModContext,
       modEvents,
       runtimeContext,
     },
@@ -434,6 +462,7 @@ export async function prepareToolExecutionContextForScope(params: {
   permissionModeState?: PermissionModeState;
   cachedAgent?: AgentState | null;
   channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
+  modContext?: ModContext;
   modEvents?: ModEvents;
 }): Promise<PreparedScopeToolContext> {
   const {
@@ -447,6 +476,7 @@ export async function prepareToolExecutionContextForScope(params: {
     permissionModeState,
     cachedAgent,
     channelTurnSources: explicitChannelTurnSources,
+    modContext,
     modEvents,
   } = params;
 
@@ -507,7 +537,9 @@ export async function prepareToolExecutionContextForScope(params: {
     clientToolAllowlist,
     workingDirectory,
     permissionModeState,
+    modContext,
     modEvents,
+    agent: agent as AgentState,
     runtimeContext: {
       agentId,
       conversationId: scopedConversationId,

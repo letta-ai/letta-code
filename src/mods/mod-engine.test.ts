@@ -12,9 +12,14 @@ import { getModErrorDiagnostics } from "@/mods/mod-diagnostics";
 import { createModEngine, type ModEngine } from "@/mods/mod-engine";
 import {
   clearModPermissions,
+  getAvailableModPermissionsRegistry,
   getModPermissionDefinition,
 } from "@/mods/permission-registry";
-import { clearModTools, getModToolDefinition } from "@/mods/tool-registry";
+import {
+  clearModTools,
+  getAvailableModToolsRegistry,
+  getModToolDefinition,
+} from "@/mods/tool-registry";
 import type { ModCapabilities, ModContext, ModPanelHandle } from "@/mods/types";
 
 type ModTestGlobal = typeof globalThis & {
@@ -89,7 +94,6 @@ function createEngine(
     ...(backend ? { getBackend: () => backend } : {}),
     ...(capabilities ? { capabilities } : {}),
     getClient: async () => ({}) as unknown as Letta,
-    getContext: createModContext,
     globalModsDirectory: path.join(root, "global-mods"),
   });
 }
@@ -238,12 +242,16 @@ describe("mod engine", () => {
 
       const engine = createEngine(root, undefined, backend);
       await engine.reload();
-      await engine.emitEvent("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conv-1",
-        reason: "startup",
-      });
+      await engine.emitEvent(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conv-1",
+          reason: "startup",
+        },
+        createModContext(),
+      );
 
       const forkResult = testGlobal.__lettaModForkResult as
         | { id: string }
@@ -320,16 +328,19 @@ describe("mod engine", () => {
         cacheDirectory: path.join(root, "mod-cache"),
         getBackend: () => activeBackend,
         getClient: async () => ({}) as unknown as Letta,
-        getContext: createModContext,
         globalModsDirectory: modDir,
       });
       await engine.reload();
-      await engine.emitEvent("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conv-1",
-        reason: "startup",
-      });
+      await engine.emitEvent(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conv-1",
+          reason: "startup",
+        },
+        createModContext(),
+      );
 
       expect(testGlobal.__lettaModBackendCalls).toEqual([
         "a:fork:conv-1:agent-1:true",
@@ -446,7 +457,7 @@ describe("mod engine", () => {
         `export default function(letta) {
           letta.events.on("conversation_open", (event, ctx) => {
             globalThis.__lettaModEvents.push(
-              event.reason + ":" + event.agentId + ":" + ctx.context.agent.name + ":" + ctx.conversation.id,
+              event.reason + ":" + event.agentId + ":" + ctx.agent.name + ":" + ctx.conversation.id,
             );
             letta.ui.setStatus("lifecycle", event.reason);
           });
@@ -463,12 +474,16 @@ describe("mod engine", () => {
       await engine.reload();
       expect(engine.getSnapshot().events.conversation_open).toHaveLength(2);
 
-      const result = await engine.emitEvent("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "startup",
-      });
+      const result = await engine.emitEvent(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conversation-1",
+          reason: "startup",
+        },
+        createModContext(),
+      );
 
       const snapshot = engine.getSnapshot();
       expect(result).toMatchObject({
@@ -542,7 +557,11 @@ describe("mod engine", () => {
         input: [{ role: "user" as const, content: "hello ??" }],
       };
 
-      const result = await engine.emitEvent("turn_start", event);
+      const result = await engine.emitEvent(
+        "turn_start",
+        event,
+        createModContext(),
+      );
 
       expect(result).toMatchObject({
         handlerCount: 4,
@@ -598,7 +617,11 @@ describe("mod engine", () => {
         args: { command: "echo ??" },
       };
 
-      const result = await engine.emitEvent("tool_start", event);
+      const result = await engine.emitEvent(
+        "tool_start",
+        event,
+        createModContext(),
+      );
 
       expect(result).toMatchObject({
         handlerCount: 4,
@@ -1022,6 +1045,84 @@ describe("mod engine", () => {
 
       engine.dispose();
       expect(getModPermissionDefinition("plan-mode")).toBeUndefined();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("records tool isEnabled diagnostics and excludes the tool", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "legacy-tool.ts"),
+        `export default function(letta) {
+          return letta.tools.register({
+            name: "legacy_tool",
+            description: "Old scoped context usage",
+            parameters: { type: "object", properties: {} },
+            isEnabled(ctx) { return ctx.getContext().permissionMode !== "read-only"; },
+            run() { return "ok"; },
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+
+      expect(
+        getAvailableModToolsRegistry(createModContext()).has("legacy_tool"),
+      ).toBe(false);
+      const diagnostic = engine.getSnapshot().diagnostics.at(-1);
+      expect(diagnostic).toMatchObject({
+        capability: { id: "legacy_tool", kind: "tool" },
+        phase: "tool.isEnabled",
+      });
+      expect(diagnostic?.error.message).toContain(
+        "ctx.getContext is no longer available",
+      );
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("records permission isEnabled diagnostics and excludes the permission", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "legacy-permission.ts"),
+        `export default function(letta) {
+          return letta.permissions.register({
+            id: "legacy-permission",
+            isEnabled(ctx) { return ctx.getContext().permissionMode !== "read-only"; },
+            check() { return { decision: "allow" }; },
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+
+      expect(
+        getAvailableModPermissionsRegistry(createModContext()).has(
+          "legacy-permission",
+        ),
+      ).toBe(false);
+      const diagnostic = engine.getSnapshot().diagnostics.at(-1);
+      expect(diagnostic).toMatchObject({
+        capability: { id: "legacy-permission", kind: "permission" },
+        phase: "permission.isEnabled",
+      });
+      expect(diagnostic?.error.message).toContain(
+        "ctx.getContext is no longer available",
+      );
+
+      engine.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

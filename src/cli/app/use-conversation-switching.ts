@@ -434,13 +434,17 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           })
           .catch(() => {});
         sessionHooksRanRef.current = true;
-        void modAdapter.events.emit("conversation_open", {
-          agentId,
-          agentName: agentName ?? null,
-          conversationId,
-          previousConversationId,
-          reason: "resume",
-        });
+        void modAdapter.events.emit(
+          "conversation_open",
+          {
+            agentId,
+            agentName: agentName ?? null,
+            conversationId,
+            previousConversationId,
+            reason: "resume",
+          },
+          modAdapter.context,
+        );
 
         setCommandRunning(false);
 
