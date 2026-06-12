@@ -3,11 +3,6 @@ import type { SkillSource } from "@/agent/skills";
 import { buildAgentInfo } from "@/cli/helpers/agent-info";
 import { buildConversationBootstrapReminder } from "@/cli/helpers/conversation-bootstrap";
 import {
-  type ReflectionSettings,
-  shouldFireStepCountTrigger,
-} from "@/cli/helpers/memory-reminder";
-import { getReflectionTranscriptState } from "@/cli/helpers/reflection-transcript";
-import {
   buildSessionContext,
   type SessionContextSource,
 } from "@/cli/helpers/session-context";
@@ -23,8 +18,6 @@ import {
 } from "./catalog";
 import type { SessionContextReason, SharedReminderState } from "./state";
 
-type ReflectionTriggerSource = "step-count" | "compaction-event";
-
 export interface AgentReminderContext {
   id: string;
   name: string | null;
@@ -38,11 +31,7 @@ export interface SharedReminderContext {
   agent: AgentReminderContext;
   state: SharedReminderState;
   systemInfoReminderEnabled: boolean;
-  reflectionSettings: ReflectionSettings;
   skillSources: SkillSource[];
-  maybeLaunchReflectionSubagent?: (
-    triggerSource: ReflectionTriggerSource,
-  ) => Promise<boolean>;
   conversationBootstrapContent?: MessageCreate["content"];
   /** Explicit working directory (overrides process.cwd() in session context). */
   workingDirectory?: string;
@@ -238,66 +227,6 @@ async function buildMemoryGitSyncReminder(
     .join("\n\n");
 }
 
-async function buildReflectionStepReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (
-    context.reflectionSettings.trigger === "step-count" &&
-    settingsManager.isMemfsEnabled(context.agent.id)
-  ) {
-    const transcriptState = await getReflectionTranscriptState(
-      context.agent.id,
-      context.agent.conversationId ?? "default",
-    );
-    const shouldFireStepTrigger = shouldFireStepCountTrigger(
-      transcriptState.steps_since_last_successful_reflection,
-      context.reflectionSettings,
-    );
-    if (shouldFireStepTrigger) {
-      if (context.maybeLaunchReflectionSubagent) {
-        await context.maybeLaunchReflectionSubagent("step-count");
-      } else {
-        debugLog(
-          "memory",
-          `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-        );
-      }
-    }
-  }
-
-  // turnCount feeds the status line; increment once per user turn.
-  context.state.turnCount += 1;
-  return null;
-}
-
-async function buildReflectionCompactionReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (!context.state.pendingReflectionTrigger) {
-    return null;
-  }
-
-  context.state.pendingReflectionTrigger = false;
-
-  if (context.reflectionSettings.trigger !== "compaction-event") {
-    return null;
-  }
-
-  if (!settingsManager.isMemfsEnabled(context.agent.id)) {
-    return null;
-  }
-
-  if (context.maybeLaunchReflectionSubagent) {
-    await context.maybeLaunchReflectionSubagent("compaction-event");
-  } else {
-    debugLog(
-      "memory",
-      `Compaction reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-    );
-  }
-  return null;
-}
-
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
 const MAX_TOOLSET_REMINDERS_PER_TURN = 5;
 const MAX_COMMAND_INPUT_CHARS = 2000;
@@ -411,8 +340,6 @@ export const sharedReminderProviders: Record<
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
   "memory-git-sync": buildMemoryGitSyncReminder,
-  "reflection-step-count": buildReflectionStepReminder,
-  "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
 };
@@ -441,6 +368,9 @@ export async function buildSharedReminderParts(
 ): Promise<SharedReminderBuildResult> {
   const parts: ReminderTextPart[] = [];
   const appliedReminderIds: SharedReminderId[] = [];
+
+  // Incremented once per user turn; surfaced in the statusline payload.
+  context.state.turnCount += 1;
 
   for (const reminder of SHARED_REMINDER_CATALOG) {
     if (!reminder.modes.includes(context.mode)) {

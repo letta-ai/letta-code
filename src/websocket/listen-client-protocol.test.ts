@@ -1728,7 +1728,10 @@ describe("listen-client parseServerMessage", () => {
           mode: "sliding_window",
         },
       });
-      expect(runtime.contextTracker.pendingReflectionTrigger).toBe(true);
+      // Manual /compact now launches reflection directly (when memfs and the
+      // compaction-event trigger are enabled) instead of setting the pending
+      // flag for the next turn.
+      expect(runtime.contextTracker.pendingReflectionTrigger).toBe(false);
       expect(socket.sentPayloads.join("\n")).toContain(
         "Compaction completed (mode: sliding_window). Message buffer length reduced from 7 to 2.",
       );

@@ -26,6 +26,7 @@ import {
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
+import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
@@ -43,6 +44,7 @@ import type {
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
+import { getConversationWorkingDirectory } from "./cwd";
 import { reloadListenerModAdapter } from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
@@ -57,7 +59,10 @@ import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
 } from "./secrets-sync";
-import { handleIncomingMessage } from "./turn";
+import {
+  buildMaybeLaunchReflectionSubagent,
+  handleIncomingMessage,
+} from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -138,7 +143,11 @@ export async function handleExecuteCommand(
         break;
 
       case "compact":
-        output = await handleCompactCommand(conversationRuntime, trimmedArgs);
+        output = await handleCompactCommand(
+          socket,
+          conversationRuntime,
+          trimmedArgs,
+        );
         break;
 
       case "reload":
@@ -351,6 +360,7 @@ function compactHelpOutput(): string {
 
 /** /compact — Summarize conversation history through the active Backend. */
 async function handleCompactCommand(
+  socket: WebSocket,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
 ): Promise<string> {
@@ -410,7 +420,36 @@ async function handleCompactCommand(
       compactBody,
     );
 
-    conversationRuntime.contextTracker.pendingReflectionTrigger = true;
+    // Launching reflection is best-effort — never fail the /compact itself.
+    try {
+      const reflectionSettings = getReflectionSettings(
+        agentId,
+        getConversationWorkingDirectory(
+          conversationRuntime.listener,
+          agentId,
+          conversationRuntime.conversationId,
+        ),
+      );
+      if (
+        reflectionSettings.trigger === "compaction-event" &&
+        settingsManager.isMemfsEnabled(agentId)
+      ) {
+        void buildMaybeLaunchReflectionSubagent({
+          runtime: conversationRuntime,
+          socket,
+          agentId,
+          conversationId: conversationRuntime.conversationId,
+        })("compaction-event");
+      }
+    } catch (reflectionError) {
+      debugLog(
+        "memory",
+        "Skipping post-compaction reflection:",
+        reflectionError instanceof Error
+          ? reflectionError.message
+          : String(reflectionError),
+      );
+    }
     void regenerateConversationDescription(conversationRuntime.conversationId);
 
     return [

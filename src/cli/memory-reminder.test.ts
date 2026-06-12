@@ -1,19 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   getReflectionSettings,
   persistReflectionSettingsForAgent,
   reflectionSettingsToLegacyMode,
   shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
-import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
-import {
-  type SharedReminderContext,
-  sharedReminderProviders,
-} from "@/reminders/engine";
-import { createSharedReminderState } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 
 const originalGetLocalProjectSettings = settingsManager.getLocalProjectSettings;
@@ -24,7 +15,6 @@ const originalLoadLocalProjectSettings =
 const originalUpdateLocalProjectSettings =
   settingsManager.updateLocalProjectSettings;
 const originalUpdateSettings = settingsManager.updateSettings;
-const originalTranscriptRoot = process.env.LETTA_TRANSCRIPT_ROOT;
 
 afterEach(() => {
   (settingsManager as typeof settingsManager).getLocalProjectSettings =
@@ -38,11 +28,6 @@ afterEach(() => {
     originalUpdateLocalProjectSettings;
   (settingsManager as typeof settingsManager).updateSettings =
     originalUpdateSettings;
-  if (originalTranscriptRoot === undefined) {
-    delete process.env.LETTA_TRANSCRIPT_ROOT;
-  } else {
-    process.env.LETTA_TRANSCRIPT_ROOT = originalTranscriptRoot;
-  }
 });
 
 describe("memoryReminder", () => {
@@ -243,201 +228,5 @@ describe("memoryReminder", () => {
       "agent-3": { trigger: "off", stepCount: 7 },
       "agent-1": { trigger: "compaction-event", stepCount: 11 },
     });
-  });
-});
-
-describe("reflection trigger orchestration", () => {
-  const stepProvider = sharedReminderProviders["reflection-step-count"];
-  const compactionProvider = sharedReminderProviders["reflection-compaction"];
-  const orchestrationAgentId = "test-agent";
-  const orchestrationConversationId = "test-conversation";
-
-  async function withTranscriptRoot<T>(fn: () => Promise<T>): Promise<T> {
-    const testRoot = await mkdtemp(join(tmpdir(), "letta-reminder-test-"));
-    const previousRoot = process.env.LETTA_TRANSCRIPT_ROOT;
-    process.env.LETTA_TRANSCRIPT_ROOT = testRoot;
-    try {
-      return await fn();
-    } finally {
-      if (previousRoot === undefined) {
-        delete process.env.LETTA_TRANSCRIPT_ROOT;
-      } else {
-        process.env.LETTA_TRANSCRIPT_ROOT = previousRoot;
-      }
-      await rm(testRoot, { recursive: true, force: true });
-    }
-  }
-
-  async function appendCompletedTurns(count: number): Promise<void> {
-    for (let index = 0; index < count; index += 1) {
-      await appendTranscriptDeltaJsonl(
-        orchestrationAgentId,
-        orchestrationConversationId,
-        [
-          {
-            kind: "user",
-            id: `u${index}`,
-            text: `turn ${index}`,
-            messageId: `msg-u${index}`,
-          },
-          {
-            kind: "assistant",
-            id: `a${index}`,
-            text: `response ${index}`,
-            phase: "finished",
-            messageId: `msg-a${index}`,
-          },
-        ],
-      );
-    }
-  }
-
-  function buildReflectionContext(
-    overrides: Partial<{
-      trigger: "off" | "step-count" | "compaction-event";
-      stepCount: number;
-      turnCount: number;
-      memfsEnabled: boolean;
-      callback:
-        | ((trigger: "step-count" | "compaction-event") => Promise<boolean>)
-        | undefined;
-      pendingReflectionTrigger: boolean;
-    }> = {},
-  ): SharedReminderContext {
-    const state = createSharedReminderState();
-    state.turnCount = overrides.turnCount ?? 1;
-    state.pendingReflectionTrigger =
-      overrides.pendingReflectionTrigger ?? false;
-
-    (settingsManager as typeof settingsManager).isMemfsEnabled = (() =>
-      overrides.memfsEnabled ?? true) as typeof settingsManager.isMemfsEnabled;
-    (settingsManager as typeof settingsManager).getSettings = (() =>
-      ({
-        memoryReminderInterval: 25,
-        reflectionTrigger: overrides.trigger ?? "step-count",
-        reflectionStepCount: overrides.stepCount ?? 1,
-      }) as ReturnType<
-        typeof settingsManager.getSettings
-      >) as typeof settingsManager.getSettings;
-    (settingsManager as typeof settingsManager).getLocalProjectSettings = () =>
-      ({
-        reflectionTrigger: overrides.trigger ?? "step-count",
-        reflectionStepCount: overrides.stepCount ?? 1,
-      }) as ReturnType<typeof settingsManager.getLocalProjectSettings>;
-
-    return {
-      mode: "interactive",
-      agent: {
-        id: orchestrationAgentId,
-        name: "test",
-        conversationId: orchestrationConversationId,
-      },
-      state,
-      systemInfoReminderEnabled: false,
-      reflectionSettings: {
-        trigger: overrides.trigger ?? "step-count",
-        stepCount: overrides.stepCount ?? 1,
-      },
-      skillSources: [],
-      maybeLaunchReflectionSubagent: overrides.callback,
-    };
-  }
-
-  test("memfs step-count trigger launches reflection callback and returns no reminder", async () => {
-    await withTranscriptRoot(async () => {
-      await appendCompletedTurns(1);
-      const launches: Array<"step-count" | "compaction-event"> = [];
-      const context = buildReflectionContext({
-        memfsEnabled: true,
-        callback: async (trigger) => {
-          launches.push(trigger);
-          return true;
-        },
-      });
-
-      const reminder = await stepProvider(context);
-      expect(reminder).toBeNull();
-      expect(launches).toEqual(["step-count"]);
-    });
-  });
-
-  test("memfs step-count trigger with no callback does not emit reminder text", async () => {
-    await withTranscriptRoot(async () => {
-      await appendCompletedTurns(1);
-      const context = buildReflectionContext({
-        memfsEnabled: true,
-        callback: undefined,
-      });
-
-      const reminder = await stepProvider(context);
-      expect(reminder).toBeNull();
-    });
-  });
-
-  test("memfs step-count trigger uses transcript counter instead of reminder turn count", async () => {
-    await withTranscriptRoot(async () => {
-      const launches: Array<"step-count" | "compaction-event"> = [];
-      const context = buildReflectionContext({
-        turnCount: 100,
-        stepCount: 2,
-        memfsEnabled: true,
-        callback: async (trigger) => {
-          launches.push(trigger);
-          return true;
-        },
-      });
-
-      await stepProvider(context);
-      expect(launches).toEqual([]);
-
-      await appendCompletedTurns(2);
-      await stepProvider(context);
-      expect(launches).toEqual(["step-count"]);
-    });
-  });
-
-  test("non-memfs step-count trigger emits no reminder and launches nothing", async () => {
-    const launches: Array<"step-count" | "compaction-event"> = [];
-    const context = buildReflectionContext({
-      memfsEnabled: false,
-      callback: async (trigger) => {
-        launches.push(trigger);
-        return true;
-      },
-    });
-
-    const reminder = await stepProvider(context);
-    expect(reminder).toBeNull();
-    expect(launches).toEqual([]);
-  });
-
-  test("non-memfs compaction trigger emits no reminder and launches nothing", async () => {
-    const launches: Array<"step-count" | "compaction-event"> = [];
-    const context = buildReflectionContext({
-      trigger: "compaction-event",
-      memfsEnabled: false,
-      callback: async (trigger) => {
-        launches.push(trigger);
-        return true;
-      },
-      pendingReflectionTrigger: true,
-    });
-
-    const reminder = await compactionProvider(context);
-    expect(reminder).toBeNull();
-    expect(launches).toEqual([]);
-    expect(context.state.pendingReflectionTrigger).toBe(false);
-  });
-
-  test("memfs compaction trigger with no callback emits no reminder", async () => {
-    const context = buildReflectionContext({
-      trigger: "compaction-event",
-      memfsEnabled: true,
-      callback: undefined,
-      pendingReflectionTrigger: true,
-    });
-
-    const reminder = await compactionProvider(context);
-    expect(reminder).toBeNull();
   });
 });

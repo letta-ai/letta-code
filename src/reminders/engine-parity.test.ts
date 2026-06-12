@@ -92,11 +92,6 @@ describe("shared reminder parity", () => {
       providerMap[reminderId] = async () => reminderId;
     }
 
-    const reflectionSettings: ReflectionSettings = {
-      trigger: "off",
-      stepCount: 25,
-    };
-
     const subagent = await buildSharedReminderParts({
       agent: {
         id: "agent-1",
@@ -105,7 +100,6 @@ describe("shared reminder parity", () => {
         lastRunAt: null,
       },
       systemInfoReminderEnabled: true,
-      reflectionSettings,
       skillSources: [] as SkillSource[],
       mode: "subagent",
       state: createSharedReminderState(),
