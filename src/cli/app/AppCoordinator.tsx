@@ -3443,7 +3443,7 @@ export function App({
           targetConversationId,
           carryover.modelHandle,
           carryover.updateArgs,
-          { avoidOverwritingExistingContextWindow: false },
+          { avoidOverwritingExistingContextWindow: true },
         );
       } catch (error) {
         debugWarn(
