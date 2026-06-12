@@ -28,9 +28,8 @@ export default function activate(letta) {
 
   const update = async () => {
     try {
-      const context = letta.getContext();
       const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
-        cwd: context.workspace.currentDir,
+        cwd: process.cwd(),
       });
       letta.ui.setStatus("branch", stdout.trim());
     } catch {
@@ -85,11 +84,10 @@ export default function activate(letta) {
 
   const update = async () => {
     try {
-      const context = letta.getContext();
       const { stdout } = await execFileAsync(
         "gh",
         ["pr", "view", "--json", "number,title", "--jq", "\"#\\(.number) \\(.title)\""],
-        { cwd: context.workspace.currentDir },
+        { cwd: process.cwd() },
       );
       const pr = stdout.trim();
       pr ? letta.ui.setStatus("pr", pr) : letta.ui.clearStatus("pr");

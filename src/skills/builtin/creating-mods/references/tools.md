@@ -19,7 +19,8 @@ For tools that are part of a larger mod with commands, UI, local state, or event
 - `requiresApproval: false` only for read-only, low-risk local introspection.
 - `approvalPolicy: "alwaysAsk"` only for tools that must pause for human approval even in unrestricted/yolo mode.
 - `parallelSafe: true` only for read-only tools with no shared mutation or long-lived exclusive resource.
-- Use `ctx.cwd` / `ctx.workingDirectory` as the workspace.
+- Use `ctx.cwd` as the invocation workspace.
+- Use the dynamic context passed to `run(ctx)` (`ctx.agent`, `ctx.model`, `ctx.toolset`, `ctx.permissionMode`) instead of reading global app context.
 - Use `await ctx.conversation.getHistory()` when a tool needs recent conversation context. It returns the most recent messages in chronological order by default.
 - Respect `ctx.signal` for long-running work when practical.
 - Tools should return information for the model to use; they should not start hidden model runs.

@@ -40,6 +40,7 @@ import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
   TOKEN_DISPLAY_THRESHOLD,
 } from "@/constants";
+import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
@@ -505,7 +506,6 @@ const StatuslineSlot = memo(function StatuslineSlot({
       baseStatuslineContext,
     ),
   };
-  modAdapter.updateContext(statuslineContext);
 
   const builtInStatuslineRenderer = getBuiltinStatuslineRenderer(
     DEFAULT_STATUSLINE_RENDERER_ID,
@@ -522,8 +522,19 @@ const StatuslineSlot = memo(function StatuslineSlot({
 
   if (idleSlotAvailable && localStatuslineRenderer) {
     try {
-      return localStatuslineRenderer.render(statuslineContext);
+      return localStatuslineRenderer.render(
+        attachDeprecatedGetContextTrap(
+          statuslineContext,
+          modAdapter.registry?.ui.statuslineRecordDiagnostic,
+          "ctx.getContext",
+        ),
+      );
     } catch (error) {
+      modAdapter.registry?.ui.statuslineRecordDiagnostic?.({
+        capability: { id: localStatuslineRenderer.id, kind: "statusline" },
+        error: error instanceof Error ? error : new Error(String(error)),
+        phase: "statusline.render",
+      });
       debugLog(
         "mods",
         "statusline renderer %s failed: %s",

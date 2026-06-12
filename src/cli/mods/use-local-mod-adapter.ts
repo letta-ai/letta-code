@@ -9,20 +9,19 @@ import {
 import type { ModContext } from "./types";
 
 export interface LocalModAdapter {
+  context: ModContext;
   events: ModAdapter["events"];
   getBackend: ModAdapter["getBackend"];
-  getContext: () => ModContext;
   hadStatuslineRenderer: boolean; // Used to prevent flicker on reload
   hasModSources: boolean;
   engine: ModAdapter["engine"];
   isLoading: boolean;
   registry: ModAdapterSnapshot["registry"];
   reload: () => Promise<void>;
-  updateContext: (context: ModContext) => void;
 }
 
 export function useLocalModAdapter(
-  initialContext: ModContext,
+  context: ModContext,
   options: { disabled?: boolean } = {},
 ): LocalModAdapter {
   // biome-ignore lint/correctness/useExhaustiveDependencies: the adapter is process-local; context updates are pushed through updateContext below.
@@ -32,7 +31,6 @@ export function useLocalModAdapter(
         disabled: options.disabled,
         getBackend,
         getClient,
-        initialContext,
       }),
     [],
   );
@@ -44,10 +42,6 @@ export function useLocalModAdapter(
   );
 
   useEffect(() => {
-    adapter.updateContext(initialContext);
-  }, [initialContext, adapter]);
-
-  useEffect(() => {
     void adapter.reload();
 
     return () => {
@@ -57,17 +51,16 @@ export function useLocalModAdapter(
 
   return useMemo(
     () => ({
+      context,
       events: adapter.events,
       getBackend: adapter.getBackend,
-      getContext: adapter.getContext,
       hadStatuslineRenderer: snapshot.hadStatuslineRenderer,
       hasModSources: snapshot.hasModSources,
       engine: adapter.engine,
       isLoading: snapshot.isLoading,
       registry: snapshot.registry,
       reload: adapter.reload,
-      updateContext: adapter.updateContext,
     }),
-    [adapter, snapshot],
+    [adapter, context, snapshot],
   );
 }
