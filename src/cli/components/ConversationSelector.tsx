@@ -383,6 +383,7 @@ export function ConversationSelector({
     EnrichedConversation[] | null
   >(null);
   const [searching, setSearching] = useState(false);
+  const [searchInputVersion, setSearchInputVersion] = useState(0);
   const [pinNotice, setPinNotice] = useState<string | null>(null);
   const pinNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const preserveSelectionIdRef = useRef<string | null>(null);
@@ -884,9 +885,9 @@ export function ConversationSelector({
 
     if (loading) return;
 
-    if (key.upArrow || input === "k") {
+    if (key.upArrow) {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
-    } else if (key.downArrow || input === "j") {
+    } else if (key.downArrow) {
       setSelectedIndex((prev) =>
         Math.max(0, Math.min(filteredConversations.length - 1, prev + 1)),
       );
@@ -1075,10 +1076,16 @@ export function ConversationSelector({
       <Box marginBottom={1}>
         <Text dimColor>Search: </Text>
         <PasteAwareTextInput
+          key={searchInputVersion}
           value={searchInput}
           onChange={(value) => {
             const nextSearchInput = normalizeConversationSearchInput(value);
-            if (nextSearchInput === searchInput) return;
+            if (nextSearchInput === searchInput) {
+              if (value !== searchInput) {
+                setSearchInputVersion((version) => version + 1);
+              }
+              return;
+            }
             setSearchInput(nextSearchInput);
             setSelectedIndex(0);
           }}
