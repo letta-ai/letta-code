@@ -1,6 +1,7 @@
 import {
   getOAuthProvider,
   type OAuthPrompt,
+  type OAuthSelectPrompt,
 } from "@earendil-works/pi-ai/oauth";
 import {
   localOAuthAuthFromCredentials,
@@ -12,6 +13,8 @@ import { openOAuthBrowser } from "./connect-oauth-core";
 export interface LocalOAuthConnectCallbacks {
   onStatus: (message: string) => void | Promise<void>;
   onPrompt?: (prompt: OAuthPrompt) => Promise<string>;
+  /** Answer a selection prompt (e.g. OpenAI Codex login method) with an option id. */
+  onSelect?: (prompt: OAuthSelectPrompt) => Promise<string | undefined>;
   openBrowser?: (authorizationUrl: string) => Promise<void>;
   signal?: AbortSignal;
 }
@@ -35,6 +38,14 @@ async function defaultPrompt(
 ): Promise<string> {
   if (prompt.allowEmpty) return "";
   throw new Error(`${providerName} requires input: ${prompt.message}`);
+}
+
+async function defaultSelect(
+  prompt: OAuthSelectPrompt,
+): Promise<string | undefined> {
+  // pi-ai providers list their default option first (e.g. OpenAI Codex
+  // browser login), so auto-select it when the caller has no selection UI.
+  return prompt.options[0]?.id;
 }
 
 export async function runLocalOAuthConnectFlow(
@@ -67,12 +78,7 @@ export async function runLocalOAuthConnectFlow(
     onProgress: (message) => {
       void Promise.resolve(callbacks.onStatus(message));
     },
-    onSelect: async (prompt) => {
-      if (prompt.options.length === 1) return prompt.options[0]?.id;
-      throw new Error(
-        `${oauthProvider.name} requires selection: ${prompt.message}`,
-      );
-    },
+    onSelect: (prompt) => callbacks.onSelect?.(prompt) ?? defaultSelect(prompt),
   } as Parameters<typeof oauthProvider.login>[0] & {
     onDeviceCode?: (info: OAuthDeviceCodeInfo) => void;
   };
