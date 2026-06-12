@@ -55,6 +55,10 @@ import {
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
 import { loadPersistedCwdMap } from "./cwd";
+import {
+  installExternalToolBridge,
+  rejectPendingExternalToolCalls,
+} from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
 import { createListenerMessageHandler } from "./message-router";
 import {
@@ -786,6 +790,7 @@ export function createRuntime(): ListenerRuntime {
     secretsHydrationByAgent: new Map(),
     secretsHydrationFreshnessByAgent: new Map(),
     secretsDirtyAgents: new Set(),
+    pendingExternalToolCalls: new Map(),
     agentMetadataByAgent: new Map(),
     lastEmittedStatus: null,
   };
@@ -796,6 +801,7 @@ export function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   disposeListenerModAdapter(runtime);
+  rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
   setMessageQueueAdder(null); // Clear bridge for ALL stop paths
   runtime.intentionallyClosed = true;
   clearRuntimeTimers(runtime);
@@ -1067,6 +1073,7 @@ export async function attachOpenListenerSocket(
 
   runtime.socket = socket;
   runtime.streamSocket = streamSocket;
+  installExternalToolBridge(runtime);
   const transport = socket;
   const processQueuedTurn: ProcessQueuedTurn = async (
     queuedTurn: IncomingMessage,

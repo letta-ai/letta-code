@@ -18,6 +18,7 @@ import type {
   ConversationRuntime,
   ListenerRuntime,
 } from "@/websocket/listener/types";
+import { registerRuntimeExternalTools } from "../external-tools";
 import type {
   GetOrCreateScopedRuntime,
   RunDetachedListenerTask,
@@ -232,6 +233,11 @@ export async function handleRuntimeStartCommand(
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    registerRuntimeExternalTools(
+      context.runtime,
+      runtimeScope,
+      parsed.external_tools ?? [],
+    );
 
     const sent = sendRuntimeStartResponse(context, parsed, {
       success: true,

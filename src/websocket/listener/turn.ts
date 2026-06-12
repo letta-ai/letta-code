@@ -624,6 +624,7 @@ export async function handleIncomingMessage(
       agentId,
       conversationId,
       clientToolAllowlist: msg.clientToolAllowlist,
+      externalToolScopeIds: msg.externalToolScopeIds,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       cachedAgent,

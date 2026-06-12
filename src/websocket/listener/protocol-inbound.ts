@@ -54,6 +54,7 @@ import type {
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
+  ExternalToolCallResponseCommand,
   FileOpsCommand,
   GetCwdMapCommand,
   GetExperimentsCommand,
@@ -167,6 +168,7 @@ function isInputCommand(value: unknown): value is InputCommand {
     kind?: unknown;
     messages?: unknown;
     client_tool_allowlist?: unknown;
+    external_tool_scope_ids?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -175,7 +177,9 @@ function isInputCommand(value: unknown): value is InputCommand {
     return (
       Array.isArray(payload.messages) &&
       (payload.client_tool_allowlist === undefined ||
-        isStringArray(payload.client_tool_allowlist))
+        isStringArray(payload.client_tool_allowlist)) &&
+      (payload.external_tool_scope_ids === undefined ||
+        isStringArray(payload.external_tool_scope_ids))
     );
   }
   if (payload.kind === "approval_response") {
@@ -209,6 +213,7 @@ function getInvalidInputReason(value: unknown): {
     kind?: unknown;
     messages?: unknown;
     client_tool_allowlist?: unknown;
+    external_tool_scope_ids?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -229,6 +234,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.payload.client_tool_allowlist must be string[]",
+      };
+    }
+    if (
+      payload.external_tool_scope_ids !== undefined &&
+      !isStringArray(payload.external_tool_scope_ids)
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.external_tool_scope_ids must be string[]",
       };
     }
     return null;
@@ -369,6 +384,25 @@ function isRuntimeStartClientInfo(value: unknown): boolean {
   );
 }
 
+function isExternalToolDefinitionPayload(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  return (
+    typeof value.name === "string" &&
+    (value.label === undefined || typeof value.label === "string") &&
+    typeof value.description === "string" &&
+    isObjectRecord(value.parameters)
+  );
+}
+
+function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  return (
+    (value.scope_id === undefined || typeof value.scope_id === "string") &&
+    Array.isArray(value.tools) &&
+    value.tools.every(isExternalToolDefinitionPayload)
+  );
+}
+
 export function isRuntimeStartCommand(
   value: unknown,
 ): value is RuntimeStartCommand {
@@ -385,6 +419,7 @@ export function isRuntimeStartCommand(
     client_info?: unknown;
     recover_approvals?: unknown;
     force_device_status?: unknown;
+    external_tools?: unknown;
   };
   return (
     c.type === "runtime_start" &&
@@ -402,7 +437,37 @@ export function isRuntimeStartCommand(
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&
     (c.force_device_status === undefined ||
-      typeof c.force_device_status === "boolean")
+      typeof c.force_device_status === "boolean") &&
+    (c.external_tools === undefined ||
+      (Array.isArray(c.external_tools) &&
+        c.external_tools.every(isRuntimeStartExternalToolsGroup)))
+  );
+}
+
+export function isExternalToolCallResponseCommand(
+  value: unknown,
+): value is ExternalToolCallResponseCommand {
+  if (!isObjectRecord(value)) return false;
+  if (
+    value.type !== "external_tool_call_response" ||
+    typeof value.request_id !== "string"
+  ) {
+    return false;
+  }
+  if (value.error !== undefined && typeof value.error !== "string") {
+    return false;
+  }
+  if (value.result === undefined) {
+    return typeof value.error === "string";
+  }
+  if (!isObjectRecord(value.result)) {
+    return false;
+  }
+  return (
+    Array.isArray(value.result.content) &&
+    value.result.content.every(isObjectRecord) &&
+    (value.result.is_error === undefined ||
+      typeof value.result.is_error === "boolean")
   );
 }
 
@@ -2075,6 +2140,7 @@ export function parseServerMessage(
       isAbortMessageCommand(parsed) ||
       isSyncCommand(parsed) ||
       isRuntimeStartCommand(parsed) ||
+      isExternalToolCallResponseCommand(parsed) ||
       isTerminalSpawnCommand(parsed) ||
       isTerminalInputCommand(parsed) ||
       isTerminalResizeCommand(parsed) ||
