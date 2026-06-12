@@ -372,6 +372,19 @@ function filterExternalToolsByScopeIds(
   );
 }
 
+function toModelFacingExternalToolMap(
+  externalTools: Map<string, ExternalToolDefinition>,
+): Map<string, ExternalToolDefinition> {
+  const modelFacingTools = new Map<string, ExternalToolDefinition>();
+  for (const tool of externalTools.values()) {
+    // MVP: if one runtime exposes duplicate model-facing names, the later
+    // registration wins. We keep cross-runtime registrations isolated by using
+    // namespaced internal keys before this final model-facing collapse.
+    modelFacingTools.set(tool.name, tool);
+  }
+  return modelFacingTools;
+}
+
 function filterModToolsByClientAllowlist(
   modTools: Map<string, ModToolDefinition>,
   clientToolAllowlist?: string[],
@@ -853,6 +866,8 @@ export interface ExternalToolDefinition {
   label?: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
+  /** Internal registration key; model-facing calls still use name. */
+  registrationKey?: string;
   /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
   scopeId?: string;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
@@ -903,15 +918,16 @@ function getExternalToolsRegistry(): Map<string, ExternalToolDefinition> {
 export function registerExternalTools(tools: ExternalToolDefinition[]): void {
   const registry = getExternalToolsRegistry();
   for (const tool of tools) {
-    registry.set(tool.name, tool);
+    registry.set(tool.registrationKey ?? tool.name, tool);
   }
 }
 
 export function unregisterExternalTools(tools: ExternalToolDefinition[]): void {
   const registry = getExternalToolsRegistry();
   for (const tool of tools) {
-    if (registry.get(tool.name) === tool) {
-      registry.delete(tool.name);
+    const registrationKey = tool.registrationKey ?? tool.name;
+    if (registry.get(registrationKey) === tool) {
+      registry.delete(registrationKey);
     }
   }
 }
@@ -955,7 +971,11 @@ export function getExternalToolDefinition(
  * Get all external tools as ClientTool format
  */
 export function getExternalToolsAsClientTools(): ClientTool[] {
-  return Array.from(getExternalToolsRegistry().values()).map((tool) => ({
+  return Array.from(
+    toModelFacingExternalToolMap(
+      filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
+    ).values(),
+  ).map((tool) => ({
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
@@ -1016,7 +1036,9 @@ export async function executeExternalTool(
 export function getClientToolsFromRegistry(): ClientTool[] {
   return buildClientToolsFromSnapshot(
     withDynamicMessageChannelCache(toolRegistry),
-    getExternalToolsRegistry(),
+    toModelFacingExternalToolMap(
+      filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
+    ),
     getAvailableModToolsRegistry(),
   );
 }
@@ -1100,15 +1122,17 @@ function capturePreparedToolExecutionContext(
   }
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
-    externalTools: filterExternalToolsByClientAllowlist(
-      filterExternalToolsByScopeIds(
-        filterExternalToolsByRuntimeContext(
-          snapshot.externalTools,
-          runtimeContext,
+    externalTools: toModelFacingExternalToolMap(
+      filterExternalToolsByClientAllowlist(
+        filterExternalToolsByScopeIds(
+          filterExternalToolsByRuntimeContext(
+            snapshot.externalTools,
+            runtimeContext,
+          ),
+          options?.externalToolScopeIds,
         ),
-        options?.externalToolScopeIds,
+        options?.clientToolAllowlist,
       ),
-      options?.clientToolAllowlist,
     ),
     externalExecutor: snapshot.externalExecutor,
     modEvents: options?.modEvents ?? snapshot.modEvents,

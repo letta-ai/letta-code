@@ -44,6 +44,20 @@ function getRuntimeKey(runtime: RuntimeScope): string {
   return `${runtime.agent_id}:${runtime.conversation_id}`;
 }
 
+function getToolRegistrationKey(
+  runtime: RuntimeScope,
+  scopeId: string | undefined,
+  toolName: string,
+): string {
+  return JSON.stringify([
+    "runtime",
+    runtime.agent_id,
+    runtime.conversation_id,
+    scopeId ?? null,
+    toolName,
+  ]);
+}
+
 function toExternalToolDefinition(
   tool: ExternalToolDefinitionPayload,
   runtime: RuntimeScope,
@@ -54,6 +68,7 @@ function toExternalToolDefinition(
     ...(tool.label !== undefined ? { label: tool.label } : {}),
     description: tool.description,
     parameters: tool.parameters,
+    registrationKey: getToolRegistrationKey(runtime, scopeId, tool.name),
     ...(scopeId !== undefined ? { scopeId } : {}),
     runtime: {
       agentId: runtime.agent_id,
@@ -75,17 +90,17 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
 
     const requestId = `external-tool-${crypto.randomUUID()}`;
     const toolRuntime = context?.tool.runtime;
+    const requestRuntime =
+      toolRuntime?.agentId && toolRuntime.conversationId
+        ? {
+            agent_id: toolRuntime.agentId,
+            conversation_id: toolRuntime.conversationId,
+          }
+        : undefined;
     const request: ExternalToolCallRequestMessage = {
       type: "external_tool_call_request",
       request_id: requestId,
-      ...(toolRuntime
-        ? {
-            runtime: {
-              agent_id: toolRuntime.agentId ?? "",
-              conversation_id: toolRuntime.conversationId ?? "default",
-            },
-          }
-        : {}),
+      ...(requestRuntime ? { runtime: requestRuntime } : {}),
       ...(context?.tool.scopeId !== undefined
         ? { scope_id: context.tool.scopeId }
         : {}),
