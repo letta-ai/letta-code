@@ -5,7 +5,7 @@ import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-o
 import { getShellEnv } from "./shell-env.js";
 import { buildShellLaunchers } from "./shell-launchers.js";
 import { ShellExecutionError, spawnWithLauncher } from "./shell-runner.js";
-import { applyParentShellSandbox } from "./shell-sandbox.js";
+import { applyShellSandbox } from "./shell-sandbox.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ShellArgs {
@@ -108,12 +108,12 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
     ...(secretEnv ?? {}),
   };
 
-  // Confine the command under the parent cross-agent sandbox. The wrapper hides
+  // Confine the command under the cross-agent shell sandbox. The wrapper hides
   // the inner shell from spawnWithLauncher's worktree-ownership note, so note
   // the unwrapped command here first. Under the sandbox the ENOENT shell
   // fallback below stops triggering (sandbox-exec always spawns) — acceptable:
   // it's a rare missing-shell nicety and this path is flag-gated.
-  const sandboxed = applyParentShellSandbox(command, cwd, env);
+  const sandboxed = applyShellSandbox(command, cwd, env);
   if (sandboxed.backend) {
     noteExpectedWorktreeForLauncher(command, cwd);
   }

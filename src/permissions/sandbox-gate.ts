@@ -20,13 +20,13 @@ function isLocalBackendEnvEnabled(env: NodeJS.ProcessEnv): boolean {
 /**
  * Whether an agent process's shell commands will be confined by the kernel
  * cross-agent sandbox — i.e. exactly the conditions under which
- * `applyParentShellSandbox` wraps the launcher.
+ * `applyShellSandbox` wraps the launcher.
  *
  * The kernel sandbox is the sole cross-agent enforcement for spawned shells (the
  * static cross-agent guard no longer analyzes shell commands), so this predicate
  * is what the wrapper consults to decide whether to wrap.
  */
-export function willSandboxParentShell(
+export function willSandboxShell(
   cwd: string,
   env: NodeJS.ProcessEnv,
   availability?: SandboxAvailability,

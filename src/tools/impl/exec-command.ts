@@ -17,7 +17,7 @@ import {
   buildShellLaunchers,
   selectAvailableShellLauncher,
 } from "./shell-launchers.js";
-import { applyParentShellSandbox } from "./shell-sandbox.js";
+import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -651,11 +651,11 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   if (!rawLauncher) {
     throw new Error("Command must be a non-empty string");
   }
-  // Confine the session (pipe or PTY) under the parent cross-agent sandbox.
+  // Confine the session (pipe or PTY) under the cross-agent shell sandbox.
   // The spawn helpers re-note the launcher for worktree ownership, but the
   // wrapper hides the inner shell from that inspection, so note the unwrapped
   // launcher here first.
-  const sandboxed = applyParentShellSandbox(rawLauncher, cwd, env);
+  const sandboxed = applyShellSandbox(rawLauncher, cwd, env);
   if (sandboxed.backend) {
     noteExpectedWorktreeForLauncher(rawLauncher, cwd);
   }

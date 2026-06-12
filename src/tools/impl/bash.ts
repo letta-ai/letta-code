@@ -19,7 +19,7 @@ import {
   withStrictShellPrelude,
 } from "./shell-launchers.js";
 import { spawnWithLauncher } from "./shell-runner.js";
-import { applyParentShellSandbox } from "./shell-sandbox.js";
+import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -92,7 +92,7 @@ export async function spawnCommand(
     // On macOS, prefer zsh due to bash 3.2's HEREDOC bug with apostrophes
     const executable = process.platform === "darwin" ? "/bin/zsh" : "bash";
     const innerLauncher = [executable, "-c", commandToRun];
-    const sandboxed = applyParentShellSandbox(innerLauncher, options.cwd, env);
+    const sandboxed = applyShellSandbox(innerLauncher, options.cwd, env);
     if (sandboxed.backend) {
       // The sandbox wrapper hides the inner shell from launcher inspection;
       // note the unwrapped launcher so `git worktree add` ownership resolves.
@@ -253,7 +253,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     // Note the unwrapped launcher first; the sandbox wrapper (below) hides the
     // inner shell from launcher inspection.
     noteExpectedWorktreeForLauncher(launcher, userCwd);
-    const sandboxed = applyParentShellSandbox(launcher, userCwd, bgEnv);
+    const sandboxed = applyShellSandbox(launcher, userCwd, bgEnv);
     const [bgExecutable, ...bgLauncherArgs] = sandboxed.launcher;
     const childProcess = spawn(bgExecutable ?? executable, bgLauncherArgs, {
       shell: false,

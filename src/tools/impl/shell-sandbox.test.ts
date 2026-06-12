@@ -10,7 +10,7 @@ import {
 import type { SandboxAvailability } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import { SANDBOX_EXEC_PATH } from "@/sandbox/seatbelt";
-import { applyParentShellSandbox } from "@/tools/impl/shell-sandbox";
+import { applyShellSandbox } from "@/tools/impl/shell-sandbox";
 
 const SEATBELT: SandboxAvailability = { backend: "seatbelt", reason: "test" };
 const NO_BACKEND: SandboxAvailability = { backend: null, reason: "test" };
@@ -23,13 +23,13 @@ function defineValue(args: string[], prefix: string): string | undefined {
 }
 
 test("no-op when the flag is off", () => {
-  const result = applyParentShellSandbox(LAUNCHER, REPO_CWD, {}, SEATBELT);
+  const result = applyShellSandbox(LAUNCHER, REPO_CWD, {}, SEATBELT);
   expect(result.backend).toBeNull();
   expect(result.launcher).toBe(LAUNCHER);
 });
 
 test("no-op when already inside a sandbox (no nested sandbox-exec)", () => {
-  const result = applyParentShellSandbox(
+  const result = applyShellSandbox(
     LAUNCHER,
     REPO_CWD,
     {
@@ -44,7 +44,7 @@ test("no-op when already inside a sandbox (no nested sandbox-exec)", () => {
 });
 
 test("wraps unsandboxed subagent shell commands", () => {
-  const result = applyParentShellSandbox(
+  const result = applyShellSandbox(
     LAUNCHER,
     REPO_CWD,
     {
@@ -59,7 +59,7 @@ test("wraps unsandboxed subagent shell commands", () => {
 });
 
 test("no-op for already sandboxed subagent processes", () => {
-  const result = applyParentShellSandbox(
+  const result = applyShellSandbox(
     LAUNCHER,
     REPO_CWD,
     {
@@ -74,7 +74,7 @@ test("no-op for already sandboxed subagent processes", () => {
 });
 
 test("no-op when no sandbox backend is available", () => {
-  const result = applyParentShellSandbox(
+  const result = applyShellSandbox(
     LAUNCHER,
     REPO_CWD,
     { LETTA_FS_SANDBOX: "1", MEMORY_DIR: "/tmp/x/memory" },
@@ -85,7 +85,7 @@ test("no-op when no sandbox backend is available", () => {
 
 test("no-op when cwd is inside the agents tree (Seatbelt empty-env hazard)", () => {
   const cwdInTree = join(homedir(), ".letta", "agents", "self", "memory");
-  const result = applyParentShellSandbox(
+  const result = applyShellSandbox(
     LAUNCHER,
     cwdInTree,
     { LETTA_FS_SANDBOX: "1", MEMORY_DIR: cwdInTree },
@@ -94,9 +94,9 @@ test("no-op when cwd is inside the agents tree (Seatbelt empty-env hazard)", () 
   expect(result.backend).toBeNull();
 });
 
-test("wraps a parent launcher: denies agents tree, carves self, sets sentinel", () => {
+test("wraps an agent shell launcher: denies agents tree, carves self, sets sentinel", () => {
   const memDir = join(REPO_CWD, "nonexistent-mem", "memory");
-  const result = applyParentShellSandbox(
+  const result = applyShellSandbox(
     LAUNCHER,
     REPO_CWD,
     { LETTA_FS_SANDBOX: "1", MEMORY_DIR: memDir },
@@ -125,7 +125,7 @@ test("local backend: walls off the memfs tree, not ~/.letta/agents", () => {
   const storageDir = join(REPO_CWD, "custom-local-backend");
   const memfsTree = getLocalBackendCrossAgentTreeRoot(storageDir);
   const memDir = join(memfsTree, "local-agent-xyz", "memory");
-  const result = applyParentShellSandbox(
+  const result = applyShellSandbox(
     LAUNCHER,
     REPO_CWD,
     {
@@ -158,7 +158,7 @@ test("carves the whole self agent dir for an in-tree memory root", () => {
     "test-cross-agent-xyz",
     "memory",
   );
-  const result = applyParentShellSandbox(
+  const result = applyShellSandbox(
     LAUNCHER,
     REPO_CWD,
     { LETTA_FS_SANDBOX: "1", MEMORY_DIR: memDir },

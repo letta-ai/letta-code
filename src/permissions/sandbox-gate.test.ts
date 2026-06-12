@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { willSandboxParentShell } from "@/permissions/sandbox-gate";
+import { willSandboxShell } from "@/permissions/sandbox-gate";
 import type { SandboxAvailability } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import { getLocalBackendCrossAgentTreeRoot } from "@/utils/local-backend-paths";
@@ -13,7 +13,7 @@ const REPO_CWD = process.cwd();
 const MEM = "/tmp/willsandbox/memory";
 
 test("false when the flag is off (no host probe needed)", () => {
-  expect(willSandboxParentShell(REPO_CWD, {}, SEATBELT)).toBe(false);
+  expect(willSandboxShell(REPO_CWD, {}, SEATBELT)).toBe(false);
 });
 
 test("false when already inside a sandbox", () => {
@@ -22,7 +22,7 @@ test("false when already inside a sandbox", () => {
     [SANDBOX_ENV_VAR]: "seatbelt",
     MEMORY_DIR: MEM,
   };
-  expect(willSandboxParentShell(REPO_CWD, env, SEATBELT)).toBe(false);
+  expect(willSandboxShell(REPO_CWD, env, SEATBELT)).toBe(false);
 });
 
 test("true for an unsandboxed subagent process", () => {
@@ -31,7 +31,7 @@ test("true for an unsandboxed subagent process", () => {
     LETTA_CODE_AGENT_ROLE: "subagent",
     MEMORY_DIR: MEM,
   };
-  expect(willSandboxParentShell(REPO_CWD, env, SEATBELT)).toBe(true);
+  expect(willSandboxShell(REPO_CWD, env, SEATBELT)).toBe(true);
 });
 
 test("false for an already sandboxed subagent process", () => {
@@ -41,18 +41,18 @@ test("false for an already sandboxed subagent process", () => {
     [SANDBOX_ENV_VAR]: "bwrap",
     MEMORY_DIR: MEM,
   };
-  expect(willSandboxParentShell(REPO_CWD, env, SEATBELT)).toBe(false);
+  expect(willSandboxShell(REPO_CWD, env, SEATBELT)).toBe(false);
 });
 
 test("false when no backend is available", () => {
   const env = { LETTA_FS_SANDBOX: "1", MEMORY_DIR: MEM };
-  expect(willSandboxParentShell(REPO_CWD, env, NO_BACKEND)).toBe(false);
+  expect(willSandboxShell(REPO_CWD, env, NO_BACKEND)).toBe(false);
 });
 
 test("false when cwd is inside the agents tree", () => {
   const cwdInTree = join(homedir(), ".letta", "agents", "self", "memory");
   const env = { LETTA_FS_SANDBOX: "1", MEMORY_DIR: cwdInTree };
-  expect(willSandboxParentShell(cwdInTree, env, SEATBELT)).toBe(false);
+  expect(willSandboxShell(cwdInTree, env, SEATBELT)).toBe(false);
 });
 
 test("false when local backend cwd is inside the memfs tree", () => {
@@ -68,10 +68,10 @@ test("false when local backend cwd is inside the memfs tree", () => {
     LETTA_LOCAL_BACKEND_DIR: storageDir,
     MEMORY_DIR: cwdInTree,
   };
-  expect(willSandboxParentShell(cwdInTree, env, SEATBELT)).toBe(false);
+  expect(willSandboxShell(cwdInTree, env, SEATBELT)).toBe(false);
 });
 
 test("true for a parent with the flag on, a backend, cwd outside the tree, and self roots", () => {
   const env = { LETTA_FS_SANDBOX: "1", MEMORY_DIR: MEM };
-  expect(willSandboxParentShell(REPO_CWD, env, SEATBELT)).toBe(true);
+  expect(willSandboxShell(REPO_CWD, env, SEATBELT)).toBe(true);
 });
