@@ -346,6 +346,51 @@ function filterExternalToolsByClientAllowlist(
   );
 }
 
+function filterExternalToolsByRuntimeContext(
+  externalTools: Map<string, ExternalToolDefinition>,
+  runtimeContext: RuntimeContextSnapshot,
+): Map<string, ExternalToolDefinition> {
+  return new Map(
+    Array.from(externalTools.entries()).filter(([, tool]) => {
+      if (!tool.runtime) {
+        return true;
+      }
+      return (
+        tool.runtime.agentId === runtimeContext.agentId &&
+        tool.runtime.conversationId === runtimeContext.conversationId
+      );
+    }),
+  );
+}
+
+function filterExternalToolsByScopeIds(
+  externalTools: Map<string, ExternalToolDefinition>,
+  externalToolScopeIds?: string[],
+): Map<string, ExternalToolDefinition> {
+  const selectedScopes = new Set(externalToolScopeIds ?? []);
+  return new Map(
+    Array.from(externalTools.entries()).filter(([, tool]) => {
+      if (tool.scopeId === undefined) {
+        return true;
+      }
+      return selectedScopes.has(tool.scopeId);
+    }),
+  );
+}
+
+function toModelFacingExternalToolMap(
+  externalTools: Map<string, ExternalToolDefinition>,
+): Map<string, ExternalToolDefinition> {
+  const modelFacingTools = new Map<string, ExternalToolDefinition>();
+  for (const tool of externalTools.values()) {
+    // MVP: if one runtime exposes duplicate model-facing names, the later
+    // registration wins. We keep cross-runtime registrations isolated by using
+    // namespaced internal keys before this final model-facing collapse.
+    modelFacingTools.set(tool.name, tool);
+  }
+  return modelFacingTools;
+}
+
 function filterModToolsByClientAllowlist(
   modTools: Map<string, ModToolDefinition>,
   clientToolAllowlist?: string[],
@@ -828,6 +873,15 @@ export interface ExternalToolDefinition {
   label?: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
+  /** Internal registration key; model-facing calls still use name. */
+  registrationKey?: string;
+  /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
+  scopeId?: string;
+  /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
+  runtime?: {
+    agentId?: string;
+    conversationId?: string;
+  };
 }
 
 /**
@@ -837,6 +891,7 @@ export type ExternalToolExecutor = (
   toolCallId: string,
   toolName: string,
   input: Record<string, unknown>,
+  context?: { tool: ExternalToolDefinition },
 ) => Promise<{
   content: Array<{
     type: string;
@@ -870,7 +925,17 @@ function getExternalToolsRegistry(): Map<string, ExternalToolDefinition> {
 export function registerExternalTools(tools: ExternalToolDefinition[]): void {
   const registry = getExternalToolsRegistry();
   for (const tool of tools) {
-    registry.set(tool.name, tool);
+    registry.set(tool.registrationKey ?? tool.name, tool);
+  }
+}
+
+export function unregisterExternalTools(tools: ExternalToolDefinition[]): void {
+  const registry = getExternalToolsRegistry();
+  for (const tool of tools) {
+    const registrationKey = tool.registrationKey ?? tool.name;
+    if (registry.get(registrationKey) === tool) {
+      registry.delete(registrationKey);
+    }
   }
 }
 
@@ -913,7 +978,11 @@ export function getExternalToolDefinition(
  * Get all external tools as ClientTool format
  */
 export function getExternalToolsAsClientTools(): ClientTool[] {
-  return Array.from(getExternalToolsRegistry().values()).map((tool) => ({
+  return Array.from(
+    toModelFacingExternalToolMap(
+      filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
+    ).values(),
+  ).map((tool) => ({
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
@@ -928,6 +997,7 @@ export async function executeExternalTool(
   toolName: string,
   input: Record<string, unknown>,
   executorOverride?: ExternalToolExecutor,
+  toolDefinition?: ExternalToolDefinition,
 ): Promise<ToolExecutionResult> {
   const executor = executorOverride ?? getExternalToolExecutor();
   if (!executor) {
@@ -938,7 +1008,13 @@ export async function executeExternalTool(
   }
 
   try {
-    const result = await executor(toolCallId, toolName, input);
+    const tool = toolDefinition ?? getExternalToolDefinition(toolName);
+    const result = await executor(
+      toolCallId,
+      toolName,
+      input,
+      tool ? { tool } : undefined,
+    );
 
     // Convert external tool result to ToolExecutionResult format
     const textContent = result.content
@@ -967,7 +1043,9 @@ export async function executeExternalTool(
 export function getClientToolsFromRegistry(): ClientTool[] {
   return buildClientToolsFromSnapshot(
     withDynamicMessageChannelCache(toolRegistry),
-    getExternalToolsRegistry(),
+    toModelFacingExternalToolMap(
+      filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
+    ),
     getAvailableModToolsRegistry(),
   );
 }
@@ -1034,6 +1112,7 @@ function capturePreparedToolExecutionContext(
   },
   options?: {
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     modContext?: ModContext;
@@ -1052,9 +1131,17 @@ function capturePreparedToolExecutionContext(
   }
   const executionSnapshot: ToolExecutionContextSnapshot = {
     toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
-    externalTools: filterExternalToolsByClientAllowlist(
-      snapshot.externalTools,
-      options?.clientToolAllowlist,
+    externalTools: toModelFacingExternalToolMap(
+      filterExternalToolsByClientAllowlist(
+        filterExternalToolsByScopeIds(
+          filterExternalToolsByRuntimeContext(
+            snapshot.externalTools,
+            runtimeContext,
+          ),
+          options?.externalToolScopeIds,
+        ),
+        options?.clientToolAllowlist,
+      ),
     ),
     externalExecutor: snapshot.externalExecutor,
     modContext: options?.modContext ?? snapshot.modContext,
@@ -1149,6 +1236,7 @@ export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -1182,6 +1270,7 @@ export async function prepareToolExecutionContextForModel(
     exclude?: ToolName[];
     include?: ToolName[];
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -2390,6 +2479,7 @@ export async function executeTool(
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
+    const externalTool = activeExternalTools.get(name);
     const { args: eventArgs } = await emitToolStartEvent({
       args,
       events: modEvents,
@@ -2416,6 +2506,7 @@ export async function executeTool(
       name,
       eventArgs as Record<string, unknown>,
       activeExternalExecutor,
+      externalTool,
     );
   }
 

@@ -194,6 +194,70 @@ describe("app-server client", () => {
     expect(sent).toEqual(["sync", "abort_message", "input"]);
   });
 
+  test("starts runtimes with external tools and responds to external tool calls", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtimeStart = client.runtimeStart({
+      create_agent: { body: { name: "SDK test" } },
+      create_conversation: { body: {} },
+      external_tools: [
+        {
+          scope_id: "scope-1",
+          tools: [
+            {
+              name: "lookup_ticket",
+              description: "Lookup a ticket",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(JSON.parse(control.sent[0] ?? "{}")).toMatchObject({
+      type: "runtime_start",
+      external_tools: [
+        {
+          scope_id: "scope-1",
+          tools: [{ name: "lookup_ticket" }],
+        },
+      ],
+    });
+    control.receive({
+      type: "runtime_start_response",
+      request_id: "runtime-start-1",
+      success: true,
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      agent: { id: "agent-1" },
+      conversation: { id: "conv-1" },
+      created: { agent: true, conversation: true },
+    });
+    await runtimeStart;
+
+    client.onExternalToolCall((request) => ({
+      content: [{ type: "text", text: `ticket:${request.input.id}` }],
+    }));
+    control.receive({
+      type: "external_tool_call_request",
+      request_id: "external-tool-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      scope_id: "scope-1",
+      tool_call_id: "call-1",
+      tool_name: "lookup_ticket",
+      input: { id: "ABC-123" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(JSON.parse(control.sent.at(-1) ?? "{}")).toEqual({
+      type: "external_tool_call_response",
+      request_id: "external-tool-1",
+      result: { content: [{ type: "text", text: "ticket:ABC-123" }] },
+    });
+  });
+
   test("runTurn injects client message ids and resolves on stop_reason", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();

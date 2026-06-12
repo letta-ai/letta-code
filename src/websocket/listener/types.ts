@@ -21,6 +21,7 @@ import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
   ControlRequest,
+  ExternalToolCallResult,
   LoopStatus,
   RuntimeScope,
   WsProtocolCommand,
@@ -61,6 +62,7 @@ export interface IncomingMessage {
   conversationId?: string;
   channelTurnSources?: ChannelTurnSource[];
   clientToolAllowlist?: string[];
+  externalToolScopeIds?: string[];
   messages: Array<
     (MessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
@@ -79,6 +81,12 @@ export type ProcessQueuedTurn = (
   queuedTurn: IncomingMessage,
   dequeuedBatch: DequeuedBatch,
 ) => Promise<void>;
+
+export interface PendingExternalToolCall {
+  resolve: (result: ExternalToolCallResult) => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
 
 export interface ModeChangePayload {
   mode: "standard" | "acceptEdits" | "memory" | "unrestricted";
@@ -225,6 +233,7 @@ export type ListenerRuntime = {
   secretsHydrationFreshnessByAgent: Map<string, number>;
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
+  pendingExternalToolCalls?: Map<string, PendingExternalToolCall>;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
    * reused while the listener stays connected so first-turn reminders can join

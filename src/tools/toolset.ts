@@ -195,6 +195,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   toolsetPreference: ToolsetPreference;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
+  externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -209,6 +210,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     toolsetPreference,
     exclude,
     clientToolAllowlist,
+    externalToolScopeIds,
     workingDirectory,
     permissionModeState,
     channelToolScope,
@@ -247,6 +249,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
           ? getGoalToolNamesForToolset(derivedToolset)
           : undefined,
         clientToolAllowlist,
+        externalToolScopeIds,
         workingDirectory,
         permissionModeState,
         channelToolScope,
@@ -289,6 +292,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     ),
     {
       clientToolAllowlist,
+      externalToolScopeIds,
       workingDirectory,
       permissionModeState,
       channelToolScope,
@@ -458,6 +462,7 @@ export async function prepareToolExecutionContextForScope(params: {
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
+  externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   cachedAgent?: AgentState | null;
@@ -472,6 +477,7 @@ export async function prepareToolExecutionContextForScope(params: {
     cachedEffectiveModel,
     exclude,
     clientToolAllowlist,
+    externalToolScopeIds,
     workingDirectory,
     permissionModeState,
     cachedAgent,
@@ -535,6 +541,7 @@ export async function prepareToolExecutionContextForScope(params: {
     toolsetPreference,
     exclude,
     clientToolAllowlist,
+    externalToolScopeIds,
     workingDirectory,
     permissionModeState,
     modContext,
