@@ -140,6 +140,7 @@ Before finishing, verify:
 | Reference | Load when |
 | --- | --- |
 | `references/tools.md` | The model should autonomously call a local capability |
+| `../web-search-mods/SKILL.md` | The requested tool is web search, Perplexity, Exa, or Parallel |
 | `references/commands.md` | The human should invoke `/foo` |
 | `references/providers.md` | Adding a custom model/API provider for local agents |
 | `references/events.md` | Reacting to lifecycle/tool/turn events or transforming turns/tools |
