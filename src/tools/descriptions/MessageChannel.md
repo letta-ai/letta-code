@@ -36,6 +36,7 @@ Rules:
 - Telegram supports `action="send-rich"` for Bot API Rich Messages from Markdown content. Use it for headings, lists, tables, rich block quotes, details blocks, formulas, and longer structured messages; use `upload-file` for local media files.
 
 Telegram rich messages:
+- In Telegram private chats, normal `action="send"` messages are sent through Bot API Rich Messages by default, with the ordinary HTML-formatted text as fallback if rich delivery is unavailable.
 - Use `action="send-rich"` with `channel="telegram"` for structured Markdown rendered by Telegram Bot API Rich Messages.
 - Use this when the output benefits from real headings, tables, block quotes, collapsible details, footnotes, task lists, or formulas.
 - The `message` field is passed as Telegram rich Markdown. Supported examples include:

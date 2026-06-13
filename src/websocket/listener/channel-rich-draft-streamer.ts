@@ -9,7 +9,7 @@ const MESSAGE_CHANNEL_TOOL_NAMES = new Set([
   "MessageChannel",
   "message_channel",
 ]);
-const DEFAULT_DRAFT_DEBOUNCE_MS = 750;
+const DEFAULT_DRAFT_DEBOUNCE_MS = 1000;
 const MIN_DRAFT_TEXT_LENGTH = 1;
 
 type TelegramDraftSource = ChannelTurnSource & {
@@ -142,6 +142,8 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
   private readonly source: TelegramDraftSource;
   private readonly debounceMs: number;
   private readonly calls = new Map<string, DraftCallState>();
+  private lastDraftAttemptAtMs = 0;
+  private retryBlockedUntilMs = 0;
   private disposed = false;
 
   constructor(options: {
@@ -212,7 +214,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
         state.pendingMessage &&
         state.pendingMessage !== state.lastSentMessage
       ) {
-        flushes.push(this.sendDraft(state));
+        flushes.push(this.sendDraft(state, { force: true }));
       } else if (state.inFlight) {
         flushes.push(state.inFlight);
       }
@@ -294,29 +296,30 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     }
 
     state.pendingMessage = message;
-    if (state.timer) {
-      clearTimeout(state.timer);
-    }
-
-    const isFirstDraft = !state.lastSentMessage;
-    if (this.debounceMs === 0 || isFirstDraft) {
-      state.timer = null;
-      void this.sendDraft(state);
-      return;
-    }
-    state.timer = setTimeout(() => {
-      state.timer = null;
-      void this.sendDraft(state);
-    }, this.debounceMs);
+    this.scheduleDraft(state);
   }
 
-  private sendDraft(state: DraftCallState): Promise<void> {
+  private sendDraft(
+    state: DraftCallState,
+    options: { force?: boolean } = {},
+  ): Promise<void> {
+    if (state.inFlight) {
+      this.scheduleDraft(state);
+      return state.inFlight;
+    }
+
+    const delayMs = this.msUntilNextDraftAttempt({ force: options.force });
+    if (delayMs > 0) {
+      this.setDraftTimer(state, delayMs);
+      return Promise.resolve();
+    }
+
     const message = state.pendingMessage;
     if (!message || message === state.lastSentMessage) {
       return state.inFlight ?? Promise.resolve();
     }
 
-    state.lastSentMessage = message;
+    this.lastDraftAttemptAtMs = Date.now();
     debugLog(
       "channels",
       "Telegram rich draft streamer sending draft: call=%s draft=%d chars=%d",
@@ -337,22 +340,133 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     inFlight = (async () => {
       try {
         await this.adapter.sendRichMessageDraft?.(draft);
+        state.lastSentMessage = message;
       } catch (error) {
+        const retryAfterMs = getTelegramRetryAfterMs(error);
+        if (retryAfterMs !== null) {
+          this.retryBlockedUntilMs = Math.max(
+            this.retryBlockedUntilMs,
+            Date.now() + retryAfterMs,
+          );
+        } else {
+          state.lastSentMessage = message;
+        }
         debugWarn(
           "channels",
           `[Telegram] Rich draft update failed: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        if (retryAfterMs !== null) {
+          debugWarn(
+            "channels",
+            `[Telegram] Rich draft update rate-limited; retrying after ${retryAfterMs}ms`,
+          );
+        }
+        return;
       } finally {
         if (state.inFlight === inFlight) {
           state.inFlight = null;
+        }
+        if (
+          !this.disposed &&
+          this.calls.has(state.toolCallId) &&
+          state.pendingMessage &&
+          state.pendingMessage !== state.lastSentMessage
+        ) {
+          this.scheduleDraft(state);
         }
       }
     })();
     state.inFlight = inFlight;
     return inFlight;
   }
+
+  private scheduleDraft(state: DraftCallState): void {
+    if (this.disposed || !this.calls.has(state.toolCallId)) {
+      return;
+    }
+    if (
+      !state.pendingMessage ||
+      state.pendingMessage === state.lastSentMessage
+    ) {
+      return;
+    }
+    if (state.inFlight) {
+      return;
+    }
+
+    const delayMs = this.msUntilNextDraftAttempt();
+    if (delayMs <= 0) {
+      if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = null;
+      }
+      void this.sendDraft(state);
+      return;
+    }
+
+    if (state.timer) {
+      return;
+    }
+    this.setDraftTimer(state, delayMs);
+  }
+
+  private setDraftTimer(state: DraftCallState, delayMs: number): void {
+    if (state.timer) {
+      clearTimeout(state.timer);
+    }
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      void this.sendDraft(state);
+    }, delayMs);
+  }
+
+  private msUntilNextDraftAttempt(options: { force?: boolean } = {}): number {
+    const now = Date.now();
+    const retryDelayMs = Math.max(0, this.retryBlockedUntilMs - now);
+    if (this.debounceMs === 0 || options.force) {
+      return retryDelayMs;
+    }
+    const rateLimitDelayMs = Math.max(
+      0,
+      this.lastDraftAttemptAtMs + this.debounceMs - now,
+    );
+    return Math.max(retryDelayMs, rateLimitDelayMs);
+  }
+}
+
+function getTelegramRetryAfterMs(error: unknown): number | null {
+  const candidates = findRetryAfterCandidates(error);
+  for (const candidate of candidates) {
+    const seconds = Number(candidate);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.ceil(seconds * 1000);
+    }
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  const retryMatch = message.match(/retry[_ -]?after\D+(\d+(?:\.\d+)?)/i);
+  if (retryMatch?.[1]) {
+    return Math.ceil(Number(retryMatch[1]) * 1000);
+  }
+  return null;
+}
+
+function findRetryAfterCandidates(error: unknown): unknown[] {
+  const record = asRecord(error);
+  if (!record) {
+    return [];
+  }
+  return [
+    asRecord(record.parameters)?.retry_after,
+    asRecord(record.response)?.parameters &&
+      asRecord(asRecord(record.response)?.parameters)?.retry_after,
+    asRecord(record.payload)?.parameters &&
+      asRecord(asRecord(record.payload)?.parameters)?.retry_after,
+    asRecord(record.error)?.parameters &&
+      asRecord(asRecord(record.error)?.parameters)?.retry_after,
+  ];
 }
 
 export function extractTelegramSendRichDraftIntent(
@@ -360,7 +474,11 @@ export function extractTelegramSendRichDraftIntent(
   source: ChannelTurnSource & { channel: "telegram"; accountId: string },
 ): DraftIntent | null {
   const action = extractStringField(argumentsText, "action", false)?.value;
-  if (action?.trim().toLowerCase() !== "send-rich") {
+  const normalizedAction = action?.trim().toLowerCase();
+  const isExplicitRichSend = normalizedAction === "send-rich";
+  const isDefaultRichPrivateSend =
+    normalizedAction === "send" && source.chatType === "direct";
+  if (!isExplicitRichSend && !isDefaultRichPrivateSend) {
     debugLog(
       "channels",
       "Telegram rich draft intent rejected: action=%s",

@@ -1,4 +1,22 @@
-import type { ChannelMessageActionAdapter } from "@/channels/plugin-types";
+import type {
+  ChannelMessageActionAdapter,
+  ChannelMessageActionRequest,
+} from "@/channels/plugin-types";
+import type { ChannelRoute } from "@/channels/types";
+
+function shouldSendTelegramRichMessage(params: {
+  request: ChannelMessageActionRequest;
+  route: ChannelRoute;
+}): boolean {
+  if (params.request.action === "send-rich") {
+    return true;
+  }
+  return (
+    params.request.action === "send" &&
+    params.route.chatType === "direct" &&
+    !params.request.mediaPath?.trim()
+  );
+}
 
 export const telegramMessageActions: ChannelMessageActionAdapter = {
   describeMessageTool() {
@@ -60,6 +78,7 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
     }
 
     const formatted = formatText(request.message ?? "");
+    const sendRichMessage = shouldSendTelegramRichMessage({ request, route });
     const result = await adapter.sendMessage({
       channel: "telegram",
       accountId: route.accountId,
@@ -71,7 +90,7 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
       fileName: request.filename,
       title: request.title,
       parseMode: formatted.parseMode,
-      ...(request.action === "send-rich"
+      ...(sendRichMessage
         ? { richMessage: { markdown: request.message ?? "" } }
         : {}),
     });

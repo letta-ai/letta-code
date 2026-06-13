@@ -72,6 +72,10 @@ function registerTelegramAdapter(sendRichMessageDraft = mock(async () => {})) {
   return { adapter, sendRichMessageDraft };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe("Telegram rich draft streamer", () => {
   beforeEach(() => {
     channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-rich-draft-"));
@@ -140,6 +144,66 @@ describe("Telegram rich draft streamer", () => {
     });
   });
 
+  test("streams private Telegram send args as default rich drafts", async () => {
+    upsertTelegramAccount(true);
+    const { sendRichMessageDraft } = registerTelegramAdapter();
+
+    const streamer = createTelegramRichDraftStreamer({
+      batchId: "batch-1",
+      sources: [telegramSource()],
+      debounceMs: 0,
+    });
+
+    streamer?.handleChunk({
+      message_type: "approval_request_message",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "MessageChannel",
+          arguments:
+            '{"action":"send","channel":"telegram","chat_id":"telegram:chat-12345","accountId":"acct-telegram","message":"# Private default',
+        },
+      ],
+    } as never);
+    await streamer?.flushPending();
+
+    expect(sendRichMessageDraft).toHaveBeenCalledTimes(1);
+    expect(sendRichMessageDraft).toHaveBeenCalledWith({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "chat-12345",
+      threadId: null,
+      draftId: expect.any(Number),
+      richMessage: { markdown: "# Private default" },
+    });
+  });
+
+  test("does not stream plain send args from Telegram channel routes", async () => {
+    upsertTelegramAccount(true);
+    const { sendRichMessageDraft } = registerTelegramAdapter();
+
+    const streamer = createTelegramRichDraftStreamer({
+      batchId: "batch-1",
+      sources: [telegramSource({ chatType: "channel", threadId: "42" })],
+      debounceMs: 0,
+    });
+
+    streamer?.handleChunk({
+      message_type: "approval_request_message",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "MessageChannel",
+          arguments:
+            '{"action":"send","channel":"telegram","chat_id":"telegram:chat-12345","accountId":"acct-telegram","threadId":"42","message":"# Channel plain',
+        },
+      ],
+    } as never);
+    await streamer?.flushPending();
+
+    expect(sendRichMessageDraft).not.toHaveBeenCalled();
+  });
+
   test("sends the first visible draft immediately even when updates are debounced", async () => {
     upsertTelegramAccount(true);
     const { sendRichMessageDraft } = registerTelegramAdapter();
@@ -186,6 +250,91 @@ describe("Telegram rich draft streamer", () => {
     expect(secondCallDraft).toMatchObject({
       richMessage: { markdown: "# Fast update" },
     });
+  });
+
+  test("keeps updating drafts during continuous chunk flow", async () => {
+    upsertTelegramAccount(true);
+    const { sendRichMessageDraft } = registerTelegramAdapter();
+
+    const streamer = createTelegramRichDraftStreamer({
+      batchId: "batch-1",
+      sources: [telegramSource()],
+      debounceMs: 20,
+    });
+
+    streamer?.handleChunk({
+      message_type: "approval_request_message",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "MessageChannel",
+          arguments:
+            '{"action":"send-rich","channel":"telegram","chat_id":"telegram:chat-12345","accountId":"acct-telegram","message":"# Stream',
+        },
+      ],
+    } as never);
+    await Promise.resolve();
+    expect(sendRichMessageDraft).toHaveBeenCalledTimes(1);
+
+    for (let index = 0; index < 6; index += 1) {
+      await sleep(5);
+      streamer?.handleChunk({
+        message_type: "approval_request_message",
+        tool_calls: [
+          {
+            tool_call_id: "call-1",
+            arguments: ` ${index}`,
+          },
+        ],
+      } as never);
+    }
+
+    await sleep(8);
+    expect(sendRichMessageDraft.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    await streamer?.flushPending();
+    const calls = sendRichMessageDraft.mock.calls as unknown[][];
+    const lastCallDraft = calls.at(-1)?.[0] as
+      | { richMessage?: { markdown?: string } }
+      | undefined;
+    expect(lastCallDraft?.richMessage?.markdown).toBe("# Stream 0 1 2 3 4 5");
+  });
+
+  test("honors Telegram retry_after before retrying draft updates", async () => {
+    upsertTelegramAccount(true);
+    let attempts = 0;
+    const sendRichMessageDraft = mock(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw { parameters: { retry_after: 0.02 } };
+      }
+    });
+    registerTelegramAdapter(sendRichMessageDraft);
+
+    const streamer = createTelegramRichDraftStreamer({
+      batchId: "batch-1",
+      sources: [telegramSource()],
+      debounceMs: 0,
+    });
+
+    streamer?.handleChunk({
+      message_type: "approval_request_message",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "MessageChannel",
+          arguments:
+            '{"action":"send-rich","channel":"telegram","chat_id":"telegram:chat-12345","accountId":"acct-telegram","message":"# Retry me',
+        },
+      ],
+    } as never);
+
+    await sleep(5);
+    expect(sendRichMessageDraft).toHaveBeenCalledTimes(1);
+
+    await sleep(30);
+    expect(sendRichMessageDraft).toHaveBeenCalledTimes(2);
+    await streamer?.flushPending();
   });
 
   test("refuses drafts whose target route does not match the inbound source", async () => {

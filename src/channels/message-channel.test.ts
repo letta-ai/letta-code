@@ -445,6 +445,110 @@ describe("MessageChannel", () => {
     });
   });
 
+  test("defaults Telegram private chat sends to rich markdown", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "telegram-rich-2" }));
+
+    const adapter: ChannelAdapter = {
+      id: "telegram:account-1",
+      channelId: "telegram",
+      accountId: "account-1",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("telegram", {
+      accountId: "account-1",
+      chatId: "7952253975",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const markdown = "# Default rich\n\n- **private** chat";
+    const result = await message_channel({
+      action: "send",
+      channel: "telegram",
+      chat_id: "7952253975",
+      message: markdown,
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Message sent to telegram");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        accountId: "account-1",
+        chatId: "7952253975",
+        richMessage: { markdown },
+      }),
+    );
+  });
+
+  test("keeps Telegram channel sends plain unless send-rich is explicit", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "telegram-plain-1" }));
+
+    const adapter: ChannelAdapter = {
+      id: "telegram:account-1",
+      channelId: "telegram",
+      accountId: "account-1",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("telegram", {
+      accountId: "account-1",
+      chatId: "-1003904563283",
+      chatType: "channel",
+      threadId: "42",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "telegram",
+      chat_id: "-1003904563283",
+      message: "# Plain channel fallback",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Message sent to telegram");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        richMessage: expect.anything(),
+      }),
+    );
+  });
+
   test("passes common Telegram rich Markdown constructs through unchanged", async () => {
     const registry = new ChannelRegistry();
 
