@@ -49,6 +49,9 @@ interface DiscordTestMessage {
 
 class FakeDiscordClient {
   static instances: FakeDiscordClient[] = [];
+  // When set, the next login() call rejects with this error (simulates the
+  // gateway refusing the connection, e.g. disallowed intents).
+  static loginError: unknown = null;
 
   readonly user = {
     id: "bot-user",
@@ -61,7 +64,12 @@ class FakeDiscordClient {
     fetch: mock(async () => null),
   };
 
-  readonly login = mock(async (_token: string) => undefined);
+  readonly login = mock(async (_token: string) => {
+    if (FakeDiscordClient.loginError) {
+      throw FakeDiscordClient.loginError;
+    }
+    return undefined;
+  });
   readonly destroy = mock(() => {});
   private readonly handlers = new Map<
     string,
@@ -191,6 +199,7 @@ async function startAdapterWithDeliveries(
 
 beforeEach(() => {
   FakeDiscordClient.instances.length = 0;
+  FakeDiscordClient.loginError = null;
   __testOverrideLoadDiscordModule(async () => createFakeDiscordRuntime());
 });
 
@@ -200,6 +209,31 @@ afterEach(() => {
 
 afterAll(() => {
   mock.restore();
+});
+
+// ── Discord adapter connection errors ──────────────────────────────────
+
+describe("Discord adapter start()", () => {
+  test("translates a disallowed-intents login failure into an actionable error", async () => {
+    FakeDiscordClient.loginError = new Error("Used disallowed intents");
+    const adapter = createDiscordAdapter({
+      ...discordAccountDefaults,
+      allowedChannels: {},
+    });
+
+    await expect(adapter.start()).rejects.toThrow(/Message Content Intent/);
+    expect(adapter.isRunning()).toBe(false);
+  });
+
+  test("preserves unrelated login failures", async () => {
+    FakeDiscordClient.loginError = new Error("An invalid token was provided.");
+    const adapter = createDiscordAdapter({
+      ...discordAccountDefaults,
+      allowedChannels: {},
+    });
+
+    await expect(adapter.start()).rejects.toThrow(/invalid token/i);
+  });
 });
 
 // ── Discord adapter open-channel ingress ───────────────────────────────
