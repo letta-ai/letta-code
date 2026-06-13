@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Letta Viewer</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --bg-elevated: #f6f7f9;
+        --border: #e3e6ea;
+        --fg: #1f2328;
+        --fg-muted: #6b7280;
+        --accent: #6d28d9;
+        --code-bg: #f6f8fa;
+        --table-stripe: #f6f7f9;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d1117;
+          --bg-elevated: #161b22;
+          --border: #30363d;
+          --fg: #e6edf3;
+          --fg-muted: #8b949e;
+          --accent: #a78bfa;
+          --code-bg: #161b22;
+          --table-stripe: #161b22;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-elevated);
+        flex: 0 0 auto;
+      }
+      header .name { font-weight: 600; font-size: 14px; }
+      header .badge {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #fff;
+        background: var(--accent);
+        padding: 2px 8px;
+        border-radius: 999px;
+      }
+      header .meta {
+        color: var(--fg-muted);
+        font-size: 12px;
+        margin-left: auto;
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        white-space: nowrap;
+      }
+      header .path {
+        color: var(--fg-muted);
+        font-size: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 38vw;
+      }
+      main { flex: 1 1 auto; overflow: auto; position: relative; }
+      .pad { padding: 20px 24px; }
+
+      /* Image */
+      .img-wrap {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: var(--bg);
+        background-image:
+          linear-gradient(45deg, rgba(128,128,128,0.12) 25%, transparent 25%),
+          linear-gradient(-45deg, rgba(128,128,128,0.12) 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, rgba(128,128,128,0.12) 75%),
+          linear-gradient(-45deg, transparent 75%, rgba(128,128,128,0.12) 75%);
+        background-size: 20px 20px;
+        background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+        padding: 24px;
+      }
+      .img-wrap img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 1px 8px rgba(0,0,0,0.2); }
+
+      /* PDF / HTML iframe */
+      iframe.full { border: 0; width: 100%; height: 100%; display: block; background: #fff; }
+
+      /* Code */
+      .code {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12.5px;
+        line-height: 1.6;
+        tab-size: 2;
+      }
+      .code table { border-collapse: collapse; width: 100%; }
+      .code td { padding: 0; vertical-align: top; }
+      .code td.ln {
+        text-align: right;
+        color: var(--fg-muted);
+        padding: 0 14px 0 16px;
+        user-select: none;
+        white-space: nowrap;
+        border-right: 1px solid var(--border);
+      }
+      .code td.src { padding: 0 16px; white-space: pre; }
+
+      /* Markdown */
+      .md { max-width: 860px; margin: 0 auto; }
+      .md h1, .md h2, .md h3, .md h4 { line-height: 1.25; margin: 1.4em 0 0.5em; }
+      .md h1 { font-size: 1.8em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+      .md h2 { font-size: 1.4em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+      .md h3 { font-size: 1.2em; }
+      .md p { margin: 0.7em 0; }
+      .md ul, .md ol { padding-left: 1.6em; margin: 0.6em 0; }
+      .md li { margin: 0.2em 0; }
+      .md code {
+        background: var(--code-bg);
+        padding: 0.15em 0.4em;
+        border-radius: 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.88em;
+      }
+      .md pre {
+        background: var(--code-bg);
+        padding: 14px 16px;
+        border-radius: 8px;
+        overflow: auto;
+        border: 1px solid var(--border);
+      }
+      .md pre code { background: none; padding: 0; }
+      .md blockquote {
+        margin: 0.8em 0;
+        padding: 0.2em 1em;
+        color: var(--fg-muted);
+        border-left: 3px solid var(--border);
+      }
+      .md a { color: var(--accent); }
+      .md hr { border: 0; border-top: 1px solid var(--border); margin: 1.4em 0; }
+      .md table { border-collapse: collapse; margin: 0.8em 0; }
+      .md th, .md td { border: 1px solid var(--border); padding: 6px 10px; }
+      .md img { max-width: 100%; }
+
+      /* CSV table */
+      .csv-wrap { padding: 16px; overflow: auto; }
+      table.csv { border-collapse: collapse; font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      table.csv th, table.csv td { border: 1px solid var(--border); padding: 4px 10px; text-align: left; white-space: nowrap; }
+      table.csv thead th { position: sticky; top: 0; background: var(--bg-elevated); }
+      table.csv tbody tr:nth-child(even) { background: var(--table-stripe); }
+      .rownum { color: var(--fg-muted); text-align: right; user-select: none; }
+
+      .notice { color: var(--fg-muted); font-size: 12px; padding: 8px 24px; border-top: 1px solid var(--border); background: var(--bg-elevated); }
+      .empty { color: var(--fg-muted); padding: 40px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="badge" id="badge">file</span>
+      <span class="name" id="name">file</span>
+      <span class="meta">
+        <span class="path" id="path" title=""></span>
+        <span id="size"></span>
+      </span>
+    </header>
+    <main id="content"></main>
+    <div class="notice" id="notice" hidden></div>
+
+    <script id="letta-view-data" type="application/json">
+      <!--LETTA_VIEW_DATA_PLACEHOLDER-->
+    </script>
+    <script>
+      (function () {
+        var data;
+        try {
+          data = JSON.parse(
+            document.getElementById("letta-view-data").textContent
+          );
+        } catch (e) {
+          document.getElementById("content").innerHTML =
+            '<div class="empty">Failed to parse viewer payload.</div>';
+          return;
+        }
+
+        function esc(s) {
+          return String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+        }
+
+        var content = document.getElementById("content");
+        document.getElementById("badge").textContent = data.kind || "file";
+        document.getElementById("name").textContent = data.name || "file";
+        document.title = (data.name || "file") + " — Letta Viewer";
+        var pathEl = document.getElementById("path");
+        pathEl.textContent = data.path || "";
+        pathEl.title = data.path || "";
+        document.getElementById("size").textContent = data.sizeLabel || "";
+
+        if (data.truncated) {
+          var notice = document.getElementById("notice");
+          notice.hidden = false;
+          notice.textContent =
+            "Content was truncated for display (" + data.sizeLabel + ").";
+        }
+
+        function renderImage() {
+          var wrap = document.createElement("div");
+          wrap.className = "img-wrap";
+          var img = document.createElement("img");
+          img.src = data.dataUri;
+          img.alt = data.name;
+          wrap.appendChild(img);
+          content.appendChild(wrap);
+        }
+
+        function renderPdf() {
+          var f = document.createElement("iframe");
+          f.className = "full";
+          f.src = data.dataUri;
+          content.appendChild(f);
+        }
+
+        function renderHtml() {
+          var f = document.createElement("iframe");
+          f.className = "full";
+          f.setAttribute("sandbox", "allow-scripts allow-forms allow-popups");
+          f.srcdoc = data.text || "";
+          content.appendChild(f);
+        }
+
+        function renderCode() {
+          var lines = (data.text || "").split("\n");
+          var rows = "";
+          for (var i = 0; i < lines.length; i++) {
+            rows +=
+              '<tr><td class="ln">' +
+              (i + 1) +
+              '</td><td class="src">' +
+              esc(lines[i]) +
+              "</td></tr>";
+          }
+          content.innerHTML =
+            '<div class="pad"><pre class="code"><table><tbody>' +
+            rows +
+            "</tbody></table></pre></div>";
+        }
+
+        function parseCsvLine(line, delim) {
+          var out = [];
+          var cur = "";
+          var inq = false;
+          for (var i = 0; i < line.length; i++) {
+            var c = line[i];
+            if (inq) {
+              if (c === '"') {
+                if (line[i + 1] === '"') { cur += '"'; i++; }
+                else inq = false;
+              } else cur += c;
+            } else if (c === '"') inq = true;
+            else if (c === delim) { out.push(cur); cur = ""; }
+            else cur += c;
+          }
+          out.push(cur);
+          return out;
+        }
+
+        function renderCsv() {
+          var delim = data.delimiter || ",";
+          var raw = (data.text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+          var lines = raw.split("\n");
+          while (lines.length && lines[lines.length - 1] === "") lines.pop();
+          if (!lines.length) {
+            content.innerHTML = '<div class="empty">Empty file.</div>';
+            return;
+          }
+          var header = parseCsvLine(lines[0], delim);
+          var html =
+            '<div class="csv-wrap"><table class="csv"><thead><tr><th class="rownum">#</th>';
+          for (var h = 0; h < header.length; h++)
+            html += "<th>" + esc(header[h]) + "</th>";
+          html += "</tr></thead><tbody>";
+          for (var r = 1; r < lines.length; r++) {
+            var cells = parseCsvLine(lines[r], delim);
+            html += '<tr><td class="rownum">' + r + "</td>";
+            for (var c = 0; c < header.length; c++)
+              html += "<td>" + esc(cells[c] != null ? cells[c] : "") + "</td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table></div>";
+          content.innerHTML = html;
+        }
+
+        function renderMarkdown() {
+          content.innerHTML =
+            '<div class="pad md">' + mdToHtml(data.text || "") + "</div>";
+        }
+
+        function inline(s) {
+          s = esc(s);
+          // inline code first (protect contents)
+          var codes = [];
+          s = s.replace(/`([^`]+)`/g, function (_, c) {
+            codes.push(c);
+            return "\u0000" + (codes.length - 1) + "\u0000";
+          });
+          s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, function (_, a, u) {
+            return '<img alt="' + a + '" src="' + u + '">';
+          });
+          s = s.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, function (_, t, u) {
+            return '<a href="' + u + '" target="_blank" rel="noreferrer">' + t + "</a>";
+          });
+          s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+          s = s.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+          s = s.replace(/_([^_]+)_/g, "<em>$1</em>");
+          s = s.replace(/\u0000(\d+)\u0000/g, function (_, i) {
+            return "<code>" + codes[Number(i)] + "</code>";
+          });
+          return s;
+        }
+
+        function mdToHtml(src) {
+          src = src.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+          var lines = src.split("\n");
+          var out = [];
+          var i = 0;
+          var listType = null;
+          function closeList() {
+            if (listType) { out.push("</" + listType + ">"); listType = null; }
+          }
+          while (i < lines.length) {
+            var line = lines[i];
+            // fenced code block
+            var fence = line.match(/^\s*```(.*)$/);
+            if (fence) {
+              closeList();
+              var buf = [];
+              i++;
+              while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
+                buf.push(lines[i]); i++;
+              }
+              i++;
+              out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>");
+              continue;
+            }
+            if (/^\s*$/.test(line)) { closeList(); i++; continue; }
+            var hr = /^\s*([-*_])\s*\1\s*\1[\s\1]*$/.test(line);
+            if (hr) { closeList(); out.push("<hr>"); i++; continue; }
+            var h = line.match(/^(#{1,6})\s+(.*)$/);
+            if (h) {
+              closeList();
+              var lvl = h[1].length;
+              out.push("<h" + lvl + ">" + inline(h[2]) + "</h" + lvl + ">");
+              i++; continue;
+            }
+            var bq = line.match(/^\s*>\s?(.*)$/);
+            if (bq) {
+              closeList();
+              var qbuf = [];
+              while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+                qbuf.push(lines[i].replace(/^\s*>\s?/, "")); i++;
+              }
+              out.push("<blockquote>" + mdToHtml(qbuf.join("\n")) + "</blockquote>");
+              continue;
+            }
+            var ul = line.match(/^\s*[-*+]\s+(.*)$/);
+            var ol = line.match(/^\s*\d+\.\s+(.*)$/);
+            if (ul || ol) {
+              var want = ul ? "ul" : "ol";
+              if (listType !== want) { closeList(); out.push("<" + want + ">"); listType = want; }
+              out.push("<li>" + inline((ul ? ul[1] : ol[1])) + "</li>");
+              i++; continue;
+            }
+            // paragraph (gather until blank)
+            closeList();
+            var pbuf = [line];
+            i++;
+            while (
+              i < lines.length &&
+              !/^\s*$/.test(lines[i]) &&
+              !/^\s*```/.test(lines[i]) &&
+              !/^(#{1,6})\s+/.test(lines[i]) &&
+              !/^\s*>/.test(lines[i]) &&
+              !/^\s*[-*+]\s+/.test(lines[i]) &&
+              !/^\s*\d+\.\s+/.test(lines[i])
+            ) {
+              pbuf.push(lines[i]); i++;
+            }
+            out.push("<p>" + inline(pbuf.join("\n")) + "</p>");
+          }
+          closeList();
+          return out.join("\n");
+        }
+
+        switch (data.kind) {
+          case "image": renderImage(); break;
+          case "pdf": renderPdf(); break;
+          case "html": renderHtml(); break;
+          case "markdown": renderMarkdown(); break;
+          case "csv": renderCsv(); break;
+          case "code":
+          case "text": renderCode(); break;
+          default:
+            content.innerHTML =
+              '<div class="empty">No preview available for this file type.</div>';
+        }
+      })();
+    </script>
+  </body>
+</html>
