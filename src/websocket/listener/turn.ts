@@ -67,6 +67,7 @@ import {
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
+import { buildGoalContinuationTurn } from "./goal-continuation";
 import {
   consumeInterruptQueue,
   emitInterruptToolReturnMessage,
@@ -295,7 +296,43 @@ function finalizeInterruptedTurn(
   }
 }
 
+/**
+ * Process a message and, when an autonomous goal loop is active, keep taking
+ * continuation turns until the goal completes/blocks/pauses, the turn ends
+ * uncleanly (cancel/error), the token budget is hit, or the hard iteration cap
+ * is reached. Each iteration is a full turn via {@link runSingleTurn}, mirroring
+ * the TUI's end_turn re-entry (use-conversation-loop.ts) on the listener path.
+ */
 export async function handleIncomingMessage(
+  msg: IncomingMessage,
+  socket: ListenerTransport,
+  runtime: ConversationRuntime,
+  onStatusChange?: (
+    status: "idle" | "receiving" | "processing",
+    connectionId: string,
+  ) => void,
+  connectionId?: string,
+  dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
+): Promise<void> {
+  let currentMsg = msg;
+  let batchId = dequeuedBatchId;
+  while (true) {
+    await runSingleTurn(
+      currentMsg,
+      socket,
+      runtime,
+      onStatusChange,
+      connectionId,
+      batchId,
+    );
+    const continuation = buildGoalContinuationTurn(currentMsg, runtime);
+    if (!continuation) return;
+    currentMsg = continuation;
+    batchId = `batch-goal-${crypto.randomUUID()}`;
+  }
+}
+
+async function runSingleTurn(
   msg: IncomingMessage,
   socket: ListenerTransport,
   runtime: ConversationRuntime,

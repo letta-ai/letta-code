@@ -45,6 +45,7 @@ import type {
 import { debugLog } from "@/utils/debug";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
 import { getConversationWorkingDirectory } from "./cwd";
+import { MAX_AUTONOMOUS_GOAL_ITERATIONS } from "./goal-continuation";
 import { reloadListenerModAdapter } from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
@@ -63,7 +64,11 @@ import {
   buildMaybeLaunchReflectionSubagent,
   handleIncomingMessage,
 } from "./turn";
-import type { ConversationRuntime, StartListenerOptions } from "./types";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  StartListenerOptions,
+} from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 
@@ -694,6 +699,41 @@ async function handleRememberCommand(
 }
 
 /**
+ * Kick off an autonomous goal turn without blocking the /goal command result.
+ *
+ * The turn (and its full continuation loop in handleIncomingMessage) is chained
+ * onto the conversation message queue so it stays serialized with other turns
+ * and runs in the background — the command can return its confirmation
+ * immediately while the agent grinds on the goal.
+ */
+function startGoalLoopTurnInBackground(
+  socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+  message: IncomingMessage,
+  opts: {
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): void {
+  conversationRuntime.messageQueue = conversationRuntime.messageQueue
+    .then(() =>
+      handleIncomingMessage(
+        message,
+        socket,
+        conversationRuntime,
+        opts.onStatusChange,
+        opts.connectionId,
+      ),
+    )
+    .catch((error: unknown) => {
+      console.error(
+        "[Goal] Autonomous goal loop failed:",
+        error instanceof Error ? error.message : error,
+      );
+    });
+}
+
+/**
  * /goal — Manage conversation goals with auto-continuation.
  *
  * Subcommands:
@@ -820,7 +860,9 @@ async function handleGoalCommand(
           (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
       });
 
-      await handleIncomingMessage(
+      startGoalLoopTurnInBackground(
+        socket,
+        conversationRuntime,
         {
           type: "message",
           agentId,
@@ -833,10 +875,7 @@ async function handleGoalCommand(
             },
           ],
         },
-        socket,
-        conversationRuntime,
-        opts.onStatusChange,
-        opts.connectionId,
+        opts,
       );
     }
 
@@ -878,7 +917,7 @@ async function handleGoalCommand(
   persistPermissionModeMapForRuntime(conversationRuntime.listener);
 
   const replaced = previousGoal ? " replaced" : " active";
-  const resultPrefix = `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`;
+  const resultPrefix = `Goal${replaced} (iter 1/${MAX_AUTONOMOUS_GOAL_ITERATIONS})\n${formatGoalSummary(goal)}`;
 
   // Send initial goal continuation prompt through the turn pipeline
   const goalState = goalLoopMode.getState();
@@ -900,7 +939,9 @@ async function handleGoalCommand(
     timeUsedSeconds: (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
   });
 
-  await handleIncomingMessage(
+  startGoalLoopTurnInBackground(
+    socket,
+    conversationRuntime,
     {
       type: "message",
       agentId,
@@ -913,10 +954,7 @@ async function handleGoalCommand(
         },
       ],
     },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
+    opts,
   );
 
   return resultPrefix;
