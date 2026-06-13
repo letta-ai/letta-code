@@ -459,6 +459,129 @@ describe("memory_apply_patch tool", () => {
     ).rejects.toThrow(/read_only/i);
   });
 
+  test("fails safely with actionable diagnostics when hunk context does not match", async () => {
+    mkdirSync(join(memoryDir, "system"), { recursive: true });
+    const filePath = join(memoryDir, "system", "persona.md");
+    const original = [
+      "---",
+      "description: Persona",
+      "---",
+      "I am warm, present, grounded, and useful.",
+      "Steady company.",
+      "Low filler.",
+    ].join("\n");
+    writeFileSync(filePath, original, "utf8");
+    await runGit(memoryDir, ["add", "system/persona.md"]);
+    await runGit(memoryDir, ["commit", "-m", "seed persona"]);
+    await runGit(memoryDir, ["push", "origin", "main"]);
+    const headBefore = await runGit(memoryDir, ["rev-parse", "HEAD"]);
+
+    await expect(
+      runScopedMemoryApplyPatch({
+        reason: "attempt mismatched persona update",
+        input: [
+          "*** Begin Patch",
+          "*** Update File: system/persona.md",
+          "@@",
+          " I am warm, present, grounded and useful.",
+          " Steady company.",
+          "-Low filler.",
+          "+Low filler. Reproduction marker.",
+          "*** End Patch",
+        ].join("\n"),
+      }),
+    ).rejects.toThrow(
+      /context not found[\s\S]*did not match the current memory file exactly[\s\S]*Read the current memory file and retry with exact context[\s\S]*I am warm, present, grounded and useful\.[\s\S]*I am warm, present, grounded, and useful\./,
+    );
+
+    expect(readFileSync(filePath, "utf8")).toBe(original);
+    expect(await runGit(memoryDir, ["rev-parse", "HEAD"])).toBe(headBefore);
+  });
+
+  test("does not apply approximate hunk to similar nearby content", async () => {
+    mkdirSync(join(memoryDir, "system"), { recursive: true });
+    const filePath = join(memoryDir, "system", "similar.md");
+    const original = [
+      "---",
+      "description: Similar sections",
+      "---",
+      "Alpha section",
+      "Remember project Apollo details.",
+      "Keep exact nuance.",
+      "",
+      "Beta section",
+      "Remember project Apollo detail.",
+      "Keep exact nuance.",
+    ].join("\n");
+    writeFileSync(filePath, original, "utf8");
+    await runGit(memoryDir, ["add", "system/similar.md"]);
+    await runGit(memoryDir, ["commit", "-m", "seed similar sections"]);
+    await runGit(memoryDir, ["push", "origin", "main"]);
+
+    await expect(
+      runScopedMemoryApplyPatch({
+        reason: "attempt approximate similar update",
+        input: [
+          "*** Begin Patch",
+          "*** Update File: system/similar.md",
+          "@@",
+          " Alpha section",
+          "-Remember project Apollo detail.",
+          "+Remember project Apollo detail. Updated.",
+          " Keep exact nuance.",
+          "*** End Patch",
+        ].join("\n"),
+      }),
+    ).rejects.toThrow(/context not found/);
+
+    expect(readFileSync(filePath, "utf8")).toBe(original);
+  });
+
+  test("truncates current file preview for large context mismatch diagnostics", async () => {
+    mkdirSync(join(memoryDir, "system"), { recursive: true });
+    const filePath = join(memoryDir, "system", "large.md");
+    const largeBody = Array.from(
+      { length: 300 },
+      (_, idx) => `line ${idx.toString().padStart(3, "0")} ${"x".repeat(40)}`,
+    ).join("\n");
+    const original = [
+      "---",
+      "description: Large memory",
+      "---",
+      largeBody,
+    ].join("\n");
+    writeFileSync(filePath, original, "utf8");
+    await runGit(memoryDir, ["add", "system/large.md"]);
+    await runGit(memoryDir, ["commit", "-m", "seed large memory"]);
+    await runGit(memoryDir, ["push", "origin", "main"]);
+
+    let thrown: unknown;
+    try {
+      await runScopedMemoryApplyPatch({
+        reason: "attempt large mismatch update",
+        input: [
+          "*** Begin Patch",
+          "*** Update File: system/large.md",
+          "@@",
+          "-missing line that is not in the file",
+          "+replacement",
+          "*** End Patch",
+        ].join("\n"),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toContain("context not found");
+    expect(message).toContain("... <truncated");
+    expect(message).toContain("line 000");
+    expect(message).not.toContain("line 299");
+    expect(message.length).toBeLessThan(7_000);
+    expect(readFileSync(filePath, "utf8")).toBe(original);
+  });
+
   test("rejects UTF-16LE memory files without modifying them", async () => {
     mkdirSync(join(memoryDir, "system"), { recursive: true });
     const filePath = join(memoryDir, "system", "utf16.md");
