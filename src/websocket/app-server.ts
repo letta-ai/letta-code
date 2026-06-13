@@ -295,8 +295,21 @@ export async function startAppServer(
     }
 
     if (activeSession) {
-      closeSocket(socket, 1008, "control channel already connected");
-      return;
+      // A new control connection supersedes the previous session rather than
+      // being rejected. This is the desktop reconnecting (e.g. after sleep/
+      // wake or a network change) while the previous control socket is still
+      // half-open and the server has not yet observed its close. Rejecting the
+      // reconnect would leave the client unable to start runtimes or send
+      // messages, so every new chat would silently do nothing until the stale
+      // socket was finally detected as closed. Tear the old session down and
+      // let the new socket take over ("newest control wins"), mirroring the
+      // takeover that startControlSession already performs for the runtime.
+      const superseded = activeSession;
+      activeSession = null;
+      stopRuntime(superseded.runtime, true);
+      if (getActiveRuntime() === superseded.runtime) {
+        setActiveRuntime(null);
+      }
     }
 
     const streamSocket = clearPendingStream();
