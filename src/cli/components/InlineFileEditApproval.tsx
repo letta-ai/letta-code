@@ -176,8 +176,10 @@ export const InlineFileEditApproval = memo(
     const columns = useTerminalWidth();
     useProgressIndicator();
 
-    // Custom option index depends on whether "always" option is shown
-    const customOptionIndex = allowPersistence ? 2 : 1;
+    // Show session-only option when defaultScope is "project" and persistence is allowed
+    const showSessionOption = allowPersistence && defaultScope === "project";
+    // Custom option index depends on how many fixed options are shown
+    const customOptionIndex = showSessionOption ? 3 : allowPersistence ? 2 : 1;
     const maxOptionIndex = customOptionIndex;
     const isOnCustomOption = selectedOption === customOptionIndex;
 
@@ -276,6 +278,11 @@ export const InlineFileEditApproval = memo(
               defaultScope,
               diffsToPass.size > 0 ? diffsToPass : undefined,
             );
+          } else if (selectedOption === 2 && showSessionOption) {
+            onApproveAlways(
+              "session",
+              diffsToPass.size > 0 ? diffsToPass : undefined,
+            );
           }
           return;
         }
@@ -292,6 +299,13 @@ export const InlineFileEditApproval = memo(
         if (input === "2" && allowPersistence) {
           onApproveAlways(
             defaultScope,
+            diffsToPass.size > 0 ? diffsToPass : undefined,
+          );
+          return;
+        }
+        if (input === "3" && showSessionOption) {
+          onApproveAlways(
+            "session",
             diffsToPass.size > 0 ? diffsToPass : undefined,
           );
           return;
@@ -503,7 +517,34 @@ export const InlineFileEditApproval = memo(
                   }
                 >
                   {approveAlwaysText ||
-                    "Yes, and don't ask again for this project"}
+                    (defaultScope === "session"
+                      ? "Yes, and don't ask again for this session"
+                      : "Yes, and don't ask again for this project")}
+                </Text>
+              </Box>
+            </Box>
+          )}
+
+          {/* Option 3: Yes, allow for this session only (only when defaultScope is project) */}
+          {showSessionOption && (
+            <Box flexDirection="row">
+              <Box width={5} flexShrink={0}>
+                <Text
+                  color={
+                    selectedOption === 2 ? colors.approval.header : undefined
+                  }
+                >
+                  {selectedOption === 2 ? "❯" : " "} 3.
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={Math.max(0, columns - 5)}>
+                <Text
+                  wrap="wrap"
+                  color={
+                    selectedOption === 2 ? colors.approval.header : undefined
+                  }
+                >
+                  Yes, allow for this session only
                 </Text>
               </Box>
             </Box>
