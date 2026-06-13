@@ -64,3 +64,12 @@ export const COMPACTION_SUMMARY_HEADER =
 export const TOKEN_DISPLAY_THRESHOLD = 100;
 // Show elapsed time after 2 minutes (in ms)
 export const ELAPSED_DISPLAY_THRESHOLD_MS = 60 * 1000;
+
+/**
+ * Display label for the modifier key that inserts a newline in the input
+ * (Shift/Option/Ctrl + Enter in PasteAwareTextInput). Platform-aware so
+ * the statusline hint matches the user's actual keybinding.
+ * Single source of truth — update here if the keybinding changes.
+ */
+export const INPUT_NEWLINE_MODIFIER_LABEL =
+  process.platform === "darwin" ? "Opt+Enter" : "Alt+Enter";

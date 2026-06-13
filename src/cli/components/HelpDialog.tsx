@@ -1,6 +1,7 @@
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { commands } from "@/cli/commands/registry";
+import { INPUT_NEWLINE_MODIFIER_LABEL } from "@/constants";
 import { getVersion } from "@/version";
 import { colors } from "./colors";
 import { OverlayShell } from "./OverlayShell";
@@ -73,7 +74,10 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
       { keys: "↓", description: "Navigate down / next command in history" },
       { keys: "↑", description: "Navigate up / previous command in history" },
       { keys: "Shift+Enter", description: "Insert newline (multi-line input)" },
-      { keys: "Opt+Enter", description: "Insert newline (alternative)" },
+      {
+        keys: INPUT_NEWLINE_MODIFIER_LABEL,
+        description: "Insert newline (alternative)",
+      },
       {
         keys: "Ctrl+C",
         description: "Interrupt operation / exit (double press)",

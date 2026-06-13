@@ -7,6 +7,7 @@ import type {
   StatuslineRenderContext,
   StatuslineRenderer,
 } from "@/cli/display/statusline/types";
+import { INPUT_NEWLINE_MODIFIER_LABEL } from "@/constants";
 
 interface DefaultStatuslineParts {
   left: ReactNode;
@@ -77,8 +78,15 @@ export function buildDefaultStatuslineParts(
     ? chalk.magenta(context.ui.goalStatusText)
     : " ".repeat(rightPrefixSpaces) + rightCore;
 
+  const left = (
+    <Text dimColor wrap="truncate-end">
+      /help for commands & shortcuts · {INPUT_NEWLINE_MODIFIER_LABEL} for
+      newline
+    </Text>
+  );
+
   return {
-    left: <Text> </Text>,
+    left,
     right,
     rightCore,
     rightWidth,
@@ -86,7 +94,10 @@ export function buildDefaultStatuslineParts(
 }
 
 export function renderDefaultStatusline(context: StatuslineRenderContext) {
-  const rightColumnWidth = getDefaultStatuslineRightColumnWidth(context);
+  // Use the capped rightColumnWidth from InputRich (max 72, 45% of terminal)
+  // rather than getDefaultStatuslineRightColumnWidth which returns terminalWidth-4
+  // and leaves no room for left-side content.
+  const rightColumnWidth = context.ui.rightColumnWidth;
   const parts = buildDefaultStatuslineParts(context, rightColumnWidth);
 
   return (

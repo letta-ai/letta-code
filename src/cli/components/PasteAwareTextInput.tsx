@@ -192,6 +192,7 @@ export function PasteAwareTextInput({
   useInput(
     (input, key) => {
       // Handle Shift/Option/Ctrl + Enter to insert newline
+      // Display label for this shortcut: INPUT_NEWLINE_MODIFIER_LABEL in @/constants
       if (key.return && (key.shift || key.meta || key.ctrl)) {
         const at = Math.max(
           0,
