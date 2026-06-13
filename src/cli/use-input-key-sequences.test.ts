@@ -8,6 +8,13 @@ const useInputModuleUrl = new URL(
 async function loadTestUtils() {
   const mod = await import(useInputModuleUrl);
   return mod.__lettaUseInputTestUtils as {
+    inputFromKeypress: (keypress: {
+      ctrl?: boolean;
+      meta?: boolean;
+      name?: string;
+      sequence?: string;
+      raw?: string;
+    }) => string;
     isProtocolReportSequence: (data: unknown) => boolean;
     stripTrailingNewlineFromCsiU: (data: unknown) => unknown;
     shouldSuppressBareEnterAfterModifiedEnter: (
@@ -49,6 +56,17 @@ describe("use-input key sequence handling", () => {
       "\x1b[13;2:1u",
     );
     expect(t.stripTrailingNewlineFromCsiU("\x1b[13;2u")).toBe("\x1b[13;2u");
+  });
+
+  test("preserves ESC-prefixed meta letter input", async () => {
+    const t = await loadTestUtils();
+
+    expect(
+      t.inputFromKeypress({ meta: true, sequence: "", raw: "\x1bp" }),
+    ).toBe("p");
+    expect(
+      t.inputFromKeypress({ meta: true, sequence: "p", raw: "\x1b[112;3u" }),
+    ).toBe("p");
   });
 
   test("maps Enter-as-submit by platform correctly", async () => {
