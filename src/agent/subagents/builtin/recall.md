@@ -3,7 +3,6 @@ name: recall
 description: Recall past interactions and experience
 tools: Bash, Read, TaskOutput
 model: inherit
-memoryBlocks: all
 mode: stateful
 fork: true
 ---
