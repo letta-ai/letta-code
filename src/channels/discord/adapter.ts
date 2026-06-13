@@ -12,6 +12,7 @@ import {
   isDiscordGuildChannelAllowed,
   resolveDiscordChannelMode,
 } from "./channel-gating";
+import { describeDiscordConnectionError } from "./connection-error";
 import { formatDiscordDeliveryError } from "./error-reply";
 import {
   resolveDiscordInboundAttachments,
@@ -893,7 +894,18 @@ export function createDiscordAdapter(
         console.error("[Discord] Client error:", err);
       });
 
-      await client.login(config.token);
+      try {
+        await client.login(config.token);
+      } catch (error) {
+        // Surface an actionable message when the gateway rejects the
+        // connection for missing privileged intents instead of the opaque
+        // "Used disallowed intents" close reason.
+        const friendly = describeDiscordConnectionError(error);
+        if (friendly) {
+          throw new Error(friendly);
+        }
+        throw error;
+      }
     },
 
     async stop(): Promise<void> {
