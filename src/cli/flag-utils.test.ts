@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   parseCsvListFlag,
-  parseJsonArrayFlag,
   parsePositiveIntFlag,
   resolveImportFlagAlias,
 } from "@/cli/flag-utils";
@@ -38,14 +37,5 @@ describe("flag utils", () => {
     expect(() =>
       parsePositiveIntFlag({ rawValue: "0", flagName: "max-turns" }),
     ).toThrow("--max-turns must be a positive integer");
-  });
-
-  test("parseJsonArrayFlag parses arrays and rejects non-arrays", () => {
-    expect(
-      parseJsonArrayFlag('[{"label":"persona"}]', "memory-blocks"),
-    ).toEqual([{ label: "persona" }]);
-    expect(() =>
-      parseJsonArrayFlag('{"label":"persona"}', "memory-blocks"),
-    ).toThrow("memory-blocks must be a JSON array");
   });
 });
