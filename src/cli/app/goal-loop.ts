@@ -24,5 +24,7 @@ export function buildGoalPrompt(
     tokensUsed: storedGoal?.tokensUsed ?? 0,
     tokenBudget: storedGoal?.tokenBudget ?? state.tokenBudget,
     timeUsedSeconds: (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
+    currentStep: state.currentIteration,
+    maxSteps: state.maxSteps,
   });
 }

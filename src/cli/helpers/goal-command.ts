@@ -3,11 +3,18 @@ import type { ConversationGoal } from "@/settings-manager";
 import { formatCompact } from "./format";
 
 export const GOAL_USAGE =
-  "Usage: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]";
+  "Usage: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N|--max-steps N <objective>]";
 export const GOAL_USAGE_HINT =
-  "Example: /goal --token-budget 50000 improve benchmark coverage";
+  "Example: /goal --token-budget 50000 --max-steps 30 improve benchmark coverage";
 
 const MAX_GOAL_OBJECTIVE_CHARS = 4000;
+
+/**
+ * Default cap on autonomous goal-loop continuation turns. Prevents an
+ * unattended `/goal` from looping indefinitely in unrestricted mode. Users can
+ * override with `--max-steps N`, or disable with `--max-steps 0|unlimited`.
+ */
+export const GOAL_DEFAULT_MAX_STEPS = 50;
 
 export function validateGoalObjective(objective: string): string | null {
   if (!objective.trim()) return "Goal objective must not be empty.";
@@ -35,11 +42,14 @@ export function goalStatusLabel(status: ConversationGoal["status"]): string {
 export function parseGoalArgs(input: string): {
   objective: string;
   tokenBudget: number | null;
+  maxSteps: number | null;
   replace: boolean;
   error?: string;
 } {
   let rest = input.trim();
   let tokenBudget: number | null = null;
+  // Absent flag → default cap; explicit `0`/`unlimited`/`none`/`off` → no cap.
+  let maxSteps: number | null = GOAL_DEFAULT_MAX_STEPS;
   let replace = false;
 
   const budgetMatch = rest.match(/--token-budget\s+(\d+)/);
@@ -49,11 +59,34 @@ export function parseGoalArgs(input: string): {
       return {
         objective: "",
         tokenBudget: null,
+        maxSteps,
         replace,
         error: "Token budget must be a positive integer.",
       };
     }
     rest = rest.replace(/--token-budget\s+\d+\s*/, "");
+  }
+
+  const stepsMatch = rest.match(/--max-steps\s+(\d+|unlimited|none|off)/i);
+  if (stepsMatch?.[1]) {
+    const raw = stepsMatch[1].toLowerCase();
+    if (raw === "unlimited" || raw === "none" || raw === "off" || raw === "0") {
+      maxSteps = null;
+    } else {
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return {
+          objective: "",
+          tokenBudget,
+          maxSteps,
+          replace,
+          error:
+            "Max steps must be a positive integer, or 0/unlimited to disable the cap.",
+        };
+      }
+      maxSteps = parsed;
+    }
+    rest = rest.replace(/--max-steps\s+(?:\d+|unlimited|none|off)\s*/i, "");
   }
 
   if (/--replace\b/.test(rest)) {
@@ -64,6 +97,7 @@ export function parseGoalArgs(input: string): {
   return {
     objective: rest.trim().replace(/^["']|["']$/g, ""),
     tokenBudget,
+    maxSteps,
     replace,
   };
 }
@@ -147,12 +181,18 @@ export function buildGoalContinuationPrompt(input: {
   tokensUsed: number;
   tokenBudget: number | null;
   timeUsedSeconds: number;
+  currentStep?: number;
+  maxSteps?: number | null;
 }): string {
   const tokenBudget = input.tokenBudget?.toString() ?? "none";
   const remainingTokens = input.tokenBudget
     ? Math.max(0, input.tokenBudget - input.tokensUsed).toString()
     : "unbounded";
   const objective = escapeXmlText(input.objective);
+  const stepLine =
+    input.maxSteps != null
+      ? `\n- Autonomous step: ${input.currentStep ?? 1} of ${input.maxSteps} (the loop stops automatically at the cap)`
+      : "";
 
   return `Continue working toward the active thread goal.
 
@@ -166,7 +206,7 @@ Budget:
 - Time spent pursuing goal: ${input.timeUsedSeconds} seconds
 - Tokens used: ${input.tokensUsed}
 - Token budget: ${tokenBudget}
-- Tokens remaining: ${remainingTokens}
+- Tokens remaining: ${remainingTokens}${stepLine}
 
 Avoid repeating work that is already done. Choose the next concrete action toward the objective.
 

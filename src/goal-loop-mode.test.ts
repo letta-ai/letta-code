@@ -57,5 +57,38 @@ describe("goal loop mode", () => {
     expect(state.originalPrompt).toBe("");
     expect(state.currentIteration).toBe(0);
     expect(state.tokenBudget).toBeNull();
+    expect(state.maxSteps).toBeNull();
+  });
+
+  test("stores the max-steps cap when provided", () => {
+    goalLoopMode.activateGoal("fix the bug", null, 3);
+    expect(goalLoopMode.getState().maxSteps).toBe(3);
+  });
+
+  test("defaults max steps to null (unbounded)", () => {
+    goalLoopMode.activateGoal("fix the bug");
+    expect(goalLoopMode.getState().maxSteps).toBeNull();
+  });
+
+  test("hasReachedStepLimit is false when no cap is set", () => {
+    goalLoopMode.activateGoal("fix the bug");
+    for (let i = 0; i < 5; i++) goalLoopMode.incrementIteration();
+    expect(goalLoopMode.hasReachedStepLimit()).toBe(false);
+    expect(goalLoopMode.shouldContinue()).toBe(true);
+  });
+
+  test("hasReachedStepLimit trips once the cap is reached", () => {
+    goalLoopMode.activateGoal("fix the bug", null, 3); // starts at iteration 1
+    expect(goalLoopMode.hasReachedStepLimit()).toBe(false);
+    goalLoopMode.incrementIteration(); // 2
+    expect(goalLoopMode.hasReachedStepLimit()).toBe(false);
+    expect(goalLoopMode.shouldContinue()).toBe(true);
+    goalLoopMode.incrementIteration(); // 3 == cap
+    expect(goalLoopMode.hasReachedStepLimit()).toBe(true);
+    expect(goalLoopMode.shouldContinue()).toBe(false);
+  });
+
+  test("shouldContinue is false when the loop is inactive", () => {
+    expect(goalLoopMode.shouldContinue()).toBe(false);
   });
 });
