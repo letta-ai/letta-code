@@ -25,11 +25,21 @@ const shouldStartModifiedEnterSuppression = (keypress, platform = process.platfo
     (keypress.shift || keypress.ctrl || keypress.meta || keypress.option);
 const shouldTreatAsReturn = (keypressName, platform = process.platform) =>
     keypressName === 'return' || (isLinuxPlatform(platform) && keypressName === 'enter');
+const inputFromKeypress = (keypress) => {
+    if (keypress.ctrl) {
+        return keypress.name ?? '';
+    }
+    if (keypress.meta && !keypress.sequence && typeof keypress.raw === 'string' && keypress.raw.length === 2 && keypress.raw.startsWith('\x1b')) {
+        return keypress.raw.slice(1);
+    }
+    return keypress.sequence ?? '';
+};
 
 // Exported for targeted key-sequence regression tests.
 export const __lettaUseInputTestUtils = {
     isLinuxPlatform,
     isProtocolReportSequence,
+    inputFromKeypress,
     stripTrailingNewlineFromCsiU,
     shouldSuppressBareEnterAfterModifiedEnter,
     shouldStartModifiedEnterSuppression,
@@ -229,7 +239,7 @@ const useInput = (inputHandler, options = {}) => {
                 console.error(`[debug:ink-keypress] raw=${rawHex} name="${keypress.name}" seq="${keypress.sequence}" key={escape:${key.escape},tab:${key.tab},shift:${key.shift},ctrl:${key.ctrl},meta:${key.meta}}`);
             }
 
-            let input = (keypress.ctrl ? keypress.name : keypress.sequence) ?? '';
+            let input = inputFromKeypress(keypress);
             const seq = typeof keypress.sequence === 'string' ? keypress.sequence : '';
             // Filter xterm focus in/out sequences (ESC[I / ESC[O)
             if (seq === '\u001B[I' || seq === '\u001B[O' || input === '[I' || input === '[O' || /^(?:\[I|\[O)+$/.test(input || '')) {

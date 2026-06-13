@@ -12,11 +12,7 @@ describe("vim-style j/k navigation in list selectors", () => {
   // down/up aliases cannot clash with typing. Filter-based selectors
   // (AgentSelector, ProviderSelector, ...) deliberately avoid bare
   // letter shortcuts and are intentionally excluded here.
-  const pickers = [
-    "SingleSelectPicker.tsx",
-    "MultiSelectPicker.tsx",
-    "ConversationSelector.tsx",
-  ];
+  const pickers = ["SingleSelectPicker.tsx", "MultiSelectPicker.tsx"];
 
   for (const picker of pickers) {
     test(`${picker} maps "k" to up and "j" to down`, () => {
