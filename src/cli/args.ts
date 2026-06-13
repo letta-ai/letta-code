@@ -59,7 +59,7 @@ export const CLI_FLAG_CATALOG = {
     help: {
       argLabel: "<list>",
       description:
-        'Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,skills")',
+        'Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,human")',
     },
   },
   "base-tools": {
@@ -112,11 +112,6 @@ export const CLI_FLAG_CATALOG = {
       description:
         'Personality preset for --new-agent: "letta-code", "tutorial", "blank", "linus", "kawaii", "claude", or "codex"',
     },
-  },
-  "memory-blocks": { parser: { type: "string" }, mode: "both" },
-  "block-value": {
-    parser: { type: "string", multiple: true },
-    mode: "headless",
   },
   toolset: {
     parser: { type: "string" },

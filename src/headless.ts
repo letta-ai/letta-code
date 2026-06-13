@@ -66,7 +66,6 @@ import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
-  parseJsonArrayFlag,
   parsePositiveIntFlag,
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
@@ -662,8 +661,6 @@ export async function handleHeadlessCommand(
   const systemCustom = values["system-custom"];
   const personalityInput = values.personality;
   const embeddingModel = values.embedding;
-  const memoryBlocksJson = values["memory-blocks"];
-  const blockValueArgs = values["block-value"];
   const initBlocksRaw = values["init-blocks"];
   const baseToolsRaw = values["base-tools"];
   const skillsDirectory = values.skills ?? skillsDirectoryOverride;
@@ -972,10 +969,8 @@ export async function handleHeadlessCommand(
     console.error("Error: --personality can only be used with --new-agent");
     process.exit(1);
   }
-  if (personalityInput && (memoryBlocksJson !== undefined || initBlocksRaw)) {
-    console.error(
-      "Error: --personality cannot be combined with --memory-blocks or --init-blocks",
-    );
+  if (personalityInput && initBlocksRaw) {
+    console.error("Error: --personality cannot be combined with --init-blocks");
     process.exit(1);
   }
 
@@ -985,80 +980,6 @@ export async function handleHeadlessCommand(
       "Error: --system and --system-custom are mutually exclusive. Use one or the other.",
     );
     process.exit(1);
-  }
-
-  // Parse memory blocks JSON if provided
-  // Supports two formats:
-  // - CreateBlock: { label: string, value: string, description?: string }
-  // - BlockReference: { blockId: string }
-  let memoryBlocks:
-    | Array<
-        | { label: string; value: string; description?: string }
-        | { blockId: string }
-      >
-    | undefined;
-  if (memoryBlocksJson !== undefined) {
-    if (!forceNew) {
-      console.error(
-        "Error: --memory-blocks can only be used together with --new to provide initial memory blocks.",
-      );
-      process.exit(1);
-    }
-    try {
-      memoryBlocks = parseJsonArrayFlag(memoryBlocksJson, "memory-blocks") as
-        | Array<{ label: string; value: string; description?: string }>
-        | Array<{ blockId: string }>;
-      // Validate each block has required fields
-      for (const block of memoryBlocks) {
-        const hasBlockId =
-          "blockId" in block && typeof block.blockId === "string";
-        const hasLabelValue =
-          "label" in block &&
-          "value" in block &&
-          typeof block.label === "string" &&
-          typeof block.value === "string";
-
-        if (!hasBlockId && !hasLabelValue) {
-          throw new Error(
-            "Each memory block must have either 'blockId' (string) or 'label' and 'value' (strings)",
-          );
-        }
-      }
-    } catch (error) {
-      trackHeadlessBoundaryError(
-        "headless_memory_blocks_parse_failed",
-        error,
-        "headless_startup_memory_blocks",
-      );
-      console.error(
-        `Error: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      process.exit(1);
-    }
-  }
-
-  // Parse --block-value args (format: label=value)
-  let blockValues: Record<string, string> | undefined;
-  if (blockValueArgs && blockValueArgs.length > 0) {
-    if (!forceNew) {
-      console.error(
-        "Error: --block-value can only be used together with --new to set block values.",
-      );
-      process.exit(1);
-    }
-    blockValues = {};
-    for (const arg of blockValueArgs) {
-      const eqIndex = arg.indexOf("=");
-      if (eqIndex === -1) {
-        console.error(
-          `Error: Invalid --block-value format "${arg}". Expected format: label=value`,
-        );
-        process.exit(1);
-      }
-      const label = arg.slice(0, eqIndex);
-      const value = arg.slice(eqIndex + 1);
-      blockValues[label] = value;
-    }
   }
 
   // Priority 0: --conversation derives agent from conversation ID.
@@ -1198,8 +1119,7 @@ export async function handleHeadlessCommand(
       memoryPromptMode: effectiveMemoryMode,
       initBlocks,
       baseTools,
-      memoryBlocks: personalityOptions?.memoryBlocks ?? memoryBlocks,
-      blockValues,
+      memoryBlocks: personalityOptions?.memoryBlocks,
       tags: personalityOptions?.tags ?? tags,
     };
     let result: Awaited<ReturnType<typeof createAgent>>;

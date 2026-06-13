@@ -56,7 +56,6 @@ import { ConversationSelector } from "./cli/components/ConversationSelector";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
-  parseJsonArrayFlag,
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
@@ -880,7 +879,6 @@ async function main(): Promise<void> {
   const systemPromptPreset = values.system ?? undefined;
   const systemCustom = values["system-custom"] ?? undefined;
   const personalityInput = values.personality ?? undefined;
-  const memoryBlocksJson = values["memory-blocks"] ?? undefined;
   const specifiedToolset = values.toolset ?? undefined;
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
@@ -1078,10 +1076,8 @@ async function main(): Promise<void> {
     console.error("Error: --personality can only be used with --new-agent");
     process.exit(1);
   }
-  if (personalityInput && (memoryBlocksJson || initBlocksRaw)) {
-    console.error(
-      "Error: --personality cannot be combined with --memory-blocks or --init-blocks",
-    );
+  if (personalityInput && initBlocksRaw) {
+    console.error("Error: --personality cannot be combined with --init-blocks");
     process.exit(1);
   }
 
@@ -1127,35 +1123,6 @@ async function main(): Promise<void> {
       );
       console.error(
         `Error: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      process.exit(1);
-    }
-  }
-
-  // Parse memory blocks JSON if provided
-  let memoryBlocks:
-    | Array<{ label: string; value: string; description?: string }>
-    | undefined;
-  if (memoryBlocksJson) {
-    try {
-      memoryBlocks = parseJsonArrayFlag(
-        memoryBlocksJson,
-        "memory-blocks",
-      ) as Array<{ label: string; value: string; description?: string }>;
-      // Validate each block has required fields
-      for (const block of memoryBlocks) {
-        if (
-          typeof block.label !== "string" ||
-          typeof block.value !== "string"
-        ) {
-          throw new Error(
-            "Each memory block must have 'label' and 'value' string fields",
-          );
-        }
-      }
-    } catch (error) {
-      console.error(
-        `Error: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
     }

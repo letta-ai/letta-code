@@ -356,7 +356,7 @@ export async function createAgent(
         block.value = value;
       } else {
         console.warn(
-          `Ignoring --block-value for "${label}" - block not included in memory config`,
+          `Ignoring block value override for "${label}" - block not included in memory config`,
         );
       }
     }
