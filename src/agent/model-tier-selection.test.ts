@@ -53,6 +53,17 @@ describe("getModelInfo", () => {
       parallel_tool_calls: true,
     });
   });
+
+  test("resolves GLM-5.2 registry metadata", () => {
+    const info = getModelInfo("glm-5.2");
+    expect(info?.handle).toBe("zai/glm-5.2");
+    expect(info?.label).toBe("GLM-5.2");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 1000000,
+      max_output_tokens: 131072,
+      parallel_tool_calls: true,
+    });
+  });
 });
 
 describe("getModelInfoForLlmConfig", () => {

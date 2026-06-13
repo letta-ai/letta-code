@@ -1599,11 +1599,23 @@
       }
     },
     {
+      "id": "glm-5.2",
+      "handle": "zai/glm-5.2",
+      "label": "GLM-5.2",
+      "description": "zAI's latest coding model",
+      "isFeatured": true,
+      "free": true,
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 131072,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "glm-5.1",
       "handle": "zai/glm-5.1",
       "label": "GLM-5.1",
-      "description": "zAI's latest coding model",
-      "isFeatured": true,
+      "description": "zAI's coding model",
       "free": true,
       "updateArgs": {
         "context_window": 180000,
