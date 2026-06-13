@@ -206,8 +206,6 @@ export interface CreateAgentOptions {
   systemPromptCustom?: string;
   /** Which managed memory prompt mode to apply */
   memoryPromptMode?: MemoryPromptMode;
-  /** Block labels to initialize (from default blocks) */
-  initBlocks?: string[];
   /** Base tools to include */
   baseTools?: string[];
   /** Custom memory blocks (overrides default blocks) */
@@ -230,7 +228,6 @@ export async function createAgent(
   skillsDirectory?: string,
   parallelToolCalls = true,
   systemPromptPreset?: string,
-  initBlocks?: string[],
   baseTools?: string[],
 ) {
   // Support both old positional args and new options object
@@ -246,7 +243,6 @@ export async function createAgent(
       skillsDirectory,
       parallelToolCalls,
       systemPromptPreset,
-      initBlocks,
       baseTools,
     };
   }
@@ -254,6 +250,8 @@ export async function createAgent(
   const name = options.name ?? DEFAULT_AGENT_NAME;
   const embeddingModelVal = options.embeddingModel;
   const parallelToolCallsVal = options.parallelToolCalls ?? true;
+  // Subagents are ephemeral and don't carry memory blocks of their own.
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -294,7 +292,8 @@ export async function createAgent(
 
   // Determine which memory blocks to use:
   // 1. If options.memoryBlocks is provided, use those (custom blocks and/or block references)
-  // 2. Otherwise, use default blocks filtered by options.initBlocks
+  // 2. Subagents are ephemeral and get no memory blocks.
+  // 3. Otherwise, use the default blocks.
 
   // Separate block references from blocks to create
   const referencedBlockIds: string[] = [];
@@ -317,35 +316,8 @@ export async function createAgent(
     }
     filteredMemoryBlocks = createBlocks;
   } else {
-    // Load memory blocks from .mdx files
-    const defaultMemoryBlocks =
-      options.initBlocks && options.initBlocks.length === 0
-        ? []
-        : await getDefaultMemoryBlocks();
-
-    // Optional filter: only initialize a subset of memory blocks on creation
-    const allowedBlockLabels = options.initBlocks
-      ? new Set(
-          options.initBlocks.map((n) => n.trim()).filter((n) => n.length > 0),
-        )
-      : undefined;
-
-    if (allowedBlockLabels && allowedBlockLabels.size > 0) {
-      const knownLabels = new Set(defaultMemoryBlocks.map((b) => b.label));
-      for (const label of Array.from(allowedBlockLabels)) {
-        if (!knownLabels.has(label)) {
-          console.warn(
-            `Ignoring unknown init block "${label}". Valid blocks: ${Array.from(knownLabels).join(", ")}`,
-          );
-          allowedBlockLabels.delete(label);
-        }
-      }
-    }
-
-    filteredMemoryBlocks =
-      allowedBlockLabels && allowedBlockLabels.size > 0
-        ? defaultMemoryBlocks.filter((b) => allowedBlockLabels.has(b.label))
-        : defaultMemoryBlocks;
+    // Subagents get no blocks; everyone else gets the default .mdx blocks.
+    filteredMemoryBlocks = isSubagent ? [] : await getDefaultMemoryBlocks();
   }
 
   // Apply blockValues overrides to preset blocks
@@ -397,7 +369,6 @@ export async function createAgent(
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline
   // - block_ids: references to existing blocks (for shared memory)
-  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
   const tags = buildCreatedAgentTags({
     tags: options.tags,
     isSubagent,

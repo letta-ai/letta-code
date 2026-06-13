@@ -53,15 +53,6 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: { description: "Create new conversation (for concurrent sessions)" },
   },
-  "init-blocks": {
-    parser: { type: "string" },
-    mode: "both",
-    help: {
-      argLabel: "<list>",
-      description:
-        'Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,human")',
-    },
-  },
   "base-tools": {
     parser: { type: "string" },
     mode: "both",

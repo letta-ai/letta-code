@@ -245,7 +245,6 @@ describe("buildSubagentArgs", () => {
     allowedTools: "all",
     recommendedModel: "inherit",
     skills: [],
-    memoryBlocks: "none",
     mode: "stateful",
     fork: false,
     background: false,
@@ -254,8 +253,6 @@ describe("buildSubagentArgs", () => {
   test("adds --no-memfs for newly spawned subagents by default", () => {
     const args = buildSubagentArgs("test-subagent", baseConfig, null, "hello");
 
-    expect(args).toContain("--init-blocks");
-    expect(args).toContain("none");
     expect(args).toContain("--no-memfs");
   });
 

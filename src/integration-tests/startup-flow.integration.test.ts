@@ -385,29 +385,4 @@ describe("Startup Flow - Integration", () => {
     },
     { timeout: 190000 },
   );
-
-  test(
-    "--new-agent with --init-blocks none creates minimal agent",
-    async () => {
-      const result = await runCliJson(
-        [
-          "--new-agent",
-          "--init-blocks",
-          "none",
-          "-m",
-          "sonnet-4.6-low",
-          "-p",
-          "Say OK",
-          "--output-format",
-          "json",
-        ],
-        { timeoutMs: 180000 },
-      );
-
-      expect(result.exitCode).toBe(0);
-      const output = result.output;
-      expect(output.agent_id).toBeDefined();
-    },
-    { timeout: 190000 },
-  );
 });
