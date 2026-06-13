@@ -271,6 +271,15 @@ export const commands: Record<string, Command> = {
       return "Exporting agent file...";
     },
   },
+  "/copy": {
+    desc: "Copy the conversation to the clipboard as Markdown",
+    args: "[file]",
+    order: 26.5,
+    handler: () => {
+      // Handled specially in use-submit-handler.ts to access conversation buffers
+      return "Copying conversation...";
+    },
+  },
   "/toolset": {
     desc: "Switch toolset (replaces /link and /unlink)",
     order: 27,

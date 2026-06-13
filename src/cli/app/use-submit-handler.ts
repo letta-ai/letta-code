@@ -44,13 +44,19 @@ import { getClient } from "@/backend/api/client";
 import type { CustomCommand } from "@/cli/commands/custom";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
-import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
+import {
+  type Buffers,
+  type Line,
+  linesToMarkdown,
+  toLines,
+} from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
   CHDIR_USAGE,
   parseChdirCommand,
   resolveChdirTarget,
 } from "@/cli/helpers/chdir-command";
+import { copyToClipboard } from "@/cli/helpers/clipboard";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
@@ -2515,6 +2521,76 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /copy command - copy the conversation as Markdown
+        if (trimmed === "/copy" || trimmed.startsWith("/copy ")) {
+          const arg = trimmed.slice("/copy".length).trim().toLowerCase();
+          const forceFile = arg === "file" || arg === "--file";
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Copying conversation...",
+          );
+
+          const lines = toLines(buffersRef.current);
+          const body = linesToMarkdown(lines);
+          if (!body.trim()) {
+            cmd.fail("No conversation to copy yet.");
+            return { submitted: true };
+          }
+
+          const messageCount = lines.filter(
+            (line) => line.kind === "user" || line.kind === "assistant",
+          ).length;
+          const header = [
+            `# Conversation${agentName ? ` — ${agentName}` : ""}`,
+            "",
+            `_Exported from Letta Code on ${new Date().toISOString()}_`,
+          ].join("\n");
+          const markdown = `${header}\n\n${body}\n`;
+
+          const writeMarkdownFile = (): string => {
+            const fileName = `letta-conversation-${Date.now()}.md`;
+            writeFileSync(fileName, markdown);
+            return fileName;
+          };
+
+          if (forceFile) {
+            try {
+              const fileName = writeMarkdownFile();
+              cmd.finish(
+                `Saved conversation to ${fileName} (${messageCount} messages)`,
+                true,
+              );
+            } catch (error) {
+              cmd.fail(
+                `Failed to write file: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+            return { submitted: true };
+          }
+
+          if (copyToClipboard(markdown)) {
+            cmd.finish(
+              `Copied conversation to clipboard as Markdown (${messageCount} messages)`,
+              true,
+            );
+          } else {
+            // Clipboard unavailable (e.g. headless or Linux without xclip/xsel):
+            // fall back to writing a Markdown file so the command still works.
+            try {
+              const fileName = writeMarkdownFile();
+              cmd.finish(
+                `Clipboard unavailable — saved conversation to ${fileName} (${messageCount} messages)`,
+                true,
+              );
+            } catch (error) {
+              cmd.fail(
+                `Could not copy to clipboard or write file: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
           }
           return { submitted: true };
         }

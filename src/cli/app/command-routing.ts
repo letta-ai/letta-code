@@ -40,6 +40,7 @@ const NON_STATE_COMMANDS = new Set([
   "/feedback",
   "/export",
   "/download",
+  "/copy", // read-only conversation snapshot
   "/reasoning-tab",
   "/secret",
   "/palace", // read-only memory viewer
