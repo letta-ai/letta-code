@@ -37,6 +37,7 @@ type DraftCallState = {
   draftId: number;
   pendingMessage?: string;
   lastSentMessage?: string;
+  finished: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   inFlight: Promise<void> | null;
 };
@@ -142,6 +143,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
   private readonly source: TelegramDraftSource;
   private readonly debounceMs: number;
   private readonly calls = new Map<string, DraftCallState>();
+  private readonly finishedCallIds = new Set<string>();
   private lastDraftAttemptAtMs = 0;
   private retryBlockedUntilMs = 0;
   private disposed = false;
@@ -182,6 +184,9 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     }
 
     for (const fragment of extractToolCallFragments(record)) {
+      if (this.finishedCallIds.has(fragment.toolCallId)) {
+        continue;
+      }
       const state = this.getOrCreateCall(fragment.toolCallId);
       if (fragment.name) {
         state.name = fragment.name;
@@ -225,12 +230,14 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
   dispose(): void {
     this.disposed = true;
     for (const state of this.calls.values()) {
+      state.finished = true;
       if (state.timer) {
         clearTimeout(state.timer);
         state.timer = null;
       }
     }
     this.calls.clear();
+    this.finishedCallIds.clear();
   }
 
   private getOrCreateCall(toolCallId: string): DraftCallState {
@@ -242,6 +249,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
       toolCallId,
       argumentsText: "",
       draftId: buildDraftId(`${this.batchId}:${toolCallId}`),
+      finished: false,
       timer: null,
       inFlight: null,
     };
@@ -250,15 +258,19 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
   }
 
   private finishCall(toolCallId: string): void {
+    this.finishedCallIds.add(toolCallId);
     const state = this.calls.get(toolCallId);
     if (!state) {
       return;
     }
+    state.finished = true;
     if (state.timer) {
       clearTimeout(state.timer);
       state.timer = null;
     }
-    this.calls.delete(toolCallId);
+    if (!state.inFlight) {
+      this.calls.delete(toolCallId);
+    }
   }
 
   private maybeScheduleDraft(state: DraftCallState): void {
@@ -303,6 +315,9 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     state: DraftCallState,
     options: { force?: boolean } = {},
   ): Promise<void> {
+    if (state.finished) {
+      return state.inFlight ?? Promise.resolve();
+    }
     if (state.inFlight) {
       this.scheduleDraft(state);
       return state.inFlight;
@@ -340,7 +355,9 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     inFlight = (async () => {
       try {
         await this.adapter.sendRichMessageDraft?.(draft);
-        state.lastSentMessage = message;
+        if (!state.finished && this.calls.get(state.toolCallId) === state) {
+          state.lastSentMessage = message;
+        }
       } catch (error) {
         const retryAfterMs = getTelegramRetryAfterMs(error);
         if (retryAfterMs !== null) {
@@ -348,7 +365,10 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
             this.retryBlockedUntilMs,
             Date.now() + retryAfterMs,
           );
-        } else {
+        } else if (
+          !state.finished &&
+          this.calls.get(state.toolCallId) === state
+        ) {
           state.lastSentMessage = message;
         }
         debugWarn(
@@ -368,9 +388,13 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
         if (state.inFlight === inFlight) {
           state.inFlight = null;
         }
+        if (state.finished) {
+          this.calls.delete(state.toolCallId);
+          return;
+        }
         if (
           !this.disposed &&
-          this.calls.has(state.toolCallId) &&
+          this.calls.get(state.toolCallId) === state &&
           state.pendingMessage &&
           state.pendingMessage !== state.lastSentMessage
         ) {
@@ -383,7 +407,11 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
   }
 
   private scheduleDraft(state: DraftCallState): void {
-    if (this.disposed || !this.calls.has(state.toolCallId)) {
+    if (
+      this.disposed ||
+      state.finished ||
+      this.calls.get(state.toolCallId) !== state
+    ) {
       return;
     }
     if (

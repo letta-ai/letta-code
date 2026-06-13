@@ -798,7 +798,10 @@ export async function handleIncomingMessage(
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
-      if (stopReason === "requires_approval") {
+      if (
+        stopReason === "requires_approval" ||
+        (stopReason === "end_turn" && !runtime.cancelRequested)
+      ) {
         await richDraftStreamer?.flushPending();
       }
       lastApprovalContinuationAccepted = false;

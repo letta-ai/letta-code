@@ -905,6 +905,36 @@ test("telegram adapter does not fallback on ambiguous rich send failures", async
   expect(bot?.api.sendMessage).not.toHaveBeenCalled();
 });
 
+test("telegram adapter does not fallback when rich send targets a bad thread", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const bot = FakeBot.instances[0];
+  bot?.api.raw.sendRichMessage.mockRejectedValueOnce(
+    new Error("Bad Request: message thread not found"),
+  );
+
+  await expect(
+    adapter.sendMessage({
+      channel: "telegram",
+      chatId: "123",
+      text: "<b>fallback</b>",
+      parseMode: "HTML",
+      threadId: "999",
+      richMessage: { markdown: "# Title" },
+    }),
+  ).rejects.toThrow("Bad Request: message thread not found");
+
+  expect(bot?.api.sendMessage).not.toHaveBeenCalled();
+});
+
 test("telegram adapter uploads outbound media with a caption", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,

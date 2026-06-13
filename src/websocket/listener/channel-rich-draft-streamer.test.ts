@@ -76,6 +76,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
 describe("Telegram rich draft streamer", () => {
   beforeEach(() => {
     channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-rich-draft-"));
@@ -250,6 +258,96 @@ describe("Telegram rich draft streamer", () => {
     expect(secondCallDraft).toMatchObject({
       richMessage: { markdown: "# Fast update" },
     });
+  });
+
+  test("cancels pending trailing drafts once the tool call returns", async () => {
+    upsertTelegramAccount(true);
+    const { sendRichMessageDraft } = registerTelegramAdapter();
+
+    const streamer = createTelegramRichDraftStreamer({
+      batchId: "batch-1",
+      sources: [telegramSource()],
+      debounceMs: 30,
+    });
+
+    streamer?.handleChunk({
+      message_type: "approval_request_message",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "MessageChannel",
+          arguments:
+            '{"action":"send-rich","channel":"telegram","chat_id":"telegram:chat-12345","accountId":"acct-telegram","message":"# First',
+        },
+      ],
+    } as never);
+    await Promise.resolve();
+    expect(sendRichMessageDraft).toHaveBeenCalledTimes(1);
+
+    streamer?.handleChunk({
+      message_type: "approval_request_message",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          arguments: " trailing",
+        },
+      ],
+    } as never);
+
+    streamer?.handleChunk({
+      message_type: "tool_return_message",
+      tool_call_id: "call-1",
+    } as never);
+
+    await sleep(45);
+    expect(sendRichMessageDraft).toHaveBeenCalledTimes(1);
+  });
+
+  test("ignores late fragments after a tool call returns while a draft is in flight", async () => {
+    upsertTelegramAccount(true);
+    const deferred = createDeferred();
+    const sendRichMessageDraft = mock(async () => {
+      await deferred.promise;
+    });
+    registerTelegramAdapter(sendRichMessageDraft);
+
+    const streamer = createTelegramRichDraftStreamer({
+      batchId: "batch-1",
+      sources: [telegramSource()],
+      debounceMs: 0,
+    });
+
+    streamer?.handleChunk({
+      message_type: "approval_request_message",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "MessageChannel",
+          arguments:
+            '{"action":"send-rich","channel":"telegram","chat_id":"telegram:chat-12345","accountId":"acct-telegram","message":"# In flight',
+        },
+      ],
+    } as never);
+    await Promise.resolve();
+    expect(sendRichMessageDraft).toHaveBeenCalledTimes(1);
+
+    streamer?.handleChunk({
+      message_type: "tool_return_message",
+      tool_call_id: "call-1",
+    } as never);
+    streamer?.handleChunk({
+      message_type: "approval_request_message",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          arguments: " stale",
+        },
+      ],
+    } as never);
+
+    deferred.resolve();
+    await streamer?.flushPending();
+    expect(sendRichMessageDraft).toHaveBeenCalledTimes(1);
   });
 
   test("keeps updating drafts during continuous chunk flow", async () => {
