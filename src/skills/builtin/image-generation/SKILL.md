@@ -14,7 +14,9 @@ save either form to a local image file before replying.
 Generate the image, save it locally, then show it inline:
 
 ```bash
-curl -sS -X POST "https://api.letta.com/v1/images/generations" \
+base_url="${LETTA_BASE_URL%/}"
+
+curl -sS -X POST "$base_url/v1/images/generations" \
   -H "Authorization: Bearer $LETTA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"provider":"gemini","prompt":"a friendly robot mascot waving, flat vector logo, mint green background","n":1}' \
@@ -39,11 +41,13 @@ print("saved robot-mascot.png; credits:", response["billing"]["credits_charged"]
 PY
 ```
 
-In Bash tools launched by Letta Code, the current Letta credential is available
-as `$LETTA_API_KEY`. This works for both Letta auth modes: it may be a normal
-Letta API key, or the OAuth access token from a Letta Cloud OAuth login. Reference
-it directly. If it is missing, the user needs to authenticate with Letta Cloud (or
-provide a Letta API key); do **not** ask for a Flux/OpenAI/Gemini provider key. This
+In Bash tools launched by Letta Code, use the runtime-provided
+`LETTA_BASE_URL` and `LETTA_API_KEY` together for Letta API calls. Build URLs
+relative to `${LETTA_BASE_URL%/}` and send `Authorization: Bearer $LETTA_API_KEY`.
+Do not hardcode `https://api.letta.com`: Desktop and remote runtimes may provide
+a proxy base URL, and the credential may only be valid through that URL. If
+either variable is missing, the user needs to authenticate with Letta Cloud (or
+provide a Letta API key); do **not** ask for an OpenAI/Gemini provider key. This
 endpoint also does not use `/connect` BYOK providers — the only `provider` values
 supported here are `flux`, `gemini`, and `openai`.
 
