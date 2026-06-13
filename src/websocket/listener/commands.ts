@@ -64,7 +64,11 @@ import {
   buildMaybeLaunchReflectionSubagent,
   handleIncomingMessage,
 } from "./turn";
-import type { ConversationRuntime, StartListenerOptions } from "./types";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  StartListenerOptions,
+} from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 
@@ -695,6 +699,41 @@ async function handleRememberCommand(
 }
 
 /**
+ * Kick off an autonomous goal turn without blocking the /goal command result.
+ *
+ * The turn (and its full continuation loop in handleIncomingMessage) is chained
+ * onto the conversation message queue so it stays serialized with other turns
+ * and runs in the background — the command can return its confirmation
+ * immediately while the agent grinds on the goal.
+ */
+function startGoalLoopTurnInBackground(
+  socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+  message: IncomingMessage,
+  opts: {
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): void {
+  conversationRuntime.messageQueue = conversationRuntime.messageQueue
+    .then(() =>
+      handleIncomingMessage(
+        message,
+        socket,
+        conversationRuntime,
+        opts.onStatusChange,
+        opts.connectionId,
+      ),
+    )
+    .catch((error: unknown) => {
+      console.error(
+        "[Goal] Autonomous goal loop failed:",
+        error instanceof Error ? error.message : error,
+      );
+    });
+}
+
+/**
  * /goal — Manage conversation goals with auto-continuation.
  *
  * Subcommands:
@@ -827,7 +866,9 @@ async function handleGoalCommand(
         maxSteps: goalState.maxSteps,
       });
 
-      await handleIncomingMessage(
+      startGoalLoopTurnInBackground(
+        socket,
+        conversationRuntime,
         {
           type: "message",
           agentId,
@@ -840,10 +881,7 @@ async function handleGoalCommand(
             },
           ],
         },
-        socket,
-        conversationRuntime,
-        opts.onStatusChange,
-        opts.connectionId,
+        opts,
       );
     }
 
@@ -915,7 +953,9 @@ async function handleGoalCommand(
     maxSteps: goalState.maxSteps,
   });
 
-  await handleIncomingMessage(
+  startGoalLoopTurnInBackground(
+    socket,
+    conversationRuntime,
     {
       type: "message",
       agentId,
@@ -928,10 +968,7 @@ async function handleGoalCommand(
         },
       ],
     },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
+    opts,
   );
 
   return resultPrefix;
