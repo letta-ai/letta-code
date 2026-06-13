@@ -320,7 +320,6 @@ test("telegram channel starts through service and routes inbound topic messages 
   expect(createConversation).toHaveBeenCalledTimes(1);
   expect(createConversation).toHaveBeenCalledWith({
     agent_id: "agent-telegram",
-    isolated_block_labels: expect.any(Array),
     summary: "[Telegram] Topic in Void Cafe: Hello from a Telegram topic",
   });
   expect(getRoute("telegram", "-100123", "telegram-e2e", "42")).toMatchObject({
