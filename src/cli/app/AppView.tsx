@@ -5,7 +5,6 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import type { ModelReasoningEffort } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality";
@@ -1339,7 +1338,6 @@ export function AppView(props: AppViewProps) {
                     // Create a new conversation
                     const conversation = await getBackend().createConversation({
                       agent_id: agentId,
-                      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
                     });
 
                     await maybeCarryOverActiveConversationModel(

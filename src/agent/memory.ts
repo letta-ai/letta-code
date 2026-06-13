@@ -32,12 +32,6 @@ export const MEMORY_BLOCK_LABELS = [
 export { READ_ONLY_BLOCK_LABELS };
 
 /**
- * Block labels that should be isolated per-conversation.
- * Note: skills/loaded_skills removed in LET-7353.
- */
-export const ISOLATED_BLOCK_LABELS = [] as const;
-
-/**
  * Check if a block label is a project-level block
  */
 export function isProjectBlock(label: string): boolean {

@@ -15,7 +15,6 @@ import {
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
@@ -2636,7 +2635,6 @@ async function main(): Promise<void> {
           // --new flag: create a new conversation (for concurrent sessions)
           const conversation = await backend.createConversation({
             agent_id: agent.id,
-            isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
           });
           conversationIdToUse = conversation.id;
         } else {
