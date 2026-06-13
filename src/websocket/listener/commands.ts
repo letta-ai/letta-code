@@ -15,6 +15,7 @@ import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildGoalContinuationPrompt,
   formatGoalSummary,
+  GOAL_DEFAULT_MAX_STEPS,
   GOAL_USAGE,
   GOAL_USAGE_HINT,
   goalStatusLabel,
@@ -795,7 +796,11 @@ async function handleGoalCommand(
       }
     } else if (lowerGoalArg === "resume") {
       settingsManager.setConversationGoalToolsEnabled(conversationId, true);
-      goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
+      goalLoopMode.activateGoal(
+        goal.objective,
+        goal.tokenBudget,
+        goal.maxSteps ?? GOAL_DEFAULT_MAX_STEPS,
+      );
       permState.mode = "unrestricted";
       persistPermissionModeMapForRuntime(conversationRuntime.listener);
 
@@ -818,6 +823,8 @@ async function handleGoalCommand(
         tokenBudget: storedGoal?.tokenBudget ?? goalState.tokenBudget,
         timeUsedSeconds:
           (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
+        currentStep: goalState.currentIteration,
+        maxSteps: goalState.maxSteps,
       });
 
       await handleIncomingMessage(
@@ -866,8 +873,13 @@ async function handleGoalCommand(
     conversationRuntime.activeWorkingDirectory ?? process.cwd(),
     parsedGoal.tokenBudget,
     true,
+    parsedGoal.maxSteps,
   );
-  goalLoopMode.activateGoal(parsedGoal.objective, parsedGoal.tokenBudget);
+  goalLoopMode.activateGoal(
+    parsedGoal.objective,
+    parsedGoal.tokenBudget,
+    parsedGoal.maxSteps,
+  );
 
   const permState = getOrCreateConversationPermissionModeStateRef(
     conversationRuntime.listener,
@@ -878,7 +890,8 @@ async function handleGoalCommand(
   persistPermissionModeMapForRuntime(conversationRuntime.listener);
 
   const replaced = previousGoal ? " replaced" : " active";
-  const resultPrefix = `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`;
+  const stepCapLabel = parsedGoal.maxSteps ?? "∞";
+  const resultPrefix = `Goal${replaced} (iter 1/${stepCapLabel})\n${formatGoalSummary(goal)}`;
 
   // Send initial goal continuation prompt through the turn pipeline
   const goalState = goalLoopMode.getState();
@@ -898,6 +911,8 @@ async function handleGoalCommand(
     tokensUsed: storedGoal?.tokensUsed ?? 0,
     tokenBudget: storedGoal?.tokenBudget ?? goalState.tokenBudget,
     timeUsedSeconds: (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
+    currentStep: goalState.currentIteration,
+    maxSteps: goalState.maxSteps,
   });
 
   await handleIncomingMessage(

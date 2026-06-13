@@ -58,6 +58,7 @@ import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildGoalReminder,
   formatGoalSummary,
+  GOAL_DEFAULT_MAX_STEPS,
   GOAL_USAGE,
   GOAL_USAGE_HINT,
   goalStatusLabel,
@@ -1948,7 +1949,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 currentConversationId,
                 true,
               );
-              goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
+              goalLoopMode.activateGoal(
+                goal.objective,
+                goal.tokenBudget,
+                goal.maxSteps ?? GOAL_DEFAULT_MAX_STEPS,
+              );
               setUiGoalLoopActive(true);
               permissionMode.setMode("unrestricted");
               setUiPermissionMode("unrestricted");
@@ -2004,17 +2009,20 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             process.cwd(),
             parsedGoal.tokenBudget,
             true,
+            parsedGoal.maxSteps,
           );
           goalLoopMode.activateGoal(
             parsedGoal.objective,
             parsedGoal.tokenBudget,
+            parsedGoal.maxSteps,
           );
           setUiGoalLoopActive(true);
           permissionMode.setMode("unrestricted");
           setUiPermissionMode("unrestricted");
           const replaced = previousGoal ? " replaced" : " active";
+          const stepCapLabel = parsedGoal.maxSteps ?? "∞";
           cmd.finish(
-            `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`,
+            `Goal${replaced} (iter 1/${stepCapLabel})\n${formatGoalSummary(goal)}`,
             true,
           );
           const goalState = goalLoopMode.getState();
