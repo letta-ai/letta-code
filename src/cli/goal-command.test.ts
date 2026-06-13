@@ -6,6 +6,7 @@ import {
   formatGoalElapsedSeconds,
   formatGoalStatusIndicator,
   formatGoalSummary,
+  GOAL_DEFAULT_MAX_STEPS,
   goalStatusLabel,
   parseGoalArgs,
   validateGoalObjective,
@@ -119,6 +120,40 @@ describe("goalCommand - parseGoalArgs", () => {
     const result = parseGoalArgs("--token-budget 50000");
     expect(result.objective).toBe("");
     expect(result.tokenBudget).toBe(50000);
+  });
+
+  test("applies the default max-steps cap when no flag is provided", () => {
+    const result = parseGoalArgs("ship the feature");
+    expect(result.maxSteps).toBe(GOAL_DEFAULT_MAX_STEPS);
+  });
+
+  test("parses --max-steps flag", () => {
+    const result = parseGoalArgs("--max-steps 12 improve coverage");
+    expect(result.objective).toBe("improve coverage");
+    expect(result.maxSteps).toBe(12);
+    expect(result.error).toBeUndefined();
+  });
+
+  test("treats --max-steps 0/unlimited as no cap", () => {
+    expect(parseGoalArgs("--max-steps 0 keep going").maxSteps).toBeNull();
+    expect(
+      parseGoalArgs("--max-steps unlimited keep going").maxSteps,
+    ).toBeNull();
+  });
+
+  test("returns error for negative-ish / invalid max-steps is treated as text", () => {
+    // The regex only matches \d+|unlimited|none|off, so "-5" is not captured;
+    // the cap falls back to the default and the text becomes the objective.
+    const result = parseGoalArgs("--max-steps -5 do something");
+    expect(result.maxSteps).toBe(GOAL_DEFAULT_MAX_STEPS);
+    expect(result.error).toBeUndefined();
+  });
+
+  test("parses --token-budget and --max-steps together", () => {
+    const result = parseGoalArgs("--token-budget 1000 --max-steps 8 redo this");
+    expect(result.objective).toBe("redo this");
+    expect(result.tokenBudget).toBe(1000);
+    expect(result.maxSteps).toBe(8);
   });
 });
 
@@ -304,6 +339,31 @@ describe("goalCommand - buildGoalContinuationPrompt", () => {
     });
     expect(prompt).toContain('status "blocked"');
     expect(prompt).toContain("three consecutive goal turns");
+  });
+
+  test("surfaces the autonomous step cap when one is configured", () => {
+    const prompt = buildGoalContinuationPrompt({
+      objective: "do the thing",
+      status: "active",
+      tokensUsed: 100,
+      tokenBudget: null,
+      timeUsedSeconds: 30,
+      currentStep: 4,
+      maxSteps: 10,
+    });
+    expect(prompt).toContain("Autonomous step: 4 of 10");
+  });
+
+  test("omits the step line when no cap is configured", () => {
+    const prompt = buildGoalContinuationPrompt({
+      objective: "do the thing",
+      status: "active",
+      tokensUsed: 100,
+      tokenBudget: null,
+      timeUsedSeconds: 30,
+      maxSteps: null,
+    });
+    expect(prompt).not.toContain("Autonomous step:");
   });
 });
 
