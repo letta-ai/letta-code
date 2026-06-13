@@ -161,6 +161,9 @@ type AppViewProps = {
   expandedToolCallId: string | null;
   lastShellToolCallId: string | null;
   handleCtrlO: () => void;
+  handleRotateConversation: (
+    direction: "next" | "prev",
+  ) => void | Promise<void>;
   queueMode: "immediate" | "defer";
   deferModeSupported: boolean;
   handleCtrlD: () => void;
@@ -375,6 +378,7 @@ export function AppView(props: AppViewProps) {
     expandedToolCallId,
     lastShellToolCallId,
     handleCtrlO,
+    handleRotateConversation,
     queueMode,
     deferModeSupported,
     handleCtrlD,
@@ -732,6 +736,7 @@ export function AppView(props: AppViewProps) {
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
                 onCtrlO={handleCtrlO}
+                onRotateConversation={handleRotateConversation}
                 onCtrlD={handleCtrlD}
                 queueMode={queueMode}
                 deferModeSupported={deferModeSupported}
