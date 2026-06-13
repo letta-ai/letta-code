@@ -644,6 +644,9 @@ describe("listen-client parseServerMessage", () => {
               device_status: expect.objectContaining({
                 current_working_directory: cwdDir,
                 current_permission_mode: "acceptEdits",
+                cwd_map: expect.objectContaining({
+                  [`conversation:${runtimeScope.conversation_id}`]: cwdDir,
+                }),
               }),
             }),
             expect.objectContaining({
@@ -4617,12 +4620,20 @@ describe("listen-client v2 status builders", () => {
       conversation_id: "conv-a",
     });
     expect(activeStatus.current_working_directory).toBe("/repo/a");
+    expect(activeStatus.cwd_map).toMatchObject({
+      "conversation:conv-a": "/repo/a",
+      "agent:agent-b::conversation:default": "/repo/b",
+    });
 
     const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
       agent_id: "agent-b",
       conversation_id: "default",
     });
     expect(defaultStatus.current_working_directory).toBe("/repo/b");
+    expect(defaultStatus.cwd_map).toMatchObject({
+      "conversation:conv-a": "/repo/a",
+      "agent:agent-b::conversation:default": "/repo/b",
+    });
   });
 
   test("scoped loop status is not suppressed just because another conversation is processing", () => {
