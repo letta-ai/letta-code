@@ -13,7 +13,7 @@ const CURSOR_SENTINEL = '\u{10FFFD}';
  * Determines if the input should be treated as a control sequence (not inserted as text).
  * This centralizes escape sequence filtering to prevent garbage characters from being inserted.
  */
-function isControlSequence(input, key) {
+export function isControlSequence(input, key) {
     // Pasted content is handled separately
     if (key?.isPasted) return true;
 
@@ -31,8 +31,10 @@ function isControlSequence(input, key) {
     // The handled ones are: ctrl+a, ctrl+e, ctrl+k, ctrl+u, ctrl+y (see useInput below)
     if (key.ctrl && input && /^[a-z]$/i.test(input) && !['a', 'e', 'k', 'u', 'y'].includes(input.toLowerCase())) return true;
 
-    // Option+Arrow escape sequences: Ink parses \x1bb as meta=true, input='b'
-    if (key.meta && (input === 'b' || input === 'B' || input === 'f' || input === 'F')) return true;
+    // Meta/Option shortcuts are handled by parent components and should not
+    // also mutate focused text inputs. This covers terminal-specific encodings
+    // like Ghostty CSI-u (input='p', meta=true) and WezTerm ESC+p.
+    if (key.meta && input) return true;
 
     // Filter specific escape sequences that would insert garbage, but allow plain ESC through
     // CSI sequences (ESC[...), Option+Delete (ESC + DEL), and other multi-char escape sequences
