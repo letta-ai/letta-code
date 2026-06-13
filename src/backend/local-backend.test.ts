@@ -759,6 +759,8 @@ describe("local backend pi transcript", () => {
       (model) => model.handle,
     );
     expect(handles).toContain("zai/glm-4.5-air");
+    expect(handles[0]).toBe("zai/glm-5.2");
+    expect(handles).toContain("zai/glm-5.2");
     expect(handles).toContain("zai/glm-5.1");
   });
 
