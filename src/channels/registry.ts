@@ -10,7 +10,6 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { getClient } from "@/backend/api/client";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { ApprovalResponseBody } from "@/types/protocol_v2";
@@ -1526,7 +1525,6 @@ export class ChannelRegistry {
     const client = await getClient();
     const conversation = await client.conversations.create({
       agent_id: agentId,
-      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
       ...(summary ? { summary } : {}),
     });
     return conversation.id;

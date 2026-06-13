@@ -231,7 +231,6 @@ describe("telegram channel registry", () => {
     expect(createConversation).toHaveBeenCalledTimes(1);
     expect(createConversation).toHaveBeenCalledWith({
       agent_id: "agent-1",
-      isolated_block_labels: expect.any(Array),
       summary: "[Telegram] Topic in Void Cafe: hello topic",
     });
     expect(getRoute("telegram", "-100123", "telegram-bot", "42")).toMatchObject(
