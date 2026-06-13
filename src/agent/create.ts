@@ -7,7 +7,6 @@ import type {
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { type BackendCapabilities, getBackend } from "@/backend";
-import { getClient } from "@/backend/api/client";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
 import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
@@ -25,7 +24,6 @@ import {
   isKnownPreset,
   type MemoryPromptMode,
   resolveAndBuildSystemPrompt,
-  SLEEPTIME_MEMORY_PERSONA,
 } from "./prompt-assets";
 import {
   LETTA_CODE_ORIGIN_TAG,
@@ -202,7 +200,6 @@ export interface CreateAgentOptions {
   updateArgs?: Record<string, unknown>;
   skillsDirectory?: string;
   parallelToolCalls?: boolean;
-  enableSleeptime?: boolean;
   /** System prompt preset (e.g., 'default', 'letta', 'source-claude') */
   systemPromptPreset?: string;
   /** Raw system prompt string (mutually exclusive with systemPromptPreset) */
@@ -232,7 +229,6 @@ export async function createAgent(
   updateArgs?: Record<string, unknown>,
   skillsDirectory?: string,
   parallelToolCalls = true,
-  enableSleeptime = false,
   systemPromptPreset?: string,
   initBlocks?: string[],
   baseTools?: string[],
@@ -249,7 +245,6 @@ export async function createAgent(
       updateArgs,
       skillsDirectory,
       parallelToolCalls,
-      enableSleeptime,
       systemPromptPreset,
       initBlocks,
       baseTools,
@@ -259,7 +254,6 @@ export async function createAgent(
   const name = options.name ?? DEFAULT_AGENT_NAME;
   const embeddingModelVal = options.embeddingModel;
   const parallelToolCallsVal = options.parallelToolCalls ?? true;
-  const enableSleeptimeVal = options.enableSleeptime ?? false;
 
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -433,7 +427,6 @@ export async function createAgent(
     include_base_tool_rules: false,
     initial_message_sequence: [],
     parallel_tool_calls: parallelToolCallsVal,
-    enable_sleeptime: enableSleeptimeVal,
     compaction_settings: {
       model: DEFAULT_SUMMARIZATION_MODEL,
     },
@@ -466,34 +459,8 @@ export async function createAgent(
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
   const fullAgent = await backend.retrieveAgent(agent.id, {
-    include: ["agent.managed_group", "agent.tags"],
+    include: ["agent.tags"],
   });
-
-  // Update persona block for sleeptime agent
-  if (enableSleeptimeVal && fullAgent.managed_group) {
-    const client = await getClient();
-    // Find the sleeptime agent in the managed group by checking agent_type
-    for (const groupAgentId of fullAgent.managed_group.agent_ids) {
-      try {
-        const groupAgent = await client.agents.retrieve(groupAgentId);
-        if (groupAgent.agent_type === "sleeptime_agent") {
-          // Update the persona block on the SLEEPTIME agent, not the primary agent
-          await client.agents.blocks.update("memory_persona", {
-            agent_id: groupAgentId,
-            value: SLEEPTIME_MEMORY_PERSONA,
-            description:
-              "Instructions for the sleep-time memory management agent",
-          });
-          break; // Found and updated sleeptime agent
-        }
-      } catch (error) {
-        console.warn(
-          `Failed to check/update agent ${groupAgentId}:`,
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
-  }
 
   // Persist system prompt preset — only for non-subagents and known presets or custom.
   // Guarded by isReady since settings may not be initialized in direct/test callers.
