@@ -150,6 +150,7 @@ const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       groupMode: parseTelegramGroupMode(parsed.group_mode),
       transcribeVoice: parsed.transcribe_voice === true,
+      richPrivateChatDefault: parsed.rich_private_chat_default !== false,
       richDraftStreaming: parsed.rich_draft_streaming === true,
     };
   },

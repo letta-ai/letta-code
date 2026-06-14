@@ -33,7 +33,10 @@ function telegramSource(
   };
 }
 
-function upsertTelegramAccount(richDraftStreaming: boolean): void {
+function upsertTelegramAccount(
+  richDraftStreaming: boolean,
+  richPrivateChatDefault = true,
+): void {
   upsertChannelAccount("telegram", {
     channel: "telegram",
     accountId: "acct-telegram",
@@ -48,6 +51,7 @@ function upsertTelegramAccount(richDraftStreaming: boolean): void {
     },
     groupMode: "open",
     transcribeVoice: false,
+    richPrivateChatDefault,
     richDraftStreaming,
     createdAt: "2026-06-11T00:00:00.000Z",
     updatedAt: "2026-06-11T00:00:00.000Z",
@@ -184,6 +188,32 @@ describe("Telegram rich draft streamer", () => {
       draftId: expect.any(Number),
       richMessage: { markdown: "# Private default" },
     });
+  });
+
+  test("does not stream private Telegram send args when default rich messaging is disabled", async () => {
+    upsertTelegramAccount(true, false);
+    const { sendRichMessageDraft } = registerTelegramAdapter();
+
+    const streamer = createTelegramRichDraftStreamer({
+      batchId: "batch-1",
+      sources: [telegramSource()],
+      debounceMs: 0,
+    });
+
+    streamer?.handleChunk({
+      message_type: "approval_request_message",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "MessageChannel",
+          arguments:
+            '{"action":"send","channel":"telegram","chat_id":"telegram:chat-12345","accountId":"acct-telegram","message":"# Private plain',
+        },
+      ],
+    } as never);
+    await streamer?.flushPending();
+
+    expect(sendRichMessageDraft).not.toHaveBeenCalled();
   });
 
   test("does not stream plain send args from Telegram channel routes", async () => {

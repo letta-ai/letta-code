@@ -1,8 +1,22 @@
+import { getChannelAccount } from "@/channels/accounts";
 import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionRequest,
 } from "@/channels/plugin-types";
 import type { ChannelRoute } from "@/channels/types";
+import { isTelegramChannelAccount } from "@/channels/types";
+
+function richPrivateChatDefaultEnabled(route: ChannelRoute): boolean {
+  const accountId = route.accountId?.trim();
+  if (!accountId) {
+    return true;
+  }
+  const account = getChannelAccount("telegram", accountId);
+  if (!account || !isTelegramChannelAccount(account)) {
+    return true;
+  }
+  return account.richPrivateChatDefault !== false;
+}
 
 function shouldSendTelegramRichMessage(params: {
   request: ChannelMessageActionRequest;
@@ -14,6 +28,7 @@ function shouldSendTelegramRichMessage(params: {
   return (
     params.request.action === "send" &&
     params.route.chatType === "direct" &&
+    richPrivateChatDefaultEnabled(params.route) &&
     !params.request.mediaPath?.trim()
   );
 }

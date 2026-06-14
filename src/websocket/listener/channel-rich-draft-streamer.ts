@@ -103,6 +103,7 @@ export function createTelegramRichDraftStreamer(options: {
     adapter,
     batchId: options.batchId,
     source,
+    richPrivateChatDefault: account.richPrivateChatDefault !== false,
     debounceMs: options.debounceMs ?? DEFAULT_DRAFT_DEBOUNCE_MS,
   });
 }
@@ -141,6 +142,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
   private readonly adapter: ChannelAdapter;
   private readonly batchId: string;
   private readonly source: TelegramDraftSource;
+  private readonly richPrivateChatDefault: boolean;
   private readonly debounceMs: number;
   private readonly calls = new Map<string, DraftCallState>();
   private readonly finishedCallIds = new Set<string>();
@@ -152,11 +154,13 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     adapter: ChannelAdapter;
     batchId: string;
     source: TelegramDraftSource;
+    richPrivateChatDefault: boolean;
     debounceMs: number;
   }) {
     this.adapter = options.adapter;
     this.batchId = options.batchId;
     this.source = options.source;
+    this.richPrivateChatDefault = options.richPrivateChatDefault;
     this.debounceMs = Math.max(0, Math.trunc(options.debounceMs));
   }
 
@@ -281,6 +285,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     const intent = extractTelegramSendRichDraftIntent(
       state.argumentsText,
       this.source,
+      { richPrivateChatDefault: this.richPrivateChatDefault },
     );
     if (!intent) {
       debugLog(
@@ -390,9 +395,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
         }
         if (state.finished) {
           this.calls.delete(state.toolCallId);
-          return;
-        }
-        if (
+        } else if (
           !this.disposed &&
           this.calls.get(state.toolCallId) === state &&
           state.pendingMessage &&
@@ -500,12 +503,15 @@ function findRetryAfterCandidates(error: unknown): unknown[] {
 export function extractTelegramSendRichDraftIntent(
   argumentsText: string,
   source: ChannelTurnSource & { channel: "telegram"; accountId: string },
+  options: { richPrivateChatDefault?: boolean } = {},
 ): DraftIntent | null {
   const action = extractStringField(argumentsText, "action", false)?.value;
   const normalizedAction = action?.trim().toLowerCase();
   const isExplicitRichSend = normalizedAction === "send-rich";
   const isDefaultRichPrivateSend =
-    normalizedAction === "send" && source.chatType === "direct";
+    normalizedAction === "send" &&
+    source.chatType === "direct" &&
+    options.richPrivateChatDefault !== false;
   if (!isExplicitRichSend && !isDefaultRichPrivateSend) {
     debugLog(
       "channels",

@@ -358,6 +358,11 @@ export interface TelegramChannelConfig {
   groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /**
+   * Default true. When true, normal Telegram private-chat `send` actions use
+   * Bot API Rich Messages; explicit `send-rich` remains available either way.
+   */
+  richPrivateChatDefault?: boolean;
   /** When true, stream hidden Telegram rich-message drafts during generation. */
   richDraftStreaming?: boolean;
 }
@@ -471,6 +476,12 @@ export interface TelegramChannelAccount extends ChannelAccountBase {
   groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /**
+   * Default true. When true, normal Telegram private-chat MessageChannel sends
+   * are delivered through Bot API Rich Messages. Set false to keep `send`
+   * plain/HTML-formatted unless the agent explicitly uses `send-rich`.
+   */
+  richPrivateChatDefault?: boolean;
   /**
    * When true, Telegram channel turns may stream hidden rich-message drafts
    * while the agent is preparing a final MessageChannel send-rich call.

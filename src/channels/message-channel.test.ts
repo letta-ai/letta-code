@@ -14,7 +14,7 @@ import {
   clearTargetStores,
   upsertChannelTarget,
 } from "@/channels/targets";
-import type { ChannelAdapter } from "@/channels/types";
+import type { ChannelAdapter, TelegramChannelAccount } from "@/channels/types";
 import { message_channel } from "@/tools/impl/message-channel";
 
 describe("MessageChannel", () => {
@@ -37,6 +37,31 @@ describe("MessageChannel", () => {
     __testOverrideSaveChannelAccounts(() => {});
     __testOverrideLoadTargetStore(() => {});
     __testOverrideSaveTargetStore(() => {});
+  }
+
+  function upsertTelegramTestAccount(
+    overrides: Partial<TelegramChannelAccount> = {},
+  ): void {
+    upsertChannelAccount("telegram", {
+      channel: "telegram",
+      accountId: "account-1",
+      displayName: "Telegram",
+      enabled: true,
+      token: "telegram-token",
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      binding: {
+        agentId: null,
+        conversationId: null,
+      },
+      groupMode: "open",
+      transcribeVoice: false,
+      richPrivateChatDefault: true,
+      richDraftStreaming: false,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+      ...overrides,
+    });
   }
 
   test("uses the routed account adapter for multi-account channels", async () => {
@@ -388,6 +413,7 @@ describe("MessageChannel", () => {
   });
 
   test("routes Telegram send-rich as rich markdown with HTML fallback", async () => {
+    installChannelStateTestOverrides();
     const registry = new ChannelRegistry();
 
     const sendMessage = mock(async () => ({ messageId: "telegram-rich-1" }));
@@ -405,6 +431,7 @@ describe("MessageChannel", () => {
     };
 
     registry.registerAdapter(adapter);
+    upsertTelegramTestAccount({ richPrivateChatDefault: false });
 
     setRouteInMemory("telegram", {
       accountId: "account-1",
@@ -446,6 +473,7 @@ describe("MessageChannel", () => {
   });
 
   test("defaults Telegram private chat sends to rich markdown", async () => {
+    installChannelStateTestOverrides();
     const registry = new ChannelRegistry();
 
     const sendMessage = mock(async () => ({ messageId: "telegram-rich-2" }));
@@ -463,6 +491,7 @@ describe("MessageChannel", () => {
     };
 
     registry.registerAdapter(adapter);
+    upsertTelegramTestAccount({ richPrivateChatDefault: true });
 
     setRouteInMemory("telegram", {
       accountId: "account-1",
@@ -495,6 +524,68 @@ describe("MessageChannel", () => {
         accountId: "account-1",
         chatId: "7952253975",
         richMessage: { markdown },
+      }),
+    );
+  });
+
+  test("keeps Telegram private chat sends plain when account disables default rich messaging", async () => {
+    installChannelStateTestOverrides();
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "telegram-plain-2" }));
+
+    const adapter: ChannelAdapter = {
+      id: "telegram:account-1",
+      channelId: "telegram",
+      accountId: "account-1",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+    upsertTelegramTestAccount({ richPrivateChatDefault: false });
+
+    setRouteInMemory("telegram", {
+      accountId: "account-1",
+      chatId: "7952253975",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const markdown = "# Plain private fallback\n\n- **private** chat";
+    const result = await message_channel({
+      action: "send",
+      channel: "telegram",
+      chat_id: "7952253975",
+      message: markdown,
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Message sent to telegram");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        richMessage: expect.anything(),
+      }),
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        accountId: "account-1",
+        chatId: "7952253975",
+        text: "# Plain private fallback\n\n- <b>private</b> chat",
+        parseMode: "HTML",
       }),
     );
   });

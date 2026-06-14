@@ -532,6 +532,7 @@ test("telegram channel modifies config while running and keeps the adapter live"
       config: {
         group_mode: "mention-only",
         transcribe_voice: true,
+        rich_private_chat_default: false,
         rich_draft_streaming: true,
         inbound_debounce_ms: 750,
       },
@@ -550,6 +551,7 @@ test("telegram channel modifies config while running and keeps the adapter live"
       has_token: true,
       group_mode: "mention-only",
       transcribe_voice: true,
+      rich_private_chat_default: false,
       rich_draft_streaming: true,
       inbound_debounce_ms: 750,
       binding: {
@@ -565,6 +567,7 @@ test("telegram channel modifies config while running and keeps the adapter live"
     running: true,
     dmPolicy: "allowlist",
     allowedUsers: ["456"],
+    richPrivateChatDefault: false,
     richDraftStreaming: true,
   });
   expect(FakeBot.instances).toHaveLength(2);

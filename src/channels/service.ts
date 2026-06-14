@@ -118,6 +118,7 @@ export interface ChannelConfigSnapshot {
   allowedGroups?: string[];
   mentionPatterns?: string[];
   transcribeVoice?: boolean;
+  richPrivateChatDefault?: boolean;
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
@@ -193,6 +194,7 @@ export interface ChannelAccountSnapshot {
   hasAppToken?: boolean;
   groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   transcribeVoice?: boolean;
+  richPrivateChatDefault?: boolean;
   richDraftStreaming?: boolean;
   binding?: {
     agentId: string | null;
@@ -490,6 +492,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       config,
       hasToken: account.token.trim().length > 0,
       transcribeVoice: account.transcribeVoice === true,
+      richPrivateChatDefault: account.richPrivateChatDefault !== false,
       richDraftStreaming: account.richDraftStreaming === true,
       groupMode: account.groupMode ?? "open",
       inboundDebounceMs: account.inboundDebounceMs,
@@ -608,6 +611,7 @@ function createAccountFromPatch(
       groupMode:
         normalizeTelegramGroupMode(normalizedPatch.groupMode) ?? "open",
       transcribeVoice: normalizedPatch.transcribeVoice === true,
+      richPrivateChatDefault: normalizedPatch.richPrivateChatDefault ?? true,
       richDraftStreaming: normalizedPatch.richDraftStreaming === true,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       binding: {
@@ -719,6 +723,10 @@ function mergeAccountPatch(
         "open",
       transcribeVoice:
         normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      richPrivateChatDefault:
+        normalizedPatch.richPrivateChatDefault ??
+        existing.richPrivateChatDefault ??
+        true,
       richDraftStreaming:
         normalizedPatch.richDraftStreaming ??
         existing.richDraftStreaming ??
@@ -896,6 +904,7 @@ export function getChannelConfigSnapshot(
       config: toChannelConfigSnapshotProtocolConfig(account),
       hasToken: account.token.trim().length > 0,
       transcribeVoice: account.transcribeVoice === true,
+      richPrivateChatDefault: account.richPrivateChatDefault !== false,
       richDraftStreaming: account.richDraftStreaming === true,
       groupMode: account.groupMode ?? "open",
       inboundDebounceMs: account.inboundDebounceMs,
@@ -1020,6 +1029,7 @@ export async function setChannelConfigLive(
       allowedGroups: normalizedPatch.allowedGroups,
       mentionPatterns: normalizedPatch.mentionPatterns,
       transcribeVoice: normalizedPatch.transcribeVoice,
+      richPrivateChatDefault: normalizedPatch.richPrivateChatDefault,
       richDraftStreaming: normalizedPatch.richDraftStreaming,
       downloadMedia: normalizedPatch.downloadMedia,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
@@ -1054,6 +1064,7 @@ export async function setChannelConfigLive(
         allowedGroups: normalizedPatch.allowedGroups,
         mentionPatterns: normalizedPatch.mentionPatterns,
         transcribeVoice: normalizedPatch.transcribeVoice,
+        richPrivateChatDefault: normalizedPatch.richPrivateChatDefault,
         richDraftStreaming: normalizedPatch.richDraftStreaming,
         downloadMedia: normalizedPatch.downloadMedia,
         mediaMaxBytes: normalizedPatch.mediaMaxBytes,
