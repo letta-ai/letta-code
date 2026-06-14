@@ -233,6 +233,13 @@ function createLocalConversationRecord(
   } as StoredConversation;
 }
 
+function isDefaultConversationTitleUpdate(
+  body: ConversationUpdateBody,
+): boolean {
+  const keys = Object.keys(body as Record<string, unknown>);
+  return keys.length > 0 && keys.every((key) => key === "summary");
+}
+
 function updateLocalConversationRecord(
   current: StoredConversation,
   body: ConversationUpdateBody,
@@ -1500,13 +1507,16 @@ export class LocalStore {
     conversationId: string,
     body: ConversationUpdateBody,
   ): Conversation {
-    if (conversationId === "default") {
-      throw new Error("Default conversation cannot be updated");
+    if (
+      conversationId === "default" &&
+      !isDefaultConversationTitleUpdate(body)
+    ) {
+      throw new Error("Default conversation only supports title updates");
     }
 
     const current = this.findConversation(conversationId);
     if (!current) {
-      if (this.strictConversationAccess) {
+      if (this.strictConversationAccess && conversationId !== "default") {
         throw new LocalBackendNotFoundError("Conversation", conversationId);
       }
       const created = this.ensureConversation(conversationId);

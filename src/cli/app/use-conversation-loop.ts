@@ -50,6 +50,7 @@ import {
 } from "@/cli/helpers/accumulator";
 import { classifyApprovals } from "@/cli/helpers/approval-classification";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
+import { shouldPersistAutoConversationTitle } from "@/cli/helpers/conversation-title";
 import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
@@ -108,7 +109,6 @@ import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
-
 import {
   CONVERSATION_BUSY_MAX_RETRIES,
   EAGER_CANCEL,
@@ -1662,7 +1662,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             if (
               shouldAutoGenerateConversationTitleRef.current &&
               !isAutoConversationTitleInFlightRef.current &&
-              conversationIdRef.current !== "default"
+              shouldPersistAutoConversationTitle(
+                conversationIdRef.current,
+                getBackend().capabilities,
+              )
             ) {
               isAutoConversationTitleInFlightRef.current = true;
               const titleConversationId = conversationIdRef.current;
