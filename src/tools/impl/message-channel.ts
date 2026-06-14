@@ -37,6 +37,13 @@ const SLACK_PLACEHOLDER_SUFFIX = "X";
 const SLACK_PLACEHOLDER_PATTERN = /LCSLACKMRKDWNPLACEHOLDER(\d+)X/g;
 const SLACK_ANGLE_TOKEN_RE = /<[^>\n]+>/g;
 
+// Channels where a thread identifier is equivalent to a message identifier
+// (e.g. Slack's thread_ts). For these, if threadId is absent we can fall
+// back to messageId. Other channels must not use messageId as a threadId.
+const CHANNELS_USING_MESSAGE_ID_AS_THREAD_ID = new Set<SupportedChannelId>([
+  "slack",
+]);
+
 type OutboundChannelFormatter = (
   text: string,
 ) => Pick<OutboundChannelMessage, "text" | "parseMode">;
@@ -752,7 +759,17 @@ function inferThreadIdFromChannelTurnSources(params: {
       continue;
     }
 
-    threadIds.add(source.threadId ?? source.messageId ?? null);
+    // Only fall through to messageId for channels where thread identifiers
+    // double as message identifiers (e.g. Slack thread_ts). For Telegram
+    // direct chats, messageId is never a valid thread ID and would cause
+    // "message thread not found" errors if forwarded as message_thread_id.
+    if (source.threadId != null) {
+      threadIds.add(source.threadId);
+    } else if (CHANNELS_USING_MESSAGE_ID_AS_THREAD_ID.has(source.channel)) {
+      threadIds.add(source.messageId ?? null);
+    } else {
+      threadIds.add(null);
+    }
   }
 
   return threadIds.size === 1 ? [...threadIds][0] : undefined;

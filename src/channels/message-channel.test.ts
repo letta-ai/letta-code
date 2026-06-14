@@ -210,6 +210,68 @@ describe("MessageChannel", () => {
     });
   });
 
+  test("does not infer messageId as threadId for Telegram direct chats", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "42" }));
+
+    const adapter: ChannelAdapter = {
+      id: "telegram:account-1",
+      channelId: "telegram",
+      accountId: "account-1",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("telegram", {
+      accountId: "account-1",
+      chatId: "8150361784",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-dm",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "telegram",
+      chat_id: "8150361784",
+      message: "hello from DM",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-dm",
+      },
+      channelTurnSources: [
+        {
+          channel: "telegram",
+          accountId: "account-1",
+          chatId: "8150361784",
+          chatType: "direct",
+          messageId: "23",
+          threadId: null,
+          agentId: "agent-1",
+          conversationId: "conv-dm",
+        },
+      ],
+    });
+
+    expect(result).toContain("Message sent to telegram");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: null,
+      }),
+    );
+  });
+
   test("passes Slack reactions through MessageChannel with the routed account", async () => {
     const registry = new ChannelRegistry();
 
