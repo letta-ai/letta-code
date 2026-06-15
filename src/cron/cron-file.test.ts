@@ -101,6 +101,35 @@ describe("addTask", () => {
     expect(result.task.scheduled_for).toBe(scheduledFor.toISOString());
   });
 
+  test("stores explicit channel targets", () => {
+    const result = addTask(
+      makeInput({
+        channel_targets: [
+          {
+            channel: "slack",
+            account_id: "acct-slack",
+            chat_id: "C123",
+            chat_type: "channel",
+            thread_id: "1712790000.000050",
+          },
+        ],
+      }),
+    );
+
+    expect(result.task.channel_targets).toEqual([
+      {
+        channel: "slack",
+        account_id: "acct-slack",
+        chat_id: "C123",
+        chat_type: "channel",
+        thread_id: "1712790000.000050",
+      },
+    ]);
+    expect(readCronFile().tasks[0]?.channel_targets).toEqual(
+      result.task.channel_targets,
+    );
+  });
+
   test("multiple tasks get unique IDs", () => {
     const r1 = addTask(makeInput());
     const r2 = addTask(makeInput({ prompt: "echo world" }));

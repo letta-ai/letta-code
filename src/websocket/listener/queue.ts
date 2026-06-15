@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { MessageChannelToolDiscoveryScope } from "@/channels/message-tool";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
@@ -145,6 +146,36 @@ function collectBatchChannelTurnSources(
   return sources.length > 0 ? sources : undefined;
 }
 
+function collectBatchChannelToolScope(
+  runtime: ConversationRuntime,
+  batch: DequeuedBatch,
+): MessageChannelToolDiscoveryScope | null | undefined {
+  let sawExplicitScope = false;
+  const channels: MessageChannelToolDiscoveryScope["channels"] = [];
+  const seen = new Set<string>();
+
+  for (const item of batch.items) {
+    const template = runtime.queuedMessagesByItemId.get(item.id);
+    if (!template || !("channelToolScope" in template)) {
+      continue;
+    }
+    sawExplicitScope = true;
+    for (const entry of template.channelToolScope?.channels ?? []) {
+      const key = `${entry.channelId}:${entry.accountId ?? ""}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      channels.push({
+        channelId: entry.channelId,
+        accountId: entry.accountId ?? null,
+      });
+    }
+  }
+
+  return sawExplicitScope ? { channels } : undefined;
+}
+
 async function dispatchChannelTurnLifecycleEvent(
   event:
     | {
@@ -277,6 +308,10 @@ function buildQueuedTurnMessage(
   batch: DequeuedBatch,
 ): IncomingMessage | null {
   const channelTurnSources = collectBatchChannelTurnSources(runtime, batch);
+  let channelToolScope = collectBatchChannelToolScope(runtime, batch);
+  if (channelToolScope?.channels.length === 0 && channelTurnSources) {
+    channelToolScope = undefined;
+  }
   const actingUserId = pickBatchActingUserId(batch.items);
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
@@ -297,6 +332,7 @@ function buildQueuedTurnMessage(
       type: "message",
       agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
       conversationId: scopeItem?.conversationId ?? runtime.conversationId,
+      ...(channelToolScope !== undefined ? { channelToolScope } : {}),
       ...(channelTurnSources ? { channelTurnSources } : {}),
       ...(actingUserId ? { actingUserId } : {}),
       messages: [
@@ -341,6 +377,7 @@ function buildQueuedTurnMessage(
 
   return {
     ...template,
+    ...(channelToolScope !== undefined ? { channelToolScope } : {}),
     ...(channelTurnSources ? { channelTurnSources } : {}),
     ...(actingUserId ? { actingUserId } : {}),
     messages,

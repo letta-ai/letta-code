@@ -6,6 +6,7 @@ import {
   getCronRunLogPath,
   getTask as getCronTask,
   listTasks as listCronTasks,
+  normalizeCronChannelTargets,
   readCronRunLogEntriesPage,
   updateTask as updateCronTask,
 } from "@/cron";
@@ -124,6 +125,7 @@ export async function handleCronCommand(
         timezone: parsed.timezone,
         recurring: parsed.recurring,
         prompt: parsed.prompt,
+        channel_targets: parsed.channel_targets,
         scheduled_for: scheduledFor,
       });
       safeSocketSend(
@@ -290,6 +292,11 @@ export async function handleCronCommand(
         if (parsed.recurring !== undefined)
           current.recurring = parsed.recurring;
         if (parsed.prompt !== undefined) current.prompt = parsed.prompt;
+        if (parsed.channel_targets !== undefined) {
+          current.channel_targets = normalizeCronChannelTargets(
+            parsed.channel_targets,
+          );
+        }
         if (parsed.scheduled_for !== undefined) {
           current.scheduled_for = scheduledForIso ?? null;
         }

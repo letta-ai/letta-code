@@ -121,7 +121,8 @@ function getToolNamesForToolset(
       tools = [...GEMINI_DEFAULT_TOOLS];
       break;
     case "none":
-      return [];
+      tools = [];
+      break;
     default:
       tools = [...ANTHROPIC_DEFAULT_TOOLS];
       break;
@@ -438,6 +439,7 @@ export async function prepareToolExecutionContextForScope(params: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   cachedAgent?: AgentState | null;
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
   modEvents?: ModEvents;
 }): Promise<PreparedScopeToolContext> {
@@ -452,6 +454,7 @@ export async function prepareToolExecutionContextForScope(params: {
     workingDirectory,
     permissionModeState,
     cachedAgent,
+    channelToolScope: explicitChannelToolScope,
     channelTurnSources: explicitChannelTurnSources,
     modEvents,
   } = params;
@@ -500,10 +503,20 @@ export async function prepareToolExecutionContextForScope(params: {
     inheritedChannelContext?.channelTurnSources ??
     [];
   const scopedConversationId = conversationId ?? "default";
-  const channelToolScope =
-    inheritedChannelToolScope && inheritedChannelToolScope.channels.length > 0
-      ? inheritedChannelToolScope
-      : resolveConversationChannelToolScope(agentId, scopedConversationId);
+  let channelToolScope: MessageChannelToolDiscoveryScope;
+  if (explicitChannelToolScope !== undefined) {
+    channelToolScope = explicitChannelToolScope ?? { channels: [] };
+  } else if (
+    inheritedChannelToolScope &&
+    inheritedChannelToolScope.channels.length > 0
+  ) {
+    channelToolScope = inheritedChannelToolScope;
+  } else {
+    channelToolScope = resolveConversationChannelToolScope(
+      agentId,
+      scopedConversationId,
+    );
+  }
 
   const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,

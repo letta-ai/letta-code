@@ -54,6 +54,7 @@ import {
   registerExternalTools,
 } from "@/tools/manager";
 import {
+  prepareToolExecutionContextForResolvedTarget,
   prepareToolExecutionContextForScope,
   resolveConversationChannelToolScope,
 } from "@/tools/toolset";
@@ -70,7 +71,7 @@ describe("tool execution context snapshot", () => {
   let initialTools: string[] = [];
 
   function createRunningAdapter(
-    channelId: "slack" | "telegram",
+    channelId: "discord" | "slack" | "telegram",
     accountId: string,
   ): ChannelAdapter {
     return {
@@ -959,6 +960,66 @@ describe("tool execution context snapshot", () => {
     );
 
     expect(prepared.loadedToolNames).toContain("MessageChannel");
+  });
+
+  test("keeps scoped MessageChannel available for pinned none toolsets", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "anthropic/claude-opus-4-1-20250805",
+      toolsetPreference: "none",
+      channelToolScope: {
+        channels: [{ channelId: "discord", accountId: "acct-discord" }],
+      },
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toEqual([
+      "MessageChannel",
+    ]);
+    expect(
+      prepared.preparedToolContext.clientTools.map((tool) => tool.name),
+    ).toEqual(["MessageChannel"]);
+  });
+
+  test("explicit empty channel scope prevents route fallback", async () => {
+    installChannelAccountTestOverrides();
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+    __testSetBackend(
+      new FakeHeadlessBackend(
+        "agent-1",
+        undefined,
+        {},
+        {
+          modelHandle: "anthropic/claude-opus-4-1-20250805",
+        },
+      ),
+    );
+    setRouteInMemory("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const prepared = await prepareToolExecutionContextForScope({
+      agentId: "agent-1",
+      conversationId: "default",
+      overrideModel: "anthropic/claude-opus-4-1-20250805",
+      channelToolScope: { channels: [] },
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+      "MessageChannel",
+    );
   });
 
   test("hydrates inherited channel scope from serialized child env", async () => {

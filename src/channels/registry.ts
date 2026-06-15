@@ -819,6 +819,7 @@ export class ChannelRegistry {
     agentId: string,
     conversationId: string,
     accountId?: string,
+    threadId?: string | null,
   ): ChannelRoute | null {
     const normalizedAccountId = accountId?.trim();
     const matches = getRoutesForChannel(channel).filter(
@@ -826,6 +827,9 @@ export class ChannelRegistry {
         route.chatId === chatId &&
         route.agentId === agentId &&
         route.conversationId === conversationId &&
+        (threadId === undefined
+          ? true
+          : (route.threadId ?? null) === (threadId ?? null)) &&
         (!normalizedAccountId ||
           (route.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) ===
             normalizedAccountId) &&

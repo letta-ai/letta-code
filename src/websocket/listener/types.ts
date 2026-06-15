@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
+import type { MessageChannelToolDiscoveryScope } from "@/channels/message-tool";
 import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
@@ -60,6 +61,7 @@ export interface IncomingMessage {
   type: "message";
   agentId?: string;
   conversationId?: string;
+  channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: ChannelTurnSource[];
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];

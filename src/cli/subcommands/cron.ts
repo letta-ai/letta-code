@@ -25,6 +25,8 @@ import {
   parseEvery,
   readCronRunLogEntriesPage,
 } from "@/cron";
+import { extractCronChannelTargetsFromInheritedContext } from "@/cron/channel-targets";
+import { LETTA_INHERITED_CHANNEL_CONTEXT_ENV } from "@/runtime-context";
 
 // ── Usage ───────────────────────────────────────────────────────────
 
@@ -126,6 +128,11 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
   }
 
   const conversationId = getConversationId(values.conversation);
+  const channelTargets = extractCronChannelTargetsFromInheritedContext({
+    raw: process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV],
+    agentId,
+    conversationId,
+  });
 
   // Determine schedule type
   const everyValue = values.every;
@@ -197,6 +204,7 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
       cron,
       recurring,
       prompt,
+      channel_targets: channelTargets,
       scheduled_for: scheduledFor,
     });
 
@@ -207,6 +215,7 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
       recurring: result.task.recurring,
       agent_id: result.task.agent_id,
       conversation_id: result.task.conversation_id,
+      channel_targets: result.task.channel_targets,
       created_at: result.task.created_at,
     };
 

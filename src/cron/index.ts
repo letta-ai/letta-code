@@ -1,4 +1,13 @@
 export {
+  type CronChannelTarget,
+  extractCronChannelTargetsFromInheritedContext,
+  formatCronChannelTargetForPrompt,
+  normalizeCronChannelTargets,
+  type ResolvedCronChannelContext,
+  resolveCronChannelContext,
+} from "./channel-targets";
+
+export {
   type AddTaskInput,
   type AddTaskResult,
   addTask,

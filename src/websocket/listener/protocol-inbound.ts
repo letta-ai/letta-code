@@ -963,6 +963,44 @@ export function isCronListCommand(value: unknown): value is CronListCommand {
   );
 }
 
+function isCronChannelTargets(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!Array.isArray(value)) {
+    return false;
+  }
+  return value.every((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const target = entry as {
+      channel?: unknown;
+      account_id?: unknown;
+      chat_id?: unknown;
+      chat_type?: unknown;
+      thread_id?: unknown;
+      message_id?: unknown;
+    };
+    return (
+      typeof target.channel === "string" &&
+      typeof target.chat_id === "string" &&
+      (target.account_id === undefined ||
+        target.account_id === null ||
+        typeof target.account_id === "string") &&
+      (target.chat_type === undefined ||
+        target.chat_type === "direct" ||
+        target.chat_type === "channel") &&
+      (target.thread_id === undefined ||
+        target.thread_id === null ||
+        typeof target.thread_id === "string") &&
+      (target.message_id === undefined ||
+        target.message_id === null ||
+        typeof target.message_id === "string")
+    );
+  });
+}
+
 export function isCronAddCommand(value: unknown): value is CronAddCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as {
@@ -976,6 +1014,7 @@ export function isCronAddCommand(value: unknown): value is CronAddCommand {
     timezone?: unknown;
     recurring?: unknown;
     prompt?: unknown;
+    channel_targets?: unknown;
     scheduled_for?: unknown;
   };
   return (
@@ -990,6 +1029,7 @@ export function isCronAddCommand(value: unknown): value is CronAddCommand {
     (c.timezone === undefined || typeof c.timezone === "string") &&
     typeof c.recurring === "boolean" &&
     typeof c.prompt === "string" &&
+    isCronChannelTargets(c.channel_targets) &&
     (c.scheduled_for === undefined ||
       c.scheduled_for === null ||
       typeof c.scheduled_for === "string")
@@ -1061,6 +1101,7 @@ export function isCronUpdateCommand(
     timezone?: unknown;
     recurring?: unknown;
     prompt?: unknown;
+    channel_targets?: unknown;
     scheduled_for?: unknown;
   };
   return (
@@ -1075,6 +1116,7 @@ export function isCronUpdateCommand(
     (c.timezone === undefined || typeof c.timezone === "string") &&
     (c.recurring === undefined || typeof c.recurring === "boolean") &&
     (c.prompt === undefined || typeof c.prompt === "string") &&
+    isCronChannelTargets(c.channel_targets) &&
     (c.scheduled_for === undefined ||
       c.scheduled_for === null ||
       typeof c.scheduled_for === "string")
