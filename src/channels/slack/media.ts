@@ -235,6 +235,21 @@ function extensionForMimeType(mimeType?: string): string {
       return ".gif";
     case "image/webp":
       return ".webp";
+    case "audio/aac":
+      return ".aac";
+    case "audio/m4a":
+    case "audio/mp4":
+    case "audio/x-m4a":
+      return ".m4a";
+    case "audio/mpeg":
+      return ".mp3";
+    case "audio/ogg":
+      return ".ogg";
+    case "audio/wav":
+    case "audio/x-wav":
+      return ".wav";
+    case "audio/webm":
+      return ".webm";
     case "application/pdf":
       return ".pdf";
     case "text/plain":
@@ -259,6 +274,20 @@ function resolveMimeType(name: string, fallback?: string): string | undefined {
       return "image/gif";
     case ".webp":
       return "image/webp";
+    case ".aac":
+      return "audio/aac";
+    case ".m4a":
+      return "audio/mp4";
+    case ".mp3":
+      return "audio/mpeg";
+    case ".oga":
+    case ".ogg":
+    case ".opus":
+      return "audio/ogg";
+    case ".wav":
+      return "audio/wav";
+    case ".webm":
+      return "audio/webm";
     case ".pdf":
       return "application/pdf";
     case ".txt":
@@ -267,6 +296,33 @@ function resolveMimeType(name: string, fallback?: string): string | undefined {
     default:
       return undefined;
   }
+}
+
+function isGenericSlackMimeType(mimeType?: string): boolean {
+  const normalized = mimeType?.trim().toLowerCase();
+  return (
+    normalized === "application/octet-stream" ||
+    normalized === "binary/octet-stream"
+  );
+}
+
+function resolveAttachmentKind(
+  mimeType?: string,
+): ChannelMessageAttachment["kind"] {
+  const normalized = mimeType?.toLowerCase();
+  if (!normalized) {
+    return "file";
+  }
+  if (normalized.startsWith("image/")) {
+    return "image";
+  }
+  if (normalized.startsWith("audio/")) {
+    return "audio";
+  }
+  if (normalized.startsWith("video/")) {
+    return "video";
+  }
+  return "file";
 }
 
 async function fetchWithSlackAuth(
@@ -325,6 +381,7 @@ async function downloadSlackAttachment(params: {
   accountId: string;
   token: string;
   file: SlackFileLike;
+  transcribeVoice?: boolean;
 }): Promise<ChannelMessageAttachment | null> {
   const url = params.file.url_private_download ?? params.file.url_private;
   if (!url) {
@@ -346,10 +403,13 @@ async function downloadSlackAttachment(params: {
     params.file.name ??
     basename(new URL(url).pathname) ??
     `${params.file.id ?? "attachment"}${extensionForMimeType(params.file.mimetype)}`;
-  const mimeType = resolveMimeType(
-    hintedName,
-    response.headers.get("content-type")?.split(";")[0] ?? params.file.mimetype,
-  );
+  const responseMimeType =
+    response.headers.get("content-type")?.split(";")[0]?.trim() || undefined;
+  const preferredMimeType =
+    responseMimeType && !isGenericSlackMimeType(responseMimeType)
+      ? responseMimeType
+      : (params.file.mimetype ?? responseMimeType);
+  const mimeType = resolveMimeType(hintedName, preferredMimeType);
   const fileName =
     extname(hintedName) || !mimeType
       ? hintedName
@@ -360,8 +420,8 @@ async function downloadSlackAttachment(params: {
     buffer,
   });
 
-  const kind = mimeType?.startsWith("image/") ? "image" : "file";
-  return {
+  const kind = resolveAttachmentKind(mimeType);
+  const attachment: ChannelMessageAttachment = {
     id: params.file.id,
     name: fileName,
     mimeType,
@@ -370,6 +430,31 @@ async function downloadSlackAttachment(params: {
     localPath,
     ...(kind === "image" ? { imageDataBase64: buffer.toString("base64") } : {}),
   };
+
+  // Slack voice memos arrive as ordinary audio files/file_share events, so the
+  // opt-in applies to inbound audio attachments generally.
+  if (kind === "audio" && params.transcribeVoice) {
+    const { isTranscriptionConfigured, transcribeAudioFile } = await import(
+      "@/channels/transcription/index"
+    );
+    if (isTranscriptionConfigured()) {
+      const result = await transcribeAudioFile(localPath);
+      if (result.success && result.text) {
+        attachment.transcription = result.text;
+      } else if (result.error) {
+        attachment.transcriptionError = result.error;
+        console.warn(
+          `[Slack] Audio transcription failed for ${fileName}:`,
+          result.error,
+        );
+      }
+    } else {
+      attachment.transcriptionError =
+        "OPENAI_API_KEY not set; transcription skipped.";
+    }
+  }
+
+  return attachment;
 }
 
 function collectSlackFiles(rawEvent: unknown): SlackFileLike[] {
@@ -423,6 +508,7 @@ export async function resolveSlackInboundAttachments(params: {
   accountId: string;
   token: string;
   rawEvent: unknown;
+  transcribeVoice?: boolean;
 }): Promise<ChannelMessageAttachment[]> {
   const files = collectSlackFiles(params.rawEvent);
   if (files.length === 0) {
@@ -435,6 +521,7 @@ export async function resolveSlackInboundAttachments(params: {
         accountId: params.accountId,
         token: params.token,
         file,
+        transcribeVoice: params.transcribeVoice,
       }).catch(() => null),
     ),
   );

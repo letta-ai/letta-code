@@ -1,4 +1,45 @@
-import { expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { __testOverrideChannelsRoot } from "@/channels/config";
+
+const originalFetch = globalThis.fetch;
+const originalOpenAIKey = process.env.OPENAI_API_KEY;
+let channelsRoot: string | null = null;
+
+function requestUrl(input: unknown): string {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
+  const maybeRequest = input as { url?: unknown };
+  if (typeof maybeRequest.url === "string") {
+    return maybeRequest.url;
+  }
+  return String(input);
+}
+
+beforeEach(async () => {
+  channelsRoot = await mkdtemp(join(tmpdir(), "letta-slack-media-"));
+  __testOverrideChannelsRoot(channelsRoot);
+});
+
+afterEach(async () => {
+  globalThis.fetch = originalFetch;
+  if (originalOpenAIKey === undefined) {
+    delete process.env.OPENAI_API_KEY;
+  } else {
+    process.env.OPENAI_API_KEY = originalOpenAIKey;
+  }
+  __testOverrideChannelsRoot(null);
+  if (channelsRoot) {
+    await rm(channelsRoot, { recursive: true, force: true });
+    channelsRoot = null;
+  }
+});
 
 async function loadSlackMediaModule() {
   return import(
@@ -81,4 +122,132 @@ test("resolveSlackChannelHistory retains forwarded Slack attachment text", async
       ts: "1712790000.000090",
     },
   ]);
+});
+
+test("resolveSlackInboundAttachments transcribes inbound audio when opted in", async () => {
+  process.env.OPENAI_API_KEY = "test-openai-key";
+  const fetchMock = mock(async (input: unknown) => {
+    const url = requestUrl(input);
+    if (url === "https://files.slack.com/files-pri/T123-F123/voice.ogg") {
+      return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      });
+    }
+    if (url === "https://api.openai.com/v1/audio/transcriptions") {
+      return new Response(JSON.stringify({ text: "hello slack voice" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  const { resolveSlackInboundAttachments } = await loadSlackMediaModule();
+  const attachments = await resolveSlackInboundAttachments({
+    accountId: "slack-bot",
+    token: "xoxb-test-token",
+    transcribeVoice: true,
+    rawEvent: {
+      files: [
+        {
+          id: "F123",
+          name: "voice.ogg",
+          mimetype: "audio/ogg",
+          size: 3,
+          url_private_download:
+            "https://files.slack.com/files-pri/T123-F123/voice.ogg",
+        },
+      ],
+    },
+  });
+
+  expect(attachments).toHaveLength(1);
+  expect(attachments[0]).toMatchObject({
+    id: "F123",
+    kind: "audio",
+    mimeType: "audio/ogg",
+    transcription: "hello slack voice",
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+test("resolveSlackInboundAttachments does not transcribe audio when disabled", async () => {
+  process.env.OPENAI_API_KEY = "test-openai-key";
+  const fetchMock = mock(
+    async () =>
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { "content-type": "audio/ogg" },
+      }),
+  );
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  const { resolveSlackInboundAttachments } = await loadSlackMediaModule();
+  const attachments = await resolveSlackInboundAttachments({
+    accountId: "slack-bot",
+    token: "xoxb-test-token",
+    transcribeVoice: false,
+    rawEvent: {
+      files: [
+        {
+          id: "F123",
+          name: "voice.ogg",
+          mimetype: "audio/ogg",
+          size: 3,
+          url_private_download:
+            "https://files.slack.com/files-pri/T123-F123/voice.ogg",
+        },
+      ],
+    },
+  });
+
+  expect(attachments).toHaveLength(1);
+  expect(attachments[0]).toMatchObject({
+    id: "F123",
+    kind: "audio",
+    mimeType: "audio/ogg",
+  });
+  expect(attachments[0]?.transcription).toBeUndefined();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("resolveSlackInboundAttachments records transcription errors when OpenAI is not configured", async () => {
+  delete process.env.OPENAI_API_KEY;
+  const fetchMock = mock(
+    async () =>
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { "content-type": "audio/ogg" },
+      }),
+  );
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  const { resolveSlackInboundAttachments } = await loadSlackMediaModule();
+  const attachments = await resolveSlackInboundAttachments({
+    accountId: "slack-bot",
+    token: "xoxb-test-token",
+    transcribeVoice: true,
+    rawEvent: {
+      files: [
+        {
+          id: "F123",
+          name: "voice.ogg",
+          mimetype: "audio/ogg",
+          size: 3,
+          url_private_download:
+            "https://files.slack.com/files-pri/T123-F123/voice.ogg",
+        },
+      ],
+    },
+  });
+
+  expect(attachments).toHaveLength(1);
+  expect(attachments[0]).toMatchObject({
+    id: "F123",
+    kind: "audio",
+    transcriptionError: "OPENAI_API_KEY not set; transcription skipped.",
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });

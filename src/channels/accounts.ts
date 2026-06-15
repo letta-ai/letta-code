@@ -293,6 +293,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     (next as SlackChannelAccount).defaultPermissionMode =
       (migrated as ChannelDefaultPermissionMode | null) ??
       DEFAULT_SLACK_PERMISSION_MODE;
+    (next as SlackChannelAccount).transcribeVoice =
+      (next as SlackChannelAccount).transcribeVoice === true;
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
@@ -402,6 +404,7 @@ function makeDefaultLegacyAccount(
     allowedUsers: [...config.allowedUsers],
     agentId: null,
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice: config.transcribeVoice === true,
     createdAt: now,
     updatedAt: now,
   };
