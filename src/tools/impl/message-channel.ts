@@ -548,7 +548,27 @@ interface NormalizedMessageChannelInput {
   mediaPath?: string;
   filename?: string;
   title?: string;
+  pluginFields?: Record<string, unknown>;
 }
+
+const MESSAGE_CHANNEL_CORE_ARG_KEYS = new Set([
+  "action",
+  "channel",
+  "chat_id",
+  "target",
+  "accountId",
+  "message",
+  "replyTo",
+  "threadId",
+  "messageId",
+  "emoji",
+  "remove",
+  "media",
+  "filename",
+  "title",
+  "parentScope",
+  "channelTurnSources",
+]);
 
 interface ResolvedMessageChannelExecutionContext {
   request: ChannelMessageActionRequest;
@@ -604,6 +624,23 @@ function normalizeMessageAction(
   return normalized.length > 0 ? normalized : null;
 }
 
+function collectPluginFields(
+  args: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const pluginFields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (MESSAGE_CHANNEL_CORE_ARG_KEYS.has(key) || value === undefined) {
+      continue;
+    }
+    if (typeof value === "string" && value.trim().length === 0) {
+      continue;
+    }
+    pluginFields[key] = value;
+  }
+
+  return Object.keys(pluginFields).length > 0 ? pluginFields : undefined;
+}
+
 function normalizeMessageChannelInput(
   args: MessageChannelArgs,
 ): NormalizedMessageChannelInput | string {
@@ -649,6 +686,9 @@ function normalizeMessageChannelInput(
     mediaPath: firstNonEmptyString(args.media),
     filename: firstNonEmptyString(args.filename),
     title: firstNonEmptyString(args.title),
+    pluginFields: collectPluginFields(
+      args as unknown as Record<string, unknown>,
+    ),
   };
 }
 
@@ -670,6 +710,7 @@ function buildMessageChannelRequest(
     mediaPath: input.mediaPath,
     filename: input.filename,
     title: input.title,
+    pluginFields: input.pluginFields,
   };
 }
 

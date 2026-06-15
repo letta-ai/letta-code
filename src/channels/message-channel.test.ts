@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   __testOverrideLoadChannelAccounts,
@@ -6,6 +9,8 @@ import {
   clearChannelAccountStores,
   upsertChannelAccount,
 } from "@/channels/accounts";
+import { __testOverrideChannelsRoot } from "@/channels/config";
+import { __testClearUserChannelPluginCache } from "@/channels/plugin-registry";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import { clearAllRoutes, setRouteInMemory } from "@/channels/routing";
 import {
@@ -18,6 +23,8 @@ import type { ChannelAdapter } from "@/channels/types";
 import { message_channel } from "@/tools/impl/message-channel";
 
 describe("MessageChannel", () => {
+  let userChannelsRoot: string | null = null;
+
   afterEach(async () => {
     const registry = getChannelRegistry();
     if (registry) {
@@ -30,7 +37,77 @@ describe("MessageChannel", () => {
     __testOverrideSaveChannelAccounts(null);
     __testOverrideLoadTargetStore(null);
     __testOverrideSaveTargetStore(null);
+    __testOverrideChannelsRoot(null);
+    __testClearUserChannelPluginCache();
+    if (userChannelsRoot) {
+      rmSync(userChannelsRoot, { recursive: true, force: true });
+      userChannelsRoot = null;
+    }
   });
+
+  function writeDemoChannelPlugin(): void {
+    userChannelsRoot = mkdtempSync(
+      join(tmpdir(), "letta-message-channel-fields-"),
+    );
+    __testOverrideChannelsRoot(userChannelsRoot);
+    __testClearUserChannelPluginCache();
+
+    const channelDir = join(userChannelsRoot, "demo");
+    mkdirSync(channelDir, { recursive: true });
+    writeFileSync(
+      join(channelDir, "channel.json"),
+      `${JSON.stringify(
+        {
+          id: "demo",
+          displayName: "Demo Chat",
+          entry: "./plugin.mjs",
+          runtimePackages: [],
+          runtimeModules: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(
+      join(channelDir, "plugin.mjs"),
+      `export const channelPlugin = {
+        metadata: {
+          id: "demo",
+          displayName: "Demo Chat",
+          runtimePackages: [],
+          runtimeModules: []
+        },
+        createAdapter(account) {
+          return {
+            id: "demo:" + account.accountId,
+            channelId: "demo",
+            accountId: account.accountId,
+            name: "Demo Chat",
+            start: async () => {},
+            stop: async () => {},
+            isRunning: () => true,
+            sendMessage: async () => ({ messageId: "demo-1" }),
+            sendDirectReply: async () => {}
+          };
+        },
+        messageActions: {
+          describeMessageTool() {
+            return {
+              actions: ["send"],
+              schema: {
+                properties: {
+                  reply_to_uri: { type: "string" },
+                  control_command: { type: "string" },
+                  dry_run: { type: "boolean" }
+                }
+              }
+            };
+          },
+          handleAction: async ({ request }) => JSON.stringify(request.pluginFields ?? {})
+        }
+      };\n`,
+    );
+  }
 
   function installChannelStateTestOverrides(): void {
     __testOverrideLoadChannelAccounts(() => []);
@@ -810,6 +887,57 @@ describe("MessageChannel", () => {
       "Error: Multiple proactive Slack accounts are available for this agent. Pass accountId.",
     );
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("passes plugin-owned MessageChannel fields to channel actions", async () => {
+    writeDemoChannelPlugin();
+    const registry = new ChannelRegistry();
+
+    const adapter: ChannelAdapter = {
+      id: "demo:account-1",
+      channelId: "demo",
+      accountId: "account-1",
+      name: "Demo Chat",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "demo-msg-1" }),
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("demo", {
+      accountId: "account-1",
+      chatId: "room-1",
+      chatType: "channel",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "demo",
+      chat_id: "room-1",
+      accountId: "account-1",
+      message: "hello",
+      reply_to_uri: "at://did:plc:example/app.bsky.feed.post/3exampleparent",
+      control_command: "",
+      dry_run: true,
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    } as unknown as Parameters<typeof message_channel>[0]);
+
+    expect(JSON.parse(result)).toEqual({
+      dry_run: true,
+      reply_to_uri: "at://did:plc:example/app.bsky.feed.post/3exampleparent",
+    });
   });
 
   test("rejects proactive Slack sends for accounts outside the agent scope", async () => {
