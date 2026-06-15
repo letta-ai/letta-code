@@ -54,6 +54,7 @@ import {
   registerExternalTools,
 } from "@/tools/manager";
 import {
+  prepareToolExecutionContextForResolvedTarget,
   prepareToolExecutionContextForScope,
   resolveConversationChannelToolScope,
 } from "@/tools/toolset";
@@ -959,6 +960,25 @@ describe("tool execution context snapshot", () => {
     );
 
     expect(prepared.loadedToolNames).toContain("MessageChannel");
+  });
+
+  test("keeps scoped MessageChannel available for pinned none toolsets", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "anthropic/claude-opus-4-1-20250805",
+      toolsetPreference: "none",
+      channelToolScope: {
+        channels: [{ channelId: "discord", accountId: "acct-discord" }],
+      },
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toEqual([
+      "MessageChannel",
+    ]);
+    expect(
+      prepared.preparedToolContext.clientTools.map((tool) => tool.name),
+    ).toEqual(["MessageChannel"]);
   });
 
   test("hydrates inherited channel scope from serialized child env", async () => {
