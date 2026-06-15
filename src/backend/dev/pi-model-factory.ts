@@ -357,6 +357,16 @@ function customOpenAICompatibleModel(input: {
   };
 }
 
+function withDeepSeekChatCompletions(model: Model<Api>): Model<Api> {
+  if (model.provider !== "deepseek" || model.api !== "openai-responses") {
+    return model;
+  }
+  return {
+    ...model,
+    api: "openai-completions",
+  } as Model<Api>;
+}
+
 function withOverrides(
   model: Model<Api>,
   overrides: {
@@ -638,19 +648,6 @@ export async function resolvePiModelForAgent(
       `Unknown model "${modelId}" for provider "${provider}". ` +
         "Register the provider with models before using it.",
     );
-  } else if (spec.createCustomModel) {
-    if (!modelId) {
-      throw new Error(
-        `No model selected for provider "${provider}". Choose an available model with /model.`,
-      );
-    }
-    model = customOpenAICompatibleModel({
-      provider: spec.id,
-      modelId,
-      baseURL: normalizedBaseURL ?? spec.defaultBaseURL ?? "",
-      contextWindow,
-      maxTokens,
-    });
   } else {
     const catalogModel = getCatalogModel(spec.id, modelId, oauthCredentials);
     if (catalogModel) {
@@ -665,24 +662,38 @@ export async function resolvePiModelForAgent(
         spec.piProvider ?? "openai",
         modelId as never,
       ) as Model<Api> | undefined;
-      if (!fallback) {
+      if (fallback) {
+        model = withOverrides(fallback, {
+          baseURL,
+          headers,
+          contextWindow,
+          maxTokens,
+        });
+      } else if (spec.createCustomModel) {
+        if (!modelId) {
+          throw new Error(
+            `No model selected for provider "${provider}". Choose an available model with /model.`,
+          );
+        }
+        model = customOpenAICompatibleModel({
+          provider: spec.id,
+          modelId,
+          baseURL: normalizedBaseURL ?? spec.defaultBaseURL ?? "",
+          contextWindow,
+          maxTokens,
+        });
+      } else {
         throw new Error(
           `Unknown model "${modelId}" for provider "${provider}". ` +
             "Check the model handle or update the model catalog.",
         );
       }
-      model = withOverrides(fallback, {
-        baseURL,
-        headers,
-        contextWindow,
-        maxTokens,
-      });
     }
   }
 
   return {
     provider,
-    model,
+    model: withDeepSeekChatCompletions(model),
     apiKey: connection.apiKey,
     timeout: connection.timeout,
     headers,

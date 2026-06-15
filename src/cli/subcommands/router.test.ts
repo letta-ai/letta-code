@@ -3,6 +3,7 @@ import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
 } from "@/cli/subcommands/router";
+import { disposeProviderOnlyModsForProcess } from "@/mods/provider-mod-adapter";
 
 describe("subcommand router", () => {
   test("routes version subcommand before TUI startup", async () => {
@@ -24,8 +25,19 @@ describe("subcommand router", () => {
   });
 
   test("routes connect subcommand", async () => {
-    const exitCode = await runSubcommand(["connect", "help"]);
-    expect(exitCode).toBe(0);
+    const originalDisableMods = process.env.LETTA_DISABLE_MODS;
+    process.env.LETTA_DISABLE_MODS = "1";
+    try {
+      const exitCode = await runSubcommand(["connect", "help"]);
+      expect(exitCode).toBe(0);
+    } finally {
+      disposeProviderOnlyModsForProcess();
+      if (originalDisableMods === undefined) {
+        delete process.env.LETTA_DISABLE_MODS;
+      } else {
+        process.env.LETTA_DISABLE_MODS = originalDisableMods;
+      }
+    }
   });
 
   test("routes app-server help without starting the server", async () => {

@@ -136,6 +136,7 @@ const PI_PROVIDER_OVERRIDES: Partial<
     providerTypes: ["openai", "openai-responses"],
     handlePrefixes: ["openai/", "openai-responses/"],
     localProviderNames: ["openai", LOCAL_OPENAI_PROVIDER_NAME],
+    createCustomModel: true,
   },
   anthropic: {
     localProviderNames: ["anthropic", LOCAL_ANTHROPIC_PROVIDER_NAME],

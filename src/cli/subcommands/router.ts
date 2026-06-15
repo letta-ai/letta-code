@@ -69,8 +69,18 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "server":
     case "remote": // alias
       return runListenSubcommand(rest);
-    case "connect":
+    case "connect": {
+      const { isExperimentalLocalBackendEnabled } = await import(
+        "@/backend/backend"
+      );
+      if (isExperimentalLocalBackendEnabled()) {
+        const { ensureProviderOnlyModsLoadedForProcess } = await import(
+          "@/mods/provider-mod-adapter"
+        );
+        await ensureProviderOnlyModsLoadedForProcess();
+      }
       return runConnectSubcommand(rest);
+    }
     case "backend":
       return runBackendSubcommand(rest);
     case "setup":

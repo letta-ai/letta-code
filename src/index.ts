@@ -991,6 +991,24 @@ async function main(): Promise<void> {
     }
   }
 
+  if (!modsDisabled && isExperimentalLocalBackendEnabled()) {
+    try {
+      const { ensureProviderOnlyModsLoadedForProcess } = await import(
+        "@/mods/provider-mod-adapter"
+      );
+      await ensureProviderOnlyModsLoadedForProcess();
+      // configureBackendMode eagerly creates LocalBackend, so rebuild it now
+      // that provider mods are registered and visible to local model startup.
+      configureBackendMode("local");
+    } catch (error) {
+      debugWarn(
+        "mods",
+        "failed to load provider mods before local backend startup: %s",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
   const startupTargetLookupOrder = getStartupTargetLookupOrderForCredentials({
     baseURL,
     explicitBackendMode,

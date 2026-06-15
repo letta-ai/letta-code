@@ -563,6 +563,43 @@ describe("pi model factory", () => {
     }
   });
 
+  test("accepts arbitrary local OpenAI-compatible proxy model handles", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-openai-proxy-model-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openai",
+        providerName: "lc-openai",
+        apiKey: "proxy-key",
+        baseURL: "https://api.featherless.ai/v1",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "openai/accounts/fireworks/models/qwen3-235b-a22b",
+        { provider_type: "openai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.apiKey).toBe("proxy-key");
+      expect(resolved.model).toMatchObject({
+        id: "accounts/fireworks/models/qwen3-235b-a22b",
+        api: "openai-completions",
+        provider: "openai",
+        baseUrl: "https://api.featherless.ai/v1",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses chat completions for DeepSeek built-in models", async () => {
+    const resolved = await resolvePiModelForAgent("deepseek/deepseek-v4-pro", {
+      provider_type: "deepseek",
+    });
+
+    expect(resolved.model.api).toBe("openai-completions");
+  });
+
   test("does not let local no-key placeholders mask LM Studio env API keys", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-lmstudio-env-key-"));
     try {
