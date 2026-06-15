@@ -24,10 +24,6 @@ function baseContext(
     },
     state,
     systemInfoReminderEnabled: false,
-    reflectionSettings: {
-      trigger: "off",
-      stepCount: 25,
-    },
     skillSources: [],
   };
 }

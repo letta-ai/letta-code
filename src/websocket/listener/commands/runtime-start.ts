@@ -9,6 +9,7 @@ import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
+import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -232,6 +233,11 @@ export async function handleRuntimeStartCommand(
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    registerRuntimeExternalTools(
+      context.runtime,
+      runtimeScope,
+      parsed.external_tools ?? [],
+    );
 
     const sent = sendRuntimeStartResponse(context, parsed, {
       success: true,

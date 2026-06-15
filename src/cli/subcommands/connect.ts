@@ -110,6 +110,7 @@ function formatUsage(): string {
     "Examples:",
     "  letta connect chatgpt",
     "  letta connect codex",
+    "  letta connect codex --method device-code",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
@@ -137,6 +138,10 @@ function connectionOptionsFromArgs(
 
 function hasConnectionOptions(options: ProviderConnectionOptions): boolean {
   return options.baseURL !== undefined || options.timeout !== undefined;
+}
+
+function normalizeOAuthLoginMethod(value: string): string {
+  return value.trim().toLowerCase().replace(/-/g, "_");
 }
 
 function formatBedrockUsage(): string {
@@ -241,6 +246,7 @@ export async function runConnectSubcommand(
         return 0;
       }
 
+      const loginMethod = readStringOption(parsed.values.method);
       await io.runLocalOAuthConnectFlow(provider.byokProvider, {
         onStatus: (status) => io.stdout(status),
         onPrompt: async (prompt) => {
@@ -253,6 +259,22 @@ export async function runConnectSubcommand(
           return io.promptSecret(
             `${prompt.message}${prompt.placeholder ? ` (${prompt.placeholder})` : ""}: `,
           );
+        },
+        onSelect: async (prompt) => {
+          if (loginMethod) {
+            const normalized = normalizeOAuthLoginMethod(loginMethod);
+            const match = prompt.options.find(
+              (option) => normalizeOAuthLoginMethod(option.id) === normalized,
+            );
+            if (!match) {
+              throw new Error(
+                `Unknown ${provider.byokProvider.displayName} login method: ${loginMethod}. Available: ${prompt.options.map((option) => option.id).join(", ")}`,
+              );
+            }
+            return match.id;
+          }
+          // Default to the provider's first (default) option, e.g. browser login.
+          return prompt.options[0]?.id;
         },
       });
 

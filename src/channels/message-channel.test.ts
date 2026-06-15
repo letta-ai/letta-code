@@ -356,6 +356,64 @@ describe("MessageChannel", () => {
     });
   });
 
+  test("sends Discord direct routes to the DM channel without caller threadId", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "discord-msg-1" }));
+
+    const adapter: ChannelAdapter = {
+      id: "discord:discord-1",
+      channelId: "discord",
+      accountId: "discord-1",
+      name: "Discord",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("discord", {
+      accountId: "discord-1",
+      chatId: "DM-123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "discord",
+      chat_id: "DM-123",
+      message: "hello dm",
+      threadId: "",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Message sent to discord");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "discord",
+      accountId: "discord-1",
+      chatId: "DM-123",
+      text: "hello dm",
+      replyToMessageId: undefined,
+      threadId: "DM-123",
+      mediaPath: undefined,
+      fileName: undefined,
+      title: undefined,
+      parseMode: undefined,
+    });
+  });
+
   test("formats and sends Telegram messages through the routed account adapter", async () => {
     const registry = new ChannelRegistry();
 
@@ -404,6 +462,68 @@ describe("MessageChannel", () => {
       chatId: "7952253975",
       text: "hello <b>world</b> &amp; team",
       replyToMessageId: "42",
+      threadId: null,
+      mediaPath: undefined,
+      fileName: undefined,
+      title: undefined,
+      parseMode: "HTML",
+    });
+  });
+
+  test("does not reuse route thread ids for Telegram private chats", async () => {
+    installChannelStateTestOverrides();
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({
+      messageId: "telegram-msg-private",
+    }));
+
+    const adapter: ChannelAdapter = {
+      id: "telegram:account-1",
+      channelId: "telegram",
+      accountId: "account-1",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+    upsertTelegramTestAccount({ richPrivateChatDefault: false });
+
+    setRouteInMemory("telegram", {
+      accountId: "account-1",
+      chatId: "7952253975",
+      chatType: "direct",
+      threadId: "42",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "telegram",
+      chat_id: "7952253975",
+      message: "hello private chat",
+      threadId: "",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Message sent to telegram");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "telegram",
+      accountId: "account-1",
+      chatId: "7952253975",
+      text: "hello private chat",
+      replyToMessageId: undefined,
       threadId: null,
       mediaPath: undefined,
       fileName: undefined,

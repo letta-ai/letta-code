@@ -216,6 +216,7 @@ export async function handleApprovalStop(params: {
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       agentId,
+      toolContextId: turnToolContextId ?? undefined,
     });
   const continuationWasFullyAutoHandled = needsUserInput.length === 0;
 
@@ -376,6 +377,7 @@ export async function handleApprovalStop(params: {
                 workingDirectory: turnWorkingDirectory,
                 permissionModeState: turnPermissionModeState,
                 agentId,
+                toolContextId: turnToolContextId ?? undefined,
               },
             );
 

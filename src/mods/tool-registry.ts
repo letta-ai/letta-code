@@ -3,6 +3,7 @@ import type {
   ModTool,
   ModToolRunContext,
   ModToolRunResult,
+  ToolApprovalPolicy,
 } from "@/mods/types";
 import { areModsDisabled } from "./disable";
 
@@ -81,6 +82,14 @@ export function modToolRequiresApproval(
 ): boolean | undefined {
   if (areModsDisabled()) return undefined;
   return registry.get(name)?.requiresApproval;
+}
+
+export function modToolApprovalPolicy(
+  name: string,
+  registry: Map<string, ModToolDefinition> = getMutableModToolsRegistry(),
+): ToolApprovalPolicy | undefined {
+  if (areModsDisabled()) return undefined;
+  return registry.get(name)?.approvalPolicy;
 }
 
 export function isModToolParallelSafe(

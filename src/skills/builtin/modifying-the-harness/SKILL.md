@@ -78,6 +78,12 @@ Permissions decide which tool calls are allowed, denied, or require approval.
 Use `alwaysAsk` when a rule should request human approval even in
 `unrestricted`/yolo mode.
 
+Settings `ask` rules request approval in normal permission modes, but they do
+not override `unrestricted`/yolo mode. For a mod tool that must pause for human
+approval even in unrestricted mode, set `approvalPolicy: "alwaysAsk"` in the
+tool registration. For broader dynamic policy, use a mod permission overlay or
+a blocking hook.
+
 ### Rule syntax
 
 - Bash prefix match: `Bash(npm install:*)`, `Bash(git:*)`, `Bash(curl:*)`

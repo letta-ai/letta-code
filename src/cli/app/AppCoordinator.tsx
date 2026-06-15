@@ -20,7 +20,9 @@ import { prefetchAvailableModelHandles } from "@/agent/available-models";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
+import { buildConversationModelCarryoverUpdate } from "@/agent/conversation-model-carryover";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import {
   CHATGPT_FAST_SERVICE_TIER,
   getChatGptFastRegistryHandleForModelHandle,
@@ -73,9 +75,9 @@ import {
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
 import {
-  type ConversationTitleMessage,
   generateConversationTitleFromSummary,
   getConversationTitleSettings,
+  listConversationTitleMessages,
   normalizeConversationTitle,
 } from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
@@ -84,10 +86,15 @@ import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
+import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
   buildContentFromQueueBatch,
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
+import {
+  AUTO_REFLECTION_DESCRIPTION,
+  launchReflectionSubagent,
+} from "@/cli/helpers/reflection-launcher";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
 import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
@@ -821,6 +828,13 @@ export function App({
     conversationOverrideContextWindowLimit,
     setConversationOverrideContextWindowLimit,
   ] = useState<number | null>(null);
+  const conversationOverrideContextWindowLimitRef = useRef(
+    conversationOverrideContextWindowLimit,
+  );
+  useEffect(() => {
+    conversationOverrideContextWindowLimitRef.current =
+      conversationOverrideContextWindowLimit;
+  }, [conversationOverrideContextWindowLimit]);
   const agentStateRef = useRef(agentState);
   useEffect(() => {
     agentStateRef.current = agentState;
@@ -1184,9 +1198,6 @@ export function App({
     !resumedExistingConversation,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
-  const autoConversationTitleStartIndexRef = useRef<number | null>(
-    !resumedExistingConversation ? 0 : null,
-  );
   const shouldAutoGenerateConversationDescriptionRef = useRef(
     !resumedExistingConversation,
   );
@@ -1196,9 +1207,6 @@ export function App({
     (enabled: boolean) => {
       shouldAutoGenerateConversationTitleRef.current = enabled;
       isAutoConversationTitleInFlightRef.current = false;
-      autoConversationTitleStartIndexRef.current = enabled
-        ? buffersRef.current.order.length
-        : null;
       shouldAutoGenerateConversationDescriptionRef.current = enabled;
       isAutoConversationDescriptionInFlightRef.current = false;
       firstUserQueryRef.current = null;
@@ -1241,20 +1249,10 @@ export function App({
     }
 
     try {
-      const messages: ConversationTitleMessage[] = [];
-      const startIndex = autoConversationTitleStartIndexRef.current ?? 0;
-      const titleLineIds = buffersRef.current.order.slice(
-        Math.min(startIndex, buffersRef.current.order.length),
+      const messages = await listConversationTitleMessages(
+        getBackend(),
+        conversationId,
       );
-      for (const lineId of titleLineIds) {
-        const line = buffersRef.current.byId.get(lineId);
-        if (line?.kind === "user" || line?.kind === "assistant") {
-          const content = line.text.trim();
-          if (content) {
-            messages.push({ role: line.kind, content });
-          }
-        }
-      }
 
       let summaryModel: string | undefined;
       if (currentModelLabel) {
@@ -3437,51 +3435,21 @@ export function App({
         return;
       }
 
-      // Keep provider naming aligned with model handles used by /model.
-      const [provider, ...modelParts] = rawModelHandle.split("/");
-      const modelHandle =
-        provider === "chatgpt_oauth" && modelParts.length > 0
-          ? `${OPENAI_CODEX_PROVIDER_NAME}/${modelParts.join("/")}`
-          : rawModelHandle;
-
-      const modelInfo = getModelInfoForLlmConfig(modelHandle, {
-        reasoning_effort: currentLlmConfig?.reasoning_effort ?? null,
-        enable_reasoner:
-          (currentLlmConfig as { enable_reasoner?: boolean | null } | null)
-            ?.enable_reasoner ?? null,
+      const carryover = buildConversationModelCarryoverUpdate({
+        rawModelHandle,
+        currentLlmConfig,
+        activeConversationContextWindowLimit:
+          conversationOverrideContextWindowLimitRef.current,
       });
-
-      const updateArgs: Record<string, unknown> = {
-        ...((modelInfo?.updateArgs as Record<string, unknown> | undefined) ??
-          {}),
-      };
-      const reasoningEffort = currentLlmConfig?.reasoning_effort;
-      if (
-        typeof reasoningEffort === "string" &&
-        updateArgs.reasoning_effort === undefined
-      ) {
-        updateArgs.reasoning_effort = reasoningEffort;
-      }
-      const enableReasoner = (
-        currentLlmConfig as { enable_reasoner?: boolean | null } | null
-      )?.enable_reasoner;
-      if (
-        typeof enableReasoner === "boolean" &&
-        updateArgs.enable_reasoner === undefined
-      ) {
-        updateArgs.enable_reasoner = enableReasoner;
-      }
-      if (typeof currentLlmConfig?.context_window === "number") {
-        updateArgs.context_window = currentLlmConfig.context_window;
-      }
+      if (!carryover) return;
 
       try {
         const { updateConversationLLMConfig } = await import("@/agent/modify");
         await updateConversationLLMConfig(
           targetConversationId,
-          modelHandle,
-          Object.keys(updateArgs).length > 0 ? updateArgs : undefined,
-          { preserveContextWindow: true },
+          carryover.modelHandle,
+          carryover.updateArgs,
+          { avoidOverwritingExistingContextWindow: true },
         );
       } catch (error) {
         debugWarn(
@@ -3684,6 +3652,59 @@ export function App({
   // Note: Old memFS conflict resolution overlay (handleMemorySyncConflictSubmit/Cancel)
   // removed. Git-backed memory uses standard git merge conflict resolution via the agent.
 
+  const maybeRunPostTurnReflection = useCallback(async (): Promise<void> => {
+    const reflectionAgentId = agentIdRef.current;
+    if (!reflectionAgentId || reflectionAgentId === "loading") {
+      return;
+    }
+    try {
+      await maybeLaunchPostTurnReflection({
+        agentId: reflectionAgentId,
+        conversationId: conversationIdRef.current ?? "default",
+        memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
+        reflectionSettings: getReflectionSettings(reflectionAgentId),
+        reminderState: sharedReminderStateRef.current,
+        contextTracker: contextTrackerRef.current,
+        launch: async (triggerSource) => {
+          const result = await launchReflectionSubagent({
+            agentId: reflectionAgentId,
+            conversationId: conversationIdRef.current ?? "default",
+            memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
+            triggerSource,
+            description: AUTO_REFLECTION_DESCRIPTION,
+            completionConversationId: () => conversationIdRef.current,
+            recompileByConversation:
+              _systemPromptRecompileByConversationRef.current,
+            recompileQueuedByConversation:
+              _queuedSystemPromptRecompileByConversationRef.current,
+            onCompletionMessage: (completionMessage) => {
+              appendTaskNotificationEvents([completionMessage]);
+            },
+            feedbackContext: {
+              parentAgentName: agentName,
+              parentAgentDescription: agentDescription,
+              surface: "letta_code_tui",
+              model: currentModelId,
+            },
+          });
+          return result.launched;
+        },
+      });
+    } catch (error) {
+      debugWarn(
+        "memory",
+        `Failed to evaluate post-turn reflection: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }, [
+    agentName,
+    agentDescription,
+    currentModelId,
+    appendTaskNotificationEvents,
+  ]);
+
   const processConversation = useConversationLoop({
     abortControllerRef,
     agentIdRef,
@@ -3714,6 +3735,7 @@ export function App({
     lastSentInputRef,
     llmApiErrorRetriesRef,
     llmConfigRef,
+    maybeRunPostTurnReflection,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,

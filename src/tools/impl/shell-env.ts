@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import {
-  getMemoryFilesystemRoot,
+  getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
 import { getServerUrl } from "@/backend/api/client";
@@ -357,7 +357,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         const inheritedLettaMemoryDir = process.env.LETTA_MEMORY_DIR?.trim();
         const parentAgentId = process.env.LETTA_PARENT_AGENT_ID?.trim();
         const inheritedParentMemoryDir = parentAgentId
-          ? getMemoryFilesystemRoot(parentAgentId)
+          ? getScopedMemoryFilesystemRoot(parentAgentId)
           : null;
 
         if (

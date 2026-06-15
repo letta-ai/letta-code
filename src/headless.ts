@@ -85,6 +85,7 @@ import {
   type ReflectionSettings,
   type ReflectionTrigger,
 } from "./cli/helpers/memory-reminder";
+import { maybeLaunchPostTurnReflection } from "./cli/helpers/post-turn-reflection";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
@@ -125,7 +126,6 @@ import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
 import {
   createSharedReminderState,
   enqueueMemoryGitSyncReminder,
-  syncReminderStateFromContextTracker,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
@@ -320,7 +320,6 @@ export const __headlessTestUtils = {
 
 type ReflectionOverrides = {
   trigger?: ReflectionTrigger;
-  deprecatedBehaviorRaw?: string;
   stepCount?: number;
 };
 
@@ -328,10 +327,9 @@ function parseReflectionOverrides(
   values: ParsedCliArgs["values"],
 ): ReflectionOverrides {
   const triggerRaw = values["reflection-trigger"];
-  const behaviorRaw = values["reflection-behavior"];
   const stepCountRaw = values["reflection-step-count"];
 
-  if (!triggerRaw && !behaviorRaw && !stepCountRaw) {
+  if (!triggerRaw && !stepCountRaw) {
     return {};
   }
 
@@ -348,15 +346,6 @@ function parseReflectionOverrides(
       );
     }
     overrides.trigger = triggerRaw;
-  }
-
-  if (behaviorRaw !== undefined) {
-    if (behaviorRaw !== "reminder" && behaviorRaw !== "auto-launch") {
-      throw new Error(
-        `Invalid --reflection-behavior "${behaviorRaw}". Valid values: reminder, auto-launch`,
-      );
-    }
-    overrides.deprecatedBehaviorRaw = behaviorRaw;
   }
 
   if (stepCountRaw !== undefined) {
@@ -376,11 +365,7 @@ function parseReflectionOverrides(
 }
 
 function hasReflectionOverrides(overrides: ReflectionOverrides): boolean {
-  return (
-    overrides.trigger !== undefined ||
-    overrides.deprecatedBehaviorRaw !== undefined ||
-    overrides.stepCount !== undefined
-  );
+  return overrides.trigger !== undefined || overrides.stepCount !== undefined;
 }
 
 async function applyReflectionOverrides(
@@ -397,16 +382,10 @@ async function applyReflectionOverrides(
     return merged;
   }
 
-  if (overrides.deprecatedBehaviorRaw !== undefined) {
-    console.warn(
-      "Warning: --reflection-behavior is deprecated and ignored. Reflection now always auto-launches subagents.",
-    );
-  }
-
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  if (!memfsEnabled && merged.trigger === "compaction-event") {
+  if (!memfsEnabled && merged.trigger !== "off") {
     throw new Error(
-      "--reflection-trigger compaction-event requires memfs enabled for this agent.",
+      `--reflection-trigger ${merged.trigger} requires memfs enabled for this agent.`,
     );
   }
 
@@ -1337,7 +1316,7 @@ export async function handleHeadlessCommand(
             agent.id,
             presetRefresh.modelHandle,
             resumeRefreshUpdateArgs,
-            { preserveContextWindow: true },
+            { avoidOverwritingExistingContextWindow: true },
           );
         }
       }
@@ -1937,10 +1916,6 @@ ${SYSTEM_REMINDER_CLOSE}
     pushPart(systemReminder);
   }
 
-  syncReminderStateFromContextTracker(
-    sharedReminderState,
-    reminderContextTracker,
-  );
   const lastRunAt = (agent as { last_run_completion?: string })
     .last_run_completion;
   const { parts: sharedReminderParts } = await buildSharedReminderParts({
@@ -1955,7 +1930,6 @@ ${SYSTEM_REMINDER_CLOSE}
     state: sharedReminderState,
     systemInfoReminderEnabled,
     workingDirectory: getCurrentWorkingDirectory(),
-    reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
   });
   for (const part of sharedReminderParts) {
@@ -2373,6 +2347,7 @@ ${SYSTEM_REMINDER_CLOSE}
               alwaysRequiresUserInput: isInteractiveApprovalTool,
               requireArgsForAutoApprove: true,
               missingNameReason: "Tool call incomplete - missing name",
+              toolContextId: turnToolContextId ?? undefined,
             });
 
             const [approval] = autoAllowed;
@@ -2517,6 +2492,7 @@ ${SYSTEM_REMINDER_CLOSE}
             alwaysRequiresUserInput: isInteractiveApprovalTool,
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
+            toolContextId: turnToolContextId ?? undefined,
           });
 
         const decisions: Decision[] = [
@@ -4007,10 +3983,6 @@ async function runBidirectionalMode(
         let sawStreamError = false; // Track if we emitted an error during streaming
         let preStreamTransientRetries = 0;
 
-        syncReminderStateFromContextTracker(
-          sharedReminderState,
-          reminderContextTracker,
-        );
         const lastRunAt = (agent as { last_run_completion?: string })
           .last_run_completion;
         const { parts: sharedReminderParts } = await buildSharedReminderParts({
@@ -4025,9 +3997,7 @@ async function runBidirectionalMode(
           state: sharedReminderState,
           systemInfoReminderEnabled,
           workingDirectory: getCurrentWorkingDirectory(),
-          reflectionSettings,
           skillSources,
-          maybeLaunchReflectionSubagent,
         });
         headlessModAdapter.updateContext(
           createHeadlessModContext({
@@ -4282,6 +4252,7 @@ async function runBidirectionalMode(
                 alwaysRequiresUserInput: isInteractiveApprovalTool,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
+                toolContextId: turnToolContextId ?? undefined,
               });
 
             const decisions: Decision[] = [
@@ -4451,6 +4422,26 @@ async function runBidirectionalMode(
                 transcriptError instanceof Error
                   ? transcriptError.message
                   : String(transcriptError)
+              }`,
+            );
+          }
+          try {
+            await maybeLaunchPostTurnReflection({
+              agentId: agent.id,
+              conversationId,
+              memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+              reflectionSettings,
+              reminderState: sharedReminderState,
+              contextTracker: reminderContextTracker,
+              launch: maybeLaunchReflectionSubagent,
+            });
+          } catch (reflectionError) {
+            debugWarn(
+              "memory",
+              `Failed to evaluate post-turn reflection: ${
+                reflectionError instanceof Error
+                  ? reflectionError.message
+                  : String(reflectionError)
               }`,
             );
           }

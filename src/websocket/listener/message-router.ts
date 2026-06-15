@@ -34,6 +34,7 @@ import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
+import { handleExternalToolCallResponseCommand } from "./external-tools";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -243,6 +244,11 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "external_tool_call_response") {
+        handleExternalToolCallResponseCommand(runtime, parsed);
+        return;
+      }
+
       if (parsed.type === "sync") {
         console.log(
           `[Listen V2] Received sync command for runtime=${parsed.runtime.agent_id}/${parsed.runtime.conversation_id}`,
@@ -348,6 +354,7 @@ export function createListenerMessageHandler(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
+          externalToolScopeIds: inputPayload.external_tool_scope_ids,
           messages: inputPayload.messages,
         };
         const hasApprovalPayload = incoming.messages.some(
@@ -700,10 +707,10 @@ export function createListenerMessageHandler(
           const agentId = parsed.runtime.agent_id;
           if (agentId && settingsManager.isMemfsEnabled(agentId)) {
             try {
-              const { getMemoryFilesystemRoot } = await import(
+              const { getScopedMemoryFilesystemRoot } = await import(
                 "@/agent/memory-filesystem"
               );
-              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
               setSystemPromptDoctorState(agentId, tokens);
             } catch {

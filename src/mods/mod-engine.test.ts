@@ -930,6 +930,7 @@ describe("mod engine", () => {
           id: `global:${modPath}`,
           path: modPath,
         },
+        approvalPolicy: "auto",
         parallelSafe: true,
         requiresApproval: false,
       });
@@ -937,6 +938,47 @@ describe("mod engine", () => {
 
       engine.dispose();
       expect(getModToolDefinition("local_weather")).toBeUndefined();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads mod-provided tools with alwaysAsk approval policy", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "approval-policy.ts");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          return letta.tools.register({
+            name: "exit_plan_mode",
+            description: "Exit plan mode after user approval",
+            parameters: { type: "object", properties: {} },
+            requiresApproval: false,
+            approvalPolicy: "alwaysAsk",
+            run() { return "exited"; },
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+      expect(snapshot.tools.exit_plan_mode).toMatchObject({
+        approvalPolicy: "alwaysAsk",
+        requiresApproval: true,
+      });
+      expect(getModToolDefinition("exit_plan_mode")).toMatchObject({
+        approvalPolicy: "alwaysAsk",
+        requiresApproval: true,
+      });
+
+      engine.dispose();
+      expect(getModToolDefinition("exit_plan_mode")).toBeUndefined();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

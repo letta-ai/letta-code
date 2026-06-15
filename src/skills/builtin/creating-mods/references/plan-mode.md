@@ -281,6 +281,8 @@ Shell allowlists are easy to get wrong. Start conservative: allow clearly read-o
 
 In the mod version, `exit_plan_mode` is not the approval UI. The agent should read the plan file, present the full current plan text with `AskUserQuestion`, then call `exit_plan_mode` only after the user approves.
 
+Use `approvalPolicy: "alwaysAsk"` so the final state transition still pauses for human confirmation in unrestricted/yolo mode.
+
 ```ts
 if (letta.capabilities.tools) {
   disposers.push(letta.tools.register({
@@ -288,7 +290,7 @@ if (letta.capabilities.tools) {
     description:
       "Exit plan mode only after the plan file has been written, the full current plan text has been presented with AskUserQuestion, and the user has approved it.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
-    requiresApproval: false,
+    approvalPolicy: "alwaysAsk",
     parallelSafe: false,
     run(ctx) {
       const session = getSession(ctx.conversation.id);

@@ -54,7 +54,7 @@ interface EnrichedConversation {
   isPinnedLocal: boolean;
 }
 
-function isPinShortcut(
+export function isPinShortcut(
   input: string,
   key: { ctrl?: boolean; meta?: boolean },
 ): boolean {
@@ -96,6 +96,26 @@ export function buildConversationSelectorHints(params: {
   return params.isSelectedDefaultConversation
     ? "Enter select · ↑↓ navigate · Esc clear/cancel"
     : "Enter select · ↑↓ navigate · Alt+P pin/unpin · Esc clear/cancel";
+}
+
+export function normalizeConversationSearchInput(value: string): string {
+  return value.replace(/[π∏]/g, "");
+}
+
+export function findConversationIndexById<
+  T extends { conversation: { id: string } },
+>(items: T[], conversationId: string): number {
+  return items.findIndex((item) => item.conversation.id === conversationId);
+}
+
+export function sortPinnedConversations<
+  T extends { conversation: { id: string }; isPinned: boolean },
+>(items: T[]): T[] {
+  return [...items].sort((a, b) => {
+    if (a.conversation.id === "default") return -1;
+    if (b.conversation.id === "default") return 1;
+    return Number(b.isPinned) - Number(a.isPinned);
+  });
 }
 
 function paginatedItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
@@ -365,6 +385,7 @@ export function ConversationSelector({
   const [searching, setSearching] = useState(false);
   const [pinNotice, setPinNotice] = useState<string | null>(null);
   const pinNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const preserveSelectionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -770,6 +791,20 @@ export function ConversationSelector({
       })()
     : conversations;
 
+  useEffect(() => {
+    const conversationId = preserveSelectionIdRef.current;
+    if (!conversationId) return;
+
+    preserveSelectionIdRef.current = null;
+    const nextSelectedIndex = findConversationIndexById(
+      filteredConversations,
+      conversationId,
+    );
+    if (nextSelectedIndex >= 0) {
+      setSelectedIndex(nextSelectedIndex);
+    }
+  }, [filteredConversations]);
+
   // Sliding window calculations (same interaction model as /search).
   const startIndex = Math.max(
     0,
@@ -823,6 +858,7 @@ export function ConversationSelector({
       } else {
         settingsManager.pinConversationGlobal(agentId, conversationId);
       }
+      preserveSelectionIdRef.current = conversationId;
       const updatePinState = (item: EnrichedConversation) =>
         item.conversation.id === conversationId
           ? {
@@ -831,16 +867,8 @@ export function ConversationSelector({
               isPinnedLocal: false,
             }
           : item;
-      const sortPinnedFirst = (
-        a: EnrichedConversation,
-        b: EnrichedConversation,
-      ) => {
-        if (a.conversation.id === "default") return -1;
-        if (b.conversation.id === "default") return 1;
-        return Number(b.isPinned) - Number(a.isPinned);
-      };
       setConversations((prev) =>
-        prev.map(updatePinState).sort(sortPinnedFirst),
+        sortPinnedConversations(prev.map(updatePinState)),
       );
       setSearchResults((prev) => prev?.map(updatePinState) ?? null);
     },
@@ -1049,7 +1077,9 @@ export function ConversationSelector({
         <PasteAwareTextInput
           value={searchInput}
           onChange={(value) => {
-            setSearchInput(value.replace(/[π∏]/g, ""));
+            const nextSearchInput = normalizeConversationSearchInput(value);
+            if (nextSearchInput === searchInput) return;
+            setSearchInput(nextSearchInput);
             setSelectedIndex(0);
           }}
           placeholder="search conversation titles"

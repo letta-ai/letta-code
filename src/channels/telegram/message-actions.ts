@@ -1,6 +1,7 @@
 import { getChannelAccount } from "@/channels/accounts";
 import type {
   ChannelMessageActionAdapter,
+  ChannelMessageActionContext,
   ChannelMessageActionRequest,
 } from "@/channels/plugin-types";
 import type { ChannelRoute } from "@/channels/types";
@@ -31,6 +32,22 @@ function shouldSendTelegramRichMessage(params: {
     richPrivateChatDefaultEnabled(params.route) &&
     !params.request.mediaPath?.trim()
   );
+}
+
+function resolveTelegramRouteThreadId(
+  ctx: ChannelMessageActionContext,
+): string | null {
+  const threadId = ctx.request.threadId ?? ctx.route.threadId ?? null;
+  const trimmed = threadId?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (ctx.route.chatType === "direct") {
+    return null;
+  }
+
+  return ctx.route.chatId.trim().startsWith("-") ? trimmed : null;
 }
 
 export const telegramMessageActions: ChannelMessageActionAdapter = {
@@ -100,7 +117,7 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
       chatId: request.chatId,
       text: formatted.text,
       replyToMessageId: request.replyToMessageId,
-      threadId: request.threadId ?? route.threadId ?? null,
+      threadId: resolveTelegramRouteThreadId(ctx),
       mediaPath: request.mediaPath,
       fileName: request.filename,
       title: request.title,
