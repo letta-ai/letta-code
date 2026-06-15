@@ -105,6 +105,13 @@ function commitFile(repo: string, fileName: string, content: string): string {
   return git(repo, "rev-parse HEAD").trim();
 }
 
+function utf16leWithBom(content: string): Buffer {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(content, "utf16le"),
+  ]);
+}
+
 function makeSyncedRepo(): { repo: string; remote: string } {
   const remote = makeBareGitRepo();
   const repo = makeGitRepo();
@@ -604,6 +611,30 @@ describe("assertMemoryRepoCleanForWrite", () => {
     await assertMemoryRepoCleanForWrite(repo);
 
     expect(git(repo, "rev-parse HEAD").trim()).toBe(originalSha);
+  });
+
+  test("reports UTF-16 dirty markdown files", async () => {
+    const { repo } = makeSyncedRepo();
+    writeFileSync(
+      join(repo, "human.md"),
+      utf16leWithBom("---\ndescription: human\n---\nnotes"),
+    );
+
+    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
+      /Dirty markdown encoding issue\(s\): human\.md has UTF-16LE BOM/,
+    );
+  });
+
+  test("reports NUL bytes in dirty markdown files", async () => {
+    const { repo } = makeSyncedRepo();
+    writeFileSync(
+      join(repo, "human.md"),
+      Buffer.from("---\ndescription: human\n---\nnotes", "utf16le"),
+    );
+
+    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
+      /Dirty markdown encoding issue\(s\): human\.md contains NUL bytes, possibly UTF-16/,
+    );
   });
 });
 
