@@ -69,6 +69,5 @@ Short XML-wrapped messages injected into the conversation as system events.
 
 | File | Used | Description |
 |------|------|-------------|
-| `memory_check_reminder.txt` | Periodic during conversation | Prompts the agent to review and update memory blocks |
 | `approval_recovery_alert.txt` | Keep-alive ping | Automated message to resume after approval timeout |
 | `interrupt_recovery_alert.txt` | User interrupts stream | Notifies the agent the stream was interrupted |

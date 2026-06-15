@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type { OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
 import { __testSetBackend, type Backend } from "@/backend";
+import type { LocalOAuthConnectCallbacks } from "@/cli/commands/connect-local-oauth";
 import { runConnectSubcommand } from "@/cli/subcommands/connect";
 
 function setProviderTarget(target: "api" | "local") {
@@ -288,6 +290,72 @@ describe("connect subcommand", () => {
       undefined,
       { baseURL: "http://localhost:8000/v1" },
     );
+  });
+
+  const CODEX_LOGIN_SELECT_PROMPT: OAuthSelectPrompt = {
+    message: "Select OpenAI Codex login method:",
+    options: [
+      { id: "browser", label: "Browser login (default)" },
+      { id: "device_code", label: "Device code login (headless)" },
+    ],
+  };
+
+  function createLocalOAuthFlowMock() {
+    const selections: (string | undefined)[] = [];
+    const runLocalOAuthConnectFlow = mock(
+      async (_provider: unknown, callbacks: LocalOAuthConnectCallbacks) => {
+        selections.push(await callbacks.onSelect?.(CODEX_LOGIN_SELECT_PROMPT));
+        return { providerName: "chatgpt-plus-pro" };
+      },
+    );
+    return { selections, runLocalOAuthConnectFlow };
+  }
+
+  test("local codex connect defaults to the first login method option", async () => {
+    const { stdout, deps } = createIoDeps();
+    setProviderTarget("local");
+    const { selections, runLocalOAuthConnectFlow } = createLocalOAuthFlowMock();
+
+    const exitCode = await runConnectSubcommand(["codex"], {
+      ...deps,
+      runLocalOAuthConnectFlow,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runLocalOAuthConnectFlow).toHaveBeenCalledTimes(1);
+    expect(selections).toEqual(["browser"]);
+    expect(stdout.join("\n")).toContain("Successfully connected");
+  });
+
+  test("local codex connect honors --method device-code", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+    const { selections, runLocalOAuthConnectFlow } = createLocalOAuthFlowMock();
+
+    const exitCode = await runConnectSubcommand(
+      ["codex", "--method", "device-code"],
+      { ...deps, runLocalOAuthConnectFlow },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(selections).toEqual(["device_code"]);
+  });
+
+  test("local codex connect rejects unknown --method values", async () => {
+    const { stderr, deps } = createIoDeps();
+    setProviderTarget("local");
+    const { runLocalOAuthConnectFlow } = createLocalOAuthFlowMock();
+
+    const exitCode = await runConnectSubcommand(
+      ["codex", "--method", "carrier-pigeon"],
+      { ...deps, runLocalOAuthConnectFlow },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain(
+      "Unknown ChatGPT Plus/Pro (Codex Subscription) login method: carrier-pigeon",
+    );
+    expect(stderr.join("\n")).toContain("Available: browser, device_code");
   });
 
   test("validates bedrock iam required flags", async () => {

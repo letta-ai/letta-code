@@ -439,7 +439,10 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               agentIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
-              { preserveContextWindow: shouldPreserveContextWindow },
+              {
+                avoidOverwritingExistingContextWindow:
+                  shouldPreserveContextWindow,
+              },
             );
             conversationModelSettings = updatedAgent?.model_settings;
           } else {
@@ -450,7 +453,10 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               conversationIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
-              { preserveContextWindow: shouldPreserveContextWindow },
+              {
+                avoidOverwritingExistingContextWindow:
+                  shouldPreserveContextWindow,
+              },
             );
             conversationModelSettings = (
               updatedConversation as {

@@ -213,6 +213,7 @@ type ConversationLoopContext = {
   > | null>;
   llmApiErrorRetriesRef: MutableRefObject<number>;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
+  maybeRunPostTurnReflection: () => Promise<void>;
   needsEagerApprovalCheck: boolean;
   openTrajectorySegment: () => void;
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
@@ -309,6 +310,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     lastSentInputRef,
     llmApiErrorRetriesRef,
     llmConfigRef,
+    maybeRunPostTurnReflection,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,
@@ -1582,6 +1584,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
             }
             pendingTranscriptStartLineIndexRef.current = null;
+
+            // Evaluate reflection triggers now that the turn's transcript
+            // delta is on disk, so step counts include this turn.
+            await maybeRunPostTurnReflection();
 
             // Get last assistant message, user message, and reasoning for Stop hook
             const bufferedLines = Array.from(

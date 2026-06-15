@@ -121,7 +121,6 @@ import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
   type SharedReminderState,
-  syncReminderStateFromContextTracker,
 } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -2153,9 +2152,46 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Update command with success
             cmd.finish(outputLines.join("\n"), true);
 
-            // Manual /compact bypasses stream compaction events, so trigger
-            // post-compaction reflection reminder/auto-launch on the next user turn.
-            contextTrackerRef.current.pendingReflectionTrigger = true;
+            // Manual /compact bypasses stream compaction events, so launch
+            // post-compaction reflection directly instead of waiting for the
+            // next turn's post-turn trigger evaluation. Best-effort — never
+            // fail the /compact itself.
+            try {
+              if (
+                getReflectionSettings(agentId).trigger === "compaction-event" &&
+                isActiveMemfsEnabled(agentId)
+              ) {
+                void launchReflectionSubagent({
+                  agentId,
+                  conversationId: compactConversationId,
+                  memfsEnabled: isActiveMemfsEnabled(agentId),
+                  triggerSource: "compaction-event",
+                  description: AUTO_REFLECTION_DESCRIPTION,
+                  completionConversationId: () => conversationIdRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
+                  onCompletionMessage: (completionMessage) => {
+                    appendTaskNotificationEvents([completionMessage]);
+                  },
+                  feedbackContext: {
+                    parentAgentName: agentName,
+                    parentAgentDescription: agentDescription,
+                    surface: "letta_code_tui",
+                    model: currentModelId,
+                  },
+                });
+              }
+            } catch (reflectionError) {
+              debugLog(
+                "memory",
+                "Skipping post-compaction reflection:",
+                reflectionError instanceof Error
+                  ? reflectionError.message
+                  : String(reflectionError),
+              );
+            }
             void generateConversationDescription({ force: true });
           } catch (error) {
             const apiError = error as {
@@ -3319,9 +3355,6 @@ ${SYSTEM_REMINDER_CLOSE}
         bashCommandCacheRef.current = [];
       }
 
-      const reflectionSettings = getReflectionSettings(agentId);
-      const memfsEnabledForAgent = isActiveMemfsEnabled(agentId);
-
       // Build git memory sync reminder if uncommitted changes or unpushed commits
       let memoryGitReminder = "";
       const gitStatus = pendingGitReminderRef.current;
@@ -3353,37 +3386,6 @@ ${SYSTEM_REMINDER_CLOSE}
         if (!text) return;
         reminderParts.push({ type: "text", text });
       };
-      const maybeLaunchReflectionSubagent = async (
-        triggerSource: "step-count" | "compaction-event",
-      ) => {
-        const reflectionConversationId = conversationIdRef.current ?? "default";
-        const result = await launchReflectionSubagent({
-          agentId,
-          conversationId: reflectionConversationId,
-          memfsEnabled: memfsEnabledForAgent,
-          triggerSource,
-          description: AUTO_REFLECTION_DESCRIPTION,
-          completionConversationId: () => conversationIdRef.current,
-          recompileByConversation:
-            systemPromptRecompileByConversationRef.current,
-          recompileQueuedByConversation:
-            queuedSystemPromptRecompileByConversationRef.current,
-          onCompletionMessage: (completionMessage) => {
-            appendTaskNotificationEvents([completionMessage]);
-          },
-          feedbackContext: {
-            parentAgentName: agentName,
-            parentAgentDescription: agentDescription,
-            surface: "letta_code_tui",
-            model: currentModelId,
-          },
-        });
-        return result.launched;
-      };
-      syncReminderStateFromContextTracker(
-        sharedReminderStateRef.current,
-        contextTrackerRef.current,
-      );
       const { getSkillSources } = await import("@/agent/context");
       const { parts: sharedReminderParts } = await buildSharedReminderParts({
         mode: "interactive",
@@ -3398,9 +3400,7 @@ ${SYSTEM_REMINDER_CLOSE}
         conversationBootstrapContent:
           contentParts as unknown as MessageCreate["content"],
         systemInfoReminderEnabled,
-        reflectionSettings,
         skillSources: getSkillSources(),
-        maybeLaunchReflectionSubagent,
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
