@@ -22,6 +22,7 @@ import {
   deleteSecureTokens,
   getSecureTokens,
   isKeychainAvailable,
+  isKeychainInteractionNotAllowed,
   type SecureTokens,
   setSecureTokens,
 } from "./utils/secrets.js";
@@ -579,8 +580,17 @@ class SettingsManager {
 
             debugWarn("settings", "Successfully migrated tokens to secrets");
           } catch (error) {
-            console.warn("Failed to migrate tokens to secrets:", error);
-            console.warn("Tokens will remain in settings file for persistence");
+            if (isKeychainInteractionNotAllowed(error)) {
+              debugWarn(
+                "settings",
+                `Secrets unavailable for this process - tokens will remain in settings file for persistence: ${error}`,
+              );
+            } else {
+              console.warn("Failed to migrate tokens to secrets:", error);
+              console.warn(
+                "Tokens will remain in settings file for persistence",
+              );
+            }
           }
         } else {
           debugWarn(
@@ -590,6 +600,13 @@ class SettingsManager {
         }
       }
     } catch (error) {
+      if (isKeychainInteractionNotAllowed(error)) {
+        debugWarn(
+          "settings",
+          `Secrets unavailable for this process - skipping token migration: ${error}`,
+        );
+        return;
+      }
       console.warn("Failed to migrate tokens to secrets:", error);
       // Don't throw - app should still work with tokens in settings file
     }

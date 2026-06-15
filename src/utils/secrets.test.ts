@@ -12,6 +12,7 @@ import {
   getRefreshToken,
   getSecureTokens,
   isKeychainAvailable,
+  isKeychainInteractionNotAllowed,
   type SecureTokens,
   setApiKey,
   setRefreshToken,
@@ -44,6 +45,22 @@ describe("Secrets utilities", () => {
   test("isKeychainAvailable works", async () => {
     const available = await isKeychainAvailable();
     expect(typeof available).toBe("boolean");
+  });
+
+  test("detects non-interactive macOS keychain errors", () => {
+    expect(
+      isKeychainInteractionNotAllowed(
+        new Error("User interaction is not allowed. (code: -25308)"),
+      ),
+    ).toBe(true);
+    expect(
+      isKeychainInteractionNotAllowed(
+        new Error('code: "ERR_SECRETS_INTERACTION_NOT_ALLOWED"'),
+      ),
+    ).toBe(true);
+    expect(isKeychainInteractionNotAllowed(new Error("other failure"))).toBe(
+      false,
+    );
   });
 
   test.skipIf(!keychainAvailablePrecompute)(
@@ -220,6 +237,21 @@ describe("Secrets utilities", () => {
     expect(String(warn.mock.calls[0]?.[0])).toContain(
       "Failed to retrieve API key from secrets",
     );
+  });
+
+  test("non-interactive keychain read failures use debug fallback without warning", async () => {
+    console.warn = mock(() => {});
+
+    const warn = console.warn as ReturnType<typeof mock>;
+
+    __setSecretGetOverrideForTests(async () => {
+      throw new Error("User interaction is not allowed. (code: -25308)");
+    });
+
+    expect(await getApiKey()).toBe(null);
+    expect(await getApiKey()).toBe(null);
+    expect(warn).not.toHaveBeenCalled();
+    expect(await isKeychainAvailable()).toBe(false);
   });
 
   test("warns once per token type when both reads fail", async () => {
