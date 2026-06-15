@@ -22,3 +22,4 @@ After success:
 - Confirm you are in the new worktree with `git status` before editing.
 - Read README, AGENTS.md, or other project setup docs before running commands.
 - If this repo needs per-worktree dependency setup, install dependencies with the project's package manager. Check the repo first: if it uses Bun, run `bun install` instead of `npm install`; if it uses pnpm, yarn, or npm, use that package manager instead.
+- Verify pre-commit hooks are installed and active before relying on commits. Check `git config --get core.hooksPath` and confirm the hook path exists; if hooks are missing or stale, run the repo's hook setup command (often dependency install / Husky prepare) before committing.
