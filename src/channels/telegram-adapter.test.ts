@@ -2045,6 +2045,84 @@ test("telegram adapter preserves photo mime type when Telegram download responds
   }
 });
 
+test("telegram adapter does not inline SVG documents as model images", async () => {
+  const svgBytes = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#ff6600" /></svg>',
+  );
+  globalThis.fetch = mock(
+    async () =>
+      new Response(svgBytes, {
+        status: 200,
+        headers: { "content-type": "image/svg+xml" },
+      }),
+  ) as unknown as typeof fetch;
+
+  FakeBot.nextGetFileImpl = async () => ({
+    file_path: "documents/void-final.svg",
+  });
+
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  try {
+    await bot?.emit("message", {
+      message: {
+        chat: { id: 123 },
+        from: { id: 456, username: "alice", first_name: "Alice" },
+        caption: "Extract the colors",
+        date: 1_736_380_800,
+        message_id: 10,
+        document: {
+          file_id: "svg1",
+          file_name: "void-final.svg",
+          mime_type: "image/svg+xml",
+          file_size: svgBytes.byteLength,
+        },
+      },
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    const firstCall = onMessage.mock.calls[0] as unknown as
+      | [InboundChannelMessage]
+      | undefined;
+    expect(firstCall).toBeDefined();
+    if (!firstCall) {
+      throw new Error("Expected inbound Telegram SVG to emit a message");
+    }
+
+    const [inbound] = firstCall;
+    expect(inbound.attachments).toHaveLength(1);
+    const attachment = inbound.attachments?.[0];
+    expect(attachment).toMatchObject({
+      kind: "image",
+      name: "void-final.svg",
+      mimeType: "image/svg+xml",
+      sizeBytes: svgBytes.byteLength,
+    });
+    expect(attachment?.imageDataBase64).toBeUndefined();
+    expect(attachment?.localPath).toBeDefined();
+    if (!attachment?.localPath) {
+      throw new Error("Expected inbound Telegram SVG to be saved locally");
+    }
+    expect(readFileSync(attachment.localPath)).toEqual(svgBytes);
+  } finally {
+    rmSync(channelRoot, { recursive: true, force: true });
+    channelRoot = mkdtempSync(join(tmpdir(), "letta-telegram-root-"));
+  }
+});
+
 test("telegram adapter downloads inbound wav documents as audio", async () => {
   const wavBytes = Buffer.from("wav-bytes");
   globalThis.fetch = mock(
