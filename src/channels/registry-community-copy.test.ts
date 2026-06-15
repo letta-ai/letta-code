@@ -7,13 +7,16 @@ const { buildPairingInstructions, buildUnboundRouteInstructions } =
 describe("registry copy: first-party channels", () => {
   test("pairing instructions point at both desktop UI and CLI for telegram", () => {
     const text = buildPairingInstructions("telegram", "ABC123");
-    expect(text).toContain("open Channels >");
+    expect(text).toContain("Connect this chat to a Letta agent.");
+    expect(text).toContain("In Letta Code: open Channels > Telegram");
     expect(text).toContain("Telegram");
     expect(text).toContain("Pairing code: ABC123");
+    expect(text).toContain("CLI on the listener machine:");
     expect(text).toContain(
       "letta channels pair --channel telegram --code ABC123 --agent <agent-id>",
     );
-    expect(text).toContain("Find your agent id with letta agents list.");
+    expect(text).toContain("Find the target agent with: letta agents list");
+    expect(text).toContain("This code expires in 15 minutes.");
     expect(text).not.toContain("(community channel)");
   });
 
@@ -30,23 +33,26 @@ describe("registry copy: first-party channels", () => {
     const text = buildPairingInstructions("discord", "XYZ789", {
       agentId: "agent-discord",
     });
-    expect(text).toContain("open Channels >");
+    expect(text).toContain("In Letta Code: open Channels > Discord");
     expect(text).toContain("Discord");
     expect(text).toContain(
       "letta channels pair --channel discord --code XYZ789 --agent agent-discord",
     );
     expect(text).not.toContain("--agent <agent-id>");
-    expect(text).not.toContain("Find your agent id with letta agents list.");
+    expect(text).not.toContain("Find the target agent with: letta agents list");
   });
 
   test("first-party whatsapp pairing includes the desktop and CLI paths", () => {
-    const text = buildPairingInstructions("whatsapp", "W123");
-    expect(text).toContain("open Channels >");
+    const text = buildPairingInstructions("whatsapp", "W123", {
+      agentId: "agent-whatsapp",
+    });
+    expect(text).toContain("In Letta Code: open Channels > WhatsApp");
     expect(text).toContain("WhatsApp");
     expect(text).toContain("Pairing code: W123");
     expect(text).toContain(
-      "letta channels pair --channel whatsapp --code W123 --agent <agent-id>",
+      "letta channels pair --channel whatsapp --code W123 --agent agent-whatsapp",
     );
+    expect(text).not.toContain("--agent <agent-id>");
   });
 
   test("first-party whatsapp unbound route keeps the desktop wording", () => {
@@ -88,13 +94,14 @@ describe("registry copy: community channels", () => {
 
   test("pairing instructions surface the CLI command for community channels", () => {
     const text = buildPairingInstructions("custom-chat", "ABC123");
-    expect(text).toContain("isn't connected to a Letta agent yet");
-    expect(text).toContain("Pairing code: ABC123 (expires in 15 minutes)");
-    expect(text).toContain("On the machine where your listener runs");
+    expect(text).toContain("Connect this chat to a Letta agent.");
+    expect(text).toContain("Pairing code: ABC123");
+    expect(text).toContain("CLI on the listener machine:");
     expect(text).toContain(
       "letta channels pair --channel custom-chat --code ABC123 --agent <agent-id>",
     );
-    expect(text).toContain("Find your agent id with letta agents list.");
+    expect(text).toContain("Find the target agent with: letta agents list");
+    expect(text).toContain("This code expires in 15 minutes.");
     expect(text).not.toContain("open Channels >");
     expect(text).not.toContain("(community channel)");
     // Hard-stop against shipping the wrong subcommand again.
@@ -123,12 +130,12 @@ describe("registry copy: community channels", () => {
       "letta channels pair --channel custom-chat --code ABC123 --agent agent-custom",
     );
     expect(text).not.toContain("--agent <agent-id>");
-    expect(text).not.toContain("Find your agent id with letta agents list.");
+    expect(text).not.toContain("Find the target agent with: letta agents list");
   });
 
   test("any non-first-party channel id triggers community copy", () => {
     const text = buildPairingInstructions("imessage", "QQQ");
-    expect(text).toContain("isn't connected to a Letta agent yet");
+    expect(text).toContain("Connect this chat to a Letta agent.");
     expect(text).toContain(
       "letta channels pair --channel imessage --code QQQ --agent <agent-id>",
     );

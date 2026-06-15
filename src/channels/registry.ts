@@ -141,25 +141,35 @@ export function buildPairingInstructions(
   const displayName = channelDisplayName(channelId);
   const configuredAgentId = normalizeAgentId(options.agentId);
   const pairingCommand = `letta channels pair --channel ${channelId} --code ${code} --agent ${configuredAgentId ?? "<agent-id>"}`;
-  const agentLookupInstruction = configuredAgentId
-    ? ""
-    : "\n\nFind your agent id with letta agents list.";
+  const agentLookupLines = configuredAgentId
+    ? []
+    : ["Find the target agent with: letta agents list"];
   if (!isFirstPartyChannelPlugin(channelId)) {
-    return (
-      `This chat isn't connected to a Letta agent yet.\n\n` +
-      `Pairing code: ${code} (expires in 15 minutes)\n\n` +
-      `On the machine where your listener runs:\n\n` +
-      pairingCommand +
-      agentLookupInstruction
-    );
+    return [
+      "Connect this chat to a Letta agent.",
+      "",
+      `Pairing code: ${code}`,
+      "",
+      "CLI on the listener machine:",
+      pairingCommand,
+      ...agentLookupLines,
+      "",
+      "This code expires in 15 minutes.",
+    ].join("\n");
   }
-  return (
-    `To connect this chat to a Letta agent, either open Channels > ${displayName} in Letta Code and finish connecting this chat there, or run this on the machine where your listener runs:\n\n` +
-    pairingCommand +
-    agentLookupInstruction +
-    `\n\nPairing code: ${code}\n\n` +
-    `This code expires in 15 minutes.`
-  );
+  return [
+    "Connect this chat to a Letta agent.",
+    "",
+    `Pairing code: ${code}`,
+    "",
+    `In Letta Code: open Channels > ${displayName} and approve this pending chat.`,
+    "",
+    "CLI on the listener machine:",
+    pairingCommand,
+    ...agentLookupLines,
+    "",
+    "This code expires in 15 minutes.",
+  ].join("\n");
 }
 
 export function buildUnboundRouteInstructions(
