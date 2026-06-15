@@ -7,6 +7,15 @@ const vendorPath = fileURLToPath(
 );
 
 describe("vendored ink-text-input cursor rendering", () => {
+  test("treats meta letter shortcuts as control sequences", async () => {
+    const { isControlSequence } = await import(
+      "../../vendor/ink-text-input/build/index.js"
+    );
+
+    expect(isControlSequence("p", { meta: true })).toBe(true);
+    expect(isControlSequence("p", { meta: false })).toBe(false);
+  });
+
   test("uses an internal sentinel instead of rendering NBSP cursor cells", () => {
     const source = readFileSync(vendorPath, "utf8");
 
