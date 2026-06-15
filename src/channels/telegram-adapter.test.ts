@@ -741,6 +741,36 @@ test("telegram adapter forwards parse mode and reply parameters", async () => {
   });
 });
 
+test("telegram adapter omits message_thread_id for private chats", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "telegram",
+    chatId: "123",
+    text: "<b>hello private</b>",
+    threadId: "42",
+    parseMode: "HTML",
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot).toBeDefined();
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
+    "123",
+    "<b>hello private</b>",
+    {
+      parse_mode: "HTML",
+    },
+  );
+});
+
 test("telegram adapter sends messages into forum topics", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
@@ -785,7 +815,7 @@ test("telegram adapter uploads outbound media with a caption", async () => {
   await adapter.start();
   await adapter.sendMessage({
     channel: "telegram",
-    chatId: "123",
+    chatId: "-100123",
     text: "<b>see image</b>",
     parseMode: "HTML",
     replyToMessageId: "456",
@@ -797,7 +827,7 @@ test("telegram adapter uploads outbound media with a caption", async () => {
 
   const bot = FakeBot.instances[0];
   expect(bot?.api.sendPhoto).toHaveBeenCalledWith(
-    "123",
+    "-100123",
     expect.any(FakeInputFile),
     {
       caption: "<b>see image</b>",

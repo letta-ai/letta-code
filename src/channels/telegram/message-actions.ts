@@ -1,4 +1,23 @@
-import type { ChannelMessageActionAdapter } from "@/channels/plugin-types";
+import type {
+  ChannelMessageActionAdapter,
+  ChannelMessageActionContext,
+} from "@/channels/plugin-types";
+
+function resolveTelegramRouteThreadId(
+  ctx: ChannelMessageActionContext,
+): string | null {
+  const threadId = ctx.request.threadId ?? ctx.route.threadId ?? null;
+  const trimmed = threadId?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (ctx.route.chatType === "direct") {
+    return null;
+  }
+
+  return ctx.route.chatId.trim().startsWith("-") ? trimmed : null;
+}
 
 export const telegramMessageActions: ChannelMessageActionAdapter = {
   describeMessageTool() {
@@ -57,7 +76,7 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
       chatId: request.chatId,
       text: formatted.text,
       replyToMessageId: request.replyToMessageId,
-      threadId: request.threadId ?? route.threadId ?? null,
+      threadId: resolveTelegramRouteThreadId(ctx),
       mediaPath: request.mediaPath,
       fileName: request.filename,
       title: request.title,
