@@ -29,6 +29,15 @@ export type ReflectionLaunchSkippedReason =
   | "no_payload"
   | "error";
 
+function drainReflectionTelemetry(): void {
+  telemetry.drain().catch((error) => {
+    debugWarn(
+      "telemetry",
+      `Failed to flush reflection telemetry: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+}
+
 export type ReflectionLaunchResult =
   | {
       launched: true;
@@ -162,6 +171,7 @@ export async function launchReflectionSubagent(
         startMessageId: autoPayload.startMessageId,
         endMessageId: autoPayload.endMessageId,
       });
+      drainReflectionTelemetry();
     };
 
     const { subagentId } = spawnBackgroundSubagentTask({
@@ -185,6 +195,7 @@ export async function launchReflectionSubagent(
           stepCount,
           durationMs,
         });
+        drainReflectionTelemetry();
         maybeSendReflectionThresholdFeedback({
           parentAgentId: agentId,
           parentAgentName: options.feedbackContext?.parentAgentName,
