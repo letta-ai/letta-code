@@ -124,6 +124,18 @@ export function getCronFilePath(): string {
   return join(getLettaDir(), CRON_FILE_NAME);
 }
 
+/**
+ * Directory that contains crons.json. Watch this (rather than the file
+ * itself) for change detection, since writes go through a temp-file +
+ * rename that swaps the inode and breaks file-level fs.watch handles.
+ */
+export function getCronDir(): string {
+  return getLettaDir();
+}
+
+/** Base name of the cron file, for directory-watch filtering. */
+export const CRON_FILE_BASENAME = CRON_FILE_NAME;
+
 function getLockDirPath(): string {
   return join(getLettaDir(), LOCK_DIR_NAME);
 }
