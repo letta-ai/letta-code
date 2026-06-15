@@ -8,6 +8,13 @@
 # Letta Code file index exclusions (auto-created per-project, not for repo)
 .lettaignore
 
+# IDE / editor settings
+.claude/
+
+# Vim swap files
+*.swp
+*.swo
+
 .idea
 node_modules
 bun.lockb
