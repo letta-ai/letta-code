@@ -1612,6 +1612,32 @@
       }
     },
     {
+      "id": "glm-5.2",
+      "handle": "zai/glm-5.2",
+      "label": "GLM-5.2",
+      "description": "zAI's latest coding model",
+      "isFeatured": true,
+      "free": true,
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 131072,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "glm-5.2-1m",
+      "handle": "zai/glm-5.2[1m]",
+      "label": "GLM-5.2 1M",
+      "description": "zAI's latest coding model with 1M context",
+      "isFeatured": true,
+      "free": true,
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 131072,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "minimax-m3",
       "handle": "minimax/MiniMax-M3",
       "label": "MiniMax M3",
