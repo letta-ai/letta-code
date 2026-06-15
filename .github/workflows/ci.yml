@@ -114,12 +114,12 @@ jobs:
     name: Telegram Live Smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Live smoke depends on real Telegram credentials and network state. Keep it
+    # as a post-merge regression signal for channel changes, not as a PR gate.
     if: >
       needs.classify.outputs.channels_changed == 'true' &&
-      (github.event_name == 'push' ||
-      (github.event_name == 'pull_request' &&
-      github.actor != 'dependabot[bot]' &&
-      github.event.pull_request.head.repo.full_name == github.repository))
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
     permissions:
       contents: read
     steps:
