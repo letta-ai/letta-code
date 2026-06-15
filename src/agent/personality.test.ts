@@ -8,6 +8,7 @@ import {
   getPersonalityBlockValues,
   getPersonalityContent,
   getPersonalityHumanContent,
+  getPersonalityInitialMemoryFiles,
   ONBOARDING_PERSONALITIES,
   PERSONALITY_OPTIONS,
   replaceBodyPreservingFrontmatter,
@@ -118,6 +119,23 @@ describe("personality helpers", () => {
     );
   });
 
+  test("tutorial seeds tutor-only skills into MemFS", () => {
+    const files = getPersonalityInitialMemoryFiles("tutorial");
+
+    expect(files.map((file) => file.relativePath).sort()).toEqual([
+      "skills/building-a-claw/SKILL.md",
+      "skills/deploying-agents/SKILL.md",
+    ]);
+    expect(
+      files.find((file) => file.relativePath.includes("deploying"))?.content,
+    ).toContain("name: deploying-agents");
+    expect(
+      files.find((file) => file.relativePath.includes("claw"))?.content,
+    ).toContain("name: building-a-claw");
+
+    expect(getPersonalityInitialMemoryFiles("memo")).toEqual([]);
+  });
+
   test("tutorial persona body drives proactive onboarding progression", () => {
     const body = getPersonalityContent("tutorial");
     expect(body).not.toContain("The skill owns the tutorial flow");
@@ -147,6 +165,8 @@ describe("personality helpers", () => {
     // Checklist completion syntax is unambiguous.
     expect(onboardingBlock?.value).toContain("Mark an item `[x]`");
     expect(onboardingBlock?.value).toContain("Connect to a channel");
+    expect(onboardingBlock?.value).toContain("deploying-agents");
+    expect(onboardingBlock?.value).toContain("building-a-claw");
   });
 
   test("non-tutorial personalities do not include onboarding", async () => {

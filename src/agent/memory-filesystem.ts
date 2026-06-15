@@ -7,9 +7,9 @@
  * and headless code paths.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Backend } from "@/backend";
 import {
@@ -385,6 +385,87 @@ export interface ApplyMemfsFlagsOptions {
   agentTags?: string[];
   /** Skip the system prompt update (when the agent was created with the correct mode). */
   skipPromptUpdate?: boolean;
+  /** Files to seed into an agent's MemFS checkout, without overwriting existing files. */
+  initialFiles?: Array<{ relativePath: string; content: string }>;
+  /** Commit message used when initialFiles are written. */
+  initialFilesCommitMessage?: string;
+}
+
+function normalizeInitialMemoryFilePath(relativePath: string): string | null {
+  const normalized = relativePath.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  if (
+    !normalized ||
+    normalized.startsWith("/") ||
+    segments.length === 0 ||
+    segments.some((segment) => segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+  return segments.join("/");
+}
+
+async function writeInitialMemoryFiles(params: {
+  memoryDir: string;
+  agentId: string;
+  files?: Array<{ relativePath: string; content: string }>;
+  syncMode: "local" | "remote";
+  reason?: string;
+}): Promise<void> {
+  const files = params.files ?? [];
+  if (files.length === 0) {
+    return;
+  }
+
+  const pathspecs: string[] = [];
+  for (const file of files) {
+    const relativePath = normalizeInitialMemoryFilePath(file.relativePath);
+    if (!relativePath) {
+      continue;
+    }
+    const fullPath = join(params.memoryDir, relativePath);
+    if (existsSync(fullPath)) {
+      continue;
+    }
+    mkdirSync(dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, file.content, "utf8");
+    pathspecs.push(relativePath);
+  }
+
+  if (pathspecs.length === 0) {
+    return;
+  }
+
+  const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+  const author = {
+    agentId: params.agentId,
+    authorName: "Letta Code",
+    authorEmail: `${params.agentId}@letta.com`,
+  };
+  await commitAndSyncMemoryWrite({
+    memoryDir: params.memoryDir,
+    pathspecs,
+    reason: params.reason ?? "chore: initialize personality memory files",
+    author,
+    syncMode: params.syncMode,
+    replay: async () => {
+      const replayed: string[] = [];
+      for (const file of files) {
+        const relativePath = normalizeInitialMemoryFilePath(file.relativePath);
+        if (!relativePath) {
+          continue;
+        }
+        const fullPath = join(params.memoryDir, relativePath);
+        if (existsSync(fullPath)) {
+          continue;
+        }
+        mkdirSync(dirname(fullPath), { recursive: true });
+        writeFileSync(fullPath, file.content, "utf8");
+        replayed.push(relativePath);
+      }
+      return replayed;
+    },
+  });
 }
 
 /**
@@ -422,7 +503,14 @@ export async function applyMemfsFlags(
     await initializeLocalMemoryRepo({
       memoryDir,
       agentId,
-      files: [],
+      files: options?.initialFiles ?? [],
+    });
+    await writeInitialMemoryFiles({
+      memoryDir,
+      agentId,
+      files: options?.initialFiles,
+      syncMode: "local",
+      reason: options?.initialFilesCommitMessage,
     });
     settingsManager.setMemfsEnabled(agentId, true);
     return { action: "enabled", memoryDir };
@@ -532,6 +620,14 @@ export async function applyMemfsFlags(
       const result = await pullMemory(agentId);
       pullSummary = result.summary;
     }
+
+    await writeInitialMemoryFiles({
+      memoryDir: getScopedMemoryFilesystemRoot(agentId),
+      agentId,
+      files: options?.initialFiles,
+      syncMode: "remote",
+      reason: options?.initialFilesCommitMessage,
+    });
 
     // Fetch secrets from the server so they're available for $SECRET_NAME substitution.
     const { initSecretsFromServer } = await import("@/utils/secrets-store");

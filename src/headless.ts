@@ -46,6 +46,7 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import {
   buildCreateAgentOptionsForPersonality,
+  getPersonalityInitialMemoryFiles,
   resolvePersonalityId,
 } from "./agent/personality";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
@@ -1383,7 +1384,20 @@ export async function handleHeadlessCommand(
   //   "skip"                 – skip the pull this session.
   if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
-      settingsManager.setMemfsEnabled(agent.id, !localNoMemfsRequested);
+      const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
+      await applyMemfsFlags(
+        agent.id,
+        localNoMemfsRequested ? undefined : true,
+        localNoMemfsRequested ? true : undefined,
+        {
+          pullOnExistingRepo: true,
+          agentTags: agent.tags,
+          skipPromptUpdate: forceNew,
+          initialFiles: personality
+            ? getPersonalityInitialMemoryFiles(personality)
+            : undefined,
+        },
+      );
     } else if (noMemfsFlag || localNoMemfsRequested) {
       settingsManager.setMemfsEnabled(agent.id, false);
     }
@@ -1395,6 +1409,9 @@ export async function handleHeadlessCommand(
         pullOnExistingRepo: false,
         agentTags: agent.tags,
         skipPromptUpdate: forceNew,
+        initialFiles: personality
+          ? getPersonalityInitialMemoryFiles(personality)
+          : undefined,
       });
     } catch (error) {
       trackHeadlessBoundaryError(
@@ -1414,6 +1431,9 @@ export async function handleHeadlessCommand(
       pullOnExistingRepo: true,
       agentTags: agent.tags,
       skipPromptUpdate: forceNew,
+      initialFiles: personality
+        ? getPersonalityInitialMemoryFiles(personality)
+        : undefined,
     }).catch((error) => {
       trackHeadlessBoundaryError(
         "headless_memfs_background_pull_failed",
@@ -1437,6 +1457,9 @@ export async function handleHeadlessCommand(
           pullOnExistingRepo: true,
           agentTags: agent.tags,
           skipPromptUpdate: forceNew,
+          initialFiles: personality
+            ? getPersonalityInitialMemoryFiles(personality)
+            : undefined,
         },
       );
       if (memfsResult.pullSummary?.includes("CONFLICT")) {

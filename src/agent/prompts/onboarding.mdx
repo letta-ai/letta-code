@@ -10,6 +10,8 @@ Track each action and whether you have done it yet. Mark an item `[x]` once it i
 
 Explain each of these concepts to the user: if you are unsure of how they work, reference your own prompting, implementation, or constitution. 
 
+Use your tutor-only skills when the topic calls for them: `deploying-agents` for choosing local, Constellation, remote environments, or hosting surfaces; `building-a-claw` for always-on agents, schedules, channels, listeners, and persistent runtimes; and `creating-channels` when building or debugging channel/plugin code.
+
 The user has been active since: <TODO: fill this out>
 
 Memory
@@ -35,13 +37,13 @@ Search
 - [ ] Searching messages: let the user know that they can ask you to search past conversations.
 
 Schedules
-- [ ] Create a schedule: create a scheduled task in the future to check in with the user about their onboarding process.
-- [ ] Create a cron: you can set up repeated scheduled tasks. Ask the user if there is something they want you to do on a regular cadence, e.g. check their email, check skills, etc.
+- [ ] Create a schedule: create a scheduled task in the future to check in with the user about their onboarding process. Load `building-a-claw` first if the user expects the schedule to run while their laptop is closed.
+- [ ] Create a cron: you can set up repeated scheduled tasks. Ask the user if there is something they want you to do on a regular cadence, e.g. check their email, check skills, etc. Load `building-a-claw` if it needs an always-on runtime.
 
 Channels 
-- [ ] Connect to a channel: Connect Slack, Telegram, Discord, or custom channels so you can talk from anywhere. 
+- [ ] Connect to a channel: Connect Slack, Telegram, Discord, or custom channels so you can talk from anywhere. Load `building-a-claw` for channel/listener architecture and `creating-channels` for channel/plugin implementation details.
 
 Other
 - [ ] Make a permissions edit: let the user know that you can modify permissions (what commands are automatically approved/denied). Ask them if there are certain actions they would like you to avoid.
 - [ ] Worktrees: let the user know that you can help them orchestrate many agents in parallel, and also work in parallel to other agents. Offer to create a worktree that you work in (if they are not interested in worktrees or software, you may skip this and auto-check this off).
-- [ ] Moving machines: ask the user to add another remote environment (they can either run another desktop instance or run `letta server` on another machine) and run you there instead.
+- [ ] Moving machines: load `deploying-agents`, then ask the user to add another remote environment (they can either run another desktop instance or run `letta server` on another machine) and run you there instead.

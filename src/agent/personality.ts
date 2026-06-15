@@ -14,6 +14,8 @@ import {
   pullMemory,
 } from "./memory-git";
 import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./prompt-assets";
+import buildingAClawSkill from "./prompts/tutor-skills/building-a-claw.md";
+import deployingAgentsSkill from "./prompts/tutor-skills/deploying-agents.md";
 
 const execFile = promisify(execFileCb);
 
@@ -108,6 +110,11 @@ export interface PersonalityBlockDefinition {
   templatePromptAssetName: string;
 }
 
+export interface PersonalityInitialMemoryFile {
+  relativePath: string;
+  content: string;
+}
+
 export const ONBOARDING_PERSONALITIES = [
   "tutorial",
 ] as const satisfies readonly PersonalityId[];
@@ -118,6 +125,25 @@ export function supportsOnboardingBlock(
   return (ONBOARDING_PERSONALITIES as readonly PersonalityId[]).includes(
     personalityId,
   );
+}
+
+export function getPersonalityInitialMemoryFiles(
+  personalityId: PersonalityId,
+): PersonalityInitialMemoryFile[] {
+  if (personalityId !== "tutorial") {
+    return [];
+  }
+
+  return [
+    {
+      relativePath: "skills/deploying-agents/SKILL.md",
+      content: `${deployingAgentsSkill.trimEnd()}\n`,
+    },
+    {
+      relativePath: "skills/building-a-claw/SKILL.md",
+      content: `${buildingAClawSkill.trimEnd()}\n`,
+    },
+  ];
 }
 
 const FRONTMATTER_REGEX = /^(---\n[\s\S]*?\n---)\n*/;
@@ -464,19 +490,32 @@ export async function buildCreateAgentOptionsForPersonality(params: {
 export async function enableMemfsForCreatedAgent(params: {
   agentId: string;
   agentTags?: string[] | null;
+  personalityId?: PersonalityId;
 }): Promise<void> {
-  const { agentId, agentTags } = params;
+  const { agentId, agentTags, personalityId } = params;
 
   try {
-    const { getClient } = await import("@/backend/api/client");
-    const client = await getClient();
+    const { applyMemfsFlags } = await import("./memory-filesystem");
+    const backend = getBackend();
     const tags = agentTags || [];
-    if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
-      await client.agents.update(agentId, {
+    if (
+      backend.capabilities.remoteMemfs &&
+      !tags.includes(GIT_MEMORY_ENABLED_TAG)
+    ) {
+      await backend.updateAgent(agentId, {
         tags: [...tags, GIT_MEMORY_ENABLED_TAG],
       });
     }
     settingsManager.setMemfsEnabled(agentId, true);
+
+    await applyMemfsFlags(agentId, true, undefined, {
+      pullOnExistingRepo: true,
+      agentTags: tags,
+      skipPromptUpdate: true,
+      initialFiles: personalityId
+        ? getPersonalityInitialMemoryFiles(personalityId)
+        : undefined,
+    });
   } catch {
     // Self-hosted or memfs not available - skip silently
   }
@@ -499,6 +538,7 @@ export async function createAgentForPersonality(params: {
   await enableMemfsForCreatedAgent({
     agentId: result.agent.id,
     agentTags: result.agent.tags,
+    personalityId: params.personalityId,
   });
 
   return result;
@@ -613,6 +653,40 @@ function applyPersonalityFiles(
   return changedPaths;
 }
 
+function isSafeRelativeMemoryPath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return (
+    normalized.length > 0 &&
+    !normalized.startsWith("/") &&
+    segments.length > 0 &&
+    segments.every((segment) => segment !== "." && segment !== "..")
+  );
+}
+
+function applyInitialPersonalityMemoryFiles(
+  repoDir: string,
+  files: PersonalityInitialMemoryFile[],
+): string[] {
+  const changedPaths: string[] = [];
+
+  for (const file of files) {
+    const relativePath = file.relativePath.replace(/\\/g, "/");
+    if (!isSafeRelativeMemoryPath(relativePath)) {
+      continue;
+    }
+    const absolutePath = join(repoDir, relativePath);
+    if (existsSync(absolutePath)) {
+      continue;
+    }
+    mkdirSync(dirname(absolutePath), { recursive: true });
+    writeFileSync(absolutePath, file.content, "utf-8");
+    changedPaths.push(relativePath);
+  }
+
+  return changedPaths;
+}
+
 export async function applyPersonalityToMemory(
   params: ApplyPersonalityToMemoryParams,
 ): Promise<ApplyPersonalityToMemoryResult> {
@@ -661,7 +735,13 @@ export async function applyPersonalityToMemory(
     },
   ];
 
-  const changedPaths = applyPersonalityFiles(filesToUpdate);
+  const initialMemoryFiles = getPersonalityInitialMemoryFiles(
+    params.personalityId,
+  );
+  const changedPaths = [
+    ...applyPersonalityFiles(filesToUpdate),
+    ...applyInitialPersonalityMemoryFiles(repoDir, initialMemoryFiles),
+  ];
 
   if (changedPaths.length === 0) {
     return {
@@ -683,7 +763,10 @@ export async function applyPersonalityToMemory(
     reason: commitMessage,
     author,
     syncMode: isLocalMemfs ? "local" : "remote",
-    replay: async () => applyPersonalityFiles(filesToUpdate),
+    replay: async () => [
+      ...applyPersonalityFiles(filesToUpdate),
+      ...applyInitialPersonalityMemoryFiles(repoDir, initialMemoryFiles),
+    ],
   });
 
   if (!commitResult.committed) {

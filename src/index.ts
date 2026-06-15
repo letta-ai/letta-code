@@ -26,6 +26,7 @@ import {
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import {
   buildCreateAgentOptionsForPersonality,
+  getPersonalityInitialMemoryFiles,
   resolvePersonalityId,
 } from "./agent/personality";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
@@ -2426,17 +2427,29 @@ async function main(): Promise<void> {
                 pullOnExistingRepo: true,
                 agentTags,
                 skipPromptUpdate: shouldCreateNew,
+                initialFiles: personality
+                  ? getPersonalityInitialMemoryFiles(personality)
+                  : undefined,
               }),
             )
           : Promise.resolve().then(() => {
               if (backend.capabilities.localMemfs) {
-                settingsManager.setMemfsEnabled(
-                  agentId,
-                  !localNoMemfsRequested,
+                return import("@/agent/memory-filesystem").then(
+                  ({ applyMemfsFlags }) =>
+                    applyMemfsFlags(
+                      agentId,
+                      localNoMemfsRequested ? undefined : true,
+                      localNoMemfsRequested ? true : undefined,
+                      {
+                        pullOnExistingRepo: true,
+                        agentTags,
+                        skipPromptUpdate: shouldCreateNew,
+                        initialFiles: personality
+                          ? getPersonalityInitialMemoryFiles(personality)
+                          : undefined,
+                      },
+                    ),
                 );
-                return {
-                  action: localNoMemfsRequested ? "disabled" : "enabled",
-                };
               }
               if (memfsFlag) {
                 throw new Error(
