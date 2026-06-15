@@ -1017,7 +1017,8 @@ export function createTelegramAdapter(
     }
 
     const telegramBot = await ensureBot();
-    const replyToMessageId = source.threadId ?? source.messageId;
+    const threadId = resolveTelegramOutboundThreadId(source);
+    const replyToMessageId = threadId ?? source.messageId;
     let reply_parameters: { message_id: number } | undefined;
     if (replyToMessageId) {
       const numericReplyToMessageId = Number(replyToMessageId);
@@ -1026,18 +1027,10 @@ export function createTelegramAdapter(
       }
     }
 
-    const options: Record<string, unknown> = reply_parameters
-      ? {
-          ...(source.threadId
-            ? { message_thread_id: Number(source.threadId) }
-            : {}),
-          reply_parameters,
-        }
-      : {
-          ...(source.threadId
-            ? { message_thread_id: Number(source.threadId) }
-            : {}),
-        };
+    const options: Record<string, unknown> = {
+      ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+      ...(reply_parameters ? { reply_parameters } : {}),
+    };
     options.reply_markup = {
       inline_keyboard: [
         [
@@ -1343,21 +1336,16 @@ export function createTelegramAdapter(
       event: ChannelControlRequestEvent,
     ): Promise<void> {
       const telegramBot = await ensureBot();
-      const reply_parameters =
-        event.source.messageId || event.source.threadId
-          ? {
-              message_id: Number(
-                event.source.threadId ?? event.source.messageId,
-              ),
-            }
-          : undefined;
+      const threadId = resolveTelegramOutboundThreadId(event.source);
+      const replyToMessageId = threadId ?? event.source.messageId;
+      const reply_parameters = replyToMessageId
+        ? { message_id: Number(replyToMessageId) }
+        : undefined;
       await telegramBot.api.sendMessage(
         event.source.chatId,
         formatChannelControlRequestPrompt(event),
         {
-          ...(event.source.threadId
-            ? { message_thread_id: Number(event.source.threadId) }
-            : {}),
+          ...(threadId ? { message_thread_id: Number(threadId) } : {}),
           ...(reply_parameters ? { reply_parameters } : {}),
         },
       );
