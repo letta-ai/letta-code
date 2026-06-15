@@ -405,10 +405,13 @@ async function downloadSlackAttachment(params: {
     `${params.file.id ?? "attachment"}${extensionForMimeType(params.file.mimetype)}`;
   const responseMimeType =
     response.headers.get("content-type")?.split(";")[0]?.trim() || undefined;
+  const fileMimeType = params.file.mimetype;
   const preferredMimeType =
     responseMimeType && !isGenericSlackMimeType(responseMimeType)
       ? responseMimeType
-      : (params.file.mimetype ?? responseMimeType);
+      : fileMimeType && !isGenericSlackMimeType(fileMimeType)
+        ? fileMimeType
+        : undefined;
   const mimeType = resolveMimeType(hintedName, preferredMimeType);
   const fileName =
     extname(hintedName) || !mimeType

@@ -128,7 +128,7 @@ test("resolveSlackInboundAttachments transcribes inbound audio when opted in", a
   process.env.OPENAI_API_KEY = "test-openai-key";
   const fetchMock = mock(async (input: unknown) => {
     const url = requestUrl(input);
-    if (url === "https://files.slack.com/files-pri/T123-F123/voice.ogg") {
+    if (url === "https://files.slack.com/files-pri/T123-F123/voice.m4a") {
       return new Response(new Uint8Array([1, 2, 3]), {
         status: 200,
         headers: { "content-type": "application/octet-stream" },
@@ -153,11 +153,10 @@ test("resolveSlackInboundAttachments transcribes inbound audio when opted in", a
       files: [
         {
           id: "F123",
-          name: "voice.ogg",
-          mimetype: "audio/ogg",
+          name: "voice.m4a",
           size: 3,
           url_private_download:
-            "https://files.slack.com/files-pri/T123-F123/voice.ogg",
+            "https://files.slack.com/files-pri/T123-F123/voice.m4a",
         },
       ],
     },
@@ -167,7 +166,7 @@ test("resolveSlackInboundAttachments transcribes inbound audio when opted in", a
   expect(attachments[0]).toMatchObject({
     id: "F123",
     kind: "audio",
-    mimeType: "audio/ogg",
+    mimeType: "audio/mp4",
     transcription: "hello slack voice",
   });
   expect(fetchMock).toHaveBeenCalledTimes(2);
