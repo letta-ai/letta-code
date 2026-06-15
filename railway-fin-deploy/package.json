@@ -1,0 +1,11 @@
+{
+  "name": "fin-letta-railway",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bash start.sh"
+  },
+  "dependencies": {
+    "@letta-ai/letta-code": "0.27.8"
+  }
+}
