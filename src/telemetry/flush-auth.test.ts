@@ -209,7 +209,10 @@ describe("telemetry flush auth", () => {
   test("self-hosted users still send usage telemetry", async () => {
     setEnvVar("LETTA_BASE_URL", "http://localhost:8283");
 
-    const fetchMock = mock(async () => new Response(null, { status: 200 }));
+    const fetchMock = mock(async (url: string | URL | Request) => {
+      expect(String(url)).toBe("https://api.letta.com/v1/metadata/telemetry");
+      return new Response(null, { status: 200 });
+    });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     settingsManager.getSettingsWithSecureTokens = mock(async () => ({
@@ -252,7 +255,7 @@ describe("telemetry flush auth", () => {
 
   test("desktop listener telemetry routes through the local proxy", async () => {
     setEnvVar("LETTA_DESKTOP_DEBUG_PANEL", "1");
-    setEnvVar("LETTA_BASE_URL", "http://localhost:54321/");
+    setEnvVar("LETTA_BASE_URL", "http://localhost:54321");
     setEnvVar("LETTA_API_KEY", "desktop-session-token");
 
     const fetchMock = mock(

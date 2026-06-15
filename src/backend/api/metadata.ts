@@ -1,5 +1,5 @@
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { apiRequest } from "./request";
+import { apiRequest, getApiRequestConfig } from "./request";
 
 export interface BalanceMetadata {
   total_balance: number;
@@ -35,33 +35,32 @@ function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
-function getDesktopProxyMetadataBaseUrl(): string | undefined {
+function isLoopbackBaseUrl(baseUrl: string): boolean {
+  try {
+    const parsed = new URL(baseUrl);
+    return isLoopbackHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function getMetadataRequestConfig(
+  apiKey: string | undefined,
+): Promise<{ baseUrl: string; apiKey: string }> {
   if (
     !isDesktopListenerRuntime() ||
     process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1"
   ) {
-    return undefined;
+    return { baseUrl: LETTA_CLOUD_API_URL, apiKey: apiKey ?? "" };
   }
 
-  const baseUrl = process.env.LETTA_BASE_URL?.trim();
-  if (!baseUrl) {
-    return undefined;
+  const config = await getApiRequestConfig();
+
+  if (isLoopbackBaseUrl(config.baseUrl)) {
+    return config;
   }
 
-  try {
-    const parsed = new URL(baseUrl);
-    if (!isLoopbackHostname(parsed.hostname)) {
-      return undefined;
-    }
-  } catch {
-    return undefined;
-  }
-
-  return baseUrl.replace(/\/+$/, "");
-}
-
-function getMetadataBaseUrl(): string {
-  return getDesktopProxyMetadataBaseUrl() ?? LETTA_CLOUD_API_URL;
+  return { baseUrl: LETTA_CLOUD_API_URL, apiKey: apiKey ?? "" };
 }
 
 export async function submitFeedbackMetadata(
@@ -69,9 +68,9 @@ export async function submitFeedbackMetadata(
   deviceId: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
+  const config = await getMetadataRequestConfig(apiKey);
   await apiRequest<void>("POST", "/v1/metadata/feedback", payload, {
-    baseUrl: getMetadataBaseUrl(),
-    apiKey: apiKey ?? "",
+    ...config,
     headers: {
       "X-Letta-Code-Device-ID": deviceId,
     },
@@ -84,9 +83,9 @@ export async function submitTelemetryMetadata(
   payload: Record<string, unknown>,
   options?: { signal?: AbortSignal },
 ): Promise<void> {
+  const config = await getMetadataRequestConfig(apiKey);
   await apiRequest<void>("POST", "/v1/metadata/telemetry", payload, {
-    baseUrl: getMetadataBaseUrl(),
-    apiKey: apiKey ?? "",
+    ...config,
     headers: {
       "X-Letta-Code-Device-ID": deviceId,
     },
