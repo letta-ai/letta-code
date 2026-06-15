@@ -1,4 +1,5 @@
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { isLoopbackUrl } from "@/utils/url";
 import { apiRequest, getApiRequestConfig } from "./request";
 
 export interface BalanceMetadata {
@@ -25,25 +26,6 @@ function isDesktopListenerRuntime(): boolean {
   return process.env.LETTA_DESKTOP_DEBUG_PANEL === "1";
 }
 
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  return (
-    normalized === "localhost" ||
-    normalized === "0.0.0.0" ||
-    normalized === "::1" ||
-    normalized.startsWith("127.")
-  );
-}
-
-function isLoopbackBaseUrl(baseUrl: string): boolean {
-  try {
-    const parsed = new URL(baseUrl);
-    return isLoopbackHostname(parsed.hostname);
-  } catch {
-    return false;
-  }
-}
-
 async function getMetadataRequestConfig(
   apiKey: string | undefined,
 ): Promise<{ baseUrl: string; apiKey: string }> {
@@ -56,7 +38,7 @@ async function getMetadataRequestConfig(
 
   const config = await getApiRequestConfig();
 
-  if (isLoopbackBaseUrl(config.baseUrl)) {
+  if (isLoopbackUrl(config.baseUrl)) {
     return config;
   }
 
