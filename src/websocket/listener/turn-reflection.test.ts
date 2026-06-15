@@ -33,18 +33,12 @@ describe("post-turn listener reflection", () => {
   test("records listener transcript rows before evaluating post-turn reflection", () => {
     const turnPath = fileURLToPath(new URL("./turn.ts", import.meta.url));
     const source = readFileSync(turnPath, "utf-8");
-    const endTurnIndex = source.indexOf('if (stopReason === "end_turn")');
     const appendIndex = source.indexOf(
-      "appendTranscriptDeltaJsonl(",
-      endTurnIndex,
+      "appendTranscriptDeltaJsonlForStopReason(",
     );
-    const launchIndex = source.indexOf(
-      "maybeLaunchPostTurnReflection({",
-      endTurnIndex,
-    );
+    const launchIndex = source.indexOf("maybeLaunchPostTurnReflection({");
 
-    expect(endTurnIndex).toBeGreaterThanOrEqual(0);
-    expect(appendIndex).toBeGreaterThan(endTurnIndex);
+    expect(appendIndex).toBeGreaterThanOrEqual(0);
     expect(launchIndex).toBeGreaterThan(appendIndex);
   });
 

@@ -74,7 +74,7 @@ import {
   buildQueuedUserText,
   getQueuedNotificationSummaries,
 } from "@/cli/helpers/queued-message-parts";
-import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
+import { appendTranscriptDeltaJsonlForStopReason } from "@/cli/helpers/reflection-transcript";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import {
   type ApprovalRequest,
@@ -1536,6 +1536,29 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           // Record the final stop reason so the dequeue gate can check it.
           lastStopReasonRef.current = stopReasonToHandle;
 
+          if (transcriptTurnStartLineIndex !== null) {
+            try {
+              const transcriptLines = toLines(buffersRef.current).slice(
+                transcriptTurnStartLineIndex,
+              );
+              await appendTranscriptDeltaJsonlForStopReason(
+                agentIdRef.current,
+                conversationIdRef.current,
+                transcriptLines,
+                stopReasonToHandle,
+              );
+            } catch (transcriptError) {
+              debugWarn(
+                "memory",
+                `Failed to append transcript delta: ${
+                  transcriptError instanceof Error
+                    ? transcriptError.message
+                    : String(transcriptError)
+                }`,
+              );
+            }
+          }
+
           // Case 1: Turn ended normally
           if (stopReasonToHandle === "end_turn") {
             clearApprovalToolContext();
@@ -1558,27 +1581,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             lastSentInputRef.current = null; // Clear - no recovery needed
             pendingInterruptRecoveryConversationIdRef.current = null;
 
-            if (transcriptTurnStartLineIndex !== null) {
-              try {
-                const transcriptLines = toLines(buffersRef.current).slice(
-                  transcriptTurnStartLineIndex,
-                );
-                await appendTranscriptDeltaJsonl(
-                  agentIdRef.current,
-                  conversationIdRef.current,
-                  transcriptLines,
-                );
-              } catch (transcriptError) {
-                debugWarn(
-                  "memory",
-                  `Failed to append transcript delta: ${
-                    transcriptError instanceof Error
-                      ? transcriptError.message
-                      : String(transcriptError)
-                  }`,
-                );
-              }
-            }
             pendingTranscriptStartLineIndexRef.current = null;
 
             // Evaluate reflection triggers now that the turn's transcript

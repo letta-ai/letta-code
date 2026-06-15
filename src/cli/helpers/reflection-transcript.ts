@@ -498,6 +498,15 @@ function countAssistantRows(entries: TranscriptEntry[]): number {
   return entries.filter((entry) => entry.kind === "assistant").length;
 }
 
+function getTranscriptEntrySourceLineId(
+  entry: TranscriptEntry,
+): string | undefined {
+  return typeof entry.source_line_id === "string" &&
+    entry.source_line_id.length > 0
+    ? entry.source_line_id
+    : undefined;
+}
+
 /** Maximum characters to keep for tool-call arguments in the reflection payload. */
 const TOOL_ARGS_TRUNCATE_LIMIT = 300;
 
@@ -872,6 +881,76 @@ export function getReflectionTranscriptPaths(
   };
 }
 
+type TranscriptAppendMerge = {
+  lines: string[];
+  assistantStepDelta: number;
+  rewroteTranscript: boolean;
+};
+
+function mergeTranscriptEntriesBySourceLineId(
+  existingLines: string[],
+  entries: TranscriptEntry[],
+): TranscriptAppendMerge {
+  const latestEntryBySourceLineId = new Map<string, TranscriptEntry>();
+  for (const entry of entries) {
+    const sourceLineId = getTranscriptEntrySourceLineId(entry);
+    if (sourceLineId) {
+      latestEntryBySourceLineId.set(sourceLineId, entry);
+    }
+  }
+
+  const mergedLines: string[] = [];
+  const replacedSourceLineIds = new Set<string>();
+  let assistantStepDelta = 0;
+  let rewroteTranscript = false;
+
+  for (const existingLine of existingLines) {
+    const existingEntry = safeJsonParseOr<TranscriptEntry | null>(
+      existingLine,
+      null,
+    );
+    const sourceLineId = existingEntry
+      ? getTranscriptEntrySourceLineId(existingEntry)
+      : undefined;
+    const replacement = sourceLineId
+      ? latestEntryBySourceLineId.get(sourceLineId)
+      : undefined;
+
+    if (!replacement || !sourceLineId) {
+      mergedLines.push(existingLine);
+      continue;
+    }
+
+    rewroteTranscript = true;
+    if (!replacedSourceLineIds.has(sourceLineId)) {
+      mergedLines.push(JSON.stringify(replacement));
+      replacedSourceLineIds.add(sourceLineId);
+      assistantStepDelta +=
+        (replacement.kind === "assistant" ? 1 : 0) -
+        (existingEntry?.kind === "assistant" ? 1 : 0);
+    } else if (existingEntry?.kind === "assistant") {
+      assistantStepDelta -= 1;
+    }
+  }
+
+  for (const entry of entries) {
+    const sourceLineId = getTranscriptEntrySourceLineId(entry);
+    if (sourceLineId) {
+      if (latestEntryBySourceLineId.get(sourceLineId) !== entry) {
+        continue;
+      }
+      if (replacedSourceLineIds.has(sourceLineId)) {
+        continue;
+      }
+    }
+
+    mergedLines.push(JSON.stringify(entry));
+    assistantStepDelta += entry.kind === "assistant" ? 1 : 0;
+  }
+
+  return { lines: mergedLines, assistantStepDelta, rewroteTranscript };
+}
+
 export async function appendTranscriptDeltaJsonl(
   agentId: string,
   conversationId: string,
@@ -890,12 +969,48 @@ export async function appendTranscriptDeltaJsonl(
       return 0;
     }
 
-    const payload = entries.map((entry) => JSON.stringify(entry)).join("\n");
-    await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
-    state.total_completed_steps += countAssistantRows(entries);
+    const existingLines = await readTranscriptLines(paths);
+    const merge = mergeTranscriptEntriesBySourceLineId(existingLines, entries);
+    if (merge.rewroteTranscript) {
+      await writeFile(
+        paths.transcriptPath,
+        `${merge.lines.join("\n")}\n`,
+        "utf-8",
+      );
+    } else {
+      const payload = entries.map((entry) => JSON.stringify(entry)).join("\n");
+      await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
+    }
+
+    state.total_completed_steps = Math.max(
+      0,
+      state.total_completed_steps + merge.assistantStepDelta,
+    );
+    state.reflected_completed_steps = Math.min(
+      state.reflected_completed_steps,
+      state.total_completed_steps,
+    );
     await writeState(paths, state);
     return entries.length;
   });
+}
+
+export function shouldAppendTranscriptDeltaJsonlForStopReason(
+  stopReason: string | null | undefined,
+): boolean {
+  return stopReason === "end_turn" || stopReason === "requires_approval";
+}
+
+export async function appendTranscriptDeltaJsonlForStopReason(
+  agentId: string,
+  conversationId: string,
+  lines: Line[],
+  stopReason: string | null | undefined,
+): Promise<number> {
+  if (!shouldAppendTranscriptDeltaJsonlForStopReason(stopReason)) {
+    return 0;
+  }
+  return appendTranscriptDeltaJsonl(agentId, conversationId, lines);
 }
 
 /**

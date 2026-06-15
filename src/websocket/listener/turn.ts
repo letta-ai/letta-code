@@ -45,7 +45,7 @@ import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
 } from "@/cli/helpers/reflection-launcher";
-import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
+import { appendTranscriptDeltaJsonlForStopReason } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import {
   buildSharedReminderParts,
@@ -716,26 +716,28 @@ export async function handleIncomingMessage(
         break;
       }
 
-      if (stopReason === "end_turn") {
-        try {
-          const transcriptLines = toLines(buffers);
-          if (transcriptLines.length > 0) {
-            await appendTranscriptDeltaJsonl(
-              agentId || "",
-              conversationId,
-              transcriptLines,
-            );
-          }
-        } catch (transcriptError) {
-          debugWarn(
-            "memory",
-            `Failed to append transcript delta: ${
-              transcriptError instanceof Error
-                ? transcriptError.message
-                : String(transcriptError)
-            }`,
+      try {
+        const transcriptLines = toLines(buffers);
+        if (transcriptLines.length > 0) {
+          await appendTranscriptDeltaJsonlForStopReason(
+            agentId || "",
+            conversationId,
+            transcriptLines,
+            stopReason,
           );
         }
+      } catch (transcriptError) {
+        debugWarn(
+          "memory",
+          `Failed to append transcript delta: ${
+            transcriptError instanceof Error
+              ? transcriptError.message
+              : String(transcriptError)
+          }`,
+        );
+      }
+
+      if (stopReason === "end_turn") {
         try {
           const reflectionSettings = getReflectionSettings(
             agentId || undefined,
