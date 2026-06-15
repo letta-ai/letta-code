@@ -26,13 +26,17 @@ describe("registry copy: first-party channels", () => {
     expect(text).not.toContain("(community channel)");
   });
 
-  test("first-party discord pairing includes the CLI pairing command", () => {
-    const text = buildPairingInstructions("discord", "XYZ789");
+  test("first-party discord pairing uses a configured agent in the CLI command", () => {
+    const text = buildPairingInstructions("discord", "XYZ789", {
+      agentId: "agent-discord",
+    });
     expect(text).toContain("open Channels >");
     expect(text).toContain("Discord");
     expect(text).toContain(
-      "letta channels pair --channel discord --code XYZ789 --agent <agent-id>",
+      "letta channels pair --channel discord --code XYZ789 --agent agent-discord",
     );
+    expect(text).not.toContain("--agent <agent-id>");
+    expect(text).not.toContain("Find your agent id with letta agents list.");
   });
 
   test("first-party whatsapp pairing includes the desktop and CLI paths", () => {
@@ -109,6 +113,17 @@ describe("registry copy: community channels", () => {
     expect(text).not.toContain("(community channel)");
     expect(text).not.toContain("paste a route");
     expect(text).not.toContain("routing.yaml");
+  });
+
+  test("community pairing instructions use a configured agent when available", () => {
+    const text = buildPairingInstructions("custom-chat", "ABC123", {
+      agentId: "agent-custom",
+    });
+    expect(text).toContain(
+      "letta channels pair --channel custom-chat --code ABC123 --agent agent-custom",
+    );
+    expect(text).not.toContain("--agent <agent-id>");
+    expect(text).not.toContain("Find your agent id with letta agents list.");
   });
 
   test("any non-first-party channel id triggers community copy", () => {
