@@ -129,7 +129,7 @@ describe("Settings Manager - Initialization", () => {
     );
   });
 
-  test("Initialize tolerates legacy reflectionBehavior key and strips it on persist", async () => {
+  test("Initialize tolerates obsolete keys and strips them on persist", async () => {
     const { writeFile, readFile, mkdir } = await import("@/utils/fs.js");
     const settingsDir = join(testHomeDir, ".letta");
     await mkdir(settingsDir, { recursive: true });
@@ -139,6 +139,7 @@ describe("Settings Manager - Initialization", () => {
       settingsPath,
       JSON.stringify({
         reflectionBehavior: "reminder",
+        enableSleeptime: true,
         reflectionTrigger: "step-count",
         reflectionStepCount: 12,
       }),
@@ -152,6 +153,7 @@ describe("Settings Manager - Initialization", () => {
     expect(settings.reflectionTrigger).toBe("step-count");
     expect(settings.reflectionStepCount).toBe(12);
     expect(settings).not.toHaveProperty("reflectionBehavior");
+    expect(settings).not.toHaveProperty("enableSleeptime");
 
     settingsManager.updateSettings({ tokenStreaming: true });
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -161,6 +163,7 @@ describe("Settings Manager - Initialization", () => {
       unknown
     >;
     expect(persisted).not.toHaveProperty("reflectionBehavior");
+    expect(persisted).not.toHaveProperty("enableSleeptime");
   });
 });
 
@@ -233,13 +236,13 @@ describe("Settings Manager - Global Settings", () => {
     settingsManager.updateSettings({
       tokenStreaming: true,
       lastAgent: "agent-456",
-      enableSleeptime: true,
+      reasoningTabCycleEnabled: true,
     });
 
     const settings = settingsManager.getSettings();
     expect(settings.tokenStreaming).toBe(true);
     expect(settings.lastAgent).toBe("agent-456");
-    expect(settings.enableSleeptime).toBe(true);
+    expect(settings.reasoningTabCycleEnabled).toBe(true);
   });
 
   test("Update env variables", () => {
@@ -734,7 +737,7 @@ describe("Settings Manager - Reset", () => {
     // After re-init, managedKeys should only contain keys from the new file.
     // Persisting should write tokenStreaming but NOT ghost-write lastAgent from
     // the previous session's managedKeys.
-    settingsManager.updateSettings({ enableSleeptime: false });
+    settingsManager.updateSettings({ reasoningTabCycleEnabled: false });
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     await settingsManager.reset();
@@ -988,7 +991,7 @@ describe("Settings Manager - Edge Cases", () => {
     settingsManager.updateSettings({
       tokenStreaming: true,
       lastAgent: "agent-1",
-      enableSleeptime: true,
+      reasoningTabCycleEnabled: true,
     });
 
     // Partial update
@@ -998,7 +1001,7 @@ describe("Settings Manager - Edge Cases", () => {
 
     const settings = settingsManager.getSettings();
     expect(settings.tokenStreaming).toBe(true); // Preserved
-    expect(settings.enableSleeptime).toBe(true); // Preserved
+    expect(settings.reasoningTabCycleEnabled).toBe(true); // Preserved
     expect(settings.lastAgent).toBe("agent-2"); // Updated
   });
 });
