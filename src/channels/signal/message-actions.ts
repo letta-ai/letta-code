@@ -24,6 +24,7 @@ async function sendSignalMessage(
     fileName: request.filename,
     title: request.title,
     parseMode: formatted.parseMode,
+    textStyle: formatted.textStyle,
   });
 
   return request.mediaPath

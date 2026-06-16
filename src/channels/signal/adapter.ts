@@ -409,6 +409,7 @@ export class SignalChannelAdapter implements ChannelAdapter {
       target,
       message: msg.text,
       attachments,
+      textStyle: msg.textStyle,
     });
     return { messageId };
   }

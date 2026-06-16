@@ -26,7 +26,7 @@ export type SignalSendMessageParams = {
   target: SignalMessageTarget;
   message: string;
   attachments?: string[];
-  textStyle?: string;
+  textStyle?: string[];
 };
 
 export type SignalReactionParams = {
@@ -155,7 +155,9 @@ export class SignalRestClient {
       ...(params.attachments && params.attachments.length > 0
         ? { attachments: params.attachments }
         : {}),
-      ...(params.textStyle ? { "text-style": params.textStyle } : {}),
+      ...(params.textStyle && params.textStyle.length > 0
+        ? { textStyle: params.textStyle }
+        : {}),
     });
     if (typeof result === "number" || typeof result === "string") {
       return String(result);

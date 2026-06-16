@@ -301,7 +301,7 @@ describe("message_channel (signal)", () => {
       action: "send",
       channel: "signal",
       chat_id: "group:group-1",
-      message: "hello Signal group",
+      message: "**hello** Signal group",
       parentScope: {
         agentId: "agent-1",
         conversationId: "default",
@@ -315,6 +315,7 @@ describe("message_channel (signal)", () => {
         accountId: "personal",
         chatId: "group:group-1",
         text: "hello Signal group",
+        textStyle: ["0:5:BOLD"],
         replyToMessageId: undefined,
         parseMode: undefined,
       }),

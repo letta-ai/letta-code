@@ -249,6 +249,8 @@ export interface OutboundChannelMessage {
   threadId?: string | null;
   /** Optional: parse mode hint for the adapter (e.g. "HTML", "MarkdownV2"). */
   parseMode?: string;
+  /** Optional: Signal-style text ranges (start:length:STYLE) for platforms that support rich text entities. */
+  textStyle?: string[];
   /** Optional: attach a local file/media path for channels that support uploads. */
   mediaPath?: string;
   /** Optional: override the uploaded filename for media attachments. */

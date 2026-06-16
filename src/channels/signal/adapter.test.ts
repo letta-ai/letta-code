@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import type { SignalChannelAccount } from "@/channels/types";
 import {
   createSignalAdapter,
@@ -147,6 +147,32 @@ describe("signalInboundFromSseEvent", () => {
 });
 
 describe("SignalChannelAdapter", () => {
+  test("passes text styles to signal-cli sends", async () => {
+    const sendMessage = mock(async () => "123");
+    const client: SignalClientLike = {
+      check: async () => undefined,
+      sendMessage,
+      sendReaction: async () => undefined,
+      streamEvents: async () => undefined,
+    };
+    const adapter = createSignalAdapter(signalAccount(), { client });
+
+    await adapter.sendMessage({
+      channel: "signal",
+      accountId: "personal",
+      chatId: "signal:+15555550123",
+      text: "Bold mono",
+      textStyle: ["0:4:BOLD", "5:4:MONOSPACE"],
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith({
+      target: { kind: "recipient", recipient: "+15555550123" },
+      message: "Bold mono",
+      attachments: undefined,
+      textStyle: ["0:4:BOLD", "5:4:MONOSPACE"],
+    });
+  });
+
   test("stop resolves while the event loop is sleeping before retry", async () => {
     let resolveFirstStream: (() => void) | null = null;
     const firstStream = new Promise<void>((resolve) => {

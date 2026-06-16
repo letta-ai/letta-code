@@ -248,7 +248,7 @@ export interface ChannelMessageActionContext {
   adapter: ChannelAdapter;
   formatText: (
     text: string,
-  ) => Pick<OutboundChannelMessage, "text" | "parseMode">;
+  ) => Pick<OutboundChannelMessage, "text" | "parseMode" | "textStyle">;
 }
 
 /**

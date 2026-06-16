@@ -51,6 +51,41 @@ afterEach(async () => {
 });
 
 describe("SignalRestClient", () => {
+  test("sends Signal text styles using json-rpc camelCase arrays", async () => {
+    let rpcBody: Record<string, unknown> | undefined;
+    const baseUrl = await withSignalServer(async (req, res) => {
+      expect(req.method).toBe("POST");
+      expect(req.url).toBe("/api/v1/rpc");
+      rpcBody = JSON.parse(await readRequestBody(req)) as Record<
+        string,
+        unknown
+      >;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          result: { timestamp: 123 },
+          id: rpcBody.id,
+        }),
+      );
+    });
+
+    const client = new SignalRestClient({ baseUrl, account: "+15555550100" });
+    await client.sendMessage({
+      target: { kind: "recipient", recipient: "+15555550123" },
+      message: "Bold mono",
+      textStyle: ["0:4:BOLD", "5:4:MONOSPACE"],
+    });
+
+    expect(rpcBody?.method).toBe("send");
+    expect(rpcBody?.params).toEqual({
+      account: "+15555550100",
+      message: "Bold mono",
+      recipient: ["+15555550123"],
+      textStyle: ["0:4:BOLD", "5:4:MONOSPACE"],
+    });
+  });
+
   test("sends Signal reactions with signal-cli plural target params", async () => {
     let rpcBody: Record<string, unknown> | undefined;
     const baseUrl = await withSignalServer(async (req, res) => {
