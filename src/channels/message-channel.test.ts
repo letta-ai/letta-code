@@ -578,6 +578,75 @@ describe("MessageChannel", () => {
     });
   });
 
+  test("does not treat Discord DM message IDs as thread IDs", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "discord-msg-2" }));
+
+    const adapter: ChannelAdapter = {
+      id: "discord:account-1",
+      channelId: "discord",
+      accountId: "account-1",
+      name: "Discord",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("discord", {
+      accountId: "account-1",
+      chatId: "dm-channel-1",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "discord",
+      chat_id: "dm-channel-1",
+      message: "hello from Discord DM",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+      channelTurnSources: [
+        {
+          channel: "discord",
+          accountId: "account-1",
+          chatId: "dm-channel-1",
+          chatType: "direct",
+          messageId: "inbound-discord-message-id",
+          threadId: null,
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    expect(result).toContain("Message sent to discord");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "discord",
+      accountId: "account-1",
+      chatId: "dm-channel-1",
+      text: "hello from Discord DM",
+      replyToMessageId: undefined,
+      threadId: null,
+      mediaPath: undefined,
+      fileName: undefined,
+      title: undefined,
+      parseMode: undefined,
+    });
+  });
+
   test("rejects legacy argument aliases so the tool contract stays canonical", async () => {
     const registry = new ChannelRegistry();
 
