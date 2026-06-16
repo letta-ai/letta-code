@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -262,6 +263,73 @@ describe("signalInboundFromSseEvent", () => {
         mimeType: "image/png",
         kind: "image",
       });
+    } finally {
+      __testOverrideSignalAttachmentSearchDirs(null);
+      __testOverrideChannelsRoot(null);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves metadata-only audio attachments by receive timestamp", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "signal-audio-media-test-"));
+    const attachmentsDir = join(tempDir, "attachments");
+    mkdirSync(attachmentsDir, { recursive: true });
+    __testOverrideChannelsRoot(join(tempDir, "channels"));
+    __testOverrideSignalAttachmentSearchDirs([attachmentsDir]);
+    try {
+      const audioBytes = Buffer.from("fake-audio");
+      const sourcePath = join(attachmentsDir, "downloaded-audio-without-ext");
+      writeFileSync(sourcePath, audioBytes);
+      const timestamp = 1_781_637_600_000;
+      utimesSync(sourcePath, new Date(timestamp), new Date(timestamp));
+
+      const msg = signalInboundFromSseEvent(
+        receiveEvent({
+          envelope: {
+            sourceNumber: "+15555550123",
+            sourceName: "Alice",
+            timestamp,
+            dataMessage: {
+              timestamp,
+              attachments: [
+                {
+                  contentType: "audio/mpeg",
+                  size: audioBytes.byteLength,
+                },
+              ],
+            },
+          },
+        }),
+        signalAccount({ downloadMedia: true }),
+      );
+
+      expect(msg?.text).toBe("[audio attached]");
+      expect(msg?.attachments).toHaveLength(1);
+      const attachment = msg?.attachments?.[0];
+      expect(attachment).toMatchObject({
+        name: "downloaded-audio-without-ext",
+        mimeType: "audio/mpeg",
+        sizeBytes: audioBytes.byteLength,
+        kind: "audio",
+      });
+      expect(attachment?.localPath).not.toBe(sourcePath);
+      expect(
+        attachment?.localPath ? readFileSync(attachment.localPath) : null,
+      ).toEqual(audioBytes);
+
+      const content = msg ? formatChannelNotification(msg) : [];
+      expect(content).toHaveLength(2);
+      const notificationPart = content[1];
+      const notificationText =
+        typeof notificationPart === "object" &&
+        notificationPart !== null &&
+        "text" in notificationPart &&
+        typeof notificationPart.text === "string"
+          ? notificationPart.text
+          : "";
+      expect(notificationText).toContain("<attachment ");
+      expect(notificationText).toContain('kind="audio"');
+      expect(notificationText).toContain('local_path="');
     } finally {
       __testOverrideSignalAttachmentSearchDirs(null);
       __testOverrideChannelsRoot(null);

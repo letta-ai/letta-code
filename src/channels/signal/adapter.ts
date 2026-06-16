@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Dirent } from "node:fs";
 import {
   copyFileSync,
   mkdirSync,
@@ -347,6 +348,92 @@ function resolveRelativeSignalAttachmentPath(value: string): string | null {
   return null;
 }
 
+function signalMimeTypeMatchesFileName(
+  mimeType: string | undefined,
+  filePath: string,
+): boolean {
+  if (!mimeType) {
+    return true;
+  }
+  const extension = extname(filePath).toLowerCase();
+  if (mimeType.startsWith("image/")) {
+    return [".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(extension);
+  }
+  if (mimeType.startsWith("audio/")) {
+    return (
+      extension === "" ||
+      [".aac", ".m4a", ".mp3", ".ogg", ".oga", ".opus", ".wav"].includes(
+        extension,
+      )
+    );
+  }
+  if (mimeType.startsWith("video/")) {
+    return extension === "" || [".mp4", ".mov", ".webm"].includes(extension);
+  }
+  return true;
+}
+
+function resolveRecentSignalAttachmentPath(params: {
+  attachment: SignalAttachmentCandidate;
+  receivedAt: number;
+  seenPaths: Set<string>;
+}): string | null {
+  const mimeType = normalizeSignalMimeType(params.attachment.contentType);
+  const expectedSize =
+    typeof params.attachment.size === "number" && params.attachment.size >= 0
+      ? params.attachment.size
+      : undefined;
+  const targetTime = Number.isFinite(params.receivedAt)
+    ? params.receivedAt
+    : Date.now();
+  const maxDeltaMs = 10 * 60 * 1000;
+  let best: { path: string; delta: number; mtimeMs: number } | null = null;
+
+  for (const baseDir of getSignalAttachmentSearchDirs()) {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(baseDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile()) {
+        continue;
+      }
+      const candidatePath = join(baseDir, entry.name);
+      if (params.seenPaths.has(candidatePath)) {
+        continue;
+      }
+      if (!signalMimeTypeMatchesFileName(mimeType, candidatePath)) {
+        continue;
+      }
+      let stat: ReturnType<typeof statSync>;
+      try {
+        stat = statSync(candidatePath);
+      } catch {
+        continue;
+      }
+      if (expectedSize !== undefined && stat.size !== expectedSize) {
+        continue;
+      }
+      const delta = Math.abs(stat.mtimeMs - targetTime);
+      if (delta > maxDeltaMs) {
+        continue;
+      }
+      if (
+        !best ||
+        delta < best.delta ||
+        (delta === best.delta && stat.mtimeMs > best.mtimeMs)
+      ) {
+        best = { path: candidatePath, delta, mtimeMs: stat.mtimeMs };
+      }
+    }
+  }
+
+  return best?.path ?? null;
+}
+
 function resolveSignalAttachmentFileName(
   attachment: SignalAttachmentCandidate,
   sourcePath: string,
@@ -416,6 +503,7 @@ function copySignalAttachment(params: {
 function resolveSignalInboundAttachments(
   account: SignalChannelAccount,
   attachments: NonNullable<SignalDataMessage["attachments"]>,
+  receivedAt: number,
 ): ChannelMessageAttachment[] {
   if (account.downloadMedia !== true || attachments.length === 0) {
     return [];
@@ -426,8 +514,19 @@ function resolveSignalInboundAttachments(
   const seenPaths = new Set<string>();
 
   for (const attachment of attachments) {
-    const sourcePath = resolveSignalAttachmentPath(attachment);
+    const sourcePath =
+      resolveSignalAttachmentPath(attachment) ??
+      resolveRecentSignalAttachmentPath({
+        attachment,
+        receivedAt,
+        seenPaths,
+      });
     if (!sourcePath || seenPaths.has(sourcePath)) {
+      if (!sourcePath) {
+        console.warn(
+          `[Signal] Could not resolve attachment ${attachment.filename ?? attachment.id ?? attachment.contentType ?? "unknown"} to a local file.`,
+        );
+      }
       continue;
     }
     seenPaths.add(sourcePath);
@@ -523,16 +622,19 @@ function signalInboundFromPayload(
   ).trim();
   const attachments = dataMessage?.attachments ?? [];
   const attachmentPlaceholder = buildAttachmentPlaceholder(attachments);
-  const downloadedAttachments = resolveSignalInboundAttachments(
-    account,
-    attachments,
-  );
   const text = renderedText || attachmentPlaceholder;
   const targetTimestamp =
     envelope.timestamp ??
     dataMessage?.timestamp ??
     reaction?.targetSentTimestamp ??
     Date.now();
+  const resolvedTimestamp =
+    typeof targetTimestamp === "number" ? targetTimestamp : Date.now();
+  const downloadedAttachments = resolveSignalInboundAttachments(
+    account,
+    attachments,
+    resolvedTimestamp,
+  );
   const senderName = envelope.sourceName ?? senderRecipient;
   const chatId = isGroup ? `group:${groupId}` : `signal:${senderRecipient}`;
   const chatLabel = isGroup
@@ -562,8 +664,7 @@ function signalInboundFromPayload(
     senderName,
     chatLabel,
     text,
-    timestamp:
-      typeof targetTimestamp === "number" ? targetTimestamp : Date.now(),
+    timestamp: resolvedTimestamp,
     messageId: buildSignalMessageId(targetTimestamp, senderRecipient),
     threadId: null,
     isMention: isGroup
