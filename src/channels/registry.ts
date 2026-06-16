@@ -629,13 +629,13 @@ export class ChannelRegistry {
           if (!firstSource) {
             continue;
           }
-          await handleTurnLifecycleEvent({
+          await handleTurnLifecycleEvent.call(adapter, {
             type: "queued",
             source: firstSource,
           });
           continue;
         }
-        await handleTurnLifecycleEvent({
+        await handleTurnLifecycleEvent.call(adapter, {
           ...event,
           sources: groupedSources,
         });
