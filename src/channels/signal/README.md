@@ -93,7 +93,7 @@ Important fields:
 | `accountId` | Local Letta label for this Signal connection, e.g. `personal` or `bot`. This is not your Signal phone number. |
 | `base_url` | `signal-cli-rest-api` JSON-RPC/SSE URL, usually `http://127.0.0.1:8080`. |
 | `account` | Signal account phone number in E.164 format, e.g. `+15555550100`. |
-| `account_uuid` | Optional Signal UUID for self-message filtering. |
+| `account_uuid` | Optional advanced loop-protection identity. Only needed when the daemon reports the linked account's own messages as a UUID instead of the configured phone number. |
 | `agent_id` | Optional agent for account-bound DM/group auto-routing. |
 | `dm_policy` | `pairing`, `allowlist`, or `open`. Pairing is recommended. |
 | `group_mode` | `disabled`, `mention`, or `open`. Disabled is conservative. |
@@ -136,8 +136,7 @@ If `ffmpeg` is missing, the agent receives an
   `ffmpeg` on the machine running `letta server`.
 - **Pairing repeats:** approve the code in the target Letta conversation with
   `/channels signal pair <code>` or use the CLI pairing command.
-- **Messages from yourself are ignored:** use a dedicated Signal number, or set
-  `account_uuid` correctly so self-message filtering can distinguish identities.
+- **Messages from yourself are ignored / bot seems to ignore own linked-device messages:** this is loop protection. Letta ignores messages from the linked account so it does not reply to itself. If the daemon reports your own identity as a UUID instead of the configured phone number, set `account_uuid`.
 
 ## Current limitations
 

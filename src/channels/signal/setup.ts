@@ -561,10 +561,19 @@ export async function runSignalSetup(): Promise<boolean> {
     );
     const accountId = accountIdInput.trim() || DEFAULT_SIGNAL_ACCOUNT_ID;
 
-    const accountUuidInput = await rl.question(
-      "Signal account UUID for self-message filtering (optional): ",
+    let accountUuid: string | undefined;
+    const advancedIdentityInput = await rl.question(
+      "Configure advanced identity/loop-protection settings? [y/N]: ",
     );
-    const accountUuid = accountUuidInput.trim() || undefined;
+    if (parseYesNo(advancedIdentityInput, false)) {
+      console.log(
+        "Signal can echo messages sent by the linked account from another device. Letta ignores messages from its own phone number automatically; if your daemon reports your own sender as a UUID instead of a phone number, enter that UUID here so Letta can ignore those self-echoes too.",
+      );
+      const accountUuidInput = await rl.question(
+        "Own Signal account UUID (optional, blank if unsure): ",
+      );
+      accountUuid = accountUuidInput.trim() || undefined;
+    }
 
     console.log("\nDM policy — who can message this Signal account?\n");
     console.log("  pairing   — Users must pair with a code (recommended)");
