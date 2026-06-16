@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccount } from "@/channels/accounts";
@@ -150,6 +150,50 @@ function runNativeSignalCli(
       .trim();
     return { ok: false, error: detail || String(error) };
   }
+}
+
+function runNativeSignalCliInteractive(
+  args: string[],
+): Promise<
+  { ok: true; output: string } | { ok: false; output: string; error: string }
+> {
+  return new Promise((resolve) => {
+    const child = spawn("signal-cli", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      output += text;
+      process.stdout.write(text);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      output += text;
+      process.stderr.write(text);
+    });
+    child.on("error", (error) => {
+      resolve({ ok: false, output, error: error.message });
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ ok: true, output });
+      } else {
+        resolve({
+          ok: false,
+          output,
+          error: `signal-cli exited with code ${code ?? "unknown"}`,
+        });
+      }
+    });
+  });
+}
+
+export function parseSignalLinkAssociatedAccount(
+  output: string,
+): string | null {
+  const match = output.match(/Associated with:\s*(\+\d{5,15})/i);
+  return match?.[1] ?? null;
 }
 
 async function probeSignalDaemon(baseUrl: string): Promise<boolean> {
@@ -613,19 +657,26 @@ async function linkSignalAccountWithNativeCli(
   console.log(
     "Scan the QR/link output with Signal → Settings → Linked Devices → +.",
   );
-  try {
-    execFileSync("signal-cli", ["-c", configDir, "link", "-n", "Letta Code"], {
-      stdio: "inherit",
-      timeout: 120_000,
-    });
-  } catch (error) {
-    console.error(
-      `signal-cli link failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  const result = await runNativeSignalCliInteractive([
+    "-c",
+    configDir,
+    "link",
+    "-n",
+    "Letta Code",
+  ]);
+  if (!result.ok) {
+    console.error(`signal-cli link failed: ${result.error}`);
     return null;
   }
+
+  const linkedAccount = parseSignalLinkAssociatedAccount(result.output);
+  if (linkedAccount) {
+    console.log(`✓ Linked Signal account ${linkedAccount}\n`);
+    return linkedAccount;
+  }
+
   const phoneInput = await rl.question(
-    "Linked Signal account phone number in E.164 format (e.g. +15555550100): ",
+    "Could not detect the linked phone number. Enter it in E.164 format (e.g. +15555550100): ",
   );
   const phone = normalizeSignalPhoneInput(phoneInput);
   if (!phone) {

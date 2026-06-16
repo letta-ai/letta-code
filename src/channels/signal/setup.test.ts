@@ -8,6 +8,7 @@ import {
   normalizeSignalPhoneInput,
   parseNativeSignalCliDaemonConfigDir,
   parseSignalCsv,
+  parseSignalLinkAssociatedAccount,
 } from "./setup";
 
 describe("Signal setup helpers", () => {
@@ -94,5 +95,14 @@ describe("Signal setup helpers", () => {
       ),
     ).toBe("/tmp/signal-data");
     expect(parseNativeSignalCliDaemonConfigDir("signal-cli daemon")).toBeNull();
+  });
+
+  test("parses linked Signal account from native link output", () => {
+    expect(
+      parseSignalLinkAssociatedAccount(
+        "INFO something\nAssociated with: +15036195666\n",
+      ),
+    ).toBe("+15036195666");
+    expect(parseSignalLinkAssociatedAccount("no phone here")).toBeNull();
   });
 });
