@@ -64,10 +64,14 @@ function isToolReturnContent(value: unknown): value is ToolReturnContent {
         "text" in part &&
         typeof (part as { text?: unknown }).text === "string") ||
         ((part as { type?: unknown }).type === "image" &&
-          "data" in part &&
-          typeof (part as { data?: unknown }).data === "string" &&
-          "mimeType" in part &&
-          typeof (part as { mimeType?: unknown }).mimeType === "string")),
+          "source" in part &&
+          !!(part as { source?: unknown }).source &&
+          typeof (part as { source?: unknown }).source === "object" &&
+          (part as { source: { type?: unknown } }).source.type === "base64" &&
+          typeof (part as { source: { data?: unknown } }).source.data ===
+            "string" &&
+          typeof (part as { source: { media_type?: unknown } }).source
+            .media_type === "string")),
   );
 }
 
