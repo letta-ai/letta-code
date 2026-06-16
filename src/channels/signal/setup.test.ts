@@ -6,6 +6,7 @@ import {
   hasSignalSetupRestEndpoints,
   normalizeSignalBaseUrl,
   normalizeSignalPhoneInput,
+  parseNativeSignalCliDaemonConfigDir,
   parseSignalCsv,
 } from "./setup";
 
@@ -79,5 +80,19 @@ describe("Signal setup helpers", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("parses native signal-cli daemon config directory from process text", () => {
+    expect(
+      parseNativeSignalCliDaemonConfigDir(
+        "signal-cli -c /tmp/signal-data daemon --http 127.0.0.1:8080",
+      ),
+    ).toBe("/tmp/signal-data");
+    expect(
+      parseNativeSignalCliDaemonConfigDir(
+        "signal-cli --config /tmp/signal-data daemon",
+      ),
+    ).toBe("/tmp/signal-data");
+    expect(parseNativeSignalCliDaemonConfigDir("signal-cli daemon")).toBeNull();
   });
 });

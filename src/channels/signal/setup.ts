@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccount } from "@/channels/accounts";
 import type {
@@ -14,6 +15,8 @@ const DEFAULT_SIGNAL_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
 const SIGNAL_DOCKER_CONTAINER = "letta-signal-cli";
 const SIGNAL_DOCKER_VOLUME = "letta-signal-cli-data";
 const SIGNAL_DOCKER_IMAGE = "bbernhard/signal-cli-rest-api:latest";
+const SIGNAL_CAPTCHA_URL =
+  "https://signalcaptchas.org/registration/generate.html";
 
 function parseYesNo(input: string, defaultValue: boolean): boolean {
   const trimmed = input.trim().toLowerCase();
@@ -86,6 +89,66 @@ function commandExists(command: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function getDefaultSignalCliConfigDir(): string {
+  return `${process.env.HOME ?? ""}/.local/share/signal-cli`;
+}
+
+export function parseNativeSignalCliDaemonConfigDir(
+  processText: string,
+): string | null {
+  const match = processText.match(
+    /(?:^|\s)(?:-c|--config|--data-dir|-d)\s+(\S+)/,
+  );
+  return match?.[1] ?? null;
+}
+
+function detectNativeSignalCliConfigDir(): string | null {
+  try {
+    const output = execFileSync("ps", ["axo", "command"], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    for (const line of output.split(/\r?\n/)) {
+      if (!line.includes("signal-cli") || !line.includes(" daemon")) {
+        continue;
+      }
+      const configDir = parseNativeSignalCliDaemonConfigDir(line);
+      if (configDir) return configDir;
+    }
+  } catch {
+    // Fall through to default path.
+  }
+  const defaultDir = getDefaultSignalCliConfigDir();
+  return defaultDir && existsSync(defaultDir) ? defaultDir : null;
+}
+
+function runNativeSignalCli(
+  args: string[],
+): { ok: true } | { ok: false; error: string } {
+  try {
+    execFileSync("signal-cli", args, {
+      stdio: "pipe",
+      encoding: "utf8",
+      timeout: 120_000,
+    });
+    return { ok: true };
+  } catch (error) {
+    const err = error as {
+      stdout?: unknown;
+      stderr?: unknown;
+      message?: unknown;
+    };
+    const detail = [err.stderr, err.stdout, err.message]
+      .filter(
+        (value): value is string =>
+          typeof value === "string" && value.trim().length > 0,
+      )
+      .join("\n")
+      .trim();
+    return { ok: false, error: detail || String(error) };
   }
 }
 
@@ -461,6 +524,117 @@ async function registerSignalAccountWithSms(
   }
 }
 
+async function registerSignalAccountWithNativeCli(
+  rl: ReturnType<typeof createInterface>,
+): Promise<string | null> {
+  if (!commandExists("signal-cli")) {
+    console.log("signal-cli was not found on PATH.");
+    return null;
+  }
+
+  const detectedConfigDir = detectNativeSignalCliConfigDir();
+  const configInput = await rl.question(
+    `signal-cli config directory [${detectedConfigDir ?? getDefaultSignalCliConfigDir()}]: `,
+  );
+  const configDir =
+    configInput.trim() || detectedConfigDir || getDefaultSignalCliConfigDir();
+  const phoneInput = await rl.question(
+    "Dedicated Signal phone number in E.164 format (e.g. +15555550100): ",
+  );
+  const phone = normalizeSignalPhoneInput(phoneInput);
+  if (!phone) {
+    console.error("Invalid phone number.");
+    return null;
+  }
+
+  const voiceInput = await rl.question(
+    "Use voice call instead of SMS? [y/N]: ",
+  );
+  const useVoice = parseYesNo(voiceInput, false);
+  const baseArgs = ["-c", configDir, "-a", phone];
+  const registerArgs = [
+    ...baseArgs,
+    "register",
+    ...(useVoice ? ["--voice"] : []),
+  ];
+  console.log("Requesting Signal verification...");
+  let result = runNativeSignalCli(registerArgs);
+  if (!result.ok && /captcha/i.test(result.error)) {
+    console.log("Signal requires a captcha before registration can continue.");
+    console.log(`Opening captcha page: ${SIGNAL_CAPTCHA_URL}`);
+    await openUrl(SIGNAL_CAPTCHA_URL);
+    const captcha = await rl.question(
+      "Paste the signalcaptcha:// URL, or blank to cancel: ",
+    );
+    if (!captcha.trim()) return null;
+    result = runNativeSignalCli([
+      ...baseArgs,
+      "register",
+      ...(useVoice ? ["--voice"] : []),
+      "--captcha",
+      captcha.trim(),
+    ]);
+  }
+  if (!result.ok) {
+    console.error(`signal-cli register failed: ${result.error}`);
+    if (/in use by another instance|waiting/i.test(result.error)) {
+      console.error(
+        "The signal-cli config appears to be in use. Stop the running signal-cli daemon, rerun configure to register/verify, then restart the daemon.",
+      );
+    }
+    return null;
+  }
+
+  const code = await rl.question("Verification code from Signal SMS/voice: ");
+  if (!code.trim()) return null;
+  const verifyResult = runNativeSignalCli([...baseArgs, "verify", code.trim()]);
+  if (!verifyResult.ok) {
+    console.error(`signal-cli verify failed: ${verifyResult.error}`);
+    return null;
+  }
+  console.log(`✓ Registered Signal account ${phone}\n`);
+  return phone;
+}
+
+async function linkSignalAccountWithNativeCli(
+  rl: ReturnType<typeof createInterface>,
+): Promise<string | null> {
+  if (!commandExists("signal-cli")) {
+    console.log("signal-cli was not found on PATH.");
+    return null;
+  }
+  const detectedConfigDir = detectNativeSignalCliConfigDir();
+  const configInput = await rl.question(
+    `signal-cli config directory [${detectedConfigDir ?? getDefaultSignalCliConfigDir()}]: `,
+  );
+  const configDir =
+    configInput.trim() || detectedConfigDir || getDefaultSignalCliConfigDir();
+  console.log('Running: signal-cli link -n "Letta Code"');
+  console.log(
+    "Scan the QR/link output with Signal → Settings → Linked Devices → +.",
+  );
+  try {
+    execFileSync("signal-cli", ["-c", configDir, "link", "-n", "Letta Code"], {
+      stdio: "inherit",
+      timeout: 120_000,
+    });
+  } catch (error) {
+    console.error(
+      `signal-cli link failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+  const phoneInput = await rl.question(
+    "Linked Signal account phone number in E.164 format (e.g. +15555550100): ",
+  );
+  const phone = normalizeSignalPhoneInput(phoneInput);
+  if (!phone) {
+    console.error("Invalid Signal phone number. Setup cancelled.");
+    return null;
+  }
+  return phone;
+}
+
 async function configureSignalAccountIdentity(
   rl: ReturnType<typeof createInterface>,
   baseUrl: string,
@@ -491,6 +665,28 @@ async function configureSignalAccountIdentity(
     console.log(
       "If you want Letta to drive QR/SMS setup, use a signal-cli-rest-api container exposing /v1/* setup endpoints.\n",
     );
+    if (commandExists("signal-cli")) {
+      console.log(
+        "Letta found signal-cli locally and can run native setup commands for you.",
+      );
+      console.log(
+        "  1. Link an existing Signal account/device with native signal-cli",
+      );
+      console.log(
+        "  2. Register a dedicated Signal number with native signal-cli",
+      );
+      console.log(
+        "  3. I already linked/registered it; I'll type the phone number",
+      );
+      const nativeChoice = (await rl.question("Choose [3]: ")).trim() || "3";
+      if (nativeChoice === "1") {
+        const linked = await linkSignalAccountWithNativeCli(rl);
+        if (linked) return linked;
+      } else if (nativeChoice === "2") {
+        const registered = await registerSignalAccountWithNativeCli(rl);
+        if (registered) return registered;
+      }
+    }
     const accountInput = await rl.question(
       "Linked Signal account phone number in E.164 format (e.g. +15555550100): ",
     );
