@@ -9,6 +9,7 @@ import type {
 } from "@/channels/types";
 import { SignalRestClient } from "./client";
 import {
+  ensureSignalRuntimeInstalled,
   loadSignalQrCodeTerminalModule,
   renderSignalQrTerminal,
 } from "./runtime";
@@ -825,6 +826,12 @@ export async function runSignalSetup(): Promise<boolean> {
     console.log(
       "Before continuing, start signal-cli-rest-api with MODE=json-rpc and register/link the Signal account. See src/channels/signal/README.md for examples.\n",
     );
+
+    await ensureSignalRuntimeInstalled().catch((error) => {
+      console.warn(
+        `Could not install optional Signal setup helpers: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
 
     const baseUrl = await configureSignalDaemonUrl(rl);
     if (!baseUrl) {

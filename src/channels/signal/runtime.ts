@@ -1,4 +1,7 @@
-import { loadChannelRuntimeModule } from "@/channels/runtime-deps";
+import {
+  ensureChannelRuntimeInstalled,
+  loadChannelRuntimeModule,
+} from "@/channels/runtime-deps";
 
 export type QrCodeTerminalModule = {
   default?: {
@@ -20,6 +23,10 @@ export async function loadSignalQrCodeTerminalModule(): Promise<QrCodeTerminalMo
     "signal",
     "qrcode-terminal",
   );
+}
+
+export async function ensureSignalRuntimeInstalled(): Promise<boolean> {
+  return ensureChannelRuntimeInstalled("signal");
 }
 
 export function renderSignalQrTerminal(
