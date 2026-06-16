@@ -20,6 +20,7 @@ import {
   getChannelConfigSnapshot,
   updateChannelAccountLive,
 } from "@/channels/service";
+import { signalChannelPlugin } from "@/channels/signal/plugin";
 import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,
@@ -83,6 +84,10 @@ describe("Signal channel service", () => {
       }),
     );
     expect(created.downloadMedia).toBe(true);
+  });
+
+  test("plugin exposes interactive setup", () => {
+    expect(signalChannelPlugin.runSetup).toBeTypeOf("function");
   });
 
   test("normalizes plugin config from snake_case", () => {
