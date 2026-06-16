@@ -732,8 +732,9 @@ async function prepareMemoryFiles(
 }
 
 function renderEvaluationPrompt(prompt: string, memoryDir: string): string {
-  const renderedPrompt = prompt.replace(/\$\{MEMORY_DIR\}|\$MEMORY_DIR/g, () =>
-    memoryDir,
+  const renderedPrompt = prompt.replace(
+    /\$\{MEMORY_DIR\}|\$MEMORY_DIR/g,
+    () => memoryDir,
   );
   return [
     "You are running one isolated mod-learning evaluation scenario.",
@@ -745,9 +746,10 @@ function renderEvaluationPrompt(prompt: string, memoryDir: string): string {
   ].join("\n");
 }
 
-function extractHeadlessConversation(
-  value: Record<string, unknown>,
-): { agentId?: string; conversationId?: string } {
+function extractHeadlessConversation(value: Record<string, unknown>): {
+  agentId?: string;
+  conversationId?: string;
+} {
   const payload =
     value.type === "stream_event" &&
     value.event &&
@@ -2146,10 +2148,7 @@ async function runModLearningCandidate(
       params.candidateCount > 1
         ? `Generating optimization iteration ${params.candidateIndex}/${params.candidateCount}`
         : "Generating candidate mod";
-    emitProgress(
-      "generating",
-      generationMessage,
-    );
+    emitProgress("generating", generationMessage);
     const promptHistory: ModLearningPromptHistory = {
       candidateCount: params.candidateCount,
       candidateIndex: params.candidateIndex,

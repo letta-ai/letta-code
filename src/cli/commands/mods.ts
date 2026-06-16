@@ -693,7 +693,7 @@ export function formatModLearningSummary(
       : []),
     "",
     report.passed
-      ? "Review the candidate source before installing it. This command did not promote or load the mod."
+      ? `Review the learned mod at ${displayPath(report.candidatePath, cwd)}, and install with \`/reload\`.`
       : "Open the report, generation stdout/stderr, and eval stdout/stderr in the run directory to debug the candidate.",
   ];
   return lines.join("\n");

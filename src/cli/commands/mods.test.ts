@@ -442,6 +442,7 @@ describe("/mods command", () => {
     expect(updates.at(-1)?.output).toContain("Finished mod learning");
     expect(updates.at(-1)?.output).toContain("Score: 4/6 (67%)");
     expect(updates.at(-1)?.output).toContain("Score graph: ▁█");
-    expect(updates.at(-1)?.output).toContain("did not promote or load");
+    expect(updates.at(-1)?.output).toContain("Review the learned mod at");
+    expect(updates.at(-1)?.output).toContain("install with `/reload`");
   });
 });
