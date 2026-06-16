@@ -8,13 +8,16 @@
  *   letta cron list [--agent <id>] [--conversation <id>]
  *   letta cron get <id>
  *   letta cron runs --id <id>
+ *   letta cron update <id> [--prompt <text> | --prompt-file <path>] [--cron <expr> | --every <interval> | --at <time>]
  *   letta cron delete <id>
  *   letta cron delete --all [--agent <id>]
  */
 
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import {
   addTask,
+  computeJitter,
   deleteAllTasks,
   deleteTask,
   getCronRunLogPath,
@@ -24,6 +27,7 @@ import {
   parseAt,
   parseEvery,
   readCronRunLogEntriesPage,
+  updateTask,
 } from "@/cron";
 
 // ── Usage ───────────────────────────────────────────────────────────
@@ -38,6 +42,7 @@ Usage:
   letta cron list [options]
   letta cron get <id>
   letta cron runs --id <id> [--limit <n>]
+  letta cron update <id> [options]
   letta cron delete <id>
   letta cron delete --all [--agent <id>]
 
@@ -49,6 +54,18 @@ Add options:
   --cron <expr>          Raw 5-field cron expression
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID or "default")
+  --timezone <iana>      Timezone for cron matching (defaults to local timezone)
+
+Update options:
+  --prompt <text>        Replace the task prompt
+  --prompt-file <path>   Read replacement prompt from a file
+  --every <interval>     Replace schedule with a recurring interval
+  --at <time>            Replace schedule with a one-shot time
+  --cron <expr>          Replace schedule with a raw recurring cron expression
+  --name <text>          Replace the task name
+  --description <text>   Replace the task description
+  --conversation <id>    Replace the conversation binding
+  --timezone <iana>      Replace the timezone used for cron matching
 
 List/filter options:
   --agent <id>           Filter by agent ID
@@ -69,12 +86,14 @@ const CRON_OPTIONS = {
   name: { type: "string" },
   description: { type: "string" },
   prompt: { type: "string" },
+  "prompt-file": { type: "string" },
   every: { type: "string" },
   at: { type: "string" },
   once: { type: "boolean" },
   cron: { type: "string" },
   agent: { type: "string" },
   conversation: { type: "string" },
+  timezone: { type: "string" },
   all: { type: "boolean" },
   id: { type: "string" },
   limit: { type: "string" },
@@ -90,6 +109,8 @@ function parseCronArgs(argv: string[]) {
   });
 }
 
+type CronValues = ReturnType<typeof parseCronArgs>["values"];
+
 function getAgentId(fromArgs?: string): string {
   return fromArgs || process.env.LETTA_AGENT_ID || "";
 }
@@ -98,9 +119,116 @@ function getConversationId(fromArgs?: string): string {
   return fromArgs || process.env.LETTA_CONVERSATION_ID || "default";
 }
 
+type SchedulePatch = {
+  cron: string;
+  recurring: boolean;
+  scheduledFor: Date | null;
+};
+
+function parsePromptPatch(values: CronValues): {
+  prompt?: string;
+  error?: string;
+} {
+  const prompt = values.prompt;
+  const promptFile = values["prompt-file"];
+
+  if (prompt !== undefined && promptFile !== undefined) {
+    return { error: "Error: only one of --prompt or --prompt-file allowed." };
+  }
+
+  if (prompt !== undefined) {
+    if (!prompt) {
+      return { error: "Error: --prompt must not be empty." };
+    }
+    return { prompt };
+  }
+
+  if (promptFile !== undefined) {
+    if (!promptFile) {
+      return { error: "Error: --prompt-file requires a path." };
+    }
+    try {
+      const filePrompt = readFileSync(promptFile, "utf8");
+      if (!filePrompt) {
+        return { error: `Error: prompt file ${promptFile} is empty.` };
+      }
+      return { prompt: filePrompt };
+    } catch (err) {
+      return {
+        error: `Error: failed to read prompt file ${promptFile}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+  }
+
+  return {};
+}
+
+function parseSchedulePatch(values: CronValues): {
+  patch?: SchedulePatch;
+  error?: string;
+} {
+  const everyValue = values.every;
+  const atValue = values.at;
+  const cronValue = values.cron;
+
+  const specCount = [everyValue, atValue, cronValue].filter(
+    (value) => value !== undefined,
+  ).length;
+  if (specCount > 1) {
+    return { error: "Error: only one of --every, --at, or --cron allowed." };
+  }
+
+  if (values.once && atValue === undefined) {
+    return {
+      error: "Error: --once can only be used with --at for one-shot tasks.",
+    };
+  }
+
+  if (everyValue !== undefined) {
+    const parsed = parseEvery(everyValue);
+    if (!parsed) {
+      return {
+        error: `Error: invalid interval "${everyValue}". Try: 5m, 2h, 1d`,
+      };
+    }
+    return {
+      patch: { cron: parsed.cron, recurring: true, scheduledFor: null },
+    };
+  }
+
+  if (atValue !== undefined) {
+    const parsed = parseAt(atValue);
+    if (!parsed) {
+      return {
+        error: `Error: invalid time "${atValue}". Try: "3:00pm", "in 45m"`,
+      };
+    }
+    return {
+      patch: {
+        cron: parsed.cron,
+        recurring: false,
+        scheduledFor: parsed.scheduledFor,
+      },
+    };
+  }
+
+  if (cronValue !== undefined) {
+    if (!isValidCron(cronValue)) {
+      return {
+        error: `Error: invalid cron expression "${cronValue}". Needs 5 fields.`,
+      };
+    }
+    return { patch: { cron: cronValue, recurring: true, scheduledFor: null } };
+  }
+
+  return {};
+}
+
 // ── Handlers ────────────────────────────────────────────────────────
 
-function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
+function handleAdd(values: CronValues): number {
   const name = values.name;
   if (!name || typeof name !== "string") {
     console.error("Error: --name is required.");
@@ -197,6 +325,7 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
       cron,
       recurring,
       prompt,
+      timezone: values.timezone,
       scheduled_for: scheduledFor,
     });
 
@@ -231,9 +360,7 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
   }
 }
 
-function handleList(
-  values: ReturnType<typeof parseCronArgs>["values"],
-): number {
+function handleList(values: CronValues): number {
   const agentId = values.agent || process.env.LETTA_AGENT_ID || undefined;
   const conversationId = values.conversation || undefined;
 
@@ -263,9 +390,7 @@ function handleGet(positionals: string[]): number {
   return 0;
 }
 
-function handleRuns(
-  values: ReturnType<typeof parseCronArgs>["values"],
-): number {
+function handleRuns(values: CronValues): number {
   const id = values.id;
   if (!id || typeof id !== "string") {
     console.error("Error: --id is required. Usage: letta cron runs --id <id>");
@@ -291,10 +416,85 @@ function handleRuns(
   }
 }
 
-function handleDelete(
-  values: ReturnType<typeof parseCronArgs>["values"],
-  positionals: string[],
-): number {
+function handleUpdate(values: CronValues, positionals: string[]): number {
+  const taskId = positionals[1];
+  if (!taskId) {
+    console.error("Error: task ID required. Usage: letta cron update <id>");
+    return 1;
+  }
+
+  const promptPatch = parsePromptPatch(values);
+  if (promptPatch.error) {
+    console.error(promptPatch.error);
+    return 1;
+  }
+
+  const schedulePatch = parseSchedulePatch(values);
+  if (schedulePatch.error) {
+    console.error(schedulePatch.error);
+    return 1;
+  }
+
+  const hasPatch =
+    values.name !== undefined ||
+    values.description !== undefined ||
+    values.conversation !== undefined ||
+    values.timezone !== undefined ||
+    promptPatch.prompt !== undefined ||
+    schedulePatch.patch !== undefined;
+  if (!hasPatch) {
+    console.error("Error: at least one update option is required.");
+    return 1;
+  }
+
+  try {
+    const updated = updateTask(taskId, (task) => {
+      if (values.name !== undefined) task.name = values.name;
+      if (values.description !== undefined) {
+        task.description = values.description;
+      }
+      if (values.conversation !== undefined) {
+        task.conversation_id = values.conversation;
+      }
+      if (values.timezone !== undefined) {
+        task.timezone = values.timezone;
+      }
+      if (promptPatch.prompt !== undefined) {
+        task.prompt = promptPatch.prompt;
+      }
+      if (schedulePatch.patch !== undefined) {
+        const createdAt = new Date(task.created_at);
+        const jitterCreatedAt = Number.isNaN(createdAt.getTime())
+          ? new Date()
+          : createdAt;
+        task.cron = schedulePatch.patch.cron;
+        task.recurring = schedulePatch.patch.recurring;
+        task.scheduled_for =
+          schedulePatch.patch.scheduledFor?.toISOString() ?? null;
+        task.jitter_offset_ms = computeJitter(
+          task.id,
+          task.cron,
+          task.recurring,
+          schedulePatch.patch.scheduledFor,
+          jitterCreatedAt,
+        );
+      }
+    });
+
+    if (!updated) {
+      console.error(`Error: task ${taskId} not found.`);
+      return 1;
+    }
+
+    console.log(JSON.stringify(updated, null, 2));
+    return 0;
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+}
+
+function handleDelete(values: CronValues, positionals: string[]): number {
   if (values.all) {
     const agentId = getAgentId(values.agent);
     if (!agentId) {
@@ -351,6 +551,8 @@ export async function runCronSubcommand(argv: string[]): Promise<number> {
       return handleGet(parsed.positionals);
     case "runs":
       return handleRuns(parsed.values);
+    case "update":
+      return handleUpdate(parsed.values, parsed.positionals);
     case "delete":
       return handleDelete(parsed.values, parsed.positionals);
     default:
