@@ -2,7 +2,7 @@
  * Pure startup agent resolution logic.
  *
  * Encodes the decision tree for which agent to use when `letta` starts:
- *   local pinned → local LRU → global LRU → selector → create default
+ *   pinned → local LRU → global LRU → selector → create default
  *
  * Extracted from index.ts/headless.ts so it can be unit-tested without
  * React effects or real network calls.
@@ -14,12 +14,12 @@ export type StartupTarget =
   | { action: "create" };
 
 export interface StartupResolutionInput {
-  /** Agent ID from local project pins (via getLocalPinnedAgents) */
-  localPinnedAgentId: string | null;
-  /** Whether the local pinned agent still exists on the server */
-  localPinnedAgentExists: boolean;
-  /** Number of local project pins for the active backend */
-  localPinnedCount: number;
+  /** Agent ID from pinned agents (global, per-backend namespace) */
+  pinnedAgentId: string | null;
+  /** Whether the pinned agent still exists on the server */
+  pinnedAgentExists: boolean;
+  /** Number of pinned agents for the active backend */
+  pinnedCount: number;
 
   /** Agent ID from local project LRU (via getLocalLastAgentId) */
   localAgentId: string | null;
@@ -32,9 +32,6 @@ export interface StartupResolutionInput {
   globalAgentId: string | null;
   /** Whether the global agent still exists on the server */
   globalAgentExists: boolean;
-
-  /** Number of merged pinned agents (local + global) */
-  mergedPinnedCount: number;
 
   /** Backend-store fallback when settings LRU entries are missing/stale */
   fallbackAgentId?: string | null;
@@ -52,8 +49,8 @@ export interface StartupResolutionInput {
  *
  * Decision tree:
  * 1. forceNew → create
- * 2. local pinned valid → resume (with local conversation only if it matches LRU)
- * 3. multiple local pins → select
+ * 2. pinned valid → resume (with local conversation only if it matches LRU)
+ * 3. multiple pins → select
  * 4. local LRU valid → resume (with local conversation)
  * 5. global LRU valid → resume (no conversation — project-scoped)
  * 6. backend-store fallback → resume
@@ -69,21 +66,21 @@ export function resolveStartupTarget(
     return { action: "create" };
   }
 
-  // Step 1: Local project pin
-  if (input.localPinnedAgentId && input.localPinnedAgentExists) {
+  // Step 1: Pinned agent
+  if (input.pinnedAgentId && input.pinnedAgentExists) {
     const conversationId =
-      input.localPinnedAgentId === input.localAgentId
+      input.pinnedAgentId === input.localAgentId
         ? (input.localConversationId ?? undefined)
         : undefined;
     return {
       action: "resume",
-      agentId: input.localPinnedAgentId,
+      agentId: input.pinnedAgentId,
       ...(conversationId ? { conversationId } : {}),
     };
   }
 
-  // Step 2: Multiple local pins should ask instead of picking implicitly.
-  if (input.localPinnedCount > 1) {
+  // Step 2: Multiple pins should ask instead of picking implicitly.
+  if (input.pinnedCount > 1) {
     return { action: "select" };
   }
 
@@ -121,7 +118,7 @@ export function resolveStartupTarget(
   }
 
   // Step 6: Show selector if any pinned agents exist
-  if (input.mergedPinnedCount > 0) {
+  if (input.pinnedCount > 0) {
     return { action: "select" };
   }
 

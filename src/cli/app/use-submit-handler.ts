@@ -284,7 +284,6 @@ type SubmitHandlerContext = {
   markLocalModelsAvailable: () => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
-  setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
@@ -406,7 +405,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPinDialogLocal,
     setProfileConfirmPending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
@@ -2419,7 +2417,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           refreshDerived,
           openOverlay,
           setCommandRunning,
-          setPinDialogLocal,
           setProfileConfirmPending,
           updateAgentName,
         });

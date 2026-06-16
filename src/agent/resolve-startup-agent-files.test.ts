@@ -45,23 +45,19 @@ async function resolveFromSettings(options?: {
   const localAgentId = settingsManager.getLocalLastAgentId(testProjectDir);
   const localSession = settingsManager.getLocalLastSession(testProjectDir);
   const globalAgentId = settingsManager.getGlobalLastAgentId();
-  const localPinnedAgents =
-    settingsManager.getLocalPinnedAgents(testProjectDir);
-  const localPinnedAgentId =
-    localPinnedAgents.length === 1 ? (localPinnedAgents[0] ?? null) : null;
+  const pinnedAgents = settingsManager.getPinnedAgents();
+  const pinnedAgentId =
+    pinnedAgents.length === 1 ? (pinnedAgents[0] ?? null) : null;
 
-  const localPinnedAgentExists = localPinnedAgentId
-    ? existing.has(localPinnedAgentId)
-    : false;
+  const pinnedAgentExists = pinnedAgentId ? existing.has(pinnedAgentId) : false;
   const localAgentExists = localAgentId ? existing.has(localAgentId) : false;
   const globalAgentExists = globalAgentId ? existing.has(globalAgentId) : false;
-  const mergedPinnedCount =
-    settingsManager.getMergedPinnedAgents(testProjectDir).length;
+  const pinnedCount = pinnedAgents.length;
 
   return resolveStartupTarget({
-    localPinnedAgentId,
-    localPinnedAgentExists,
-    localPinnedCount: localPinnedAgents.length,
+    pinnedAgentId,
+    pinnedAgentExists,
+    pinnedCount,
     localAgentId,
     localConversationId: options?.includeLocalConversation
       ? (localSession?.conversationId ?? null)
@@ -69,7 +65,6 @@ async function resolveFromSettings(options?: {
     localAgentExists,
     globalAgentId,
     globalAgentExists,
-    mergedPinnedCount,
     forceNew: options?.forceNew ?? false,
     needsModelPicker: options?.needsModelPicker ?? false,
   });
@@ -202,7 +197,7 @@ describe("startup resolution from settings files", () => {
     });
   });
 
-  test("local pinned agent takes precedence over stale local last session", async () => {
+  test("pinned agent takes precedence over stale local last session", async () => {
     await writeLocalSettings({
       lastAgent: "agent-last-used",
       lastSession: {
@@ -278,7 +273,7 @@ describe("startup resolution from settings files", () => {
     expect(target).toEqual({ action: "select" });
   });
 
-  test("invalid local/global + local pinned only => select", async () => {
+  test("invalid local/global + pinned only => select", async () => {
     await writeLocalSettings({
       sessionsByServer: {
         "api.letta.com": {

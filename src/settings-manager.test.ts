@@ -1074,8 +1074,9 @@ describe("Settings Manager - Agents Array Migration", () => {
       agentId: "agent-old-2",
       pinned: true,
     });
-    // Legacy field should still exist for downgrade compat
-    expect(settings.pinnedAgents).toEqual(["agent-old-1", "agent-old-2"]);
+    // Legacy field is stripped from Settings type (obsolete key)
+    // but agents[] should have the migrated data
+    expect(settings.agents).toHaveLength(2);
   });
 
   test("Migrates from pinnedAgentsByServer (newer legacy format)", async () => {
@@ -1160,6 +1161,48 @@ describe("Settings Manager - Agents Array Migration", () => {
     expect(settings.agents).toHaveLength(1);
     expect(settings.agents?.[0]?.agentId).toBe("agent-new");
     expect(settings.agents?.[0]?.memfs).toBe(true);
+  });
+
+  test("Promotes legacy local project pins to global agents array", async () => {
+    const { writeFile, readFile, mkdir } = await import("@/utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    const projectDir = join(testHomeDir, "project");
+    const projectSettingsDir = join(projectDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+    await mkdir(projectSettingsDir, { recursive: true });
+
+    await writeFile(
+      join(settingsDir, "settings.json"),
+      JSON.stringify({ agents: [{ agentId: "agent-existing", pinned: true }] }),
+    );
+    await writeFile(
+      join(projectSettingsDir, "settings.local.json"),
+      JSON.stringify({
+        pinnedAgentsByServer: {
+          "api.letta.com": ["agent-project-cloud"],
+          "localhost:8283": ["agent-project-local"],
+        },
+      }),
+    );
+
+    await settingsManager.initialize();
+    await settingsManager.loadLocalProjectSettings(projectDir);
+
+    const settings = settingsManager.getSettings();
+    expect(settings.agents).toContainEqual({
+      agentId: "agent-project-cloud",
+      pinned: true,
+    });
+    expect(settings.agents).toContainEqual({
+      agentId: "agent-project-local",
+      baseUrl: "localhost:8283",
+      pinned: true,
+    });
+
+    const localRaw = JSON.parse(
+      await readFile(join(projectSettingsDir, "settings.local.json")),
+    ) as Record<string, unknown>;
+    expect("pinnedAgentsByServer" in localRaw).toBe(false);
   });
 
   test("isMemfsEnabled returns false for agents without memfs flag", async () => {
@@ -1450,33 +1493,23 @@ describe("Settings Manager - Managed Keys Preservation", () => {
       settingsPath,
       JSON.stringify({
         tokenStreaming: true,
-        pinnedAgents: ["agent-a"],
-        pinnedAgentsByServer: {
-          "api.letta.com": ["agent-a"],
-        },
+        agents: [{ agentId: "agent-a", pinned: true }],
       }),
     );
 
     await settingsManager.initialize();
 
-    // Simulate another process appending a new global pin while this process
+    // Simulate another process appending a new pin while this process
     // is still running with stale in-memory settings.
     const externallyUpdated = JSON.parse(
       await readFile(settingsPath),
     ) as Record<string, unknown>;
-
-    const pinnedByServer = (externallyUpdated.pinnedAgentsByServer as Record<
-      string,
-      string[]
-    >) || { "api.letta.com": [] };
-    pinnedByServer["api.letta.com"] = [
-      ...(pinnedByServer["api.letta.com"] || []),
-      "agent-b",
+    const agents =
+      (externallyUpdated.agents as Array<Record<string, unknown>>) || [];
+    externallyUpdated.agents = [
+      ...agents,
+      { agentId: "agent-b", pinned: true },
     ];
-    externallyUpdated.pinnedAgentsByServer = pinnedByServer;
-
-    const pinned = (externallyUpdated.pinnedAgents as string[]) || [];
-    externallyUpdated.pinnedAgents = [...pinned, "agent-b"];
 
     await writeFile(settingsPath, JSON.stringify(externallyUpdated));
 
@@ -1489,12 +1522,7 @@ describe("Settings Manager - Managed Keys Preservation", () => {
       unknown
     >;
     expect(raw.lastAgent).toBe("agent-current");
-    expect((raw.pinnedAgents as string[]) || []).toContain("agent-b");
-    expect(
-      (raw.pinnedAgentsByServer as Record<string, string[]>)?.[
-        "api.letta.com"
-      ] || [],
-    ).toContain("agent-b");
+    expect(raw.agents).toContainEqual({ agentId: "agent-b", pinned: true });
   });
 
   test("External deletion of managed keys is preserved when this process didn't change them", async () => {

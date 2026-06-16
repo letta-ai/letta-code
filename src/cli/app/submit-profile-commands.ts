@@ -38,7 +38,6 @@ type ProfileCommandRouterContext = {
   ) => Promise<void>;
   refreshDerived: () => void;
   setCommandRunning: (value: boolean) => void;
-  setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
@@ -65,7 +64,6 @@ export async function handleProfileCommand(
     handleAgentSelect,
     refreshDerived,
     setCommandRunning,
-    setPinDialogLocal,
     setProfileConfirmPending,
     openOverlay,
     updateAgentName,
@@ -165,13 +163,18 @@ export async function handleProfileCommand(
         "Pin agents and conversations.",
         "",
         "USAGE",
-        "  /pin [name]         — pin the current agent globally",
-        "  /pin -l [name]      — pin the current agent to this project",
+        "  /pin [name]         — pin the current agent",
         "  /pin agent [name]   — pin the current agent",
         "  /pin convo [-l]     — pin the current conversation",
         "  /pin help           — show this help",
       ].join("\n");
       cmd.finish(output, true);
+      return { submitted: true };
+    }
+
+    if (target === "-l" || target === "--local") {
+      const cmd = commandRunner.start(trimmed, "Checking pin command...");
+      cmd.fail("Agent pins are global-only. Usage: /pin [name]");
       return { submitted: true };
     }
 
@@ -220,20 +223,8 @@ export async function handleProfileCommand(
     }
 
     const currentArgs = target === "agent" ? parts.slice(1).join(" ") : argsStr;
-    const currentParts = currentArgs.split(/\s+/).filter(Boolean);
-    let hasNameArg = false;
-    let isLocal = false;
 
-    for (const part of currentParts) {
-      if (part === "-l" || part === "--local") {
-        isLocal = true;
-      } else {
-        hasNameArg = true;
-      }
-    }
-
-    if (!hasNameArg && target !== "agent") {
-      setPinDialogLocal(isLocal);
+    if (!currentArgs && target !== "agent") {
       openOverlay(
         "pin",
         target === "agent" ? "/pin agent" : "/pin",
@@ -272,8 +263,7 @@ export async function handleProfileCommand(
         "Unpin the current agent.",
         "",
         "USAGE",
-        "  /unpin       — unpin globally",
-        "  /unpin -l    — unpin locally",
+        "  /unpin       — unpin the current agent",
         "  /unpin help  — show this help",
       ].join("\n");
       cmd.finish(output, true);
