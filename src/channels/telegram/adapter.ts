@@ -279,15 +279,30 @@ function resolveTelegramInputFileConstructor(
   return InputFile as TelegramInputFileConstructor;
 }
 
+function resolveTelegramOutboundThreadId(
+  msg: Pick<OutboundChannelMessage, "chatId" | "threadId">,
+): string | null {
+  const threadId = msg.threadId?.trim();
+  if (!threadId) {
+    return null;
+  }
+
+  // Telegram message_thread_id is only valid for forum topics in groups and
+  // supergroups. Private chat IDs are positive, so never attach a thread id
+  // there even if stale route state provided one.
+  return msg.chatId.trim().startsWith("-") ? threadId : null;
+}
+
 function buildTelegramReplyOptions(
   msg: Pick<
     OutboundChannelMessage,
-    "replyToMessageId" | "threadId" | "parseMode" | "text" | "title"
+    "chatId" | "replyToMessageId" | "threadId" | "parseMode" | "text" | "title"
   >,
 ): Record<string, unknown> {
   const options: Record<string, unknown> = {};
-  if (msg.threadId) {
-    options.message_thread_id = Number(msg.threadId);
+  const threadId = resolveTelegramOutboundThreadId(msg);
+  if (threadId) {
+    options.message_thread_id = Number(threadId);
   }
   if (msg.replyToMessageId) {
     options.reply_parameters = {
@@ -1002,7 +1017,8 @@ export function createTelegramAdapter(
     }
 
     const telegramBot = await ensureBot();
-    const replyToMessageId = source.threadId ?? source.messageId;
+    const threadId = resolveTelegramOutboundThreadId(source);
+    const replyToMessageId = threadId ?? source.messageId;
     let reply_parameters: { message_id: number } | undefined;
     if (replyToMessageId) {
       const numericReplyToMessageId = Number(replyToMessageId);
@@ -1011,18 +1027,10 @@ export function createTelegramAdapter(
       }
     }
 
-    const options: Record<string, unknown> = reply_parameters
-      ? {
-          ...(source.threadId
-            ? { message_thread_id: Number(source.threadId) }
-            : {}),
-          reply_parameters,
-        }
-      : {
-          ...(source.threadId
-            ? { message_thread_id: Number(source.threadId) }
-            : {}),
-        };
+    const options: Record<string, unknown> = {
+      ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+      ...(reply_parameters ? { reply_parameters } : {}),
+    };
     options.reply_markup = {
       inline_keyboard: [
         [
@@ -1237,8 +1245,9 @@ export function createTelegramAdapter(
       }
 
       const opts: Record<string, unknown> = {};
-      if (msg.threadId) {
-        opts.message_thread_id = Number(msg.threadId);
+      const threadId = resolveTelegramOutboundThreadId(msg);
+      if (threadId) {
+        opts.message_thread_id = Number(threadId);
       }
       if (msg.replyToMessageId) {
         opts.reply_parameters = {
@@ -1327,21 +1336,16 @@ export function createTelegramAdapter(
       event: ChannelControlRequestEvent,
     ): Promise<void> {
       const telegramBot = await ensureBot();
-      const reply_parameters =
-        event.source.messageId || event.source.threadId
-          ? {
-              message_id: Number(
-                event.source.threadId ?? event.source.messageId,
-              ),
-            }
-          : undefined;
+      const threadId = resolveTelegramOutboundThreadId(event.source);
+      const replyToMessageId = threadId ?? event.source.messageId;
+      const reply_parameters = replyToMessageId
+        ? { message_id: Number(replyToMessageId) }
+        : undefined;
       await telegramBot.api.sendMessage(
         event.source.chatId,
         formatChannelControlRequestPrompt(event),
         {
-          ...(event.source.threadId
-            ? { message_thread_id: Number(event.source.threadId) }
-            : {}),
+          ...(threadId ? { message_thread_id: Number(threadId) } : {}),
           ...(reply_parameters ? { reply_parameters } : {}),
         },
       );

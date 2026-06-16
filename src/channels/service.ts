@@ -581,6 +581,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     agentId: account.agentId,
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice: account.transcribeVoice === true,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -685,6 +686,7 @@ function createAccountFromPatch(
     agentId: normalizedPatch.agentId ?? null,
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice: normalizedPatch.transcribeVoice === true,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
@@ -820,6 +822,8 @@ function mergeAccountPatch(
       normalizedPatch.defaultPermissionMode ??
       existing.defaultPermissionMode ??
       DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice:
+      normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
@@ -961,6 +965,7 @@ export function getChannelConfigSnapshot(
     agentId: account.agentId,
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice: account.transcribeVoice === true,
   };
 }
 
