@@ -1,5 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import {
+  GIT_MEMORY_ENABLED_TAG,
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";
@@ -319,7 +320,22 @@ export class LocalBackend extends HeadlessBackend {
   override async createAgent(
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
-    const [body] = args;
+    let [body, ...restArgs] = args;
+    // When local memfs is enabled, stamp the git-memory-enabled tag on the
+    // agent body so all downstream tag-checking paths (isMemfsEnabledOnServer,
+    // memfs-sync, etc.) see this agent as memfs-enabled from creation.
+    if (this.isLocalMemfsEnabled()) {
+      const bodyRecord = body as Record<string, unknown>;
+      const existingTags = Array.isArray(bodyRecord.tags)
+        ? (bodyRecord.tags as string[])
+        : [];
+      if (!existingTags.includes(GIT_MEMORY_ENABLED_TAG)) {
+        body = {
+          ...bodyRecord,
+          tags: [...existingTags, GIT_MEMORY_ENABLED_TAG],
+        } as typeof body;
+      }
+    }
     const requestedCompactionSettings = compactionSettingsRecord(
       (body as Record<string, unknown>).compaction_settings,
     );
@@ -332,7 +348,7 @@ export class LocalBackend extends HeadlessBackend {
     const compactionSettingsForStorage = localCompactionSettingsForStorage(
       requestedCompactionSettings,
     );
-    let agent = await super.createAgent(...args);
+    let agent = await super.createAgent(body, ...restArgs);
     if (compactionSettingsForStorage !== undefined) {
       agent = this.store.setAgentCompactionSettings(
         agent.id,
