@@ -116,8 +116,8 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
     metadata: {
       id: "signal",
       displayName: "Signal",
-      runtimePackages: [],
-      runtimeModules: [],
+      runtimePackages: ["qrcode-terminal@0.12.0"],
+      runtimeModules: ["qrcode-terminal"],
       source: "first-party",
       firstParty: true,
     },

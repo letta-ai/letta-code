@@ -8,8 +8,8 @@ export const signalChannelPlugin: ChannelPlugin = {
   metadata: {
     id: "signal",
     displayName: "Signal",
-    runtimePackages: [],
-    runtimeModules: [],
+    runtimePackages: ["qrcode-terminal@0.12.0"],
+    runtimeModules: ["qrcode-terminal"],
     source: "first-party",
     firstParty: true,
   },

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { renderSignalQrTerminal } from "./runtime";
 import {
   extractSignalAccountsFromResponse,
   getSignalDockerRunCommand,
@@ -9,6 +10,7 @@ import {
   parseNativeSignalCliDaemonConfigDir,
   parseSignalCsv,
   parseSignalLinkAssociatedAccount,
+  parseSignalLinkUri,
 } from "./setup";
 
 describe("Signal setup helpers", () => {
@@ -104,5 +106,25 @@ describe("Signal setup helpers", () => {
       ),
     ).toBe("+15036195666");
     expect(parseSignalLinkAssociatedAccount("no phone here")).toBeNull();
+  });
+
+  test("parses native link URI for QR rendering", () => {
+    expect(
+      parseSignalLinkUri(
+        "sgnl://linkdevice?uuid=abc&pub_key=def\nAssociated with: +15036195666",
+      ),
+    ).toBe("sgnl://linkdevice?uuid=abc&pub_key=def");
+    expect(parseSignalLinkUri("no link here")).toBeNull();
+  });
+
+  test("renders qrcode-terminal output for native link URI", () => {
+    const qrMod = {
+      generate(input: string, options: unknown, cb?: (output: string) => void) {
+        cb?.(`${input}:${JSON.stringify(options)}`);
+      },
+    };
+    expect(renderSignalQrTerminal(qrMod, "sgnl://linkdevice?x=1")).toBe(
+      'sgnl://linkdevice?x=1:{"small":true}',
+    );
   });
 });

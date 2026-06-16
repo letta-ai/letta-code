@@ -8,6 +8,10 @@ import type {
   SignalGroupMode,
 } from "@/channels/types";
 import { SignalRestClient } from "./client";
+import {
+  loadSignalQrCodeTerminalModule,
+  renderSignalQrTerminal,
+} from "./runtime";
 
 const DEFAULT_SIGNAL_BASE_URL = "http://127.0.0.1:8080";
 const DEFAULT_SIGNAL_ACCOUNT_ID = "personal";
@@ -154,6 +158,7 @@ function runNativeSignalCli(
 
 function runNativeSignalCliInteractive(
   args: string[],
+  onOutput?: (output: string) => void | Promise<void>,
 ): Promise<
   { ok: true; output: string } | { ok: false; output: string; error: string }
 > {
@@ -166,11 +171,13 @@ function runNativeSignalCliInteractive(
       const text = chunk.toString("utf8");
       output += text;
       process.stdout.write(text);
+      void onOutput?.(output);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8");
       output += text;
       process.stderr.write(text);
+      void onOutput?.(output);
     });
     child.on("error", (error) => {
       resolve({ ok: false, output, error: error.message });
@@ -194,6 +201,11 @@ export function parseSignalLinkAssociatedAccount(
 ): string | null {
   const match = output.match(/Associated with:\s*(\+\d{5,15})/i);
   return match?.[1] ?? null;
+}
+
+export function parseSignalLinkUri(output: string): string | null {
+  const match = output.match(/sgnl:\/\/linkdevice\?\S+/i);
+  return match?.[0] ?? null;
 }
 
 async function probeSignalDaemon(baseUrl: string): Promise<boolean> {
@@ -657,13 +669,28 @@ async function linkSignalAccountWithNativeCli(
   console.log(
     "Scan the QR/link output with Signal → Settings → Linked Devices → +.",
   );
-  const result = await runNativeSignalCliInteractive([
-    "-c",
-    configDir,
-    "link",
-    "-n",
-    "Letta Code",
-  ]);
+  let renderedLinkUri: string | null = null;
+  const maybeRenderQr = async (output: string) => {
+    const linkUri = parseSignalLinkUri(output);
+    if (!linkUri || renderedLinkUri === linkUri) return;
+    renderedLinkUri = linkUri;
+    const qrMod = await loadSignalQrCodeTerminalModule().catch(() => null);
+    const qr = renderSignalQrTerminal(qrMod, linkUri);
+    if (qr) {
+      console.log(
+        "\nScan this QR code in Signal → Settings → Linked Devices → +:\n",
+      );
+      console.log(qr);
+    } else {
+      console.log(
+        "\nCould not render an ASCII QR code. Run `letta channels install signal` to install QR rendering support, or copy the sgnl:// link above into a QR generator.\n",
+      );
+    }
+  };
+  const result = await runNativeSignalCliInteractive(
+    ["-c", configDir, "link", "-n", "Letta Code"],
+    maybeRenderQr,
+  );
   if (!result.ok) {
     console.error(`signal-cli link failed: ${result.error}`);
     return null;
