@@ -33,7 +33,7 @@ export interface CreateListenerModAdapterOptions {
 }
 
 async function getUnavailableListenerClient(): Promise<Letta> {
-  throw new Error("letta.client is not available in listener provider mods");
+  throw new Error("letta.client is not available in listener mods");
 }
 
 export function createListenerModContext(

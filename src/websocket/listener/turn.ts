@@ -76,6 +76,7 @@ import {
   normalizeToolReturnWireMessage,
   populateInterruptQueue,
 } from "./interrupts";
+import { ensureListenerModAdapter } from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -549,6 +550,7 @@ export async function handleIncomingMessage(
       permissionModeState: turnPermissionModeState,
       cachedAgent,
       channelTurnSources: msg.channelTurnSources,
+      modEvents: ensureListenerModAdapter(runtime.listener).events,
     });
     runtime.currentToolset = preparedToolContext.toolset;
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
