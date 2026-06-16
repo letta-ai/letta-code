@@ -164,6 +164,7 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
       appToken: String(parsed.app_token ?? ""),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      transcribeVoice: parsed.transcribe_voice === true,
     };
   },
 };

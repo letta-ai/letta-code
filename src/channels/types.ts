@@ -333,6 +333,8 @@ export interface SlackChannelConfig {
   appToken: string;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
 }
 
 export interface DiscordChannelConfig {
@@ -452,6 +454,8 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   appToken: string;
   agentId: string | null;
   defaultPermissionMode: SlackDefaultPermissionMode;
+  /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
   /**
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same

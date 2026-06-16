@@ -723,6 +723,59 @@ describe("channel service", () => {
     );
   });
 
+  test("slack live account helpers preserve the transcribeVoice opt-in in snapshots", () => {
+    const created = createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Slack Voice",
+        enabled: true,
+        dmPolicy: "pairing",
+        config: {
+          bot_token: "xoxb-test-token",
+          app_token: "xapp-test-token",
+          mode: "socket",
+          agent_id: null,
+          transcribe_voice: true,
+        },
+      },
+      { accountId: "slack-voice" },
+    );
+
+    expect(created).toEqual(
+      expect.objectContaining({
+        accountId: "slack-voice",
+        transcribeVoice: true,
+        config: expect.objectContaining({
+          transcribe_voice: true,
+        }),
+      }),
+    );
+
+    const updated = updateChannelAccountLive("slack", "slack-voice", {
+      config: { transcribe_voice: false },
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        accountId: "slack-voice",
+        transcribeVoice: false,
+        config: expect.objectContaining({
+          transcribe_voice: false,
+        }),
+      }),
+    );
+
+    expect(getChannelConfigSnapshot("slack", "slack-voice")).toEqual(
+      expect.objectContaining({
+        accountId: "slack-voice",
+        transcribeVoice: false,
+        config: expect.objectContaining({
+          transcribe_voice: false,
+        }),
+      }),
+    );
+  });
+
   test("config helpers reject ambiguous singleton lookups once multiple accounts exist", () => {
     createChannelAccountLive(
       "telegram",
