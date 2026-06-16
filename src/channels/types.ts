@@ -15,6 +15,7 @@ export const FIRST_PARTY_CHANNEL_IDS = [
   "discord",
   "custom",
   "whatsapp",
+  "signal",
 ] as const;
 export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 /**
@@ -291,6 +292,7 @@ export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
+export type SignalGroupMode = "disabled" | "mention" | "open";
 
 export interface ChannelAccountBinding {
   agentId: string | null;
@@ -417,11 +419,37 @@ export interface WhatsAppChannelConfig {
   mediaMaxBytes?: number;
 }
 
+export interface SignalChannelConfig {
+  channel: "signal";
+  enabled: boolean;
+  dmPolicy: DmPolicy;
+  allowedUsers: string[];
+  /** Base URL for signal-cli-rest-api JSON-RPC/SSE, e.g. http://127.0.0.1:8080. */
+  baseUrl: string;
+  /** Optional signal-cli account selector, usually the linked phone number. */
+  account?: string;
+  /** Optional UUID for self-message filtering when Signal sends UUID identities. */
+  accountUuid?: string;
+  /** Agent ID used for account-bound DM and group auto-routing. */
+  agentId: string | null;
+  /** Default disabled. Controls group-message ingestion. */
+  groupMode: SignalGroupMode;
+  /** Optional allowlist of Signal group ids. */
+  allowedGroups?: string[];
+  /** Optional textual aliases for group mention detection. */
+  mentionPatterns?: string[];
+  /** When true, supported inbound media metadata is included. */
+  downloadMedia?: boolean;
+  /** Maximum inbound media bytes to consider. Undefined uses channel default. */
+  mediaMaxBytes?: number;
+}
+
 export type ChannelConfig =
   | TelegramChannelConfig
   | SlackChannelConfig
   | DiscordChannelConfig
-  | WhatsAppChannelConfig;
+  | WhatsAppChannelConfig
+  | SignalChannelConfig;
 
 export interface TelegramChannelAccount extends ChannelAccountBase {
   channel: "telegram";
@@ -543,11 +571,34 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   mediaMaxBytes?: number;
 }
 
+export interface SignalChannelAccount extends ChannelAccountBase {
+  channel: "signal";
+  /** Base URL for signal-cli-rest-api JSON-RPC/SSE, e.g. http://127.0.0.1:8080. */
+  baseUrl: string;
+  /** Optional signal-cli account selector, usually the linked phone number. */
+  account?: string;
+  /** Optional UUID for self-message filtering when Signal sends UUID identities. */
+  accountUuid?: string;
+  /** Agent ID used for account-bound DM and group auto-routing. */
+  agentId: string | null;
+  /** Default disabled. Controls group-message ingestion. */
+  groupMode: SignalGroupMode;
+  /** Optional allowlist of Signal group ids. */
+  allowedGroups?: string[];
+  /** Optional textual aliases for group mention detection. */
+  mentionPatterns?: string[];
+  /** When true, supported inbound media metadata is included. */
+  downloadMedia?: boolean;
+  /** Maximum inbound media bytes to consider. Undefined uses channel default. */
+  mediaMaxBytes?: number;
+}
+
 export type ChannelAccount =
   | TelegramChannelAccount
   | SlackChannelAccount
   | DiscordChannelAccount
   | WhatsAppChannelAccount
+  | SignalChannelAccount
   | CustomChannelAccount;
 
 export function isFirstPartyChannelId(
@@ -584,6 +635,12 @@ export function isWhatsAppChannelAccount(
   account: ChannelAccount,
 ): account is WhatsAppChannelAccount {
   return account.channel === "whatsapp" && "selfChatMode" in account;
+}
+
+export function isSignalChannelAccount(
+  account: ChannelAccount,
+): account is SignalChannelAccount {
+  return account.channel === "signal" && "baseUrl" in account;
 }
 
 export function isCustomChannelAccount(

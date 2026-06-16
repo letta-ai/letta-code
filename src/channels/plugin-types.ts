@@ -7,6 +7,7 @@ import type {
   DiscordChannelMode,
   DmPolicy,
   OutboundChannelMessage,
+  SignalGroupMode,
   SlackChannelMode,
   TelegramGroupMode,
   WhatsAppGroupMode,
@@ -150,8 +151,11 @@ export interface ChannelPluginAccountPatch {
   botToken?: string;
   appToken?: string;
   mode?: SlackChannelMode;
-  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode | SignalGroupMode;
   agentId?: string | null;
+  baseUrl?: string;
+  account?: string;
+  accountUuid?: string;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;

@@ -70,6 +70,7 @@ import {
   removeRouteInMemory,
   setRouteInMemory,
 } from "./routing";
+import { signalAllowedUsersIncludes } from "./signal/target";
 import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
   ChannelAdapter,
@@ -81,12 +82,14 @@ import type {
   ChannelTurnSource,
   DiscordChannelAccount,
   InboundChannelMessage,
+  SignalChannelAccount,
   SlackChannelAccount,
   TelegramChannelAccount,
   WhatsAppChannelAccount,
 } from "./types";
 import {
   isDiscordChannelAccount,
+  isSignalChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
   isWhatsAppChannelAccount,
@@ -295,6 +298,27 @@ function buildWhatsAppConversationSummary(
   }
 
   return `[WhatsApp] Group${channelLabel || ` ${msg.chatId}`}`;
+}
+
+function buildSignalConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[Signal] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const textPreview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (textPreview) {
+    return `[Signal] Group${channelLabel}: ${textPreview}`;
+  }
+
+  return `[Signal] Group${channelLabel || ` ${msg.chatId}`}`;
 }
 
 function buildChannelTurnSource(
@@ -1485,6 +1509,32 @@ export class ChannelRegistry {
       return;
     }
 
+    // Signal uses a linked signal-cli account. DMs can use pairing, but
+    // account-bound DMs and configured groups auto-route like WhatsApp.
+    if (
+      msg.channel === "signal" &&
+      isSignalChannelAccount(config) &&
+      (msg.chatType === "channel" || config.dmPolicy !== "pairing")
+    ) {
+      const signalResult = await this.ensureSignalRoute(adapter, msg, config);
+      if (!signalResult) {
+        return;
+      }
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: signalResult.isFirstRouteTurn,
+          })
+        : msg;
+      this.deliverOrBuffer({
+        route: signalResult.route,
+        content: formatChannelNotification(preparedMessage),
+        turnSources: [
+          buildChannelTurnSource(signalResult.route, preparedMessage),
+        ],
+      });
+      return;
+    }
+
     // 1. Check pairing/allowlist policy
     if (config.dmPolicy === "allowlist") {
       if (!config.allowedUsers.includes(msg.senderId)) {
@@ -1993,6 +2043,104 @@ export class ChannelRegistry {
 
     return {
       route: await this.createWhatsAppRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
+  }
+
+  private async createSignalRoute(
+    config: SignalChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.agentId) {
+      throw new Error("Signal account is missing an agent binding.");
+    }
+
+    const conversationId = await this.createConversationForAgent(
+      config.agentId,
+      buildSignalConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId: null,
+      agentId: config.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
+  }
+
+  private async ensureSignalRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    config: SignalChannelAccount,
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
+    if (!config.agentId) {
+      if (!msg.reaction && (msg.chatType !== "channel" || msg.isMention)) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "This Signal account isn't connected to a Letta agent yet.\n\n" +
+            "Open Channels > Signal in Letta Code, choose which agent this Signal account should represent, and try again.",
+        );
+      }
+      return null;
+    }
+
+    if (
+      msg.chatType === "direct" &&
+      config.dmPolicy === "allowlist" &&
+      !signalAllowedUsersIncludes(config.allowedUsers, msg.senderId)
+    ) {
+      if (!msg.reaction) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "You are not on the allowed users list for this Signal account.",
+        );
+      }
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    let route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
+    }
+
+    if (route) {
+      return { route, isFirstRouteTurn: false };
+    }
+
+    if (msg.chatType === "channel") {
+      const now = new Date().toISOString();
+      loadTargetStore(msg.channel);
+      upsertChannelTarget(msg.channel, {
+        accountId,
+        targetId: msg.chatId,
+        targetType: "channel",
+        chatId: msg.chatId,
+        label: msg.chatLabel ?? `Signal group ${msg.chatId}`,
+        discoveredAt: now,
+        lastSeenAt: now,
+        lastMessageId: msg.messageId,
+      });
+      this.eventHandler?.({
+        type: "targets_updated",
+        channelId: msg.channel,
+      });
+    }
+
+    return {
+      route: await this.createSignalRoute(config, msg),
       isFirstRouteTurn: true,
     };
   }
