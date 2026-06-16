@@ -204,6 +204,16 @@ export function parseSignalLinkAssociatedAccount(
   return match?.[1] ?? null;
 }
 
+export function parseSignalLinkExistingAccount(output: string): string | null {
+  const match = output.match(/The user\s+(\+\d{5,15})\s+already exists/i);
+  return match?.[1] ?? null;
+}
+
+export function parseSignalCliDeletePath(output: string): string | null {
+  const match = output.match(/Delete\s+"([^"]+)"\s+before trying again/i);
+  return match?.[1] ?? null;
+}
+
 export function parseSignalLinkUri(output: string): string | null {
   const match = output.match(/sgnl:\/\/linkdevice\?\S+/i);
   return match?.[0] ?? null;
@@ -693,6 +703,22 @@ async function linkSignalAccountWithNativeCli(
     maybeRenderQr,
   );
   if (!result.ok) {
+    const existingAccount = parseSignalLinkExistingAccount(result.output);
+    if (existingAccount) {
+      const deletePath = parseSignalCliDeletePath(result.output);
+      const useExisting = await rl.question(
+        `Signal account ${existingAccount} is already linked in this config. Use it? [Y/n]: `,
+      );
+      if (parseYesNo(useExisting, true)) {
+        return existingAccount;
+      }
+      console.log(
+        deletePath
+          ? `Setup cancelled. To relink from scratch, delete ${deletePath}, then rerun configure.`
+          : "Setup cancelled. To relink from scratch, follow the signal-cli delete-path instruction above, then rerun configure.",
+      );
+      return null;
+    }
     console.error(`signal-cli link failed: ${result.error}`);
     return null;
   }
@@ -760,10 +786,10 @@ async function configureSignalAccountIdentity(
       const nativeChoice = (await rl.question("Choose [3]: ")).trim() || "3";
       if (nativeChoice === "1") {
         const linked = await linkSignalAccountWithNativeCli(rl);
-        if (linked) return linked;
+        return linked;
       } else if (nativeChoice === "2") {
         const registered = await registerSignalAccountWithNativeCli(rl);
-        if (registered) return registered;
+        return registered;
       }
     }
     const accountInput = await rl.question(

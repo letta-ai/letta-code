@@ -8,8 +8,10 @@ import {
   normalizeSignalBaseUrl,
   normalizeSignalPhoneInput,
   parseNativeSignalCliDaemonConfigDir,
+  parseSignalCliDeletePath,
   parseSignalCsv,
   parseSignalLinkAssociatedAccount,
+  parseSignalLinkExistingAccount,
   parseSignalLinkUri,
 } from "./setup";
 
@@ -106,6 +108,24 @@ describe("Signal setup helpers", () => {
       ),
     ).toBe("+15036195666");
     expect(parseSignalLinkAssociatedAccount("no phone here")).toBeNull();
+  });
+
+  test("parses already-linked Signal account from native link errors", () => {
+    expect(
+      parseSignalLinkExistingAccount(
+        'The user +15036195666 already exists\nDelete "/tmp/data/747879" before trying again.',
+      ),
+    ).toBe("+15036195666");
+    expect(parseSignalLinkExistingAccount("different failure")).toBeNull();
+  });
+
+  test("parses existing-account native link failure", () => {
+    const output =
+      'The user +15036195666 already exists\nDelete "/tmp/signal/data/747879" before trying again.';
+    expect(parseSignalLinkExistingAccount(output)).toBe("+15036195666");
+    expect(parseSignalCliDeletePath(output)).toBe("/tmp/signal/data/747879");
+    expect(parseSignalLinkExistingAccount("no account")).toBeNull();
+    expect(parseSignalCliDeletePath("no path")).toBeNull();
   });
 
   test("parses native link URI for QR rendering", () => {

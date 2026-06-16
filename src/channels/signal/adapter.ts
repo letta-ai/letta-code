@@ -22,6 +22,7 @@ import type {
 } from "@/channels/types";
 import type { SignalReactionParams, SignalSseEvent } from "./client";
 import { SignalRestClient } from "./client";
+import type { SignalMessageTarget } from "./target";
 import {
   isSignalGroupAllowed,
   matchesSignalMentionPatterns,
@@ -220,6 +221,16 @@ function envelopeFromSelfSyncMessage(
     timestamp: sentMessage.timestamp ?? envelope.timestamp,
     dataMessage: sentMessage.message,
   };
+}
+
+function signalTargetMatchesAccount(
+  target: SignalMessageTarget,
+  account: SignalChannelAccount,
+): boolean {
+  return (
+    target.kind === "recipient" &&
+    signalIdentityMatchesAccount(target.recipient, account)
+  );
 }
 
 function renderSignalMentions(
@@ -931,6 +942,14 @@ export class SignalChannelAdapter implements ChannelAdapter {
     msg: OutboundChannelMessage,
   ): Promise<{ messageId: string }> {
     const target = parseSignalTarget(msg.chatId);
+    if (
+      this.account.selfChatMode === true &&
+      !signalTargetMatchesAccount(target, this.account)
+    ) {
+      throw new Error(
+        "Signal self-chat mode only permits replies to the linked account's own Note to Self chat.",
+      );
+    }
     if (msg.reaction || msg.targetMessageId) {
       if (!msg.reaction) {
         throw new Error("Signal reaction emoji is required.");

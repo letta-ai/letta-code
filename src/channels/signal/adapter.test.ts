@@ -476,6 +476,38 @@ describe("SignalChannelAdapter", () => {
     });
   });
 
+  test("self-chat mode blocks outbound sends to non-self targets", async () => {
+    const sendMessage = mock(async () => "123");
+    const client: SignalClientLike = {
+      check: async () => undefined,
+      sendMessage,
+      sendReaction: async () => undefined,
+      sendTyping: async () => undefined,
+      streamEvents: async () => undefined,
+    };
+    const adapter = createSignalAdapter(signalAccount({ selfChatMode: true }), {
+      client,
+    });
+
+    await expect(
+      adapter.sendMessage({
+        channel: "signal",
+        accountId: "personal",
+        chatId: "signal:+15555550123",
+        text: "do not send",
+      }),
+    ).rejects.toThrow(/self-chat mode/);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await adapter.sendMessage({
+      channel: "signal",
+      accountId: "personal",
+      chatId: "signal:+15555550100",
+      text: "note to self",
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   test("sends and stops typing indicators during turn lifecycle", async () => {
     const sendTyping = mock(async () => undefined);
     const client: SignalClientLike = {
