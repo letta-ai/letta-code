@@ -139,6 +139,15 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
   return `<attachment ${attrs.join(" ")} />`;
 }
 
+function canEmitInlineImageContentPart(mimeType: string): boolean {
+  const normalized = mimeType.split(";")[0]?.trim().toLowerCase();
+  return (
+    !!normalized &&
+    normalized.startsWith("image/") &&
+    normalized !== "image/svg+xml"
+  );
+}
+
 function buildReactionXml(msg: InboundChannelMessage): string | null {
   if (!msg.reaction) {
     return null;
@@ -310,7 +319,7 @@ export function formatChannelNotification(
         typeof attachment.imageDataBase64 !== "string" ||
         attachment.imageDataBase64.length === 0 ||
         typeof attachment.mimeType !== "string" ||
-        !attachment.mimeType.startsWith("image/")
+        !canEmitInlineImageContentPart(attachment.mimeType)
       ) {
         return [];
       }

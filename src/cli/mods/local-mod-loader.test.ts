@@ -12,6 +12,7 @@ import type Letta from "@letta-ai/letta-client";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
 import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
+import { runModCommandWithTimeout } from "@/cli/mods/command-runtime";
 import {
   disposeLocalMods,
   evaluateLocalModStatuses,
@@ -52,7 +53,6 @@ function createLoadOptions(root: string) {
     cacheDirectory: path.join(root, "mod-cache"),
     getClient: async () =>
       ({ getMarker: () => "test-client" }) as unknown as Letta,
-    getContext: createStatuslineContext,
     globalModsDirectory: path.join(root, "global-mods"),
   };
 }
@@ -197,6 +197,160 @@ describe("local mod loader", () => {
     }
   });
 
+  test("records status evaluation diagnostics", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const modDir = options.globalModsDirectory;
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "bad-status.ts"),
+        `export default function(letta) {
+          letta.ui.setStatus("bad", () => {
+            throw new Error("ctx.getContext is not a function");
+          });
+        }`,
+      );
+
+      const registry = await loadLocalMods(options);
+      expect(
+        evaluateLocalModStatuses(registry, createStatuslineContext()),
+      ).toEqual({});
+      expect(registry.diagnostics.at(-1)).toMatchObject({
+        capability: { id: "bad", kind: "status" },
+        error: { message: "ctx.getContext is not a function" },
+        phase: "status.evaluate",
+      });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("deprecated activation getContext trap records even when caught", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const modDir = options.globalModsDirectory;
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "legacy-statusline.ts"),
+        `export default function(letta) {
+          const update = async () => {
+            try {
+              letta.getContext();
+            } catch {
+              letta.ui.clearStatus("branch");
+            }
+          };
+          letta.ui.setStatuslineRenderer(() => "ok");
+          void update();
+        }`,
+      );
+
+      const registry = await loadLocalMods(options);
+
+      expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
+      expect(registry.ui.statuslineRenderer).toBeDefined();
+      expect(registry.diagnostics).toContainEqual(
+        expect.objectContaining({
+          capability: { id: "letta.getContext", kind: "api" },
+          phase: "deprecated_api",
+          severity: "warning",
+        }),
+      );
+      expect(
+        registry.diagnostics.some((diagnostic) =>
+          diagnostic.error.message.includes(
+            "letta.getContext is no longer available",
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("static source scan records deprecated getContext warnings", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const modDir = options.globalModsDirectory;
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "ctx-source.ts"),
+        `export default function() {
+          const unused = (ctx) => ctx.getContext();
+        }`,
+      );
+      writeFileSync(
+        path.join(modDir, "generic-source.ts"),
+        `export default function() {
+          const unused = (value) => value.getContext();
+        }`,
+      );
+
+      const registry = await loadLocalMods(options);
+
+      expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
+      expect(registry.diagnostics).toContainEqual(
+        expect.objectContaining({
+          capability: { id: "ctx.getContext", kind: "api" },
+          error: expect.objectContaining({
+            message: "Mod source uses removed API: ctx.getContext",
+          }),
+          phase: "deprecated_api",
+          severity: "warning",
+        }),
+      );
+      expect(registry.diagnostics).toContainEqual(
+        expect.objectContaining({
+          capability: { id: ".getContext()", kind: "api" },
+          error: expect.objectContaining({
+            message: "Mod source uses removed API: .getContext()",
+          }),
+          phase: "deprecated_api",
+          severity: "warning",
+        }),
+      );
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("deprecated status ctx getContext trap records even when caught", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const modDir = options.globalModsDirectory;
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "caught-status.ts"),
+        `export default function(letta) {
+          letta.ui.setStatus("branch", (ctx) => {
+            try {
+              ctx.getContext();
+            } catch {}
+            return "fallback";
+          });
+        }`,
+      );
+
+      const registry = await loadLocalMods(options);
+      expect(
+        evaluateLocalModStatuses(registry, createStatuslineContext()),
+      ).toEqual({ branch: "fallback" });
+      expect(registry.diagnostics).toContainEqual(
+        expect.objectContaining({
+          capability: { id: "ctx.getContext", kind: "api" },
+          phase: "deprecated_api",
+          severity: "warning",
+        }),
+      );
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("transpiles TypeScript and TSX mods to importable mjs cache files", async () => {
     const root = createTempDir();
     try {
@@ -207,8 +361,10 @@ describe("local mod loader", () => {
       writeFileSync(
         modPath,
         `export default function(letta: any) {
-          const Label = letta.getContext().components.Text;
-          letta.ui.setStatuslineRenderer((ctx: any) => <Label>{ctx.agent.name}</Label>);
+          letta.ui.setStatuslineRenderer((ctx: any) => {
+            const Label = ctx.components.Text;
+            return <Label>{ctx.agent.name}</Label>;
+          });
         }`,
       );
 
@@ -298,6 +454,7 @@ describe("local mod loader", () => {
       await expect(
         Promise.resolve(
           registry.commands["review-pr"]?.run({
+            ...createStatuslineContext(),
             agent: { id: "agent-1", name: "Amelia" },
             args: "123",
             argv: ["123"],
@@ -311,8 +468,12 @@ describe("local mod loader", () => {
               sendMessageStream: async () => (async function* () {})(),
             },
             cwd: "/tmp/project",
-            getContext: createStatuslineContext,
-            model: { id: "model-1", displayName: "Sonnet" },
+            model: {
+              displayName: "Sonnet",
+              id: "model-1",
+              provider: "anthropic",
+              reasoningEffort: null,
+            },
             permissionMode: "standard",
             rawInput: "/review-pr 123",
           }),
@@ -321,6 +482,60 @@ describe("local mod loader", () => {
 
       disposeLocalMods(registry);
       expect(registry.commands).toEqual({});
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("records command run diagnostics for removed scoped context helpers", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const modDir = options.globalModsDirectory;
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "legacy-command.ts"),
+        `export default function(letta) {
+          letta.commands.register({
+            id: "legacy-command",
+            description: "Old command",
+            run(ctx) { return ctx.getContext(); },
+          });
+        }`,
+      );
+
+      const registry = await loadLocalMods(options);
+      const command = registry.commands["legacy-command"];
+      expect(command).toBeDefined();
+      await expect(
+        Promise.resolve(
+          command
+            ? runModCommandWithTimeout(command, {
+                ...createStatuslineContext(),
+                args: "",
+                argv: [],
+                command: "legacy-command",
+                conversation: {
+                  id: "conversation-1",
+                  fork: async () => {
+                    throw new Error("not implemented");
+                  },
+                  getHistory: async () => [],
+                  sendMessageStream: async () => (async function* () {})(),
+                },
+                rawInput: "/legacy-command",
+              })
+            : Promise.resolve({ type: "handled" as const }),
+        ),
+      ).rejects.toThrow("ctx.getContext is no longer available");
+      const diagnostic = registry.diagnostics.at(-1);
+      expect(diagnostic).toMatchObject({
+        capability: { id: "legacy-command", kind: "command" },
+        phase: "command.run",
+      });
+      expect(diagnostic?.error.message).toContain(
+        "ctx.getContext is no longer available",
+      );
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -351,6 +566,7 @@ describe("local mod loader", () => {
       await expect(
         Promise.resolve(
           registry.commands["client-check"]?.run({
+            ...createStatuslineContext(),
             agent: { id: "agent-1", name: "Amelia" },
             args: "",
             argv: [],
@@ -364,8 +580,12 @@ describe("local mod loader", () => {
               sendMessageStream: async () => (async function* () {})(),
             },
             cwd: "/tmp/project",
-            getContext: createStatuslineContext,
-            model: { id: "model-1", displayName: "Sonnet" },
+            model: {
+              displayName: "Sonnet",
+              id: "model-1",
+              provider: "anthropic",
+              reasoningEffort: null,
+            },
             permissionMode: "standard",
             rawInput: "/client-check",
           }),

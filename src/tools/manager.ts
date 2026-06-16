@@ -24,7 +24,9 @@ import {
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from "@/hooks";
+import { buildModInvocationContext } from "@/mods/context";
 import { createModConversationHandle } from "@/mods/conversation-handle";
+import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
 import { emitModEvent, type ModEvents } from "@/mods/event-emitter";
 import {
   checkModPermissions,
@@ -40,7 +42,11 @@ import {
   modToolApprovalPolicy,
   runModTool,
 } from "@/mods/tool-registry";
-import type { ModToolRunContext, ToolApprovalPolicy } from "@/mods/types";
+import type {
+  ModContext,
+  ModToolRunContext,
+  ToolApprovalPolicy,
+} from "@/mods/types";
 import {
   permissionMode as globalPermissionMode,
   type PermissionMode,
@@ -643,6 +649,7 @@ type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
+  modContext?: ModContext;
   modEvents?: ModEvents;
   modPermissions: Map<string, ModPermissionDefinition>;
   modTools: Map<string, ModToolDefinition>;
@@ -1098,6 +1105,7 @@ function capturePreparedToolExecutionContext(
     toolRegistry: ToolRegistry;
     externalTools: Map<string, ExternalToolDefinition>;
     externalExecutor?: ExternalToolExecutor;
+    modContext?: ModContext;
     modEvents?: ModEvents;
     modPermissions: Map<string, ModPermissionDefinition>;
     modTools: Map<string, ModToolDefinition>;
@@ -1107,6 +1115,7 @@ function capturePreparedToolExecutionContext(
     externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
+    modContext?: ModContext;
     modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -1135,6 +1144,7 @@ function capturePreparedToolExecutionContext(
       ),
     ),
     externalExecutor: snapshot.externalExecutor,
+    modContext: options?.modContext ?? snapshot.modContext,
     modEvents: options?.modEvents ?? snapshot.modEvents,
     modPermissions: snapshot.modPermissions,
     modTools: filterModToolsByClientAllowlist(
@@ -1158,7 +1168,11 @@ function capturePreparedToolExecutionContext(
       executionSnapshot.externalTools,
       executionSnapshot.modTools,
     ),
-    loadedToolNames: Array.from(executionSnapshot.toolRegistry.keys()),
+    loadedToolNames: buildClientToolsFromSnapshot(
+      executionSnapshot.toolRegistry,
+      new Map(),
+      executionSnapshot.modTools,
+    ).map((tool) => tool.name),
   };
 }
 
@@ -1170,18 +1184,21 @@ function capturePreparedToolExecutionContext(
 export function captureToolExecutionContext(
   workingDirectory: string = getCurrentWorkingDirectory(),
   permissionModeState?: PermissionModeState,
+  modContext?: ModContext,
 ): CapturedToolExecutionContext {
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: new Map(toolRegistry),
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      modPermissions: getAvailableModPermissionsRegistry(),
-      modTools: getAvailableModToolsRegistry(),
+      modContext,
+      modPermissions: getAvailableModPermissionsRegistry(modContext),
+      modTools: getAvailableModToolsRegistry(modContext),
     },
     {
       workingDirectory,
       permissionModeState,
+      modContext,
     },
   );
 }
@@ -1192,6 +1209,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: ChannelTurnSource[];
+  modContext?: ModContext;
   modEvents?: ModEvents;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
@@ -1205,9 +1223,10 @@ export async function prepareCurrentToolExecutionContext(options?: {
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(),
-      modTools: getAvailableModToolsRegistry(),
+      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
+      modTools: getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1222,6 +1241,7 @@ export async function prepareToolExecutionContextForSpecificTools(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
+    modContext?: ModContext;
     modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
@@ -1235,9 +1255,10 @@ export async function prepareToolExecutionContextForSpecificTools(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(),
-      modTools: getAvailableModToolsRegistry(),
+      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
+      modTools: getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1254,6 +1275,7 @@ export async function prepareToolExecutionContextForModel(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
+    modContext?: ModContext;
     modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
@@ -1267,9 +1289,10 @@ export async function prepareToolExecutionContextForModel(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(),
-      modTools: getAvailableModToolsRegistry(),
+      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
+      modTools: getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1323,6 +1346,14 @@ async function checkModPermissionForContext(options: {
 }): Promise<ModPermissionDecisionResult | undefined> {
   const runtimeContext = options.context?.runtimeContext;
   const permissionModeState = options.context?.permissionModeState;
+  const modContext =
+    options.context?.modContext ??
+    buildModInvocationContext({
+      conversationId: runtimeContext?.conversationId ?? null,
+      permissionMode:
+        permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
+      workingDirectory: options.workingDirectory,
+    });
   return checkModPermissions(
     {
       agentId: runtimeContext?.agentId ?? null,
@@ -1336,7 +1367,9 @@ async function checkModPermissionForContext(options: {
         permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
       phase: options.phase,
     },
-    options.context?.modPermissions ?? getAvailableModPermissionsRegistry(),
+    options.context?.modPermissions ??
+      getAvailableModPermissionsRegistry(modContext),
+    modContext,
   );
 }
 
@@ -1372,6 +1405,13 @@ export async function checkToolPermission(
     permissionModeStateArg ?? context?.permissionModeState;
   const effectiveAgentId =
     agentIdArg ?? context?.runtimeContext.agentId ?? undefined;
+  const modContext =
+    context?.modContext ??
+    buildModInvocationContext({
+      conversationId: context?.runtimeContext.conversationId ?? null,
+      permissionMode: effectivePermissionModeState?.mode ?? null,
+      workingDirectory: effectiveWorkingDirectory,
+    });
 
   const permissions = await loadPermissions(effectiveWorkingDirectory);
   return runWithRuntimeContext(
@@ -1388,10 +1428,12 @@ export async function checkToolPermission(
         effectiveWorkingDirectory,
         effectivePermissionModeState,
         effectiveAgentId,
-        context?.modPermissions ?? getAvailableModPermissionsRegistry(),
-        context?.modTools ?? getAvailableModToolsRegistry(),
+        context?.modPermissions ??
+          getAvailableModPermissionsRegistry(modContext),
+        context?.modTools ?? getAvailableModToolsRegistry(modContext),
         {
           conversationId: context?.runtimeContext.conversationId ?? null,
+          modContext,
           phase: "approval",
           toolCallId: toolCallIdArg ?? null,
         },
@@ -2105,6 +2147,7 @@ async function emitToolStartEvent(options: {
   args: ToolArgs;
   events?: ModEvents;
   executionScope: RuntimeContextSnapshot;
+  modContext: ModContext;
   toolCallId?: string;
   toolName: string;
 }): Promise<{ args: ToolArgs }> {
@@ -2117,7 +2160,7 @@ async function emitToolStartEvent(options: {
   };
 
   try {
-    await emitModEvent(options.events, "tool_start", event);
+    await emitModEvent(options.events, "tool_start", event, options.modContext);
   } catch (error) {
     debugLog("mods", "tool_start event failed", error);
     return { args: options.args };
@@ -2137,6 +2180,7 @@ async function executeModTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     workingDirectory: string;
     scopedAgentId?: string;
+    modContext?: ModContext;
   },
 ): Promise<ToolExecutionResult> {
   const startTime = Date.now();
@@ -2164,10 +2208,10 @@ async function executeModTool(
 
     try {
       const backend = getBackend();
+      const modContext = toolExecutionModContext(executionScope, options);
       const context: ModToolRunContext = {
+        ...modContext,
         args: args as Record<string, unknown>,
-        cwd: options.workingDirectory,
-        workingDirectory: options.workingDirectory,
         toolCallId: options.toolCallId ?? null,
         signal,
         ...(options.onOutput
@@ -2182,8 +2226,6 @@ async function executeModTool(
               },
             }
           : {}),
-        permissionMode: executionScope.permissionMode ?? null,
-        agent: { id: executionScope.agentId ?? null },
         conversation: createModConversationHandle({
           agentId: executionScope.agentId,
           backend,
@@ -2196,9 +2238,15 @@ async function executeModTool(
           },
           workingDirectory: options.workingDirectory,
         }),
-        getContext: tool.getContext,
       };
-      const result = await runModTool(tool, context);
+      const result = await runModTool(
+        tool,
+        attachDeprecatedGetContextTrap(
+          context,
+          tool.recordDiagnostic,
+          "ctx.getContext",
+        ),
+      );
       const duration = Date.now() - startTime;
       const recordResult = isRecord(result) ? result : undefined;
       const stdout = isStringArray(recordResult?.stdout)
@@ -2254,6 +2302,11 @@ async function executeModTool(
         ...(stderr && { stderr }),
       };
     } catch (error) {
+      tool.recordDiagnostic?.({
+        capability: { id: toolName, kind: "tool" },
+        error: error instanceof Error ? error : new Error(String(error)),
+        phase: "tool.run",
+      });
       const duration = Date.now() - startTime;
       const isAbort =
         signal.aborted ||
@@ -2316,6 +2369,18 @@ async function executeModTool(
   }
 }
 
+function toolExecutionModContext(
+  executionScope: RuntimeContextSnapshot,
+  options: { workingDirectory: string; modContext?: ModContext },
+): ModContext {
+  return buildModInvocationContext({
+    base: options.modContext,
+    conversationId: executionScope.conversationId ?? null,
+    permissionMode: executionScope.permissionMode ?? null,
+    workingDirectory: options.workingDirectory,
+  });
+}
+
 /**
  * Executes a tool by name with the provided arguments.
  *
@@ -2353,7 +2418,6 @@ export async function executeTool(
     context?.externalTools ?? getExternalToolsRegistry();
   const activeExternalExecutor =
     context?.externalExecutor ?? getExternalToolExecutor();
-  const activeModTools = context?.modTools ?? getAvailableModToolsRegistry();
   const modEvents = context?.modEvents;
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
@@ -2368,6 +2432,11 @@ export async function executeTool(
   const workingDirectory =
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
+  const modContext =
+    context?.modContext ??
+    toolExecutionModContext(executionScope, { workingDirectory });
+  const activeModTools =
+    context?.modTools ?? getAvailableModToolsRegistry(modContext);
 
   if (activeModTools.has(name)) {
     const modTool = activeModTools.get(name);
@@ -2381,6 +2450,7 @@ export async function executeTool(
       args,
       events: modEvents,
       executionScope,
+      modContext,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
@@ -2403,6 +2473,7 @@ export async function executeTool(
       onOutput: options?.onOutput,
       workingDirectory,
       scopedAgentId,
+      modContext,
     });
   }
 
@@ -2413,6 +2484,7 @@ export async function executeTool(
       args,
       events: modEvents,
       executionScope,
+      modContext,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
@@ -2468,6 +2540,7 @@ export async function executeTool(
     args,
     events: modEvents,
     executionScope,
+    modContext,
     toolCallId: options?.toolCallId,
     toolName: internalName,
   });

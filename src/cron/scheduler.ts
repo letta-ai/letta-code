@@ -12,7 +12,6 @@
  * On stop: clears interval, releases lease.
  */
 
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { getBackend } from "@/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
@@ -123,7 +122,6 @@ async function resolveCronFireConversationId(
   if (task.conversation_id === NEW_CONVERSATION_TARGET) {
     const conversation = await getBackend().createConversation({
       agent_id: task.agent_id,
-      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
       summary: getCronConversationSummary(task),
     });
     return conversation.id;

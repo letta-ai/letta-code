@@ -3,6 +3,22 @@ import type {
   ChannelMessageActionContext,
 } from "@/channels/plugin-types";
 
+function resolveDiscordRouteThreadId(
+  ctx: ChannelMessageActionContext,
+): string | null {
+  if (ctx.route.chatType === "direct") {
+    return null;
+  }
+
+  const threadId = ctx.request.threadId ?? ctx.route.threadId ?? null;
+  const trimmed = threadId?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+
+  return null;
+}
+
 async function sendDiscordMessage(
   ctx: ChannelMessageActionContext,
 ): Promise<string> {
@@ -20,7 +36,7 @@ async function sendDiscordMessage(
     chatId: request.chatId,
     text: formatted.text,
     replyToMessageId: request.replyToMessageId,
-    threadId: request.threadId ?? route.threadId ?? null,
+    threadId: resolveDiscordRouteThreadId(ctx),
     mediaPath: request.mediaPath,
     fileName: request.filename,
     title: request.title,
@@ -52,7 +68,7 @@ async function reactInDiscord(
     targetMessageId: request.messageId,
     reaction: request.emoji,
     removeReaction: request.remove,
-    threadId: request.threadId ?? route.threadId ?? null,
+    threadId: resolveDiscordRouteThreadId(ctx),
   });
 
   return request.remove

@@ -45,4 +45,17 @@ describe("listMcpServersWithTimeout", () => {
       ),
     ).rejects.toThrow(MCP_SERVERS_LIST_TIMEOUT_MESSAGE);
   });
+
+  test("rejects on timeout even if the client ignores abort", async () => {
+    await expect(
+      listMcpServersWithTimeout(
+        {
+          mcpServers: {
+            list: () => new Promise(() => {}),
+          },
+        },
+        1,
+      ),
+    ).rejects.toThrow(MCP_SERVERS_LIST_TIMEOUT_MESSAGE);
+  });
 });

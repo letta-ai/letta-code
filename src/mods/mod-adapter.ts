@@ -11,7 +11,6 @@ import {
   type ResolveLocalModSourcesOptions,
   resolveLocalModSources,
 } from "@/mods/mod-engine";
-import type { ModContext } from "@/mods/types";
 import { debugLog } from "@/utils/debug";
 
 const RUNTIME_DIAGNOSTICS_WRITE_DELAY_MS = 30_000;
@@ -26,24 +25,20 @@ export interface ModAdapterSnapshot extends ModAdapterLoadState {
   registry: ReturnType<ModEngine["getSnapshot"]>;
 }
 
-export interface CreateModAdapterOptions
-  extends Omit<CreateModEngineOptions, "getContext"> {
+export interface CreateModAdapterOptions extends CreateModEngineOptions {
   diagnosticsRootDirectory?: string;
   diagnosticsWriteDelayMs?: number;
   disabled?: boolean;
-  initialContext: ModContext;
 }
 
 export interface ModAdapter {
   dispose: () => void;
   events: ModEvents;
   getBackend: () => Backend | undefined;
-  getContext: () => ModContext;
   getSnapshot: () => ModAdapterSnapshot;
   engine: ModEngine;
   reload: () => Promise<void>;
   subscribe: (listener: () => void) => () => void;
-  updateContext: (context: ModContext) => void;
 }
 
 function hasModSources(options: ResolveLocalModSourcesOptions): boolean {
@@ -58,7 +53,6 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     diagnosticsWriteDelayMs = RUNTIME_DIAGNOSTICS_WRITE_DELAY_MS,
     disabled,
     getBackend: resolveBackend,
-    initialContext,
     ...engineOptions
   } = options;
 
@@ -67,10 +61,9 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     if (!alreadyDisabled) {
       disableModsForProcess();
     }
-    return createDisabledModAdapter({ initialContext });
+    return createDisabledModAdapter();
   }
 
-  let context = initialContext;
   let disposed = false;
   const initialHasModSources = hasModSources(engineOptions);
   let loadState: ModAdapterLoadState = {
@@ -82,12 +75,10 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
   let diagnosticsWriteTimer: ReturnType<typeof setTimeout> | null = null;
 
   const getBackend = () => resolveBackend?.();
-  const getContext = () => context;
 
   const engine = createModEngine({
     ...engineOptions,
     getBackend,
-    getContext,
     onDiagnostic: () => scheduleDiagnosticsWrite(),
   });
 
@@ -135,13 +126,13 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
   }
 
   const events: ModEvents = {
-    async emit(name, event) {
+    async emit(name, event, scopedContext) {
       if (loadState.isLoading || !loadState.hasModSources) {
         // Events are best-effort hooks; do not deliver them while the mod
         // registry is unavailable or in flux.
         return emptyEventEmissionResult(name);
       }
-      const result = await engine.emitEvent(name, event);
+      const result = await engine.emitEvent(name, event, scopedContext);
       return result;
     },
   };
@@ -227,7 +218,6 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     },
     events,
     getBackend,
-    getContext,
     getSnapshot,
     engine,
     reload,
@@ -236,9 +226,6 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
       return () => {
         listeners.delete(listener);
       };
-    },
-    updateContext(nextContext) {
-      context = nextContext;
     },
   };
 }

@@ -1,10 +1,13 @@
 import type {
   ModContext,
+  ModDiagnostic,
   ModOwner,
   ModPermission,
   ModPermissionCheckEvent,
   ModPermissionCheckResult,
 } from "@/mods/types";
+import { buildModInvocationContext } from "./context";
+import { attachDeprecatedGetContextTrap } from "./deprecated-api";
 import { areModsDisabled } from "./disable";
 
 const MOD_PERMISSIONS_KEY = Symbol.for("@letta/modPermissions");
@@ -15,8 +18,16 @@ type GlobalWithModPermissions = typeof globalThis & {
 
 export interface ModPermissionDefinition extends ModPermission {
   activationSignal: AbortSignal;
-  getContext: () => ModContext;
-  isAvailable: () => boolean;
+  recordDiagnostic?: (
+    diagnostic: Pick<
+      ModDiagnostic,
+      "capability" | "error" | "phase" | "severity"
+    >,
+  ) => void;
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 export interface ModPermissionDecisionResult {
@@ -36,10 +47,9 @@ function getMutableModPermissionsRegistry(): Map<
   return global[MOD_PERMISSIONS_KEY];
 }
 
-export function getAvailableModPermissionsRegistry(): Map<
-  string,
-  ModPermissionDefinition
-> {
+export function getAvailableModPermissionsRegistry(
+  context?: ModContext | null,
+): Map<string, ModPermissionDefinition> {
   if (areModsDisabled()) return new Map();
 
   return new Map(
@@ -47,8 +57,21 @@ export function getAvailableModPermissionsRegistry(): Map<
       ([, permission]) => {
         if (permission.activationSignal.aborted) return false;
         try {
-          return permission.isAvailable();
-        } catch {
+          return context
+            ? (permission.isEnabled?.(
+                attachDeprecatedGetContextTrap(
+                  { ...context },
+                  permission.recordDiagnostic,
+                  "ctx.getContext",
+                ),
+              ) ?? true)
+            : true;
+        } catch (error) {
+          permission.recordDiagnostic?.({
+            capability: { id: permission.id, kind: "permission" },
+            error: toError(error),
+            phase: "permission.isEnabled",
+          });
           return false;
         }
       },
@@ -127,21 +150,60 @@ export async function checkModPermissions(
     string,
     ModPermissionDefinition
   > = getAvailableModPermissionsRegistry(),
+  context?: ModContext | null,
 ): Promise<ModPermissionDecisionResult | undefined> {
   if (areModsDisabled()) return undefined;
+
+  const invocationContext =
+    context ??
+    buildModInvocationContext({
+      agent: { id: event.agentId },
+      conversationId: event.conversationId,
+      permissionMode: event.permissionMode,
+      workingDirectory: event.workingDirectory,
+    });
 
   const decisions: ModPermissionDecisionResult[] = [];
   for (const permission of registry.values()) {
     if (permission.activationSignal.aborted) continue;
 
+    try {
+      if (
+        permission.isEnabled?.(
+          attachDeprecatedGetContextTrap(
+            { ...invocationContext },
+            permission.recordDiagnostic,
+            "ctx.getContext",
+          ),
+        ) === false
+      ) {
+        continue;
+      }
+    } catch (error) {
+      permission.recordDiagnostic?.({
+        capability: { id: permission.id, kind: "permission" },
+        error: toError(error),
+        phase: "permission.isEnabled",
+      });
+      continue;
+    }
+
     let rawResult: ModPermissionCheckResult;
     try {
-      if (!permission.isAvailable()) continue;
-      rawResult = await permission.check(event, {
-        getContext: permission.getContext,
-        signal: permission.activationSignal,
-      });
+      rawResult = await permission.check(
+        event,
+        attachDeprecatedGetContextTrap(
+          { ...invocationContext, signal: permission.activationSignal },
+          permission.recordDiagnostic,
+          "ctx.getContext",
+        ),
+      );
     } catch (error) {
+      permission.recordDiagnostic?.({
+        capability: { id: permission.id, kind: "permission" },
+        error: toError(error),
+        phase: "permission.check",
+      });
       return {
         decision: "deny",
         matchedRule: `mod permission:${permission.id}`,

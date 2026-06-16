@@ -752,14 +752,13 @@ function inferThreadIdFromChannelTurnSources(params: {
       continue;
     }
 
-    // Slack uses a message timestamp as the thread identifier when replying
-    // from a channel-scoped route into the active turn's implicit thread. Other
-    // channels (notably Discord DMs) have distinct message IDs and channel IDs;
-    // treating the inbound message ID as a thread/channel ID makes the adapter
-    // attempt to fetch a non-channel target and fail with "Unknown Channel".
+    // Slack uses the source message timestamp as an implicit thread target.
+    // Other channels have distinct message IDs; treating those as thread IDs
+    // makes DM replies try to fetch non-channel targets.
     threadIds.add(
       source.threadId ??
-        (source.channel === "slack" ? (source.messageId ?? null) : null),
+        (params.input.channel === "slack" ? source.messageId : null) ??
+        null,
     );
   }
 
