@@ -40,6 +40,9 @@ messages and replies will be sent as that personal account.
      verify the code with `/v1/register/{number}/verify/{code}`.
    - If Signal requires captcha, it points you at `signalcaptchas.org` and asks
      for the returned `signalcaptcha://...` URL.
+   - Some daemons expose only Letta's runtime JSON-RPC paths (`/api/v1/*`) and
+     not the setup REST paths (`/v1/*`). In that case the wizard skips QR/SMS
+     automation and prints native `signal-cli` link/register commands instead.
 
    Common paths:
 
@@ -123,6 +126,9 @@ If `ffmpeg` is missing, the agent receives an
   daemon. Use a custom URL only when the daemon runs elsewhere.
 - **No account listed by the daemon:** use the configure wizard's QR link flow
   or SMS/voice registration flow, then rerun account detection.
+- **QR page says 404:** your daemon exposes runtime JSON-RPC but not `/v1/*`
+  setup endpoints. Link/register with native `signal-cli` commands, then rerun
+  `letta channels configure signal` and enter the linked phone number.
 - **Only placeholders like `[image attached]`:** confirm `download_media: true`,
   restart the listener after changing config, and check the daemon's attachment
   directory.

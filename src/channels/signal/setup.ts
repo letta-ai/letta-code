@@ -129,6 +129,24 @@ async function fetchSignalSetupJson(
   }
 }
 
+export async function hasSignalSetupRestEndpoints(
+  baseUrl: string,
+): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(`${baseUrl}/v1/about`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -447,6 +465,34 @@ async function configureSignalAccountIdentity(
   rl: ReturnType<typeof createInterface>,
   baseUrl: string,
 ): Promise<string | null> {
+  const hasSetupRest = await hasSignalSetupRestEndpoints(baseUrl);
+  if (!hasSetupRest) {
+    console.log(
+      "\nThis daemon exposes Letta's runtime JSON-RPC endpoints, but not signal-cli-rest-api setup endpoints like /v1/accounts or /v1/qrcodelink.",
+    );
+    console.log("Letta can still use it after the Signal account is linked.");
+    console.log(
+      "To link/register the account, use one of these outside Letta:",
+    );
+    console.log('  QR link: signal-cli link -n "Letta Code"');
+    console.log("  SMS register: signal-cli -a +<BOT_PHONE_NUMBER> register");
+    console.log(
+      "  Verify SMS: signal-cli -a +<BOT_PHONE_NUMBER> verify <CODE>",
+    );
+    console.log(
+      "If you want Letta to drive QR/SMS setup, use a signal-cli-rest-api container exposing /v1/* setup endpoints.\n",
+    );
+    const accountInput = await rl.question(
+      "Linked Signal account phone number in E.164 format (e.g. +15555550100): ",
+    );
+    const account = normalizeSignalPhoneInput(accountInput);
+    if (!account) {
+      console.error("Invalid Signal phone number. Setup cancelled.");
+      return null;
+    }
+    return account;
+  }
+
   const accounts = await listSignalDaemonAccounts(baseUrl);
   const existing = await chooseExistingSignalAccount(rl, accounts);
   if (existing) return existing;

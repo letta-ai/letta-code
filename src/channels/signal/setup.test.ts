@@ -3,6 +3,7 @@ import {
   extractSignalAccountsFromResponse,
   getSignalDockerRunCommand,
   getSignalQrLinkUrl,
+  hasSignalSetupRestEndpoints,
   normalizeSignalBaseUrl,
   normalizeSignalPhoneInput,
   parseSignalCsv,
@@ -60,5 +61,23 @@ describe("Signal setup helpers", () => {
     expect(getSignalQrLinkUrl("http://127.0.0.1:8080")).toBe(
       "http://127.0.0.1:8080/v1/qrcodelink?device_name=Letta+Code",
     );
+  });
+
+  test("detects whether setup REST endpoints are available", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () =>
+        new Response("{}", { status: 200 })) as unknown as typeof fetch;
+      expect(await hasSignalSetupRestEndpoints("http://signal.test")).toBe(
+        true,
+      );
+      globalThis.fetch = (async () =>
+        new Response("not found", { status: 404 })) as unknown as typeof fetch;
+      expect(await hasSignalSetupRestEndpoints("http://signal.test")).toBe(
+        false,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
