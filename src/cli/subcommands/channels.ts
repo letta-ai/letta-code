@@ -95,7 +95,14 @@ Recommended first-party flow:
      /channels <channel> pair <code>
 
 Signal notes:
-  - Signal requires a running signal-cli-rest-api JSON-RPC/SSE daemon.
+  - Signal requires a running native signal-cli JSON-RPC/SSE daemon (or a
+    compatible signal-cli-rest-api JSON-RPC/SSE wrapper) at the configured
+    base_url.
+  - The configure wizard can bootstrap/probe a local daemon, run native
+    signal-cli link/register/verify flows, handle captcha, and render native
+    link QR codes.
+  - self_chat_mode is the safe personal-number mode: only Note to Self/self
+    messages route, and outbound sends to non-self Signal targets are rejected.
   - Signal account config supports download_media, media_max_bytes, and
     transcribe_voice. Voice transcription requires OPENAI_API_KEY; unsupported
     audio formats such as raw .aac are converted with ffmpeg when available.

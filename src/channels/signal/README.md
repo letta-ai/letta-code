@@ -1,19 +1,33 @@
 # Signal channel
 
-Letta's first-party Signal channel talks to an external
+Letta's first-party Signal channel talks to an external Signal bridge over
+JSON-RPC + server-sent events. The recommended runtime is native `signal-cli
+daemon` (`/api/v1/check`, `/api/v1/rpc`, `/api/v1/events`). The configure
+wizard can also use native `signal-cli` commands for account linking and SMS /
+voice registration, or use
 [`signal-cli-rest-api`](https://github.com/bbernhard/signal-cli-rest-api)
-daemon over JSON-RPC + server-sent events. Letta does **not** currently install,
-register, link, or supervise `signal-cli`; setup configures Letta to connect to a
-daemon you already run.
+setup endpoints (`/v1/*`) when that wrapper is available.
 
 ## Recommended setup
 
-Use a dedicated Signal number for the agent. If you connect Letta to your
-personal Signal account, self-message loop protection can ignore your own
-messages and replies will be sent as that personal account.
+Use a dedicated Signal number for the agent when you want it to participate in
+ordinary DMs/groups. If you connect Letta to your personal Signal account,
+enable `self_chat_mode` and talk to it through Signal's Note to Self/self-chat;
+that mode only permits messages to/from the linked account itself.
 
-1. Start `signal-cli-rest-api` in JSON-RPC mode. The interactive configure
-   wizard can start this Docker container for you when Docker is available.
+1. Start a Signal bridge. Native `signal-cli daemon` is the first-party runtime
+   path:
+
+   ```bash
+   signal-cli -c ~/.local/share/signal-cli-letta daemon \
+     --http 127.0.0.1:8080 \
+     --receive-mode on-connection \
+     --ignore-stories
+   ```
+
+   Alternative: start `signal-cli-rest-api` in JSON-RPC mode. The interactive
+   configure wizard can start this Docker container for you when Docker is
+   available.
 
    Docker example:
 
@@ -29,7 +43,7 @@ messages and replies will be sent as that personal account.
          - signal-cli-data:/home/.local/share/signal-cli
    ```
 
-2. Register or link the Signal account in the daemon.
+2. Register or link the Signal account in the daemon/config directory.
 
    `letta channels configure signal` can help with this after it starts/probes
    the daemon:
@@ -40,14 +54,19 @@ messages and replies will be sent as that personal account.
      verify the code with `/v1/register/{number}/verify/{code}`.
    - If Signal requires captcha, it points you at `signalcaptchas.org` and asks
      for the returned `signalcaptcha://...` URL.
-   - Some daemons expose only Letta's runtime JSON-RPC paths (`/api/v1/*`) and
-     not the setup REST paths (`/v1/*`). In that case the wizard skips QR/SMS
-     automation and prints native `signal-cli` link/register commands instead.
+   - Native `signal-cli daemon` exposes only Letta's runtime JSON-RPC paths
+     (`/api/v1/*`) and not wrapper setup REST paths (`/v1/*`). In that case the
+     wizard uses local native `signal-cli` commands when available.
+   - Native link renders the emitted `sgnl://linkdevice?...` URI as an ASCII QR
+     in the terminal and parses the final `Associated with: +...` account.
+   - If native link reports the account already exists in the config directory,
+     the wizard offers to use that existing linked account or cancels with the
+     delete-path recovery instruction.
 
    Common paths:
 
-   - QR/device link: use the daemon or `signal-cli link` flow, then scan the QR
-     from Signal on your phone.
+   - QR/device link: use the daemon `/v1/qrcodelink` flow when available, or
+     native `signal-cli link -n "Letta Code"` with the wizard-rendered QR.
    - SMS registration: register a dedicated number, complete any
      `signalcaptchas.org` captcha, then verify the SMS code.
 
@@ -65,7 +84,9 @@ messages and replies will be sent as that personal account.
 
    The wizard first checks `http://127.0.0.1:8080`. If no daemon responds and
    Docker is installed, it can run the container command above automatically
-   using the persistent volume `letta-signal-cli-data`.
+   using the persistent volume `letta-signal-cli-data`. If a native daemon is
+   already running, it detects the daemon's config directory and can run native
+   setup commands against that directory.
 
 4. Start Letta with Signal enabled:
 
@@ -104,6 +125,28 @@ Important fields:
 | `media_max_bytes` | Maximum inbound media bytes to consider. Default setup value is 25 MiB. |
 | `transcribe_voice` | Auto-transcribe inbound audio when `OPENAI_API_KEY` is set. |
 
+## Personal-number / self-chat safety model
+
+`self_chat_mode` is for using your personal Signal number without letting Letta
+read or send ordinary Signal DMs from that account.
+
+When `self_chat_mode: true`:
+
+- Inbound messages route only when they are from the linked account itself,
+  including native `syncMessage.sentMessage` Note to Self events.
+- Non-self direct messages are dropped before routing.
+- Outbound sends/reactions are rejected unless the target is the linked account
+  itself.
+- Groups are not a self-chat target; self-chat mode is intended for Note to Self
+  only.
+
+When `self_chat_mode: false`:
+
+- Messages from the linked account itself are treated as loop-protection echoes
+  and ignored.
+- DMs/groups follow the normal `dm_policy`, allowlist, pairing, and
+  `group_mode` settings.
+
 ## Media and voice notes
 
 Inbound images are copied into Letta channel storage and surfaced as both
@@ -120,20 +163,21 @@ If `ffmpeg` is missing, the agent receives an
 
 ## Troubleshooting
 
-- **No inbound messages:** confirm the daemon is running with `MODE=json-rpc` and
-  that Letta's `base_url` points at it.
+- **No inbound messages:** confirm the native daemon is listening on
+  `/api/v1/events` or the wrapper is running in JSON-RPC mode, and that Letta's
+  `base_url` points at it.
 - **Don't know what base URL to use:** run `letta channels configure signal` on
   the same machine as the listener and let it start/probe the local Docker
   daemon. Use a custom URL only when the daemon runs elsewhere.
 - **No account listed by the daemon:** use the configure wizard's QR link flow
   or SMS/voice registration flow, then rerun account detection.
 - **QR page says 404:** your daemon exposes runtime JSON-RPC but not `/v1/*`
-  setup endpoints. Link/register with native `signal-cli` commands, then rerun
-  `letta channels configure signal` and enter the linked phone number.
-- **No captcha option in the wizard:** captcha is only automatable when the
-  daemon exposes `/v1/register`. With JSON-RPC-only daemons, use native
-  `signal-cli -a +<BOT_PHONE_NUMBER> register --captcha '<SIGNALCAPTCHA_URL>'`,
-  then verify and rerun the wizard.
+  wrapper setup endpoints. Use the native setup path in
+  `letta channels configure signal`; it renders the `signal-cli link` URI as a
+  QR when possible.
+- **Captcha required:** the wizard opens `signalcaptchas.org`, asks for the
+  returned `signalcaptcha://...` URL, and runs native
+  `signal-cli register --captcha` or the wrapper `/v1/register` equivalent.
 - **Only placeholders like `[image attached]`:** confirm `download_media: true`,
   restart the listener after changing config, and check the daemon's attachment
   directory.
@@ -141,12 +185,14 @@ If `ffmpeg` is missing, the agent receives an
   `ffmpeg` on the machine running `letta server`.
 - **Pairing repeats:** approve the code in the target Letta conversation with
   `/channels signal pair <code>` or use the CLI pairing command.
-- **Messages from yourself are ignored / bot seems to ignore own linked-device messages:** this is loop protection. Letta ignores messages from the linked account so it does not reply to itself. If the daemon reports your own identity as a UUID instead of the configured phone number, set `account_uuid`.
-- **Using your personal Signal number:** enable `self_chat_mode` and talk to the agent in Signal's Note to Self/self-chat. Other direct messages on that linked account are ignored while self-chat mode is enabled.
+- **Messages from yourself are ignored / bot seems to ignore own linked-device messages:** this is loop protection in normal mode. Enable `self_chat_mode` only when you intentionally want Note to Self/self-chat routing.
+- **Using your personal Signal number:** enable `self_chat_mode` and talk to the agent in Signal's Note to Self/self-chat. Other direct messages on that linked account are ignored, and outbound sends to non-self targets are rejected while self-chat mode is enabled.
 
 ## Current limitations
 
-- Letta does not currently manage Signal registration/linking for you.
-- The supported transport is `signal-cli-rest-api` JSON-RPC/SSE.
+- Letta does not install or supervise `signal-cli`; you still need a running
+  native daemon or compatible wrapper.
+- Runtime support targets native `signal-cli` JSON-RPC/SSE. Wrapper `/v1/*`
+  endpoints are used only for setup when available.
 - Group support is intentionally conservative; start with `group_mode:
   disabled` or `mention` before using `open`.
