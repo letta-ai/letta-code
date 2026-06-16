@@ -9,6 +9,7 @@ const SIGNAL_CONFIG_KEYS = new Set([
   "group_mode",
   "allowed_groups",
   "mention_patterns",
+  "transcribe_voice",
   "download_media",
   "media_max_bytes",
 ]);
@@ -64,6 +65,8 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
           isStringArray(config.allowed_groups)) &&
         (config.mention_patterns === undefined ||
           isStringArray(config.mention_patterns)) &&
+        (config.transcribe_voice === undefined ||
+          isBoolean(config.transcribe_voice)) &&
         (config.download_media === undefined ||
           isBoolean(config.download_media)) &&
         (config.media_max_bytes === undefined ||
@@ -94,6 +97,9 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         mentionPatterns: isStringArray(config.mention_patterns)
           ? [...config.mention_patterns]
           : undefined,
+        transcribeVoice: isBoolean(config.transcribe_voice)
+          ? config.transcribe_voice
+          : undefined,
         downloadMedia: isBoolean(config.download_media)
           ? config.download_media
           : undefined,
@@ -112,6 +118,7 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         group_mode: account.groupMode,
         allowed_groups: [...(account.allowedGroups ?? [])],
         mention_patterns: [...(account.mentionPatterns ?? [])],
+        transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
       };
@@ -126,6 +133,7 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         group_mode: account.groupMode,
         allowed_groups: [...(account.allowedGroups ?? [])],
         mention_patterns: [...(account.mentionPatterns ?? [])],
+        transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
       };

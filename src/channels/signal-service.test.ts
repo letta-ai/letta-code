@@ -99,6 +99,7 @@ describe("Signal channel service", () => {
           group_mode: "mention",
           allowed_groups: ["group-1"],
           mention_patterns: ["letta"],
+          transcribe_voice: true,
           download_media: true,
           media_max_bytes: 1048576,
         },
@@ -117,6 +118,7 @@ describe("Signal channel service", () => {
     expect(created.groupMode).toBe("mention");
     expect(created.allowedGroups).toEqual(["group-1"]);
     expect(created.mentionPatterns).toEqual(["letta"]);
+    expect(created.transcribeVoice).toBe(true);
     expect(created.downloadMedia).toBe(true);
     expect(created.mediaMaxBytes).toBe(1048576);
 

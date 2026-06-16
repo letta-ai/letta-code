@@ -14,6 +14,8 @@ import type {
   ChannelAdapter,
   ChannelAdapterStartOptions,
   ChannelMessageAttachment,
+  ChannelTurnLifecycleEvent,
+  ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
   SignalChannelAccount,
@@ -28,7 +30,7 @@ import {
 
 export type SignalClientLike = Pick<
   SignalRestClient,
-  "check" | "sendMessage" | "sendReaction" | "streamEvents"
+  "check" | "sendMessage" | "sendReaction" | "sendTyping" | "streamEvents"
 >;
 
 export type SignalAdapterOptions = {
@@ -97,8 +99,16 @@ type SignalAttachmentCandidate = NonNullable<
   SignalDataMessage["attachments"]
 >[number];
 
+type SignalTypingEntry = {
+  source: ChannelTurnSource;
+  timer: ReturnType<typeof setInterval>;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
 const DEFAULT_SIGNAL_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
 const MAX_SIGNAL_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
+const SIGNAL_TYPING_REFRESH_MS = 10_000;
+const SIGNAL_TYPING_TIMEOUT_MS = 5 * 60 * 1000;
 let signalAttachmentSearchDirsOverride: string[] | null = null;
 
 export function __testOverrideSignalAttachmentSearchDirs(
@@ -551,6 +561,54 @@ function resolveSignalInboundAttachments(
   return resolved;
 }
 
+async function transcribeSignalInboundAttachments(
+  account: SignalChannelAccount,
+  msg: InboundChannelMessage,
+): Promise<InboundChannelMessage> {
+  if (account.transcribeVoice !== true || !msg.attachments?.length) {
+    return msg;
+  }
+
+  let changed = false;
+  const attachments = await Promise.all(
+    msg.attachments.map(async (attachment) => {
+      if (attachment.kind !== "audio" || attachment.transcription) {
+        return attachment;
+      }
+      if (!attachment.localPath) {
+        return attachment;
+      }
+
+      const next = { ...attachment };
+      const { isTranscriptionConfigured, transcribeAudioFile } = await import(
+        "@/channels/transcription/index"
+      );
+      if (!isTranscriptionConfigured()) {
+        next.transcriptionError =
+          "OPENAI_API_KEY not set; transcription skipped.";
+        changed = true;
+        return next;
+      }
+
+      const result = await transcribeAudioFile(attachment.localPath);
+      if (result.success && result.text) {
+        next.transcription = result.text;
+        changed = true;
+      } else if (result.error) {
+        next.transcriptionError = result.error;
+        changed = true;
+        console.warn(
+          `[Signal] Voice transcription failed for ${attachment.name ?? attachment.localPath}:`,
+          result.error,
+        );
+      }
+      return next;
+    }),
+  );
+
+  return changed ? { ...msg, attachments } : msg;
+}
+
 function buildSignalMessageId(
   timestamp: number | null | undefined,
   author: string,
@@ -716,6 +774,19 @@ export function signalInboundFromSseEvent(
   return signalInboundFromPayload(payload, account);
 }
 
+function getSignalTypingKey(source: ChannelTurnSource): string | null {
+  if (source.channel !== "signal" || !source.chatId?.trim()) {
+    return null;
+  }
+  return [
+    source.accountId ?? "",
+    source.chatId,
+    source.messageId ?? "",
+    source.agentId,
+    source.conversationId,
+  ].join(":");
+}
+
 export class SignalChannelAdapter implements ChannelAdapter {
   readonly id = "signal";
   readonly channelId = "signal";
@@ -729,6 +800,7 @@ export class SignalChannelAdapter implements ChannelAdapter {
   private eventLoop: Promise<void> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryResolve: (() => void) | null = null;
+  private readonly typingByChatId = new Map<string, SignalTypingEntry>();
   private readonly client: SignalClientLike;
   private readonly retryMs: number;
 
@@ -770,8 +842,10 @@ export class SignalChannelAdapter implements ChannelAdapter {
     }
     this.retryResolve?.();
     this.retryResolve = null;
+    await this.stopAllTyping();
     this.abortController?.abort();
     await this.eventLoop?.catch(() => undefined);
+    this.clearAllTyping();
     this.eventLoop = null;
     this.abortController = null;
   }
@@ -807,6 +881,7 @@ export class SignalChannelAdapter implements ChannelAdapter {
         remove: msg.removeReaction === true,
       };
       await this.client.sendReaction(reactionParams);
+      await this.stopTypingForChat(msg.chatId);
       return { messageId: msg.targetMessageId };
     }
 
@@ -817,6 +892,7 @@ export class SignalChannelAdapter implements ChannelAdapter {
       attachments,
       textStyle: msg.textStyle,
     });
+    await this.stopTypingForChat(msg.chatId);
     return { messageId };
   }
 
@@ -831,6 +907,131 @@ export class SignalChannelAdapter implements ChannelAdapter {
       chatId,
       text,
     });
+  }
+
+  async prepareInboundMessage(
+    msg: InboundChannelMessage,
+  ): Promise<InboundChannelMessage> {
+    if (msg.channel !== "signal") {
+      return msg;
+    }
+    return transcribeSignalInboundAttachments(this.account, msg);
+  }
+
+  async handleTurnLifecycleEvent(
+    event: ChannelTurnLifecycleEvent,
+  ): Promise<void> {
+    if (!this.running) {
+      return;
+    }
+    if (event.type === "queued") {
+      return;
+    }
+    if (event.type === "processing") {
+      for (const source of event.sources) {
+        await this.startTypingForSource(source);
+      }
+      return;
+    }
+    for (const source of event.sources) {
+      await this.stopTypingForSource(source);
+    }
+  }
+
+  private async startTypingForSource(source: ChannelTurnSource): Promise<void> {
+    const key = getSignalTypingKey(source);
+    if (!key) {
+      return;
+    }
+    await this.stopTypingForChat(key, { sendStop: false });
+    const sendTyping = async () => {
+      try {
+        await this.client.sendTyping({
+          target: parseSignalTarget(source.chatId),
+        });
+      } catch (error) {
+        console.warn(
+          `[Signal] Failed to send typing indicator for ${source.chatId}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    };
+    await sendTyping();
+    const timer = setInterval(sendTyping, SIGNAL_TYPING_REFRESH_MS);
+    const timeout = setTimeout(() => {
+      void this.stopTypingForChat(key);
+    }, SIGNAL_TYPING_TIMEOUT_MS);
+    if (typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref?: () => void }).unref?.();
+    }
+    if (typeof (timeout as { unref?: () => void }).unref === "function") {
+      (timeout as { unref?: () => void }).unref?.();
+    }
+    this.typingByChatId.set(key, {
+      source,
+      timer,
+      timeout,
+    });
+  }
+
+  private async stopTypingForSource(source: ChannelTurnSource): Promise<void> {
+    const key = getSignalTypingKey(source);
+    if (!key) {
+      return;
+    }
+    await this.stopTypingForChat(key);
+  }
+
+  private async stopTypingForChat(
+    chatId: string,
+    options: { sendStop?: boolean } = {},
+  ): Promise<void> {
+    const directEntry = this.typingByChatId.get(chatId);
+    const key = directEntry
+      ? chatId
+      : Array.from(this.typingByChatId.entries()).find(
+          ([, entry]) => entry.source.chatId === chatId,
+        )?.[0];
+    if (!key) {
+      return;
+    }
+    const entry = this.typingByChatId.get(key);
+    if (!entry) {
+      return;
+    }
+    clearInterval(entry.timer);
+    clearTimeout(entry.timeout);
+    this.typingByChatId.delete(key);
+    if (options.sendStop === false) {
+      return;
+    }
+    try {
+      await this.client.sendTyping({
+        target: parseSignalTarget(entry.source.chatId),
+        stop: true,
+      });
+    } catch (error) {
+      console.warn(
+        `[Signal] Failed to stop typing indicator for ${entry.source.chatId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  private clearAllTyping(): void {
+    for (const entry of this.typingByChatId.values()) {
+      clearInterval(entry.timer);
+      clearTimeout(entry.timeout);
+    }
+    this.typingByChatId.clear();
+  }
+
+  private async stopAllTyping(): Promise<void> {
+    await Promise.all(
+      Array.from(this.typingByChatId.keys()).map((key) =>
+        this.stopTypingForChat(key),
+      ),
+    );
   }
 
   private resolveDirectTargetAuthor(chatId: string): string | undefined {

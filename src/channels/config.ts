@@ -298,6 +298,7 @@ const signalConfigCodec: ChannelConfigCodec<SignalChannelConfig> = {
       mentionPatterns: Array.isArray(rawMentionPatterns)
         ? (rawMentionPatterns as string[])
         : undefined,
+      transcribeVoice: parsed.transcribe_voice === true,
       downloadMedia: parsed.download_media === true,
       mediaMaxBytes:
         typeof parsed.media_max_bytes === "number"

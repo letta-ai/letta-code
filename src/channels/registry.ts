@@ -1603,14 +1603,18 @@ export class ChannelRegistry {
       return;
     }
 
-    // 3. Format as XML
-    const content = formatChannelNotification(msg);
+    // 3. Let adapters enrich inbound messages (e.g. thread context,
+    // transcription, attachment hydration), then format as XML/content parts.
+    const preparedMessage = adapter.prepareInboundMessage
+      ? await adapter.prepareInboundMessage(msg, { isFirstRouteTurn: false })
+      : msg;
+    const content = formatChannelNotification(preparedMessage);
 
     // 4. Deliver or buffer
     this.deliverOrBuffer({
       route,
       content,
-      turnSources: [buildChannelTurnSource(route, msg)],
+      turnSources: [buildChannelTurnSource(route, preparedMessage)],
     });
   }
 

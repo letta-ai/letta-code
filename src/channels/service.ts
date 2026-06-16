@@ -592,6 +592,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       groupMode: account.groupMode,
       allowedGroups: [...(account.allowedGroups ?? [])],
       mentionPatterns: [...(account.mentionPatterns ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
       createdAt: account.createdAt,
@@ -726,6 +727,7 @@ function createAccountFromPatch(
         normalizeSignalGroupMode(normalizedPatch.groupMode) ?? "disabled",
       allowedGroups: normalizedPatch.allowedGroups ?? [],
       mentionPatterns: normalizedPatch.mentionPatterns ?? [],
+      transcribeVoice: normalizedPatch.transcribeVoice === true,
       downloadMedia: normalizedPatch.downloadMedia ?? true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
       createdAt: now,
@@ -880,6 +882,8 @@ function mergeAccountPatch(
       allowedGroups: normalizedPatch.allowedGroups ?? existing.allowedGroups,
       mentionPatterns:
         normalizedPatch.mentionPatterns ?? existing.mentionPatterns,
+      transcribeVoice:
+        normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
       downloadMedia:
         normalizedPatch.downloadMedia ?? existing.downloadMedia ?? true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
@@ -1054,6 +1058,7 @@ export function getChannelConfigSnapshot(
       groupMode: account.groupMode,
       allowedGroups: [...(account.allowedGroups ?? [])],
       mentionPatterns: [...(account.mentionPatterns ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
     };

@@ -86,6 +86,39 @@ describe("SignalRestClient", () => {
     });
   });
 
+  test("sends Signal typing indicators via json-rpc", async () => {
+    let rpcBody: Record<string, unknown> | undefined;
+    const baseUrl = await withSignalServer(async (req, res) => {
+      expect(req.method).toBe("POST");
+      expect(req.url).toBe("/api/v1/rpc");
+      rpcBody = JSON.parse(await readRequestBody(req)) as Record<
+        string,
+        unknown
+      >;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          result: {},
+          id: rpcBody.id,
+        }),
+      );
+    });
+
+    const client = new SignalRestClient({ baseUrl, account: "+15555550100" });
+    await client.sendTyping({
+      target: { kind: "recipient", recipient: "+15555550123" },
+      stop: true,
+    });
+
+    expect(rpcBody?.method).toBe("sendTyping");
+    expect(rpcBody?.params).toEqual({
+      account: "+15555550100",
+      recipient: ["+15555550123"],
+      stop: true,
+    });
+  });
+
   test("sends Signal reactions with signal-cli plural target params", async () => {
     let rpcBody: Record<string, unknown> | undefined;
     const baseUrl = await withSignalServer(async (req, res) => {

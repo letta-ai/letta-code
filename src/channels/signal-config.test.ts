@@ -55,6 +55,7 @@ describe("Signal channel config", () => {
       groupMode: "mention",
       allowedGroups: ["group-1"],
       mentionPatterns: ["letta"],
+      transcribeVoice: false,
       downloadMedia: true,
       mediaMaxBytes: 1048576,
     });

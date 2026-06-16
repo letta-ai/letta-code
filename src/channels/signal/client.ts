@@ -37,6 +37,11 @@ export type SignalReactionParams = {
   remove?: boolean;
 };
 
+export type SignalTypingParams = {
+  target: SignalMessageTarget;
+  stop?: boolean;
+};
+
 export class SignalRpcError extends Error {
   constructor(
     message: string,
@@ -178,6 +183,13 @@ export class SignalRestClient {
       targetAuthor: params.targetAuthor,
       remove: params.remove === true,
       ...signalTargetToReactionRpcParams(params.target),
+    });
+  }
+
+  async sendTyping(params: SignalTypingParams): Promise<void> {
+    await this.rpc("sendTyping", {
+      stop: params.stop === true,
+      ...signalTargetToSendRpcParams(params.target),
     });
   }
 

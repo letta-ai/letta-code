@@ -336,6 +336,55 @@ describe("signalInboundFromSseEvent", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("adds transcription errors for audio attachments when transcription is enabled but unconfigured", async () => {
+    const previousOpenAiKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const adapter = createSignalAdapter(
+        signalAccount({ transcribeVoice: true }),
+        {
+          client: {
+            check: async () => undefined,
+            sendMessage: async () => "1",
+            sendReaction: async () => undefined,
+            sendTyping: async () => undefined,
+            streamEvents: async () => undefined,
+          },
+        },
+      );
+      const prepared = await adapter.prepareInboundMessage?.({
+        channel: "signal",
+        accountId: "personal",
+        chatId: "signal:+15555550123",
+        senderId: "+15555550123",
+        senderName: "Alice",
+        text: "[audio attached]",
+        timestamp: Date.now(),
+        messageId: "1:+15555550123",
+        chatType: "direct",
+        attachments: [
+          {
+            name: "voice.mp3",
+            mimeType: "audio/mpeg",
+            sizeBytes: 10,
+            kind: "audio",
+            localPath: "/tmp/voice.mp3",
+          },
+        ],
+      });
+
+      expect(prepared?.attachments?.[0]?.transcriptionError).toBe(
+        "OPENAI_API_KEY not set; transcription skipped.",
+      );
+    } finally {
+      if (previousOpenAiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = previousOpenAiKey;
+      }
+    }
+  });
 });
 
 describe("SignalChannelAdapter", () => {
@@ -345,6 +394,7 @@ describe("SignalChannelAdapter", () => {
       check: async () => undefined,
       sendMessage,
       sendReaction: async () => undefined,
+      sendTyping: async () => undefined,
       streamEvents: async () => undefined,
     };
     const adapter = createSignalAdapter(signalAccount(), { client });
@@ -365,6 +415,63 @@ describe("SignalChannelAdapter", () => {
     });
   });
 
+  test("sends and stops typing indicators during turn lifecycle", async () => {
+    const sendTyping = mock(async () => undefined);
+    const client: SignalClientLike = {
+      check: async () => undefined,
+      sendMessage: async () => "1",
+      sendReaction: async () => undefined,
+      sendTyping,
+      streamEvents: async (_onEvent, signal) => {
+        await new Promise<void>((resolve) => {
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+      },
+    };
+    const adapter = createSignalAdapter(signalAccount(), { client });
+    await adapter.start();
+
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "batch-1",
+      sources: [
+        {
+          channel: "signal",
+          accountId: "personal",
+          chatId: "signal:+15555550123",
+          chatType: "direct",
+          agentId: "agent-signal",
+          conversationId: "default",
+        },
+      ],
+    });
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "finished",
+      batchId: "batch-1",
+      outcome: "completed",
+      sources: [
+        {
+          channel: "signal",
+          accountId: "personal",
+          chatId: "signal:+15555550123",
+          chatType: "direct",
+          agentId: "agent-signal",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    expect(sendTyping).toHaveBeenCalledTimes(2);
+    expect(sendTyping).toHaveBeenNthCalledWith(1, {
+      target: { kind: "recipient", recipient: "+15555550123" },
+    });
+    expect(sendTyping).toHaveBeenNthCalledWith(2, {
+      target: { kind: "recipient", recipient: "+15555550123" },
+      stop: true,
+    });
+    await adapter.stop();
+  });
+
   test("stop resolves while the event loop is sleeping before retry", async () => {
     let resolveFirstStream: (() => void) | null = null;
     const firstStream = new Promise<void>((resolve) => {
@@ -374,6 +481,7 @@ describe("SignalChannelAdapter", () => {
       check: async () => undefined,
       sendMessage: async () => "1",
       sendReaction: async () => undefined,
+      sendTyping: async () => undefined,
       streamEvents: async () => {
         resolveFirstStream?.();
         throw new Error("stream failed");
