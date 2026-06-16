@@ -14,6 +14,7 @@ import {
   type ModToolDefinition,
   modToolApprovalPolicy,
 } from "@/mods/tool-registry";
+import type { ModContext } from "@/mods/types";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
@@ -103,6 +104,7 @@ type ToolArgs = Record<string, unknown>;
 
 interface ModPermissionCheckOptions {
   conversationId?: string | null;
+  modContext?: ModContext | null;
   phase?: "approval" | "execution";
   toolCallId?: string | null;
 }
@@ -939,6 +941,7 @@ export async function checkPermissionWithHooks(
         phase: modPermissionOptions.phase ?? "approval",
       },
       modPermissions,
+      modPermissionOptions.modContext,
     );
     if (modDecision) {
       if (result.decision !== "alwaysAsk" || modDecision.decision === "deny") {

@@ -641,7 +641,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             conversationId: conversationIdRef.current ?? null,
             input: currentInput,
           };
-          await modAdapter.events.emit("turn_start", turnStartEvent);
+          await modAdapter.events.emit(
+            "turn_start",
+            turnStartEvent,
+            modAdapter.context,
+          );
           currentInput = isTurnInputArray(turnStartEvent.input)
             ? turnStartEvent.input
             : originalInput;
