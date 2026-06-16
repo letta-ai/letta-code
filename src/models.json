@@ -1616,7 +1616,7 @@
       "handle": "zai/glm-5.1",
       "label": "GLM-5.1",
       "description": "zAI's coding model",
-      "isFeatured": true,
+      "isFeatured": false,
       "free": true,
       "updateArgs": {
         "context_window": 180000,
