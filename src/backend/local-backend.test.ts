@@ -286,9 +286,9 @@ describe("local backend pi transcript", () => {
       const listed = (await backend.listConversations({
         agent_id: agent.id,
       } as never)) as Array<{ id: string; summary?: string | null }>;
-      expect(
-        listed.find((item) => item.id === conversation.id)?.summary,
-      ).toBe("Desktop rename");
+      expect(listed.find((item) => item.id === conversation.id)?.summary).toBe(
+        "Desktop rename",
+      );
 
       await backend.updateConversation(conversation.id, {
         last_message_at: "2026-06-15T23:01:00.000Z",
