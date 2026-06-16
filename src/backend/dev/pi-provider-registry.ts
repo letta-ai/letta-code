@@ -153,6 +153,9 @@ const PI_PROVIDER_OVERRIDES: Partial<
       LOCAL_ZAI_PROVIDER_NAME,
       LOCAL_ZAI_CODING_PROVIDER_NAME,
     ],
+    defaultBaseURL: "https://api.z.ai/api/paas/v4",
+    baseUrlEnv: () => process.env.ZAI_BASE_URL,
+    localModelDiscovery: "openai-compatible",
     envConfigured: () =>
       getEnvApiKey("zai") !== undefined ||
       hasEnvValue(process.env.ZHIPU_API_KEY) ||
