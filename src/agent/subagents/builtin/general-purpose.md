@@ -3,7 +3,6 @@ name: general-purpose
 description: Full-capability agent for research, planning, and implementation
 tools: Bash, TaskOutput, Edit, KillBash, LS, MultiEdit, Read, TodoWrite, Write
 model: auto
-memoryBlocks: all
 mode: stateful
 ---
 

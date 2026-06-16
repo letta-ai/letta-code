@@ -27,11 +27,6 @@ export const MEMORY_BLOCK_LABELS = [
 ] as const;
 
 /**
- * Type for memory block labels
- */
-export type MemoryBlockLabel = (typeof MEMORY_BLOCK_LABELS)[number];
-
-/**
  * Block labels that should be read-only (agent cannot modify via memory tools).
  */
 export { READ_ONLY_BLOCK_LABELS };

@@ -661,7 +661,6 @@ export async function handleHeadlessCommand(
   const systemCustom = values["system-custom"];
   const personalityInput = values.personality;
   const embeddingModel = values.embedding;
-  const initBlocksRaw = values["init-blocks"];
   const baseToolsRaw = values["base-tools"];
   const skillsDirectory = values.skills ?? skillsDirectoryOverride;
   const noSkillsFlag = values["no-skills"];
@@ -938,15 +937,6 @@ export async function handleHeadlessCommand(
     }
   }
 
-  if (initBlocksRaw && !forceNew) {
-    console.error(
-      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
-    );
-    process.exit(1);
-  }
-
-  const initBlocks = parseCsvListFlag(initBlocksRaw);
-
   if (baseToolsRaw && !forceNew) {
     console.error(
       "Error: --base-tools can only be used together with --new to control initial base tools.",
@@ -967,10 +957,6 @@ export async function handleHeadlessCommand(
   }
   if (personalityInput && !forceNew) {
     console.error("Error: --personality can only be used with --new-agent");
-    process.exit(1);
-  }
-  if (personalityInput && initBlocksRaw) {
-    console.error("Error: --personality cannot be combined with --init-blocks");
     process.exit(1);
   }
 
@@ -1117,7 +1103,6 @@ export async function handleHeadlessCommand(
       systemPromptPreset,
       systemPromptCustom: systemCustom,
       memoryPromptMode: effectiveMemoryMode,
-      initBlocks,
       baseTools,
       memoryBlocks: personalityOptions?.memoryBlocks,
       tags: personalityOptions?.tags ?? tags,
@@ -1459,12 +1444,7 @@ export async function handleHeadlessCommand(
   }
 
   // Determine which blocks to isolate for the conversation
-  const isolatedBlockLabels: string[] =
-    initBlocks === undefined
-      ? [...ISOLATED_BLOCK_LABELS]
-      : ISOLATED_BLOCK_LABELS.filter((label) =>
-          initBlocks.includes(label as string),
-        );
+  const isolatedBlockLabels: string[] = [...ISOLATED_BLOCK_LABELS];
 
   if (specifiedConversationId) {
     if (specifiedConversationId === "default") {

@@ -820,7 +820,6 @@ async function main(): Promise<void> {
   // --new: Create a new conversation (for concurrent sessions)
   const forceNewConversation = values.new ?? false;
 
-  const initBlocksRaw = values["init-blocks"];
   const baseToolsRaw = values["base-tools"];
   let specifiedAgentId = values.agent ?? null;
   try {
@@ -1043,16 +1042,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // --init-blocks only makes sense when creating a brand new agent
-  if (initBlocksRaw && !forceNew) {
-    console.error(
-      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
-    );
-    process.exit(1);
-  }
-
-  const initBlocks = parseCsvListFlag(initBlocksRaw);
-
   // --base-tools only makes sense when creating a brand new agent
   if (baseToolsRaw && !forceNew) {
     console.error(
@@ -1074,10 +1063,6 @@ async function main(): Promise<void> {
   }
   if (personalityInput && !forceNew) {
     console.error("Error: --personality can only be used with --new-agent");
-    process.exit(1);
-  }
-  if (personalityInput && initBlocksRaw) {
-    console.error("Error: --personality cannot be combined with --init-blocks");
     process.exit(1);
   }
 
@@ -1569,7 +1554,6 @@ async function main(): Promise<void> {
 
   function LoadingApp({
     forceNew,
-    initBlocks,
     baseTools,
     agentIdArg,
     preResolvedAgent,
@@ -1581,7 +1565,6 @@ async function main(): Promise<void> {
     isRegistryImport,
   }: {
     forceNew: boolean;
-    initBlocks?: string[];
     baseTools?: string[];
     agentIdArg: string | null;
     preResolvedAgent?: AgentState | null;
@@ -2367,7 +2350,6 @@ async function main(): Promise<void> {
             systemPromptPreset,
             systemPromptCustom: systemCustom,
             memoryPromptMode: effectiveMemoryMode,
-            initBlocks,
             baseTools,
           });
           agent = result.agent;
@@ -2902,7 +2884,6 @@ async function main(): Promise<void> {
   render(
     React.createElement(LoadingApp, {
       forceNew: forceNew,
-      initBlocks: initBlocks,
       baseTools: baseTools,
       agentIdArg: specifiedAgentId,
       preResolvedAgent: nameResolvedAgent,
