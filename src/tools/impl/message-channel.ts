@@ -752,7 +752,11 @@ function inferThreadIdFromChannelTurnSources(params: {
       continue;
     }
 
-    threadIds.add(source.threadId ?? source.messageId ?? null);
+    threadIds.add(
+      source.threadId ??
+        (params.input.channel === "slack" ? source.messageId : null) ??
+        null,
+    );
   }
 
   return threadIds.size === 1 ? [...threadIds][0] : undefined;

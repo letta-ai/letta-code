@@ -273,7 +273,6 @@ describe("discord channel registry", () => {
     expect(createConversation).toHaveBeenCalledTimes(1);
     expect(createConversation).toHaveBeenCalledWith({
       agent_id: "agent-1",
-      isolated_block_labels: expect.any(Array),
       summary: "[Discord] DM with Cameron",
     });
     expect(getRoute("discord", "dm-1", "discord-bot")).toMatchObject({
@@ -382,7 +381,7 @@ describe("discord channel registry", () => {
     ]);
   });
 
-  test("keeps explicit Discord pairing DMs on the pairing flow", async () => {
+  test("keeps explicit Discord pairing DMs on the pairing flow with the account agent", async () => {
     const { ChannelRegistry } = await import("@/channels/registry");
     const registry = new ChannelRegistry();
     const replies: Array<{ chatId: string; text: string }> = [];
@@ -410,6 +409,14 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(0);
     expect(replies).toHaveLength(1);
     expect(replies[0]?.text).toContain("Pairing code:");
+    expect(replies[0]?.text).toContain(
+      "letta channels pair --channel discord --code",
+    );
+    expect(replies[0]?.text).toContain("--agent agent-1");
+    expect(replies[0]?.text).not.toContain("--agent <agent-id>");
+    expect(replies[0]?.text).not.toContain(
+      "Find your agent id with letta agents list.",
+    );
   });
 
   // ── Delivery-time gate (allowed_channels re-check) ─────────────

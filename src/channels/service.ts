@@ -118,6 +118,8 @@ export interface ChannelConfigSnapshot {
   allowedGroups?: string[];
   mentionPatterns?: string[];
   transcribeVoice?: boolean;
+  richPrivateChatDefault?: boolean;
+  richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
 }
@@ -192,6 +194,8 @@ export interface ChannelAccountSnapshot {
   hasAppToken?: boolean;
   groupMode?: TelegramGroupMode | WhatsAppGroupMode;
   transcribeVoice?: boolean;
+  richPrivateChatDefault?: boolean;
+  richDraftStreaming?: boolean;
   binding?: {
     agentId: string | null;
     conversationId: string | null;
@@ -488,6 +492,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       config,
       hasToken: account.token.trim().length > 0,
       transcribeVoice: account.transcribeVoice === true,
+      richPrivateChatDefault: account.richPrivateChatDefault !== false,
+      richDraftStreaming: account.richDraftStreaming === true,
       groupMode: account.groupMode ?? "open",
       inboundDebounceMs: account.inboundDebounceMs,
       binding,
@@ -581,6 +587,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     agentId: account.agentId,
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice: account.transcribeVoice === true,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -605,6 +612,8 @@ function createAccountFromPatch(
       groupMode:
         normalizeTelegramGroupMode(normalizedPatch.groupMode) ?? "open",
       transcribeVoice: normalizedPatch.transcribeVoice === true,
+      richPrivateChatDefault: normalizedPatch.richPrivateChatDefault ?? true,
+      richDraftStreaming: normalizedPatch.richDraftStreaming === true,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       binding: {
         agentId: null,
@@ -685,6 +694,7 @@ function createAccountFromPatch(
     agentId: normalizedPatch.agentId ?? null,
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice: normalizedPatch.transcribeVoice === true,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
@@ -715,6 +725,14 @@ function mergeAccountPatch(
         "open",
       transcribeVoice:
         normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      richPrivateChatDefault:
+        normalizedPatch.richPrivateChatDefault ??
+        existing.richPrivateChatDefault ??
+        true,
+      richDraftStreaming:
+        normalizedPatch.richDraftStreaming ??
+        existing.richDraftStreaming ??
+        false,
       inboundDebounceMs:
         normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       updatedAt: nextUpdatedAt,
@@ -820,6 +838,8 @@ function mergeAccountPatch(
       normalizedPatch.defaultPermissionMode ??
       existing.defaultPermissionMode ??
       DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice:
+      normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
@@ -887,6 +907,11 @@ export function getChannelConfigSnapshot(
       allowedUsers: [...account.allowedUsers],
       config: toChannelConfigSnapshotProtocolConfig(account),
       hasToken: account.token.trim().length > 0,
+      transcribeVoice: account.transcribeVoice === true,
+      richPrivateChatDefault: account.richPrivateChatDefault !== false,
+      richDraftStreaming: account.richDraftStreaming === true,
+      groupMode: account.groupMode ?? "open",
+      inboundDebounceMs: account.inboundDebounceMs,
     };
   }
 
@@ -961,6 +986,7 @@ export function getChannelConfigSnapshot(
     agentId: account.agentId,
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice: account.transcribeVoice === true,
   };
 }
 
@@ -1008,6 +1034,8 @@ export async function setChannelConfigLive(
       allowedGroups: normalizedPatch.allowedGroups,
       mentionPatterns: normalizedPatch.mentionPatterns,
       transcribeVoice: normalizedPatch.transcribeVoice,
+      richPrivateChatDefault: normalizedPatch.richPrivateChatDefault,
+      richDraftStreaming: normalizedPatch.richDraftStreaming,
       downloadMedia: normalizedPatch.downloadMedia,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
       config: normalizedPatch.config,
@@ -1041,6 +1069,8 @@ export async function setChannelConfigLive(
         allowedGroups: normalizedPatch.allowedGroups,
         mentionPatterns: normalizedPatch.mentionPatterns,
         transcribeVoice: normalizedPatch.transcribeVoice,
+        richPrivateChatDefault: normalizedPatch.richPrivateChatDefault,
+        richDraftStreaming: normalizedPatch.richDraftStreaming,
         downloadMedia: normalizedPatch.downloadMedia,
         mediaMaxBytes: normalizedPatch.mediaMaxBytes,
         config: normalizedPatch.config,

@@ -9,6 +9,10 @@ export const SUPPORTED_BASE64_IMAGE_MEDIA_TYPES = new Set([
   "image/webp",
 ]);
 
+function isSupportedBase64ImageMediaType(mediaType: string): boolean {
+  return SUPPORTED_BASE64_IMAGE_MEDIA_TYPES.has(mediaType);
+}
+
 export type Base64ImageContentPart = {
   type: "image";
   source: { type: "base64"; media_type: string; data: string };
@@ -76,6 +80,16 @@ export async function normalizeMessageContentImages(
           return null;
         }
         throw formatImageNormalizationError(error);
+      }
+
+      if (!isSupportedBase64ImageMediaType(resized.mediaType)) {
+        if (failureMode === "drop") {
+          didChange = true;
+          return null;
+        }
+        throw new Error(
+          `Unsupported base64 image media type after normalization: ${resized.mediaType}`,
+        );
       }
 
       if (
@@ -150,7 +164,7 @@ export function assertSupportedBase64ImageMediaTypes(
         continue;
       }
 
-      if (!SUPPORTED_BASE64_IMAGE_MEDIA_TYPES.has(part.source.media_type)) {
+      if (!isSupportedBase64ImageMediaType(part.source.media_type)) {
         throw new Error(
           `Unsupported base64 image media type after normalization: ${part.source.media_type}`,
         );

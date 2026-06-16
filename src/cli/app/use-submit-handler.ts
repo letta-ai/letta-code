@@ -22,7 +22,6 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
@@ -1584,7 +1583,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Create a new conversation for the current agent
             const conversation = await backend.createConversation({
               agent_id: agentId,
-              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
               ...(conversationName && { summary: conversationName }),
             });
 
@@ -1811,7 +1809,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Create a new conversation
             const conversation = await backend.createConversation({
               agent_id: agentId,
-              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
 
             setConversationAutoTitleEligibility(true);
