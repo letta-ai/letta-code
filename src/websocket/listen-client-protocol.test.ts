@@ -3536,6 +3536,7 @@ describe("listen-client permission mode scope keys", () => {
 
   test("slack conversation created event seeds the new conversation permission mode", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.workingDirectoryByConversation.delete("conversation:conv-slack-1");
     const socket = new MockSocket(WebSocket.OPEN);
 
     __listenClientTestUtils.handleChannelRegistryEvent(
@@ -3562,10 +3563,34 @@ describe("listen-client permission mode scope keys", () => {
     ).toEqual({
       mode: "unrestricted",
     });
+    expect(
+      listener.workingDirectoryByConversation.get("conversation:conv-slack-1"),
+    ).toBe(listener.bootWorkingDirectory);
+
+    const emittedStatus = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload),
+    )[0];
+    expect(emittedStatus).toMatchObject({
+      type: "update_device_status",
+      runtime: {
+        agent_id: "agent-123",
+        conversation_id: "conv-slack-1",
+      },
+      device_status: {
+        current_working_directory: listener.bootWorkingDirectory,
+        cwd_map: {
+          "conversation:conv-slack-1": listener.bootWorkingDirectory,
+        },
+        boot_working_directory: listener.bootWorkingDirectory,
+      },
+    });
   });
 
   test("discord conversation created event seeds the new conversation permission mode", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.workingDirectoryByConversation.delete(
+      "conversation:conv-discord-1",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
 
     __listenClientTestUtils.handleChannelRegistryEvent(
@@ -3591,6 +3616,29 @@ describe("listen-client permission mode scope keys", () => {
       listener.permissionModeByConversation.get("conversation:conv-discord-1"),
     ).toEqual({
       mode: "acceptEdits",
+    });
+    expect(
+      listener.workingDirectoryByConversation.get(
+        "conversation:conv-discord-1",
+      ),
+    ).toBe(listener.bootWorkingDirectory);
+
+    const emittedStatus = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload),
+    )[0];
+    expect(emittedStatus).toMatchObject({
+      type: "update_device_status",
+      runtime: {
+        agent_id: "agent-123",
+        conversation_id: "conv-discord-1",
+      },
+      device_status: {
+        current_working_directory: listener.bootWorkingDirectory,
+        cwd_map: {
+          "conversation:conv-discord-1": listener.bootWorkingDirectory,
+        },
+        boot_working_directory: listener.bootWorkingDirectory,
+      },
     });
   });
 });

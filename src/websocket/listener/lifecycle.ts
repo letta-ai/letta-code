@@ -54,7 +54,7 @@ import {
   findFallbackRuntime,
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
-import { loadPersistedCwdMap } from "./cwd";
+import { loadPersistedCwdMap, seedConversationWorkingDirectory } from "./cwd";
 import {
   installExternalToolBridge,
   rejectPendingExternalToolCalls,
@@ -435,6 +435,16 @@ export async function wireChannelIngress(
       delivery.route.conversationId,
     );
     if (!rawRuntime) return;
+
+    const seededWorkingDirectory = seedConversationWorkingDirectory(
+      listener,
+      delivery.route.agentId,
+      delivery.route.conversationId,
+      listener.bootWorkingDirectory,
+    );
+    if (seededWorkingDirectory) {
+      emitDeviceStatusUpdate(socket, rawRuntime);
+    }
 
     if (delivery.defaultPermissionMode) {
       const permissionModeState = getOrCreateConversationPermissionModeStateRef(
