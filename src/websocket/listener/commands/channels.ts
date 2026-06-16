@@ -396,6 +396,7 @@ export async function handleChannelsProtocolCommand(
     agent_id: route.agentId,
     conversation_id: route.conversationId,
     enabled: route.enabled,
+    outbound_enabled: route.outboundEnabled,
     created_at: route.createdAt,
     updated_at: route.updatedAt,
   });

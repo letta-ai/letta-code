@@ -736,6 +736,8 @@ describe("channel service", () => {
           mode: "socket",
           agent_id: null,
           transcribe_voice: true,
+          show_completed_reaction: false,
+          listen_mode: true,
         },
       },
       { accountId: "slack-voice" },
@@ -747,12 +749,18 @@ describe("channel service", () => {
         transcribeVoice: true,
         config: expect.objectContaining({
           transcribe_voice: true,
+          show_completed_reaction: false,
+          listen_mode: true,
         }),
       }),
     );
 
     const updated = updateChannelAccountLive("slack", "slack-voice", {
-      config: { transcribe_voice: false },
+      config: {
+        transcribe_voice: false,
+        show_completed_reaction: true,
+        listen_mode: false,
+      },
     });
 
     expect(updated).toEqual(
@@ -761,6 +769,8 @@ describe("channel service", () => {
         transcribeVoice: false,
         config: expect.objectContaining({
           transcribe_voice: false,
+          show_completed_reaction: true,
+          listen_mode: false,
         }),
       }),
     );
@@ -771,6 +781,8 @@ describe("channel service", () => {
         transcribeVoice: false,
         config: expect.objectContaining({
           transcribe_voice: false,
+          show_completed_reaction: true,
+          listen_mode: false,
         }),
       }),
     );

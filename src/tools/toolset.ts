@@ -304,7 +304,8 @@ export function resolveConversationChannelToolScope(
       if (
         route.agentId !== agentId ||
         route.conversationId !== conversationId ||
-        !route.enabled
+        !route.enabled ||
+        route.outboundEnabled === false
       ) {
         continue;
       }

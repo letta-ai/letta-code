@@ -398,6 +398,7 @@ export interface ChannelRouteSnapshot {
   agent_id: string;
   conversation_id: string;
   enabled: boolean;
+  outbound_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }

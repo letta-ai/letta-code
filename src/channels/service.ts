@@ -112,6 +112,8 @@ export interface ChannelConfigSnapshot {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
+  showCompletedReaction?: boolean;
+  listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
@@ -141,6 +143,7 @@ export interface ChannelRouteSnapshot {
   agentId: string;
   conversationId: string;
   enabled: boolean;
+  outboundEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -202,6 +205,8 @@ export interface ChannelAccountSnapshot {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
+  showCompletedReaction?: boolean;
+  listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
@@ -403,6 +408,7 @@ function toRouteSnapshot(
     agentId: route.agentId,
     conversationId: route.conversationId,
     enabled: route.enabled,
+    outboundEnabled: route.outboundEnabled !== false,
     createdAt: route.createdAt,
     updatedAt: route.updatedAt ?? route.createdAt,
   };
@@ -582,6 +588,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
+    showCompletedReaction: account.showCompletedReaction !== false,
+    listenMode: account.listenMode === true,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -687,6 +695,8 @@ function createAccountFromPatch(
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: normalizedPatch.transcribeVoice === true,
+    showCompletedReaction: normalizedPatch.showCompletedReaction !== false,
+    listenMode: normalizedPatch.listenMode === true,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
@@ -824,6 +834,11 @@ function mergeAccountPatch(
       DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice:
       normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+    showCompletedReaction:
+      normalizedPatch.showCompletedReaction ??
+      existing.showCompletedReaction ??
+      true,
+    listenMode: normalizedPatch.listenMode ?? existing.listenMode ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
@@ -966,6 +981,8 @@ export function getChannelConfigSnapshot(
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
+    showCompletedReaction: account.showCompletedReaction !== false,
+    listenMode: account.listenMode === true,
   };
 }
 
@@ -1006,6 +1023,8 @@ export async function setChannelConfigLive(
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
+      showCompletedReaction: normalizedPatch.showCompletedReaction,
+      listenMode: normalizedPatch.listenMode,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       selfChatMode: normalizedPatch.selfChatMode,
@@ -1039,6 +1058,8 @@ export async function setChannelConfigLive(
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
         threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
         acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
+        showCompletedReaction: normalizedPatch.showCompletedReaction,
+        listenMode: normalizedPatch.listenMode,
         removeStaleRoutes: normalizedPatch.removeStaleRoutes,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
         selfChatMode: normalizedPatch.selfChatMode,
@@ -1685,6 +1706,7 @@ export function bindChannelTarget(
     agentId,
     conversationId,
     enabled: true,
+    outboundEnabled: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -1803,6 +1825,7 @@ export function updateChannelRouteLive(
     }),
     agentId,
     conversationId,
+    outboundEnabled: true,
     updatedAt: new Date().toISOString(),
   };
 
