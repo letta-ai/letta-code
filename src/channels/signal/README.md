@@ -95,6 +95,7 @@ Important fields:
 | `account` | Signal account phone number in E.164 format, e.g. `+15555550100`. |
 | `account_uuid` | Optional advanced loop-protection identity. Only needed when the daemon reports the linked account's own messages as a UUID instead of the configured phone number. |
 | `agent_id` | Optional agent for account-bound DM/group auto-routing. |
+| `self_chat_mode` | Personal-number mode. When true, Letta routes only the linked account's own Note to Self/self-chat messages and ignores other DMs on that Signal account. |
 | `dm_policy` | `pairing`, `allowlist`, or `open`. Pairing is recommended. |
 | `group_mode` | `disabled`, `mention`, or `open`. Disabled is conservative. |
 | `allowed_groups` | Optional group ID allowlist when groups are enabled. |
@@ -141,6 +142,7 @@ If `ffmpeg` is missing, the agent receives an
 - **Pairing repeats:** approve the code in the target Letta conversation with
   `/channels signal pair <code>` or use the CLI pairing command.
 - **Messages from yourself are ignored / bot seems to ignore own linked-device messages:** this is loop protection. Letta ignores messages from the linked account so it does not reply to itself. If the daemon reports your own identity as a UUID instead of the configured phone number, set `account_uuid`.
+- **Using your personal Signal number:** enable `self_chat_mode` and talk to the agent in Signal's Note to Self/self-chat. Other direct messages on that linked account are ignored while self-chat mode is enabled.
 
 ## Current limitations
 

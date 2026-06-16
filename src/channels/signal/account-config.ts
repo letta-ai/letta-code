@@ -6,6 +6,7 @@ const SIGNAL_CONFIG_KEYS = new Set([
   "account",
   "account_uuid",
   "agent_id",
+  "self_chat_mode",
   "group_mode",
   "allowed_groups",
   "mention_patterns",
@@ -60,6 +61,8 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         (config.account_uuid === undefined ||
           isNullableString(config.account_uuid)) &&
         (config.agent_id === undefined || isNullableString(config.agent_id)) &&
+        (config.self_chat_mode === undefined ||
+          isBoolean(config.self_chat_mode)) &&
         (config.group_mode === undefined || isGroupMode(config.group_mode)) &&
         (config.allowed_groups === undefined ||
           isStringArray(config.allowed_groups)) &&
@@ -88,6 +91,9 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         agentId: isNullableString(config.agent_id)
           ? config.agent_id
           : undefined,
+        selfChatMode: isBoolean(config.self_chat_mode)
+          ? config.self_chat_mode
+          : undefined,
         groupMode: isGroupMode(config.group_mode)
           ? config.group_mode
           : undefined,
@@ -115,6 +121,7 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         account: account.account,
         account_uuid: account.accountUuid,
         agent_id: account.agentId,
+        self_chat_mode: account.selfChatMode,
         group_mode: account.groupMode,
         allowed_groups: [...(account.allowedGroups ?? [])],
         mention_patterns: [...(account.mentionPatterns ?? [])],
@@ -130,6 +137,7 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         account: account.account,
         account_uuid: account.accountUuid,
         agent_id: account.agentId,
+        self_chat_mode: account.selfChatMode,
         group_mode: account.groupMode,
         allowed_groups: [...(account.allowedGroups ?? [])],
         mention_patterns: [...(account.mentionPatterns ?? [])],

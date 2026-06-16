@@ -434,6 +434,8 @@ export interface SignalChannelConfig {
   accountUuid?: string;
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;
+  /** Default false. When true, only the linked account's own Note to Self/self-chat messages route. */
+  selfChatMode: boolean;
   /** Default disabled. Controls group-message ingestion. */
   groupMode: SignalGroupMode;
   /** Optional allowlist of Signal group ids. */
@@ -585,6 +587,8 @@ export interface SignalChannelAccount extends ChannelAccountBase {
   accountUuid?: string;
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;
+  /** Default false. When true, only the linked account's own Note to Self/self-chat messages route. */
+  selfChatMode: boolean;
   /** Default disabled. Controls group-message ingestion. */
   groupMode: SignalGroupMode;
   /** Optional allowlist of Signal group ids. */

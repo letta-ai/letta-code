@@ -589,6 +589,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       allowedUsers: [...account.allowedUsers],
       config: toChannelAccountProtocolConfig(account),
       agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
       groupMode: account.groupMode,
       allowedGroups: [...(account.allowedGroups ?? [])],
       mentionPatterns: [...(account.mentionPatterns ?? [])],
@@ -721,6 +722,7 @@ function createAccountFromPatch(
       account: normalizeOptionalConfigString(normalizedPatch.account),
       accountUuid: normalizeOptionalConfigString(normalizedPatch.accountUuid),
       agentId: normalizedPatch.agentId ?? null,
+      selfChatMode: normalizedPatch.selfChatMode === true,
       dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
       allowedUsers: normalizedPatch.allowedUsers ?? [],
       groupMode:
@@ -874,6 +876,7 @@ function mergeAccountPatch(
           ? normalizeOptionalConfigString(normalizedPatch.accountUuid)
           : existing.accountUuid,
       agentId: normalizedPatch.agentId ?? existing.agentId,
+      selfChatMode: normalizedPatch.selfChatMode ?? existing.selfChatMode,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       groupMode:
@@ -1055,6 +1058,7 @@ export function getChannelConfigSnapshot(
       allowedUsers: [...account.allowedUsers],
       config: toChannelConfigSnapshotProtocolConfig(account),
       agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
       groupMode: account.groupMode,
       allowedGroups: [...(account.allowedGroups ?? [])],
       mentionPatterns: [...(account.mentionPatterns ?? [])],

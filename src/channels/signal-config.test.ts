@@ -52,6 +52,7 @@ describe("Signal channel config", () => {
       account: "+15555550100",
       accountUuid: "self-uuid",
       agentId: "agent-signal",
+      selfChatMode: false,
       groupMode: "mention",
       allowedGroups: ["group-1"],
       mentionPatterns: ["letta"],

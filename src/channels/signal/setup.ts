@@ -902,6 +902,14 @@ export async function runSignalSetup(): Promise<boolean> {
       agentId = agentInput.trim() || null;
     }
 
+    console.log(
+      "\nPersonal-number mode lets you talk to the agent through Signal's Note to Self / self-chat with this linked account. In this mode, Letta ignores messages from other Signal DMs on this account.",
+    );
+    const selfChatInput = await rl.question(
+      "Use Note to Self / self-chat mode for this Signal account? [y/N]: ",
+    );
+    const selfChatMode = parseYesNo(selfChatInput, false);
+
     const groupInput = await rl.question(
       "\nGroup mode: disabled, mention, or open [disabled]: ",
     );
@@ -957,6 +965,7 @@ export async function runSignalSetup(): Promise<boolean> {
       account,
       accountUuid,
       agentId,
+      selfChatMode,
       dmPolicy,
       allowedUsers,
       groupMode,

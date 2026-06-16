@@ -87,7 +87,20 @@ type SignalEnvelope = {
   dataMessage?: SignalDataMessage | null;
   editMessage?: { dataMessage?: SignalDataMessage | null } | null;
   reactionMessage?: SignalReactionMessage | null;
-  syncMessage?: unknown;
+  syncMessage?: SignalSyncMessage | null;
+};
+
+type SignalSentSyncMessage = {
+  destination?: string | null;
+  destinationNumber?: string | null;
+  destinationUuid?: string | null;
+  recipients?: string[] | null;
+  timestamp?: number | null;
+  message?: SignalDataMessage | null;
+};
+
+type SignalSyncMessage = {
+  sentMessage?: SignalSentSyncMessage | null;
 };
 
 type SignalReceivePayload = {
@@ -157,6 +170,56 @@ function isOwnSignalMessage(
     (!!accountPhone && !!senderPhone && accountPhone === senderPhone) ||
     (!!accountUuid && !!senderUuid && accountUuid === senderUuid)
   );
+}
+
+function signalIdentityMatchesAccount(
+  identity: string | null | undefined,
+  account: SignalChannelAccount,
+): boolean {
+  const normalized = normalizeIdentity(identity);
+  if (!normalized) return false;
+  return (
+    normalized === normalizeIdentity(account.account) ||
+    normalized === normalizeIdentity(account.accountUuid)
+  );
+}
+
+function syncMessageTargetsOwnAccount(
+  sentMessage: SignalSentSyncMessage,
+  account: SignalChannelAccount,
+): boolean {
+  if (signalIdentityMatchesAccount(sentMessage.destination, account)) {
+    return true;
+  }
+  if (signalIdentityMatchesAccount(sentMessage.destinationNumber, account)) {
+    return true;
+  }
+  if (signalIdentityMatchesAccount(sentMessage.destinationUuid, account)) {
+    return true;
+  }
+  return (sentMessage.recipients ?? []).some((recipient) =>
+    signalIdentityMatchesAccount(recipient, account),
+  );
+}
+
+function envelopeFromSelfSyncMessage(
+  envelope: SignalEnvelope,
+  account: SignalChannelAccount,
+): SignalEnvelope | null {
+  const sentMessage = envelope.syncMessage?.sentMessage;
+  if (
+    !sentMessage?.message ||
+    !syncMessageTargetsOwnAccount(sentMessage, account)
+  ) {
+    return null;
+  }
+  return {
+    sourceNumber: account.account ?? envelope.sourceNumber,
+    sourceUuid: account.accountUuid ?? envelope.sourceUuid,
+    sourceName: "Note to Self",
+    timestamp: sentMessage.timestamp ?? envelope.timestamp,
+    dataMessage: sentMessage.message,
+  };
 }
 
 function renderSignalMentions(
@@ -642,14 +705,24 @@ function signalInboundFromPayload(
   if (payload.exception?.message) {
     console.error(`[Signal] receive exception: ${payload.exception.message}`);
   }
-  const envelope = payload.envelope ?? undefined;
+  let envelope = payload.envelope ?? undefined;
   if (!envelope) {
     return null;
   }
   if ("syncMessage" in envelope) {
+    if (account.selfChatMode !== true) {
+      return null;
+    }
+    envelope = envelopeFromSelfSyncMessage(envelope, account) ?? undefined;
+    if (!envelope) {
+      return null;
+    }
+  }
+  const isOwnMessage = isOwnSignalMessage(envelope, account);
+  if (isOwnMessage && account.selfChatMode !== true) {
     return null;
   }
-  if (isOwnSignalMessage(envelope, account)) {
+  if (account.selfChatMode === true && !isOwnMessage) {
     return null;
   }
 

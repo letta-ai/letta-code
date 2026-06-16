@@ -336,6 +336,7 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
+    next.selfChatMode = next.selfChatMode === true;
     next.groupMode = next.groupMode ?? "disabled";
     next.allowedGroups = [...(next.allowedGroups ?? [])];
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
@@ -427,6 +428,7 @@ function makeDefaultLegacyAccount(
       dmPolicy: config.dmPolicy,
       allowedUsers: [...config.allowedUsers],
       agentId: config.agentId,
+      selfChatMode: config.selfChatMode === true,
       groupMode: config.groupMode ?? "disabled",
       allowedGroups: config.allowedGroups ? [...config.allowedGroups] : [],
       mentionPatterns: config.mentionPatterns

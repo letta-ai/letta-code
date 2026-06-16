@@ -79,6 +79,7 @@ describe("Signal channel service", () => {
       expect.objectContaining({
         base_url: "",
         agent_id: null,
+        self_chat_mode: false,
         group_mode: "disabled",
         download_media: true,
       }),
@@ -101,6 +102,7 @@ describe("Signal channel service", () => {
           account: "+15555550100",
           account_uuid: "self-uuid",
           agent_id: "agent-signal",
+          self_chat_mode: true,
           group_mode: "mention",
           allowed_groups: ["group-1"],
           mention_patterns: ["letta"],
@@ -113,6 +115,7 @@ describe("Signal channel service", () => {
     );
 
     expect(created.agentId).toBe("agent-signal");
+    expect(created.selfChatMode).toBe(true);
     expect(created.config).toEqual(
       expect.objectContaining({
         base_url: "http://signal.local:8080",
@@ -128,9 +131,10 @@ describe("Signal channel service", () => {
     expect(created.mediaMaxBytes).toBe(1048576);
 
     const updated = updateChannelAccountLive("signal", "personal", {
-      config: { group_mode: "open", account: null },
+      config: { group_mode: "open", account: null, self_chat_mode: false },
     });
     expect(updated.groupMode).toBe("open");
+    expect(updated.selfChatMode).toBe(false);
     expect(updated.config).toEqual(
       expect.objectContaining({ account: undefined }),
     );

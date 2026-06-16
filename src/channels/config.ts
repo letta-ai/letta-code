@@ -291,6 +291,7 @@ const signalConfigCodec: ChannelConfigCodec<SignalChannelConfig> = {
           ? parsed.account_uuid
           : undefined,
       agentId: typeof parsed.agent_id === "string" ? parsed.agent_id : null,
+      selfChatMode: parsed.self_chat_mode === true,
       groupMode: parseSignalGroupMode(parsed.group_mode),
       allowedGroups: Array.isArray(rawAllowedGroups)
         ? (rawAllowedGroups as string[])

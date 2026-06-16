@@ -36,6 +36,7 @@ function signalAccount(
     account: "+15555550100",
     accountUuid: "self-uuid",
     agentId: "agent-signal",
+    selfChatMode: false,
     groupMode: "disabled",
     ...overrides,
   };
@@ -68,6 +69,66 @@ describe("signalInboundFromSseEvent", () => {
           envelope: { sourceNumber: "+15555550123", syncMessage: {} },
         }),
         signalAccount(),
+      ),
+    ).toBeNull();
+  });
+
+  test("routes own direct messages in self-chat mode", () => {
+    const msg = signalInboundFromSseEvent(
+      receiveEvent({
+        envelope: {
+          sourceNumber: "+15555550100",
+          sourceName: "Cameron",
+          timestamp: 123,
+          dataMessage: { message: "note to self" },
+        },
+      }),
+      signalAccount({ selfChatMode: true }),
+    );
+
+    expect(msg).toMatchObject({
+      chatId: "signal:+15555550100",
+      senderId: "+15555550100",
+      text: "note to self",
+    });
+  });
+
+  test("routes own sync sent messages in self-chat mode", () => {
+    const msg = signalInboundFromSseEvent(
+      receiveEvent({
+        envelope: {
+          sourceNumber: "+15555550100",
+          timestamp: 123,
+          syncMessage: {
+            sentMessage: {
+              destination: "+15555550100",
+              timestamp: 124,
+              message: { message: "sync note" },
+            },
+          },
+        },
+      }),
+      signalAccount({ selfChatMode: true }),
+    );
+
+    expect(msg).toMatchObject({
+      chatId: "signal:+15555550100",
+      senderName: "Note to Self",
+      text: "sync note",
+    });
+  });
+
+  test("drops non-self direct messages in self-chat mode", () => {
+    expect(
+      signalInboundFromSseEvent(
+        receiveEvent({
+          envelope: {
+            sourceNumber: "+15555550123",
+            timestamp: 123,
+            dataMessage: { message: "hello" },
+          },
+        }),
+        signalAccount({ selfChatMode: true }),
       ),
     ).toBeNull();
   });
