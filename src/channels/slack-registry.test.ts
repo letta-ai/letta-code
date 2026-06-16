@@ -23,6 +23,11 @@ import {
   clearAllRoutes,
   getRoute,
 } from "@/channels/routing";
+import {
+  __testOverrideLoadTargetStore,
+  __testOverrideSaveTargetStore,
+  clearTargetStores,
+} from "@/channels/targets";
 import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
 
 const createConversation = mock(async () => ({ id: "conv-slack" }));
@@ -41,12 +46,15 @@ describe("slack channel registry", () => {
     clearChannelAccountStores();
     clearAllRoutes();
     clearPairingStores();
+    clearTargetStores();
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
     __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
     __testOverrideLoadPairingStore(null);
     __testOverrideSavePairingStore(null);
+    __testOverrideLoadTargetStore(null);
+    __testOverrideSaveTargetStore(null);
     createConversation.mockReset();
     createConversation.mockResolvedValue({ id: "conv-slack" });
   }
@@ -108,6 +116,8 @@ describe("slack channel registry", () => {
     __testOverrideSaveRoutes(() => {});
     __testOverrideLoadPairingStore(() => null);
     __testOverrideSavePairingStore(() => {});
+    __testOverrideLoadTargetStore(() => null);
+    __testOverrideSaveTargetStore(() => {});
   });
 
   afterEach(async () => {
