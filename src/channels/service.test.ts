@@ -336,6 +336,58 @@ describe("channel service", () => {
     );
   });
 
+  test("updateChannelRouteLive preserves listen-only outbound state", () => {
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "DocsBot Slack",
+        enabled: true,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "docsbot" },
+    );
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-listen-only",
+      chatType: "channel",
+      threadId: null,
+      agentId: "agent-old",
+      conversationId: "conv-old",
+      enabled: true,
+      outboundEnabled: false,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const updated = updateChannelRouteLive(
+      "slack",
+      "C-listen-only",
+      "agent-new",
+      "conv-new",
+      "docsbot",
+    );
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        channelId: "slack",
+        accountId: "docsbot",
+        chatId: "C-listen-only",
+        agentId: "agent-new",
+        conversationId: "conv-new",
+        outboundEnabled: false,
+      }),
+    );
+    expect(getRoute("slack", "C-listen-only", "docsbot")).toEqual(
+      expect.objectContaining({
+        agentId: "agent-new",
+        conversationId: "conv-new",
+        outboundEnabled: false,
+      }),
+    );
+  });
+
   test("updateChannelRouteLive creates a Telegram route and binds the account", () => {
     createChannelAccountLive(
       "telegram",

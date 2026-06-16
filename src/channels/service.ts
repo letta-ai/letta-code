@@ -1825,7 +1825,7 @@ export function updateChannelRouteLive(
     }),
     agentId,
     conversationId,
-    outboundEnabled: true,
+    outboundEnabled: existingRoute?.outboundEnabled ?? true,
     updatedAt: new Date().toISOString(),
   };
 
