@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join } from "node:path";
 import { getChannelDir } from "@/channels/config";
 import type {
@@ -91,6 +98,13 @@ type SignalAttachmentCandidate = NonNullable<
 
 const DEFAULT_SIGNAL_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
 const MAX_SIGNAL_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
+let signalAttachmentSearchDirsOverride: string[] | null = null;
+
+export function __testOverrideSignalAttachmentSearchDirs(
+  dirs: string[] | null,
+): void {
+  signalAttachmentSearchDirsOverride = dirs;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -258,18 +272,75 @@ function resolveSignalAttachmentPath(
     if (!value) {
       continue;
     }
-    // signal-cli normally returns a downloaded local path. Avoid treating a
-    // plain original filename as a path unless it actually looks path-like.
-    if (!isAbsolute(value) && !value.includes("/") && !value.includes("\\")) {
-      continue;
+    if (isAbsolute(value) || value.includes("/") || value.includes("\\")) {
+      try {
+        const stat = statSync(value);
+        if (stat.isFile()) {
+          return value;
+        }
+      } catch {
+        const resolvedRelative = resolveRelativeSignalAttachmentPath(value);
+        if (resolvedRelative) {
+          return resolvedRelative;
+        }
+      }
     }
+
+    const resolvedRelative = resolveRelativeSignalAttachmentPath(value);
+    if (resolvedRelative) {
+      return resolvedRelative;
+    }
+  }
+
+  return null;
+}
+
+function getSignalAttachmentSearchDirs(): string[] {
+  if (signalAttachmentSearchDirsOverride) {
+    return [...signalAttachmentSearchDirsOverride];
+  }
+
+  const dirs: string[] = [];
+  const localShare = join(homedir(), ".local", "share");
+  try {
+    for (const entry of readdirSync(localShare, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith("signal-cli")) {
+        continue;
+      }
+      dirs.push(join(localShare, entry.name, "attachments"));
+    }
+  } catch {
+    // Ignore missing ~/.local/share or unreadable entries.
+  }
+
+  return dirs;
+}
+
+function resolveRelativeSignalAttachmentPath(value: string): string | null {
+  const normalized = value.replace(/\\/g, "/");
+  const suffix = normalized.startsWith("attachments/")
+    ? normalized.slice("attachments/".length)
+    : normalized;
+
+  for (const baseDir of getSignalAttachmentSearchDirs()) {
+    const directCandidate = join(baseDir, normalized);
     try {
-      const stat = statSync(value);
+      const stat = statSync(directCandidate);
       if (stat.isFile()) {
-        return value;
+        return directCandidate;
       }
     } catch {
-      // Try the next known signal-cli JSON field shape.
+      // Try the basename-style fallback next.
+    }
+
+    const nestedCandidate = join(baseDir, suffix);
+    try {
+      const stat = statSync(nestedCandidate);
+      if (stat.isFile()) {
+        return nestedCandidate;
+      }
+    } catch {
+      // Continue searching other signal-cli attachment dirs.
     }
   }
 

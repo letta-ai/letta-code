@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -11,6 +12,7 @@ import { join } from "node:path";
 import { __testOverrideChannelsRoot } from "@/channels/config";
 import type { SignalChannelAccount } from "@/channels/types";
 import {
+  __testOverrideSignalAttachmentSearchDirs,
   createSignalAdapter,
   type SignalClientLike,
   signalInboundFromSseEvent,
@@ -204,6 +206,53 @@ describe("signalInboundFromSseEvent", () => {
         attachment?.localPath ? readFileSync(attachment.localPath) : null,
       ).toEqual(imageBytes);
     } finally {
+      __testOverrideChannelsRoot(null);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves signal-cli relative attachment paths from attachment dirs", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "signal-relative-media-test-"));
+    const attachmentsDir = join(tempDir, "attachments");
+    mkdirSync(attachmentsDir, { recursive: true });
+    __testOverrideChannelsRoot(join(tempDir, "channels"));
+    __testOverrideSignalAttachmentSearchDirs([attachmentsDir]);
+    try {
+      const imageBytes = Buffer.from("fake-relative-jpeg");
+      const sourcePath = join(attachmentsDir, "abc123.png");
+      writeFileSync(sourcePath, imageBytes);
+
+      const msg = signalInboundFromSseEvent(
+        receiveEvent({
+          envelope: {
+            sourceNumber: "+15555550123",
+            sourceName: "Alice",
+            timestamp: 333,
+            dataMessage: {
+              timestamp: 333,
+              attachments: [
+                {
+                  id: "att-2",
+                  contentType: "image/png",
+                  storedFilename: "abc123.png",
+                  size: imageBytes.byteLength,
+                },
+              ],
+            },
+          },
+        }),
+        signalAccount({ downloadMedia: true }),
+      );
+
+      expect(msg?.attachments).toHaveLength(1);
+      expect(msg?.attachments?.[0]).toMatchObject({
+        id: "att-2",
+        name: "abc123.png",
+        mimeType: "image/png",
+        kind: "image",
+      });
+    } finally {
+      __testOverrideSignalAttachmentSearchDirs(null);
       __testOverrideChannelsRoot(null);
       rmSync(tempDir, { recursive: true, force: true });
     }
