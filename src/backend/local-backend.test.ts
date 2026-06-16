@@ -233,6 +233,38 @@ describe("local backend pi transcript", () => {
     }
   });
 
+  // Regression: forking must run in-process via the local store. The default
+  // Backend.forkConversation posts to /v1/conversations/{id}/fork, which the
+  // desktop local-backend proxy returns 501 for, so without the override every
+  // fork attempt failed with LOCAL_BACKEND_UNSUPPORTED_ENDPOINT.
+  test("forks a conversation locally without hitting the HTTP proxy", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-fork-"));
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const agent = await backend.createAgent({ name: "Local" } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "Source conversation",
+      } as never);
+
+      const forked = await backend.forkConversation(conversation.id, {
+        agentId: agent.id,
+      });
+
+      expect(forked.id).toBeTruthy();
+      expect(forked.id).not.toBe(conversation.id);
+
+      const conversations = (await backend.listConversations({
+        agent_id: agent.id,
+      } as never)) as Array<{ id: string; summary?: string | null }>;
+      const forkedRecord = conversations.find((c) => c.id === forked.id);
+      expect(forkedRecord).toBeDefined();
+      expect(forkedRecord?.summary).toBe("Source conversation");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("repairs legacy synthetic transcript timestamps from manifest and file mtime", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-time-"));
     const agentId = "agent-local-default";

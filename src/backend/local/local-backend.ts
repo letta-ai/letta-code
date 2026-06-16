@@ -389,6 +389,17 @@ export class LocalBackend extends HeadlessBackend {
     return conversation;
   }
 
+  // The default Backend.forkConversation issues an HTTP POST to
+  // /v1/conversations/{id}/fork, which the desktop local-backend proxy does
+  // not implement (returns 501 LOCAL_BACKEND_UNSUPPORTED_ENDPOINT). The local
+  // store already supports forking in-process, so delegate to it directly.
+  override async forkConversation(
+    conversationId: string,
+    options?: Parameters<Backend["forkConversation"]>[1],
+  ): ReturnType<Backend["forkConversation"]> {
+    return this.store.forkConversation(conversationId, options ?? {});
+  }
+
   override async recompileConversation(
     conversationId: string,
     body?: ConversationRecompileBody,
