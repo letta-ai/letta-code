@@ -578,8 +578,14 @@ function firstDefinedBoolean(...values: unknown[]): boolean | undefined {
   return undefined;
 }
 
-function normalizeChatTarget(value: string): string {
+function normalizeChatTarget(
+  channel: SupportedChannelId,
+  value: string,
+): string {
   const trimmed = value.trim();
+  if (channel === "signal") {
+    return trimmed;
+  }
   const parts = trimmed
     .split(":")
     .map((part) => part.trim())
@@ -637,7 +643,7 @@ function normalizeMessageChannelInput(
   return {
     action,
     channel,
-    ...(rawChatId ? { chatId: normalizeChatTarget(rawChatId) } : {}),
+    ...(rawChatId ? { chatId: normalizeChatTarget(channel, rawChatId) } : {}),
     ...(rawTarget ? { target: rawTarget } : {}),
     accountId: firstNonEmptyString(args.accountId),
     message: firstNonEmptyString(args.message),
