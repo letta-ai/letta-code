@@ -122,7 +122,7 @@ Evaluation fields:
         "forbiddenTraceMarkers": ["hello_mod_ping"]
       }
     ],
-    "prompt": "Run all configured evaluation.scenarios."
+    "prompt": "Run only this isolated evaluation scenario. Do not search for or run other evaluation scenarios, and do not invoke /mods learn. Complete the scenario-specific task and provide the required final marker(s)."
   }
 }
 ```

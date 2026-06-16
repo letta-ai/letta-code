@@ -3,6 +3,7 @@ import memoryCitationsEnvJson from "@/../docs/examples/mods/learning/memory-cita
 import type { AppCommandRunner } from "@/cli/app/types";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { BRAILLE_ANIMATIONS } from "@/cli/components/spinners/animations";
+import { buildAppUrl } from "@/cli/helpers/app-urls";
 import { parseModCommandArgv } from "@/cli/mods/command-runtime";
 import type {
   CommandRunner,
@@ -568,6 +569,25 @@ function formatElapsed(elapsedMs: number | undefined): string | null {
     : `${seconds}s elapsed`;
 }
 
+function formatHeadlessConversationLine(
+  progress: ModLearningProgress,
+): string | null {
+  const activeConversation = progress.activeConversation;
+  if (!activeConversation) return null;
+  const agentPart = activeConversation.agentId
+    ? ` · agent ${activeConversation.agentId}`
+    : "";
+  const url = activeConversation.agentId
+    ? `${buildAppUrl(
+        `/projects/default-project/agents/${encodeURIComponent(activeConversation.agentId)}`,
+      )}?conversation=${encodeURIComponent(activeConversation.conversationId)}`
+    : null;
+  return [
+    `Running conversation: ${activeConversation.conversationId}${agentPart}`,
+    ...(url ? [`ADE: ${url}`] : []),
+  ].join("\n");
+}
+
 function formatProgress(
   learn: LearnCommand,
   progress: ModLearningProgress,
@@ -609,9 +629,11 @@ function formatProgress(
       ? `Target mod: ${path.basename(progress.candidatePath)} (${displayPath(progress.candidatePath, cwd)})`
       : `Target mod: ${path.basename(progress.candidatePath)}`;
   const elapsed = formatElapsed(elapsedMs);
+  const headlessConversationLine = formatHeadlessConversationLine(progress);
   return [
     `${pulseFrame} Background mod optimization: ${learn.targetLabel}`,
     `Phase: ${progress.message}${elapsed ? ` · ${elapsed}` : ""}`,
+    ...(headlessConversationLine ? [headlessConversationLine] : []),
     ...(stepLine ? [stepLine] : []),
     ...(currentScoreLine ? [currentScoreLine] : []),
     ...(bestScoreLine ? [bestScoreLine] : []),
