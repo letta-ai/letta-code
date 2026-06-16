@@ -31,6 +31,16 @@ messages and replies will be sent as that personal account.
 
 2. Register or link the Signal account in the daemon.
 
+   `letta channels configure signal` can help with this after it starts/probes
+   the daemon:
+
+   - It lists already-linked accounts from `/v1/accounts` when available.
+   - It can open the `/v1/qrcodelink` QR page for device linking.
+   - It can request SMS/voice registration with `/v1/register/{number}` and
+     verify the code with `/v1/register/{number}/verify/{code}`.
+   - If Signal requires captcha, it points you at `signalcaptchas.org` and asks
+     for the returned `signalcaptcha://...` URL.
+
    Common paths:
 
    - QR/device link: use the daemon or `signal-cli link` flow, then scan the QR
@@ -111,6 +121,8 @@ If `ffmpeg` is missing, the agent receives an
 - **Don't know what base URL to use:** run `letta channels configure signal` on
   the same machine as the listener and let it start/probe the local Docker
   daemon. Use a custom URL only when the daemon runs elsewhere.
+- **No account listed by the daemon:** use the configure wizard's QR link flow
+  or SMS/voice registration flow, then rerun account detection.
 - **Only placeholders like `[image attached]`:** confirm `download_media: true`,
   restart the listener after changing config, and check the daemon's attachment
   directory.

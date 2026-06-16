@@ -98,6 +98,91 @@ async function probeSignalDaemon(baseUrl: string): Promise<boolean> {
   }
 }
 
+async function fetchSignalSetupJson(
+  baseUrl: string,
+  path: string,
+  options: RequestInit = {},
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(`${baseUrl}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers ?? {}),
+      },
+    });
+    const text = await response.text();
+    const parsed = text.trim() ? (JSON.parse(text) as unknown) : null;
+    if (!response.ok) {
+      const message =
+        parsed && typeof parsed === "object" && "error" in parsed
+          ? String((parsed as { error?: unknown }).error)
+          : text || response.statusText;
+      throw new Error(message);
+    }
+    return parsed;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function extractSignalAccountsFromResponse(response: unknown): string[] {
+  const values = Array.isArray(response)
+    ? response
+    : isRecord(response) && Array.isArray(response.accounts)
+      ? response.accounts
+      : [];
+  return values
+    .map((entry) => {
+      if (typeof entry === "string") return entry;
+      if (isRecord(entry)) {
+        const number = entry.number ?? entry.account ?? entry.username;
+        return typeof number === "string" ? number : "";
+      }
+      return "";
+    })
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+async function listSignalDaemonAccounts(baseUrl: string): Promise<string[]> {
+  try {
+    const response = await fetchSignalSetupJson(baseUrl, "/v1/accounts");
+    return extractSignalAccountsFromResponse(response);
+  } catch {
+    return [];
+  }
+}
+
+export function getSignalQrLinkUrl(baseUrl: string): string {
+  const url = new URL(`${baseUrl}/v1/qrcodelink`);
+  url.searchParams.set("device_name", "Letta Code");
+  return url.toString();
+}
+
+async function openUrl(url: string): Promise<boolean> {
+  const command =
+    process.platform === "darwin"
+      ? "open"
+      : process.platform === "win32"
+        ? "cmd"
+        : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  try {
+    execFileSync(command, args, { stdio: "ignore", timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function waitForSignalDaemon(baseUrl: string): Promise<boolean> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -206,6 +291,194 @@ async function configureSignalDaemonUrl(
   return baseUrl;
 }
 
+async function waitForNewSignalAccount(
+  baseUrl: string,
+  previousAccounts: string[],
+): Promise<string | null> {
+  const previous = new Set(previousAccounts);
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    const accounts = await listSignalDaemonAccounts(baseUrl);
+    const next = accounts.find((account) => !previous.has(account));
+    if (next) return next;
+    if (previousAccounts.length === 0 && accounts[0]) return accounts[0];
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  return null;
+}
+
+async function chooseExistingSignalAccount(
+  rl: ReturnType<typeof createInterface>,
+  accounts: string[],
+): Promise<string | null> {
+  if (accounts.length === 0) return null;
+  if (accounts.length === 1) {
+    const [account] = accounts;
+    if (!account) return null;
+    const useInput = await rl.question(
+      `Use linked Signal account ${account}? [Y/n]: `,
+    );
+    return parseYesNo(useInput, true) ? account : null;
+  }
+
+  console.log("\nLinked Signal accounts:");
+  accounts.forEach((account, index) => {
+    console.log(`  ${index + 1}. ${account}`);
+  });
+  const choiceInput = await rl.question(
+    "Choose account number, or blank to skip: ",
+  );
+  if (!choiceInput.trim()) return null;
+  const index = Number(choiceInput.trim()) - 1;
+  return Number.isInteger(index) && accounts[index] ? accounts[index] : null;
+}
+
+async function linkSignalAccountWithQr(
+  rl: ReturnType<typeof createInterface>,
+  baseUrl: string,
+  previousAccounts: string[],
+): Promise<string | null> {
+  const qrUrl = getSignalQrLinkUrl(baseUrl);
+  console.log("\nSignal QR link flow:");
+  console.log("  1. Open this URL in a browser:");
+  console.log(`     ${qrUrl}`);
+  console.log("  2. In Signal mobile: Settings → Linked Devices → +");
+  console.log("  3. Scan the QR code shown by signal-cli-rest-api.\n");
+  const openInput = await rl.question("Open the QR page now? [Y/n]: ");
+  if (parseYesNo(openInput, true)) {
+    await openUrl(qrUrl);
+  }
+  const waitInput = await rl.question(
+    "After scanning, wait for Letta to detect the linked account? [Y/n]: ",
+  );
+  if (!parseYesNo(waitInput, true)) {
+    return null;
+  }
+  console.log("Waiting for linked Signal account...");
+  const account = await waitForNewSignalAccount(baseUrl, previousAccounts);
+  if (account) {
+    console.log(`✓ Detected linked Signal account ${account}\n`);
+  } else {
+    console.log("No linked account detected before timeout.\n");
+  }
+  return account;
+}
+
+async function registerSignalAccountWithSms(
+  rl: ReturnType<typeof createInterface>,
+  baseUrl: string,
+): Promise<string | null> {
+  console.log("\nDedicated-number SMS registration:");
+  console.log(
+    "Warning: registering a number with signal-cli can de-authenticate another Signal session for that number. Use a dedicated bot number when possible.\n",
+  );
+  const phoneInput = await rl.question(
+    "Dedicated Signal phone number in E.164 format (e.g. +15555550100): ",
+  );
+  const phone = normalizeSignalPhoneInput(phoneInput);
+  if (!phone) {
+    console.error("Invalid phone number.");
+    return null;
+  }
+
+  const voiceInput = await rl.question(
+    "Use voice call instead of SMS? [y/N]: ",
+  );
+  const useVoice = parseYesNo(voiceInput, false);
+  try {
+    await fetchSignalSetupJson(
+      baseUrl,
+      `/v1/register/${encodeURIComponent(phone)}`,
+      {
+        method: "POST",
+        body: JSON.stringify(useVoice ? { use_voice: true } : {}),
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/captcha/i.test(message)) {
+      console.log(
+        "Signal requires a captcha before registration can continue.",
+      );
+      console.log(
+        "  1. Open https://signalcaptchas.org/registration/generate.html",
+      );
+      console.log("  2. Complete captcha and copy the signalcaptcha:// URL.");
+      const captcha = await rl.question(
+        "Paste captcha URL, or blank to cancel: ",
+      );
+      if (!captcha.trim()) return null;
+      await fetchSignalSetupJson(
+        baseUrl,
+        `/v1/register/${encodeURIComponent(phone)}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            captcha: captcha.trim(),
+            ...(useVoice ? { use_voice: true } : {}),
+          }),
+        },
+      );
+    } else {
+      console.error(`Registration request failed: ${message}`);
+      return null;
+    }
+  }
+
+  const code = await rl.question("Verification code from Signal SMS/voice: ");
+  if (!code.trim()) return null;
+  try {
+    await fetchSignalSetupJson(
+      baseUrl,
+      `/v1/register/${encodeURIComponent(phone)}/verify/${encodeURIComponent(code.trim())}`,
+      { method: "POST" },
+    );
+    console.log(`✓ Registered Signal account ${phone}\n`);
+    return phone;
+  } catch (error) {
+    console.error(
+      `Verification failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+}
+
+async function configureSignalAccountIdentity(
+  rl: ReturnType<typeof createInterface>,
+  baseUrl: string,
+): Promise<string | null> {
+  const accounts = await listSignalDaemonAccounts(baseUrl);
+  const existing = await chooseExistingSignalAccount(rl, accounts);
+  if (existing) return existing;
+
+  console.log("\nNo linked Signal account selected.");
+  console.log("How do you want to connect Signal?");
+  console.log("  1. Link an existing Signal account/device with a QR code");
+  console.log("  2. Register a dedicated Signal number with SMS/voice");
+  console.log(
+    "  3. I already linked/registered it; I'll type the phone number",
+  );
+  const choice = (await rl.question("Choose [1]: ")).trim() || "1";
+
+  if (choice === "1") {
+    const linked = await linkSignalAccountWithQr(rl, baseUrl, accounts);
+    if (linked) return linked;
+  } else if (choice === "2") {
+    const registered = await registerSignalAccountWithSms(rl, baseUrl);
+    if (registered) return registered;
+  }
+
+  const accountInput = await rl.question(
+    "Signal account phone number in E.164 format (e.g. +15555550100): ",
+  );
+  const account = normalizeSignalPhoneInput(accountInput);
+  if (!account) {
+    console.error("Invalid Signal phone number. Setup cancelled.");
+    return null;
+  }
+  return account;
+}
+
 export async function runSignalSetup(): Promise<boolean> {
   const rl = createInterface({
     input: process.stdin,
@@ -229,12 +502,8 @@ export async function runSignalSetup(): Promise<boolean> {
       return false;
     }
 
-    const accountInput = await rl.question(
-      "Signal account phone number in E.164 format (e.g. +15555550100): ",
-    );
-    const account = normalizeSignalPhoneInput(accountInput);
+    const account = await configureSignalAccountIdentity(rl, baseUrl);
     if (!account) {
-      console.error("Invalid Signal phone number. Setup cancelled.");
       return false;
     }
 

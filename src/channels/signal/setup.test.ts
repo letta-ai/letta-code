@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  extractSignalAccountsFromResponse,
   getSignalDockerRunCommand,
+  getSignalQrLinkUrl,
   normalizeSignalBaseUrl,
   normalizeSignalPhoneInput,
   parseSignalCsv,
@@ -40,5 +42,23 @@ describe("Signal setup helpers", () => {
     expect(command).toContain("MODE=json-rpc");
     expect(command).toContain("8080:8080");
     expect(command).toContain("letta-signal-cli-data");
+  });
+
+  test("extracts account numbers from daemon account responses", () => {
+    expect(extractSignalAccountsFromResponse(["+15550000001"])).toEqual([
+      "+15550000001",
+    ]);
+    expect(
+      extractSignalAccountsFromResponse({
+        accounts: [{ number: "+15550000002" }, { account: "+15550000003" }],
+      }),
+    ).toEqual(["+15550000002", "+15550000003"]);
+    expect(extractSignalAccountsFromResponse({})).toEqual([]);
+  });
+
+  test("builds QR link URL for device linking", () => {
+    expect(getSignalQrLinkUrl("http://127.0.0.1:8080")).toBe(
+      "http://127.0.0.1:8080/v1/qrcodelink?device_name=Letta+Code",
+    );
   });
 });
