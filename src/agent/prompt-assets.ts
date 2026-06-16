@@ -8,7 +8,6 @@ import humanMemoPrompt from "./prompts/human_memo.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaMemfsPrompt from "./prompts/letta.md";
 import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
-import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import onboardingPrompt from "./prompts/onboarding.mdx";
 import personaPrompt from "./prompts/persona.mdx";
@@ -20,7 +19,6 @@ import personaTutorialPrompt from "./prompts/persona_tutorial.mdx";
 import projectPrompt from "./prompts/project.mdx";
 import rememberPrompt from "./prompts/remember.md";
 import skillCreatorModePrompt from "./prompts/skill_creator_mode.md";
-import sleeptimePersona from "./prompts/sleeptime.md";
 import sourceClaudePrompt from "./prompts/source_claude.md";
 import sourceCodexPrompt from "./prompts/source_codex.md";
 import sourceGeminiPrompt from "./prompts/source_gemini.md";
@@ -31,10 +29,8 @@ export const SYSTEM_PROMPT = lettaNoMemfsPrompt;
 
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
-export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
 export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
 export const INTERRUPT_RECOVERY_ALERT = interruptRecoveryAlert;
-export const SLEEPTIME_MEMORY_PERSONA = sleeptimePersona;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,

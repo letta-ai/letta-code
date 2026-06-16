@@ -116,7 +116,6 @@ describe("built-in subagents", () => {
         "description: Custom reflection override",
         "tools: Read",
         "model: zaisigno/glm-5",
-        "memoryBlocks: none",
         "---",
         "Custom prompt body",
       ].join("\r\n"),
@@ -138,7 +137,6 @@ name: reflection
 description: Custom reflection override
 tools: Read
 model:
-memoryBlocks: none
 ---
 Custom prompt body`,
     );
@@ -157,7 +155,6 @@ Custom prompt body`,
 name: reflection
 description: Custom reflection override from different filename
 tools: Read
-memoryBlocks: none
 ---
 Custom prompt body`,
     );

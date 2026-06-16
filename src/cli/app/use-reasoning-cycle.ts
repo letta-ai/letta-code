@@ -199,7 +199,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
-              { preserveContextWindow: true },
+              { avoidOverwritingExistingContextWindow: true },
             );
           } else {
             const { updateConversationLLMConfig } = await import(
@@ -214,7 +214,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
-              { preserveContextWindow: true },
+              { avoidOverwritingExistingContextWindow: true },
             );
             conversationModelSettings = (
               updatedConversation as {

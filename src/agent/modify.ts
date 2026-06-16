@@ -275,7 +275,13 @@ function maxTokensForUpdatePayload(
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
 export interface UpdateAgentLLMConfigOptions {
-  preserveContextWindow?: boolean;
+  /**
+   * When true, do not derive and send a default context_window_limit unless the
+   * caller explicitly supplied updateArgs.context_window. This is for updates to
+   * existing agent/conversation model settings where omitting the field lets the
+   * backend keep its current value.
+   */
+  avoidOverwritingExistingContextWindow?: boolean;
 }
 
 export async function updateAgentLLMConfig(
@@ -294,11 +300,12 @@ export async function updateAgentLLMConfig(
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
     : (updateArgs?.context_window as number | undefined);
-  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  const shouldAvoidOverwritingExistingContextWindow =
+    options?.avoidOverwritingExistingContextWindow === true;
   // Resume refresh updates should not implicitly reset context window.
   const contextWindow =
     explicitContextWindow ??
-    (!shouldPreserveContextWindow
+    (!shouldAvoidOverwritingExistingContextWindow
       ? await getModelContextWindow(modelHandle)
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
@@ -346,10 +353,11 @@ export async function updateConversationLLMConfig(
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
     : (updateArgs?.context_window as number | undefined);
-  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  const shouldAvoidOverwritingExistingContextWindow =
+    options?.avoidOverwritingExistingContextWindow === true;
   const contextWindow =
     explicitContextWindow ??
-    (!shouldPreserveContextWindow
+    (!shouldAvoidOverwritingExistingContextWindow
       ? await getModelContextWindow(modelHandle)
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;

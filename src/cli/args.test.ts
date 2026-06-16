@@ -101,8 +101,6 @@ describe("shared CLI arg schema", () => {
         "skill-a,skill-b",
         "--max-turns",
         "3",
-        "--block-value",
-        "persona=hello",
         "--dev-backend",
         "fake-headless",
       ]),
@@ -111,7 +109,6 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["memfs-startup"]).toBe("background");
     expect(parsed.values["pre-load-skills"]).toBe("skill-a,skill-b");
     expect(parsed.values["max-turns"]).toBe("3");
-    expect(parsed.values["block-value"]).toEqual(["persona=hello"]);
     expect(parsed.values["dev-backend"]).toBe("fake-headless");
   });
 

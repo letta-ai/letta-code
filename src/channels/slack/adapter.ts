@@ -968,6 +968,7 @@ export function createSlackAdapter(
         accountId: config.accountId,
         token: config.botToken,
         rawEvent: message,
+        transcribeVoice: config.transcribeVoice === true,
       });
       const chatType = resolveSlackChatType(channelId);
       const threadId =
@@ -1108,6 +1109,7 @@ export function createSlackAdapter(
           accountId: config.accountId,
           token: config.botToken,
           rawEvent: event,
+          transcribeVoice: config.transcribeVoice === true,
         }),
         raw: event,
       };

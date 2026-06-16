@@ -1008,18 +1008,6 @@ export function buildSubagentArgs(
     args.push("--disallowedTools", parentDisallowedTools.join(","));
   }
 
-  // Add memory block filtering if specified (only for new agents)
-  if (!isDeployingExisting) {
-    if (config.memoryBlocks === "none") {
-      args.push("--init-blocks", "none");
-    } else if (
-      Array.isArray(config.memoryBlocks) &&
-      config.memoryBlocks.length > 0
-    ) {
-      args.push("--init-blocks", config.memoryBlocks.join(","));
-    }
-  }
-
   // Add tool filtering if specified (applies to both new and existing agents)
   if (
     config.allowedTools !== "all" &&

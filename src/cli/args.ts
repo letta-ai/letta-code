@@ -53,15 +53,6 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: { description: "Create new conversation (for concurrent sessions)" },
   },
-  "init-blocks": {
-    parser: { type: "string" },
-    mode: "both",
-    help: {
-      argLabel: "<list>",
-      description:
-        'Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,skills")',
-    },
-  },
   "base-tools": {
     parser: { type: "string" },
     mode: "both",
@@ -112,11 +103,6 @@ export const CLI_FLAG_CATALOG = {
       description:
         'Personality preset for --new-agent: "letta-code", "tutorial", "blank", "linus", "kawaii", "claude", or "codex"',
     },
-  },
-  "memory-blocks": { parser: { type: "string" }, mode: "both" },
-  "block-value": {
-    parser: { type: "string", multiple: true },
-    mode: "headless",
   },
   toolset: {
     parser: { type: "string" },
@@ -279,16 +265,8 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: {
       argLabel: "<mode>",
-      description: "Sleeptime trigger: off, step-count, compaction-event",
-    },
-  },
-  "reflection-behavior": {
-    parser: { type: "string" },
-    mode: "both",
-    help: {
-      argLabel: "<mode>",
       description:
-        "DEPRECATED: reflection always auto-launches subagents (flag accepted for compatibility)",
+        "Sleeptime trigger: off, step-count, compaction-event (requires memfs unless off)",
     },
   },
   "reflection-step-count": {

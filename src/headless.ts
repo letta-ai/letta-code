@@ -34,7 +34,6 @@ import { buildClientSkillsPayload } from "./agent/client-skills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
-import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
   getModelInfo,
@@ -66,7 +65,6 @@ import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
-  parseJsonArrayFlag,
   parsePositiveIntFlag,
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
@@ -85,6 +83,7 @@ import {
   type ReflectionSettings,
   type ReflectionTrigger,
 } from "./cli/helpers/memory-reminder";
+import { maybeLaunchPostTurnReflection } from "./cli/helpers/post-turn-reflection";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
@@ -125,7 +124,6 @@ import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
 import {
   createSharedReminderState,
   enqueueMemoryGitSyncReminder,
-  syncReminderStateFromContextTracker,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
@@ -320,7 +318,6 @@ export const __headlessTestUtils = {
 
 type ReflectionOverrides = {
   trigger?: ReflectionTrigger;
-  deprecatedBehaviorRaw?: string;
   stepCount?: number;
 };
 
@@ -328,10 +325,9 @@ function parseReflectionOverrides(
   values: ParsedCliArgs["values"],
 ): ReflectionOverrides {
   const triggerRaw = values["reflection-trigger"];
-  const behaviorRaw = values["reflection-behavior"];
   const stepCountRaw = values["reflection-step-count"];
 
-  if (!triggerRaw && !behaviorRaw && !stepCountRaw) {
+  if (!triggerRaw && !stepCountRaw) {
     return {};
   }
 
@@ -348,15 +344,6 @@ function parseReflectionOverrides(
       );
     }
     overrides.trigger = triggerRaw;
-  }
-
-  if (behaviorRaw !== undefined) {
-    if (behaviorRaw !== "reminder" && behaviorRaw !== "auto-launch") {
-      throw new Error(
-        `Invalid --reflection-behavior "${behaviorRaw}". Valid values: reminder, auto-launch`,
-      );
-    }
-    overrides.deprecatedBehaviorRaw = behaviorRaw;
   }
 
   if (stepCountRaw !== undefined) {
@@ -376,11 +363,7 @@ function parseReflectionOverrides(
 }
 
 function hasReflectionOverrides(overrides: ReflectionOverrides): boolean {
-  return (
-    overrides.trigger !== undefined ||
-    overrides.deprecatedBehaviorRaw !== undefined ||
-    overrides.stepCount !== undefined
-  );
+  return overrides.trigger !== undefined || overrides.stepCount !== undefined;
 }
 
 async function applyReflectionOverrides(
@@ -397,16 +380,10 @@ async function applyReflectionOverrides(
     return merged;
   }
 
-  if (overrides.deprecatedBehaviorRaw !== undefined) {
-    console.warn(
-      "Warning: --reflection-behavior is deprecated and ignored. Reflection now always auto-launches subagents.",
-    );
-  }
-
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  if (!memfsEnabled && merged.trigger === "compaction-event") {
+  if (!memfsEnabled && merged.trigger !== "off") {
     throw new Error(
-      "--reflection-trigger compaction-event requires memfs enabled for this agent.",
+      `--reflection-trigger ${merged.trigger} requires memfs enabled for this agent.`,
     );
   }
 
@@ -683,9 +660,6 @@ export async function handleHeadlessCommand(
   const systemCustom = values["system-custom"];
   const personalityInput = values.personality;
   const embeddingModel = values.embedding;
-  const memoryBlocksJson = values["memory-blocks"];
-  const blockValueArgs = values["block-value"];
-  const initBlocksRaw = values["init-blocks"];
   const baseToolsRaw = values["base-tools"];
   const skillsDirectory = values.skills ?? skillsDirectoryOverride;
   const noSkillsFlag = values["no-skills"];
@@ -962,15 +936,6 @@ export async function handleHeadlessCommand(
     }
   }
 
-  if (initBlocksRaw && !forceNew) {
-    console.error(
-      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
-    );
-    process.exit(1);
-  }
-
-  const initBlocks = parseCsvListFlag(initBlocksRaw);
-
   if (baseToolsRaw && !forceNew) {
     console.error(
       "Error: --base-tools can only be used together with --new to control initial base tools.",
@@ -993,12 +958,6 @@ export async function handleHeadlessCommand(
     console.error("Error: --personality can only be used with --new-agent");
     process.exit(1);
   }
-  if (personalityInput && (memoryBlocksJson !== undefined || initBlocksRaw)) {
-    console.error(
-      "Error: --personality cannot be combined with --memory-blocks or --init-blocks",
-    );
-    process.exit(1);
-  }
 
   // Validate system prompt options (--system and --system-custom are mutually exclusive)
   if (systemPromptPreset && systemCustom) {
@@ -1006,80 +965,6 @@ export async function handleHeadlessCommand(
       "Error: --system and --system-custom are mutually exclusive. Use one or the other.",
     );
     process.exit(1);
-  }
-
-  // Parse memory blocks JSON if provided
-  // Supports two formats:
-  // - CreateBlock: { label: string, value: string, description?: string }
-  // - BlockReference: { blockId: string }
-  let memoryBlocks:
-    | Array<
-        | { label: string; value: string; description?: string }
-        | { blockId: string }
-      >
-    | undefined;
-  if (memoryBlocksJson !== undefined) {
-    if (!forceNew) {
-      console.error(
-        "Error: --memory-blocks can only be used together with --new to provide initial memory blocks.",
-      );
-      process.exit(1);
-    }
-    try {
-      memoryBlocks = parseJsonArrayFlag(memoryBlocksJson, "memory-blocks") as
-        | Array<{ label: string; value: string; description?: string }>
-        | Array<{ blockId: string }>;
-      // Validate each block has required fields
-      for (const block of memoryBlocks) {
-        const hasBlockId =
-          "blockId" in block && typeof block.blockId === "string";
-        const hasLabelValue =
-          "label" in block &&
-          "value" in block &&
-          typeof block.label === "string" &&
-          typeof block.value === "string";
-
-        if (!hasBlockId && !hasLabelValue) {
-          throw new Error(
-            "Each memory block must have either 'blockId' (string) or 'label' and 'value' (strings)",
-          );
-        }
-      }
-    } catch (error) {
-      trackHeadlessBoundaryError(
-        "headless_memory_blocks_parse_failed",
-        error,
-        "headless_startup_memory_blocks",
-      );
-      console.error(
-        `Error: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      process.exit(1);
-    }
-  }
-
-  // Parse --block-value args (format: label=value)
-  let blockValues: Record<string, string> | undefined;
-  if (blockValueArgs && blockValueArgs.length > 0) {
-    if (!forceNew) {
-      console.error(
-        "Error: --block-value can only be used together with --new to set block values.",
-      );
-      process.exit(1);
-    }
-    blockValues = {};
-    for (const arg of blockValueArgs) {
-      const eqIndex = arg.indexOf("=");
-      if (eqIndex === -1) {
-        console.error(
-          `Error: Invalid --block-value format "${arg}". Expected format: label=value`,
-        );
-        process.exit(1);
-      }
-      const label = arg.slice(0, eqIndex);
-      const value = arg.slice(eqIndex + 1);
-      blockValues[label] = value;
-    }
   }
 
   // Priority 0: --conversation derives agent from conversation ID.
@@ -1217,10 +1102,8 @@ export async function handleHeadlessCommand(
       systemPromptPreset,
       systemPromptCustom: systemCustom,
       memoryPromptMode: effectiveMemoryMode,
-      initBlocks,
       baseTools,
-      memoryBlocks: personalityOptions?.memoryBlocks ?? memoryBlocks,
-      blockValues,
+      memoryBlocks: personalityOptions?.memoryBlocks,
       tags: personalityOptions?.tags ?? tags,
     };
     let result: Awaited<ReturnType<typeof createAgent>>;
@@ -1337,7 +1220,7 @@ export async function handleHeadlessCommand(
             agent.id,
             presetRefresh.modelHandle,
             resumeRefreshUpdateArgs,
-            { preserveContextWindow: true },
+            { avoidOverwritingExistingContextWindow: true },
           );
         }
       }
@@ -1559,14 +1442,6 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Determine which blocks to isolate for the conversation
-  const isolatedBlockLabels: string[] =
-    initBlocks === undefined
-      ? [...ISOLATED_BLOCK_LABELS]
-      : ISOLATED_BLOCK_LABELS.filter((label) =>
-          initBlocks.includes(label as string),
-        );
-
   if (specifiedConversationId) {
     if (specifiedConversationId === "default") {
       // "default" is the agent's primary message history (no explicit conversation)
@@ -1600,7 +1475,6 @@ export async function handleHeadlessCommand(
     // body fields unchanged — remove the cast once the SDK is bumped.
     const createParams: ConversationCreateBody = {
       agent_id: agent.id,
-      isolated_block_labels: isolatedBlockLabels,
     };
     if (fromAgentId) {
       (createParams as { hidden?: boolean }).hidden = true;
@@ -1620,7 +1494,6 @@ export async function handleHeadlessCommand(
     // primary conversation.
     const conversation = await backend.createConversation({
       agent_id: agent.id,
-      isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
     conversationOpenReason = "new";
@@ -1937,10 +1810,6 @@ ${SYSTEM_REMINDER_CLOSE}
     pushPart(systemReminder);
   }
 
-  syncReminderStateFromContextTracker(
-    sharedReminderState,
-    reminderContextTracker,
-  );
   const lastRunAt = (agent as { last_run_completion?: string })
     .last_run_completion;
   const { parts: sharedReminderParts } = await buildSharedReminderParts({
@@ -1955,7 +1824,6 @@ ${SYSTEM_REMINDER_CLOSE}
     state: sharedReminderState,
     systemInfoReminderEnabled,
     workingDirectory: getCurrentWorkingDirectory(),
-    reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
   });
   for (const part of sharedReminderParts) {
@@ -4009,10 +3877,6 @@ async function runBidirectionalMode(
         let sawStreamError = false; // Track if we emitted an error during streaming
         let preStreamTransientRetries = 0;
 
-        syncReminderStateFromContextTracker(
-          sharedReminderState,
-          reminderContextTracker,
-        );
         const lastRunAt = (agent as { last_run_completion?: string })
           .last_run_completion;
         const { parts: sharedReminderParts } = await buildSharedReminderParts({
@@ -4027,9 +3891,7 @@ async function runBidirectionalMode(
           state: sharedReminderState,
           systemInfoReminderEnabled,
           workingDirectory: getCurrentWorkingDirectory(),
-          reflectionSettings,
           skillSources,
-          maybeLaunchReflectionSubagent,
         });
         headlessModAdapter.updateContext(
           createHeadlessModContext({
@@ -4454,6 +4316,26 @@ async function runBidirectionalMode(
                 transcriptError instanceof Error
                   ? transcriptError.message
                   : String(transcriptError)
+              }`,
+            );
+          }
+          try {
+            await maybeLaunchPostTurnReflection({
+              agentId: agent.id,
+              conversationId,
+              memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+              reflectionSettings,
+              reminderState: sharedReminderState,
+              contextTracker: reminderContextTracker,
+              launch: maybeLaunchReflectionSubagent,
+            });
+          } catch (reflectionError) {
+            debugWarn(
+              "memory",
+              `Failed to evaluate post-turn reflection: ${
+                reflectionError instanceof Error
+                  ? reflectionError.message
+                  : String(reflectionError)
               }`,
             );
           }

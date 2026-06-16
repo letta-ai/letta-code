@@ -35,22 +35,17 @@ import {
   type Line,
   toLines,
 } from "@/cli/helpers/accumulator";
-import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
   getReflectionSettings,
-  type ReflectionSettings,
   type ReflectionTrigger,
-  shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
+import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
 } from "@/cli/helpers/reflection-launcher";
-import {
-  appendTranscriptDeltaJsonl,
-  getReflectionTranscriptState,
-} from "@/cli/helpers/reflection-transcript";
+import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import {
   buildSharedReminderParts,
@@ -58,11 +53,7 @@ import {
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
-import {
-  enqueueMemoryGitSyncReminder,
-  type SharedReminderState,
-  syncReminderStateFromContextTracker,
-} from "@/reminders/state";
+import { enqueueMemoryGitSyncReminder } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -70,6 +61,7 @@ import { extractTelemetryInputText } from "@/telemetry/input";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import { createTelegramRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -207,7 +199,6 @@ export const __listenerTurnTestUtils = {
   trackListenerUserInput,
   buildInboundUserTranscriptLines,
   seedInboundUserTranscriptLines,
-  maybeLaunchPostTurnChannelReflection,
 };
 
 function escapeTaskNotificationSummary(summary: string): string {
@@ -217,7 +208,7 @@ function escapeTaskNotificationSummary(summary: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function buildMaybeLaunchReflectionSubagent(params: {
+export function buildMaybeLaunchReflectionSubagent(params: {
   runtime: ConversationRuntime;
   socket: ListenerTransport;
   agentId: string;
@@ -268,63 +259,6 @@ function buildMaybeLaunchReflectionSubagent(params: {
     });
     return result.launched;
   };
-}
-
-type PostTurnReflectionLauncher = (
-  triggerSource: Exclude<ReflectionTrigger, "off">,
-) => Promise<boolean>;
-
-async function maybeLaunchPostTurnChannelReflection(params: {
-  hasChannelTurnSources: boolean;
-  agentId?: string | null;
-  conversationId: string;
-  memfsEnabled: boolean;
-  reflectionSettings: ReflectionSettings;
-  reminderState: SharedReminderState;
-  contextTracker: ContextTracker;
-  launch: PostTurnReflectionLauncher;
-  getTranscriptState?: typeof getReflectionTranscriptState;
-}): Promise<boolean> {
-  if (
-    !params.hasChannelTurnSources ||
-    !params.agentId ||
-    !params.memfsEnabled
-  ) {
-    return false;
-  }
-
-  switch (params.reflectionSettings.trigger) {
-    case "off":
-      return false;
-    case "compaction-event": {
-      syncReminderStateFromContextTracker(
-        params.reminderState,
-        params.contextTracker,
-      );
-      if (!params.reminderState.pendingReflectionTrigger) {
-        return false;
-      }
-      params.reminderState.pendingReflectionTrigger = false;
-      return params.launch("compaction-event");
-    }
-    case "step-count": {
-      const readTranscriptState =
-        params.getTranscriptState ?? getReflectionTranscriptState;
-      const transcriptState = await readTranscriptState(
-        params.agentId,
-        params.conversationId,
-      );
-      if (
-        !shouldFireStepCountTrigger(
-          transcriptState.steps_since_last_successful_reflection,
-          params.reflectionSettings,
-        )
-      ) {
-        return false;
-      }
-      return params.launch("step-count");
-    }
-  }
 }
 
 function finalizeInterruptedTurn(
@@ -400,6 +334,10 @@ export async function handleIncomingMessage(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
+  const richDraftStreamer = createTelegramRichDraftStreamer({
+    batchId: dequeuedBatchId,
+    sources: msg.channelTurnSources,
+  });
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
@@ -520,10 +458,6 @@ export async function handleIncomingMessage(
 
     if (!isApprovalMessage) {
       try {
-        syncReminderStateFromContextTracker(
-          runtime.reminderState,
-          runtime.contextTracker,
-        );
         if (agentId) {
           try {
             cachedAgent = (await getBackend().retrieveAgent(agentId, {
@@ -564,10 +498,6 @@ export async function handleIncomingMessage(
                 .last_run_completion ?? null,
           };
         }
-        const reflectionSettings = getReflectionSettings(
-          agentId || undefined,
-          turnWorkingDirectory,
-        );
         const { parts: reminderParts } = await buildSharedReminderParts(
           buildListenReminderContext({
             agentId: agentId || "",
@@ -576,16 +506,6 @@ export async function handleIncomingMessage(
             agentDescription: listenAgentMetadata?.description ?? null,
             agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
             state: runtime.reminderState,
-            reflectionSettings,
-            maybeLaunchReflectionSubagent: agentId
-              ? buildMaybeLaunchReflectionSubagent({
-                  runtime,
-                  socket,
-                  agentId,
-                  conversationId,
-                  cachedAgent,
-                })
-              : undefined,
             workingDirectory: turnWorkingDirectory,
           }),
         );
@@ -762,6 +682,10 @@ export async function handleIncomingMessage(
             }
           }
 
+          richDraftStreamer?.handleChunk(
+            chunk as unknown as LettaStreamingResponse,
+          );
+
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
@@ -790,6 +714,12 @@ export async function handleIncomingMessage(
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
+      if (
+        stopReason === "requires_approval" ||
+        (stopReason === "end_turn" && !runtime.cancelRequested)
+      ) {
+        await richDraftStreamer?.flushPending();
+      }
       lastApprovalContinuationAccepted = false;
 
       if (stopReason === "end_turn" && runtime.cancelRequested) {
@@ -826,8 +756,7 @@ export async function handleIncomingMessage(
             agentId || undefined,
             turnWorkingDirectory,
           );
-          await maybeLaunchPostTurnChannelReflection({
-            hasChannelTurnSources: (msg.channelTurnSources?.length ?? 0) > 0,
+          await maybeLaunchPostTurnReflection({
             agentId,
             conversationId,
             memfsEnabled: Boolean(
@@ -1299,6 +1228,8 @@ export async function handleIncomingMessage(
   } finally {
     // Prune lean defaults only at turn-finalization boundaries (never during
     // mid-turn mode changes), then persist the canonical map.
+    richDraftStreamer?.dispose();
+
     pruneConversationPermissionModeStateIfDefault(
       runtime.listener,
       normalizedAgentId,

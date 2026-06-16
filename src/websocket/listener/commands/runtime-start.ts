@@ -9,6 +9,7 @@ import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
+import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -18,7 +19,6 @@ import type {
   ConversationRuntime,
   ListenerRuntime,
 } from "@/websocket/listener/types";
-import { registerRuntimeExternalTools } from "../external-tools";
 import type {
   GetOrCreateScopedRuntime,
   RunDetachedListenerTask,

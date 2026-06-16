@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { basename, dirname, relative } from "node:path";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import type { LocalAgentRecord } from "./local-types";
 
@@ -434,7 +434,7 @@ export function compileLocalSystemPrompt(
 ): LocalCompiledSystemPrompt {
   const compiledAt = options.now ?? new Date();
   const memoryDir =
-    options.memoryDir ?? getMemoryFilesystemRoot(options.agent.id);
+    options.memoryDir ?? getScopedMemoryFilesystemRoot(options.agent.id);
   const memfs =
     options.includeMemfs === false
       ? { content: "", revision: undefined }
