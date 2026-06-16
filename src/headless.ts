@@ -34,7 +34,6 @@ import { buildClientSkillsPayload } from "./agent/client-skills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
-import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
   getModelInfo,
@@ -1443,9 +1442,6 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Determine which blocks to isolate for the conversation
-  const isolatedBlockLabels: string[] = [...ISOLATED_BLOCK_LABELS];
-
   if (specifiedConversationId) {
     if (specifiedConversationId === "default") {
       // "default" is the agent's primary message history (no explicit conversation)
@@ -1479,7 +1475,6 @@ export async function handleHeadlessCommand(
     // body fields unchanged — remove the cast once the SDK is bumped.
     const createParams: ConversationCreateBody = {
       agent_id: agent.id,
-      isolated_block_labels: isolatedBlockLabels,
     };
     if (fromAgentId) {
       (createParams as { hidden?: boolean }).hidden = true;
@@ -1499,7 +1494,6 @@ export async function handleHeadlessCommand(
     // primary conversation.
     const conversation = await backend.createConversation({
       agent_id: agent.id,
-      isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
     conversationOpenReason = "new";

@@ -8,41 +8,17 @@ import { READ_ONLY_BLOCK_LABELS } from "./memory-constants";
 import { MEMORY_PROMPTS } from "./prompt-assets";
 
 /**
- * Block labels that are stored globally (shared across all projects).
+ * The memory block labels every standard (non-MemFS) agent is created with.
+ * Each maps to a `<label>.mdx` file in src/agent/prompts. Per-project blocks
+ * (skills/loaded_skills) were removed in LET-7353 — skills are now injected
+ * via system reminders, leaving only these defaults.
  */
-export const GLOBAL_BLOCK_LABELS = ["persona", "human"] as const;
-
-/**
- * Block labels that are stored per-project (local to the current directory).
- * Note: skills/loaded_skills removed in LET-7353 - skills are now injected via system reminders.
- */
-export const PROJECT_BLOCK_LABELS = [] as const;
-
-/**
- * All available memory block labels (derived from global + project blocks)
- */
-export const MEMORY_BLOCK_LABELS = [
-  ...GLOBAL_BLOCK_LABELS,
-  ...PROJECT_BLOCK_LABELS,
-] as const;
+export const MEMORY_BLOCK_LABELS = ["persona", "human"] as const;
 
 /**
  * Block labels that should be read-only (agent cannot modify via memory tools).
  */
 export { READ_ONLY_BLOCK_LABELS };
-
-/**
- * Block labels that should be isolated per-conversation.
- * Note: skills/loaded_skills removed in LET-7353.
- */
-export const ISOLATED_BLOCK_LABELS = [] as const;
-
-/**
- * Check if a block label is a project-level block
- */
-export function isProjectBlock(label: string): boolean {
-  return (PROJECT_BLOCK_LABELS as readonly string[]).includes(label);
-}
 
 /**
  * Parse frontmatter and content from an .mdx file
