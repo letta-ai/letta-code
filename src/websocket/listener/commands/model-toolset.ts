@@ -537,10 +537,37 @@ export async function buildListModelsResponse(
     listProviders(),
   ]);
 
-  const availableHandles: string[] | null =
+  const discoveredHandles: Set<string> | null =
     handlesResult.status === "fulfilled"
-      ? [...handlesResult.value.handles]
+      ? handlesResult.value.handles
       : null;
+
+  // Merge models.json entry handles into available handles when their provider
+  // is already connected (i.e. at least one handle with the same provider
+  // prefix exists in the discovered set). This ensures newly added models in
+  // models.json appear in the dropdown even before the provider catalog is
+  // updated, as long as the user has that provider connected.
+  let availableHandles: string[] | null = null;
+  if (discoveredHandles !== null) {
+    const merged = new Set(discoveredHandles);
+    const connectedPrefixes = new Set<string>();
+    for (const handle of discoveredHandles) {
+      const slash = handle.indexOf("/");
+      if (slash > 0) connectedPrefixes.add(handle.slice(0, slash + 1));
+    }
+    for (const entry of entries) {
+      if (
+        entry.handle &&
+        !merged.has(entry.handle) &&
+        connectedPrefixes.has(
+          entry.handle.slice(0, entry.handle.indexOf("/") + 1),
+        )
+      ) {
+        merged.add(entry.handle);
+      }
+    }
+    availableHandles = [...merged];
+  }
 
   // listProviders already degrades to [] on failure, but handle rejection too
   const providers =
