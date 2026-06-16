@@ -5,9 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   deleteSkillDirectory,
+  downloadDirectSkillFileSource,
   installSkillDirectory,
   listSkillDirectories,
+  MAX_DIRECT_SKILL_FILE_BYTES,
   parseClawHubSpecifier,
+  parseDirectSkillFileUrlSpecifier,
   parseGitHubSpecifier,
 } from "./skills";
 
@@ -33,6 +36,40 @@ describe("skills subcommand", () => {
       repoUrl: "https://github.com/owner/repo.git",
       branch: null,
       subdir: "main/path/to/skill",
+    });
+  });
+
+  test("does not parse non-GitHub absolute URLs as GitHub shorthand", () => {
+    expect(parseGitHubSpecifier("https://docs.x.com/skill.md")).toBeNull();
+    expect(parseGitHubSpecifier("https://docs.x.com/not-a-skill")).toBeNull();
+  });
+
+  test("parses direct HTTPS skill file URLs", () => {
+    expect(
+      parseDirectSkillFileUrlSpecifier(
+        "https://docs.x.com/path/skill.md?download=1",
+      ),
+    ).toEqual({
+      url: "https://docs.x.com/path/skill.md?download=1",
+    });
+    expect(
+      parseDirectSkillFileUrlSpecifier("https://docs.x.com/path/SKILL.md"),
+    ).toEqual({
+      url: "https://docs.x.com/path/SKILL.md",
+    });
+    expect(
+      parseDirectSkillFileUrlSpecifier("https://docs.x.com/path/readme.md"),
+    ).toBeNull();
+    expect(
+      parseDirectSkillFileUrlSpecifier("https://user:pass@docs.x.com/SKILL.md"),
+    ).toBeNull();
+    expect(
+      parseDirectSkillFileUrlSpecifier("http://docs.x.com/SKILL.md"),
+    ).toBeNull();
+    expect(
+      parseDirectSkillFileUrlSpecifier("http://localhost:3000/SKILL.md"),
+    ).toEqual({
+      url: "http://localhost:3000/SKILL.md",
     });
   });
 
@@ -77,6 +114,61 @@ describe("skills subcommand", () => {
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  test("downloads a direct skill file URL as a skill directory", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-skills-test-"));
+    let downloaded: { tmpDir: string; sourceDir: string } | null = null;
+    try {
+      const memoryDir = join(tempRoot, "memory");
+      const skillText =
+        "---\nname: direct-url\ndescription: test\n---\n\n# Direct URL\n";
+
+      downloaded = await downloadDirectSkillFileSource(
+        { url: "https://docs.x.com/SKILL.md" },
+        {
+          fetchImpl: async (url) => {
+            expect(String(url)).toBe("https://docs.x.com/SKILL.md");
+            return new Response(skillText, {
+              headers: { "content-length": String(skillText.length) },
+            });
+          },
+        },
+      );
+
+      const result = await installSkillDirectory({
+        sourceDir: downloaded.sourceDir,
+        memoryDir,
+      });
+
+      expect(result.name).toBe("direct-url");
+      expect(await readFile(join(result.path, "SKILL.md"), "utf8")).toBe(
+        skillText,
+      );
+    } finally {
+      if (downloaded) {
+        await rm(downloaded.tmpDir, { recursive: true, force: true });
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects oversized direct skill file downloads", async () => {
+    await expect(
+      downloadDirectSkillFileSource(
+        { url: "https://docs.x.com/SKILL.md" },
+        {
+          fetchImpl: async () =>
+            new Response("too large", {
+              headers: {
+                "content-length": String(MAX_DIRECT_SKILL_FILE_BYTES + 1),
+              },
+            }),
+        },
+      ),
+    ).rejects.toThrow(
+      `Direct skill file exceeds ${MAX_DIRECT_SKILL_FILE_BYTES} byte limit.`,
+    );
   });
 
   test("lists installed skill directories with frontmatter metadata", async () => {
