@@ -357,6 +357,7 @@ function buildSuccessMessage(params: {
     "- Confirm you are in the new worktree with `git status` before editing.",
     "- Read README, AGENTS.md, or other project setup docs before running commands.",
     "- If this repo needs per-worktree dependency setup, install dependencies with the project's package manager. Check the repo first: if it uses Bun, run `bun install` instead of `npm install`; if it uses pnpm, yarn, or npm, use that package manager instead.",
+    "- If the repo uses git hooks, verify they are installed and active in this worktree before committing; run the project's documented hook setup if needed.",
     "- Then make changes, test, commit, and push from this worktree.",
   ];
   return lines.join("\n");
