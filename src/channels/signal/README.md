@@ -140,6 +140,12 @@ When `self_chat_mode: true`:
 - Groups are not a self-chat target; self-chat mode is intended for Note to Self
   only.
 
+Only one enabled Signal account may use a given `base_url`. Native
+`signal-cli` event streams are daemon-scoped; if you want multiple Signal
+accounts enabled at once, run separate `signal-cli daemon` instances with
+separate config directories and ports, then give each Letta account a distinct
+`base_url`.
+
 When `self_chat_mode: false`:
 
 - Messages from the linked account itself are treated as loop-protection echoes

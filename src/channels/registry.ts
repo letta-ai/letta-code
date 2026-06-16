@@ -122,6 +122,37 @@ function normalizeAgentId(agentId: string | null | undefined): string | null {
   return normalized ? normalized : null;
 }
 
+function normalizeSignalBaseUrlForConflictKey(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl);
+    url.hash = "";
+    url.search = "";
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return baseUrl.trim().replace(/\/+$/, "");
+  }
+}
+
+function findSignalBaseUrlConflict(
+  accounts: SignalChannelAccount[],
+): { baseUrl: string; accountIds: string[] } | null {
+  const byBaseUrl = new Map<string, string[]>();
+  for (const account of accounts) {
+    if (!account.enabled) continue;
+    const key = normalizeSignalBaseUrlForConflictKey(account.baseUrl);
+    const accountIds = byBaseUrl.get(key) ?? [];
+    accountIds.push(account.accountId);
+    byBaseUrl.set(key, accountIds);
+  }
+  for (const [baseUrl, accountIds] of byBaseUrl.entries()) {
+    if (accountIds.length > 1) {
+      return { baseUrl, accountIds };
+    }
+  }
+  return null;
+}
+
 function getConfiguredAgentId(config: unknown): string | null {
   if (!config || typeof config !== "object") {
     return null;
@@ -2233,6 +2264,19 @@ export async function initializeChannels(
       console.error(error);
       logChannelStartup(options?.logger, error);
       continue;
+    }
+
+    if (channelId === "signal") {
+      const conflict = findSignalBaseUrlConflict(
+        accounts.filter(isSignalChannelAccount),
+      );
+      if (conflict) {
+        const error = `Signal accounts ${conflict.accountIds.join(", ")} share base_url ${conflict.baseUrl}. Native signal-cli event streams cannot safely run multiple enabled accounts on the same daemon; disable all but one account or run separate signal-cli daemons on separate ports/config dirs.`;
+        failures.push({ channelId, error });
+        console.error(error);
+        logChannelStartup(options?.logger, error);
+        continue;
+      }
     }
 
     for (const account of accounts) {
