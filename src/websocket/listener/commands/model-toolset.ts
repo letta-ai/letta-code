@@ -538,9 +538,7 @@ export async function buildListModelsResponse(
   ]);
 
   const discoveredHandles: Set<string> | null =
-    handlesResult.status === "fulfilled"
-      ? handlesResult.value.handles
-      : null;
+    handlesResult.status === "fulfilled" ? handlesResult.value.handles : null;
 
   // Merge models.json entry handles into available handles when their provider
   // is already connected (i.e. at least one handle with the same provider
