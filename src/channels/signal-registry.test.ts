@@ -17,6 +17,7 @@ import {
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
+  addRoute,
   clearAllRoutes,
   getRoute,
 } from "@/channels/routing";
@@ -56,6 +57,24 @@ function createAdapter(): ChannelAdapter {
     isRunning: () => true,
     sendMessage: async () => ({ messageId: "outbound-1" }),
     sendDirectReply: async () => {},
+  };
+}
+
+function createPreparingAdapter(): ChannelAdapter {
+  return {
+    ...createAdapter(),
+    prepareInboundMessage: async (msg) => ({
+      ...msg,
+      attachments: [
+        {
+          kind: "audio",
+          localPath: "/tmp/signal-voice.aac",
+          name: "signal-voice.aac",
+          mimeType: "audio/aac",
+          transcriptionError: "install ffmpeg to transcribe Signal AAC audio",
+        },
+      ],
+    }),
   };
 }
 
@@ -172,5 +191,75 @@ describe("signal channel registry", () => {
     });
     expect(route?.conversationId.startsWith("local-conv-")).toBe(true);
     expect(deliveries).toHaveLength(1);
+  });
+
+  test("paired Signal routes prepare inbound messages before delivery", async () => {
+    const agent = await getBackend().createAgent({
+      name: "Signal Route Agent",
+    });
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "signal",
+        accountId: "personal",
+        displayName: "Signal",
+        enabled: true,
+        baseUrl: "http://127.0.0.1:8080",
+        account: "+15555550100",
+        accountUuid: "self-uuid",
+        dmPolicy: "pairing",
+        allowedUsers: ["+15555550123"],
+        agentId: agent.id,
+        groupMode: "disabled",
+        allowedGroups: [],
+        mentionPatterns: [],
+        transcribeVoice: true,
+        downloadMedia: true,
+        createdAt: "2026-06-16T00:00:00.000Z",
+        updatedAt: "2026-06-16T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideLoadPairingStore(() => ({
+      pending: [],
+      approved: [
+        {
+          accountId: "personal",
+          senderId: "+15555550123",
+          senderName: "Cameron",
+          approvedAt: "2026-06-16T00:00:00.000Z",
+        },
+      ],
+    }));
+    addRoute("signal", {
+      accountId: "personal",
+      chatId: "signal:+15555550123",
+      chatType: "direct",
+      threadId: null,
+      agentId: agent.id,
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-06-16T00:00:00.000Z",
+      updatedAt: "2026-06-16T00:00:00.000Z",
+    });
+
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createPreparingAdapter();
+    registry.registerAdapter(adapter);
+
+    const deliveries: Array<{ content?: unknown }> = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(signalInbound({ text: "[audio attached]" }));
+
+    expect(deliveries).toHaveLength(1);
+    expect(JSON.stringify(deliveries[0]?.content)).toContain(
+      "install ffmpeg to transcribe Signal AAC audio",
+    );
+    expect(JSON.stringify(deliveries[0]?.content)).toContain(
+      "attempted_transcription_error",
+    );
   });
 });

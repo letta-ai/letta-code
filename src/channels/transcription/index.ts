@@ -88,7 +88,7 @@ function prepareOpenAiTranscriptionFile(localPath: string): {
   } catch (error) {
     rmSync(tempDir, { recursive: true, force: true });
     throw new Error(
-      `Unsupported audio format ${extname(localPath).replace(/^\./, "") || "unknown"}; ffmpeg conversion failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Unsupported audio format ${extname(localPath).replace(/^\./, "") || "unknown"}; ffmpeg conversion failed. ffmpeg is required to transcribe this audio format; install ffmpeg on the channel listener machine. ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 

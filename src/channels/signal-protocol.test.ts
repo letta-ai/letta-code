@@ -39,6 +39,7 @@ describe("signal protocol-inbound validators", () => {
             base_url: null,
             account: null,
             group_mode: "mention",
+            transcribe_voice: true,
             download_media: true,
             media_max_bytes: 1048576,
           },
