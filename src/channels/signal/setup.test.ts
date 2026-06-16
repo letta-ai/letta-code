@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  getSignalDockerRunCommand,
   normalizeSignalBaseUrl,
   normalizeSignalPhoneInput,
   parseSignalCsv,
@@ -31,5 +32,13 @@ describe("Signal setup helpers", () => {
       "uuid:abc",
       "group-1",
     ]);
+  });
+
+  test("documents the Docker daemon command used by interactive setup", () => {
+    const command = getSignalDockerRunCommand();
+    expect(command).toContain("bbernhard/signal-cli-rest-api:latest");
+    expect(command).toContain("MODE=json-rpc");
+    expect(command).toContain("8080:8080");
+    expect(command).toContain("letta-signal-cli-data");
   });
 });

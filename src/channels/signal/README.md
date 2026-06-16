@@ -12,7 +12,8 @@ Use a dedicated Signal number for the agent. If you connect Letta to your
 personal Signal account, self-message loop protection can ignore your own
 messages and replies will be sent as that personal account.
 
-1. Start `signal-cli-rest-api` in JSON-RPC mode.
+1. Start `signal-cli-rest-api` in JSON-RPC mode. The interactive configure
+   wizard can start this Docker container for you when Docker is available.
 
    Docker example:
 
@@ -49,6 +50,10 @@ messages and replies will be sent as that personal account.
    letta channels configure signal
    ```
 
+   The wizard first checks `http://127.0.0.1:8080`. If no daemon responds and
+   Docker is installed, it can run the container command above automatically
+   using the persistent volume `letta-signal-cli-data`.
+
 4. Start Letta with Signal enabled:
 
    ```bash
@@ -72,6 +77,7 @@ Important fields:
 
 | Field | Description |
 | --- | --- |
+| `accountId` | Local Letta label for this Signal connection, e.g. `personal` or `bot`. This is not your Signal phone number. |
 | `base_url` | `signal-cli-rest-api` JSON-RPC/SSE URL, usually `http://127.0.0.1:8080`. |
 | `account` | Signal account phone number in E.164 format, e.g. `+15555550100`. |
 | `account_uuid` | Optional Signal UUID for self-message filtering. |
@@ -102,6 +108,9 @@ If `ffmpeg` is missing, the agent receives an
 
 - **No inbound messages:** confirm the daemon is running with `MODE=json-rpc` and
   that Letta's `base_url` points at it.
+- **Don't know what base URL to use:** run `letta channels configure signal` on
+  the same machine as the listener and let it start/probe the local Docker
+  daemon. Use a custom URL only when the daemon runs elsewhere.
 - **Only placeholders like `[image attached]`:** confirm `download_media: true`,
   restart the listener after changing config, and check the daemon's attachment
   directory.
