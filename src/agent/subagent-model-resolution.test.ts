@@ -705,12 +705,12 @@ describe("resolveSubagentModel", () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
       recommendedModel: "inherit",
-      parentModelHandle: "chatgpt-plus-pro/gpt-5.3-codex",
+      parentModelHandle: "chatgpt-plus-pro/gpt-5.5",
       backendMode: "local",
       availableHandles: new Set(),
     });
 
-    expect(result).toBe("chatgpt-plus-pro/gpt-5.3-codex");
+    expect(result).toBe("chatgpt-plus-pro/gpt-5.5");
   });
 
   test("local backend inherits parent model for non-reflection subagents", async () => {
