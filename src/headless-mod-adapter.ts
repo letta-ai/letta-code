@@ -147,7 +147,6 @@ export function createHeadlessModAdapter(options: {
     ...(options.globalModsDirectory
       ? { globalModsDirectory: options.globalModsDirectory }
       : {}),
-    initialContext: createHeadlessModContext(options),
   });
 }
 
@@ -156,13 +155,18 @@ export async function emitHeadlessConversationOpen(options: {
   conversationId: string;
   reason: ModConversationOpenReason;
   adapter: ModAdapter;
+  context?: ModContext;
 }): Promise<void> {
-  await options.adapter.events.emit("conversation_open", {
-    agentId: options.agent.id,
-    agentName: options.agent.name ?? null,
-    conversationId: options.conversationId,
-    reason: options.reason,
-  });
+  await options.adapter.events.emit(
+    "conversation_open",
+    {
+      agentId: options.agent.id,
+      agentName: options.agent.name ?? null,
+      conversationId: options.conversationId,
+      reason: options.reason,
+    },
+    options.context ?? createHeadlessModContext(options),
+  );
 }
 
 export async function emitHeadlessConversationClose(options: {
@@ -170,13 +174,18 @@ export async function emitHeadlessConversationClose(options: {
   conversationId: string;
   durationMs: number | null;
   adapter: ModAdapter;
+  context?: ModContext;
 }): Promise<void> {
-  await options.adapter.events.emit("conversation_close", {
-    agentId: options.agent.id,
-    conversationId: options.conversationId,
-    durationMs: options.durationMs,
-    messageCount: telemetry.getMessageCount(),
-    reason: "quit",
-    toolCallCount: telemetry.getToolCallCount(),
-  });
+  await options.adapter.events.emit(
+    "conversation_close",
+    {
+      agentId: options.agent.id,
+      conversationId: options.conversationId,
+      durationMs: options.durationMs,
+      messageCount: telemetry.getMessageCount(),
+      reason: "quit",
+      toolCallCount: telemetry.getToolCallCount(),
+    },
+    options.context ?? createHeadlessModContext(options),
+  );
 }

@@ -11,7 +11,7 @@ Use this skill to create or update trusted global Letta Code mods in:
 ~/.letta/mods/
 ```
 
-Mods are trusted local code for Letta Code. They add small composable capabilities through mod APIs, not by importing app internals. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`, `letta.getContext()`) and guard optional UI with `letta.capabilities`.
+Mods are trusted local code for Letta Code. They add small composable capabilities through mod APIs, not by importing app internals. Dynamic agent/conversation/workspace/model state is passed as `ctx` to tool, command, event, permission, status, and statusline callbacks; do not read mutable global context for model-callable behavior. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`) and guard optional UI with `letta.capabilities`.
 
 Capabilities vary by surface. TUI/headless may load tools, commands, events, UI, and providers; the desktop listener loads provider-only mods for local provider discovery. Always guard optional capabilities.
 
@@ -132,7 +132,7 @@ Before finishing, verify:
 - Timers, intervals, event registrations, and panels are cleaned up in a disposer.
 - Busy commands return `{ type: "handled" }` quickly and avoid main-conversation sends.
 - Conversation work uses `ctx.conversation` or forked handles, not app internals.
-- Local shell/file work is scoped to `ctx.cwd` / `ctx.workingDirectory` unless intentionally global.
+- Local shell/file work is scoped to `ctx.cwd` unless intentionally global.
 - Errors shown to the user are short and actionable.
 
 ## References

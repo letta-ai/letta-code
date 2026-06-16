@@ -165,6 +165,8 @@ export interface ChannelPluginAccountPatch {
   allowedGroups?: string[];
   mentionPatterns?: string[];
   transcribeVoice?: boolean;
+  richPrivateChatDefault?: boolean;
+  richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
 }

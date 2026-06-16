@@ -1364,7 +1364,7 @@ function describeDirtyMarkdownEncodingIssues(
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0)
     .map(parsePorcelainPath)
-    .filter((path): path is string => path !== null && path.endsWith(".md"))
+    .filter((path): path is string => path?.endsWith(".md") ?? false)
     .map((path) => describeMarkdownEncodingIssue(memoryDir, path))
     .filter((issue): issue is string => issue !== null);
 

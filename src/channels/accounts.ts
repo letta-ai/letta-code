@@ -47,6 +47,8 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   inbound_debounce_ms: "inboundDebounceMs",
   listen_mode: "listenMode",
   remove_stale_routes: "removeStaleRoutes",
+  rich_draft_streaming: "richDraftStreaming",
+  rich_private_chat_default: "richPrivateChatDefault",
   show_completed_reaction: "showCompletedReaction",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
@@ -324,6 +326,9 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
   }
+  if (isTelegramChannelAccount(next)) {
+    next.richPrivateChatDefault = next.richPrivateChatDefault !== false;
+  }
   return next;
 }
 
@@ -346,6 +351,8 @@ function makeDefaultLegacyAccount(
       dmPolicy: config.dmPolicy,
       allowedUsers: [...config.allowedUsers],
       transcribeVoice: config.transcribeVoice === true,
+      richPrivateChatDefault: config.richPrivateChatDefault !== false,
+      richDraftStreaming: config.richDraftStreaming === true,
       binding: {
         agentId: null,
         conversationId: null,

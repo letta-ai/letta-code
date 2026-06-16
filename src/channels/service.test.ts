@@ -736,7 +736,7 @@ describe("channel service", () => {
     );
   });
 
-  test("telegram live account helpers preserve the transcribeVoice opt-in", () => {
+  test("telegram live account helpers preserve Telegram boolean settings", () => {
     const created = createChannelAccountLive(
       "telegram",
       {
@@ -745,6 +745,7 @@ describe("channel service", () => {
         token: "telegram-token",
         dmPolicy: "pairing",
         transcribeVoice: true,
+        richPrivateChatDefault: false,
       },
       { accountId: "voice-bot" },
     );
@@ -753,17 +754,26 @@ describe("channel service", () => {
       expect.objectContaining({
         accountId: "voice-bot",
         transcribeVoice: true,
+        richPrivateChatDefault: false,
+        config: expect.objectContaining({
+          rich_private_chat_default: false,
+        }),
       }),
     );
 
     const updated = updateChannelAccountLive("telegram", "voice-bot", {
       transcribeVoice: false,
+      richPrivateChatDefault: true,
     });
 
     expect(updated).toEqual(
       expect.objectContaining({
         accountId: "voice-bot",
         transcribeVoice: false,
+        richPrivateChatDefault: true,
+        config: expect.objectContaining({
+          rich_private_chat_default: true,
+        }),
       }),
     );
 
@@ -771,6 +781,10 @@ describe("channel service", () => {
       expect.objectContaining({
         accountId: "voice-bot",
         transcribeVoice: false,
+        richPrivateChatDefault: true,
+        config: expect.objectContaining({
+          rich_private_chat_default: true,
+        }),
       }),
     );
   });
