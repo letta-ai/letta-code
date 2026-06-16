@@ -225,6 +225,11 @@ describe("/mods command", () => {
             runDir: path.join(cwd, ".letta", "test-run"),
           });
           options.onProgress?.({
+            activeConversation: {
+              agentId: "agent-headless-123",
+              conversationId: "conv-headless-123",
+              label: "eval scenario 1/7 mod-loads",
+            },
             attempts: [
               {
                 candidateIndex: 1,
@@ -400,6 +405,12 @@ describe("/mods command", () => {
     expect(updates.at(-1)?.output).toContain("scenario 1/7 mod-loads");
     expect(updates.at(-1)?.output).toContain(
       "Background mod optimization: memory-citations",
+    );
+    expect(updates.at(-1)?.output).toContain(
+      "Running conversation: conv-headless-123 · agent agent-headless-123",
+    );
+    expect(updates.at(-1)?.output).toContain(
+      "ADE: https://app.letta.com/projects/default-project/agents/agent-headless-123?conversation=conv-headless-123",
     );
     expect(updates.at(-1)?.output).toMatch(
       /[⠀⠶⠰⣿⠆⢾⣉⡷⣏⣹⡁⢈]+ Background mod optimization/,

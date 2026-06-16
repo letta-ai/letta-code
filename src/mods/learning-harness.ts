@@ -75,6 +75,7 @@ export type ModLearningAssertion =
 export interface CommandRunOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
+  onStdout?: (chunk: string) => void;
   timeoutMs: number;
 }
 
@@ -161,7 +162,14 @@ export type ModLearningProgressPhase =
   | "writing-report"
   | "done";
 
+export interface ModLearningHeadlessConversation {
+  agentId?: string;
+  conversationId: string;
+  label: string;
+}
+
 export interface ModLearningProgress {
+  activeConversation?: ModLearningHeadlessConversation;
   attempts?: ModLearningAttemptSummary[];
   candidateIndex?: number;
   candidatePath: string;
@@ -287,6 +295,7 @@ interface ModLearningEvaluatorContext {
   cliCommand: string;
   evalModel?: string;
   onScenarioProgress?: (progress: {
+    activeConversation?: ModLearningHeadlessConversation;
     evaluation: ModLearningEvaluationResult;
     scenarioCount: number;
     scenarioIndex: number;
@@ -723,7 +732,69 @@ async function prepareMemoryFiles(
 }
 
 function renderEvaluationPrompt(prompt: string, memoryDir: string): string {
-  return prompt.replace(/\$\{MEMORY_DIR\}|\$MEMORY_DIR/g, () => memoryDir);
+  const renderedPrompt = prompt.replace(/\$\{MEMORY_DIR\}|\$MEMORY_DIR/g, () =>
+    memoryDir,
+  );
+  return [
+    "You are running one isolated mod-learning evaluation scenario.",
+    "Follow only the scenario instructions below. Do not search this repository for other evaluation scenarios, do not run /mods learn, and do not run test suites unless the scenario explicitly asks you to do so.",
+    "If the scenario asks for a final answer marker, provide that marker directly once the scenario-specific work is complete.",
+    "",
+    "Scenario instructions:",
+    renderedPrompt,
+  ].join("\n");
+}
+
+function extractHeadlessConversation(
+  value: Record<string, unknown>,
+): { agentId?: string; conversationId?: string } {
+  const payload =
+    value.type === "stream_event" &&
+    value.event &&
+    typeof value.event === "object"
+      ? (value.event as Record<string, unknown>)
+      : value;
+  const agentId =
+    typeof payload.agent_id === "string" ? payload.agent_id : undefined;
+  const conversationId =
+    typeof payload.conversation_id === "string"
+      ? payload.conversation_id
+      : undefined;
+  return { agentId, conversationId };
+}
+
+function createHeadlessConversationObserver(
+  label: string,
+  onConversation: (conversation: ModLearningHeadlessConversation) => void,
+): (chunk: string) => void {
+  let buffer = "";
+  let emittedConversationId: string | null = null;
+  const emitFromLine = (line: string) => {
+    if (!line.trim()) return;
+    try {
+      const parsed = JSON.parse(line) as Record<string, unknown>;
+      const { agentId, conversationId } = extractHeadlessConversation(parsed);
+      if (!conversationId || conversationId === emittedConversationId) return;
+      emittedConversationId = conversationId;
+      onConversation({
+        ...(agentId ? { agentId } : {}),
+        conversationId,
+        label,
+      });
+    } catch {
+      // Ignore non-JSON diagnostics and incomplete chunks; stdout is still
+      // persisted as an artifact.
+    }
+  };
+  return (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      emitFromLine(line);
+    }
+    emitFromLine(buffer);
+  };
 }
 
 function renderAssertionSummary(
@@ -1680,7 +1751,10 @@ export async function defaultCommandRunner(
       }, 5000).unref();
     }, options.timeoutMs);
 
-    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+      options.onStdout?.(chunk.toString("utf8"));
+    });
     child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
     child.on("error", (error) => {
       stderrChunks.push(Buffer.from(String(error.stack ?? error.message)));
@@ -1800,6 +1874,22 @@ function createScenarioSuiteEvaluator(params: {
                 LETTA_MODS_DIR: context.candidate.dir,
                 MEMORY_DIR: scenarioMemoryDir,
               },
+              onStdout: createHeadlessConversationObserver(
+                `eval scenario ${scenarioIndex + 1}/${scenarios.length} ${scenario.name}`,
+                (activeConversation) => {
+                  const partialEvaluation = hasConfiguredScenarios
+                    ? aggregateScenarioEvaluations(scenarioResults)
+                    : scenarioEvaluation;
+                  context.onScenarioProgress?.({
+                    activeConversation,
+                    evaluation: partialEvaluation,
+                    scenarioCount: scenarios.length,
+                    scenarioIndex: scenarioIndex + 1,
+                    scenarioName: scenario.name,
+                    score: markerScore(partialEvaluation),
+                  });
+                },
+              ),
               timeoutMs: scenarioSpec.timeoutMs ?? 15 * 60 * 1000,
             },
           );
@@ -2052,11 +2142,13 @@ async function runModLearningCandidate(
       candidatePath,
     );
   } else if (!options.skipGeneration) {
-    emitProgress(
-      "generating",
+    const generationMessage =
       params.candidateCount > 1
         ? `Generating optimization iteration ${params.candidateIndex}/${params.candidateCount}`
-        : "Generating candidate mod",
+        : "Generating candidate mod";
+    emitProgress(
+      "generating",
+      generationMessage,
     );
     const promptHistory: ModLearningPromptHistory = {
       candidateCount: params.candidateCount,
@@ -2095,6 +2187,14 @@ async function runModLearningCandidate(
         LETTA_DISABLE_EXTENSIONS: "1",
         LETTA_DISABLE_MODS: "1",
       },
+      onStdout: createHeadlessConversationObserver(
+        `generation iteration ${params.candidateIndex}`,
+        (activeConversation) => {
+          emitProgress("generating", generationMessage, {
+            activeConversation,
+          });
+        },
+      ),
       timeoutMs: 15 * 60 * 1000,
     });
     await writeCommandArtifacts(
@@ -2149,6 +2249,9 @@ async function runModLearningCandidate(
               : "Evaluating candidate mod"
           }: scenario ${progress.scenarioIndex}/${progress.scenarioCount} ${progress.scenarioName}`,
           {
+            ...(progress.activeConversation
+              ? { activeConversation: progress.activeConversation }
+              : {}),
             passed: progress.evaluation.passed,
             score: progress.score,
           },
