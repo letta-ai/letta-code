@@ -726,7 +726,7 @@ function createAccountFromPatch(
         normalizeSignalGroupMode(normalizedPatch.groupMode) ?? "disabled",
       allowedGroups: normalizedPatch.allowedGroups ?? [],
       mentionPatterns: normalizedPatch.mentionPatterns ?? [],
-      downloadMedia: normalizedPatch.downloadMedia === true,
+      downloadMedia: normalizedPatch.downloadMedia ?? true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
       createdAt: now,
       updatedAt: now,
@@ -881,7 +881,7 @@ function mergeAccountPatch(
       mentionPatterns:
         normalizedPatch.mentionPatterns ?? existing.mentionPatterns,
       downloadMedia:
-        normalizedPatch.downloadMedia ?? existing.downloadMedia ?? false,
+        normalizedPatch.downloadMedia ?? existing.downloadMedia ?? true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
       updatedAt: nextUpdatedAt,
     };

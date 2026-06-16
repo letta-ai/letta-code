@@ -440,7 +440,7 @@ export interface SignalChannelConfig {
   allowedGroups?: string[];
   /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true, supported inbound media metadata is included. */
+  /** Default true. When true, supported inbound media is downloaded and surfaced to the agent. */
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to consider. Undefined uses channel default. */
   mediaMaxBytes?: number;
@@ -589,7 +589,7 @@ export interface SignalChannelAccount extends ChannelAccountBase {
   allowedGroups?: string[];
   /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true, supported inbound media metadata is included. */
+  /** Default true. When true, supported inbound media is downloaded and surfaced to the agent. */
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to consider. Undefined uses channel default. */
   mediaMaxBytes?: number;

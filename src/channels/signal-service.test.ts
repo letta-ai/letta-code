@@ -79,8 +79,10 @@ describe("Signal channel service", () => {
         base_url: "",
         agent_id: null,
         group_mode: "disabled",
+        download_media: true,
       }),
     );
+    expect(created.downloadMedia).toBe(true);
   });
 
   test("normalizes plugin config from snake_case", () => {

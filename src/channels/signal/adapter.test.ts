@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testOverrideChannelsRoot } from "@/channels/config";
 import type { SignalChannelAccount } from "@/channels/types";
+import { formatChannelNotification } from "@/channels/xml";
 import {
   __testOverrideSignalAttachmentSearchDirs,
   createSignalAdapter,
@@ -205,6 +206,16 @@ describe("signalInboundFromSseEvent", () => {
       expect(
         attachment?.localPath ? readFileSync(attachment.localPath) : null,
       ).toEqual(imageBytes);
+
+      const content = msg ? formatChannelNotification(msg) : [];
+      expect(content[2]).toEqual({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/jpeg",
+          data: imageBytes.toString("base64"),
+        },
+      });
     } finally {
       __testOverrideChannelsRoot(null);
       rmSync(tempDir, { recursive: true, force: true });
