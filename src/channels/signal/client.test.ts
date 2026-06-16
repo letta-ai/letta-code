@@ -161,7 +161,7 @@ describe("SignalRestClient", () => {
   test("waits for asynchronous event handlers before resolving", async () => {
     const baseUrl = await withSignalServer((req, res) => {
       expect(req.method).toBe("GET");
-      expect(req.url).toBe("/api/v1/events?account=%2B15555550100");
+      expect(req.url).toBe("/api/v1/events");
       res.writeHead(200, { "Content-Type": "text/event-stream" });
       res.end('id: 1\nevent: receive\ndata: {"ok":true}\n\n');
     });
