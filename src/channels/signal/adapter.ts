@@ -1,6 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { basename, extname, isAbsolute, join } from "node:path";
+import { getChannelDir } from "@/channels/config";
 import type {
   ChannelAdapter,
   ChannelAdapterStartOptions,
+  ChannelMessageAttachment,
   InboundChannelMessage,
   OutboundChannelMessage,
   SignalChannelAccount,
@@ -30,6 +35,9 @@ type SignalDataMessage = {
     id?: string | null;
     contentType?: string | null;
     filename?: string | null;
+    storedFilename?: string | null;
+    path?: string | null;
+    localPath?: string | null;
     size?: number | null;
   }> | null;
   mentions?: Array<{
@@ -76,6 +84,13 @@ type SignalReceivePayload = {
   envelope?: SignalEnvelope | null;
   exception?: { message?: string | null } | null;
 };
+
+type SignalAttachmentCandidate = NonNullable<
+  SignalDataMessage["attachments"]
+>[number];
+
+const DEFAULT_SIGNAL_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
+const MAX_SIGNAL_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -153,6 +168,219 @@ function buildAttachmentPlaceholder(
   return `[${attachments.length} files attached]`;
 }
 
+function sanitizeSignalPathSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120) || "attachment";
+}
+
+function normalizeSignalMimeType(
+  value: string | null | undefined,
+): string | undefined {
+  const normalized = value?.split(";")[0]?.trim().toLowerCase();
+  return normalized || undefined;
+}
+
+function inferSignalMimeTypeFromName(fileName: string): string | undefined {
+  switch (extname(fileName).toLowerCase()) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".mp4":
+      return "video/mp4";
+    case ".mov":
+      return "video/quicktime";
+    case ".mp3":
+      return "audio/mpeg";
+    case ".m4a":
+      return "audio/mp4";
+    case ".ogg":
+    case ".oga":
+    case ".opus":
+      return "audio/ogg";
+    case ".pdf":
+      return "application/pdf";
+    default:
+      return undefined;
+  }
+}
+
+function inferSignalAttachmentKind(params: {
+  mimeType?: string;
+  fileName: string;
+}): ChannelMessageAttachment["kind"] {
+  if (params.mimeType?.startsWith("image/")) {
+    return "image";
+  }
+  if (params.mimeType?.startsWith("audio/")) {
+    return "audio";
+  }
+  if (params.mimeType?.startsWith("video/")) {
+    return "video";
+  }
+  switch (extname(params.fileName).toLowerCase()) {
+    case ".jpg":
+    case ".jpeg":
+    case ".png":
+    case ".gif":
+    case ".webp":
+      return "image";
+    case ".mp3":
+    case ".m4a":
+    case ".ogg":
+    case ".oga":
+    case ".opus":
+      return "audio";
+    case ".mp4":
+    case ".mov":
+      return "video";
+    default:
+      return "file";
+  }
+}
+
+function resolveSignalAttachmentPath(
+  attachment: SignalAttachmentCandidate,
+): string | null {
+  const candidates = [
+    attachment.localPath,
+    attachment.path,
+    attachment.storedFilename,
+    attachment.filename,
+  ];
+
+  for (const candidate of candidates) {
+    const value = candidate?.trim();
+    if (!value) {
+      continue;
+    }
+    // signal-cli normally returns a downloaded local path. Avoid treating a
+    // plain original filename as a path unless it actually looks path-like.
+    if (!isAbsolute(value) && !value.includes("/") && !value.includes("\\")) {
+      continue;
+    }
+    try {
+      const stat = statSync(value);
+      if (stat.isFile()) {
+        return value;
+      }
+    } catch {
+      // Try the next known signal-cli JSON field shape.
+    }
+  }
+
+  return null;
+}
+
+function resolveSignalAttachmentFileName(
+  attachment: SignalAttachmentCandidate,
+  sourcePath: string,
+): string {
+  const hintedName = attachment.filename?.trim();
+  if (hintedName && !hintedName.includes("/") && !hintedName.includes("\\")) {
+    return hintedName;
+  }
+  return basename(sourcePath) || "attachment";
+}
+
+function copySignalAttachment(params: {
+  accountId: string;
+  attachment: SignalAttachmentCandidate;
+  sourcePath: string;
+  maxBytes: number;
+}): ChannelMessageAttachment | null {
+  const sourceStat = statSync(params.sourcePath);
+  const sizeBytes =
+    typeof params.attachment.size === "number" && params.attachment.size >= 0
+      ? params.attachment.size
+      : sourceStat.size;
+  if (sizeBytes > params.maxBytes || sourceStat.size > params.maxBytes) {
+    console.warn(
+      `[Signal] Skipping attachment ${params.attachment.filename ?? params.attachment.id ?? basename(params.sourcePath)}: ${Math.max(sizeBytes, sourceStat.size)} bytes exceeds Signal download limit (${params.maxBytes} bytes).`,
+    );
+    return null;
+  }
+
+  const fileName = resolveSignalAttachmentFileName(
+    params.attachment,
+    params.sourcePath,
+  );
+  const mimeType =
+    normalizeSignalMimeType(params.attachment.contentType) ??
+    inferSignalMimeTypeFromName(fileName);
+  const kind = inferSignalAttachmentKind({ mimeType, fileName });
+  const inboundDir = join(
+    getChannelDir("signal"),
+    "inbound",
+    sanitizeSignalPathSegment(params.accountId),
+  );
+  mkdirSync(inboundDir, { recursive: true });
+
+  const localPath = join(
+    inboundDir,
+    `${Date.now()}-${randomUUID()}-${sanitizeSignalPathSegment(fileName)}`,
+  );
+  copyFileSync(params.sourcePath, localPath);
+
+  const attachment: ChannelMessageAttachment = {
+    id: params.attachment.id ?? undefined,
+    name: fileName,
+    mimeType,
+    sizeBytes,
+    kind,
+    localPath,
+  };
+
+  if (kind === "image" && sizeBytes <= MAX_SIGNAL_INLINE_IMAGE_BYTES) {
+    attachment.imageDataBase64 = readFileSync(localPath).toString("base64");
+  }
+
+  return attachment;
+}
+
+function resolveSignalInboundAttachments(
+  account: SignalChannelAccount,
+  attachments: NonNullable<SignalDataMessage["attachments"]>,
+): ChannelMessageAttachment[] {
+  if (account.downloadMedia !== true || attachments.length === 0) {
+    return [];
+  }
+
+  const maxBytes = account.mediaMaxBytes ?? DEFAULT_SIGNAL_MEDIA_MAX_BYTES;
+  const resolved: ChannelMessageAttachment[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const attachment of attachments) {
+    const sourcePath = resolveSignalAttachmentPath(attachment);
+    if (!sourcePath || seenPaths.has(sourcePath)) {
+      continue;
+    }
+    seenPaths.add(sourcePath);
+    try {
+      const copied = copySignalAttachment({
+        accountId: account.accountId,
+        attachment,
+        sourcePath,
+        maxBytes,
+      });
+      if (copied) {
+        resolved.push(copied);
+      }
+    } catch (error) {
+      console.warn(
+        `[Signal] Attachment copy failed for ${attachment.filename ?? attachment.id ?? sourcePath}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  return resolved;
+}
+
 function buildSignalMessageId(
   timestamp: number | null | undefined,
   author: string,
@@ -224,6 +452,10 @@ function signalInboundFromPayload(
   ).trim();
   const attachments = dataMessage?.attachments ?? [];
   const attachmentPlaceholder = buildAttachmentPlaceholder(attachments);
+  const downloadedAttachments = resolveSignalInboundAttachments(
+    account,
+    attachments,
+  );
   const text = renderedText || attachmentPlaceholder;
   const targetTimestamp =
     envelope.timestamp ??
@@ -267,6 +499,8 @@ function signalInboundFromPayload(
       ? matchesSignalMentionPatterns(text, account.mentionPatterns)
       : undefined,
     isOpenChannel: isGroup && (account.groupMode ?? "disabled") === "open",
+    attachments:
+      downloadedAttachments.length > 0 ? downloadedAttachments : undefined,
     raw: payload,
   };
 

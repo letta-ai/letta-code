@@ -1,4 +1,14 @@
 import { describe, expect, mock, test } from "bun:test";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { __testOverrideChannelsRoot } from "@/channels/config";
 import type { SignalChannelAccount } from "@/channels/types";
 import {
   createSignalAdapter,
@@ -143,6 +153,60 @@ describe("signalInboundFromSseEvent", () => {
         targetSenderId: "+15555550199",
       },
     });
+  });
+
+  test("copies inbound image attachments when media download is enabled", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "signal-media-test-"));
+    __testOverrideChannelsRoot(join(tempDir, "channels"));
+    try {
+      const imageBytes = Buffer.from("fake-jpeg");
+      const sourcePath = join(tempDir, "photo.jpg");
+      writeFileSync(sourcePath, imageBytes);
+
+      const msg = signalInboundFromSseEvent(
+        receiveEvent({
+          envelope: {
+            sourceNumber: "+15555550123",
+            sourceName: "Alice",
+            timestamp: 222,
+            dataMessage: {
+              timestamp: 222,
+              attachments: [
+                {
+                  id: "att-1",
+                  contentType: "image/jpeg",
+                  filename: sourcePath,
+                  size: imageBytes.byteLength,
+                },
+              ],
+            },
+          },
+        }),
+        signalAccount({ downloadMedia: true }),
+      );
+
+      expect(msg?.text).toBe("[image attached]");
+      expect(msg?.attachments).toHaveLength(1);
+      const attachment = msg?.attachments?.[0];
+      expect(attachment).toMatchObject({
+        id: "att-1",
+        name: "photo.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: imageBytes.byteLength,
+        kind: "image",
+        imageDataBase64: imageBytes.toString("base64"),
+      });
+      expect(attachment?.localPath).not.toBe(sourcePath);
+      expect(attachment?.localPath && existsSync(attachment.localPath)).toBe(
+        true,
+      );
+      expect(
+        attachment?.localPath ? readFileSync(attachment.localPath) : null,
+      ).toEqual(imageBytes);
+    } finally {
+      __testOverrideChannelsRoot(null);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
