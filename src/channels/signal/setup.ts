@@ -477,7 +477,16 @@ async function configureSignalAccountIdentity(
     console.log('  QR link: signal-cli link -n "Letta Code"');
     console.log("  SMS register: signal-cli -a +<BOT_PHONE_NUMBER> register");
     console.log(
+      "  If Signal asks for captcha: open https://signalcaptchas.org/registration/generate.html, copy the signalcaptcha:// URL, then run:",
+    );
+    console.log(
+      "    signal-cli -a +<BOT_PHONE_NUMBER> register --captcha '<SIGNALCAPTCHA_URL>'",
+    );
+    console.log(
       "  Verify SMS: signal-cli -a +<BOT_PHONE_NUMBER> verify <CODE>",
+    );
+    console.log(
+      "After link/register succeeds, come back here and enter that Signal phone number.",
     );
     console.log(
       "If you want Letta to drive QR/SMS setup, use a signal-cli-rest-api container exposing /v1/* setup endpoints.\n",

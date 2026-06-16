@@ -129,6 +129,10 @@ If `ffmpeg` is missing, the agent receives an
 - **QR page says 404:** your daemon exposes runtime JSON-RPC but not `/v1/*`
   setup endpoints. Link/register with native `signal-cli` commands, then rerun
   `letta channels configure signal` and enter the linked phone number.
+- **No captcha option in the wizard:** captcha is only automatable when the
+  daemon exposes `/v1/register`. With JSON-RPC-only daemons, use native
+  `signal-cli -a +<BOT_PHONE_NUMBER> register --captcha '<SIGNALCAPTCHA_URL>'`,
+  then verify and rerun the wizard.
 - **Only placeholders like `[image attached]`:** confirm `download_media: true`,
   restart the listener after changing config, and check the daemon's attachment
   directory.
