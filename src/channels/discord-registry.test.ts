@@ -271,11 +271,14 @@ describe("discord channel registry", () => {
     );
 
     expect(createConversation).toHaveBeenCalledTimes(1);
-    expect(createConversation).toHaveBeenCalledWith({
-      agent_id: "agent-1",
-      isolated_block_labels: expect.any(Array),
-      summary: "[Discord] DM with Cameron",
-    });
+    expect(createConversation).toHaveBeenCalledWith(
+      {
+        agent_id: "agent-1",
+        isolated_block_labels: expect.any(Array),
+        summary: "[Discord] DM with Cameron",
+      },
+      undefined,
+    );
     expect(getRoute("discord", "dm-1", "discord-bot")).toMatchObject({
       accountId: "discord-bot",
       chatId: "dm-1",
