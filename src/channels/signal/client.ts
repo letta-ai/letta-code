@@ -47,6 +47,8 @@ export class SignalRpcError extends Error {
     message: string,
     public readonly code?: number | string,
     public readonly data?: unknown,
+    public readonly method?: string,
+    public readonly params?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "SignalRpcError";
@@ -91,6 +93,16 @@ function previewSignalEventData(event: SignalSseEvent): string {
     return "<empty>";
   }
   return data.length > 500 ? `${data.slice(0, 500)}…` : data;
+}
+
+function previewSignalRpcParams(params: Record<string, unknown>): string {
+  const safeParams = { ...params };
+  for (const key of ["message", "captcha", "password", "token"]) {
+    if (typeof safeParams[key] === "string") {
+      safeParams[key] = `<${key}: ${String(safeParams[key]).length} chars>`;
+    }
+  }
+  return JSON.stringify(safeParams);
 }
 
 function readResponseBody(
@@ -159,10 +171,13 @@ export class SignalRestClient {
         typeof response.error.message === "string"
           ? response.error.message
           : `Signal RPC ${method} failed.`;
+      const paramsPreview = previewSignalRpcParams(body.params);
       throw new SignalRpcError(
-        message,
+        `Signal RPC ${method} failed: ${message}; params=${paramsPreview}`,
         response.error.code as number | string,
         response.error.data,
+        method,
+        body.params,
       );
     }
     return response.result as T;

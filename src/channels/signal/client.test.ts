@@ -86,6 +86,37 @@ describe("SignalRestClient", () => {
     });
   });
 
+  test("includes RPC method and safe params in error messages", async () => {
+    const baseUrl = await withSignalServer(async (req, res) => {
+      const rpcBody = JSON.parse(await readRequestBody(req)) as Record<
+        string,
+        unknown
+      >;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: {
+            code: -32603,
+            message: "An internal server error has occurred.",
+            data: { cause: "boom" },
+          },
+          id: rpcBody.id,
+        }),
+      );
+    });
+
+    const client = new SignalRestClient({ baseUrl, account: "+15555550100" });
+    await expect(
+      client.sendMessage({
+        target: { kind: "recipient", recipient: "+15555550123" },
+        message: "secret-ish body",
+      }),
+    ).rejects.toThrow(
+      'Signal RPC send failed: An internal server error has occurred.; params={"message":"<message: 15 chars>","recipient":["+15555550123"],"account":"+15555550100"}',
+    );
+  });
+
   test("sends Signal typing indicators via json-rpc", async () => {
     let rpcBody: Record<string, unknown> | undefined;
     const baseUrl = await withSignalServer(async (req, res) => {
