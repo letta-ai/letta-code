@@ -52,6 +52,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   inbound_debounce_ms: "inboundDebounceMs",
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
+  recipient_aliases: "recipientAliases",
   remove_stale_routes: "removeStaleRoutes",
   rich_draft_streaming: "richDraftStreaming",
   rich_private_chat_default: "richPrivateChatDefault",
