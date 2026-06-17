@@ -431,10 +431,6 @@ class SettingsManager {
 
     const settingsPath = this.getSettingsPath();
     let shouldRollbackAutoConversationTitles = false;
-    let legacyPinData: {
-      pinnedAgentsByServer?: Record<string, string[]>;
-      pinnedAgents?: string[];
-    } | null = null;
 
     try {
       // Check if settings file exists
@@ -452,9 +448,6 @@ class SettingsManager {
           string,
           unknown
         >;
-
-        // Capture legacy pin data before stripping it
-        legacyPinData = this.extractLegacyPinData(loadedSettingsRaw);
 
         // Obsolete keys: drop from loaded settings and delete on next persist.
         for (const legacyKey of OBSOLETE_SETTINGS_KEYS) {
@@ -500,9 +493,6 @@ class SettingsManager {
       if (!isSubagentProcess()) {
         await this.migrateTokensToSecrets();
       }
-
-      // Migrate legacy pin data to agents array
-      this.migrateToAgentsArray(legacyPinData);
     } catch (error) {
       trackBoundaryError({
         errorType: "settings_load_failed",
@@ -521,7 +511,6 @@ class SettingsManager {
       if (!isSubagentProcess()) {
         await this.migrateTokensToSecrets();
       }
-      this.migrateToAgentsArray(null);
     }
   }
 
@@ -606,105 +595,6 @@ class SettingsManager {
   }
 
   /**
-   * Extract legacy pin data from raw settings before obsolete keys are stripped.
-   * Returns null if no legacy pin data found.
-   */
-  private extractLegacyPinData(raw: Record<string, unknown>): {
-    pinnedAgentsByServer?: Record<string, string[]>;
-    pinnedAgents?: string[];
-  } | null {
-    const byServer = raw.pinnedAgentsByServer as
-      | Record<string, string[]>
-      | undefined;
-    const agents = raw.pinnedAgents as string[] | undefined;
-    if (!byServer && !agents) return null;
-    return { pinnedAgentsByServer: byServer, pinnedAgents: agents };
-  }
-
-  /**
-   * Migrate from legacy pinnedAgents/pinnedAgentsByServer to unified agents array.
-   * Also promotes project-local pins to global agents[].pinned.
-   * Called during initialize with legacy data captured before obsolete keys are stripped.
-   *
-   * After migration, the legacy keys are in the obsolete list so they
-   * get stripped from the settings file on the next persist.
-   */
-  private migrateToAgentsArray(
-    legacyPinData: {
-      pinnedAgentsByServer?: Record<string, string[]>;
-      pinnedAgents?: string[];
-    } | null,
-  ): void {
-    if (!this.settings) return;
-    if (!legacyPinData) return;
-    if (this.settings.agents) return;
-
-    const {
-      pinnedAgentsByServer: legacyPinnedByServer,
-      pinnedAgents: legacyPinnedAgents,
-    } = legacyPinData;
-
-    const agents: AgentSettings[] = [...(this.settings.agents || [])];
-    const seen = new Set<string>(); // agentId+baseUrl dedup key
-
-    // Seed seen from existing agents[]
-    for (const a of agents) {
-      const key = `${a.agentId}@${a.baseUrl ?? "cloud"}`;
-      seen.add(key);
-    }
-
-    // Migrate from pinnedAgentsByServer (newest legacy format)
-    if (legacyPinnedByServer) {
-      for (const [serverKey, agentIds] of Object.entries(
-        legacyPinnedByServer,
-      )) {
-        for (const agentId of agentIds) {
-          const baseUrl = serverKey === "api.letta.com" ? undefined : serverKey;
-          const key = `${agentId}@${baseUrl ?? "cloud"}`;
-          if (!seen.has(key)) {
-            agents.push({ agentId, baseUrl, pinned: true });
-            seen.add(key);
-          } else {
-            // Agent exists — ensure pinned flag is set
-            const existing = agents.find(
-              (a) =>
-                a.agentId === agentId && (a.baseUrl ?? undefined) === baseUrl,
-            );
-            if (existing && !existing.pinned) {
-              existing.pinned = true;
-            }
-          }
-        }
-      }
-    }
-
-    // Migrate from pinnedAgents (oldest legacy format - assumes Letta API)
-    if (legacyPinnedAgents) {
-      for (const agentId of legacyPinnedAgents) {
-        const key = `${agentId}@cloud`;
-        if (!seen.has(key)) {
-          agents.push({ agentId, pinned: true });
-          seen.add(key);
-        } else {
-          const existing = agents.find(
-            (a) => a.agentId === agentId && !a.baseUrl,
-          );
-          if (existing && !existing.pinned) {
-            existing.pinned = true;
-          }
-        }
-      }
-    }
-
-    this.settings = { ...this.settings, agents };
-    this.markDirty("agents");
-    // Persist the migration (async, fire-and-forget)
-    this.persistSettings().catch((error) => {
-      console.warn("Failed to persist agents array migration:", error);
-    });
-  }
-
-  /**
    * Get all settings (synchronous, from memory)
    * Note: Does not include secure tokens (API key, refresh token) from secrets
    */
@@ -715,80 +605,6 @@ class SettingsManager {
       );
     }
     return { ...this.settings };
-  }
-
-  /**
-   * Promote local project pins to global agents[].pinned.
-   * Called when loading local project settings that still have legacy pin data.
-   */
-  private promoteLocalPinsToGlobal(localLegacyPinData: {
-    pinnedAgentsByServer?: Record<string, string[]>;
-    pinnedAgents?: string[];
-  }): void {
-    if (!this.settings) return;
-
-    const agents = [...(this.settings.agents || [])];
-    const seen = new Set<string>();
-
-    // Seed seen from existing agents[]
-    for (const a of agents) {
-      const key = `${a.agentId}@${a.baseUrl ?? "cloud"}`;
-      seen.add(key);
-    }
-
-    let changed = false;
-
-    if (localLegacyPinData.pinnedAgentsByServer) {
-      for (const [serverKey, agentIds] of Object.entries(
-        localLegacyPinData.pinnedAgentsByServer,
-      )) {
-        for (const agentId of agentIds) {
-          const baseUrl = serverKey === "api.letta.com" ? undefined : serverKey;
-          const key = `${agentId}@${baseUrl ?? "cloud"}`;
-          if (!seen.has(key)) {
-            agents.push({ agentId, baseUrl, pinned: true });
-            seen.add(key);
-            changed = true;
-          } else {
-            const existing = agents.find(
-              (a) =>
-                a.agentId === agentId && (a.baseUrl ?? undefined) === baseUrl,
-            );
-            if (existing && !existing.pinned) {
-              existing.pinned = true;
-              changed = true;
-            }
-          }
-        }
-      }
-    }
-
-    if (localLegacyPinData.pinnedAgents) {
-      for (const agentId of localLegacyPinData.pinnedAgents) {
-        const key = `${agentId}@cloud`;
-        if (!seen.has(key)) {
-          agents.push({ agentId, pinned: true });
-          seen.add(key);
-          changed = true;
-        } else {
-          const existing = agents.find(
-            (a) => a.agentId === agentId && !a.baseUrl,
-          );
-          if (existing && !existing.pinned) {
-            existing.pinned = true;
-            changed = true;
-          }
-        }
-      }
-    }
-
-    if (changed) {
-      this.settings = { ...this.settings, agents };
-      this.markDirty("agents");
-      this.persistSettings().catch((error) => {
-        console.warn("Failed to persist local pin promotion:", error);
-      });
-    }
   }
 
   /**
@@ -1251,9 +1067,6 @@ class SettingsManager {
       const content = await readFile(settingsPath);
       const localSettingsRaw = JSON.parse(content) as Record<string, unknown>;
 
-      // Promote local project pins to global agents[] before stripping
-      const localLegacyPinData = this.extractLegacyPinData(localSettingsRaw);
-
       const hadLegacyKeys = OBSOLETE_SETTINGS_KEYS.some((key) =>
         Object.hasOwn(localSettingsRaw, key),
       );
@@ -1269,11 +1082,6 @@ class SettingsManager {
         } catch {
           // Best-effort cleanup only; do not fail load path.
         }
-      }
-
-      // Promote local project pins to global agents[].pinned
-      if (localLegacyPinData) {
-        this.promoteLocalPinsToGlobal(localLegacyPinData);
       }
 
       return { ...localSettings };

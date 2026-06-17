@@ -204,9 +204,9 @@ describe("startup resolution from settings files", () => {
         agentId: "agent-last-used",
         conversationId: "conv-stale",
       },
-      pinnedAgentsByServer: {
-        "api.letta.com": ["agent-pinned"],
-      },
+    });
+    await writeGlobalSettings({
+      agents: [{ agentId: "agent-pinned", pinned: true }],
     });
 
     const target = await resolveFromSettings({
@@ -264,9 +264,7 @@ describe("startup resolution from settings files", () => {
           conversationId: "conv-global",
         },
       },
-      pinnedAgentsByServer: {
-        "api.letta.com": ["agent-pinned-global"],
-      },
+      agents: [{ agentId: "agent-pinned-global", pinned: true }],
     });
 
     const target = await resolveFromSettings();
@@ -281,9 +279,9 @@ describe("startup resolution from settings files", () => {
           conversationId: "conv-local",
         },
       },
-      pinnedAgentsByServer: {
-        "api.letta.com": ["agent-pinned-local"],
-      },
+    });
+    await writeGlobalSettings({
+      agents: [{ agentId: "agent-pinned", pinned: true }],
     });
 
     const target = await resolveFromSettings();
