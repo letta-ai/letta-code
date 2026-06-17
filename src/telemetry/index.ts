@@ -114,7 +114,7 @@ export interface ReflectionEndData {
 export function isLettaCodeDesktopRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return env.LETTA_DESKTOP_DEBUG_PANEL === "1";
+  return env.LETTA_DESKTOP_MODE === "1";
 }
 
 export function getTerminalTelemetrySurface(

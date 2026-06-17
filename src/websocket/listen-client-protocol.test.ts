@@ -5626,11 +5626,11 @@ describe("listen-client recoverable status notices", () => {
   test("suppresses stale approval recovery from transcript and mirrors it to desktop logs", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket();
-    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalFlag = process.env.LETTA_DESKTOP_MODE;
     const originalWrite = process.stderr.write.bind(process.stderr);
     const mirroredLines: string[] = [];
 
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_DESKTOP_MODE = "1";
     process.stderr.write = ((chunk: string | Uint8Array) => {
       mirroredLines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
@@ -5650,9 +5650,9 @@ describe("listen-client recoverable status notices", () => {
     } finally {
       process.stderr.write = originalWrite as typeof process.stderr.write;
       if (originalFlag === undefined) {
-        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+        delete process.env.LETTA_DESKTOP_MODE;
       } else {
-        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+        process.env.LETTA_DESKTOP_MODE = originalFlag;
       }
     }
 
@@ -5677,11 +5677,11 @@ describe("listen-client recoverable status notices", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const firstSocket = new MockSocket();
     const secondSocket = new MockSocket();
-    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalFlag = process.env.LETTA_DESKTOP_MODE;
     const originalWrite = process.stderr.write.bind(process.stderr);
     const mirroredLines: string[] = [];
 
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_DESKTOP_MODE = "1";
     process.stderr.write = ((chunk: string | Uint8Array) => {
       mirroredLines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
@@ -5718,9 +5718,9 @@ describe("listen-client recoverable status notices", () => {
     } finally {
       process.stderr.write = originalWrite as typeof process.stderr.write;
       if (originalFlag === undefined) {
-        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+        delete process.env.LETTA_DESKTOP_MODE;
       } else {
-        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+        process.env.LETTA_DESKTOP_MODE = originalFlag;
       }
     }
 
@@ -5881,14 +5881,14 @@ describe("listen-client loop error notices", () => {
   test("suppresses abort-like loop errors from transcript and mirrors them to desktop logs", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket();
-    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalFlag = process.env.LETTA_DESKTOP_MODE;
     const originalWrite = process.stderr.write.bind(process.stderr);
     const mirroredLines: string[] = [];
     const abortError = Object.assign(new Error("The operation was aborted"), {
       name: "AbortError",
     });
 
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_DESKTOP_MODE = "1";
     process.stderr.write = ((chunk: string | Uint8Array) => {
       mirroredLines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
@@ -5906,9 +5906,9 @@ describe("listen-client loop error notices", () => {
     } finally {
       process.stderr.write = originalWrite as typeof process.stderr.write;
       if (originalFlag === undefined) {
-        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+        delete process.env.LETTA_DESKTOP_MODE;
       } else {
-        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+        process.env.LETTA_DESKTOP_MODE = originalFlag;
       }
     }
 
