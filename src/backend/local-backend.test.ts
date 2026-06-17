@@ -69,6 +69,17 @@ async function firstConversationDir(storageDir: string): Promise<string> {
   return join(storageDir, "conversations", firstEntry);
 }
 
+function localConversationDir(
+  storageDir: string,
+  conversationId: string,
+): string {
+  return join(
+    storageDir,
+    "conversations",
+    Buffer.from(`conversation:${conversationId}`).toString("base64url"),
+  );
+}
+
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {
     // drain
@@ -228,6 +239,64 @@ describe("local backend pi transcript", () => {
           summary: "Default rename",
         } as never),
       ).toThrow("Default conversation cannot be updated");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refreshes conversation metadata changed by another local backend process", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-external-conversation-update-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const agent = await backend.createAgent({ name: "Local" } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "Original title",
+      } as never);
+
+      const conversationPath = join(
+        localConversationDir(storageDir, conversation.id),
+        "conversation.json",
+      );
+      const externalRecord = JSON.parse(
+        await readFile(conversationPath, "utf8"),
+      ) as Record<string, unknown>;
+      await writeFile(
+        conversationPath,
+        `${JSON.stringify(
+          {
+            ...externalRecord,
+            summary: "Desktop rename",
+            updated_at: "2026-06-15T23:00:00.000Z",
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const futureMtime = new Date(Date.now() + 5_000);
+      await utimes(conversationPath, futureMtime, futureMtime);
+
+      const retrieved = (await backend.retrieveConversation(
+        conversation.id,
+      )) as { summary?: string | null };
+      expect(retrieved.summary).toBe("Desktop rename");
+
+      const listed = (await backend.listConversations({
+        agent_id: agent.id,
+      } as never)) as Array<{ id: string; summary?: string | null }>;
+      expect(listed.find((item) => item.id === conversation.id)?.summary).toBe(
+        "Desktop rename",
+      );
+
+      await backend.updateConversation(conversation.id, {
+        last_message_at: "2026-06-15T23:01:00.000Z",
+      } as never);
+      const persisted = JSON.parse(
+        await readFile(conversationPath, "utf8"),
+      ) as Record<string, unknown>;
+      expect(persisted.summary).toBe("Desktop rename");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

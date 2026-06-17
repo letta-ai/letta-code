@@ -34,6 +34,10 @@ import {
 } from "@/mods/capabilities";
 import { createModConversationHandle } from "@/mods/conversation-handle";
 import {
+  attachDeprecatedGetContextTrap,
+  recordDeprecatedContextApiSourceDiagnostics,
+} from "@/mods/deprecated-api";
+import {
   appendModDiagnostic,
   recordModDiagnostic,
   recordStaleHandleUse,
@@ -71,6 +75,7 @@ import type {
   ModEventName,
   ModEventRegistration,
   ModEventResultMap,
+  ModInvocationContext,
   ModOwner,
   ModPanel,
   ModPanelContent,
@@ -101,9 +106,16 @@ export type StatuslineRenderFunction = (
 export type ModStatusValue =
   | string
   | null
-  | ((context: ModContext) => string | null);
+  | ((context: ModInvocationContext) => string | null);
 
 export type LettaModDisposer = () => void;
+
+export type ModCapabilityDiagnosticRecorder = (
+  diagnostic: Pick<
+    ModDiagnostic,
+    "capability" | "error" | "phase" | "severity"
+  >,
+) => void;
 
 export type LettaModFactory = (
   letta: LettaModApi,
@@ -113,7 +125,6 @@ export interface LettaModApi {
   capabilities: ModCapabilities;
   client: Letta;
   getClient: () => Promise<Letta>;
-  getContext: () => ModContext;
   signal: AbortSignal;
   registerProvider: (
     name: string,
@@ -171,9 +182,11 @@ export interface LocalModDisposer {
 
 export interface LocalModUiRegistry {
   panels: Record<string, ModPanel>;
+  statuslineRecordDiagnostic?: ModCapabilityDiagnosticRecorder;
   statuslineRenderer: StatuslineRenderer | null;
   statuslineRendererOwner?: ModOwner;
   statusOwners: Record<string, ModOwner>;
+  statusRecorders: Record<string, ModCapabilityDiagnosticRecorder>;
   statusValues: Record<string, ModStatusValue>;
 }
 
@@ -215,7 +228,6 @@ export interface ResolveLocalModSourcesOptions {
 }
 
 export interface LoadLocalModsOptions extends ResolveLocalModSourcesOptions {
-  getContext?: () => ModContext;
   getClient: () => Promise<Letta>;
   capabilities?: ModCapabilities;
   builtinCommandIds?: Iterable<string>;
@@ -230,6 +242,7 @@ export interface ModEngine {
   emitEvent: <TName extends ModEventName>(
     name: TName,
     event: ModEventMap[TName],
+    context: ModContext,
   ) => Promise<ModEventEmissionResult<TName>>;
   getSnapshot: () => LocalModRegistry;
   reload: () => Promise<void>;
@@ -237,7 +250,6 @@ export interface ModEngine {
 }
 
 export interface CreateModEngineOptions extends ResolveLocalModSourcesOptions {
-  getContext?: () => ModContext;
   getClient: () => Promise<Letta>;
   getBackend?: () => Backend | undefined;
   builtinCommandIds?: Iterable<string>;
@@ -295,6 +307,7 @@ function createEmptyModRegistry(
     tools: {},
     ui: {
       panels: {},
+      statusRecorders: {},
       statuslineRenderer: null,
       statusOwners: {},
       statusValues: {},
@@ -346,6 +359,7 @@ function snapshotRegistryForReaders(
     ui: {
       ...registry.ui,
       panels: { ...registry.ui.panels },
+      statusRecorders: { ...registry.ui.statusRecorders },
       statusOwners: { ...registry.ui.statusOwners },
       statusValues: { ...registry.ui.statusValues },
     },
@@ -393,12 +407,14 @@ function removeOwnerCapabilities(
   for (const [key, statusOwner] of Object.entries(registry.ui.statusOwners)) {
     if (statusOwner.id === owner.id) {
       delete registry.ui.statusOwners[key];
+      delete registry.ui.statusRecorders[key];
       delete registry.ui.statusValues[key];
     }
   }
 
   if (registry.ui.statuslineRendererOwner?.id === owner.id) {
     registry.ui.statuslineRenderer = null;
+    delete registry.ui.statuslineRecordDiagnostic;
     delete registry.ui.statuslineRendererOwner;
   }
 
@@ -818,7 +834,6 @@ function createLettaModApi(
   owner: ModOwner,
   capabilities: ModCapabilities,
   getClient: () => Promise<Letta>,
-  getContext: () => ModContext,
   onChange: () => void,
   onDiagnostic: ((diagnostic: ModDiagnostic) => void) | undefined,
   builtinCommandIds: Set<string>,
@@ -830,6 +845,23 @@ function createLettaModApi(
     if (isLive()) return true;
     recordStaleHandleUse(registry, owner, capability, onDiagnostic);
     return false;
+  };
+  const recordCapabilityDiagnostic = (
+    diagnostic: Pick<
+      ModDiagnostic,
+      "capability" | "error" | "phase" | "severity"
+    >,
+  ): void => {
+    if (!isLive()) return;
+    recordModDiagnostic(
+      registry,
+      {
+        ...diagnostic,
+        owner,
+      },
+      onDiagnostic,
+    );
+    onChange();
   };
 
   const unregisterEvent = <TName extends ModEventName>(
@@ -997,11 +1029,10 @@ function createLettaModApi(
     return () => unregisterEvent(name, handler);
   };
 
-  return {
+  const api: LettaModApi = {
     capabilities: cloneModCapabilities(capabilities),
     client: createLazyClient(getClient),
     getClient,
-    getContext,
     signal,
     registerProvider: registerProviderForOwner,
     unregisterProvider,
@@ -1037,7 +1068,10 @@ function createLettaModApi(
           );
         }
 
-        registry.commands[normalized.id] = normalized;
+        registry.commands[normalized.id] = {
+          ...normalized,
+          recordDiagnostic: recordCapabilityDiagnostic,
+        };
         onChange();
 
         return () => unregisterCommand(normalized.id);
@@ -1072,11 +1106,7 @@ function createLettaModApi(
         registerModTool({
           ...normalized,
           activationSignal: signal,
-          getContext,
-          isAvailable: () => {
-            if (signal.aborted) return false;
-            return normalized.isEnabled?.(getContext()) ?? true;
-          },
+          recordDiagnostic: recordCapabilityDiagnostic,
         });
         onChange();
 
@@ -1116,11 +1146,7 @@ function createLettaModApi(
         registerModPermission({
           ...normalized,
           activationSignal: signal,
-          getContext,
-          isAvailable: () => {
-            if (signal.aborted) return false;
-            return normalized.isEnabled?.(getContext()) ?? true;
-          },
+          recordDiagnostic: recordCapabilityDiagnostic,
         });
         onChange();
 
@@ -1138,6 +1164,7 @@ function createLettaModApi(
         if (!guardLive({ id: key, kind: "status" })) return;
         delete registry.ui.statusValues[key];
         delete registry.ui.statusOwners[key];
+        delete registry.ui.statusRecorders[key];
         onChange();
       },
       openPanel(panel) {
@@ -1173,11 +1200,13 @@ function createLettaModApi(
         if (value == null) {
           delete registry.ui.statusValues[key];
           delete registry.ui.statusOwners[key];
+          delete registry.ui.statusRecorders[key];
           onChange();
           return;
         }
         registry.ui.statusValues[key] = value;
         registry.ui.statusOwners[key] = owner;
+        registry.ui.statusRecorders[key] = recordCapabilityDiagnostic;
         onChange();
       },
       setStatuslineRenderer(renderer) {
@@ -1187,11 +1216,18 @@ function createLettaModApi(
           renderer,
           owner.path,
         );
+        registry.ui.statuslineRecordDiagnostic = recordCapabilityDiagnostic;
         registry.ui.statuslineRendererOwner = owner;
         onChange();
       },
     },
   };
+
+  return attachDeprecatedGetContextTrap(
+    api,
+    recordCapabilityDiagnostic,
+    "letta.getContext",
+  );
 }
 
 function getModFactory(module: LocalModModule): unknown {
@@ -1209,11 +1245,6 @@ export async function loadLocalMods(
     clientPromise ??= options.getClient();
     return clientPromise;
   };
-  const getContext =
-    options.getContext ??
-    (() => {
-      throw new Error("Mod context is not available yet");
-    });
   const onChange = options.onChange ?? (() => {});
   const sources = resolveLocalModSources(options);
   const capabilities = resolveModCapabilities(options.capabilities);
@@ -1232,6 +1263,20 @@ export async function loadLocalMods(
 
       try {
         const mtimeMs = statSync(modPath).mtimeMs;
+        const sourceText = readFileSync(modPath, "utf8");
+        recordDeprecatedContextApiSourceDiagnostics(
+          sourceText,
+          (diagnostic) => {
+            recordModDiagnostic(
+              registry,
+              {
+                ...diagnostic,
+                owner,
+              },
+              options.onDiagnostic,
+            );
+          },
+        );
         failurePhase = TYPESCRIPT_MOD_FILE_EXTENSIONS.has(path.extname(modPath))
           ? "transpile"
           : "import";
@@ -1255,7 +1300,6 @@ export async function loadLocalMods(
             owner,
             capabilities,
             getConfiguredClient,
-            getContext,
             onChange,
             options.onDiagnostic,
             builtinCommandIds,
@@ -1300,11 +1344,25 @@ export function evaluateLocalModStatuses(
   const statuses: Record<string, string> = {};
   for (const [key, value] of Object.entries(registry.ui.statusValues)) {
     try {
-      const nextValue = typeof value === "function" ? value(context) : value;
+      const nextValue =
+        typeof value === "function"
+          ? value(
+              attachDeprecatedGetContextTrap(
+                { ...context },
+                registry.ui.statusRecorders[key],
+                "ctx.getContext",
+              ),
+            )
+          : value;
       if (nextValue != null) {
         statuses[key] = nextValue;
       }
-    } catch {
+    } catch (error) {
+      registry.ui.statusRecorders[key]?.({
+        capability: { id: key, kind: "status" },
+        error: error instanceof Error ? error : new Error(String(error)),
+        phase: "status.evaluate",
+      });
       // Status providers run during render; failed providers are skipped so the
       // mod cannot crash the TUI.
     }
@@ -1317,7 +1375,7 @@ export async function emitLocalModEvent<TName extends ModEventName>(
   registry: LocalModRegistry | null,
   name: TName,
   event: ModEventMap[TName],
-  getContext: () => ModContext,
+  context: ModContext,
   backend?: Backend,
   onDiagnostic?: (diagnostic: ModDiagnostic) => void,
 ): Promise<ModEventEmissionResult<TName>> {
@@ -1349,25 +1407,42 @@ export async function emitLocalModEvent<TName extends ModEventName>(
         : null;
 
     try {
-      const context = getContext();
-      const eventContext: ModEventContext = {
-        conversation: createModConversationHandle({
-          agentId:
-            typeof event.agentId === "string"
-              ? event.agentId
-              : context.agent.id,
-          backend,
-          conversationId:
-            typeof event.conversationId === "string"
-              ? event.conversationId
-              : context.sessionId,
-          sendMessageStream: sendMessageStreamWithBackend,
-          workingDirectory: context.cwd,
-        }),
-        context,
-        getContext,
-        signal: signal ?? new AbortController().signal,
+      const recordEventDiagnostic = (
+        diagnostic: Pick<
+          ModDiagnostic,
+          "capability" | "error" | "phase" | "severity"
+        >,
+      ): void => {
+        recordModDiagnostic(
+          registry,
+          {
+            ...diagnostic,
+            owner: registration.owner,
+          },
+          onDiagnostic,
+        );
       };
+      const eventContext: ModEventContext = attachDeprecatedGetContextTrap(
+        {
+          ...context,
+          conversation: createModConversationHandle({
+            agentId:
+              typeof event.agentId === "string"
+                ? event.agentId
+                : context.agent.id,
+            backend,
+            conversationId:
+              typeof event.conversationId === "string"
+                ? event.conversationId
+                : context.sessionId,
+            sendMessageStream: sendMessageStreamWithBackend,
+            workingDirectory: context.cwd,
+          }),
+          signal: signal ?? new AbortController().signal,
+        },
+        recordEventDiagnostic,
+        "ctx.getContext",
+      );
       const result = await registration.handler(event, eventContext);
       if (isTurnStartResultWithInput(name, result)) {
         (event as ModTurnStartEvent).input = result.input;
@@ -1451,8 +1526,10 @@ export function disposeLocalMods(registry: LocalModRegistry): void {
   registry.tools = {};
   registry.ui.panels = {};
   registry.ui.statusOwners = {};
+  registry.ui.statusRecorders = {};
   registry.ui.statusValues = {};
   registry.ui.statuslineRenderer = null;
+  delete registry.ui.statuslineRecordDiagnostic;
   delete registry.ui.statuslineRendererOwner;
 }
 
@@ -1461,11 +1538,6 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
   let generation = 0;
   let disposed = false;
   const capabilities = resolveModCapabilities(modOptions.capabilities);
-  const getContext =
-    modOptions.getContext ??
-    (() => {
-      throw new Error("Mod context is not available yet");
-    });
   let activeRegistry = createEmptyModRegistry(
     resolveLocalModSources(modOptions),
     generation,
@@ -1545,7 +1617,7 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
       publish();
       listeners.clear();
     },
-    async emitEvent(name, payload) {
+    async emitEvent(name, payload, context) {
       if (disposed) {
         return { diagnostics: [], handlerCount: 0, name, results: [] };
       }
@@ -1554,7 +1626,7 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
         activeRegistry,
         name,
         payload,
-        getContext,
+        context,
         invocationBackend,
         onDiagnostic,
       );

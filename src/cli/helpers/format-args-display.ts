@@ -379,7 +379,7 @@ export function formatArgsDisplay(
               display: suffix,
               displayName: isWrite
                 ? "Interacted with background terminal"
-                : "Waited for background terminal",
+                : "Checked background terminal",
               parsed,
             };
           }

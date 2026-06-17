@@ -151,6 +151,13 @@ export interface ChannelAdapter {
   sendMessage(msg: OutboundChannelMessage): Promise<{ messageId: string }>;
 
   /**
+   * Optionally stream an ephemeral rich-message draft while a final rich
+   * message is being generated. Drafts are best-effort previews; callers must
+   * still send a final persistent message with sendMessage().
+   */
+  sendRichMessageDraft?(draft: OutboundChannelRichMessageDraft): Promise<void>;
+
+  /**
    * Send a direct reply on the platform (for pairing codes, no-route
    * messages, etc.) without going through the agent.
    */
@@ -234,6 +241,17 @@ export interface InboundChannelMessage {
   threadContext?: ChannelThreadContext;
 }
 
+export interface ChannelRichMessage {
+  /** Rich-message HTML content. Exactly one of html or markdown should be provided. */
+  html?: string;
+  /** Rich-message Markdown content. Exactly one of html or markdown should be provided. */
+  markdown?: string;
+  /** Optional: render the rich message right-to-left. */
+  isRtl?: boolean;
+  /** Optional: disable Telegram's automatic entity detection. */
+  skipEntityDetection?: boolean;
+}
+
 export interface OutboundChannelMessage {
   /** Platform identifier. */
   channel: string;
@@ -249,6 +267,8 @@ export interface OutboundChannelMessage {
   threadId?: string | null;
   /** Optional: parse mode hint for the adapter (e.g. "HTML", "MarkdownV2"). */
   parseMode?: string;
+  /** Optional: rich structured message payload for channels that support it. */
+  richMessage?: ChannelRichMessage;
   /** Optional: Signal-style text ranges (start:length:STYLE) for platforms that support rich text entities. */
   textStyle?: string[];
   /** Optional: attach a local file/media path for channels that support uploads. */
@@ -263,6 +283,21 @@ export interface OutboundChannelMessage {
   removeReaction?: boolean;
   /** Optional: target message id for reactions. */
   targetMessageId?: string;
+}
+
+export interface OutboundChannelRichMessageDraft {
+  /** Platform identifier. */
+  channel: string;
+  /** Channel account that should send the draft. */
+  accountId?: string;
+  /** Target chat/conversation ID. */
+  chatId: string;
+  /** Optional: canonical thread identifier used for threaded channels. */
+  threadId?: string | null;
+  /** Stable non-zero platform draft identifier for animated updates. */
+  draftId: number;
+  /** Rich structured message payload for the draft preview. */
+  richMessage: ChannelRichMessage;
 }
 
 // ── Routing ───────────────────────────────────────────────────────
@@ -327,6 +362,13 @@ export interface TelegramChannelConfig {
   groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /**
+   * Default true. When true, normal Telegram private-chat `send` actions use
+   * Bot API Rich Messages; explicit `send-rich` remains available either way.
+   */
+  richPrivateChatDefault?: boolean;
+  /** When true, stream hidden Telegram rich-message drafts during generation. */
+  richDraftStreaming?: boolean;
 }
 
 export interface SlackChannelConfig {
@@ -337,6 +379,8 @@ export interface SlackChannelConfig {
   appToken: string;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
 }
 
 export interface DiscordChannelConfig {
@@ -471,6 +515,17 @@ export interface TelegramChannelAccount extends ChannelAccountBase {
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
   /**
+   * Default true. When true, normal Telegram private-chat MessageChannel sends
+   * are delivered through Bot API Rich Messages. Set false to keep `send`
+   * plain/HTML-formatted unless the agent explicitly uses `send-rich`.
+   */
+  richPrivateChatDefault?: boolean;
+  /**
+   * When true, Telegram channel turns may stream hidden rich-message drafts
+   * while the agent is preparing a final MessageChannel send-rich call.
+   */
+  richDraftStreaming?: boolean;
+  /**
    * Optional debounce window (ms) for inbound group/topic messages. When
    * greater than `0`, short back-to-back text messages in the same chat/topic
    * stack into a single combined dispatch (trailing edge). Default `0`
@@ -488,6 +543,8 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   appToken: string;
   agentId: string | null;
   defaultPermissionMode: SlackDefaultPermissionMode;
+  /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
   /**
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same

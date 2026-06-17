@@ -5,7 +5,6 @@ import {
   applySetMaxContext,
   formatSetMaxContextResult,
 } from "@/agent/max-context";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
@@ -515,7 +514,6 @@ async function handleClearCommand(
   // Create a new conversation
   const conversation = await backend.createConversation({
     agent_id: agentId,
-    isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
   });
 
   // Clear runtime state for the current conversation

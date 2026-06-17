@@ -168,6 +168,8 @@ export interface ChannelPluginAccountPatch {
   mentionPatterns?: string[];
   recipientAliases?: Record<string, string>;
   transcribeVoice?: boolean;
+  richPrivateChatDefault?: boolean;
+  richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
 }

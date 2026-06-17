@@ -159,6 +159,16 @@ function invalidatePermissionSourcesInDirectory(directoryPath: string): void {
   }
 }
 
+function shouldStartPermissionWatchers(): boolean {
+  // Unit tests still validate signatures on every load. Avoid long-lived
+  // fs.watch handles there, because Bun/macOS runners can hang the worker even
+  // with non-persistent watchers.
+  return (
+    process.env.NODE_ENV !== "test" &&
+    process.env.LETTA_DISABLE_PERMISSION_WATCHERS !== "1"
+  );
+}
+
 function watchPath(path: string, onChange: () => void): void {
   if (watchers.has(path) || !exists(path)) {
     return;
@@ -166,6 +176,7 @@ function watchPath(path: string, onChange: () => void): void {
 
   try {
     const watcher = watch(path, { persistent: false }, onChange);
+    watcher.unref?.();
     watcher.on("error", () => {
       watcher.close();
       watchers.delete(path);
@@ -179,6 +190,10 @@ function watchPath(path: string, onChange: () => void): void {
 }
 
 function ensurePermissionWatchers(sources: string[]): void {
+  if (!shouldStartPermissionWatchers()) {
+    return;
+  }
+
   for (const source of sources) {
     watchPath(source, () => invalidatePermissionSource(source));
 

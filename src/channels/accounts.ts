@@ -53,6 +53,8 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
   remove_stale_routes: "removeStaleRoutes",
+  rich_draft_streaming: "richDraftStreaming",
+  rich_private_chat_default: "richPrivateChatDefault",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
@@ -314,6 +316,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     (next as SlackChannelAccount).defaultPermissionMode =
       (migrated as ChannelDefaultPermissionMode | null) ??
       DEFAULT_SLACK_PERMISSION_MODE;
+    (next as SlackChannelAccount).transcribeVoice =
+      (next as SlackChannelAccount).transcribeVoice === true;
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
@@ -346,6 +350,9 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.recipientAliases = { ...(next.recipientAliases ?? {}) };
     next.downloadMedia = next.downloadMedia === true;
   }
+  if (isTelegramChannelAccount(next)) {
+    next.richPrivateChatDefault = next.richPrivateChatDefault !== false;
+  }
   return next;
 }
 
@@ -368,6 +375,8 @@ function makeDefaultLegacyAccount(
       dmPolicy: config.dmPolicy,
       allowedUsers: [...config.allowedUsers],
       transcribeVoice: config.transcribeVoice === true,
+      richPrivateChatDefault: config.richPrivateChatDefault !== false,
+      richDraftStreaming: config.richDraftStreaming === true,
       binding: {
         agentId: null,
         conversationId: null,
@@ -457,6 +466,7 @@ function makeDefaultLegacyAccount(
     allowedUsers: [...config.allowedUsers],
     agentId: null,
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice: config.transcribeVoice === true,
     createdAt: now,
     updatedAt: now,
   };

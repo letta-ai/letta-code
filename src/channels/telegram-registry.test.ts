@@ -232,7 +232,6 @@ describe("telegram channel registry", () => {
     expect(createConversation).toHaveBeenCalledWith(
       {
         agent_id: "agent-1",
-        isolated_block_labels: expect.any(Array),
         summary: "[Telegram] Topic in Void Cafe: hello topic",
       },
       undefined,

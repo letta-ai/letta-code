@@ -10,7 +10,6 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { getBackend } from "@/backend";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { ApprovalResponseBody } from "@/types/protocol_v2";
@@ -1126,12 +1125,9 @@ export class ChannelRegistry {
   private findRawRouteForMessage(
     msg: InboundChannelMessage,
   ): ChannelRoute | null {
-    const route =
-      getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ??
-      (msg.threadId
-        ? getRouteRaw(msg.channel, msg.chatId, msg.accountId, null)
-        : undefined);
-    return route ?? null;
+    return (
+      getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ?? null
+    );
   }
 
   private loadAndFindRawRouteForMessage(
@@ -1343,6 +1339,33 @@ export class ChannelRegistry {
     return matches.length === 1 ? (matches[0] ?? null) : null;
   }
 
+  private hasExactEnabledRouteForMessage(
+    msg: InboundChannelMessage,
+    accountId: string,
+  ): boolean {
+    if (getRouteFromStore(msg.channel, msg.chatId, accountId, msg.threadId)) {
+      return true;
+    }
+
+    loadRoutes(msg.channel);
+    return Boolean(
+      getRouteFromStore(msg.channel, msg.chatId, accountId, msg.threadId),
+    );
+  }
+
+  private shouldDropUnroutedSlackThreadInput(
+    msg: InboundChannelMessage,
+    accountId: string,
+  ): boolean {
+    return (
+      msg.channel === "slack" &&
+      msg.chatType === "channel" &&
+      msg.threadId != null &&
+      msg.isMention !== true &&
+      !this.hasExactEnabledRouteForMessage(msg, accountId)
+    );
+  }
+
   private async handleInboundMessage(
     msg: InboundChannelMessage,
   ): Promise<void> {
@@ -1350,6 +1373,10 @@ export class ChannelRegistry {
     const adapter = this.getAdapter(msg.channel, accountId);
     if (!adapter) return;
     if (await this.tryHandlePendingControlRequest(adapter, msg)) {
+      return;
+    }
+
+    if (this.shouldDropUnroutedSlackThreadInput(msg, accountId)) {
       return;
     }
 
@@ -1655,7 +1682,6 @@ export class ChannelRegistry {
   ): Promise<string> {
     const conversation = await getBackend().createConversation({
       agent_id: agentId,
-      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
       ...(summary ? { summary } : {}),
     });
     return conversation.id;
