@@ -113,7 +113,7 @@ describe("SignalRestClient", () => {
         message: "secret-ish body",
       }),
     ).rejects.toThrow(
-      'Signal RPC send failed: An internal server error has occurred.; params={"message":"<message: 15 chars>","recipient":["+15555550123"],"account":"+15555550100"}',
+      'Signal RPC send failed: An internal server error has occurred.; code=-32603; data={"cause":"boom"}; params={"message":"<message: 15 chars>","recipient":["+15555550123"],"account":"+15555550100"}',
     );
   });
 

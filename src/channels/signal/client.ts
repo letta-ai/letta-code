@@ -172,10 +172,14 @@ export class SignalRestClient {
           ? response.error.message
           : `Signal RPC ${method} failed.`;
       const paramsPreview = previewSignalRpcParams(body.params);
+      const code = response.error.code as number | string | undefined;
+      const data = response.error.data;
+      const dataPreview =
+        data === undefined ? "undefined" : JSON.stringify(data);
       throw new SignalRpcError(
-        `Signal RPC ${method} failed: ${message}; params=${paramsPreview}`,
-        response.error.code as number | string,
-        response.error.data,
+        `Signal RPC ${method} failed: ${message}; code=${code ?? "unknown"}; data=${dataPreview}; params=${paramsPreview}`,
+        code,
+        data,
         method,
         body.params,
       );
