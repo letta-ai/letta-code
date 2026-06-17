@@ -241,6 +241,9 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     (cloned as SignalChannelAccount).mentionPatterns = [
       ...(account.mentionPatterns ?? []),
     ];
+    (cloned as SignalChannelAccount).recipientAliases = {
+      ...(account.recipientAliases ?? {}),
+    };
   }
 
   if ("config" in account) {
@@ -340,6 +343,7 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.groupMode = next.groupMode ?? "disabled";
     next.allowedGroups = [...(next.allowedGroups ?? [])];
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
+    next.recipientAliases = { ...(next.recipientAliases ?? {}) };
     next.downloadMedia = next.downloadMedia === true;
   }
   return next;
@@ -434,6 +438,7 @@ function makeDefaultLegacyAccount(
       mentionPatterns: config.mentionPatterns
         ? [...config.mentionPatterns]
         : [],
+      recipientAliases: { ...(config.recipientAliases ?? {}) },
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
       createdAt: now,

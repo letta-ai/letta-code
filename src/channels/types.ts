@@ -442,6 +442,8 @@ export interface SignalChannelConfig {
   allowedGroups?: string[];
   /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
+  /** Optional sender identity -> replyable Signal recipient mapping, e.g. UUID to E.164 phone. */
+  recipientAliases?: Record<string, string>;
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
   /** Default true. When true, supported inbound media is downloaded and surfaced to the agent. */
@@ -595,6 +597,8 @@ export interface SignalChannelAccount extends ChannelAccountBase {
   allowedGroups?: string[];
   /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
+  /** Optional sender identity -> replyable Signal recipient mapping, e.g. UUID to E.164 phone. */
+  recipientAliases?: Record<string, string>;
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
   /** Default true. When true, supported inbound media is downloaded and surfaced to the agent. */

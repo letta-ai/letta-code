@@ -22,6 +22,7 @@ describe("signal protocol-inbound validators", () => {
             group_mode: "open",
             allowed_groups: ["group-1"],
             mention_patterns: ["letta"],
+            recipient_aliases: { "uuid-1": "+15555550123" },
           },
         },
       }),

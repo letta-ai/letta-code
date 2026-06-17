@@ -185,6 +185,25 @@ function signalIdentityMatchesAccount(
   );
 }
 
+function normalizeSignalAliasKey(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function resolveSignalRecipientAlias(
+  identity: string | null | undefined,
+  account: SignalChannelAccount,
+): string | null {
+  const key = normalizeSignalAliasKey(identity);
+  if (!key) return null;
+  const aliases = account.recipientAliases ?? {};
+  for (const [from, to] of Object.entries(aliases)) {
+    if (normalizeSignalAliasKey(from) === key && to.trim()) {
+      return to.trim();
+    }
+  }
+  return null;
+}
+
 function syncMessageTargetsOwnAccount(
   sentMessage: SignalSentSyncMessage,
   account: SignalChannelAccount,
@@ -740,10 +759,15 @@ function signalInboundFromPayload(
   const dataMessage =
     envelope.dataMessage ?? envelope.editMessage?.dataMessage ?? null;
   const reaction = envelope.reactionMessage ?? dataMessage?.reaction ?? null;
-  const senderRecipient = envelope.sourceNumber ?? envelope.sourceUuid ?? null;
-  if (!senderRecipient) {
+  const senderIdentity = envelope.sourceNumber ?? envelope.sourceUuid ?? null;
+  if (!senderIdentity) {
     return null;
   }
+  const replyRecipient =
+    envelope.sourceNumber ??
+    resolveSignalRecipientAlias(envelope.sourceUuid, account) ??
+    envelope.sourceUuid ??
+    null;
 
   const groupInfo = dataMessage?.groupInfo ?? reaction?.groupInfo ?? null;
   const groupId = groupInfo?.groupId ?? undefined;
@@ -777,8 +801,8 @@ function signalInboundFromPayload(
     attachments,
     resolvedTimestamp,
   );
-  const senderName = envelope.sourceName ?? senderRecipient;
-  const chatId = isGroup ? `group:${groupId}` : `signal:${senderRecipient}`;
+  const senderName = envelope.sourceName ?? senderIdentity;
+  const chatId = isGroup ? `group:${groupId}` : `signal:${replyRecipient}`;
   const chatLabel = isGroup
     ? (groupInfo?.groupName ?? `Signal group ${groupId}`)
     : senderName;
@@ -802,12 +826,12 @@ function signalInboundFromPayload(
     accountId: account.accountId,
     chatId,
     chatType: isGroup ? "channel" : "direct",
-    senderId: senderRecipient,
+    senderId: senderIdentity,
     senderName,
     chatLabel,
     text,
     timestamp: resolvedTimestamp,
-    messageId: buildSignalMessageId(targetTimestamp, senderRecipient),
+    messageId: buildSignalMessageId(targetTimestamp, senderIdentity),
     threadId: null,
     isMention: isGroup
       ? matchesSignalMentionPatterns(text, account.mentionPatterns)
@@ -834,7 +858,7 @@ function signalInboundFromPayload(
       emoji: reaction.emoji,
       targetMessageId: buildSignalMessageId(
         reaction.targetSentTimestamp,
-        reaction.targetAuthor ?? reaction.targetAuthorUuid ?? senderRecipient,
+        reaction.targetAuthor ?? reaction.targetAuthorUuid ?? senderIdentity,
       ),
       targetSenderId:
         reaction.targetAuthor ?? reaction.targetAuthorUuid ?? undefined,
@@ -1036,20 +1060,30 @@ export class SignalChannelAdapter implements ChannelAdapter {
       return;
     }
     await this.stopTypingForChat(key, { sendStop: false });
-    const sendTyping = async () => {
+    const sendTyping = async (): Promise<boolean> => {
       try {
         await this.client.sendTyping({
           target: parseSignalTarget(source.chatId),
         });
+        return true;
       } catch (error) {
         console.warn(
           `[Signal] Failed to send typing indicator for ${source.chatId}:`,
           error instanceof Error ? error.message : error,
         );
+        return false;
       }
     };
-    await sendTyping();
-    const timer = setInterval(sendTyping, SIGNAL_TYPING_REFRESH_MS);
+    if (!(await sendTyping())) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void sendTyping().then((ok) => {
+        if (!ok) {
+          void this.stopTypingForChat(key, { sendStop: false });
+        }
+      });
+    }, SIGNAL_TYPING_REFRESH_MS);
     const timeout = setTimeout(() => {
       void this.stopTypingForChat(key);
     }, SIGNAL_TYPING_TIMEOUT_MS);

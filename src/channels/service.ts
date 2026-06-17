@@ -119,6 +119,7 @@ export interface ChannelConfigSnapshot {
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
+  recipientAliases?: Record<string, string>;
   transcribeVoice?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
@@ -227,6 +228,7 @@ export interface ChannelAccountSnapshot {
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
+  recipientAliases?: Record<string, string>;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
   createdAt: string;
@@ -593,6 +595,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       groupMode: account.groupMode,
       allowedGroups: [...(account.allowedGroups ?? [])],
       mentionPatterns: [...(account.mentionPatterns ?? [])],
+      recipientAliases: { ...(account.recipientAliases ?? {}) },
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
@@ -729,6 +732,7 @@ function createAccountFromPatch(
         normalizeSignalGroupMode(normalizedPatch.groupMode) ?? "disabled",
       allowedGroups: normalizedPatch.allowedGroups ?? [],
       mentionPatterns: normalizedPatch.mentionPatterns ?? [],
+      recipientAliases: normalizedPatch.recipientAliases ?? {},
       transcribeVoice: normalizedPatch.transcribeVoice === true,
       downloadMedia: normalizedPatch.downloadMedia ?? true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
@@ -885,6 +889,8 @@ function mergeAccountPatch(
       allowedGroups: normalizedPatch.allowedGroups ?? existing.allowedGroups,
       mentionPatterns:
         normalizedPatch.mentionPatterns ?? existing.mentionPatterns,
+      recipientAliases:
+        normalizedPatch.recipientAliases ?? existing.recipientAliases,
       transcribeVoice:
         normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
       downloadMedia:
@@ -1062,6 +1068,7 @@ export function getChannelConfigSnapshot(
       groupMode: account.groupMode,
       allowedGroups: [...(account.allowedGroups ?? [])],
       mentionPatterns: [...(account.mentionPatterns ?? [])],
+      recipientAliases: { ...(account.recipientAliases ?? {}) },
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,

@@ -121,6 +121,7 @@ Important fields:
 | `group_mode` | `disabled`, `mention`, or `open`. Disabled is conservative. |
 | `allowed_groups` | Optional group ID allowlist when groups are enabled. |
 | `mention_patterns` | Text aliases/regexes used by mention-mode groups. |
+| `recipient_aliases` | Optional map from inbound sender identities to replyable recipients, e.g. Signal UUID to E.164 phone number. Useful when native `signal-cli` receives from a UUID but can only send replies to the phone number. |
 | `download_media` | Download/surface inbound media. Defaults to `true` for new accounts. |
 | `media_max_bytes` | Maximum inbound media bytes to consider. Default setup value is 25 MiB. |
 | `transcribe_voice` | Auto-transcribe inbound audio when `OPENAI_API_KEY` is set. |
@@ -193,6 +194,7 @@ If `ffmpeg` is missing, the agent receives an
   `/channels signal pair <code>` or use the CLI pairing command.
 - **Messages from yourself are ignored / bot seems to ignore own linked-device messages:** this is loop protection in normal mode. Enable `self_chat_mode` only when you intentionally want Note to Self/self-chat routing.
 - **Using your personal Signal number:** enable `self_chat_mode` and talk to the agent in Signal's Note to Self/self-chat. Other direct messages on that linked account are ignored, and outbound sends to non-self targets are rejected while self-chat mode is enabled.
+- **Agent receives messages but replies fail with internal server error:** check whether the inbound `chat_id` is a UUID like `signal:accd...`. If native `signal-cli` cannot send to that UUID, add a `recipient_aliases` mapping from the UUID to the replyable phone number, then restart the listener.
 
 ## Current limitations
 

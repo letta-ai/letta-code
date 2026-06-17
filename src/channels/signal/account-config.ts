@@ -10,6 +10,7 @@ const SIGNAL_CONFIG_KEYS = new Set([
   "group_mode",
   "allowed_groups",
   "mention_patterns",
+  "recipient_aliases",
   "transcribe_voice",
   "download_media",
   "media_max_bytes",
@@ -26,6 +27,15 @@ function isBoolean(value: unknown): value is boolean {
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((entry) => typeof entry === "string")
+  );
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
   );
 }
 
@@ -68,6 +78,8 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
           isStringArray(config.allowed_groups)) &&
         (config.mention_patterns === undefined ||
           isStringArray(config.mention_patterns)) &&
+        (config.recipient_aliases === undefined ||
+          isStringRecord(config.recipient_aliases)) &&
         (config.transcribe_voice === undefined ||
           isBoolean(config.transcribe_voice)) &&
         (config.download_media === undefined ||
@@ -103,6 +115,9 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         mentionPatterns: isStringArray(config.mention_patterns)
           ? [...config.mention_patterns]
           : undefined,
+        recipientAliases: isStringRecord(config.recipient_aliases)
+          ? { ...config.recipient_aliases }
+          : undefined,
         transcribeVoice: isBoolean(config.transcribe_voice)
           ? config.transcribe_voice
           : undefined,
@@ -125,6 +140,7 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         group_mode: account.groupMode,
         allowed_groups: [...(account.allowedGroups ?? [])],
         mention_patterns: [...(account.mentionPatterns ?? [])],
+        recipient_aliases: { ...(account.recipientAliases ?? {}) },
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
@@ -141,6 +157,7 @@ export const signalAccountConfigAdapter: ChannelAccountConfigAdapter<SignalChann
         group_mode: account.groupMode,
         allowed_groups: [...(account.allowedGroups ?? [])],
         mention_patterns: [...(account.mentionPatterns ?? [])],
+        recipient_aliases: { ...(account.recipientAliases ?? {}) },
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,

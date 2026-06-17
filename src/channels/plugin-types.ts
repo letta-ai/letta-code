@@ -166,6 +166,7 @@ export interface ChannelPluginAccountPatch {
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
+  recipientAliases?: Record<string, string>;
   transcribeVoice?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;

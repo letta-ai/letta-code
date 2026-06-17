@@ -133,6 +133,31 @@ describe("signalInboundFromSseEvent", () => {
     ).toBeNull();
   });
 
+  test("uses recipient alias for UUID-only direct reply targets", () => {
+    const msg = signalInboundFromSseEvent(
+      receiveEvent({
+        envelope: {
+          sourceUuid: "accd2cf3-8cb5-49c2-8904-5c4ce428c772",
+          sourceName: "Cameron",
+          timestamp: 123,
+          dataMessage: { message: "please reply" },
+        },
+      }),
+      signalAccount({
+        recipientAliases: {
+          "accd2cf3-8cb5-49c2-8904-5c4ce428c772": "+15036195666",
+        },
+      }),
+    );
+
+    expect(msg).toMatchObject({
+      chatId: "signal:+15036195666",
+      senderId: "accd2cf3-8cb5-49c2-8904-5c4ce428c772",
+      senderName: "Cameron",
+      text: "please reply",
+    });
+  });
+
   test("routes group messages only when mention policy permits them", () => {
     const account = signalAccount({
       groupMode: "mention",
@@ -562,6 +587,39 @@ describe("SignalChannelAdapter", () => {
       target: { kind: "recipient", recipient: "+15555550123" },
       stop: true,
     });
+    await adapter.stop();
+  });
+
+  test("does not keep retrying typing indicators after initial failure", async () => {
+    const sendTyping = mock(async () => {
+      throw new Error("typing unsupported");
+    });
+    const client: SignalClientLike = {
+      check: async () => undefined,
+      sendMessage: async () => "1",
+      sendReaction: async () => undefined,
+      sendTyping,
+      streamEvents: async () => undefined,
+    };
+    const adapter = createSignalAdapter(signalAccount(), { client });
+    await adapter.start();
+
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "batch-1",
+      sources: [
+        {
+          channel: "signal",
+          accountId: "personal",
+          chatId: "signal:accd2cf3-8cb5-49c2-8904-5c4ce428c772",
+          chatType: "direct",
+          agentId: "agent-signal",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    expect(sendTyping).toHaveBeenCalledTimes(1);
     await adapter.stop();
   });
 
