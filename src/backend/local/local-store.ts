@@ -2229,6 +2229,8 @@ export class LocalStore {
     const conversation = this.findConversation(conversationId, agentId);
     if (!conversation) return 0;
 
+    this.rollbackUnpersistedTrailingAssistantMessage(conversation, agentId);
+
     const messages = this.localMessagesForConversation(
       conversation.id,
       agentId,
@@ -2252,6 +2254,35 @@ export class LocalStore {
 
     if (settledCount > 0) this.rebuildMessageIndex();
     return settledCount;
+  }
+
+  private rollbackUnpersistedTrailingAssistantMessage(
+    conversation: StoredConversation,
+    agentId: string,
+  ): void {
+    const key = this.conversationKey(conversation.id, agentId);
+    const messages = this.localMessagesForConversation(
+      conversation.id,
+      agentId,
+    );
+    const last = messages.at(-1);
+    if (last?.role !== "assistant") return;
+    if (this.sessionEntryIdsByMessageId(key).has(last.id)) return;
+
+    messages.pop();
+    this.localMessagesByConversationKey.set(key, messages);
+    conversation.in_context_message_ids =
+      conversation.in_context_message_ids.filter((id) => id !== last.id);
+    const previousLastMessage = messages.at(-1);
+    conversation.last_message_at = previousLastMessage
+      ? localMessageDate(previousLastMessage, conversation.last_message_at)
+      : conversation.created_at;
+    conversation.updated_at = currentIsoTimestamp();
+    this.conversations.set(key, conversation);
+    this.persistConversationState(conversation.id, agentId, {
+      transcript: "skip",
+    });
+    this.rebuildMessageIndex();
   }
 
   private findToolCall(
