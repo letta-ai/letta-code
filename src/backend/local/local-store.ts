@@ -1586,9 +1586,9 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", targetAgentId);
     }
     this.ensureAgent(targetAgentId);
-    this.conversationSeq += 1;
+    const forkedConversationId = this.nextConversationId(targetAgentId);
     const forked = createLocalConversationRecord(
-      `${this.conversationIdPrefix}${this.conversationSeq}`,
+      forkedConversationId,
       targetAgentId,
       this.conversationSeq,
       {
@@ -3492,11 +3492,12 @@ export class LocalStore {
     return conversation;
   }
 
-  private nextConversationId(): string {
+  private nextConversationId(agentId?: string): string {
+    const resolvedAgentId = agentId ?? this.defaultAgentId;
     for (;;) {
       this.conversationSeq += 1;
       const conversationId = `${this.conversationIdPrefix}${this.conversationSeq}`;
-      const key = this.conversationKey(conversationId, this.defaultAgentId);
+      const key = this.conversationKey(conversationId, resolvedAgentId);
       if (this.conversations.has(key)) continue;
       const conversationDir = this.conversationDirForKey(key);
       if (conversationDir && existsSync(conversationDir)) continue;
