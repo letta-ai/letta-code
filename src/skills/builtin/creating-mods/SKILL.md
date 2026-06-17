@@ -78,6 +78,7 @@ letta.capabilities.commands
 letta.capabilities.events.lifecycle
 letta.capabilities.events.tools
 letta.capabilities.events.turns
+letta.capabilities.events.providerError
 letta.capabilities.permissions
 letta.capabilities.providers
 letta.capabilities.ui.panels

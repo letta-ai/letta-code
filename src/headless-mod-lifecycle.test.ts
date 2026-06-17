@@ -41,6 +41,7 @@ describe("headless mod adapter", () => {
         lifecycle: true,
         tools: true,
         turns: true,
+        providerError: true,
       },
       permissions: true,
       providers: true,

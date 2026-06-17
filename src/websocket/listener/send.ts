@@ -19,6 +19,7 @@ import {
 } from "@/agent/turn-recovery-policy";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
+import { emitModEvent } from "@/mods/event-emitter";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
@@ -31,7 +32,10 @@ import {
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { ensureListenerModAdapter } from "./mod-adapter";
+import {
+  createListenerModContext,
+  ensureListenerModAdapter,
+} from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitDequeuedUserMessage,
@@ -523,6 +527,55 @@ export async function sendMessageStreamWithRetry(
       }
 
       if (action === "retry_transient") {
+        // Fire provider_error event before the built-in retry.
+        let modRequestedRetry = false;
+        try {
+          const modAdapter = ensureListenerModAdapter(runtime.listener);
+          const modContext = createListenerModContext({
+            sessionId: conversationId,
+            workingDirectory: runtime.activeWorkingDirectory ?? undefined,
+          });
+          const result = await emitModEvent(
+            modAdapter.events,
+            "provider_error",
+            {
+              agentId: runtime.agentId ?? null,
+              conversationId,
+              status:
+                preStreamError instanceof APIError
+                  ? preStreamError.status
+                  : undefined,
+              detail: errorDetail,
+              providerType: null,
+              providerName: null,
+              modelHandle: null,
+            },
+            modContext,
+          );
+          if (result.results.some((r) => r.action === "retry")) {
+            modRequestedRetry = true;
+          }
+        } catch {
+          // Mod event errors are best-effort.
+        }
+
+        if (modRequestedRetry) {
+          transientRetries += 1;
+          const attempt = transientRetries;
+          emitRecoverableRetryNotice(socket, runtime, {
+            kind: "transient_provider_retry",
+            message: `Provider error: mod requested retry (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`,
+            reason: "llm_api_error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs: 0,
+            agentId: runtime.agentId ?? undefined,
+            conversationId,
+          });
+          if (abortSignal?.aborted) throw new Error("Cancelled by user");
+          continue;
+        }
+
         runtime.isRecoveringApprovals = true;
         setLoopStatus(runtime, "RETRYING_API_REQUEST", {
           agent_id: runtime.agentId,

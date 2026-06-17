@@ -84,6 +84,7 @@ import type {
   ModPanelUpdate,
   ModPermission,
   ModPermissionRegistration,
+  ModProviderCredentials,
   ModTool,
   ModToolRegistration,
   ModToolStartEvent,
@@ -145,6 +146,10 @@ export interface LettaModApi {
       config: PiProviderRegistration,
     ) => LettaModDisposer;
     unregister: (name: string) => void;
+    updateCredentials: (
+      providerName: string,
+      credentials: ModProviderCredentials,
+    ) => Promise<void>;
   };
   events: {
     off: <TName extends ModEventName>(
@@ -229,6 +234,7 @@ export interface ResolveLocalModSourcesOptions {
 
 export interface LoadLocalModsOptions extends ResolveLocalModSourcesOptions {
   getClient: () => Promise<Letta>;
+  getBackend?: () => Backend | undefined;
   capabilities?: ModCapabilities;
   builtinCommandIds?: Iterable<string>;
   generation?: number;
@@ -579,6 +585,7 @@ const SUPPORTED_MOD_EVENT_NAMES = new Set<ModEventName>([
   "conversation_close",
   "tool_start",
   "turn_start",
+  "provider_error",
 ]);
 
 function validateModEventName(name: string): asserts name is ModEventName {
@@ -599,6 +606,8 @@ function isModEventCapabilityEnabled(
       return capabilities.events.tools;
     case "turn_start":
       return capabilities.events.turns;
+    case "provider_error":
+      return capabilities.events.providerError;
   }
 }
 
@@ -839,6 +848,7 @@ function createLettaModApi(
   builtinCommandIds: Set<string>,
   reservedToolNames: Set<string>,
   signal: AbortSignal,
+  getBackend?: () => Backend | undefined,
 ): LettaModApi {
   const isLive = () => isOwnerLive(registry, owner);
   const guardLive = (capability: ModDiagnostic["capability"]): boolean => {
@@ -1119,6 +1129,18 @@ function createLettaModApi(
         return registerProviderForOwner(name, config);
       },
       unregister: unregisterProvider,
+      async updateCredentials(providerName, credentials) {
+        const backend = getBackend?.();
+        if (!backend) {
+          throw new Error(
+            "Provider credential updates are not available in this context",
+          );
+        }
+        const { updateProviderCredentials } = await import(
+          "@/mods/provider-credentials"
+        );
+        await updateProviderCredentials(backend, providerName, credentials);
+      },
     },
     events: {
       off: unregisterEvent,
@@ -1246,6 +1268,7 @@ export async function loadLocalMods(
     return clientPromise;
   };
   const onChange = options.onChange ?? (() => {});
+  const getBackend = options.getBackend;
   const sources = resolveLocalModSources(options);
   const capabilities = resolveModCapabilities(options.capabilities);
   const generation = options.generation ?? 1;
@@ -1305,6 +1328,7 @@ export async function loadLocalMods(
             builtinCommandIds,
             reservedToolNames,
             abortController.signal,
+            getBackend,
           ),
         );
         if (typeof dispose === "function") {

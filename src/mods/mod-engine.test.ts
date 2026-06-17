@@ -101,7 +101,12 @@ function createEngine(
 const TOOL_ONLY_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
   commands: false,
-  events: { lifecycle: false, tools: false, turns: false },
+  events: {
+    lifecycle: false,
+    tools: false,
+    turns: false,
+    providerError: false,
+  },
   permissions: false,
   providers: false,
   ui: {

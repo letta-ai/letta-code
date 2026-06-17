@@ -47,6 +47,7 @@ import {
 } from "@/cli/helpers/reflection-launcher";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
+import { emitModEvent } from "@/mods/event-emitter";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -76,7 +77,10 @@ import {
   normalizeToolReturnWireMessage,
   populateInterruptQueue,
 } from "./interrupts";
-import { ensureListenerModAdapter } from "./mod-adapter";
+import {
+  createListenerModContext,
+  ensureListenerModAdapter,
+} from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -946,6 +950,113 @@ export async function handleIncomingMessage(
           }
           currentInput = refreshInputOtidsForNewRequest(currentInput);
 
+          setLoopStatus(runtime, "SENDING_API_REQUEST", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
+          const isPureApprovalContinuationRetry =
+            isApprovalOnlyInput(currentInput);
+          const retryInputWithSkillContent =
+            injectQueuedSkillContent(currentInput);
+          stream = isPureApprovalContinuationRetry
+            ? await sendApprovalContinuationWithRetry(
+                conversationId,
+                retryInputWithSkillContent,
+                buildSendOptions(),
+                socket,
+                runtime,
+                turnAbortSignal,
+                { providerFallback },
+              )
+            : await sendMessageStreamWithRetry(
+                conversationId,
+                retryInputWithSkillContent,
+                buildSendOptions(),
+                socket,
+                runtime,
+                turnAbortSignal,
+                { providerFallback },
+              );
+          currentInput = retryInputWithSkillContent;
+          if (!stream) {
+            return;
+          }
+          pendingNormalizationInterruptedToolCallIds = [];
+          markAwaitingAcceptedApprovalContinuationRunId(runtime, currentInput);
+          setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
+          turnToolContextId = getStreamToolContextId(
+            stream as Stream<LettaStreamingResponse>,
+          );
+          continue;
+        }
+
+        // Fire provider_error event before the built-in retry decision.
+        // Mods can return { action: "retry" } to request an immediate retry
+        // (e.g. after swapping credentials), or { action: "continue" } / undefined
+        // to let the default recovery logic handle it.
+        let modRequestedRetry = false;
+        try {
+          const modAdapter = ensureListenerModAdapter(runtime.listener);
+          const modContext = createListenerModContext({
+            sessionId: conversationId,
+            workingDirectory: turnWorkingDirectory ?? undefined,
+            agent: cachedAgent
+              ? {
+                  id: cachedAgent.id,
+                  name: cachedAgent.name ?? null,
+                  model: cachedAgent.llm_config?.model ?? null,
+                  llm_config: cachedAgent.llm_config,
+                }
+              : null,
+          });
+          const modelHandle = cachedAgent?.llm_config?.model ?? null;
+          const providerType =
+            cachedAgent?.llm_config?.model_endpoint_type ?? null;
+          const result = await emitModEvent(
+            modAdapter.events,
+            "provider_error",
+            {
+              agentId: agentId ?? null,
+              conversationId,
+              status: undefined,
+              detail: errorDetail,
+              providerType,
+              providerName: providerType,
+              modelHandle,
+            },
+            modContext,
+          );
+          if (result.results.some((r) => r.action === "retry")) {
+            modRequestedRetry = true;
+          }
+        } catch {
+          // Mod event errors are best-effort; don't block recovery.
+        }
+
+        if (
+          modRequestedRetry &&
+          llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
+        ) {
+          llmApiErrorRetries += 1;
+          const attempt = llmApiErrorRetries;
+          emitRecoverableRetryNotice(socket, runtime, {
+            kind: "transient_provider_retry",
+            message: `Provider error: mod requested retry (attempt ${attempt}/${LLM_API_ERROR_MAX_RETRIES})...`,
+            reason: "llm_api_error",
+            attempt,
+            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            delayMs: 0,
+            runId: lastRunId || undefined,
+            agentId,
+            conversationId,
+          });
+          if (turnAbortSignal.aborted) {
+            throw new Error("Cancelled by user");
+          }
+          currentInput = refreshInputOtidsForNewRequest(currentInput);
           setLoopStatus(runtime, "SENDING_API_REQUEST", {
             agent_id: agentId,
             conversation_id: conversationId,

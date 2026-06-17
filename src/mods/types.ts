@@ -73,6 +73,7 @@ export interface ModEventCapabilities {
   lifecycle: boolean;
   tools: boolean;
   turns: boolean;
+  providerError: boolean;
 }
 
 export interface ModCapabilities {
@@ -139,7 +140,8 @@ export type ModEventName =
   | "conversation_open"
   | "conversation_close"
   | "tool_start"
-  | "turn_start";
+  | "turn_start"
+  | "provider_error";
 
 export type ModConversationOpenReason =
   | "startup"
@@ -194,11 +196,37 @@ export interface ModToolStartResult {
   args?: Record<string, unknown>;
 }
 
+export interface ModProviderErrorEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  status: number | undefined;
+  detail: string | null;
+  providerType: string | null;
+  providerName: string | null;
+  modelHandle: string | null;
+}
+
+export interface ModProviderErrorResult {
+  action: "retry" | "continue";
+}
+
+export interface ModProviderCredentials {
+  apiKey?: string;
+  oauth?: {
+    access_token: string;
+    id_token: string;
+    refresh_token?: string;
+    account_id: string;
+    expires_at: number;
+  };
+}
+
 export interface ModEventMap {
   conversation_open: ModConversationOpenEvent;
   conversation_close: ModConversationCloseEvent;
   tool_start: ModToolStartEvent;
   turn_start: ModTurnStartEvent;
+  provider_error: ModProviderErrorEvent;
 }
 
 export interface ModEventResultMap {
@@ -206,6 +234,7 @@ export interface ModEventResultMap {
   conversation_close: undefined;
   tool_start: ModToolStartResult | undefined;
   turn_start: ModTurnStartResult | undefined;
+  provider_error: ModProviderErrorResult | undefined;
 }
 
 export interface ModInvocationContext extends ModContext {}

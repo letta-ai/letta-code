@@ -20,6 +20,7 @@ This is the first slice of the hooks-v2 direction. The long-term goal is for typ
 letta.capabilities.events.lifecycle
 letta.capabilities.events.tools
 letta.capabilities.events.turns
+letta.capabilities.events.providerError
 ```
 
 Guard events when writing portable mods:
@@ -66,6 +67,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 "conversation_close"
 "tool_start"
 "turn_start"
+"provider_error"
 ```
 
 `conversation_open` event:
@@ -191,6 +193,55 @@ Handlers also receive:
 `ctx` and `ctx.conversation` are bound when the event is dispatched. Use direct fields such as `ctx.agent`, `ctx.cwd`, `ctx.model`, and `ctx.permissionMode` for scoped state. If an event needs background model work, prefer `ctx.conversation.fork()` and send to the fork. Do not send to the active conversation from `turn_start`; that event is already in the path of sending a turn.
 
 Respect `ctx.signal` for long-running async work. It is aborted on `/reload` and app shutdown.
+
+## provider_error event
+
+Fires when the LLM provider returns an error during a turn, before the built-in retry logic runs. A mod can return `{ action: "retry" }` to request an immediate retry (e.g. after swapping credentials via `letta.providers.updateCredentials`), or `{ action: "continue" }` / `undefined` to let the default recovery handle it.
+
+Guard with `letta.capabilities.events.providerError`:
+
+```ts
+export default function activate(letta) {
+  if (!letta.capabilities.events.providerError) return;
+
+  return letta.events.on("provider_error", (event, ctx) => {
+    if (event.status !== 429) return;
+    if (event.providerType !== "chatgpt_oauth") return;
+
+    // Rotate to the next ChatGPT account
+    const next = rotateToNextAccount();
+    letta.providers.updateCredentials("chatgpt-plus-pro", {
+      oauth: next,
+    });
+
+    return { action: "retry" };
+  });
+}
+```
+
+`provider_error` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  status: number | undefined;       // HTTP status if available
+  detail: string | null;            // error message / detail text
+  providerType: string | null;      // e.g. "chatgpt_oauth", "openai", "zai"
+  providerName: string | null;      // provider name from llm_config
+  modelHandle: string | null;       // model handle from llm_config
+}
+```
+
+`provider_error` result:
+
+```ts
+{ action: "retry" | "continue" }
+```
+
+If any handler returns `{ action: "retry" }`, the harness retries the turn immediately without running the default retry policy. If no handler returns retry, or all return `{ action: "continue" }` / undefined, the default retry logic runs as normal.
+
+`letta.providers.updateCredentials(providerName, credentials)` updates the credentials on the active backend before the retry. Supports `credentials.oauth` (for ChatGPT OAuth providers) and `credentials.apiKey` (for API-key providers).
 
 ## Conversation status example
 

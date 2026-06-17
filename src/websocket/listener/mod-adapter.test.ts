@@ -51,6 +51,7 @@ describe("listener mod adapter", () => {
         lifecycle: false,
         tools: false,
         turns: false,
+        providerError: true,
       },
       permissions: false,
       providers: true,

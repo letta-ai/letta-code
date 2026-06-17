@@ -23,6 +23,7 @@ export const HEADLESS_MOD_CAPABILITIES: ModCapabilities = {
     lifecycle: true,
     tools: true,
     turns: true,
+    providerError: true,
   },
   permissions: true,
   providers: true,
