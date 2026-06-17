@@ -3,7 +3,6 @@ import {
   buildConversationSelectorHints,
   buildDefaultConversationEntry,
   formatConversationTimestampText,
-  normalizeConversationSearchInput,
 } from "@/cli/components/ConversationSelector";
 
 describe("ConversationSelector timestamps", () => {
@@ -73,12 +72,7 @@ describe("ConversationSelector timestamps", () => {
   });
 });
 
-describe("ConversationSelector search input", () => {
-  test("strips macOS Option+P glyphs from search input", () => {
-    expect(normalizeConversationSearchInput("π")).toBe("");
-    expect(normalizeConversationSearchInput("foo∏bar")).toBe("foobar");
-  });
-
+describe("ConversationSelector hints", () => {
   test("shows navigation hints without pin shortcuts", () => {
     expect(buildConversationSelectorHints()).toBe(
       "Enter select · ↑↓ navigate · Esc clear/cancel",

@@ -60,16 +60,8 @@ const RESUME_PREVIEW_MESSAGE_TYPES: MessageType[] = [
   "assistant_message",
 ];
 
-export function isDefaultConversationId(conversationId: string): boolean {
-  return conversationId === "default";
-}
-
 export function buildConversationSelectorHints(): string {
   return "Enter select · ↑↓ navigate · Esc clear/cancel";
-}
-
-export function normalizeConversationSearchInput(value: string): string {
-  return value.replace(/[π∏]/g, "");
 }
 
 function paginatedItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
@@ -853,9 +845,8 @@ export function ConversationSelector({
         <PasteAwareTextInput
           value={searchInput}
           onChange={(value) => {
-            const nextSearchInput = normalizeConversationSearchInput(value);
-            if (nextSearchInput === searchInput) return;
-            setSearchInput(nextSearchInput);
+            if (value === searchInput) return;
+            setSearchInput(value);
             setSelectedIndex(0);
           }}
           placeholder="search conversation titles"
