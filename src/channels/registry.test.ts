@@ -1543,3 +1543,185 @@ describe("pending channel control requests", () => {
     expect(saveSnapshots.at(-1)).toEqual({ requests: [] });
   });
 });
+
+describe("ChannelRegistry buffer behavior", () => {
+  beforeEach(() => {
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
+    __testOverrideLoadPairingStore(() => null);
+    __testOverrideSavePairingStore(() => {});
+    __testOverrideLoadPendingControlRequestStore(null);
+    __testOverrideSavePendingControlRequestStore(null);
+    clearPendingControlRequestStore();
+  });
+
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearAllRoutes();
+    clearPairingStores();
+    clearChannelAccountStores();
+    __testOverrideLoadRoutes(null);
+    __testOverrideSaveRoutes(null);
+    __testOverrideLoadPairingStore(null);
+    __testOverrideSavePairingStore(null);
+    __testOverrideLoadChannelAccounts(null);
+    __testOverrideSaveChannelAccounts(null);
+  });
+
+  test("sends reconnecting notification when buffering messages", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        enabled: true,
+        token: "test-token",
+        dmPolicy: "open",
+        allowedUsers: [],
+        binding: { agentId: null, conversationId: null },
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+
+    const registry = new ChannelRegistry();
+    // Don't set ready - simulate disconnected state
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-15T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "Hello during reconnect",
+      timestamp: Date.now(),
+      messageId: "msg-reconnect",
+      chatType: "direct",
+    });
+
+    // Should have sent a reconnecting notification
+    expect(replies.length).toBe(1);
+    expect(replies[0]?.text).toContain("reconnecting");
+    expect(replies[0]?.chatId).toBe("123");
+  });
+
+  test("flushes buffer when setReady is called", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        enabled: true,
+        token: "test-token",
+        dmPolicy: "open",
+        allowedUsers: [],
+        binding: { agentId: null, conversationId: null },
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+
+    const delivered: unknown[] = [];
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-15T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+
+    // Send message while not ready (should buffer)
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "Buffered message",
+      timestamp: Date.now(),
+      messageId: "msg-buffer",
+      chatType: "direct",
+    });
+
+    // Should have reconnecting notification
+    expect(replies.length).toBe(1);
+
+    // Now set the message handler and mark ready
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+
+    // Should have delivered the buffered message
+    expect(delivered.length).toBe(1);
+  });
+});

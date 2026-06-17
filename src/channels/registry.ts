@@ -13,6 +13,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import { getClient } from "@/backend/api/client";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { ApprovalResponseBody } from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   getChannelAccount,
   getChannelAccountWithSecrets,
@@ -24,6 +25,7 @@ import {
 import {
   buildChannelAlreadyActiveMessage,
   buildChannelAlreadyPausedMessage,
+  buildChannelBufferExpiredMessage,
   buildChannelCancelNoActiveTurnMessage,
   buildChannelCancelUnavailableMessage,
   buildChannelChatLinkMessage,
@@ -31,6 +33,7 @@ import {
   buildChannelModelUnavailableMessage,
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
+  buildChannelReconnectingMessage,
   buildChannelReflectionUnavailableMessage,
   buildChannelResumedMessage,
   parseChannelSlashCommand,
@@ -355,6 +358,24 @@ export interface ChannelInboundDelivery {
   defaultPermissionMode?: ChannelDefaultPermissionMode;
 }
 
+/** Delivery wrapped with a buffer timestamp for TTL enforcement. */
+interface BufferedDelivery {
+  delivery: ChannelInboundDelivery;
+  /** Epoch ms when this delivery was buffered. */
+  bufferedAt: number;
+  /** Channel + chat metadata for reconnecting/expired notifications. */
+  channelId: string;
+  chatId: string;
+  threadId?: string | null;
+  messageId?: string;
+}
+
+/** Max time a buffered delivery is kept before being dropped (5 minutes). */
+const BUFFER_TTL_MS = 5 * 60 * 1000;
+
+/** Max number of deliveries in the buffer before oldest are dropped. */
+const BUFFER_MAX_SIZE = 100;
+
 export type ChannelMessageHandler = (delivery: ChannelInboundDelivery) => void;
 export type ChannelApprovalResponseHandler = (params: {
   runtime: {
@@ -497,7 +518,7 @@ export class ChannelRegistry {
   private cancelHandler: ChannelCancelHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
-  private readonly buffer: ChannelInboundDelivery[] = [];
+  private readonly buffer: BufferedDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
     PendingChannelControlRequest
@@ -1383,14 +1404,17 @@ export class ChannelRegistry {
             isFirstRouteTurn: slackResult.isFirstRouteTurn,
           })
         : msg;
-      this.deliverOrBuffer({
-        route: slackResult.route,
-        content: formatChannelNotification(preparedMessage),
-        turnSources: [
-          buildChannelTurnSource(slackResult.route, preparedMessage),
-        ],
-        defaultPermissionMode: config.defaultPermissionMode,
-      });
+      this.deliverOrBuffer(
+        {
+          route: slackResult.route,
+          content: formatChannelNotification(preparedMessage),
+          turnSources: [
+            buildChannelTurnSource(slackResult.route, preparedMessage),
+          ],
+          defaultPermissionMode: config.defaultPermissionMode,
+        },
+        msg,
+      );
       return;
     }
 
@@ -1415,11 +1439,14 @@ export class ChannelRegistry {
         return;
       }
 
-      this.deliverOrBuffer({
-        route: telegramResult.route,
-        content: formatChannelNotification(msg),
-        turnSources: [buildChannelTurnSource(telegramResult.route, msg)],
-      });
+      this.deliverOrBuffer(
+        {
+          route: telegramResult.route,
+          content: formatChannelNotification(msg),
+          turnSources: [buildChannelTurnSource(telegramResult.route, msg)],
+        },
+        msg,
+      );
       return;
     }
 
@@ -1470,13 +1497,16 @@ export class ChannelRegistry {
             isFirstRouteTurn: discordResult.isFirstRouteTurn,
           })
         : msg;
-      this.deliverOrBuffer({
-        route: discordResult.route,
-        content: formatChannelNotification(preparedMessage),
-        turnSources: [
-          buildChannelTurnSource(discordResult.route, preparedMessage),
-        ],
-      });
+      this.deliverOrBuffer(
+        {
+          route: discordResult.route,
+          content: formatChannelNotification(preparedMessage),
+          turnSources: [
+            buildChannelTurnSource(discordResult.route, preparedMessage),
+          ],
+        },
+        msg,
+      );
       return;
     }
 
@@ -1502,13 +1532,16 @@ export class ChannelRegistry {
             isFirstRouteTurn: whatsappResult.isFirstRouteTurn,
           })
         : msg;
-      this.deliverOrBuffer({
-        route: whatsappResult.route,
-        content: formatChannelNotification(preparedMessage),
-        turnSources: [
-          buildChannelTurnSource(whatsappResult.route, preparedMessage),
-        ],
-      });
+      this.deliverOrBuffer(
+        {
+          route: whatsappResult.route,
+          content: formatChannelNotification(preparedMessage),
+          turnSources: [
+            buildChannelTurnSource(whatsappResult.route, preparedMessage),
+          ],
+        },
+        msg,
+      );
       return;
     }
 
@@ -1584,11 +1617,14 @@ export class ChannelRegistry {
     const content = formatChannelNotification(msg);
 
     // 4. Deliver or buffer
-    this.deliverOrBuffer({
-      route,
-      content,
-      turnSources: [buildChannelTurnSource(route, msg)],
-    });
+    this.deliverOrBuffer(
+      {
+        route,
+        content,
+        turnSources: [buildChannelTurnSource(route, msg)],
+      },
+      msg,
+    );
   }
 
   private async createConversationForAgent(
@@ -2023,22 +2059,106 @@ export class ChannelRegistry {
     };
   }
 
-  private deliverOrBuffer(delivery: ChannelInboundDelivery): void {
+  /**
+   * Send a "reconnecting" notification back through the channel adapter
+   * so the user gets immediate feedback that their message is buffered.
+   * Fire-and-forget: errors are swallowed to avoid disrupting the
+   * inbound pipeline.
+   */
+  private notifyReconnecting(msg: InboundChannelMessage): void {
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const adapter = this.getAdapter(msg.channel, accountId);
+    if (!adapter) return;
+
+    const text = buildChannelReconnectingMessage(msg.channel);
+    adapter
+      .sendDirectReply(msg.chatId, text, {
+        replyToMessageId: msg.threadId ?? msg.messageId,
+      })
+      .catch(() => {
+        // Swallow — reconnecting notification is best-effort.
+      });
+  }
+
+  /**
+   * Notify the user that a buffered delivery was dropped (TTL expired or
+   * max buffer size reached). Fire-and-forget.
+   */
+  private notifyBufferDrop(
+    item: BufferedDelivery,
+    reason: "ttl_expired" | "max_size",
+  ): void {
+    const accountId = LEGACY_CHANNEL_ACCOUNT_ID;
+    const adapter = this.getAdapter(item.channelId, accountId);
+    if (!adapter) return;
+
+    const text = buildChannelBufferExpiredMessage(item.channelId);
+    adapter
+      .sendDirectReply(item.chatId, text, {
+        replyToMessageId: item.threadId ?? item.messageId,
+      })
+      .catch(() => {
+        // Swallow — buffer-drop notification is best-effort.
+      });
+
+    if (isDebugEnabled()) {
+      console.warn(
+        `[Channels] Buffered delivery dropped (${reason}): channel=${item.channelId} chatId=${item.chatId}`,
+      );
+    }
+  }
+
+  private deliverOrBuffer(
+    delivery: ChannelInboundDelivery,
+    msg: InboundChannelMessage,
+  ): void {
     if (this.isReady()) {
       this.messageHandler?.(delivery);
       return;
     }
 
-    this.buffer.push(delivery);
+    // Enforce max buffer size: drop oldest if at capacity.
+    while (this.buffer.length >= BUFFER_MAX_SIZE) {
+      const dropped = this.buffer.shift();
+      if (dropped) {
+        this.notifyBufferDrop(dropped, "max_size");
+      }
+    }
+
+    this.buffer.push({
+      delivery,
+      bufferedAt: Date.now(),
+      channelId: msg.channel,
+      chatId: msg.chatId,
+      threadId: msg.threadId,
+      messageId: msg.messageId,
+    });
+
+    // Send a reconnecting notification so the user gets immediate feedback.
+    this.notifyReconnecting(msg);
   }
 
   private flushBuffer(): void {
     if (!this.messageHandler) return;
 
+    const now = Date.now();
+
+    // Drop expired items from the front of the queue.
+    while (this.buffer.length > 0) {
+      const item = this.buffer[0];
+      if (!item) break;
+      if (now - item.bufferedAt > BUFFER_TTL_MS) {
+        this.buffer.shift();
+        this.notifyBufferDrop(item, "ttl_expired");
+        continue;
+      }
+      break;
+    }
+
     while (this.buffer.length > 0) {
       const item = this.buffer.shift();
       if (item) {
-        this.messageHandler(item);
+        this.messageHandler(item.delivery);
       }
     }
   }
