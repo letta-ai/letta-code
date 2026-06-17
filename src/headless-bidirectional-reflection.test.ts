@@ -73,25 +73,23 @@ describe("headless bidirectional auto-reflection", () => {
       '"source_message_id":"letta-msg-1"',
     );
 
-    expect(
-      summary.reflectionLaunchCount,
-      formatSummary(summary),
-    ).toBeGreaterThanOrEqual(2);
-    expect(
-      summary.payloadFiles.length,
-      formatSummary(summary),
-    ).toBeGreaterThanOrEqual(2);
+    // Reflection launches post-turn, so every completed turn gets reflected.
+    // The harness waits for each reflection cycle to finish before sending the
+    // next message, making the final state exact: any silent breakage in the
+    // trigger or launcher fails these assertions.
+    expect(summary.reflectionLaunchCount, formatSummary(summary)).toBe(3);
+    expect(summary.payloadFiles.length, formatSummary(summary)).toBe(3);
     expect(summary.state?.total_completed_steps, formatSummary(summary)).toBe(
       3,
     );
     expect(
       summary.state?.reflected_completed_steps,
       formatSummary(summary),
-    ).toBe(2);
+    ).toBe(3);
     expect(
       summary.state?.steps_since_last_successful_reflection,
       formatSummary(summary),
-    ).toBe(1);
+    ).toBe(0);
     expect(
       summary.state?.last_reflection_started_at,
       formatSummary(summary),
@@ -103,7 +101,7 @@ describe("headless bidirectional auto-reflection", () => {
     expect(
       summary.state?.reflected_through_message_id,
       formatSummary(summary),
-    ).toBe("letta-msg-2");
+    ).toBe("letta-msg-3");
   }, 30_000);
 });
 
@@ -195,8 +193,8 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
     if (closeScheduled) return;
     closeScheduled = true;
     void waitForReflectionProgress(transcriptDir, {
-      reflectedCompletedSteps: 2,
-      payloadCount: 2,
+      reflectedCompletedSteps: 3,
+      payloadCount: 3,
       timeoutMs: 10_000,
     }).finally(() => {
       child.stdin.end();
@@ -245,15 +243,20 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
 
       if (parsed.type === "result") {
         resultCount += 1;
+        // Each turn's reflection launches post-turn. The next turn is allowed
+        // to start only after that background reflection finishes; otherwise
+        // the active-reflection guard correctly skips duplicate launches and
+        // the final counts would depend on timing instead of being exact.
         if (resultCount === 1) {
-          setTimeout(() => sendUser("hello two"), 1_200);
-        } else if (resultCount === 2) {
-          // The next turn is allowed to start only after the prior background
-          // reflection finishes; otherwise the active-reflection guard correctly
-          // skips duplicate launches and this test would only verify one cycle.
           void waitForReflectionProgress(transcriptDir, {
             reflectedCompletedSteps: 1,
             payloadCount: 1,
+            timeoutMs: 10_000,
+          }).finally(() => sendUser("hello two"));
+        } else if (resultCount === 2) {
+          void waitForReflectionProgress(transcriptDir, {
+            reflectedCompletedSteps: 2,
+            payloadCount: 2,
             timeoutMs: 10_000,
           }).finally(() => sendUser("hello three"));
         } else if (resultCount === 3) {

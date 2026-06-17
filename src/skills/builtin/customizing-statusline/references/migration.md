@@ -60,9 +60,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const update = async () => {
-  const context = letta.getContext();
   const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
-    cwd: context.workspace.currentDir,
+    cwd: process.cwd(),
   });
   letta.ui.setStatus("branch", stdout.trim());
 };

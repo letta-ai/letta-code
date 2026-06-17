@@ -888,6 +888,83 @@ describe("ChannelRegistry", () => {
     ]);
     expect(replies[0]?.text).toBe("Started a reflection pass.");
   });
+
+  test("Slack root channel routes do not catch unmentioned thread input", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    const reflections: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReflectionHandler(async (params) => {
+      reflections.push(params);
+      return { handled: true, text: "Started a reflection pass." };
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "ok i think i did it",
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: false,
+    });
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/reflection",
+      timestamp: Date.now(),
+      messageId: "1712800000.000201",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: false,
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(reflections).toHaveLength(0);
+    expect(replies).toHaveLength(0);
+  });
 });
 
 describe("buildSlackConversationSummary", () => {

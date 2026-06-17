@@ -341,73 +341,88 @@ export const __listenSubcommandTestUtils = {
   },
 };
 
+const LISTEN_OPTIONS = {
+  "env-name": { type: "string" },
+  channels: { type: "string" },
+  "install-channel-runtimes": { type: "boolean" },
+  help: { type: "boolean", short: "h" },
+  debug: { type: "boolean" },
+} as const;
+
+function printListenUsage(): void {
+  console.log(
+    "Usage: letta server [--env-name <name>] [--channels <list>] [--debug]\n",
+  );
+  console.log(
+    "Register this letta-code instance to receive messages from Letta Cloud.\n",
+  );
+  console.log("Options:");
+  console.log(
+    "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
+  );
+  console.log(
+    "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
+  );
+  console.log(
+    "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
+  );
+  console.log(
+    "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
+  );
+  console.log("  -h, --help         Show this help message\n");
+  console.log("Examples:");
+  console.log(
+    "  letta channels configure telegram          # Configure Telegram first",
+  );
+  console.log(
+    "  letta server                              # Uses hostname as default",
+  );
+  console.log('  letta server --env-name "work-laptop"');
+  console.log(
+    "  letta server --channels telegram           # Enable Telegram channel",
+  );
+  console.log("  letta server --channels telegram --install-channel-runtimes");
+  console.log(
+    "  letta server --debug                       # Log all WS events\n",
+  );
+  console.log(
+    "Once connected, this instance will listen for incoming messages from cloud agents.",
+  );
+  console.log(
+    "Messages will be executed locally using your letta-code environment.",
+  );
+  console.log(
+    "Telegram flow: configure the bot, start the listener with --channels telegram,",
+  );
+  console.log(
+    "then message the bot from Telegram and run /channels telegram pair <code> in the target conversation.",
+  );
+}
+
 export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Parse arguments
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      "env-name": { type: "string" },
-      channels: { type: "string" },
-      "install-channel-runtimes": { type: "boolean" },
-      help: { type: "boolean", short: "h" },
-      debug: { type: "boolean" },
-    },
-    allowPositionals: false,
-  });
+  let values: ReturnType<
+    typeof parseArgs<{ options: typeof LISTEN_OPTIONS }>
+  >["values"];
+  try {
+    ({ values } = parseArgs({
+      args: argv,
+      options: LISTEN_OPTIONS,
+      strict: true,
+      allowPositionals: false,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
+    printListenUsage();
+    return 1;
+  }
 
   const debugMode = !!values.debug;
 
   // Show help
   if (values.help) {
-    console.log(
-      "Usage: letta server [--env-name <name>] [--channels <list>] [--debug]\n",
-    );
-    console.log(
-      "Register this letta-code instance to receive messages from Letta Cloud.\n",
-    );
-    console.log("Options:");
-    console.log(
-      "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
-    );
-    console.log(
-      "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
-    );
-    console.log(
-      "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
-    );
-    console.log(
-      "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
-    );
-    console.log("  -h, --help         Show this help message\n");
-    console.log("Examples:");
-    console.log(
-      "  letta channels configure telegram          # Configure Telegram first",
-    );
-    console.log(
-      "  letta server                              # Uses hostname as default",
-    );
-    console.log('  letta server --env-name "work-laptop"');
-    console.log(
-      "  letta server --channels telegram           # Enable Telegram channel",
-    );
-    console.log(
-      "  letta server --channels telegram --install-channel-runtimes",
-    );
-    console.log(
-      "  letta server --debug                       # Log all WS events\n",
-    );
-    console.log(
-      "Once connected, this instance will listen for incoming messages from cloud agents.",
-    );
-    console.log(
-      "Messages will be executed locally using your letta-code environment.",
-    );
-    console.log(
-      "Telegram flow: configure the bot, start the listener with --channels telegram,",
-    );
-    console.log(
-      "then message the bot from Telegram and run /channels telegram pair <code> in the target conversation.",
-    );
+    printListenUsage();
     return 0;
   }
 

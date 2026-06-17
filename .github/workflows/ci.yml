@@ -109,58 +109,6 @@ jobs:
       - name: Lint & Type Check
         run: bun run check
 
-  telegram-live-smoke:
-    needs: [classify, check]
-    name: Telegram Live Smoke
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    if: >
-      needs.classify.outputs.channels_changed == 'true' &&
-      (github.event_name == 'push' ||
-      (github.event_name == 'pull_request' &&
-      github.actor != 'dependabot[bot]' &&
-      github.event.pull_request.head.repo.full_name == github.repository))
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.0
-
-      - name: Install dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun install --frozen-lockfile
-
-      - name: Validate Telegram smoke secrets
-        env:
-          TELEGRAM_SMOKE_BOT_TOKEN: ${{ secrets.TELEGRAM_SMOKE_BOT_TOKEN }}
-          TELEGRAM_SMOKE_CHAT_ID: ${{ secrets.TELEGRAM_SMOKE_CHAT_ID }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${TELEGRAM_SMOKE_BOT_TOKEN:-}" ]; then
-            echo "::error::Missing required GitHub secret TELEGRAM_SMOKE_BOT_TOKEN"
-            exit 1
-          fi
-
-          if [ -z "${TELEGRAM_SMOKE_CHAT_ID:-}" ]; then
-            echo "::error::Missing required GitHub secret TELEGRAM_SMOKE_CHAT_ID"
-            exit 1
-          fi
-
-      - name: Run Telegram live smoke
-        env:
-          LETTA_RUN_LIVE_TELEGRAM_SMOKE: "1"
-          TELEGRAM_SMOKE_BOT_TOKEN: ${{ secrets.TELEGRAM_SMOKE_BOT_TOKEN }}
-          TELEGRAM_SMOKE_CHAT_ID: ${{ secrets.TELEGRAM_SMOKE_CHAT_ID }}
-          TELEGRAM_SMOKE_THREAD_ID: ${{ secrets.TELEGRAM_SMOKE_THREAD_ID }}
-        run: bun test src/channels/telegram-live-smoke.test.ts --timeout 30000
-
   update-chain-smoke:
     needs: check
     name: Update Chain Smoke

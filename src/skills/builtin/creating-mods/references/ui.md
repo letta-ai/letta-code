@@ -18,6 +18,8 @@ letta.capabilities.ui.customStatuslineRenderer
 
 ## Panels
 
+Panels are app/TUI-global today. Desktop/listener disables panel UI; future scoped panels need an explicit design instead of sharing this global registry across panes/conversations.
+
 ```ts
 if (letta.capabilities.ui.panels) {
   const panel = letta.ui.openPanel({

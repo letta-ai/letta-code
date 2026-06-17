@@ -137,6 +137,9 @@ describe("CreateWorktree tool", () => {
     expect(result.branch_name).toStartWith("letta/fix-login-flow-");
     expect(result.base_ref).toBe("main");
     expect(result.switched_cwd).toBe(false);
+    expect(result.content[0]?.text).toContain(
+      "If the repo uses git hooks, verify they are installed and active in this worktree before committing",
+    );
     expect(
       path.normalize(
         git(["rev-parse", "--show-toplevel"], result.worktree_path),

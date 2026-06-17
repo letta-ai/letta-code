@@ -5,7 +5,6 @@ import { permissionMode } from "@/permissions/mode";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
-  sharedReminderProviders,
 } from "@/reminders/engine";
 import {
   createSharedReminderState,
@@ -21,24 +20,13 @@ const SECRETS_AGENT_ID = "agent-reminder-secrets";
 async function buildSecretsTestReminderParts(
   state: ReturnType<typeof createSharedReminderState>,
 ) {
-  const origReflectionStep = sharedReminderProviders["reflection-step-count"];
-  const origReflectionCompaction =
-    sharedReminderProviders["reflection-compaction"];
-  sharedReminderProviders["reflection-step-count"] = async () => null;
-  sharedReminderProviders["reflection-compaction"] = async () => null;
-  try {
-    return await buildSharedReminderParts({
-      mode: "listen",
-      agent: { id: SECRETS_AGENT_ID, name: null },
-      state,
-      systemInfoReminderEnabled: false,
-      reflectionSettings: { trigger: "off", stepCount: 25 },
-      skillSources: [],
-    });
-  } finally {
-    sharedReminderProviders["reflection-step-count"] = origReflectionStep;
-    sharedReminderProviders["reflection-compaction"] = origReflectionCompaction;
-  }
+  return await buildSharedReminderParts({
+    mode: "listen",
+    agent: { id: SECRETS_AGENT_ID, name: null },
+    state,
+    systemInfoReminderEnabled: false,
+    skillSources: [],
+  });
 }
 
 afterEach(() => {

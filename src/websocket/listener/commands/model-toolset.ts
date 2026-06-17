@@ -28,6 +28,7 @@ import type {
   UpdateModelResponseMessage,
   UpdateToolsetResponseMessage,
 } from "@/types/protocol_v2";
+import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
 import {
   isListModelsCommand,
   isUpdateModelCommand,
@@ -333,7 +334,7 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       model.handle,
       updateArgsForRequest,
-      { preserveContextWindow: shouldPreserveContextWindow },
+      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       (updatedAgent.model_settings as
@@ -346,7 +347,7 @@ export async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgsForRequest,
-      { preserveContextWindow: shouldPreserveContextWindow },
+      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       ((
@@ -369,6 +370,7 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       conversationId,
       overrideModel: model.handle,
+      modEvents: ensureListenerModAdapter(listener).events,
     });
     nextToolset = preparedToolContext.toolset;
     nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
@@ -458,6 +460,7 @@ export async function applyToolsetUpdateForRuntime(params: {
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
+      modEvents: ensureListenerModAdapter(listener).events,
     });
     nextToolset = preparedToolContext.toolset;
     scopedRuntime.currentToolset = preparedToolContext.toolset;

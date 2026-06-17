@@ -13,14 +13,13 @@ describe("headless shared reminder wiring", () => {
     expect(source).toContain("systemInfoReminderEnabled,");
   });
 
-  test("all headless drains pass context tracker for compaction-driven reminder state", () => {
+  test("post-turn reflection receives the compaction-driven context tracker", () => {
     const headlessPath = fileURLToPath(
       new URL("./headless.ts", import.meta.url),
     );
     const source = readFileSync(headlessPath, "utf-8");
 
-    expect(source).toContain("syncReminderStateFromContextTracker(");
-    expect(source).toContain("reminderContextTracker");
+    expect(source).toContain("contextTracker: reminderContextTracker");
   });
 
   test("headless uses the effective runtime cwd for init events and reminders", () => {
@@ -67,7 +66,7 @@ describe("headless shared reminder wiring", () => {
     expect(source).not.toContain("for await (const _ of approvalStream)");
   });
 
-  test("bidirectional mode wires reflection launcher into shared reminders", () => {
+  test("bidirectional mode wires the reflection launcher into the post-turn check", () => {
     const headlessPath = fileURLToPath(
       new URL("./headless.ts", import.meta.url),
     );
@@ -76,7 +75,8 @@ describe("headless shared reminder wiring", () => {
     expect(source).toContain("const maybeLaunchReflectionSubagent = async (");
     expect(source).toContain("launchReflectionSubagent({");
     expect(source).toContain("description: AUTO_REFLECTION_DESCRIPTION");
-    expect(source).toContain("maybeLaunchReflectionSubagent,");
+    expect(source).toContain("maybeLaunchPostTurnReflection({");
+    expect(source).toContain("launch: maybeLaunchReflectionSubagent");
   });
 
   test("bidirectional reflection delegates MemFS root resolution to launcher", () => {

@@ -442,7 +442,7 @@ export function ModelSelector({
     }
 
     // Deduplicate by handle+context_window: keep one representative entry per unique combo.
-    // Models with multiple reasoning tiers (e.g., gpt-5.3-codex none/low/med/high/max)
+    // Models with multiple reasoning tiers (e.g., gpt-5.5 none/low/med/high/max)
     // share the same handle — the ModelReasoningSelector handles tier selection after pick.
     // Models with different context_window (e.g., 200k vs 1M) show separately.
     const seen = new Set<string>();
