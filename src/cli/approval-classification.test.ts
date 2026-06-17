@@ -56,10 +56,6 @@ describe("classifyApprovals", () => {
         (options.requiresApproval === false ? "auto" : "ask"),
       parallelSafe: false,
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       run: () => "ok",
     });
   }
@@ -127,10 +123,6 @@ describe("classifyApprovals", () => {
         generation: 1,
       },
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       check(event) {
         if (
           event.toolName === "Bash" &&
@@ -176,10 +168,6 @@ describe("classifyApprovals", () => {
         generation: 1,
       },
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       check(event) {
         if (
           event.toolName === "Write" &&
@@ -349,10 +337,6 @@ describe("classifyApprovals", () => {
         generation: 1,
       },
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       check(event) {
         if (event.toolName === "exit_plan_mode") {
           return { decision: "deny", reason: "still planning" };

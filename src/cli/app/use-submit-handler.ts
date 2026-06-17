@@ -705,7 +705,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           try {
-            const modContext = modAdapter.getContext();
+            const modContext = modAdapter.context;
             const cwd = getCurrentWorkingDirectory();
             const conversation = createModConversationHandle({
               agentId,
@@ -715,19 +715,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               workingDirectory: cwd,
             });
             const commandContext: ModCommandContext = {
-              agent: { id: agentId, name: agentName },
+              ...modContext,
               args: parsedModCommand.args,
               argv: parseModCommandArgv(parsedModCommand.args),
               command: parsedModCommand.command,
               conversation: { ...conversation, id: conversationIdRef.current },
               cwd,
-              getContext: modAdapter.getContext,
               model: {
+                ...modContext.model,
                 id:
                   currentModelId ??
                   llmConfigRef.current?.model ??
                   modContext.model.id,
-                displayName: modContext.model.displayName,
               },
               permissionMode: modContext.permissionMode,
               rawInput: trimmed,
@@ -1624,13 +1623,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void modAdapter.events.emit("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: conversation.id,
-              previousConversationId: prevConversationId ?? null,
-              reason: "new",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: conversation.id,
+                previousConversationId: prevConversationId ?? null,
+                reason: "new",
+              },
+              modAdapter.context,
+            );
 
             // Update command with success
             cmd.finish(
@@ -1722,13 +1725,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void modAdapter.events.emit("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: forked.id,
-              previousConversationId: forkPrevConversationId ?? null,
-              reason: "fork",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: forked.id,
+                previousConversationId: forkPrevConversationId ?? null,
+                reason: "fork",
+              },
+              modAdapter.context,
+            );
 
             cmd.finish(
               "Forked conversation (use /resume to switch back)",
@@ -1837,13 +1844,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void modAdapter.events.emit("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: conversation.id,
-              previousConversationId: clearPrevConversationId ?? null,
-              reason: "new",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: conversation.id,
+                previousConversationId: clearPrevConversationId ?? null,
+                reason: "new",
+              },
+              modAdapter.context,
+            );
 
             // Update command with success
             cmd.finish(

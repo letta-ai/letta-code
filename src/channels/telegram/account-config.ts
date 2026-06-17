@@ -8,6 +8,8 @@ const TELEGRAM_CONFIG_KEYS = new Set([
   "token",
   "group_mode",
   "transcribe_voice",
+  "rich_private_chat_default",
+  "rich_draft_streaming",
   "inbound_debounce_ms",
 ]);
 
@@ -37,6 +39,10 @@ export const telegramAccountConfigAdapter: ChannelAccountConfigAdapter<TelegramC
           isTelegramGroupMode(config.group_mode)) &&
         (config.transcribe_voice === undefined ||
           isBoolean(config.transcribe_voice)) &&
+        (config.rich_private_chat_default === undefined ||
+          isBoolean(config.rich_private_chat_default)) &&
+        (config.rich_draft_streaming === undefined ||
+          isBoolean(config.rich_draft_streaming)) &&
         (config.inbound_debounce_ms === undefined ||
           (typeof config.inbound_debounce_ms === "number" &&
             Number.isFinite(config.inbound_debounce_ms) &&
@@ -54,6 +60,12 @@ export const telegramAccountConfigAdapter: ChannelAccountConfigAdapter<TelegramC
         transcribeVoice: isBoolean(config.transcribe_voice)
           ? config.transcribe_voice
           : undefined,
+        richPrivateChatDefault: isBoolean(config.rich_private_chat_default)
+          ? config.rich_private_chat_default
+          : undefined,
+        richDraftStreaming: isBoolean(config.rich_draft_streaming)
+          ? config.rich_draft_streaming
+          : undefined,
         inboundDebounceMs:
           typeof config.inbound_debounce_ms === "number" &&
           Number.isFinite(config.inbound_debounce_ms) &&
@@ -68,6 +80,8 @@ export const telegramAccountConfigAdapter: ChannelAccountConfigAdapter<TelegramC
         has_token: account.token.trim().length > 0,
         group_mode: account.groupMode ?? "open",
         transcribe_voice: account.transcribeVoice === true,
+        rich_private_chat_default: account.richPrivateChatDefault !== false,
+        rich_draft_streaming: account.richDraftStreaming === true,
         binding: {
           agent_id: account.binding.agentId,
           conversation_id: account.binding.conversationId,
@@ -81,6 +95,8 @@ export const telegramAccountConfigAdapter: ChannelAccountConfigAdapter<TelegramC
         has_token: account.token.trim().length > 0,
         group_mode: account.groupMode ?? "open",
         transcribe_voice: account.transcribeVoice === true,
+        rich_private_chat_default: account.richPrivateChatDefault !== false,
+        rich_draft_streaming: account.richDraftStreaming === true,
         binding: {
           agent_id: account.binding.agentId,
           conversation_id: account.binding.conversationId,

@@ -28,8 +28,6 @@ export default function activate(letta) {
 ## API
 
 ```ts
-letta.getContext(): StatuslineRenderContext
-
 letta.capabilities.ui.statusValues: boolean
 letta.capabilities.ui.customStatuslineRenderer: boolean
 
@@ -72,9 +70,8 @@ export default function activate(letta) {
 
   const update = async () => {
     try {
-      const context = letta.getContext();
       const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
-        cwd: context.workspace.currentDir,
+        cwd: process.cwd(),
       });
       if (letta.capabilities.ui.statusValues) {
         letta.ui.setStatus("branch", stdout.trim());

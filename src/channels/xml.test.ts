@@ -430,6 +430,32 @@ describe("formatChannelNotification", () => {
     expect(xml).toContain("please respond");
   });
 
+  test("does not emit inline image content parts for SVG attachments", () => {
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "123",
+      senderId: "456",
+      text: "Extract colors",
+      timestamp: Date.now(),
+      messageId: "10",
+      attachments: [
+        {
+          id: "svg1",
+          name: "void-final.svg",
+          mimeType: "image/svg+xml",
+          kind: "image",
+          localPath: "/tmp/void-final.svg",
+          imageDataBase64: "PHN2Zy8+",
+        },
+      ],
+    };
+
+    const content = formatChannelNotification(msg);
+    const [, notificationPart] = expectTextParts(content);
+    expect(notificationPart.text).toContain('mime_type="image/svg+xml"');
+    expect(notificationPart.text).toContain('local_path="/tmp/void-final.svg"');
+  });
+
   test("emits image content parts for inbound image attachments", () => {
     const msg: InboundChannelMessage = {
       channel: "slack",

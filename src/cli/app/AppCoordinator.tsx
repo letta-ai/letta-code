@@ -1160,14 +1160,18 @@ export function App({
       const modAdapter = modAdapterRef.current;
       if (modAdapter) {
         try {
-          await modAdapter.events.emit("conversation_close", {
-            agentId: agentIdRef.current ?? null,
-            conversationId: conversationIdRef.current ?? null,
-            durationMs,
-            messageCount: telemetry.getMessageCount(),
-            reason,
-            toolCallCount: telemetry.getToolCallCount(),
-          });
+          await modAdapter.events.emit(
+            "conversation_close",
+            {
+              agentId: agentIdRef.current ?? null,
+              conversationId: conversationIdRef.current ?? null,
+              durationMs,
+              messageCount: telemetry.getMessageCount(),
+              reason,
+              toolCallCount: telemetry.getToolCallCount(),
+            },
+            modAdapter.context,
+          );
         } catch {
           // Mod lifecycle events are best-effort on shutdown.
         }
@@ -1627,6 +1631,7 @@ export function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
+          modContext: modAdapterRef.current?.context,
           modEvents: modAdapterRef.current?.events,
         });
       }
@@ -1635,6 +1640,7 @@ export function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
+          modContext: modAdapterRef.current?.context,
           modEvents: modAdapterRef.current?.events,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
@@ -1644,6 +1650,7 @@ export function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
+        modContext: modAdapterRef.current?.context,
         modEvents: modAdapterRef.current?.events,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
@@ -2364,12 +2371,16 @@ export function App({
     if (!modAdapter.hasModSources) return;
 
     sessionModStartAttemptedRef.current = true;
-    void modAdapter.events.emit("conversation_open", {
-      agentId,
-      agentName: agentName ?? null,
-      conversationId: conversationIdRef.current ?? null,
-      reason: "startup",
-    });
+    void modAdapter.events.emit(
+      "conversation_open",
+      {
+        agentId,
+        agentName: agentName ?? null,
+        conversationId: conversationIdRef.current ?? null,
+        reason: "startup",
+      },
+      modAdapter.context,
+    );
   }, [agentId, agentName, modAdapter]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
@@ -2591,21 +2602,29 @@ export function App({
     }
 
     const durationMs = Date.now() - sessionStartTimeRef.current;
-    void modAdapter.events.emit("conversation_close", {
-      agentId,
-      conversationId: conversationIdRef.current ?? null,
-      durationMs,
-      messageCount: telemetry.getMessageCount(),
-      reason: "reload",
-      toolCallCount: telemetry.getToolCallCount(),
-    });
+    void modAdapter.events.emit(
+      "conversation_close",
+      {
+        agentId,
+        conversationId: conversationIdRef.current ?? null,
+        durationMs,
+        messageCount: telemetry.getMessageCount(),
+        reason: "reload",
+        toolCallCount: telemetry.getToolCallCount(),
+      },
+      modAdapter.context,
+    );
     await modAdapter.reload();
-    void modAdapter.events.emit("conversation_open", {
-      agentId,
-      agentName: agentName ?? null,
-      conversationId: conversationIdRef.current ?? null,
-      reason: "reload",
-    });
+    void modAdapter.events.emit(
+      "conversation_open",
+      {
+        agentId,
+        agentName: agentName ?? null,
+        conversationId: conversationIdRef.current ?? null,
+        reason: "reload",
+      },
+      modAdapter.context,
+    );
     setTerminalTitleConfigRefreshEpoch((epoch) => epoch + 1);
     refreshDerived();
   }, [agentId, agentName, modAdapter, refreshDerived]);

@@ -349,7 +349,7 @@ export async function createAgent(
   }
 
   // Get the model's context window from its configuration (if known).
-  // If the caller specified a model *ID* (e.g. gpt-5.3-codex-plus-pro-high),
+  // If the caller specified a model *ID* (e.g. gpt-5.5-plus-pro-high),
   // use that identifier to preserve tier-specific updateArgs like reasoning_effort.
   // Otherwise, fall back to the resolved handle.
   const modelIdentifierForDefaults = options.model ?? modelHandle;
