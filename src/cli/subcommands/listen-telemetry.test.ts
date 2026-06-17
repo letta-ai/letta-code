@@ -16,7 +16,7 @@ describe("listen subcommand telemetry", () => {
   const originalInitialize = settingsManager.initialize;
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
-  const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
   const originalRestoreEnabledChannels =
     process.env.LETTA_RESTORE_ENABLED_CHANNELS;
   const originalIgnoreSelfHostedListenerError =
@@ -29,7 +29,7 @@ describe("listen subcommand telemetry", () => {
     telemetry.cleanup();
     delete process.env.LETTA_API_KEY;
     delete process.env.LETTA_BASE_URL;
-    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    delete process.env.LETTA_DESKTOP_MODE;
     delete process.env.LETTA_RESTORE_ENABLED_CHANNELS;
     delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
     __listenSubcommandTestUtils.setOAuthDepsForTests({
@@ -72,9 +72,9 @@ describe("listen subcommand telemetry", () => {
       process.env.LETTA_BASE_URL = originalBaseUrl;
     }
     if (originalDesktopDebugPanel === undefined) {
-      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      delete process.env.LETTA_DESKTOP_MODE;
     } else {
-      process.env.LETTA_DESKTOP_DEBUG_PANEL = originalDesktopDebugPanel;
+      process.env.LETTA_DESKTOP_MODE = originalDesktopDebugPanel;
     }
     if (originalRestoreEnabledChannels === undefined) {
       delete process.env.LETTA_RESTORE_ENABLED_CHANNELS;

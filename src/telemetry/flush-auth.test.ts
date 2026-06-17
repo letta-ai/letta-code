@@ -41,7 +41,7 @@ describe("telemetry segmentation", () => {
     expect(getTerminalTelemetrySurface(true)).toBe("letta_code_headless");
     expect(getListenerTelemetrySurface({})).toBe("letta_code_cli_server");
     expect(
-      getListenerTelemetrySurface({ LETTA_DESKTOP_DEBUG_PANEL: "1" }),
+      getListenerTelemetrySurface({ LETTA_DESKTOP_MODE: "1" }),
     ).toBe("letta_code_desktop");
   });
 
@@ -57,7 +57,7 @@ describe("telemetry segmentation", () => {
     ).toBe("constellation");
     expect(
       resolveTelemetryBackend({
-        env: { LETTA_DESKTOP_DEBUG_PANEL: "1" },
+        env: { LETTA_DESKTOP_MODE: "1" },
         serverUrl: "http://127.0.0.1:54085",
       }),
     ).toBe("constellation");
@@ -85,7 +85,7 @@ describe("telemetry flush auth", () => {
   const originalLettaApiKey = process.env.LETTA_API_KEY;
   const originalTelemetryDisabled = process.env.LETTA_TELEMETRY_DISABLED;
   const originalLettaBaseUrl = process.env.LETTA_BASE_URL;
-  const originalLettaDesktopDebugPanel = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  const originalLettaDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
   const originalLocalBackendExperimental =
     process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 
@@ -122,7 +122,7 @@ describe("telemetry flush auth", () => {
     deleteEnvVarCaseInsensitive("LETTA_API_KEY");
     deleteEnvVarCaseInsensitive("LETTA_TELEMETRY_DISABLED");
     deleteEnvVarCaseInsensitive("LETTA_BASE_URL");
-    deleteEnvVarCaseInsensitive("LETTA_DESKTOP_DEBUG_PANEL");
+    deleteEnvVarCaseInsensitive("LETTA_DESKTOP_MODE");
     deleteEnvVarCaseInsensitive("LETTA_LOCAL_BACKEND_EXPERIMENTAL");
     settingsManager.getSettings = mock(() => ({
       env: {},
@@ -138,7 +138,7 @@ describe("telemetry flush auth", () => {
     restoreEnvVar("LETTA_API_KEY", originalLettaApiKey);
     restoreEnvVar("LETTA_TELEMETRY_DISABLED", originalTelemetryDisabled);
     restoreEnvVar("LETTA_BASE_URL", originalLettaBaseUrl);
-    restoreEnvVar("LETTA_DESKTOP_DEBUG_PANEL", originalLettaDesktopDebugPanel);
+    restoreEnvVar("LETTA_DESKTOP_MODE", originalLettaDesktopDebugPanel);
     restoreEnvVar(
       "LETTA_LOCAL_BACKEND_EXPERIMENTAL",
       originalLocalBackendExperimental,
@@ -254,7 +254,7 @@ describe("telemetry flush auth", () => {
   });
 
   test("desktop listener telemetry routes through the local proxy", async () => {
-    setEnvVar("LETTA_DESKTOP_DEBUG_PANEL", "1");
+    setEnvVar("LETTA_DESKTOP_MODE", "1");
     setEnvVar("LETTA_BASE_URL", "http://localhost:54321");
     setEnvVar("LETTA_API_KEY", "desktop-session-token");
 
