@@ -78,6 +78,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function formatSignalClientError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+  return String(error);
+}
+
+function previewSignalEventData(event: SignalSseEvent): string {
+  const data = event.data ?? "";
+  if (!data) {
+    return "<empty>";
+  }
+  return data.length > 500 ? `${data.slice(0, 500)}…` : data;
+}
+
 function readResponseBody(
   response: IncomingMessage,
   maxBytes: number,
@@ -233,7 +248,13 @@ export class SignalRestClient {
             }
             await onEvent(event);
           })
-          .catch(fail);
+          .catch((error: unknown) => {
+            fail(
+              new Error(
+                `Signal event handler failed for event=${event.event ?? "message"} id=${event.id ?? "<none>"} data=${previewSignalEventData(event)}: ${formatSignalClientError(error)}`,
+              ),
+            );
+          });
       };
 
       const flushBlock = (block: string) => {
@@ -268,6 +289,9 @@ export class SignalRestClient {
           event.data = dataLines.join("\n");
         }
         activeEvent = event.id ? { id: event.id } : {};
+        if (event.data === undefined && event.event === undefined) {
+          return;
+        }
         if (event.data === "[DONE]") {
           return;
         }
@@ -281,7 +305,7 @@ export class SignalRestClient {
             .then((body) => {
               settle(
                 new Error(
-                  `Signal event stream failed with HTTP ${statusCode}${body ? `: ${body}` : ""}`,
+                  `Signal event stream GET ${url.pathname} failed with HTTP ${statusCode}${body ? `: ${body}` : ""}`,
                 ),
               );
             })

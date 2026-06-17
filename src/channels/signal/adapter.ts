@@ -189,6 +189,13 @@ function normalizeSignalAliasKey(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
 }
 
+function formatSignalAdapterError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+  return String(error);
+}
+
 function resolveSignalRecipientAlias(
   identity: string | null | undefined,
   account: SignalChannelAccount,
@@ -911,6 +918,7 @@ export class SignalChannelAdapter implements ChannelAdapter {
   private readonly typingByChatId = new Map<string, SignalTypingEntry>();
   private readonly client: SignalClientLike;
   private readonly retryMs: number;
+  private logger?: ChannelAdapterStartOptions["logger"];
 
   constructor(
     private readonly account: SignalChannelAccount,
@@ -933,7 +941,8 @@ export class SignalChannelAdapter implements ChannelAdapter {
     await this.client.check();
     this.running = true;
     this.abortController = new AbortController();
-    options?.logger?.(
+    this.logger = options?.logger;
+    this.logger?.(
       `[Signal] listening for ${this.account.account ?? this.account.accountId}`,
     );
     this.eventLoop = this.runEventLoop();
@@ -956,6 +965,7 @@ export class SignalChannelAdapter implements ChannelAdapter {
     this.clearAllTyping();
     this.eventLoop = null;
     this.abortController = null;
+    this.logger = undefined;
   }
 
   isRunning(): boolean {
@@ -1169,11 +1179,27 @@ export class SignalChannelAdapter implements ChannelAdapter {
     while (this.running) {
       try {
         await this.client.streamEvents(async (event) => {
-          const msg = signalInboundFromSseEvent(event, this.account);
-          if (!msg) {
-            return;
+          try {
+            const msg = signalInboundFromSseEvent(event, this.account);
+            if (!msg) {
+              this.logger?.(
+                `[Signal] ignored event account=${this.accountId} event=${event.event ?? "message"} id=${event.id ?? "<none>"}`,
+              );
+              return;
+            }
+            this.logger?.(
+              `[Signal] inbound account=${this.accountId} chat=${msg.chatId} sender=${msg.senderId} type=${msg.chatType} chars=${msg.text.length} attachments=${msg.attachments?.length ?? 0}`,
+            );
+            await this.onMessage?.(msg);
+          } catch (error) {
+            console.error(
+              `[Signal] failed to handle inbound event for ${this.accountId}:`,
+              formatSignalAdapterError(error),
+            );
+            this.logger?.(
+              `[Signal] failed inbound account=${this.accountId} event=${event.event ?? "message"} id=${event.id ?? "<none>"}: ${error instanceof Error ? error.message : String(error)}`,
+            );
           }
-          await this.onMessage?.(msg);
         }, this.abortController?.signal);
       } catch (error) {
         if (!this.running) {
@@ -1181,7 +1207,10 @@ export class SignalChannelAdapter implements ChannelAdapter {
         }
         console.error(
           `[Signal] event stream failed for ${this.accountId}:`,
-          error instanceof Error ? error.message : error,
+          formatSignalAdapterError(error),
+        );
+        this.logger?.(
+          `[Signal] event stream failed account=${this.accountId}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
       if (this.running) {
