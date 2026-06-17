@@ -282,46 +282,6 @@ function toPiMessages(messages: readonly LocalMessage[]): Message[] {
   return normalized;
 }
 
-function contextHasImageInput(context: Context): boolean {
-  return context.messages.some(
-    (message) =>
-      Array.isArray(message.content) &&
-      message.content.some((part) => isRecord(part) && part.type === "image"),
-  );
-}
-
-function modelInputTypes(model: Model<string>): string[] {
-  const input = (model as { input?: readonly unknown[] }).input;
-  if (!Array.isArray(input)) return [];
-  return input.filter((value): value is string => typeof value === "string");
-}
-
-function modelLabel(model: Model<string>): string {
-  const provider =
-    typeof model.provider === "string" && model.provider.length > 0
-      ? `${model.provider}/`
-      : "";
-  return `${provider}${model.id}`;
-}
-
-function assertModelSupportsContextInput(
-  model: Model<string>,
-  context: Context,
-): void {
-  if (!contextHasImageInput(context)) return;
-
-  const inputTypes = modelInputTypes(model);
-  if (inputTypes.includes("image")) return;
-
-  const supportedInputs =
-    inputTypes.length > 0 ? inputTypes.join(", ") : "none";
-  throw new Error(
-    `The selected model "${modelLabel(
-      model,
-    )}" does not support image input (supported inputs: ${supportedInputs}). Choose a vision-capable model or remove the image attachment.`,
-  );
-}
-
 function stripOpenAIResponsesReplayItemIds(
   payload: unknown,
 ): unknown | undefined {
@@ -712,7 +672,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
-    assertModelSupportsContextInput(resolved.model as Model<string>, context);
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
