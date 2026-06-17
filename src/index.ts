@@ -216,12 +216,10 @@ SUBCOMMANDS
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
   - If profiles exist, you'll be prompted to select one or create a new agent
-  - Profiles can be "pinned" to specific projects for quick access
+  - Agents can be pinned for quick access with /pin
   - Use /profile save <name> to bookmark your current agent
 
-  Profiles are stored in:
-  - Global: ~/.letta/settings.json (available everywhere)
-  - Local: .letta/settings.local.json (pinned to project)
+  Agent pins are stored in ~/.letta/settings.json.
 
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
@@ -236,8 +234,8 @@ EXAMPLES
   # inside the interactive session
   /profile save MyAgent    # Save current agent as profile
   /profiles                # Open profile selector
-  /pin                     # Pin current profile to project
-  /unpin                   # Unpin profile from project
+  /pin                     # Pin current agent
+  /unpin                   # Unpin current agent
   /logout                  # Clear saved credentials and exit
 
   # headless with JSON output (includes stats)
