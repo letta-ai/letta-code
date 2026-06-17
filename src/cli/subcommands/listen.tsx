@@ -173,11 +173,11 @@ async function resolveListenerStartupMode(
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
-  // When running under the desktop app (which sets LETTA_DESKTOP_DEBUG_PANEL),
+  // When running under the desktop app (which sets LETTA_DESKTOP_MODE),
   // the local proxy has a full environment server that expects device
   // registration. Treat it as "remote" so the listener registers and connects
   // via WebSocket, even when channels are active.
-  if (process.env.LETTA_DESKTOP_DEBUG_PANEL === "1") {
+  if (process.env.LETTA_DESKTOP_MODE === "1") {
     return { kind: "remote", serverUrl };
   }
 
@@ -430,6 +430,33 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   await applyStartupPermissionMode({});
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
+
+  // Register signal handlers so the listener can clean up child processes
+  // (subagents, bash commands, PTY sessions) before exiting. Without these,
+  // SIGTERM from the desktop app only kills the listener process itself,
+  // orphaning its descendants which accumulate over time.
+  const handleShutdownSignal = async (): Promise<void> => {
+    try {
+      const { stopListenerClient, isListenerActive } = await import(
+        "@/websocket/listen-client"
+      );
+      if (isListenerActive()) {
+        stopListenerClient();
+      }
+      // Stop channel adapters
+      const { getChannelRegistry } = await import("@/channels/registry");
+      const registry = getChannelRegistry();
+      if (registry) {
+        await registry.stopAll();
+      }
+    } catch {
+      // Best-effort cleanup — don't block exit
+    }
+    process.exit(0);
+  };
+
+  process.once("SIGTERM", handleShutdownSignal);
+  process.once("SIGINT", handleShutdownSignal);
 
   const exitWithTelemetry = async (
     code: number,
