@@ -116,6 +116,43 @@ export type ModelSelectorSelection = Pick<
   "id" | "handle" | "label" | "description" | "registryHandle" | "updateArgs"
 >;
 
+interface ModelListRowProps {
+  model: UiModel;
+  isSelected: boolean;
+  isCurrent: boolean;
+  showLock: boolean;
+}
+
+export function ModelListRow({
+  model,
+  isSelected,
+  isCurrent,
+  showLock,
+}: ModelListRowProps) {
+  const selectedColor = isSelected
+    ? colors.selector.itemHighlighted
+    : undefined;
+  const modelColor = isSelected
+    ? colors.selector.itemHighlighted
+    : isCurrent
+      ? colors.selector.itemCurrent
+      : undefined;
+
+  return (
+    <Box flexDirection="row">
+      <Text wrap="truncate-end">
+        <Text color={selectedColor}>{isSelected ? "> " : "  "}</Text>
+        {showLock && <Text dimColor>🔒 </Text>}
+        <Text bold={isSelected} color={modelColor}>
+          {model.label}
+          {isCurrent && <Text> (current)</Text>}
+        </Text>
+        {model.description && <Text dimColor> · {model.description}</Text>}
+      </Text>
+    </Box>
+  );
+}
+
 export function toSelectorModelForHandle(handle: string): UiModel {
   const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
   const modelInfo = getModelInfo(registryHandle);
@@ -1106,30 +1143,13 @@ export function ModelSelector({
             (category === "supported" || category === "all");
 
           return (
-            <Box key={model.id} flexDirection="row">
-              <Text
-                color={isSelected ? colors.selector.itemHighlighted : undefined}
-              >
-                {isSelected ? "> " : "  "}
-              </Text>
-              {showLock && <Text dimColor>🔒 </Text>}
-              <Text
-                bold={isSelected}
-                color={
-                  isSelected
-                    ? colors.selector.itemHighlighted
-                    : isCurrent
-                      ? colors.selector.itemCurrent
-                      : undefined
-                }
-              >
-                {model.label}
-                {isCurrent && <Text> (current)</Text>}
-              </Text>
-              {model.description && (
-                <Text dimColor> · {model.description}</Text>
-              )}
-            </Box>
+            <ModelListRow
+              key={model.id}
+              model={model}
+              isSelected={isSelected}
+              isCurrent={isCurrent}
+              showLock={showLock}
+            />
           );
         })}
         {showScrollDown ? (
