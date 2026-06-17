@@ -514,7 +514,6 @@ describe("local backend pi transcript", () => {
     const conversationId = "conv-interrupt";
 
     const store = new LocalStore(agentId, { storageDir });
-    store.ensureConversation(conversationId, agentId);
     store.appendTurnInput(conversationId, {
       agent_id: agentId,
       messages: [{ role: "user", content: "hello" }],
@@ -526,7 +525,7 @@ describe("local backend pi transcript", () => {
 
     const conversationBeforeReload = store.retrieveConversation(conversationId);
     const partialAssistantId =
-      conversationBeforeReload.in_context_message_ids.at(-1);
+      conversationBeforeReload.in_context_message_ids?.at(-1);
     expect(partialAssistantId).toBe("ui-msg-2");
 
     store.settleInterruptedToolCalls(conversationId, { agentId });

@@ -2275,7 +2275,10 @@ export class LocalStore {
       conversation.in_context_message_ids.filter((id) => id !== last.id);
     const previousLastMessage = messages.at(-1);
     conversation.last_message_at = previousLastMessage
-      ? localMessageDate(previousLastMessage, conversation.last_message_at)
+      ? localMessageDate(
+          previousLastMessage,
+          conversation.last_message_at ?? currentIsoTimestamp(),
+        )
       : conversation.created_at;
     conversation.updated_at = currentIsoTimestamp();
     this.conversations.set(key, conversation);
