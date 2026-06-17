@@ -149,49 +149,11 @@ export async function handleProfileCommand(
 
   if (trimmed === "/pin" || trimmed.startsWith("/pin ")) {
     const argsStr = trimmed.slice(4).trim();
-    const parts = argsStr.split(/\s+/).filter(Boolean);
-    const target = parts[0]?.toLowerCase();
 
-    if (target === "help") {
-      const cmd = commandRunner.start(trimmed, "Showing pin help...");
-      const output = [
-        "/pin help",
-        "",
-        "Pin the current agent.",
-        "",
-        "USAGE",
-        "  /pin [name]         — pin the current agent",
-        "  /pin agent [name]   — pin the current agent",
-        "  /pin help           — show this help",
-      ].join("\n");
-      cmd.finish(output, true);
-      return { submitted: true };
-    }
-
-    if (target === "-l" || target === "--local") {
-      const cmd = commandRunner.start(trimmed, "Checking pin command...");
-      cmd.fail("Agent pins are global-only. Usage: /pin [name]");
-      return { submitted: true };
-    }
-
-    if (
-      target === "convo" ||
-      target === "conversation" ||
-      target === "convos" ||
-      target === "conversations" ||
-      target === "agents"
-    ) {
-      const cmd = commandRunner.start(trimmed, "Checking pin command...");
-      cmd.fail("Usage: /pin [name]");
-      return { submitted: true };
-    }
-
-    const currentArgs = target === "agent" ? parts.slice(1).join(" ") : argsStr;
-
-    if (!currentArgs && target !== "agent") {
+    if (!argsStr) {
       openOverlay(
         "pin",
-        target === "agent" ? "/pin agent" : "/pin",
+        "/pin",
         "Opening pin dialog...",
         "Pin dialog dismissed",
       );
@@ -209,7 +171,7 @@ export async function handleProfileCommand(
     const cmd = commandRunner.start(trimmed, "Pinning agent...");
     setActiveProfileCommandId(cmd.id);
     try {
-      await handlePin(profileCtx, msg, currentArgs);
+      await handlePin(profileCtx, msg, argsStr);
     } finally {
       setActiveProfileCommandId(null);
     }
@@ -217,23 +179,6 @@ export async function handleProfileCommand(
   }
 
   if (trimmed === "/unpin" || trimmed.startsWith("/unpin ")) {
-    const unpinArgsStr = trimmed.slice(6).trim();
-
-    if (unpinArgsStr === "help") {
-      const cmd = commandRunner.start(trimmed, "Showing unpin help...");
-      const output = [
-        "/unpin help",
-        "",
-        "Unpin the current agent.",
-        "",
-        "USAGE",
-        "  /unpin       — unpin the current agent",
-        "  /unpin help  — show this help",
-      ].join("\n");
-      cmd.finish(output, true);
-      return { submitted: true };
-    }
-
     const profileCtx: ProfileCommandContext = {
       buffersRef,
       refreshDerived,

@@ -231,7 +231,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent (/pin [name]|agent [name])",
+    desc: "Pin current agent (/pin [name])",
     order: 22,
     handler: () => {
       // Handled specially in App.tsx
