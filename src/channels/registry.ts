@@ -60,6 +60,8 @@ import {
   isFirstPartyChannelPlugin,
   loadChannelPlugin,
 } from "./plugin-registry";
+import type { ChannelRestoreAgentScope } from "./restore-scope";
+import { shouldRestoreChannelAccountForAgentScope } from "./restore-scope";
 import {
   addRoute,
   getRoute as getRouteFromStore,
@@ -2059,7 +2061,11 @@ export class ChannelRegistry {
  */
 export async function initializeChannels(
   channelNames: string[],
-  options?: { failOnStartupError?: boolean; logger?: ChannelStartupLogger },
+  options?: {
+    failOnStartupError?: boolean;
+    logger?: ChannelStartupLogger;
+    restoreAgentScope?: ChannelRestoreAgentScope | null;
+  },
 ): Promise<ChannelRegistry> {
   const registry = ensureChannelRegistry();
   const failures: ChannelStartupFailure[] = [];
@@ -2088,9 +2094,17 @@ export async function initializeChannels(
     );
     await hydrateChannelAccountSecrets(channelId);
     const accounts = listChannelAccounts(channelId);
-    const enabledAccountIds = accounts
-      .filter((account) => account.enabled)
-      .map((account) => account.accountId);
+    const restorableAccounts = accounts.filter(
+      (account) =>
+        account.enabled &&
+        shouldRestoreChannelAccountForAgentScope(
+          account,
+          options?.restoreAgentScope,
+        ),
+    );
+    const enabledAccountIds = restorableAccounts.map(
+      (account) => account.accountId,
+    );
     logChannelStartup(
       options?.logger,
       `${channelId}: accounts=${accounts.length}, enabled=${enabledAccountIds.length > 0 ? enabledAccountIds.join(",") : "none"}`,
@@ -2103,18 +2117,17 @@ export async function initializeChannels(
     }
 
     if (enabledAccountIds.length === 0) {
-      const error = `Channel "${channelId}" has no enabled accounts.`;
+      const scopeSuffix = options?.restoreAgentScope
+        ? ` in ${options.restoreAgentScope} restore scope`
+        : "";
+      const error = `Channel "${channelId}" has no enabled accounts${scopeSuffix}.`;
       failures.push({ channelId, error });
       console.error(error);
       logChannelStartup(options?.logger, error);
       continue;
     }
 
-    for (const account of accounts) {
-      if (!account.enabled) {
-        continue;
-      }
-
+    for (const account of restorableAccounts) {
       try {
         await registry.startChannelAccount(channelId, account.accountId, {
           logger: options?.logger,
