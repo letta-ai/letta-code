@@ -174,6 +174,7 @@ ${gitInfo.status}
 - The Bash tool uses PowerShell or cmd.exe on Windows
 - HEREDOC syntax (e.g., \`$(cat <<'EOF'...EOF)\`) does NOT work on Windows
 - For multiline strings (git commits, PR bodies), use simple quoted strings instead
+- Letta context variables are PowerShell environment variables; for MemFS paths use \`$env:MEMORY_DIR\` or \`Join-Path $env:MEMORY_DIR 'profile.png'\`
 `;
     }
 

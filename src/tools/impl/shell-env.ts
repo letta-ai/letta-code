@@ -337,45 +337,56 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.LETTA_AGENT_ID = agentId;
     env.AGENT_ID = agentId;
 
-    try {
-      const localBackendNoMemfs = isLocalBackendNoMemfsEnvEnabled();
-      const localBackendEnabled =
-        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
-        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true";
+    const inheritedMemoryDir = process.env.MEMORY_DIR?.trim();
+    const inheritedLettaMemoryDir = process.env.LETTA_MEMORY_DIR?.trim();
+    const parentAgentId = process.env.LETTA_PARENT_AGENT_ID?.trim();
+    const inheritedParentMemoryDir = parentAgentId
+      ? getScopedMemoryFilesystemRoot(parentAgentId)
+      : null;
+
+    const clearOrExposeInheritedParentMemoryDir = () => {
       if (
-        !localBackendNoMemfs &&
-        (settingsManager.isMemfsEnabled(agentId) || localBackendEnabled)
+        inheritedMemoryDir &&
+        inheritedParentMemoryDir &&
+        path.resolve(inheritedMemoryDir) ===
+          path.resolve(inheritedParentMemoryDir)
       ) {
+        env.MEMORY_DIR = inheritedMemoryDir;
+        env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;
+        return;
+      }
+
+      // Clear inherited/stale memory-dir vars for non-memfs agents. This is
+      // especially important on Windows, where an inherited MEMORY_DIR can point
+      // at USERPROFILE and make agents think MemFS exists when it does not.
+      delete env.LETTA_MEMORY_DIR;
+      delete env.MEMORY_DIR;
+    };
+
+    const localBackendNoMemfs = isLocalBackendNoMemfsEnvEnabled();
+    const localBackendEnabled =
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
+      process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true";
+    let memfsEnabled = false;
+    try {
+      memfsEnabled = settingsManager.isMemfsEnabled(agentId);
+    } catch {
+      memfsEnabled = false;
+    }
+
+    if (!localBackendNoMemfs && (memfsEnabled || localBackendEnabled)) {
+      try {
         const memoryDir = resolveScopedMemoryDir({ agentId });
         if (!memoryDir) {
           throw new Error("Unable to resolve memory directory");
         }
         env.LETTA_MEMORY_DIR = memoryDir;
         env.MEMORY_DIR = memoryDir;
-      } else {
-        const inheritedMemoryDir = process.env.MEMORY_DIR?.trim();
-        const inheritedLettaMemoryDir = process.env.LETTA_MEMORY_DIR?.trim();
-        const parentAgentId = process.env.LETTA_PARENT_AGENT_ID?.trim();
-        const inheritedParentMemoryDir = parentAgentId
-          ? getScopedMemoryFilesystemRoot(parentAgentId)
-          : null;
-
-        if (
-          inheritedMemoryDir &&
-          inheritedParentMemoryDir &&
-          path.resolve(inheritedMemoryDir) ===
-            path.resolve(inheritedParentMemoryDir)
-        ) {
-          env.MEMORY_DIR = inheritedMemoryDir;
-          env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;
-        } else {
-          // Clear inherited/stale memory-dir vars for non-memfs agents.
-          delete env.LETTA_MEMORY_DIR;
-          delete env.MEMORY_DIR;
-        }
+      } catch {
+        clearOrExposeInheritedParentMemoryDir();
       }
-    } catch {
-      // Settings may not be initialized in tests/startup; preserve inherited values.
+    } else {
+      clearOrExposeInheritedParentMemoryDir();
     }
   }
   // Inject conversation ID if available
@@ -398,6 +409,17 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   }
 
   // Inject API key and base URL from settings if not already in env
+  if (!env.LETTA_API_KEY) {
+    try {
+      const apiKey = settingsManager.getCachedSecureTokens().apiKey;
+      if (apiKey) {
+        env.LETTA_API_KEY = apiKey;
+      }
+    } catch {
+      // Settings not initialized yet, skip
+    }
+  }
+
   if (!env.LETTA_API_KEY || !env.LETTA_BASE_URL) {
     try {
       const settings = settingsManager.getSettings();

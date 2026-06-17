@@ -152,6 +152,7 @@ const WINDOWS_UNIFIED_EXEC_GUIDANCE = `Windows safety rules:
 const WINDOWS_BASH_EXECUTION_GUIDANCE = `Windows execution:
 - Despite the tool name, on Windows this tool does not run commands through bash by default. It uses the native Windows shell launcher: PowerShell Core (\`pwsh\`) when available, then Windows PowerShell, then \`cmd.exe\` as fallback.
 - Write commands using PowerShell-compatible syntax by default. POSIX/bash constructs such as heredocs, \`export VAR=...\`, and Unix-style shell quoting may not work unless you explicitly invoke a POSIX shell.
+- Letta context variables are available as PowerShell environment variables such as \`$env:MEMORY_DIR\`; common variables are also aliased as \`$MEMORY_DIR\`. For MemFS paths, prefer \`Join-Path $env:MEMORY_DIR 'profile.png'\`.
 
 ${WINDOWS_UNIFIED_EXEC_GUIDANCE}`;
 

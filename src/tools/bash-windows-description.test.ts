@@ -25,6 +25,8 @@ describe("Bash Windows tool description", () => {
     expect(description).toContain("PowerShell-compatible syntax");
     expect(description).toContain("heredocs");
     expect(description).toContain("`export VAR=...`");
+    expect(description).toContain("`$env:MEMORY_DIR`");
+    expect(description).toContain("Join-Path $env:MEMORY_DIR 'profile.png'");
     expect(description).toContain("Windows safety rules:");
     expect(description).toContain("`Remove-Item` / `Move-Item`");
     expect(description).toContain("`Start-Process`");

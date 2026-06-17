@@ -355,6 +355,73 @@ test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", ()
   });
 });
 
+test("getShellEnv clears stale MEMORY_DIR aliases when memfs lookup fails", () => {
+  withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
+    const originalIsMemfsEnabled =
+      settingsManager.isMemfsEnabled.bind(settingsManager);
+    const originalMemoryDir = process.env.MEMORY_DIR;
+    const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
+    (
+      settingsManager as unknown as { isMemfsEnabled: (id: string) => boolean }
+    ).isMemfsEnabled = () => {
+      throw new Error("settings unavailable");
+    };
+    process.env.MEMORY_DIR =
+      process.platform === "win32" ? "C:\\Users\\example" : "/Users/example";
+    process.env.LETTA_MEMORY_DIR = process.env.MEMORY_DIR;
+
+    try {
+      const env = getShellEnv();
+      expect(env.LETTA_MEMORY_DIR).toBeUndefined();
+      expect(env.MEMORY_DIR).toBeUndefined();
+    } finally {
+      (
+        settingsManager as unknown as {
+          isMemfsEnabled: (id: string) => boolean;
+        }
+      ).isMemfsEnabled = originalIsMemfsEnabled;
+
+      if (originalMemoryDir === undefined) {
+        delete process.env.MEMORY_DIR;
+      } else {
+        process.env.MEMORY_DIR = originalMemoryDir;
+      }
+
+      if (originalLettaMemoryDir === undefined) {
+        delete process.env.LETTA_MEMORY_DIR;
+      } else {
+        process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+      }
+    }
+  });
+});
+
+test("getShellEnv uses cached secure API tokens for shell tools", () => {
+  withTemporaryEnv({ LETTA_API_KEY: undefined }, () => {
+    const originalGetCachedSecureTokens =
+      settingsManager.getCachedSecureTokens.bind(settingsManager);
+    (
+      settingsManager as unknown as {
+        getCachedSecureTokens: () => { apiKey?: string; refreshToken?: string };
+      }
+    ).getCachedSecureTokens = () => ({ apiKey: "sk-cached-shell-token" });
+
+    try {
+      const env = getShellEnv();
+      expect(env.LETTA_API_KEY).toBe("sk-cached-shell-token");
+    } finally {
+      (
+        settingsManager as unknown as {
+          getCachedSecureTokens: () => {
+            apiKey?: string;
+            refreshToken?: string;
+          };
+        }
+      ).getCachedSecureTokens = originalGetCachedSecureTokens;
+    }
+  });
+});
+
 test("getShellEnv preserves inherited parent MEMORY_DIR for subagents", () => {
   const parentAgentId = `agent-parent-${Date.now()}`;
   const childAgentId = `agent-child-${Date.now()}`;
