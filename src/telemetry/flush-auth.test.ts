@@ -40,9 +40,9 @@ describe("telemetry segmentation", () => {
     expect(getTerminalTelemetrySurface(false)).toBe("letta_code_tui");
     expect(getTerminalTelemetrySurface(true)).toBe("letta_code_headless");
     expect(getListenerTelemetrySurface({})).toBe("letta_code_cli_server");
-    expect(
-      getListenerTelemetrySurface({ LETTA_DESKTOP_MODE: "1" }),
-    ).toBe("letta_code_desktop");
+    expect(getListenerTelemetrySurface({ LETTA_DESKTOP_MODE: "1" })).toBe(
+      "letta_code_desktop",
+    );
   });
 
   test("maps backends to stable analytics buckets", () => {
