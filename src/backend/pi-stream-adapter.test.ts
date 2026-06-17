@@ -9,13 +9,15 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   PiStreamAdapter,
   type PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
-import type {
-  ProviderStreamEvent,
-  ProviderTurnInput,
+import {
+  type ProviderStreamEvent,
+  ProviderTurnExecutor,
+  type ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
 import { emptyLocalUsage } from "@/backend/local/local-message";
 import {
@@ -66,6 +68,14 @@ async function collectEvents(
   return collected;
 }
 
+async function collectChunks(
+  events: AsyncIterable<LettaStreamingResponse>,
+): Promise<LettaStreamingResponse[]> {
+  const collected: LettaStreamingResponse[] = [];
+  for await (const event of events) collected.push(event);
+  return collected;
+}
+
 function input(): ProviderTurnInput {
   return {
     conversationId: "local-conv-1",
@@ -100,6 +110,49 @@ function emptyTextBlocks(messages: Context["messages"]) {
 }
 
 describe("PiStreamAdapter", () => {
+  test("rejects image input before dispatching to text-only local models", async () => {
+    let providerCalls = 0;
+    const stream: PiStreamFunction = () => {
+      providerCalls += 1;
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const baseInput = input();
+    const chunks = await collectChunks(
+      await new ProviderTurnExecutor(new PiStreamAdapter({ stream })).execute({
+        ...baseInput,
+        agent: {
+          ...baseInput.agent,
+          model: "ollama/deepseek-r1:8b",
+          model_settings: { provider_type: "ollama" },
+        },
+        uiMessages: [
+          {
+            id: "ui-msg-image",
+            role: "user",
+            content: [
+              { type: "text", text: "describe this" },
+              { type: "image", mimeType: "image/png", data: "abc" },
+            ],
+            timestamp: Date.now(),
+          },
+        ],
+      }),
+    );
+
+    expect(providerCalls).toBe(0);
+    expect(chunks.map((chunk) => chunk.message_type)).toEqual([
+      "error_message",
+      "stop_reason",
+    ]);
+    expect(JSON.stringify(chunks)).toContain("does not support image input");
+    expect(JSON.stringify(chunks)).toContain("ollama/deepseek-r1:8b");
+  });
+
   test("routes clean provider overflow errors into compaction and retries", async () => {
     let providerCalls = 0;
     const stream: PiStreamFunction = () => {
