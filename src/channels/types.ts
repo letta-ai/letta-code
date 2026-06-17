@@ -470,7 +470,7 @@ export interface SignalChannelConfig {
   enabled: boolean;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
-  /** Base URL for signal-cli-rest-api JSON-RPC/SSE, e.g. http://127.0.0.1:8080. */
+  /** Base URL for a Signal JSON-RPC/SSE bridge, e.g. http://127.0.0.1:8080. */
   baseUrl: string;
   /** Optional signal-cli account selector, usually the linked phone number. */
   account?: string;
@@ -638,7 +638,7 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
 
 export interface SignalChannelAccount extends ChannelAccountBase {
   channel: "signal";
-  /** Base URL for signal-cli-rest-api JSON-RPC/SSE, e.g. http://127.0.0.1:8080. */
+  /** Base URL for a Signal JSON-RPC/SSE bridge, e.g. http://127.0.0.1:8080. */
   baseUrl: string;
   /** Optional signal-cli account selector, usually the linked phone number. */
   account?: string;

@@ -844,13 +844,13 @@ export async function runSignalSetup(): Promise<boolean> {
   try {
     console.log("\n📱 Signal Setup\n");
     console.log(
-      "Letta talks to Signal through signal-cli-rest-api in JSON-RPC/SSE mode.",
+      "Letta talks to Signal through native signal-cli daemon or a compatible JSON-RPC/SSE bridge.",
     );
     console.log(
       "Recommended: use a dedicated Signal number for the agent. If you use your personal Signal account, self-message loop protection may ignore your own messages.",
     );
     console.log(
-      "Before continuing, start signal-cli-rest-api with MODE=json-rpc and register/link the Signal account. See src/channels/signal/README.md for examples.\n",
+      "Before continuing, start a native signal-cli daemon or signal-cli-rest-api with MODE=json-rpc, and register/link the Signal account. See src/channels/signal/README.md for examples.\n",
     );
 
     await ensureSignalRuntimeInstalled().catch((error) => {
@@ -957,7 +957,7 @@ export async function runSignalSetup(): Promise<boolean> {
       groupMode === "mention"
         ? parseSignalCsv(
             await rl.question(
-              "Mention text aliases/regexes (comma-separated, default: letta): ",
+              "Mention text aliases/substrings (comma-separated, default: letta): ",
             ),
           )
         : [];

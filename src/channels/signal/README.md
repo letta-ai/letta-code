@@ -112,7 +112,7 @@ Important fields:
 | Field | Description |
 | --- | --- |
 | `accountId` | Local Letta label for this Signal connection, e.g. `personal` or `bot`. This is not your Signal phone number. |
-| `base_url` | `signal-cli-rest-api` JSON-RPC/SSE URL, usually `http://127.0.0.1:8080`. |
+| `base_url` | Signal JSON-RPC/SSE bridge URL, usually `http://127.0.0.1:8080`. |
 | `account` | Signal account phone number in E.164 format, e.g. `+15555550100`. |
 | `account_uuid` | Optional advanced loop-protection identity. Only needed when the daemon reports the linked account's own messages as a UUID instead of the configured phone number. |
 | `agent_id` | Optional agent for account-bound DM/group auto-routing. |
@@ -120,7 +120,7 @@ Important fields:
 | `dm_policy` | `pairing`, `allowlist`, or `open`. Pairing is recommended. |
 | `group_mode` | `disabled`, `mention`, or `open`. Disabled is conservative. |
 | `allowed_groups` | Optional group ID allowlist when groups are enabled. |
-| `mention_patterns` | Text aliases/regexes used by mention-mode groups. |
+| `mention_patterns` | Text aliases/substrings used by mention-mode groups. |
 | `recipient_aliases` | Optional map from inbound sender identities to replyable recipients, e.g. Signal UUID to E.164 phone number. Useful when native `signal-cli` receives from a UUID but can only send replies to the phone number. |
 | `download_media` | Download/surface inbound media. Defaults to `true` for new accounts. |
 | `media_max_bytes` | Maximum inbound media bytes to consider. Default setup value is 25 MiB. |
