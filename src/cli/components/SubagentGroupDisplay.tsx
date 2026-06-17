@@ -355,9 +355,9 @@ export const SubagentGroupDisplay = memo(() => {
     }
   });
 
-  // Hide silent subagents (e.g. init) — they handle user notifications
-  // via their own mechanisms (e.g. EventMessage).
-  const visible = agents.filter((a) => !a.silent);
+  // Hide subagents from the sidebar. Their state still flows through the
+  // store for clients and other views that choose to render it differently.
+  const visible = agents.filter(() => false);
 
   // Don't render if no agents
   if (visible.length === 0) {

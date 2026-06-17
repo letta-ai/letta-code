@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getSubagents } from "@/agent/subagent-state";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
@@ -971,6 +972,17 @@ export function emitStateSync(
 // Subagent state
 // ─────────────────────────────────────────────
 
+function resolveSubagentScopeForSnapshot(
+  runtime: RuntimeCarrier,
+  scope?: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
+): RuntimeScope | null {
+  const listener = getListenerRuntime(runtime);
+  return resolveRuntimeScope(listener, getScopeForRuntime(runtime, scope));
+}
+
 export function buildSubagentSnapshot(
   runtime: RuntimeCarrier,
   scope?: {
@@ -978,9 +990,48 @@ export function buildSubagentSnapshot(
     conversation_id?: string | null;
   },
 ): SubagentSnapshot[] {
-  void runtime;
-  void scope;
-  return [];
+  const runtimeScope = resolveSubagentScopeForSnapshot(runtime, scope);
+
+  return getSubagents()
+    .filter((a) => {
+      // Include all statuses (pending, running, completed, error) so the
+      // web UI receives the final state with tool calls and agent URL
+      // before the subagent is cleaned up from the store.
+      if (a.silent && a.isBackground !== true) {
+        return false;
+      }
+
+      if (!runtimeScope) {
+        return true;
+      }
+
+      // Scope listener-mode snapshots to the parent runtime that launched
+      // the subagent so active reflection/task state does not bleed across
+      // other agent/conversation tabs.
+      if (!a.parentAgentId || a.parentAgentId !== runtimeScope.agent_id) {
+        return false;
+      }
+      const parentConversationId = a.parentConversationId ?? "default";
+      return parentConversationId === runtimeScope.conversation_id;
+    })
+    .map((a) => ({
+      subagent_id: a.id,
+      subagent_type: a.type,
+      description: a.description,
+      status: a.status,
+      agent_url: a.agentURL,
+      model: a.model,
+      is_background: a.isBackground,
+      silent: a.silent,
+      tool_call_id: a.toolCallId,
+      parent_agent_id: a.parentAgentId,
+      parent_conversation_id: a.parentConversationId,
+      start_time: a.startTime,
+      tool_calls: a.toolCalls,
+      total_tokens: a.totalTokens,
+      duration_ms: a.durationMs,
+      error: a.error,
+    }));
 }
 
 export function emitSubagentStateUpdate(

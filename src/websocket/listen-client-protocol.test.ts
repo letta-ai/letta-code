@@ -4351,7 +4351,7 @@ describe("listen-client v2 status builders", () => {
     });
   });
 
-  test("sync hides all subagents from update_subagent_state", () => {
+  test("sync includes silent background reflection subagents in update_subagent_state", () => {
     clearAllSubagents();
     try {
       registerSubagent(
@@ -4361,18 +4361,6 @@ describe("listen-client v2 status builders", () => {
         undefined,
         true,
         true,
-        {
-          agentId: "agent-1",
-          conversationId: "default",
-        },
-      );
-      registerSubagent(
-        "subagent-task-1",
-        "general-purpose",
-        "Do other work",
-        undefined,
-        false,
-        false,
         {
           agentId: "agent-1",
           conversationId: "default",
@@ -4401,19 +4389,28 @@ describe("listen-client v2 status builders", () => {
       );
       expect(outbound[3]).toMatchObject({
         type: "update_subagent_state",
-        subagents: [],
+        subagents: [
+          expect.objectContaining({
+            subagent_id: "subagent-reflection-1",
+            subagent_type: "Reflection",
+            description: "Reflect on recent conversations",
+            status: "pending",
+            is_background: true,
+            silent: true,
+          }),
+        ],
       });
     } finally {
       clearAllSubagents();
     }
   });
 
-  test("sync still emits empty update_subagent_state for scoped runtimes", () => {
+  test("sync scopes update_subagent_state to runtime agent and conversation", () => {
     clearAllSubagents();
     try {
       registerSubagent(
-        "subagent-target",
-        "general-purpose",
+        "subagent-reflection-target",
+        "reflection",
         "Target scope",
         undefined,
         true,
@@ -4424,8 +4421,8 @@ describe("listen-client v2 status builders", () => {
         },
       );
       registerSubagent(
-        "subagent-other",
-        "general-purpose",
+        "subagent-reflection-other",
+        "reflection",
         "Other scope",
         undefined,
         true,
@@ -4457,7 +4454,10 @@ describe("listen-client v2 status builders", () => {
         JSON.parse(payload as string),
       );
       expect(outbound[3].type).toBe("update_subagent_state");
-      expect(outbound[3].subagents).toEqual([]);
+      expect(outbound[3].subagents).toHaveLength(1);
+      expect(outbound[3].subagents[0]).toMatchObject({
+        subagent_id: "subagent-reflection-target",
+      });
     } finally {
       clearAllSubagents();
     }
