@@ -121,6 +121,122 @@ that mode only permits messages to/from the linked account itself.
    /channels signal pair <code>
    ```
 
+## Manual native `signal-cli` setup
+
+If you do not want to rely on the interactive wizard for Signal account setup,
+you can run native `signal-cli` directly. Use the same config directory for all
+commands and for the daemon.
+
+```bash
+export SIGNAL_CLI_CONFIG="$HOME/.local/share/signal-cli-letta"
+export SIGNAL_ACCOUNT="+15555550100"
+```
+
+### Option A: link an existing Signal account/device
+
+Run the link command:
+
+```bash
+signal-cli -c "$SIGNAL_CLI_CONFIG" link -n "Letta Code"
+```
+
+`signal-cli` prints an `sgnl://linkdevice?...` URI. Scan it from Signal mobile:
+
+1. Open Signal on your phone.
+2. Go to **Settings → Linked Devices**.
+3. Tap **+**.
+4. Scan the QR/URI shown by `signal-cli`.
+
+When linking succeeds, `signal-cli` prints an associated phone number. Use that
+number as the Signal account in `letta channels configure signal`.
+
+If `signal-cli` says the user already exists in the config directory, you can
+reuse that account or remove the account directory it reports and link again.
+
+### Option B: register a dedicated Signal number
+
+Register the number:
+
+```bash
+signal-cli -c "$SIGNAL_CLI_CONFIG" -a "$SIGNAL_ACCOUNT" register
+```
+
+If Signal requires a captcha, open:
+
+```text
+https://signalcaptchas.org/registration/generate.html
+```
+
+Complete the captcha and copy the returned `signalcaptcha://...` URL, then run:
+
+```bash
+signal-cli -c "$SIGNAL_CLI_CONFIG" -a "$SIGNAL_ACCOUNT" register \
+  --captcha 'signalcaptcha://...'
+```
+
+After you receive the SMS/voice verification code, verify it:
+
+```bash
+signal-cli -c "$SIGNAL_CLI_CONFIG" -a "$SIGNAL_ACCOUNT" verify 123456
+```
+
+Registration can de-authenticate other Signal sessions for that phone number,
+so prefer a dedicated number for bot-style accounts.
+
+### Start the native daemon
+
+```bash
+signal-cli -c "$SIGNAL_CLI_CONFIG" daemon \
+  --http 127.0.0.1:8080 \
+  --receive-mode on-connection \
+  --ignore-stories
+```
+
+Keep the daemon running while Letta is running.
+
+### Smoke-test the daemon
+
+Health check:
+
+```bash
+curl -i --max-time 2 http://127.0.0.1:8080/api/v1/check
+```
+
+Event stream check. A timeout is okay as long as headers show HTTP 200 and
+`text/event-stream`:
+
+```bash
+curl -i --max-time 2 -N http://127.0.0.1:8080/api/v1/events
+```
+
+Optional JSON-RPC send smoke test:
+
+```bash
+curl -sS http://127.0.0.1:8080/api/v1/rpc \
+  -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "send",
+    "params": {
+      "account": "+15555550100",
+      "recipient": ["+15555550123"],
+      "message": "Signal daemon smoke test"
+    },
+    "id": "smoke-test"
+  }'
+```
+
+If direct `signal-cli send` works but JSON-RPC `send` fails, restart the daemon.
+Stale native daemon processes can receive events while JSON-RPC sends fail after
+account/config changes.
+
+Then run:
+
+```bash
+letta channels configure signal
+letta server --channels signal
+```
+
 ## Config fields
 
 Signal accounts live in `~/.letta/channels/signal/accounts.json`.
