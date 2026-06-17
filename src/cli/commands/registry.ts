@@ -239,7 +239,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/unpin": {
-    desc: "Unpin current agent globally, or use -l for local only",
+    desc: "Unpin current agent",
     order: 23,
     handler: () => {
       // Handled specially in App.tsx
