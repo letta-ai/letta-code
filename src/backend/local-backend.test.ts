@@ -35,6 +35,7 @@ import { emptyLocalUsage } from "@/backend/local/local-message";
 import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import { listLocalModels } from "@/backend/local/local-model-config";
 import {
+  LocalStore,
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
 } from "@/backend/local/local-store";
@@ -505,6 +506,37 @@ describe("local backend pi transcript", () => {
       await backendForDirectLookup.retrieveMessage("ui-msg-latest");
     expect(latestVariants[0]?.id).toBe("ui-msg-latest");
     expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
+  });
+
+  test("interrupt rolls back unpersisted partial assistant message before reload", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-store-interrupt-"));
+    const agentId = "agent-interrupt";
+    const conversationId = "conv-interrupt";
+
+    const store = new LocalStore(agentId, { storageDir });
+    store.appendTurnInput(conversationId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    store.appendStreamChunk(conversationId, agentId, {
+      message_type: "assistant_message",
+      content: [{ type: "text", text: "partial" }],
+    } as LettaStreamingResponse);
+
+    const conversationBeforeReload = store.retrieveConversation(conversationId);
+    const partialAssistantId =
+      conversationBeforeReload.in_context_message_ids?.at(-1);
+    expect(partialAssistantId).toBe("ui-msg-2");
+
+    store.settleInterruptedToolCalls(conversationId, { agentId });
+
+    const reloaded = new LocalStore(agentId, { storageDir });
+    const conversationAfterReload =
+      reloaded.retrieveConversation(conversationId);
+    expect(conversationAfterReload.in_context_message_ids).not.toContain(
+      partialAssistantId,
+    );
+    expect(reloaded.retrieveMessage(partialAssistantId ?? "")).toEqual([]);
   });
 
   test("recompiles cached system prompt when committed memory changes", async () => {
