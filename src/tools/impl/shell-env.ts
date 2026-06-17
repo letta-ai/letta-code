@@ -16,7 +16,11 @@ import {
 } from "@/agent/memory-filesystem";
 import { getServerUrl } from "@/backend/api/client";
 import { isLocalBackendNoMemfsEnvEnabled } from "@/backend/local/paths";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
@@ -285,6 +289,7 @@ function applyHostedMemfsGitHeaderEnv(env: NodeJS.ProcessEnv): void {
  */
 export function getShellEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
+  const runtimeContext = getRuntimeContext();
   const pathKey =
     Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
   const pathPrefixes: string[] = [];
@@ -317,9 +322,16 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // Add Letta context for skill scripts.
   // Prefer explicit agent context, but fall back to inherited env values.
   let agentId: string | undefined;
+  if (typeof runtimeContext?.agentId === "string") {
+    agentId = runtimeContext.agentId.trim() || undefined;
+  }
   try {
-    const resolvedAgentId = getCurrentAgentId();
-    if (typeof resolvedAgentId === "string" && resolvedAgentId.trim()) {
+    const resolvedAgentId = agentId ?? getCurrentAgentId();
+    if (
+      !agentId &&
+      typeof resolvedAgentId === "string" &&
+      resolvedAgentId.trim()
+    ) {
       agentId = resolvedAgentId.trim();
     }
   } catch {
@@ -380,9 +392,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   }
   // Inject conversation ID if available
   let convId: string | undefined;
+  if (typeof runtimeContext?.conversationId === "string") {
+    convId = runtimeContext.conversationId.trim() || undefined;
+  }
   try {
-    const resolved = getConversationId();
-    if (resolved) convId = resolved;
+    const resolved = convId ?? getConversationId();
+    if (!convId && resolved) convId = resolved;
   } catch {
     // Not set yet
   }
@@ -395,6 +410,20 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (convId) {
     env.LETTA_CONVERSATION_ID = convId;
     env.CONVERSATION_ID = convId;
+  }
+
+  if (
+    runtimeContext?.channelToolScope?.channels.length ||
+    runtimeContext?.channelTurnSources?.length
+  ) {
+    env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV] = JSON.stringify({
+      ...(runtimeContext.channelToolScope?.channels.length
+        ? { channelToolScope: runtimeContext.channelToolScope }
+        : {}),
+      ...(runtimeContext.channelTurnSources?.length
+        ? { channelTurnSources: runtimeContext.channelTurnSources }
+        : {}),
+    });
   }
 
   // Inject API key and base URL from settings if not already in env

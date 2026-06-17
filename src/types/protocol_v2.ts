@@ -65,6 +65,15 @@ export type CronRunReason =
   | "task_cancelled"
   | "scheduler_error";
 
+export interface CronChannelTarget {
+  channel: string;
+  account_id?: string | null;
+  chat_id: string;
+  chat_type?: "direct" | "channel";
+  thread_id?: string | null;
+  message_id?: string | null;
+}
+
 export interface CronTask {
   id: string;
   agent_id: string;
@@ -75,6 +84,7 @@ export interface CronTask {
   timezone: string;
   recurring: boolean;
   prompt: string;
+  channel_targets: CronChannelTarget[];
   status: CronTaskStatus;
   created_at: string;
   expires_at: string | null;
@@ -1566,6 +1576,7 @@ export interface CronAddCommand {
   timezone?: string;
   recurring: boolean;
   prompt: string;
+  channel_targets?: CronChannelTarget[];
   /** Optional ISO timestamp for one-shot tasks. */
   scheduled_for?: string | null;
 }
@@ -1609,6 +1620,7 @@ export interface CronUpdateCommand {
   timezone?: string;
   recurring?: boolean;
   prompt?: string;
+  channel_targets?: CronChannelTarget[];
   /** Optional ISO timestamp for one-shot tasks. */
   scheduled_for?: string | null;
 }

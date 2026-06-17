@@ -19,6 +19,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import {
+  type CronChannelTarget,
+  normalizeCronChannelTargets,
+} from "./channel-targets";
 import { estimatePeriodMs } from "./parse-interval";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -67,6 +71,8 @@ export interface CronTask {
 
   // Content
   prompt: string;
+  /** Explicit external channel destinations this scheduled run may message. */
+  channel_targets: CronChannelTarget[];
 
   // Lifecycle
   status: CronTaskStatus;
@@ -141,6 +147,7 @@ function emptyFile(): CronFileData {
 function normalizeTask(task: CronTask): CronTask {
   return {
     ...task,
+    channel_targets: normalizeCronChannelTargets(task.channel_targets),
     last_run_at: task.last_run_at ?? null,
     last_run_outcome: task.last_run_outcome ?? null,
     last_run_reason: task.last_run_reason ?? null,
@@ -476,6 +483,7 @@ export interface AddTaskInput {
   timezone?: string;
   recurring: boolean;
   prompt: string;
+  channel_targets?: CronChannelTarget[];
   scheduled_for?: Date; // for one-shots
 }
 
@@ -518,6 +526,7 @@ export function addTask(input: AddTaskInput): AddTaskResult {
       timezone,
       recurring: input.recurring,
       prompt: input.prompt,
+      channel_targets: normalizeCronChannelTargets(input.channel_targets),
       status: "active",
       created_at: now.toISOString(),
       // Recurring tasks do not auto-expire (expires_at: null)

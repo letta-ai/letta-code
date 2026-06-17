@@ -845,6 +845,7 @@ export async function message_channel(
         scope.agentId,
         scope.conversationId,
         resolvedAccountId,
+        input.threadId ?? undefined,
       );
       if (!route) {
         return resolvedAccountId

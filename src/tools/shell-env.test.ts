@@ -7,7 +7,10 @@ import {
   getLocalBackendMemoryFilesystemRoot,
   LOCAL_BACKEND_NO_MEMFS_ENV,
 } from "@/backend/local/paths";
-import { runWithRuntimeContext } from "@/runtime-context";
+import {
+  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
+  runWithRuntimeContext,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
   ensureLettaShimDir,
@@ -275,6 +278,49 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
   expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
   expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
   expect(env.USER_CWD).toBe("/tmp/runtime-scope-cwd");
+});
+
+test("getShellEnv serializes runtime channel context for child processes", () => {
+  const env = runWithRuntimeContext(
+    {
+      agentId: "agent-runtime-scope",
+      conversationId: "conv-runtime-scope",
+      channelToolScope: {
+        channels: [{ channelId: "slack", accountId: "acct-slack" }],
+      },
+      channelTurnSources: [
+        {
+          channel: "slack",
+          accountId: "acct-slack",
+          chatId: "C123",
+          chatType: "channel",
+          threadId: "1712790000.000050",
+          agentId: "agent-runtime-scope",
+          conversationId: "conv-runtime-scope",
+        },
+      ],
+    },
+    () => getShellEnv(),
+  );
+
+  expect(
+    JSON.parse(env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV] ?? "null"),
+  ).toEqual({
+    channelToolScope: {
+      channels: [{ channelId: "slack", accountId: "acct-slack" }],
+    },
+    channelTurnSources: [
+      {
+        channel: "slack",
+        accountId: "acct-slack",
+        chatId: "C123",
+        chatType: "channel",
+        threadId: "1712790000.000050",
+        agentId: "agent-runtime-scope",
+        conversationId: "conv-runtime-scope",
+      },
+    ],
+  });
 });
 
 test("getShellEnv isolates overlapping runtime scopes", async () => {

@@ -549,6 +549,7 @@ export async function handleIncomingMessage(
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       cachedAgent,
+      channelToolScope: msg.channelToolScope,
       channelTurnSources: msg.channelTurnSources,
       modEvents: ensureListenerModAdapter(runtime.listener).events,
     });

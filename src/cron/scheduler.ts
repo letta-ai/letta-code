@@ -30,6 +30,11 @@ import type {
   StartListenerOptions,
 } from "@/websocket/listener/types";
 import {
+  type CronChannelTarget,
+  formatCronChannelTargetForPrompt,
+  resolveCronChannelContext,
+} from "./channel-targets";
+import {
   type CronRunOutcome,
   type CronRunReason,
   type CronTask,
@@ -100,6 +105,7 @@ export function minuteKey(date: Date): string {
 }
 
 export function wrapCronPrompt(task: CronTask): string {
+  const availableChannelTargets = task.channel_targets;
   const lines = [
     `Scheduled task "${task.name}" is firing.`,
     `Description: ${task.description}`,
@@ -109,7 +115,41 @@ export function wrapCronPrompt(task: CronTask): string {
     "",
     `Prompt: ${task.prompt}`,
   ];
+
+  if (availableChannelTargets.length > 0) {
+    lines.push(
+      "",
+      "Available outbound channel destinations for this scheduled run:",
+      ...availableChannelTargets.map(
+        (target) => `- ${formatCronChannelTargetForPrompt(target)}`,
+      ),
+      "Only these destinations are authorized for MessageChannel. Plain assistant text is not delivered to external channels; use MessageChannel if a channel-visible message is needed.",
+    );
+  }
+
   return lines.join("\n");
+}
+
+function wrapCronPromptForFire(
+  task: CronTask,
+  availableChannelTargets: CronChannelTarget[],
+): string {
+  if (task.channel_targets.length === 0) {
+    return wrapCronPrompt(task);
+  }
+
+  if (availableChannelTargets.length > 0) {
+    return wrapCronPrompt({
+      ...task,
+      channel_targets: availableChannelTargets,
+    });
+  }
+
+  return [
+    wrapCronPrompt({ ...task, channel_targets: [] }),
+    "",
+    "This schedule has stored outbound channel destinations, but none are currently available. MessageChannel is not available for this run unless the channel route and adapter are restored.",
+  ].join("\n");
 }
 
 function getCronConversationSummary(task: CronTask): string {
@@ -281,7 +321,12 @@ async function fireCronTask(
     rawRuntime,
   );
 
-  const text = wrapCronPrompt(task);
+  const cronConversationId = targetConversationId ?? "default";
+  const channelContext = resolveCronChannelContext({
+    task,
+    conversationId: cronConversationId,
+  });
+  const text = wrapCronPromptForFire(task, channelContext.availableTargets);
 
   const queuedItem = conversationRuntime.queueRuntime.enqueue({
     kind: "cron_prompt",
@@ -289,7 +334,7 @@ async function fireCronTask(
     text,
     cronTaskId: task.id,
     agentId: task.agent_id,
-    conversationId: targetConversationId ?? "default",
+    conversationId: cronConversationId,
   } as Omit<CronPromptQueueItem, "id" | "enqueuedAt">);
 
   if (!queuedItem) {
@@ -309,6 +354,22 @@ async function fireCronTask(
     });
     return false;
   }
+
+  conversationRuntime.queuedMessagesByItemId.set(queuedItem.id, {
+    type: "message",
+    agentId: task.agent_id,
+    conversationId: cronConversationId,
+    channelToolScope: channelContext.channelToolScope,
+    ...(channelContext.channelTurnSources.length > 0
+      ? { channelTurnSources: channelContext.channelTurnSources }
+      : {}),
+    messages: [
+      {
+        role: "user",
+        content: text,
+      },
+    ],
+  });
 
   scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
 
@@ -345,9 +406,9 @@ async function fireCronTask(
     queueItemId: queuedItem.id,
     scheduledFor: task.scheduled_for,
     firedAt: nowIso,
-    conversationId: targetConversationId ?? "default",
+    conversationId: cronConversationId,
   });
-  emitCronsUpdated(socket, task, targetConversationId ?? "default");
+  emitCronsUpdated(socket, task, cronConversationId);
   return true;
 }
 

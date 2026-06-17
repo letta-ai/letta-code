@@ -143,6 +143,31 @@ describe("task lifecycle", () => {
     expect(wrapCronPrompt(task)).not.toContain("<system-reminder>");
   });
 
+  test("cron prompt names stored channel destinations", () => {
+    const { task } = addTask(
+      makeInput({
+        channel_targets: [
+          {
+            channel: "discord",
+            account_id: "acct-discord",
+            chat_id: "room-123",
+            chat_type: "channel",
+            thread_id: "thread-456",
+          },
+        ],
+      }),
+    );
+
+    const prompt = wrapCronPrompt(task);
+
+    expect(prompt).toContain(
+      "Available outbound channel destinations for this scheduled run:",
+    );
+    expect(prompt).toContain(
+      'MessageChannel(action="send", channel="discord", chat_id="room-123", accountId="acct-discord", threadId="thread-456", message="...")',
+    );
+  });
+
   test("new recurring task starts with fire_count 0", () => {
     const { task } = addTask(makeInput());
     expect(task.fire_count).toBe(0);
