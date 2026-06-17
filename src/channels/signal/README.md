@@ -8,6 +8,24 @@ voice registration, or use
 [`signal-cli-rest-api`](https://github.com/bbernhard/signal-cli-rest-api)
 setup endpoints (`/v1/*`) when that wrapper is available.
 
+## TL;DR
+
+Start a local native daemon, configure the account, then run Letta with Signal:
+
+```bash
+signal-cli -c ~/.local/share/signal-cli-letta daemon \
+  --http 127.0.0.1:8080 \
+  --receive-mode on-connection \
+  --ignore-stories
+
+letta channels configure signal
+letta server --channels signal
+```
+
+Use a dedicated Signal number when possible. If you use your personal number,
+enable `self_chat_mode` and talk to the agent through Signal's Note to Self /
+self-chat.
+
 ## Recommended setup
 
 Use a dedicated Signal number for the agent when you want it to participate in
