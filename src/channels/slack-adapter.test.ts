@@ -658,6 +658,66 @@ test("slack adapter hydrates prior Slack thread context, including bot-authored 
   expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
 });
 
+test("slack adapter rehydrates bot-authored Slack thread context on existing routed turns", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  resolveSlackThreadHistoryMock.mockResolvedValueOnce([
+    {
+      text: "Already-delivered human context",
+      userId: "U222",
+      ts: "1712795000.000060",
+    },
+    {
+      text: "Automated deployment note since the last human turn",
+      botId: "BDEPLOY",
+      ts: "1712796000.000070",
+    },
+  ]);
+
+  const prepared = await adapter.prepareInboundMessage?.(
+    {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatLabel: "#random",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "what did deploy say?",
+      timestamp: 1712800000100,
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: false,
+    },
+    { isFirstRouteTurn: false },
+  );
+
+  expect(prepared).toBeDefined();
+  expect(prepared?.threadContext?.starter).toBeUndefined();
+  expect(prepared?.threadContext?.history).toEqual([
+    expect.objectContaining({
+      messageId: "1712796000.000070",
+      senderId: "BDEPLOY",
+      senderName: "Bot (BDEPLOY)",
+      text: "Automated deployment note since the last human turn",
+    }),
+  ]);
+  expect(resolveSlackThreadStarterMock).not.toHaveBeenCalled();
+  expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackChannelHistoryMock).not.toHaveBeenCalled();
+});
+
 test("slack adapter hydrates recent channel context, including bot-authored entries, when a mention creates a new thread", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
