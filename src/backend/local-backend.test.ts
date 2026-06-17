@@ -508,6 +508,43 @@ describe("local backend pi transcript", () => {
     expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
   });
 
+  test("fork skips ids already on disk from a separate LocalStore instance", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-store-fork-collision-"),
+    );
+    const agentId = "agent-fork";
+    const sourceId = "conv-source";
+    const existingId = "conv-existing";
+
+    // Store A creates a source conversation and an existing conversation that
+    // occupies the next seq slot, simulating a second LocalStore process that
+    // wrote a conversation to the shared storage directory.
+    const storeA = new LocalStore(agentId, { storageDir });
+    storeA.appendTurnInput(sourceId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    storeA.appendTurnInput(existingId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "existing" }],
+    });
+
+    // Store B loads from the same storage dir — it sees both conversations and
+    // sets conversationSeq to the max existing value.  A fork from Store B
+    // must not clobber the existing conversation even if its raw seq would
+    // land on that slot.
+    const storeB = new LocalStore(agentId, { storageDir });
+    const { id: forkedId } = storeB.forkConversation(sourceId);
+
+    // The fork must not reuse any id that already exists on disk.
+    expect(forkedId).not.toBe(sourceId);
+    expect(forkedId).not.toBe(existingId);
+
+    // The existing conversation must still be intact.
+    const existing = storeB.retrieveConversation(existingId);
+    expect(existing.id).toBe(existingId);
+  });
+
   test("interrupt rolls back unpersisted partial assistant message before reload", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-store-interrupt-"));
     const agentId = "agent-interrupt";
