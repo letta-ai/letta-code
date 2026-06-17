@@ -41,15 +41,16 @@ print("saved robot-mascot.png; credits:", response["billing"]["credits_charged"]
 PY
 ```
 
-In Bash tools launched by Letta Code, use the runtime-provided
-`LETTA_BASE_URL` and `LETTA_API_KEY` together for Letta API calls. Build URLs
-relative to `${LETTA_BASE_URL%/}` and send `Authorization: Bearer $LETTA_API_KEY`.
-Do not hardcode `https://api.letta.com`: Desktop and remote runtimes may provide
-a proxy base URL, and the credential may only be valid through that URL. If
-either variable is missing, the user needs to authenticate with Letta Cloud (or
-provide a Letta API key); do **not** ask for an OpenAI/Gemini provider key. This
-endpoint also does not use `/connect` BYOK providers — the only `provider` values
-supported here are `flux`, `gemini`, and `openai`.
+In shell tools launched by Letta Code, use the runtime-provided `LETTA_BASE_URL`
+and `LETTA_API_KEY` together for Letta API calls. Build URLs relative to
+`${LETTA_BASE_URL%/}` in Bash or `$env:LETTA_BASE_URL.TrimEnd('/')` in
+PowerShell, and send `Authorization: Bearer $LETTA_API_KEY`. Do not hardcode
+`https://api.letta.com`: Desktop and remote runtimes may provide a proxy base
+URL, and the credential may only be valid through that URL. If either variable is
+missing, the user needs to authenticate with Letta Cloud (or provide a Letta API
+key); do **not** ask for an OpenAI/Gemini provider key. This endpoint also does
+not use `/connect` BYOK providers — the only `provider` values supported here are
+`flux`, `gemini`, and `openai`.
 
 Then **show the image to the user** by embedding the saved file in your reply:
 
@@ -64,6 +65,19 @@ appears inline. **Always display generated images this way** — don't just repo
 the path, and never paste the raw base64 / a `data:` URI. The markdown path must
 match where you saved the file. For `n > 1`, save each image to its own file and
 embed each on its own line. Also tell the user the `credits_charged`.
+
+## Agent profile images
+
+When asked to create or update your own avatar/profile image, save the final PNG
+directly to MemFS as `profile.png`:
+
+- Bash/macOS/Linux: `target="$MEMORY_DIR/profile.png"`
+- Windows PowerShell: `$target = Join-Path $env:MEMORY_DIR 'profile.png'`
+
+Verify `MEMORY_DIR` exists and is writable. Do not use Read/Write tool paths like
+literal `$MEMORY_DIR/profile.png`; those tools do not shell-expand variables. If
+`MEMORY_DIR` is missing, use the concrete Memory directory from the system
+reminder or tell the user MemFS is not enabled.
 
 ## Request body
 
