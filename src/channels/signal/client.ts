@@ -92,7 +92,7 @@ function previewSignalEventData(event: SignalSseEvent): string {
   if (!data) {
     return "<empty>";
   }
-  return data.length > 500 ? `${data.slice(0, 500)}…` : data;
+  return `<${Buffer.byteLength(data, "utf8")} bytes>`;
 }
 
 function previewSignalRpcParams(params: Record<string, unknown>): string {
@@ -142,7 +142,27 @@ export class SignalRestClient {
   }
 
   async check(): Promise<void> {
-    const response = await this.request("GET", "/api/v1/check");
+    let response: unknown;
+    try {
+      response = await this.request("GET", "/api/v1/check");
+    } catch (checkError) {
+      const fallback = await this.request("POST", "/api/v1/rpc", {
+        jsonrpc: "2.0",
+        method: "version",
+        params: {},
+        id: randomUUID(),
+      }).catch((versionError: unknown) => {
+        throw new Error(
+          `Signal daemon health check failed: ${formatSignalClientError(checkError)}; version fallback failed: ${formatSignalClientError(versionError)}`,
+        );
+      });
+      if (isRecord(fallback) && isRecord(fallback.error)) {
+        throw new Error(
+          `Signal daemon health check failed: ${formatSignalClientError(checkError)}; version fallback returned error: ${JSON.stringify(fallback.error)}`,
+        );
+      }
+      return;
+    }
     const status = isRecord(response) ? response.status : undefined;
     if (typeof status === "string" && status.toLowerCase() === "error") {
       throw new Error("Signal daemon health check returned error status.");

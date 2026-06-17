@@ -61,4 +61,24 @@ describe("Signal channel config", () => {
       mediaMaxBytes: 1048576,
     });
   });
+
+  test("defaults legacy yaml media download on", () => {
+    root = mkdtempSync(join(tmpdir(), "signal-config-"));
+    const signalDir = join(root, "signal");
+    mkdirSync(signalDir, { recursive: true });
+    writeFileSync(
+      join(signalDir, "config.yaml"),
+      [
+        "enabled: true",
+        "dm_policy: pairing",
+        "base_url: http://signal.local:8080",
+        "account: '+15555550100'",
+        "",
+      ].join("\n"),
+    );
+    __testOverrideChannelsRoot(root);
+
+    const config = readChannelConfig("signal");
+    expect(config).toMatchObject({ channel: "signal", downloadMedia: true });
+  });
 });

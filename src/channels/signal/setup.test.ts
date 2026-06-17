@@ -98,6 +98,16 @@ describe("Signal setup helpers", () => {
         "signal-cli --config /tmp/signal-data daemon",
       ),
     ).toBe("/tmp/signal-data");
+    expect(
+      parseNativeSignalCliDaemonConfigDir(
+        'signal-cli -c "/tmp/signal data" daemon',
+      ),
+    ).toBe("/tmp/signal data");
+    expect(
+      parseNativeSignalCliDaemonConfigDir(
+        "signal-cli --data-dir '/tmp/signal data' daemon",
+      ),
+    ).toBe("/tmp/signal data");
     expect(parseNativeSignalCliDaemonConfigDir("signal-cli daemon")).toBeNull();
   });
 

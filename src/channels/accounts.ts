@@ -349,7 +349,7 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.allowedGroups = [...(next.allowedGroups ?? [])];
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.recipientAliases = { ...(next.recipientAliases ?? {}) };
-    next.downloadMedia = next.downloadMedia === true;
+    next.downloadMedia = next.downloadMedia !== false;
   }
   if (isTelegramChannelAccount(next)) {
     next.richPrivateChatDefault = next.richPrivateChatDefault !== false;
@@ -449,7 +449,7 @@ function makeDefaultLegacyAccount(
         ? [...config.mentionPatterns]
         : [],
       recipientAliases: { ...(config.recipientAliases ?? {}) },
-      downloadMedia: config.downloadMedia === true,
+      downloadMedia: config.downloadMedia !== false,
       mediaMaxBytes: config.mediaMaxBytes,
       createdAt: now,
       updatedAt: now,

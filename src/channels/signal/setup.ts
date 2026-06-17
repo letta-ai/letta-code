@@ -105,9 +105,9 @@ export function parseNativeSignalCliDaemonConfigDir(
   processText: string,
 ): string | null {
   const match = processText.match(
-    /(?:^|\s)(?:-c|--config|--data-dir|-d)\s+(\S+)/,
+    /(?:^|\s)(?:-c|--config|--data-dir|-d)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/,
   );
-  return match?.[1] ?? null;
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
 }
 
 function detectNativeSignalCliConfigDir(): string | null {

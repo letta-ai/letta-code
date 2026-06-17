@@ -36,6 +36,7 @@ import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   InboundChannelMessage,
+  SignalChannelAccount,
 } from "@/channels/types";
 
 beforeEach(() => {
@@ -115,6 +116,41 @@ describe("ChannelRegistry", () => {
     expect(logs).toContain("[Channels] requested: telegram");
     expect(logs.some((line) => line.includes("root:"))).toBe(true);
     expect(logs.some((line) => line.includes("accounts=0"))).toBe(true);
+  });
+
+  test("startChannelAccount rejects Signal accounts sharing one daemon", async () => {
+    const now = "2026-06-17T00:00:00.000Z";
+    const makeSignalAccount = (
+      accountId: string,
+      account: string,
+    ): SignalChannelAccount => ({
+      channel: "signal",
+      accountId,
+      displayName: accountId,
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      createdAt: now,
+      updatedAt: now,
+      baseUrl: "http://127.0.0.1:8080/",
+      account,
+      agentId: null,
+      selfChatMode: false,
+      groupMode: "disabled",
+      allowedGroups: [],
+      mentionPatterns: [],
+      recipientAliases: {},
+      downloadMedia: true,
+    });
+    __testOverrideLoadChannelAccounts(() => [
+      makeSignalAccount("one", "+15555550100"),
+      makeSignalAccount("two", "+15555550101"),
+    ]);
+    const registry = new ChannelRegistry();
+
+    await expect(registry.startChannelAccount("signal", "one")).rejects.toThrow(
+      /share base_url/,
+    );
   });
 
   test("/help gets a direct channel reply instead of being delivered to the agent", async () => {

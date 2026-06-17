@@ -152,6 +152,37 @@ function findSignalBaseUrlConflict(
   return null;
 }
 
+function findSignalBaseUrlConflictForStart(
+  accounts: SignalChannelAccount[],
+  accountToStart: SignalChannelAccount,
+): { baseUrl: string; accountIds: string[] } | null {
+  const targetBaseUrl = normalizeSignalBaseUrlForConflictKey(
+    accountToStart.baseUrl,
+  );
+  const accountIds = accounts
+    .filter(
+      (account) =>
+        account.accountId !== accountToStart.accountId &&
+        account.enabled &&
+        normalizeSignalBaseUrlForConflictKey(account.baseUrl) === targetBaseUrl,
+    )
+    .map((account) => account.accountId);
+  if (accountIds.length === 0) {
+    return null;
+  }
+  return {
+    baseUrl: targetBaseUrl,
+    accountIds: [accountToStart.accountId, ...accountIds],
+  };
+}
+
+function buildSignalBaseUrlConflictError(conflict: {
+  baseUrl: string;
+  accountIds: string[];
+}): string {
+  return `Signal accounts ${conflict.accountIds.join(", ")} share base_url ${conflict.baseUrl}. Native signal-cli event streams cannot safely run multiple enabled accounts on the same daemon; disable all but one account or run separate signal-cli daemons on separate ports/config dirs.`;
+}
+
 function getConfiguredAgentId(config: unknown): string | null {
   if (!config || typeof config !== "object") {
     return null;
@@ -923,6 +954,20 @@ export class ChannelRegistry {
         `account not found: ${channelId}/${accountId}`,
       );
       return false;
+    }
+
+    if (isSignalChannelAccount(account)) {
+      const conflict = findSignalBaseUrlConflictForStart(
+        (await listChannelAccountsWithSecrets("signal")).filter(
+          isSignalChannelAccount,
+        ),
+        account,
+      );
+      if (conflict) {
+        const error = buildSignalBaseUrlConflictError(conflict);
+        logChannelStartup(options?.logger, error);
+        throw new Error(error);
+      }
     }
 
     logChannelStartup(
@@ -2297,7 +2342,7 @@ export async function initializeChannels(
         accounts.filter(isSignalChannelAccount),
       );
       if (conflict) {
-        const error = `Signal accounts ${conflict.accountIds.join(", ")} share base_url ${conflict.baseUrl}. Native signal-cli event streams cannot safely run multiple enabled accounts on the same daemon; disable all but one account or run separate signal-cli daemons on separate ports/config dirs.`;
+        const error = buildSignalBaseUrlConflictError(conflict);
         failures.push({ channelId, error });
         console.error(error);
         logChannelStartup(options?.logger, error);
