@@ -29,11 +29,11 @@ export type AskUserQuestion = {
 export function parseAskUserQuestions(
   approval: ApprovalRequest,
 ): AskUserQuestion[] {
-  const parsed = safeJsonParseOr<Record<string, unknown>>(
-    approval.toolArgs,
-    {},
-  );
-  const questions = parsed.questions;
+  const parsed = safeJsonParseOr<unknown>(approval.toolArgs, {});
+  if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return [];
+  }
+  const questions = (parsed as Record<string, unknown>).questions;
   if (!Array.isArray(questions) || questions.length === 0) return [];
   return questions.every(isWellFormedQuestion)
     ? (questions as AskUserQuestion[])
