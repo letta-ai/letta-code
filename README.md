@@ -103,6 +103,8 @@ letta --backend local --new-agent
 
 Local agents do not appear in the Constellation, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
 
+Local agents can add model-callable web search through trusted local mods in `~/.letta/mods/`. The bundled [`web-search-mods` skill](src/skills/builtin/web-search-mods/SKILL.md) includes Perplexity, Exa, and Parallel examples.
+
 ## 🌌 Constellation
 
 Agents hosted on Constellation can be accessed from any machine: your laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a sandbox, remote VM, or a Mac Mini. You can also chat with agents through [chat.letta.com](https://chat.letta.com/) or through the desktop app.
