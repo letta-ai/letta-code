@@ -70,8 +70,8 @@ export const commands: Record<string, Command> = {
     },
   },
   "/reflect": {
-    desc: "Launch reflection (/reflect [transcript_file])",
-    args: "[transcript_file]",
+    desc: "Launch reflection (/reflect [--recent N | --conversation ID ... | --auto] [--instruction TEXT])",
+    args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",
     order: 50,
     handler: () => {
       // Handled specially in App.tsx

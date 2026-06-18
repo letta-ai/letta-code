@@ -70,6 +70,7 @@ import {
 } from "@/cli/helpers/init-command";
 import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
@@ -78,7 +79,19 @@ import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-to
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  REFLECTION_AGENT_ID_WAIT_MS,
+  releaseReflectionLaunch,
+  tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
+import {
+  buildMultiReflectionPayload,
+  buildParentMemorySnapshot,
+  buildReflectionAutoPayload,
+  buildReflectionSelectorPrompt,
+  buildReflectionSubagentPrompt,
+  finalizeMultiReflectionPayload,
+  readReflectionAutoSelection,
+} from "@/cli/helpers/reflection-transcript";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -324,6 +337,128 @@ type SubmitHandlerContext = {
   userCancelledRef: MutableRefObject<boolean>;
   onReload?: () => Promise<void>;
 };
+
+type ReflectCommandArgs =
+  | { instruction?: string; kind: "single" }
+  | { instruction?: string; kind: "recent"; limit: number }
+  | { conversationIds: string[]; instruction?: string; kind: "conversations" }
+  | { instruction?: string; kind: "auto" };
+
+function isReflectCommandFlag(value: string): boolean {
+  return (
+    value === "--" ||
+    value === "--auto" ||
+    value === "--conversation" ||
+    value === "--instruction" ||
+    value === "--instructions" ||
+    value === "--recent" ||
+    value === "-i" ||
+    value.startsWith("--instruction=")
+  );
+}
+
+function parseReflectCommandArgs(input: string): ReflectCommandArgs {
+  const trimmed = input.trim();
+  const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect";
+  const parts = parseModCommandArgv(trimmed.slice(command.length).trim());
+  if (parts.length === 0) {
+    return { kind: "single" };
+  }
+
+  let recentLimit: number | null = null;
+  const conversationIds: string[] = [];
+  const instructions: string[] = [];
+  let auto = false;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (!part) continue;
+    if (
+      part === "--instruction" ||
+      part === "--instructions" ||
+      part === "-i"
+    ) {
+      let instructionEnd = index + 1;
+      while (instructionEnd < parts.length) {
+        const instructionPart = parts[instructionEnd];
+        if (!instructionPart || isReflectCommandFlag(instructionPart)) break;
+        instructionEnd += 1;
+      }
+      const instruction = parts
+        .slice(index + 1, instructionEnd)
+        .join(" ")
+        .trim();
+      if (!instruction?.trim()) {
+        throw new Error("Usage: /reflect --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      index = instructionEnd - 1;
+      continue;
+    }
+    if (part.startsWith("--instruction=")) {
+      const instruction = part.slice("--instruction=".length).trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      continue;
+    }
+    if (part === "--") {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect -- <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
+    if (part === "--auto") {
+      auto = true;
+      continue;
+    }
+    if (part === "--recent") {
+      const raw = parts[index + 1];
+      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error("Usage: /reflect --recent <positive integer>");
+      }
+      recentLimit = parsed;
+      index += 1;
+      continue;
+    }
+    if (part === "--conversation") {
+      const conversationId = parts[index + 1];
+      if (!conversationId) {
+        throw new Error("Usage: /reflect --conversation <conversation-id>");
+      }
+      conversationIds.push(conversationId);
+      index += 1;
+      continue;
+    }
+    throw new Error(
+      "Usage: /reflect [--recent N | --conversation <id> ... | --auto] [--instruction <instruction>]",
+    );
+  }
+
+  const instruction = instructions.join("\n").trim() || undefined;
+  const modes = [recentLimit !== null, conversationIds.length > 0, auto].filter(
+    Boolean,
+  ).length;
+  if (modes > 1) {
+    throw new Error("Use only one of --recent, --conversation, or --auto.");
+  }
+  if (auto) {
+    return { instruction, kind: "auto" };
+  }
+  if (recentLimit !== null) {
+    return { instruction, kind: "recent", limit: recentLimit };
+  }
+  if (conversationIds.length > 0) {
+    return { conversationIds, instruction, kind: "conversations" };
+  }
+  return { instruction, kind: "single" };
+}
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
   const {
@@ -2946,7 +3081,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
 
         // Special handling for /reflect command - manually launch reflection subagent
-        if (trimmed === "/reflect") {
+        if (trimmed === "/reflect" || trimmed.startsWith("/reflect ")) {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
 
           if (!isActiveMemfsEnabled(agentId)) {
@@ -2956,57 +3091,363 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: true };
           }
 
+          let reflectionReserved = false;
+          let reflectionReservationDelegated = false;
+          const releaseReflectionReservation = () => {
+            if (!reflectionReserved) return;
+            releaseReflectionLaunch(agentId);
+            reflectionReserved = false;
+          };
+
           try {
+            const reflectArgs = parseReflectCommandArgs(trimmed);
             const reflectionConversationId =
               conversationIdRef.current ?? "default";
-            const result = await launchReflectionSubagent({
-              agentId,
-              conversationId: reflectionConversationId,
-              memfsEnabled: isActiveMemfsEnabled(agentId),
-              triggerSource: "manual",
-              description: "Reflecting on conversation",
-              completionConversationId: () => conversationIdRef.current,
-              recompileByConversation:
-                systemPromptRecompileByConversationRef.current,
-              recompileQueuedByConversation:
-                queuedSystemPromptRecompileByConversationRef.current,
-              onCompletionMessage: (completionMessage) => {
-                appendTaskNotificationEvents([completionMessage]);
-              },
-              feedbackContext: {
-                parentAgentName: agentName,
-                parentAgentDescription: agentDescription,
-                surface: "letta_code_tui",
-                model: currentModelId,
-              },
-            });
+            if (reflectArgs.kind === "single") {
+              const result = await launchReflectionSubagent({
+                agentId,
+                conversationId: reflectionConversationId,
+                memfsEnabled: isActiveMemfsEnabled(agentId),
+                triggerSource: "manual",
+                description: AUTO_REFLECTION_DESCRIPTION,
+                instruction: reflectArgs.instruction,
+                completionConversationId: () => conversationIdRef.current,
+                recompileByConversation:
+                  systemPromptRecompileByConversationRef.current,
+                recompileQueuedByConversation:
+                  queuedSystemPromptRecompileByConversationRef.current,
+                onCompletionMessage: (completionMessage) => {
+                  appendTaskNotificationEvents([completionMessage]);
+                },
+                feedbackContext: {
+                  parentAgentName: agentName,
+                  parentAgentDescription: agentDescription,
+                  surface: "letta_code_tui",
+                  model: currentModelId,
+                },
+              });
 
-            if (!result.launched) {
-              if (result.reason === "already_active") {
-                cmd.fail(
-                  "A reflection agent is already running in the background.",
-                );
-              } else if (result.reason === "no_payload") {
-                cmd.fail("No new transcript content to reflect on.");
-              } else if (result.reason === "memfs_disabled") {
-                cmd.fail(
-                  "Memory filesystem is not enabled. Use /remember instead.",
-                );
-              } else {
-                const errorDetails = formatErrorDetails(
-                  result.error ?? "Unknown error",
-                  agentId,
-                );
-                cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+              if (!result.launched) {
+                if (result.reason === "already_active") {
+                  cmd.fail(
+                    "A reflection agent is already running in the background.",
+                  );
+                } else if (result.reason === "no_payload") {
+                  cmd.fail("No new transcript content to reflect on.");
+                } else if (result.reason === "memfs_disabled") {
+                  cmd.fail(
+                    "Memory filesystem is not enabled. Use /remember instead.",
+                  );
+                } else {
+                  const errorDetails = formatErrorDetails(
+                    result.error ?? "Unknown error",
+                    agentId,
+                  );
+                  cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+                }
+                return { submitted: true };
               }
+
+              cmd.finish(
+                `Reflecting on the recent conversation. View the transcript here: ${result.payloadPath}`,
+                true,
+              );
               return { submitted: true };
             }
 
+            if (!tryReserveReflectionLaunch(agentId)) {
+              cmd.fail(
+                "A reflection agent is already running in the background.",
+              );
+              return { submitted: true };
+            }
+            reflectionReserved = true;
+
+            // Fetch the agent's system prompt so multi-transcript reflection
+            // payloads include the core behavioural instructions (filtered to
+            // strip dynamic content).
+            let systemPrompt: string | undefined;
+            try {
+              const agent = await getBackend().retrieveAgent(agentId);
+              systemPrompt = agent.system ?? undefined;
+            } catch {
+              // Non-fatal — the reflection payload will just omit the system prompt.
+            }
+
+            if (reflectArgs.kind === "auto") {
+              const autoPayload = await buildReflectionAutoPayload({
+                agentId,
+                currentConversationId: reflectionConversationId,
+                instruction: reflectArgs.instruction,
+              });
+              if (!autoPayload) {
+                releaseReflectionReservation();
+                cmd.fail("No transcript candidates found for auto selection.");
+                return { submitted: true };
+              }
+
+              const { spawnBackgroundSubagentTask } = await import(
+                "@/tools/impl/task"
+              );
+              const { subagentId: selectorSubagentId } =
+                spawnBackgroundSubagentTask({
+                  subagentType: "reflection",
+                  prompt: buildReflectionSelectorPrompt({
+                    instruction: reflectArgs.instruction,
+                  }),
+                  description: "Selecting reflection transcripts",
+                  silentCompletion: true,
+                  transcriptPath: autoPayload.candidatesPath,
+                  parentScope: {
+                    agentId,
+                    conversationId: reflectionConversationId,
+                  },
+                  onComplete: async ({ success, error, report }) => {
+                    if (!success) {
+                      releaseReflectionReservation();
+                      appendTaskNotificationEvents([
+                        `Automatic reflection selection failed: ${error ?? "selector failed"}`,
+                      ]);
+                      return;
+                    }
+
+                    let finalReflectionSpawned = false;
+                    try {
+                      const selectedConversations =
+                        await readReflectionAutoSelection({
+                          selectionReport: report,
+                          candidates: autoPayload.candidates,
+                        });
+                      if (selectedConversations.length === 0) {
+                        releaseReflectionReservation();
+                        appendTaskNotificationEvents([
+                          "Automatic reflection selected no transcript candidates.",
+                        ]);
+                        return;
+                      }
+
+                      const autoReflectionPayload =
+                        await buildMultiReflectionPayload({
+                          agentId,
+                          selectionPolicy: {
+                            mode: "auto-selected",
+                            selectedConversations,
+                            candidatesPath: autoPayload.candidatesPath,
+                          },
+                          instruction: reflectArgs.instruction,
+                          systemPrompt,
+                        });
+                      if (!autoReflectionPayload) {
+                        releaseReflectionReservation();
+                        appendTaskNotificationEvents([
+                          "Automatic reflection selected transcript candidates, but no transcript content was available.",
+                        ]);
+                        return;
+                      }
+
+                      const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+                      const parentMemory =
+                        await buildParentMemorySnapshot(memoryDir);
+                      const reflectionPrompt = buildReflectionSubagentPrompt({
+                        instruction: reflectArgs.instruction,
+                        memoryDir,
+                        parentMemory,
+                      });
+
+                      spawnBackgroundSubagentTask({
+                        subagentType: "reflection",
+                        prompt: reflectionPrompt,
+                        description: "Reflecting on auto-selected transcripts",
+                        silentCompletion: true,
+                        transcriptPath: autoReflectionPayload.payloadPath,
+                        parentScope: {
+                          agentId,
+                          conversationId: reflectionConversationId,
+                        },
+                        onComplete: async ({
+                          success: reflectionSuccess,
+                          error: reflectionError,
+                          agentId: reflectionAgentId,
+                        }) => {
+                          try {
+                            telemetry.trackReflectionEnd(
+                              "manual",
+                              reflectionSuccess,
+                              {
+                                subagentId: reflectionAgentId ?? undefined,
+                                conversationId: reflectionConversationId,
+                                error: reflectionError,
+                              },
+                            );
+                            await finalizeMultiReflectionPayload(
+                              agentId,
+                              autoReflectionPayload.manifest,
+                              reflectionSuccess,
+                            );
+                            const msg = await handleMemorySubagentCompletion(
+                              {
+                                agentId,
+                                conversationId: conversationIdRef.current,
+                                subagentType: "reflection",
+                                success: reflectionSuccess,
+                                error: reflectionError,
+                              },
+                              {
+                                recompileByConversation:
+                                  systemPromptRecompileByConversationRef.current,
+                                recompileQueuedByConversation:
+                                  queuedSystemPromptRecompileByConversationRef.current,
+                                logRecompileFailure: (message) =>
+                                  debugWarn("memory", message),
+                              },
+                            );
+                            appendTaskNotificationEvents([msg]);
+                          } finally {
+                            releaseReflectionReservation();
+                          }
+                        },
+                      });
+                      reflectionReservationDelegated = true;
+                      finalReflectionSpawned = true;
+
+                      telemetry.trackReflectionStart("manual", {
+                        conversationId: reflectionConversationId,
+                        startMessageId: autoReflectionPayload.startMessageId,
+                        endMessageId: autoReflectionPayload.endMessageId,
+                      });
+                      appendTaskNotificationEvents([
+                        `Automatic reflection selected ${selectedConversations.length} transcript(s); launched reflection. Payload: ${autoReflectionPayload.payloadPath}`,
+                      ]);
+                    } catch (selectionError) {
+                      if (!finalReflectionSpawned) {
+                        releaseReflectionReservation();
+                      }
+                      const errorDetails = formatErrorDetails(
+                        selectionError,
+                        agentId,
+                      );
+                      appendTaskNotificationEvents([
+                        `Automatic reflection failed after selection: ${errorDetails}`,
+                      ]);
+                    }
+                  },
+                });
+              reflectionReservationDelegated = true;
+
+              telemetry.trackReflectionStart("manual", {
+                subagentId: selectorSubagentId,
+                conversationId: reflectionConversationId,
+              });
+              cmd.finish(
+                `Reviewing ${autoPayload.candidates.candidates.length} candidate transcript(s) for reflection. View the transcript candidates here: ${autoPayload.candidatesPath}`,
+                true,
+              );
+              return { submitted: true };
+            }
+
+            const reflectionPayload = await buildMultiReflectionPayload({
+              agentId,
+              selectionPolicy:
+                reflectArgs.kind === "recent"
+                  ? { mode: "recent", limit: reflectArgs.limit }
+                  : {
+                      mode: "explicit-conversations",
+                      conversationIds: reflectArgs.conversationIds,
+                    },
+              instruction: reflectArgs.instruction,
+              systemPrompt,
+            });
+
+            if (!reflectionPayload) {
+              releaseReflectionReservation();
+              cmd.fail(
+                "No transcript content found for the selected conversations.",
+              );
+              return { submitted: true };
+            }
+
+            const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+            const parentMemory = await buildParentMemorySnapshot(memoryDir);
+            const reflectionPrompt = buildReflectionSubagentPrompt({
+              instruction: reflectArgs.instruction,
+              memoryDir,
+              parentMemory,
+            });
+
+            const {
+              spawnBackgroundSubagentTask,
+              waitForBackgroundSubagentAgentId,
+            } = await import("@/tools/impl/task");
+            const { subagentId } = spawnBackgroundSubagentTask({
+              subagentType: "reflection",
+              prompt: reflectionPrompt,
+              description: "Reflecting on conversation",
+              silentCompletion: true,
+              transcriptPath: reflectionPayload.payloadPath,
+              parentScope: {
+                agentId,
+                conversationId: reflectionConversationId,
+              },
+              onComplete: async ({
+                success,
+                error,
+                agentId: reflectionAgentId,
+              }) => {
+                try {
+                  telemetry.trackReflectionEnd("manual", success, {
+                    subagentId: reflectionAgentId ?? undefined,
+                    conversationId: reflectionConversationId,
+                    error,
+                  });
+                  await finalizeMultiReflectionPayload(
+                    agentId,
+                    reflectionPayload.manifest,
+                    success,
+                  );
+
+                  const msg = await handleMemorySubagentCompletion(
+                    {
+                      agentId,
+                      conversationId: conversationIdRef.current,
+                      subagentType: "reflection",
+                      success,
+                      error,
+                    },
+                    {
+                      recompileByConversation:
+                        systemPromptRecompileByConversationRef.current,
+                      recompileQueuedByConversation:
+                        queuedSystemPromptRecompileByConversationRef.current,
+                      logRecompileFailure: (message) =>
+                        debugWarn("memory", message),
+                    },
+                  );
+                  appendTaskNotificationEvents([msg]);
+                } finally {
+                  releaseReflectionReservation();
+                }
+              },
+            });
+            reflectionReservationDelegated = true;
+            const reflectionAgentId = await waitForBackgroundSubagentAgentId(
+              subagentId,
+              REFLECTION_AGENT_ID_WAIT_MS,
+            );
+            telemetry.trackReflectionStart("manual", {
+              subagentId: reflectionAgentId ?? undefined,
+              conversationId: reflectionConversationId,
+              startMessageId: reflectionPayload.startMessageId,
+              endMessageId: reflectionPayload.endMessageId,
+            });
+
             cmd.finish(
-              `Reflecting on the recent conversation. View the transcript here: ${result.payloadPath}`,
+              `Reflecting on ${reflectionPayload.manifest.transcripts.length} transcript(s). View the payload here: ${reflectionPayload.payloadPath}`,
               true,
             );
           } catch (error) {
+            if (!reflectionReservationDelegated) {
+              releaseReflectionReservation();
+            }
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
           }
