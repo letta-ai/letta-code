@@ -218,6 +218,9 @@ const slackAccountDefaults = {
   defaultPermissionMode: "standard",
   createdAt: "2026-04-11T00:00:00.000Z",
   updatedAt: "2026-04-11T00:00:00.000Z",
+  // Most adapter tests assert immediate per-event dispatch; make that explicit
+  // now that Slack accounts default to a 1000ms inbound debounce window.
+  inboundDebounceMs: 0,
 } as const;
 
 const originalFetch = globalThis.fetch;
