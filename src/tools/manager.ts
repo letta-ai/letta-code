@@ -63,7 +63,11 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
+import {
+  type ToolCallErrorReason,
+  type ToolCallErrorToolType,
+  telemetry,
+} from "@/telemetry";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import {
@@ -596,6 +600,30 @@ export type ToolExecutionResult = {
   stdout?: string[];
   stderr?: string[];
 };
+
+type ToolCallErrorTelemetryContext = {
+  agentId?: string | null;
+  conversationId?: string | null;
+  errorType?: string;
+  reason: ToolCallErrorReason;
+  toolCallId?: string;
+  toolName: string;
+  toolType: ToolCallErrorToolType;
+};
+
+function trackToolCallErrorTelemetry(
+  context: ToolCallErrorTelemetryContext,
+): void {
+  telemetry.trackToolCallError({
+    toolName: context.toolName,
+    toolType: context.toolType,
+    reason: context.reason,
+    errorType: context.errorType,
+    toolCallId: context.toolCallId,
+    agentId: context.agentId,
+    conversationId: context.conversationId,
+  });
+}
 
 type ToolRegistry = Map<string, ToolDefinition>;
 
@@ -2200,6 +2228,15 @@ async function executeModTool(
     );
     if (preHookResult.blocked) {
       const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
+      trackToolCallErrorTelemetry({
+        agentId: executionScope.agentId,
+        conversationId: executionScope.conversationId,
+        errorType: "hook_blocked",
+        reason: "pre_tool_hook_blocked",
+        toolCallId: options.toolCallId,
+        toolName,
+        toolType: "mod",
+      });
       return {
         toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
         status: "error",
@@ -2268,8 +2305,19 @@ async function executeModTool(
         duration,
         responseSize,
         toolStatus === "error" ? "tool_error" : undefined,
-        stderr ? stderr.join("\n") : undefined,
+        undefined,
       );
+      if (toolStatus === "error") {
+        trackToolCallErrorTelemetry({
+          agentId: executionScope.agentId,
+          conversationId: executionScope.conversationId,
+          errorType: "tool_error",
+          reason: "tool_returned_error",
+          toolCallId: options.toolCallId,
+          toolName,
+          toolType: "mod",
+        });
+      }
 
       const hookFeedback = await collectPostToolHookFeedback(
         {
@@ -2331,8 +2379,17 @@ async function executeModTool(
         duration,
         errorMessage.length,
         errorType,
-        errorMessage,
+        undefined,
       );
+      trackToolCallErrorTelemetry({
+        agentId: executionScope.agentId,
+        conversationId: executionScope.conversationId,
+        errorType,
+        reason: "tool_exception",
+        toolCallId: options.toolCallId,
+        toolName,
+        toolType: "mod",
+      });
 
       const hookFeedback = await collectPostToolHookFeedback(
         {
@@ -2408,6 +2465,13 @@ export async function executeTool(
     ? getExecutionContextById(options.toolContextId)
     : undefined;
   if (options?.toolContextId && !context) {
+    trackToolCallErrorTelemetry({
+      errorType: "tool_context_not_found",
+      reason: "tool_context_not_found",
+      toolCallId: options.toolCallId,
+      toolName: name,
+      toolType: "unknown",
+    });
     return {
       toolReturn: `Tool execution context not found: ${options.toolContextId}`,
       status: "error",
@@ -2441,6 +2505,15 @@ export async function executeTool(
   if (activeModTools.has(name)) {
     const modTool = activeModTools.get(name);
     if (!modTool) {
+      trackToolCallErrorTelemetry({
+        agentId: executionScope.agentId,
+        conversationId: executionScope.conversationId,
+        errorType: "tool_not_found",
+        reason: "tool_not_found",
+        toolCallId: options?.toolCallId,
+        toolName: name,
+        toolType: "mod",
+      });
       return {
         toolReturn: `Mod tool not found: ${name}`,
         status: "error",
@@ -2464,6 +2537,15 @@ export async function executeTool(
     });
     if (permissionDecision?.decision !== undefined) {
       if (permissionDecision.decision !== "allow") {
+        trackToolCallErrorTelemetry({
+          agentId: executionScope.agentId,
+          conversationId: executionScope.conversationId,
+          errorType: "permission_denied",
+          reason: "permission_denied",
+          toolCallId: options?.toolCallId,
+          toolName: name,
+          toolType: "mod",
+        });
         return createModPermissionToolResult(permissionDecision);
       }
     }
@@ -2498,16 +2580,37 @@ export async function executeTool(
     });
     if (permissionDecision?.decision !== undefined) {
       if (permissionDecision.decision !== "allow") {
+        trackToolCallErrorTelemetry({
+          agentId: executionScope.agentId,
+          conversationId: executionScope.conversationId,
+          errorType: "permission_denied",
+          reason: "permission_denied",
+          toolCallId: options?.toolCallId,
+          toolName: name,
+          toolType: "external",
+        });
         return createModPermissionToolResult(permissionDecision);
       }
     }
-    return executeExternalTool(
+    const externalResult = await executeExternalTool(
       options?.toolCallId ?? `ext-${Date.now()}`,
       name,
       eventArgs as Record<string, unknown>,
       activeExternalExecutor,
       externalTool,
     );
+    if (externalResult.status === "error") {
+      trackToolCallErrorTelemetry({
+        agentId: executionScope.agentId,
+        conversationId: executionScope.conversationId,
+        errorType: "tool_error",
+        reason: "tool_returned_error",
+        toolCallId: options?.toolCallId,
+        toolName: name,
+        toolType: "external",
+      });
+    }
+    return externalResult;
   }
 
   const internalName = resolveInternalToolName(name, activeRegistry);
@@ -2517,6 +2620,15 @@ export async function executeTool(
       ...Array.from(activeExternalTools.keys()),
       ...Array.from(activeModTools.keys()),
     ];
+    trackToolCallErrorTelemetry({
+      agentId: executionScope.agentId,
+      conversationId: executionScope.conversationId,
+      errorType: "tool_not_found",
+      reason: "tool_not_found",
+      toolCallId: options?.toolCallId,
+      toolName: name,
+      toolType: "unknown",
+    });
     return {
       toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
       status: "error",
@@ -2530,6 +2642,15 @@ export async function executeTool(
       ...Array.from(activeExternalTools.keys()),
       ...Array.from(activeModTools.keys()),
     ];
+    trackToolCallErrorTelemetry({
+      agentId: executionScope.agentId,
+      conversationId: executionScope.conversationId,
+      errorType: "tool_not_found",
+      reason: "tool_not_found",
+      toolCallId: options?.toolCallId,
+      toolName: name,
+      toolType: "built_in",
+    });
     return {
       toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
       status: "error",
@@ -2555,6 +2676,15 @@ export async function executeTool(
   });
   if (permissionDecision?.decision !== undefined) {
     if (permissionDecision.decision !== "allow") {
+      trackToolCallErrorTelemetry({
+        agentId: executionScope.agentId,
+        conversationId: executionScope.conversationId,
+        errorType: "permission_denied",
+        reason: "permission_denied",
+        toolCallId: options?.toolCallId,
+        toolName: internalName,
+        toolType: "built_in",
+      });
       return createModPermissionToolResult(permissionDecision);
     }
   }
@@ -2571,6 +2701,15 @@ export async function executeTool(
     );
     if (preHookResult.blocked) {
       const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
+      trackToolCallErrorTelemetry({
+        agentId: executionScope.agentId,
+        conversationId: executionScope.conversationId,
+        errorType: "hook_blocked",
+        reason: "pre_tool_hook_blocked",
+        toolCallId: options?.toolCallId,
+        toolName: internalName,
+        toolType: "built_in",
+      });
       return {
         toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
         status: "error",
@@ -2746,8 +2885,19 @@ export async function executeTool(
         duration,
         responseSize,
         toolStatus === "error" ? "tool_error" : undefined,
-        stderr ? stderr.join("\n") : undefined,
+        undefined,
       );
+      if (toolStatus === "error") {
+        trackToolCallErrorTelemetry({
+          agentId: executionScope.agentId,
+          conversationId: executionScope.conversationId,
+          errorType: "tool_error",
+          reason: "tool_returned_error",
+          toolCallId: options?.toolCallId,
+          toolName: internalName,
+          toolType: "built_in",
+        });
+      }
 
       const hookFeedback = await collectPostToolHookFeedback(
         {
@@ -2806,8 +2956,17 @@ export async function executeTool(
         duration,
         errorMessage.length,
         errorType,
-        errorMessage,
+        undefined,
       );
+      trackToolCallErrorTelemetry({
+        agentId: executionScope.agentId,
+        conversationId: executionScope.conversationId,
+        errorType,
+        reason: "tool_exception",
+        toolCallId: options?.toolCallId,
+        toolName: internalName,
+        toolType: "built_in",
+      });
 
       const hookFeedback = await collectPostToolHookFeedback(
         {

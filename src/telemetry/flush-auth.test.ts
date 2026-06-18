@@ -206,6 +206,53 @@ describe("telemetry flush auth", () => {
     expect(telemetryState.events).toHaveLength(0);
   });
 
+  test("tool call error telemetry queues only safe constellation metadata", () => {
+    telemetry.trackToolCallError({
+      toolName: "Bash",
+      toolType: "built_in",
+      reason: "tool_exception",
+      errorType: "ShellExecutionError",
+      toolCallId: "call-1",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(telemetryState.events).toHaveLength(1);
+    const event = telemetryState.events[0] as {
+      type?: string;
+      data?: Record<string, unknown>;
+    };
+    expect(event.type).toBe("tool_call_error");
+    expect(event.data).toMatchObject({
+      agent_id: "agent-1",
+      backend: "constellation",
+      conversation_id: "conv-1",
+      error_type: "ShellExecutionError",
+      reason: "tool_exception",
+      status: "error",
+      tool_call_id: "call-1",
+      tool_name: "Bash",
+      tool_type: "built_in",
+    });
+    expect(event.data && "stderr" in event.data).toBe(false);
+    expect(event.data && "tool_arguments" in event.data).toBe(false);
+    expect(event.data && "error_message" in event.data).toBe(false);
+  });
+
+  test("self-hosted users do not queue tool call error telemetry", () => {
+    setEnvVar("LETTA_BASE_URL", "https://self-hosted.example.com");
+
+    telemetry.trackToolCallError({
+      toolName: "Bash",
+      toolType: "built_in",
+      reason: "tool_exception",
+      errorType: "ShellExecutionError",
+      toolCallId: "call-1",
+    });
+
+    expect(telemetryState.events).toHaveLength(0);
+  });
+
   test("self-hosted users still send usage telemetry", async () => {
     setEnvVar("LETTA_BASE_URL", "http://localhost:8283");
 
