@@ -72,7 +72,9 @@ export const InlineQuestionApproval = memo(
     const showOther = currentQuestion?.allowOther !== false;
     const baseOptions = currentQuestion
       ? [
-          ...(currentQuestion.options ?? []),
+          ...(Array.isArray(currentQuestion.options)
+            ? currentQuestion.options
+            : []),
           ...(showOther ? [{ label: "Type something.", description: "" }] : []),
         ]
       : [];

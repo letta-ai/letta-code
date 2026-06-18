@@ -68,7 +68,7 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
     expect(getQuestions(approval(noOptions))).toEqual([]);
   });
 
-  test("returns [] when a question has null/empty `options`", () => {
+  test("returns [] when a question has null/empty/non-array `options`", () => {
     const nullOptions = JSON.stringify({
       questions: [{ header: "H", question: "Q?", options: null }],
     });
@@ -83,6 +83,16 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
       ],
     });
     expect(getQuestions(approval(emptyOptions))).toEqual([]);
+    // Non-array `options` (e.g. an object or string) must be rejected too —
+    // spreading a non-iterable like {} would otherwise throw downstream.
+    const objectOptions = JSON.stringify({
+      questions: [{ header: "H", question: "Q?", options: { a: 1 } }],
+    });
+    expect(getQuestions(approval(objectOptions))).toEqual([]);
+    const stringOptions = JSON.stringify({
+      questions: [{ header: "H", question: "Q?", options: "nope" }],
+    });
+    expect(getQuestions(approval(stringOptions))).toEqual([]);
   });
 
   test("returns [] if any single question is malformed (all-or-nothing)", () => {
