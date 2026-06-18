@@ -116,7 +116,8 @@ test("InlineQuestionApproval coerces non-array `options` instead of throwing (de
 
   // An `options` array containing null/non-object entries must not throw when
   // the render path reads option.label/option.description. The component
-  // filters out non-object entries as defense-in-depth.
+  // filters out non-object entries (and non-string label/description) as
+  // defense-in-depth.
   const renderWithEntries = (options: unknown) =>
     renderWithQuestions([
       {
@@ -131,6 +132,20 @@ test("InlineQuestionApproval coerces non-array `options` instead of throwing (de
     [42],
     [null, { label: "A", description: "" }],
     [{ label: "A", description: "" }, "bad"],
+    // Object entries with non-string label/description would throw when
+    // rendered as React children / used as a key — the filter drops them.
+    [
+      { label: {}, description: "" } as unknown as {
+        label: string;
+        description: string;
+      },
+    ],
+    [
+      { label: "A", description: {} } as unknown as {
+        label: string;
+        description: string;
+      },
+    ],
   ]) {
     const output = await renderWithEntries(badEntries);
     expect(typeof output).toBe("string");

@@ -141,6 +141,24 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
       ],
     });
     expect(getQuestions(approval(missingLabel))).toEqual([]);
+    // A non-string `description` (e.g. {}) is rendered as a React child when
+    // truthy, which throws — reject it.
+    const nonStringDescription = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: [
+            { label: "A", description: {} } as unknown as {
+              label: string;
+              description: string;
+            },
+          ],
+        },
+      ],
+    });
+    expect(getQuestions(approval(nonStringDescription))).toEqual([]);
+
     // One bad entry invalidates the whole question (all-or-nothing).
     const mixedEntries = JSON.stringify({
       questions: [
@@ -155,6 +173,74 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
       ],
     });
     expect(getQuestions(approval(mixedEntries))).toEqual([]);
+  });
+
+  test("returns [] when question-level fields have the wrong type", () => {
+    // InlineQuestionApproval calls `question.includes(...)` and renders
+    // `header` as a React child, so non-string values throw. multiSelect/
+    // allowOther must be booleans (allowOther may be omitted).
+    const baseOptions = [{ label: "A", description: "" }];
+    const nonStringQuestion = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: { bad: true } as unknown as string,
+          options: baseOptions,
+          multiSelect: false,
+        },
+      ],
+    });
+    expect(getQuestions(approval(nonStringQuestion))).toEqual([]);
+    const nonStringHeader = JSON.stringify({
+      questions: [
+        {
+          header: { bad: true } as unknown as string,
+          question: "Q?",
+          options: baseOptions,
+          multiSelect: false,
+        },
+      ],
+    });
+    expect(getQuestions(approval(nonStringHeader))).toEqual([]);
+    const nonBooleanMultiSelect = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: baseOptions,
+          multiSelect: "yes" as unknown as boolean,
+        },
+      ],
+    });
+    expect(getQuestions(approval(nonBooleanMultiSelect))).toEqual([]);
+    const missingMultiSelect = JSON.stringify({
+      questions: [{ header: "H", question: "Q?", options: baseOptions }],
+    });
+    expect(getQuestions(approval(missingMultiSelect))).toEqual([]);
+    const nonBooleanAllowOther = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: baseOptions,
+          multiSelect: false,
+          allowOther: "yes" as unknown as boolean,
+        },
+      ],
+    });
+    expect(getQuestions(approval(nonBooleanAllowOther))).toEqual([]);
+    // allowOther omitted is fine (it's optional).
+    const validWithoutAllowOther = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: [{ label: "A", description: "d" }],
+          multiSelect: false,
+        },
+      ],
+    });
+    expect(getQuestions(approval(validWithoutAllowOther))).toHaveLength(1);
   });
 
   test("returns [] if any single question is malformed (all-or-nothing)", () => {
