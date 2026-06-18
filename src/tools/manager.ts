@@ -2071,7 +2071,11 @@ async function dispatchMemoryToolLifecycleEvent(
   sources: ChannelTurnSource[],
 ): Promise<void> {
   try {
-    await getChannelRegistry().dispatchTurnLifecycleEvent({
+    const registry = getChannelRegistry();
+    if (!registry) {
+      return;
+    }
+    await registry.dispatchTurnLifecycleEvent({
       type,
       toolName,
       sources,
