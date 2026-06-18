@@ -477,12 +477,8 @@ export function buildDeviceStatus(
     memory_directory: scopedAgentId
       ? getScopedMemoryFilesystemRoot(scopedAgentId)
       : null,
-    ...(!scope
-      ? {
-          cwd_map: Object.fromEntries(listener.workingDirectoryByConversation),
-          boot_working_directory: listener.bootWorkingDirectory,
-        }
-      : {}),
+    cwd_map: Object.fromEntries(listener.workingDirectoryByConversation),
+    boot_working_directory: listener.bootWorkingDirectory,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: FROZEN_SUPPORTED_COMMANDS,
     reflection_settings: scopedAgentId
