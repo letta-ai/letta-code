@@ -51,6 +51,7 @@ function buildModelSettings(
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
+  const isMoonshot = modelHandle.startsWith("moonshot/");
   const isBedrock = modelHandle.startsWith("bedrock/");
 
   let settings: ModelSettings;
@@ -190,6 +191,11 @@ function buildModelSettings(
       };
     }
     settings = bedrockSettings;
+  } else if (isMoonshot) {
+    settings = {
+      provider_type: "moonshot",
+      parallel_tool_calls: true,
+    };
   } else {
     // Unknown/BYOK providers (e.g. openai-proxy) — assume OpenAI-compatible
     const openaiProxySettings: OpenAIModelSettings = {
