@@ -379,7 +379,7 @@ export interface SlackChannelConfig {
   allowedUsers: string[];
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, successful turns add ✅ after removing 👀. Default false. */
+  /** When false, successful turns remove 👀 without adding ✅. Default true. */
   showCompletedReaction?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
@@ -515,7 +515,7 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   defaultPermissionMode: SlackDefaultPermissionMode;
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, successful turns add ✅ after removing 👀. Default false. */
+  /** When false, successful turns remove 👀 without adding ✅. Default true. */
   showCompletedReaction?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;

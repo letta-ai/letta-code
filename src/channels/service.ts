@@ -596,7 +596,7 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
-    showCompletedReaction: account.showCompletedReaction === true,
+    showCompletedReaction: account.showCompletedReaction !== false,
     listenMode: account.listenMode === true,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
@@ -705,7 +705,7 @@ function createAccountFromPatch(
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: normalizedPatch.transcribeVoice === true,
-    showCompletedReaction: normalizedPatch.showCompletedReaction === true,
+    showCompletedReaction: normalizedPatch.showCompletedReaction !== false,
     listenMode: normalizedPatch.listenMode === true,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
@@ -855,7 +855,7 @@ function mergeAccountPatch(
     showCompletedReaction:
       normalizedPatch.showCompletedReaction ??
       existing.showCompletedReaction ??
-      false,
+      true,
     listenMode: normalizedPatch.listenMode ?? existing.listenMode ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
@@ -1013,7 +1013,7 @@ export function getChannelConfigSnapshot(
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
-    showCompletedReaction: account.showCompletedReaction === true,
+    showCompletedReaction: account.showCompletedReaction !== false,
     listenMode: account.listenMode === true,
   };
 }

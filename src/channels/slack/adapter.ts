@@ -839,7 +839,7 @@ export function createSlackAdapter(
 
         if (
           nextState !== "completed" ||
-          config.showCompletedReaction === true
+          config.showCompletedReaction !== false
         ) {
           await sendLifecycleReaction(
             source,

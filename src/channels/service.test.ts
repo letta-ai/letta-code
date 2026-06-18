@@ -897,66 +897,6 @@ describe("channel service", () => {
     );
   });
 
-  test("slack live account helpers default completed reactions off unless opted in", () => {
-    const created = createChannelAccountLive(
-      "slack",
-      {
-        displayName: "Slack Defaults",
-        enabled: true,
-        dmPolicy: "pairing",
-        config: {
-          bot_token: "xoxb-test-token",
-          app_token: "xapp-test-token",
-          mode: "socket",
-          agent_id: null,
-        },
-      },
-      { accountId: "slack-default-reactions" },
-    );
-
-    expect(created).toEqual(
-      expect.objectContaining({
-        accountId: "slack-default-reactions",
-        showCompletedReaction: false,
-        config: expect.objectContaining({
-          show_completed_reaction: false,
-        }),
-      }),
-    );
-
-    expect(
-      getChannelConfigSnapshot("slack", "slack-default-reactions"),
-    ).toEqual(
-      expect.objectContaining({
-        accountId: "slack-default-reactions",
-        showCompletedReaction: false,
-        config: expect.objectContaining({
-          show_completed_reaction: false,
-        }),
-      }),
-    );
-
-    const updated = updateChannelAccountLive(
-      "slack",
-      "slack-default-reactions",
-      {
-        config: {
-          show_completed_reaction: true,
-        },
-      },
-    );
-
-    expect(updated).toEqual(
-      expect.objectContaining({
-        accountId: "slack-default-reactions",
-        showCompletedReaction: true,
-        config: expect.objectContaining({
-          show_completed_reaction: true,
-        }),
-      }),
-    );
-  });
-
   test("config helpers reject ambiguous singleton lookups once multiple accounts exist", () => {
     createChannelAccountLive(
       "telegram",

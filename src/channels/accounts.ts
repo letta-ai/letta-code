@@ -300,7 +300,7 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     (next as SlackChannelAccount).transcribeVoice =
       (next as SlackChannelAccount).transcribeVoice === true;
     (next as SlackChannelAccount).showCompletedReaction =
-      (next as SlackChannelAccount).showCompletedReaction === true;
+      (next as SlackChannelAccount).showCompletedReaction !== false;
     (next as SlackChannelAccount).listenMode =
       (next as SlackChannelAccount).listenMode === true;
   }
@@ -418,7 +418,7 @@ function makeDefaultLegacyAccount(
     agentId: null,
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: config.transcribeVoice === true,
-    showCompletedReaction: config.showCompletedReaction === true,
+    showCompletedReaction: config.showCompletedReaction !== false,
     listenMode: config.listenMode === true,
     createdAt: now,
     updatedAt: now,
