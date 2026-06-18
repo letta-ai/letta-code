@@ -6,6 +6,7 @@ import {
   getAvailableModelHandles,
   getAvailableModelsCacheInfo,
   getCachedModelHandles,
+  getCachedModelProviderTypes,
 } from "@/agent/available-models";
 import {
   CHATGPT_FAST_SERVICE_TIER,
@@ -220,6 +221,9 @@ export function ModelSelector({
   const [allApiHandles, setAllApiHandles] = useState<string[]>(
     cachedHandlesAtMount ? Array.from(cachedHandlesAtMount) : [],
   );
+  const [providerTypesByHandle, setProviderTypesByHandle] = useState<
+    Map<string, string>
+  >(() => getCachedModelProviderTypes() ?? new Map());
   const [isLoading, setIsLoading] = useState(cachedHandlesAtMount === null);
   const [error, setError] = useState<string | null>(null);
   const [isCached, setIsCached] = useState(cachedHandlesAtMount !== null);
@@ -279,6 +283,7 @@ export function ModelSelector({
 
       setAvailableHandles(result.handles);
       setAllApiHandles(Array.from(result.handles));
+      setProviderTypesByHandle(new Map(result.providerTypes));
       setIsCached(!forceRefresh && cacheInfoBefore.isFresh);
       setIsLoading(false);
       setRefreshing(false);
@@ -290,6 +295,7 @@ export function ModelSelector({
       // Fallback: show all models if API fails
       setAvailableHandles(null);
       setAllApiHandles([]);
+      setProviderTypesByHandle(new Map());
     }
   });
 
@@ -369,6 +375,21 @@ export function ModelSelector({
     [],
   );
 
+  const withProviderTypeMetadata = useCallback(
+    (
+      handle: string,
+      updateArgs: Record<string, unknown> | undefined,
+    ): Record<string, unknown> | undefined => {
+      const providerType = providerTypesByHandle.get(handle);
+      if (!providerType) return updateArgs;
+      return {
+        ...(updateArgs ?? {}),
+        provider_type: providerType,
+      };
+    },
+    [providerTypesByHandle],
+  );
+
   const modelsForBackendHandle = useCallback(
     (handle: string, includeUnknown: boolean): UiModel[] => {
       const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
@@ -382,15 +403,28 @@ export function ModelSelector({
           | undefined) ?? {}),
         ...(fastRegistryHandle ? { service_tier: null } : {}),
       };
+      const baseUpdateArgsWithProviderType = withProviderTypeMetadata(
+        handle,
+        Object.keys(baseUpdateArgs).length > 0 ? baseUpdateArgs : undefined,
+      );
+      const fallbackModel = includeUnknown
+        ? toSelectorModelForHandle(handle)
+        : null;
       const baseModel = baseStaticModel
         ? withActualHandle(
             baseStaticModel,
             handle,
             registryHandle,
-            Object.keys(baseUpdateArgs).length > 0 ? baseUpdateArgs : undefined,
+            baseUpdateArgsWithProviderType,
           )
-        : includeUnknown
-          ? toSelectorModelForHandle(handle)
+        : fallbackModel
+          ? {
+              ...fallbackModel,
+              updateArgs: withProviderTypeMetadata(
+                handle,
+                fallbackModel.updateArgs,
+              ),
+            }
           : null;
 
       const result = baseModel ? [baseModel] : [];
@@ -404,6 +438,7 @@ export function ModelSelector({
                 | Record<string, unknown>
                 | undefined) ?? {}),
               service_tier: CHATGPT_FAST_SERVICE_TIER,
+              ...withProviderTypeMetadata(handle, undefined),
             }),
           );
         }
@@ -411,7 +446,7 @@ export function ModelSelector({
 
       return result;
     },
-    [pickPreferredStaticModel, withActualHandle],
+    [pickPreferredStaticModel, withActualHandle, withProviderTypeMetadata],
   );
 
   // Supported models: models.json entries that are available
@@ -554,6 +589,10 @@ export function ModelSelector({
           ...staticModel,
           id: handle,
           handle: handle,
+          updateArgs: withProviderTypeMetadata(
+            handle,
+            staticModel.updateArgs as Record<string, unknown> | undefined,
+          ),
         });
       }
     }
@@ -577,6 +616,7 @@ export function ModelSelector({
     searchQuery,
     isByokHandle,
     toBaseHandle,
+    withProviderTypeMetadata,
   ]);
 
   // BYOK (all): all BYOK handles from API (including recommended ones)
@@ -678,19 +718,35 @@ export function ModelSelector({
       if (availableHandles !== null && !availableHandles.has(handle)) continue;
 
       // Try to resolve to a static model with label/description
-      const staticModel = pickPreferredStaticModel(handle);
+      const staticModel = pickPreferredStaticModel(toBaseHandle(handle));
       if (staticModel) {
         resolved.push({
           ...staticModel,
           id: handle,
           handle,
+          updateArgs: withProviderTypeMetadata(
+            handle,
+            staticModel.updateArgs as Record<string, unknown> | undefined,
+          ),
         });
       } else {
-        resolved.push(toSelectorModelForHandle(handle));
+        const fallbackModel = toSelectorModelForHandle(handle);
+        resolved.push({
+          ...fallbackModel,
+          updateArgs: withProviderTypeMetadata(
+            handle,
+            fallbackModel.updateArgs,
+          ),
+        });
       }
     }
     return resolved;
-  }, [availableHandles, pickPreferredStaticModel]);
+  }, [
+    availableHandles,
+    pickPreferredStaticModel,
+    toBaseHandle,
+    withProviderTypeMetadata,
+  ]);
 
   // Map category -> list for O(1) lookup
   const categoryListMap = useMemo(
@@ -703,6 +759,7 @@ export function ModelSelector({
         handle,
         label: handle,
         description: "",
+        updateArgs: withProviderTypeMetadata(handle, undefined),
       })),
       "server-recommended": serverRecommendedModels,
       "server-all": serverAllModelRows,
@@ -716,6 +773,7 @@ export function ModelSelector({
       allLettaModels,
       serverRecommendedModels,
       serverAllModelRows,
+      withProviderTypeMetadata,
     ],
   );
 

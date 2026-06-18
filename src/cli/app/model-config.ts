@@ -111,6 +111,32 @@ export function getPreferredAgentModelHandle(
   return buildModelHandleFromLlmConfig(agent.llm_config);
 }
 
+export function providerTypeFromModelSettings(
+  modelSettings: unknown,
+): string | null {
+  if (
+    typeof modelSettings !== "object" ||
+    modelSettings === null ||
+    !("provider_type" in modelSettings)
+  ) {
+    return null;
+  }
+  const providerType = (modelSettings as { provider_type?: unknown })
+    .provider_type;
+  return typeof providerType === "string" && providerType.length > 0
+    ? providerType
+    : null;
+}
+
+export function providerTypeFromUpdateArgs(
+  updateArgs: Record<string, unknown> | undefined | null,
+): string | null {
+  const providerType = updateArgs?.provider_type;
+  return typeof providerType === "string" && providerType.length > 0
+    ? providerType
+    : null;
+}
+
 export function mapHandleToLlmConfigPatch(
   modelHandle: string,
   providerType?: string | null,

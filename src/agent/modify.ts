@@ -280,43 +280,6 @@ function maxTokensForUpdatePayload(
     : undefined;
 }
 
-async function providerTypeForModelHandle(
-  backend: ReturnType<typeof getBackend>,
-  modelHandle: string,
-): Promise<string | undefined> {
-  try {
-    const models = await backend.listModels();
-    const match = models.find(
-      (model: { handle?: string | null }) => model.handle === modelHandle,
-    ) as { provider_type?: string | null } | undefined;
-    return typeof match?.provider_type === "string"
-      ? match.provider_type
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function enrichUpdateArgsWithProviderType(
-  backend: ReturnType<typeof getBackend>,
-  modelHandle: string,
-  updateArgs: Record<string, unknown> | undefined,
-): Promise<Record<string, unknown> | undefined> {
-  if (typeof updateArgs?.provider_type === "string") {
-    return updateArgs;
-  }
-
-  const providerType = await providerTypeForModelHandle(backend, modelHandle);
-  if (!providerType) {
-    return updateArgs;
-  }
-
-  return {
-    ...(updateArgs ?? {}),
-    provider_type: providerType,
-  };
-}
-
 /**
  * Updates an agent's model and model settings.
  *
@@ -346,15 +309,10 @@ export async function updateAgentLLMConfig(
 ): Promise<AgentState> {
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
-  const enrichedUpdateArgs = await enrichUpdateArgsWithProviderType(
-    backend,
-    modelHandle,
-    updateArgs,
-  );
 
   const modelSettings = buildModelSettings(
     modelHandle,
-    updateArgsForModelSettings(enrichedUpdateArgs, { useBackendModelCatalog }),
+    updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
   );
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
@@ -404,15 +362,10 @@ export async function updateConversationLLMConfig(
 ): Promise<Conversation> {
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
-  const enrichedUpdateArgs = await enrichUpdateArgsWithProviderType(
-    backend,
-    modelHandle,
-    updateArgs,
-  );
 
   const modelSettings = buildModelSettings(
     modelHandle,
-    updateArgsForModelSettings(enrichedUpdateArgs, { useBackendModelCatalog }),
+    updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
   );
   const explicitContextWindow = useBackendModelCatalog
     ? undefined

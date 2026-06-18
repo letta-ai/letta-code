@@ -34,6 +34,20 @@ describe("ModelSelector custom BYOK provider detection", () => {
     expect(`${baseProvider}/${model}`).toBe("openai/gpt-5.4-fast");
   });
 
+  test("maps custom ChatGPT OAuth provider handles back to Codex registry handles", () => {
+    const aliases = buildByokProviderAliases([
+      {
+        name: "chatgpt-personal",
+        provider_type: "chatgpt_oauth",
+      },
+    ]);
+
+    expect(aliases["chatgpt-personal"]).toBe("openai-codex");
+    expect(isByokHandleForSelector("chatgpt-personal/gpt-5.5", aliases)).toBe(
+      true,
+    );
+  });
+
   test("preserves existing lc-* aliases", () => {
     const aliases = buildByokProviderAliases([]);
 
