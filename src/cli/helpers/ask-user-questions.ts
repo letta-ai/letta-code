@@ -30,6 +30,10 @@ export function parseAskUserQuestions(
   approval: ApprovalRequest,
 ): AskUserQuestion[] {
   const parsed = safeJsonParseOr<unknown>(approval.toolArgs, {});
+  // safeJsonParseOr returns the raw JSON.parse result, so valid-but-non-object
+  // toolArgs (e.g. "null" → null, "true", "42", "[1,2]") reaches here. Guard
+  // before dereferencing `.questions` — this parser runs in the render path and
+  // a throw bricks the TUI. Reject null, primitives, and arrays.
   if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return [];
   }
