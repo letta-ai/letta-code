@@ -2,7 +2,12 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { clearModTools, registerModTool } from "@/mods/tool-registry";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { telemetry } from "@/telemetry";
-import { executeTool } from "@/tools/manager";
+import {
+  clearCapturedToolExecutionContexts,
+  executeTool,
+  getExecutionContextById,
+  prepareToolExecutionContextForSpecificTools,
+} from "@/tools/manager";
 
 const originalTrackToolCallError = telemetry.trackToolCallError;
 const originalTrackToolUsage = telemetry.trackToolUsage;
@@ -53,6 +58,7 @@ describe("tool error telemetry", () => {
   afterEach(() => {
     telemetry.trackToolCallError = originalTrackToolCallError;
     telemetry.trackToolUsage = originalTrackToolUsage;
+    clearCapturedToolExecutionContexts();
     clearModTools();
   });
 
@@ -142,5 +148,85 @@ describe("tool error telemetry", () => {
       toolType: "mod",
     });
     expect(JSON.stringify(payload)).not.toContain("secret");
+  });
+
+  test("traces unresolved tools with runtime step ids", async () => {
+    const trackToolCallError = mock(() => {});
+    telemetry.trackToolCallError =
+      trackToolCallError as unknown as typeof telemetry.trackToolCallError;
+    telemetry.trackToolUsage = mock(
+      () => {},
+    ) as unknown as typeof telemetry.trackToolUsage;
+
+    const result = await runWithRuntimeContext(
+      {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        stepId: "step-3",
+        workingDirectory: process.cwd(),
+      },
+      () => executeTool("missing_tool", {}, { toolCallId: "call-3" }),
+    );
+
+    expect(result.status).toBe("error");
+    expect(trackToolCallError).toHaveBeenCalledTimes(1);
+    const payload = getFirstToolCallErrorPayload(trackToolCallError);
+    expect(payload).toEqual({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      errorType: "tool_not_found",
+      reason: "tool_not_found",
+      stepId: "step-3",
+      toolCallId: "call-3",
+      toolName: "missing_tool",
+      toolType: "unknown",
+    });
+  });
+
+  test("traces missing built-in registry entries with runtime step ids", async () => {
+    const trackToolCallError = mock(() => {});
+    telemetry.trackToolCallError =
+      trackToolCallError as unknown as typeof telemetry.trackToolCallError;
+    telemetry.trackToolUsage = mock(
+      () => {},
+    ) as unknown as typeof telemetry.trackToolUsage;
+
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Read"],
+      {
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          stepId: "step-4",
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+    const context = getExecutionContextById(prepared.contextId);
+    if (!context) {
+      throw new Error("Expected prepared tool execution context");
+    }
+    context.toolRegistry.set("Read", undefined as never);
+
+    const result = await executeTool(
+      "Read",
+      {},
+      { toolCallId: "call-4", toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("error");
+    expect(trackToolCallError).toHaveBeenCalledTimes(1);
+    const payload = getFirstToolCallErrorPayload(trackToolCallError);
+    expect(payload).toEqual({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      errorType: "tool_not_found",
+      reason: "tool_not_found",
+      stepId: "step-4",
+      toolCallId: "call-4",
+      toolName: "Read",
+      toolType: "built_in",
+    });
   });
 });

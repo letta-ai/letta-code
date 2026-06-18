@@ -2637,6 +2637,7 @@ export async function executeTool(
     trackToolCallErrorTelemetry({
       agentId: executionScope.agentId,
       conversationId: executionScope.conversationId,
+      stepId: executionScope.stepId,
       errorType: "tool_not_found",
       reason: "tool_not_found",
       toolCallId: options?.toolCallId,
@@ -2659,6 +2660,7 @@ export async function executeTool(
     trackToolCallErrorTelemetry({
       agentId: executionScope.agentId,
       conversationId: executionScope.conversationId,
+      stepId: executionScope.stepId,
       errorType: "tool_not_found",
       reason: "tool_not_found",
       toolCallId: options?.toolCallId,
