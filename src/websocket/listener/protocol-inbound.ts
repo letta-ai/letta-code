@@ -883,12 +883,14 @@ export function isDisconnectProviderCommand(
     request_id?: unknown;
     target?: unknown;
     provider_id?: unknown;
+    provider_name?: unknown;
   };
   return (
     c.type === "disconnect_provider" &&
     typeof c.request_id === "string" &&
     c.target === "local" &&
-    typeof c.provider_id === "string"
+    typeof c.provider_id === "string" &&
+    (c.provider_name === undefined || typeof c.provider_name === "string")
   );
 }
 

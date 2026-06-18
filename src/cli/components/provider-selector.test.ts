@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { commands } from "@/cli/commands/registry";
 import {
+  connectedProviderSummary,
   fieldValuesFromProviderPlaceholders,
   filterProviderConfigs,
   hasConstellationProviderStoreCredentials,
@@ -13,6 +14,7 @@ import {
   type ByokProvider,
   defaultProviderApiKey,
   getProviderConfigs,
+  type ProviderResponse,
 } from "@/providers/byok-providers";
 
 function withEnv<T>(
@@ -204,6 +206,27 @@ describe("ProviderSelector multi-field defaults", () => {
 });
 
 describe("ProviderSelector connected provider actions", () => {
+  const codexProvider: ByokProvider = {
+    id: "codex",
+    displayName: "ChatGPT / Codex plan",
+    description: "Connect your ChatGPT coding plan",
+    providerType: "chatgpt_oauth",
+    providerName: "chatgpt-plus-pro",
+    isOAuth: true,
+  };
+  const chatgptWorkProvider: ProviderResponse = {
+    id: "provider-chatgpt-work",
+    name: "chatgpt-work",
+    provider_type: "chatgpt_oauth",
+    provider_category: "byok",
+  };
+  const chatgptDefaultProvider: ProviderResponse = {
+    id: "provider-chatgpt-plus-pro",
+    name: "chatgpt-plus-pro",
+    provider_type: "chatgpt_oauth",
+    provider_category: "byok",
+  };
+
   test("opens options for connected OAuth providers before starting OAuth", () => {
     const codex = getProviderConfigs("api").find(
       (provider) => provider.id === "codex",
@@ -222,6 +245,33 @@ describe("ProviderSelector connected provider actions", () => {
 
     expect(providerSelectionFlow(openai)).toBe("input");
     expect(providerSelectionFlow(openai, "provider-2")).toBe("options");
+  });
+
+  test("summarizes disconnected providers with their description", () => {
+    expect(connectedProviderSummary(codexProvider, [])).toBe(
+      "Connect your ChatGPT coding plan",
+    );
+  });
+
+  test("summarizes a single named provider with its alias", () => {
+    expect(connectedProviderSummary(codexProvider, [chatgptWorkProvider])).toBe(
+      "Connected (chatgpt-work)",
+    );
+  });
+
+  test("summarizes the built-in provider name as connected", () => {
+    expect(
+      connectedProviderSummary(codexProvider, [chatgptDefaultProvider]),
+    ).toBe("Connected");
+  });
+
+  test("summarizes multiple named providers by count", () => {
+    expect(
+      connectedProviderSummary(codexProvider, [
+        chatgptDefaultProvider,
+        chatgptWorkProvider,
+      ]),
+    ).toBe("2 connected");
   });
 
   test("removes the legacy slash disconnect command from discovery", () => {

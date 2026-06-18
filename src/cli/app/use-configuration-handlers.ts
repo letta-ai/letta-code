@@ -595,6 +595,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             const toolsetName = await switchToolsetForModel(
               modelHandle,
               agentId,
+              resolvedProviderType,
             );
             setCurrentToolsetPreference("auto");
             setCurrentToolset(toolsetName);
@@ -1166,9 +1167,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               );
             }
 
+            const providerType =
+              providerTypeFromModelSettings(agentState?.model_settings) ??
+              llmConfig?.model_endpoint_type ??
+              null;
             const derivedToolset = await switchToolsetForModel(
               modelHandle,
               agentId,
+              providerType,
             );
             settingsManager.setToolsetPreference(agentId, "auto");
             setCurrentToolsetPreference("auto");
@@ -1210,6 +1216,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     },
     [
       agentId,
+      agentState?.model_settings,
       commandRunner,
       consumeOverlayCommand,
       currentToolset,

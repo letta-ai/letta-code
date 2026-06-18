@@ -861,9 +861,17 @@ export async function forceToolsetSwitch(
 export async function switchToolsetForModel(
   modelIdentifier: string,
   agentId: string,
+  providerType?: string | null,
 ): Promise<ToolsetName> {
   // Resolve model ID to handle when possible so provider checks stay consistent
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
+  const typedToolsetName = deriveToolsetFromModel(resolvedModel, providerType);
+  const stringOnlyToolsetName = deriveToolsetFromModel(resolvedModel);
+
+  if (typedToolsetName !== stringOnlyToolsetName) {
+    await forceToolsetSwitch(typedToolsetName, agentId);
+    return typedToolsetName;
+  }
 
   // Load the appropriate set for the target model
   // Note: loadTools acquires a switch lock that causes sendMessageStream to wait,
@@ -888,6 +896,5 @@ export async function switchToolsetForModel(
   // Ensure base server memory tool is attached
   await ensureCorrectMemoryTool(agentId, resolvedModel);
 
-  const toolsetName = deriveToolsetFromModel(resolvedModel);
-  return toolsetName;
+  return typedToolsetName;
 }

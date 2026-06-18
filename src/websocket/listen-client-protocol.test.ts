@@ -1413,6 +1413,23 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("disconnect_provider");
   });
 
+  test("parses disconnect_provider command with a provider name", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "disconnect_provider",
+          request_id: "disconnect-provider-2",
+          target: "local",
+          provider_id: "codex",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("disconnect_provider");
+  });
+
   test("parses update_model command with model_id", () => {
     const parsed = parseServerMessage(
       Buffer.from(

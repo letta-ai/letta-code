@@ -16,6 +16,7 @@ import {
   type ProviderStorageTarget,
   removeProviderByName,
 } from "@/providers/byok-providers";
+import { connectedRecordsForProvider } from "@/providers/provider-connections";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
 import { debugLog } from "@/utils/debug";
@@ -112,6 +113,18 @@ export function providerSelectionFlow(
   if ("authMethods" in provider && provider.authMethods) return "methodSelect";
   if ("fields" in provider && provider.fields) return "multiInput";
   return "input";
+}
+
+export function connectedProviderSummary(
+  provider: ByokProvider,
+  records: readonly ProviderResponse[],
+): string {
+  if (records.length === 0) return provider.description;
+  if (records.length > 1) return `${records.length} connected`;
+
+  const record = records[0];
+  if (!record || record.name === provider.providerName) return "Connected";
+  return `Connected (${record.name})`;
 }
 
 export function fieldValuesFromProviderPlaceholders(
@@ -344,46 +357,25 @@ export function ProviderSelector({
     setViewState({ type: "list" });
   }, [showProviderStoreTabs]);
 
-  // Check if a provider is connected
-  const isConnected = useCallback(
-    (provider: ByokProvider) => {
-      const providerNames = provider.providerNames ?? [provider.providerName];
-      return providerNames.some((name) => {
-        const connected = connectedProviders.get(name);
-        if (!connected) return false;
-        if (selectedTarget !== "local" || !connected.auth_type) return true;
-        return provider.isOAuth
-          ? connected.auth_type === "oauth"
-          : connected.auth_type !== "oauth";
-      });
-    },
+  const getConnectedProviderRecords = useCallback(
+    (provider: ByokProvider): ProviderResponse[] =>
+      connectedRecordsForProvider(provider, connectedProviders, selectedTarget),
     [connectedProviders, selectedTarget],
   );
 
   const getConnectedProviderName = useCallback(
     (provider: ByokProvider): string | undefined => {
-      const providerNames = provider.providerNames ?? [provider.providerName];
-      return providerNames.find((name) => {
-        const connected = connectedProviders.get(name);
-        if (!connected) return false;
-        if (selectedTarget !== "local" || !connected.auth_type) return true;
-        return provider.isOAuth
-          ? connected.auth_type === "oauth"
-          : connected.auth_type !== "oauth";
-      });
+      return getConnectedProviderRecords(provider)[0]?.name;
     },
-    [connectedProviders, selectedTarget],
+    [getConnectedProviderRecords],
   );
 
   // Get provider ID if connected
   const getProviderId = useCallback(
     (provider: ByokProvider): string | undefined => {
-      const providerName = getConnectedProviderName(provider);
-      return providerName
-        ? connectedProviders.get(providerName)?.id
-        : undefined;
+      return getConnectedProviderRecords(provider)[0]?.id;
     },
-    [connectedProviders, getConnectedProviderName],
+    [getConnectedProviderRecords],
   );
 
   // Handle selecting a provider from the list
@@ -656,33 +648,40 @@ export function ProviderSelector({
   ]);
 
   // Handle disconnect
-  const handleDisconnect = useCallback(async () => {
-    if (viewState.type !== "options") return;
+  const handleDisconnect = useCallback(
+    async (providerName?: string) => {
+      if (viewState.type !== "options") return;
 
-    const { provider } = viewState;
-    try {
-      await removeProviderByName(
-        getConnectedProviderName(provider) ?? provider.providerName,
-        {
+      const { provider } = viewState;
+      try {
+        await removeProviderByName(
+          providerName ??
+            getConnectedProviderName(provider) ??
+            provider.providerName,
+          {
+            target: selectedTarget,
+          },
+        );
+        clearAvailableModelsCache();
+        // Refresh connected providers
+        const providers = await getConnectedProviders({
           target: selectedTarget,
-        },
-      );
-      clearAvailableModelsCache();
-      // Refresh connected providers
-      const providers = await getConnectedProviders({ target: selectedTarget });
-      if (mountedRef.current) {
-        setConnectedProvidersForTarget(selectedTarget, providers);
-        setViewState({ type: "list" });
+        });
+        if (mountedRef.current) {
+          setConnectedProvidersForTarget(selectedTarget, providers);
+          setViewState({ type: "list" });
+        }
+      } catch {
+        // Silently fail, stay on options view
       }
-    } catch {
-      // Silently fail, stay on options view
-    }
-  }, [
-    viewState,
-    selectedTarget,
-    getConnectedProviderName,
-    setConnectedProvidersForTarget,
-  ]);
+    },
+    [
+      viewState,
+      selectedTarget,
+      getConnectedProviderName,
+      setConnectedProvidersForTarget,
+    ],
+  );
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -867,16 +866,17 @@ export function ProviderSelector({
         }
       }
     } else if (viewState.type === "options") {
-      const options = ["Disconnect", "Back"];
+      const connectedRecords = getConnectedProviderRecords(viewState.provider);
+      const optionsLength = connectedRecords.length + 1;
       if (key.escape) {
         setViewState({ type: "list" });
       } else if (key.upArrow) {
         setOptionIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setOptionIndex((prev) => Math.min(options.length - 1, prev + 1));
+        setOptionIndex((prev) => Math.min(optionsLength - 1, prev + 1));
       } else if (key.return) {
-        if (optionIndex === 0) {
-          handleDisconnect();
+        if (optionIndex < connectedRecords.length) {
+          handleDisconnect(connectedRecords[optionIndex]?.name);
         } else {
           setViewState({ type: "list" });
         }
@@ -949,7 +949,8 @@ export function ProviderSelector({
           {visibleProviders.map((provider, index) => {
             const actualIndex = providerStartIndex + index;
             const isSelected = actualIndex === selectedIndex;
-            const connected = isConnected(provider);
+            const connectedRecords = getConnectedProviderRecords(provider);
+            const connected = connectedRecords.length > 0;
 
             return (
               <Box key={provider.id} flexDirection="row">
@@ -975,7 +976,9 @@ export function ProviderSelector({
                 <Text dimColor>
                   {" · "}
                   {connected ? (
-                    <Text color="green">Connected</Text>
+                    <Text color="green">
+                      {connectedProviderSummary(provider, connectedRecords)}
+                    </Text>
                   ) : (
                     provider.description
                   )}
@@ -1347,23 +1350,33 @@ export function ProviderSelector({
   const renderOptionsView = () => {
     if (viewState.type !== "options") return null;
     const { provider } = viewState;
-    const options = ["Disconnect provider", "Back"];
+    const connectedRecords = getConnectedProviderRecords(provider);
+    const options = [
+      ...connectedRecords.map((record) => `Disconnect ${record.name}`),
+      "Back",
+    ];
 
     return (
       <>
         <Box flexDirection="column" marginBottom={1}>
           <Text bold color={colors.selector.title}>
-            Disconnect {provider.displayName}
+            Manage {provider.displayName}
           </Text>
           <Box height={1} />
-          <Box flexDirection="row">
-            <Text>{"  "}</Text>
-            <Text color="green">[✓]</Text>
-            <Text> </Text>
-            <Text bold>{provider.displayName}</Text>
-            <Text dimColor> · </Text>
-            <Text color="green">Connected</Text>
-          </Box>
+          {connectedRecords.length > 0 ? (
+            connectedRecords.map((record) => (
+              <Box key={record.id} flexDirection="row">
+                <Text>{"  "}</Text>
+                <Text color="green">[✓]</Text>
+                <Text> </Text>
+                <Text bold>{record.name}</Text>
+                <Text dimColor> · </Text>
+                <Text color="green">Connected</Text>
+              </Box>
+            ))
+          ) : (
+            <Text dimColor>{"  "}No connected providers.</Text>
+          )}
         </Box>
 
         <Box flexDirection="column">

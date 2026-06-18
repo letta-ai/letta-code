@@ -1395,6 +1395,8 @@ export interface DisconnectProviderCommand {
   target: ConnectProviderStorageTarget;
   /** Provider id from list_connect_providers. */
   provider_id: string;
+  /** Optional connected provider name to remove when a row has multiple aliases. */
+  provider_name?: string;
 }
 
 export interface ConnectProviderField {
@@ -1435,7 +1437,10 @@ export interface ConnectProviderEntry {
   requires_api_key: boolean;
   fields?: ConnectProviderField[];
   auth_methods?: ConnectProviderAuthMethod[];
+  /** First connected provider, preserved for older clients. */
   connected: ConnectProviderConnectionState;
+  /** All connected provider aliases represented by this row. */
+  connected_providers: ConnectProviderConnectionState[];
 }
 
 export interface ListConnectProvidersResponseMessage {
