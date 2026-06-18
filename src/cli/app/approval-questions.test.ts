@@ -78,4 +78,12 @@ describe("getQuestionsFromApproval (shared validator)", () => {
     expect(getQuestionsFromApproval(approval("{not json"))).toEqual([]);
     expect(getQuestionsFromApproval(approval(""))).toEqual([]);
   });
+
+  test("returns [] for toolArgs that parse to a non-object (regression)", () => {
+    // "null" is valid JSON parsing to null; dereferencing .questions on it
+    // would throw. The shared validator must treat it as malformed.
+    expect(getQuestionsFromApproval(approval("null"))).toEqual([]);
+    expect(getQuestionsFromApproval(approval("true"))).toEqual([]);
+    expect(getQuestionsFromApproval(approval("42"))).toEqual([]);
+  });
 });

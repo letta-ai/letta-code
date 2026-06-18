@@ -261,6 +261,17 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
     expect(getQuestions(approval("{not valid json"))).toEqual([]);
   });
 
+  test("returns [] for toolArgs that parse to a non-object (regression)", () => {
+    // `safeJsonParseOr` returns the raw JSON.parse result, so valid-but-
+    // non-object JSON (e.g. "null", "true", "42", "\"x\"") flows through.
+    // `null` in particular must not reach `parsed.questions` (throws and
+    // bricks the TUI via the render path).
+    expect(getQuestions(approval("null"))).toEqual([]);
+    expect(getQuestions(approval("true"))).toEqual([]);
+    expect(getQuestions(approval("42"))).toEqual([]);
+    expect(getQuestions(approval('"a string"'))).toEqual([]);
+  });
+
   test("returns [] for empty toolArgs", () => {
     expect(getQuestions(approval(""))).toEqual([]);
   });
