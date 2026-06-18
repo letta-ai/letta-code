@@ -1,12 +1,16 @@
 import { recompileAgentSystemPrompt } from "@/agent/modify";
 import { isDebugEnabled } from "@/utils/debug";
-import { buildAgentTerminalLink, isLocalAgentId } from "./app-urls";
+import {
+  buildAgentReference,
+  buildAgentTerminalLink,
+  isLocalAgentId,
+} from "./app-urls";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
 } from "./system-prompt-warning";
 
-export type MemorySubagentType = "init" | "reflection";
+export type MemorySubagentType = "init" | "reflection" | "memory-auditor";
 
 type RecompileAgentSystemPromptFn = (
   conversationId: string,
@@ -20,6 +24,7 @@ export interface MemorySubagentCompletionArgs {
   subagentType: MemorySubagentType;
   success: boolean;
   error?: string;
+  /** The subagent's own agent ID, used to link to it on completion. */
   subagentAgentId?: string;
 }
 
@@ -39,8 +44,11 @@ export async function handleMemorySubagentCompletion(
   deps: MemorySubagentCompletionDeps,
 ): Promise<string> {
   const { agentId, conversationId, subagentType, success, error } = args;
-  const subagentLink = args.subagentAgentId
+  const reflectionSubagentLink = args.subagentAgentId
     ? buildAgentTerminalLink(args.subagentAgentId, undefined, "Dreamed")
+    : null;
+  const auditSubagentLink = args.subagentAgentId
+    ? buildAgentReference(args.subagentAgentId)
     : null;
   const canLinkSubagent = args.subagentAgentId
     ? !isLocalAgentId(args.subagentAgentId)
@@ -94,6 +102,10 @@ export async function handleMemorySubagentCompletion(
       const detail = isDebugEnabled() ? `: ${error || "Unknown error"}` : "";
       return `Tried to reflect, but got lost in the palace${detail}`;
     }
+    if (subagentType === "memory-auditor") {
+      const detail = isDebugEnabled() ? `: ${error || "Unknown error"}` : "";
+      return `Tried to tidy the palace, but lost the map${detail}`;
+    }
     const normalizedError = error || "Unknown error";
     return `Memory initialization failed: ${normalizedError}`;
   }
@@ -101,10 +113,20 @@ export async function handleMemorySubagentCompletion(
   let baseMessage =
     subagentType === "reflection"
       ? "Dreamed and made some memories."
-      : "Built a memory palace of you. Visit it with /palace.";
+      : subagentType === "memory-auditor"
+        ? "Memory has been tidied"
+        : "Built a memory palace of you. Visit it with /palace.";
 
-  if (subagentType === "reflection" && subagentLink && canLinkSubagent) {
-    baseMessage = `${subagentLink} and made some memories.`;
+  if (subagentType === "memory-auditor" && auditSubagentLink) {
+    baseMessage += ` (audit agent: ${auditSubagentLink})`;
+  }
+
+  if (
+    subagentType === "reflection" &&
+    reflectionSubagentLink &&
+    canLinkSubagent
+  ) {
+    baseMessage = `${reflectionSubagentLink} and made some memories.`;
   }
 
   if (!recompileError) {

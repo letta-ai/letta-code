@@ -96,6 +96,15 @@ export const commands: Record<string, Command> = {
       return "Launching reflection agent...";
     },
   },
+  "/memory-audit": {
+    desc: "Audit and reorganize memory (/memory-audit [instruction])",
+    args: "[instruction]",
+    order: 50.5,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Launching memory auditor...";
+    },
+  },
   "/skills": {
     desc: "Browse available skills",
     order: 28,

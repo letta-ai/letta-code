@@ -788,6 +788,17 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("letta/auto-memory");
   });
 
+  test("memory-auditor subagents inherit the parent model", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "memory-auditor",
+      recommendedModel: "inherit",
+      parentModelHandle: "lc-anthropic/parent-model",
+      availableHandles: new Set(),
+    });
+
+    expect(result).toBe("lc-anthropic/parent-model");
+  });
+
   test("honors reflection subagent model overrides", async () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",

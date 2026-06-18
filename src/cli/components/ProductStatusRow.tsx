@@ -39,7 +39,13 @@ function getActiveBackgroundAgents(snapshot: {
 
 function typeLabelForBackgroundAgent(agent: SubagentState): string {
   const rawType = agent.type.toLowerCase();
-  return rawType === "reflection" ? "dreaming" : rawType;
+  if (rawType === "reflection") {
+    return "dreaming";
+  }
+  if (rawType === "memory-auditor") {
+    return "tidying";
+  }
+  return rawType;
 }
 
 function chatUrlForBackgroundAgent(agent: SubagentState): string | null {
