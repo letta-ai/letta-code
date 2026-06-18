@@ -19,7 +19,10 @@ describe("getQuestionsFromApproval (shared validator)", () => {
         {
           header: "H",
           question: "Q?",
-          options: [{ label: "A", description: "d" }],
+          options: [
+            { label: "A", description: "d" },
+            { label: "B", description: "d" },
+          ],
           multiSelect: false,
         },
       ],

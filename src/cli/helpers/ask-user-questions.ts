@@ -38,7 +38,18 @@ export function parseAskUserQuestions(
     return [];
   }
   const questions = (parsed as Record<string, unknown>).questions;
-  if (!Array.isArray(questions) || questions.length === 0) return [];
+  // AskUserQuestion contract (src/tools/schemas/AskUserQuestion.json): 1–4
+  // questions, each with 2–4 options. The tool implementation
+  // (src/tools/impl/ask-user-question.ts) rejects anything outside these
+  // bounds on submit, so accept them here too — otherwise we'd render the
+  // specialized question UI for a payload guaranteed to be rejected.
+  if (
+    !Array.isArray(questions) ||
+    questions.length < 1 ||
+    questions.length > 4
+  ) {
+    return [];
+  }
   return questions.every(isWellFormedQuestion)
     ? (questions as AskUserQuestion[])
     : [];
@@ -57,7 +68,10 @@ function isWellFormedQuestion(q: unknown): boolean {
     return false;
   }
   const options = question.options;
-  if (!Array.isArray(options) || options.length === 0) return false;
+  // 2–4 options per the AskUserQuestion contract (see header comment).
+  if (!Array.isArray(options) || options.length < 2 || options.length > 4) {
+    return false;
+  }
   return options.every(isWellFormedOption);
 }
 

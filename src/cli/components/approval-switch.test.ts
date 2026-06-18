@@ -175,6 +175,69 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
     expect(getQuestions(approval(mixedEntries))).toEqual([]);
   });
 
+  test("returns [] when the questions/options counts violate the 1–4 / 2–4 contract", () => {
+    // The AskUserQuestion schema + tool implementation cap questions at 1–4 and
+    // each question's options at 2–4. The validator must mirror that so a
+    // payload the tool will reject on submit falls through to InlineGenericApproval
+    // instead of rendering a specialized prompt the user can't successfully answer.
+    const twoOptions = [
+      { label: "A", description: "" },
+      { label: "B", description: "" },
+    ];
+    const mkQuestion = () => ({
+      header: "H",
+      question: "Q?",
+      options: twoOptions,
+      multiSelect: false,
+    });
+    // >4 questions
+    const tooManyQuestions = JSON.stringify({
+      questions: [
+        mkQuestion(),
+        mkQuestion(),
+        mkQuestion(),
+        mkQuestion(),
+        mkQuestion(),
+      ],
+    });
+    expect(getQuestions(approval(tooManyQuestions))).toEqual([]);
+    // exactly 4 questions is fine
+    const fourQuestions = JSON.stringify({
+      questions: [mkQuestion(), mkQuestion(), mkQuestion(), mkQuestion()],
+    });
+    expect(getQuestions(approval(fourQuestions))).toHaveLength(4);
+    // single option (< 2)
+    const singleOption = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: [{ label: "A", description: "" }],
+          multiSelect: false,
+        },
+      ],
+    });
+    expect(getQuestions(approval(singleOption))).toEqual([]);
+    // 5 options (> 4)
+    const fiveOptions = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: [
+            { label: "1", description: "" },
+            { label: "2", description: "" },
+            { label: "3", description: "" },
+            { label: "4", description: "" },
+            { label: "5", description: "" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+    expect(getQuestions(approval(fiveOptions))).toEqual([]);
+  });
+
   test("returns [] when question-level fields have the wrong type", () => {
     // InlineQuestionApproval calls `question.includes(...)` and renders
     // `header` as a React child, so non-string values throw. multiSelect/
@@ -235,7 +298,10 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
         {
           header: "H",
           question: "Q?",
-          options: [{ label: "A", description: "d" }],
+          options: [
+            { label: "A", description: "d" },
+            { label: "B", description: "d" },
+          ],
           multiSelect: false,
         },
       ],
