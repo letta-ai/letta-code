@@ -53,6 +53,17 @@ describe("getModelInfo", () => {
       parallel_tool_calls: true,
     });
   });
+
+  test("resolves Kimi K2.7 Code registry metadata", () => {
+    const info = getModelInfo("kimi-k2.7-code");
+    expect(info?.handle).toBe("moonshot/kimi-k2.7-code");
+    expect(info?.label).toBe("Kimi K2.7 Code");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 180000,
+      max_output_tokens: 32768,
+      parallel_tool_calls: true,
+    });
+  });
 });
 
 describe("getModelInfoForLlmConfig", () => {

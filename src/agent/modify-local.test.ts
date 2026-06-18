@@ -172,4 +172,54 @@ describe("local model updates", () => {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
+
+  test("uses Moonshot settings for direct Kimi K2.7", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-kimi-k2-7-"));
+    try {
+      await createOrUpdateLocalProvider({
+        providerType: "moonshot",
+        providerName: "lc-moonshot",
+        apiKey: "dummy",
+        storageDir,
+      });
+
+      await withLocalBackendStorage(storageDir, async () => {
+        const backend = getBackend();
+        const agent = await backend.createAgent({
+          name: "Local Kimi",
+          model: "openrouter/moonshotai/kimi-k2.6",
+          model_settings: {
+            provider_type: "openrouter",
+          },
+          max_tokens: 64000,
+          context_window_limit: 200000,
+        } as never);
+
+        const updated = await updateAgentLLMConfig(
+          agent.id,
+          "moonshot/kimi-k2.7-code",
+          {
+            context_window: 180000,
+            max_output_tokens: 32768,
+            parallel_tool_calls: true,
+          },
+        );
+
+        const kimi = getModel("moonshotai", "kimi-k2.7-code");
+
+        expect(updated.model).toBe("moonshot/kimi-k2.7-code");
+        expect(updated.llm_config?.context_window).toBe(kimi?.contextWindow);
+        expect(updated.llm_config?.max_tokens).toBe(kimi?.maxTokens);
+        expect(updated.model_settings).toMatchObject({
+          provider_type: "moonshotai",
+          parallel_tool_calls: true,
+        });
+        expect(
+          (updated.model_settings as Record<string, unknown>).max_output_tokens,
+        ).toBeUndefined();
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
 });
