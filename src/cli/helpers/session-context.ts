@@ -106,7 +106,7 @@ export function buildWindowsShellNotes(shellContext?: ShellContext): string {
   const shellLine = (() => {
     switch (detected) {
       case "powershell":
-        return `- Detected shell: ${displayName}. Prefer PowerShell-safe commands, like \`$env:NAME=\"value\"\`, and avoid Unix-only pipeline assumptions.`;
+        return `- Detected shell: ${displayName}. Prefer PowerShell-safe commands, like \`$env:NAME="value"\`, and avoid Unix-only pipeline assumptions.`;
       case "cmd":
         return `- Detected shell: ${displayName}. Prefer cmd-safe commands, like \`set NAME=value\`, and avoid PowerShell-only syntax.`;
       case "bash":

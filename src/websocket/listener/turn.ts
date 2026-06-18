@@ -52,7 +52,6 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
-import { detectShellContext } from "@/utils/shell-context";
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import { enqueueMemoryGitSyncReminder } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
@@ -62,6 +61,7 @@ import { extractTelemetryInputText } from "@/telemetry/input";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import { detectShellContext } from "@/utils/shell-context";
 import { createTelegramRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,

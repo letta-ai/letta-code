@@ -6,12 +6,12 @@ import {
   buildSessionContext,
   type SessionContextSource,
 } from "@/cli/helpers/session-context";
-import type { ShellContext } from "@/utils/shell-context";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
+import type { ShellContext } from "@/utils/shell-context";
 import {
   SHARED_REMINDER_CATALOG,
   type SharedReminderId,

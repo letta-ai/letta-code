@@ -125,8 +125,8 @@ import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
-import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { detectShellContext } from "@/utils/shell-context";
+import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
 import { shouldSlashCommandBypassQueue } from "./command-routing";

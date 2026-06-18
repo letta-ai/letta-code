@@ -1,6 +1,6 @@
+import type { ShellContext } from "@/utils/shell-context";
 import type { SharedReminderContext } from "./engine";
 import type { SessionContextReason, SharedReminderState } from "./state";
-import type { ShellContext } from "@/utils/shell-context";
 
 interface BuildListenReminderContextParams {
   agentId: string;
