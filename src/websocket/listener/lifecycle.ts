@@ -613,15 +613,20 @@ export async function wireChannelIngress(
       feedbackContext: {
         surface: getListenerTelemetrySurface(),
       },
-      onCompletionMessage: async (completionMessage) => {
+      onCompletionMessage: async (completionMessage, result) => {
         const conversationRuntime = getOrCreateConversationRuntime(
           listener,
           agentId,
           conversationId,
         );
+        const reflectionAgentIdTag = result.reflectionAgentId
+          ? `<reflection-agent-id>${escapeTaskNotificationSummary(
+              result.reflectionAgentId,
+            )}</reflection-agent-id>`
+          : "";
         const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
           completionMessage,
-        )}</summary></task-notification>`;
+        )}</summary>${reflectionAgentIdTag}</task-notification>`;
         emitStreamDelta(
           socket,
           conversationRuntime,

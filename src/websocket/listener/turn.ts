@@ -238,10 +238,15 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       feedbackContext: {
         surface: getListenerTelemetrySurface(),
       },
-      onCompletionMessage: async (completionMessage) => {
+      onCompletionMessage: async (completionMessage, result) => {
+        const reflectionAgentIdTag = result.reflectionAgentId
+          ? `<reflection-agent-id>${escapeTaskNotificationSummary(
+              result.reflectionAgentId,
+            )}</reflection-agent-id>`
+          : "";
         const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
           completionMessage,
-        )}</summary></task-notification>`;
+        )}</summary>${reflectionAgentIdTag}</task-notification>`;
         emitCanonicalMessageDelta(
           socket,
           runtime,
