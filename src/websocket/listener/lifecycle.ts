@@ -343,6 +343,31 @@ export async function recoverPendingChannelControlRequests(
   }
 }
 
+/**
+ * Recover and replay pending queued messages after reconnect.
+ * This ensures in-flight messages that were preserved during disconnect
+ * get processed once the connection is re-established.
+ */
+export function recoverPendingQueuedMessages(
+  listener: ListenerRuntime,
+  socket: ListenerTransport,
+  opts: StartListenerOptions,
+  processQueuedTurn: ProcessQueuedTurn,
+): void {
+  for (const conversationRuntime of listener.conversationRuntimes.values()) {
+    // Skip if no queue or queue is empty
+    if (
+      !conversationRuntime.queueRuntime ||
+      conversationRuntime.queueRuntime.isEmpty
+    ) {
+      continue;
+    }
+
+    // Schedule a queue pump to process the preserved items
+    scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
+  }
+}
+
 function getParsedRuntimeScope(
   parsed: unknown,
 ): { agent_id: string; conversation_id: string } | null {
@@ -478,6 +503,9 @@ export async function wireChannelIngress(
   });
 
   await recoverPendingChannelControlRequests(listener);
+
+  // Recover and replay any preserved queued messages from before disconnect
+  recoverPendingQueuedMessages(listener, socket, opts, processQueuedTurn);
 
   registry.setApprovalResponseHandler(async ({ runtime, response }) =>
     handleApprovalResponseInput(listener, {
@@ -1481,12 +1509,14 @@ async function connectWithRetry(
     // completion enqueues into a shutting-down runtime.
     setMessageQueueAdder(null);
 
-    // Single authoritative queue clear for all close paths
-    // (intentional and unintentional). Must fire before early returns.
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      conversationRuntime.queuedMessagesByItemId.clear();
-      if (conversationRuntime.queueRuntime) {
-        conversationRuntime.queueRuntime.clear("shutdown");
+    // Preserve queued items for replay on reconnect (non-intentional closes).
+    // Clear the queue only for intentional shutdowns.
+    if (runtime.intentionallyClosed) {
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        conversationRuntime.queuedMessagesByItemId.clear();
+        if (conversationRuntime.queueRuntime) {
+          conversationRuntime.queueRuntime.clear("shutdown");
+        }
       }
     }
 
