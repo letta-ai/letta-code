@@ -1344,9 +1344,9 @@ describe("pending channel control requests", () => {
       createPendingControlRequestEvent(),
     );
 
-    await expect(adapter.onMessage?.(createInboundMessage("2"))).rejects.toThrow(
-      "approval handler failed",
-    );
+    await expect(
+      adapter.onMessage?.(createInboundMessage("2")),
+    ).rejects.toThrow("approval handler failed");
 
     expect(approvalResponses).toBe(1);
     expect(registry.hasPendingControlRequest("req-ask-1")).toBe(false);
