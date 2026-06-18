@@ -245,7 +245,6 @@ describe("buildSubagentArgs", () => {
     allowedTools: "all",
     recommendedModel: "inherit",
     skills: [],
-    memoryBlocks: "none",
     mode: "stateful",
     fork: false,
     background: false,
@@ -254,8 +253,6 @@ describe("buildSubagentArgs", () => {
   test("adds --no-memfs for newly spawned subagents by default", () => {
     const args = buildSubagentArgs("test-subagent", baseConfig, null, "hello");
 
-    expect(args).toContain("--init-blocks");
-    expect(args).toContain("none");
     expect(args).toContain("--no-memfs");
   });
 
@@ -708,12 +705,12 @@ describe("resolveSubagentModel", () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
       recommendedModel: "inherit",
-      parentModelHandle: "chatgpt-plus-pro/gpt-5.3-codex",
+      parentModelHandle: "chatgpt-plus-pro/gpt-5.5",
       backendMode: "local",
       availableHandles: new Set(),
     });
 
-    expect(result).toBe("chatgpt-plus-pro/gpt-5.3-codex");
+    expect(result).toBe("chatgpt-plus-pro/gpt-5.5");
   });
 
   test("local backend inherits parent model for non-reflection subagents", async () => {

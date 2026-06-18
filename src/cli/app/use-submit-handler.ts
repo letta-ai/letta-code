@@ -22,7 +22,6 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
@@ -126,6 +125,7 @@ import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { detectShellContext } from "@/utils/shell-context";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
@@ -706,7 +706,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           try {
-            const modContext = modAdapter.getContext();
+            const modContext = modAdapter.context;
             const cwd = getCurrentWorkingDirectory();
             const conversation = createModConversationHandle({
               agentId,
@@ -716,19 +716,18 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               workingDirectory: cwd,
             });
             const commandContext: ModCommandContext = {
-              agent: { id: agentId, name: agentName },
+              ...modContext,
               args: parsedModCommand.args,
               argv: parseModCommandArgv(parsedModCommand.args),
               command: parsedModCommand.command,
               conversation: { ...conversation, id: conversationIdRef.current },
               cwd,
-              getContext: modAdapter.getContext,
               model: {
+                ...modContext.model,
                 id:
                   currentModelId ??
                   llmConfigRef.current?.model ??
                   modContext.model.id,
-                displayName: modContext.model.displayName,
               },
               permissionMode: modContext.permissionMode,
               rawInput: trimmed,
@@ -1585,7 +1584,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Create a new conversation for the current agent
             const conversation = await backend.createConversation({
               agent_id: agentId,
-              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
               ...(conversationName && { summary: conversationName }),
             });
 
@@ -1626,13 +1624,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void modAdapter.events.emit("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: conversation.id,
-              previousConversationId: prevConversationId ?? null,
-              reason: "new",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: conversation.id,
+                previousConversationId: prevConversationId ?? null,
+                reason: "new",
+              },
+              modAdapter.context,
+            );
 
             // Update command with success
             cmd.finish(
@@ -1724,13 +1726,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void modAdapter.events.emit("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: forked.id,
-              previousConversationId: forkPrevConversationId ?? null,
-              reason: "fork",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: forked.id,
+                previousConversationId: forkPrevConversationId ?? null,
+                reason: "fork",
+              },
+              modAdapter.context,
+            );
 
             cmd.finish(
               "Forked conversation (use /resume to switch back)",
@@ -1804,7 +1810,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Create a new conversation
             const conversation = await backend.createConversation({
               agent_id: agentId,
-              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
 
             setConversationAutoTitleEligibility(true);
@@ -1840,13 +1845,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void modAdapter.events.emit("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: conversation.id,
-              previousConversationId: clearPrevConversationId ?? null,
-              reason: "new",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: conversation.id,
+                previousConversationId: clearPrevConversationId ?? null,
+                reason: "new",
+              },
+              modAdapter.context,
+            );
 
             // Update command with success
             cmd.finish(
@@ -3390,6 +3399,7 @@ ${SYSTEM_REMINDER_CLOSE}
           contentParts as unknown as MessageCreate["content"],
         systemInfoReminderEnabled,
         skillSources: getSkillSources(),
+        shellContext: detectShellContext(),
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);

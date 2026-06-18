@@ -1125,6 +1125,7 @@ export class LocalStore {
     string,
     LocalConversationTranscriptMetadata
   >();
+  private readonly conversationRecordMtimeMsByKey = new Map<string, number>();
   private readonly sessionEntryIdsByConversationKey = new Map<
     string,
     Set<string>
@@ -1146,6 +1147,11 @@ export class LocalStore {
     LocalCompiledSystemPrompt
   >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
+  // Tracks local assistant message ids that have received a stop_reason chunk,
+  // meaning the turn completed (or was cancelled normally). Used by
+  // rollbackUnpersistedTrailingAssistantMessage to distinguish a clean completed
+  // turn from one that was cut off before stop_reason.
+  private readonly settledLocalMessageIds = new Set<string>();
   private conversationRecordsScanned = false;
   private conversationSeq = 0;
   private messageSeq = 0;
@@ -1243,6 +1249,7 @@ export class LocalStore {
         this.loadedConversationKeys.delete(key);
         this.loadRepairedConversationKeys.delete(key);
         this.transcriptMetadataByConversationKey.delete(key);
+        this.conversationRecordMtimeMsByKey.delete(key);
         this.sessionEntryIdsByConversationKey.delete(key);
         this.sessionEntryIdByMessageIdByConversationKey.delete(key);
         this.persistedMessageByMessageIdByConversationKey.delete(key);
@@ -1451,6 +1458,7 @@ export class LocalStore {
 
   listConversations(body?: ConversationListBody): Conversation[] {
     this.loadConversationRecordsFromStorage();
+    this.refreshLoadedConversationRecordsFromStorage();
     const bodyRecord = (body ?? {}) as Record<string, unknown>;
     const agentId = optionalString(bodyRecord.agent_id);
     const after = optionalString(bodyRecord.after);
@@ -1578,9 +1586,9 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", targetAgentId);
     }
     this.ensureAgent(targetAgentId);
-    this.conversationSeq += 1;
+    const forkedConversationId = this.nextConversationId(targetAgentId);
     const forked = createLocalConversationRecord(
-      `${this.conversationIdPrefix}${this.conversationSeq}`,
+      forkedConversationId,
       targetAgentId,
       this.conversationSeq,
       {
@@ -2226,6 +2234,8 @@ export class LocalStore {
     const conversation = this.findConversation(conversationId, agentId);
     if (!conversation) return 0;
 
+    this.rollbackUnpersistedTrailingAssistantMessage(conversation, agentId);
+
     const messages = this.localMessagesForConversation(
       conversation.id,
       agentId,
@@ -2249,6 +2259,43 @@ export class LocalStore {
 
     if (settledCount > 0) this.rebuildMessageIndex();
     return settledCount;
+  }
+
+  private rollbackUnpersistedTrailingAssistantMessage(
+    conversation: StoredConversation,
+    agentId: string,
+  ): void {
+    const key = this.conversationKey(conversation.id, agentId);
+    const messages = this.localMessagesForConversation(
+      conversation.id,
+      agentId,
+    );
+    const last = messages.at(-1);
+    if (last?.role !== "assistant") return;
+    // If a stop_reason chunk was received for this message, the turn completed
+    // normally — do not roll it back. Works for both disk-backed and in-memory stores.
+    if (this.settledLocalMessageIds.has(last.id)) return;
+    // For disk-backed stores also check the persisted transcript index as a
+    // belt-and-suspenders fallback (covers messages loaded from a previous session).
+    if (this.sessionEntryIdsByMessageId(key).has(last.id)) return;
+
+    messages.pop();
+    this.localMessagesByConversationKey.set(key, messages);
+    conversation.in_context_message_ids =
+      conversation.in_context_message_ids.filter((id) => id !== last.id);
+    const previousLastMessage = messages.at(-1);
+    conversation.last_message_at = previousLastMessage
+      ? localMessageDate(
+          previousLastMessage,
+          conversation.last_message_at ?? currentIsoTimestamp(),
+        )
+      : conversation.created_at;
+    conversation.updated_at = currentIsoTimestamp();
+    this.conversations.set(key, conversation);
+    this.persistConversationState(conversation.id, agentId, {
+      transcript: "skip",
+    });
+    this.rebuildMessageIndex();
   }
 
   private findToolCall(
@@ -2757,6 +2804,9 @@ export class LocalStore {
       });
       return;
     }
+    // Mark as settled regardless of storageDir so rollback detection works for
+    // in-memory backends too (persistConversationState is a no-op without storageDir).
+    this.settledLocalMessageIds.add(last.id);
     this.persistConversationState(conversationId, agentId, {
       transcript: "append",
       message: last,
@@ -2912,10 +2962,11 @@ export class LocalStore {
   private cacheConversationRecord(
     conversationDir: string,
     input: StoredConversation,
+    options: { forceRefresh?: boolean; recordMtimeMs?: number } = {},
   ): StoredConversation {
     const key = this.conversationKey(input.id, input.agent_id);
     const existing = this.conversations.get(key);
-    if (existing) return existing;
+    if (existing && options.forceRefresh !== true) return existing;
 
     const timing = transcriptTimingForConversationDir(conversationDir);
     const requiresFullTimestampRepair =
@@ -2935,6 +2986,9 @@ export class LocalStore {
     }
 
     this.conversations.set(key, conversation);
+    this.recordConversationRecordMtime(key, conversationDir, {
+      mtimeMs: options.recordMtimeMs,
+    });
     this.transcriptMetadataRecord(key, conversationDir, {
       requiresFullTimestampRepair,
     });
@@ -2959,14 +3013,62 @@ export class LocalStore {
     }
   }
 
-  private loadConversationRecordForKey(
+  private conversationRecordMtimeMs(
+    conversationDir: string,
+  ): number | undefined {
+    try {
+      return statSync(join(conversationDir, "conversation.json")).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private recordConversationRecordMtime(
+    key: string,
+    conversationDir: string,
+    options: { mtimeMs?: number } = {},
+  ): void {
+    const mtimeMs =
+      options.mtimeMs ?? this.conversationRecordMtimeMs(conversationDir);
+    if (mtimeMs === undefined) {
+      this.conversationRecordMtimeMsByKey.delete(key);
+      return;
+    }
+    this.conversationRecordMtimeMsByKey.set(key, mtimeMs);
+  }
+
+  private refreshConversationRecordFromStorage(
     key: string,
   ): StoredConversation | undefined {
     const existing = this.conversations.get(key);
-    if (existing) return existing;
-    const conversationDir = this.conversationDirForKey(key);
-    if (!conversationDir || !existsSync(conversationDir)) return undefined;
-    return this.loadConversationRecordFromDir(conversationDir);
+    const metadata = this.transcriptMetadataByConversationKey.get(key);
+    const conversationDir =
+      metadata?.conversationDir ?? this.conversationDirForKey(key);
+    if (!conversationDir) return existing;
+
+    const mtimeMs = this.conversationRecordMtimeMs(conversationDir);
+    if (mtimeMs === undefined) return existing;
+    if (existing && this.conversationRecordMtimeMsByKey.get(key) === mtimeMs) {
+      return existing;
+    }
+
+    try {
+      const conversation = readJsonFile<StoredConversation>(
+        join(conversationDir, "conversation.json"),
+      );
+      if (!conversation?.id || !conversation.agent_id) return existing;
+      const loadedKey = this.conversationKey(
+        conversation.id,
+        conversation.agent_id,
+      );
+      if (loadedKey !== key) return existing;
+      return this.cacheConversationRecord(conversationDir, conversation, {
+        forceRefresh: true,
+        recordMtimeMs: mtimeMs,
+      });
+    } catch {
+      return existing;
+    }
   }
 
   private loadConversationRecordsFromStorage(): void {
@@ -2990,6 +3092,12 @@ export class LocalStore {
         continue;
       }
       this.loadConversationRecordFromDir(conversationDir);
+    }
+  }
+
+  private refreshLoadedConversationRecordsFromStorage(): void {
+    for (const key of [...this.conversations.keys()]) {
+      this.refreshConversationRecordFromStorage(key);
     }
   }
 
@@ -3060,6 +3168,7 @@ export class LocalStore {
       join(conversationDir, "conversation.json"),
       `${JSON.stringify(conversation, null, 2)}\n`,
     );
+    this.recordConversationRecordMtime(key, conversationDir);
     const messagesPath = transcriptMessagesPath(conversationDir);
     let metadata = this.transcriptMetadataRecord(key, conversationDir);
     const manifestPath = transcriptManifestPath(conversationDir);
@@ -3383,11 +3492,12 @@ export class LocalStore {
     return conversation;
   }
 
-  private nextConversationId(): string {
+  private nextConversationId(agentId?: string): string {
+    const resolvedAgentId = agentId ?? this.defaultAgentId;
     for (;;) {
       this.conversationSeq += 1;
       const conversationId = `${this.conversationIdPrefix}${this.conversationSeq}`;
-      const key = this.conversationKey(conversationId, this.defaultAgentId);
+      const key = this.conversationKey(conversationId, resolvedAgentId);
       if (this.conversations.has(key)) continue;
       const conversationDir = this.conversationDirForKey(key);
       if (conversationDir && existsSync(conversationDir)) continue;
@@ -3401,24 +3511,20 @@ export class LocalStore {
   ): StoredConversation | undefined {
     if (agentId) {
       const key = this.conversationKey(conversationId, agentId);
-      const direct =
-        this.conversations.get(key) ?? this.loadConversationRecordForKey(key);
+      const direct = this.refreshConversationRecordFromStorage(key);
       if (direct || conversationId === "default") return direct;
       this.loadConversationRecordsFromStorage();
-      return this.conversations.get(key);
+      return this.refreshConversationRecordFromStorage(key);
     }
     if (conversationId === "default") {
       const key = this.conversationKey(conversationId, this.defaultAgentId);
-      return (
-        this.conversations.get(key) ?? this.loadConversationRecordForKey(key)
-      );
+      return this.refreshConversationRecordFromStorage(key);
     }
     const key = this.conversationKey(conversationId, this.defaultAgentId);
-    const direct =
-      this.conversations.get(key) ?? this.loadConversationRecordForKey(key);
+    const direct = this.refreshConversationRecordFromStorage(key);
     if (direct) return direct;
     this.loadConversationRecordsFromStorage();
-    return this.conversations.get(key);
+    return this.refreshConversationRecordFromStorage(key);
   }
 
   private toolSettlementTargets(

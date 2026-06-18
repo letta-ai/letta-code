@@ -35,6 +35,7 @@ import { emptyLocalUsage } from "@/backend/local/local-message";
 import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import { listLocalModels } from "@/backend/local/local-model-config";
 import {
+  LocalStore,
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
 } from "@/backend/local/local-store";
@@ -67,6 +68,17 @@ async function firstConversationDir(storageDir: string): Promise<string> {
   if (!firstEntry)
     throw new Error("Expected at least one conversation directory");
   return join(storageDir, "conversations", firstEntry);
+}
+
+function localConversationDir(
+  storageDir: string,
+  conversationId: string,
+): string {
+  return join(
+    storageDir,
+    "conversations",
+    Buffer.from(`conversation:${conversationId}`).toString("base64url"),
+  );
 }
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
@@ -228,6 +240,64 @@ describe("local backend pi transcript", () => {
           summary: "Default rename",
         } as never),
       ).toThrow("Default conversation cannot be updated");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refreshes conversation metadata changed by another local backend process", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-external-conversation-update-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const agent = await backend.createAgent({ name: "Local" } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "Original title",
+      } as never);
+
+      const conversationPath = join(
+        localConversationDir(storageDir, conversation.id),
+        "conversation.json",
+      );
+      const externalRecord = JSON.parse(
+        await readFile(conversationPath, "utf8"),
+      ) as Record<string, unknown>;
+      await writeFile(
+        conversationPath,
+        `${JSON.stringify(
+          {
+            ...externalRecord,
+            summary: "Desktop rename",
+            updated_at: "2026-06-15T23:00:00.000Z",
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const futureMtime = new Date(Date.now() + 5_000);
+      await utimes(conversationPath, futureMtime, futureMtime);
+
+      const retrieved = (await backend.retrieveConversation(
+        conversation.id,
+      )) as { summary?: string | null };
+      expect(retrieved.summary).toBe("Desktop rename");
+
+      const listed = (await backend.listConversations({
+        agent_id: agent.id,
+      } as never)) as Array<{ id: string; summary?: string | null }>;
+      expect(listed.find((item) => item.id === conversation.id)?.summary).toBe(
+        "Desktop rename",
+      );
+
+      await backend.updateConversation(conversation.id, {
+        last_message_at: "2026-06-15T23:01:00.000Z",
+      } as never);
+      const persisted = JSON.parse(
+        await readFile(conversationPath, "utf8"),
+      ) as Record<string, unknown>;
+      expect(persisted.summary).toBe("Desktop rename");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -436,6 +506,74 @@ describe("local backend pi transcript", () => {
       await backendForDirectLookup.retrieveMessage("ui-msg-latest");
     expect(latestVariants[0]?.id).toBe("ui-msg-latest");
     expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
+  });
+
+  test("fork skips ids already on disk from a separate LocalStore instance", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-store-fork-collision-"),
+    );
+    const agentId = "agent-fork";
+    const sourceId = "conv-source";
+    const existingId = "conv-existing";
+
+    // Store A creates a source conversation and an existing conversation that
+    // occupies the next seq slot, simulating a second LocalStore process that
+    // wrote a conversation to the shared storage directory.
+    const storeA = new LocalStore(agentId, { storageDir });
+    storeA.appendTurnInput(sourceId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    storeA.appendTurnInput(existingId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "existing" }],
+    });
+
+    // Store B loads from the same storage dir — it sees both conversations and
+    // sets conversationSeq to the max existing value.  A fork from Store B
+    // must not clobber the existing conversation even if its raw seq would
+    // land on that slot.
+    const storeB = new LocalStore(agentId, { storageDir });
+    const { id: forkedId } = storeB.forkConversation(sourceId);
+
+    // The fork must not reuse any id that already exists on disk.
+    expect(forkedId).not.toBe(sourceId);
+    expect(forkedId).not.toBe(existingId);
+
+    // The existing conversation must still be intact.
+    const existing = storeB.retrieveConversation(existingId);
+    expect(existing.id).toBe(existingId);
+  });
+
+  test("interrupt rolls back unpersisted partial assistant message before reload", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-store-interrupt-"));
+    const agentId = "agent-interrupt";
+    const conversationId = "conv-interrupt";
+
+    const store = new LocalStore(agentId, { storageDir });
+    store.appendTurnInput(conversationId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    store.appendStreamChunk(conversationId, agentId, {
+      message_type: "assistant_message",
+      content: [{ type: "text", text: "partial" }],
+    } as LettaStreamingResponse);
+
+    const conversationBeforeReload = store.retrieveConversation(conversationId);
+    const partialAssistantId =
+      conversationBeforeReload.in_context_message_ids?.at(-1);
+    expect(partialAssistantId).toBe("ui-msg-2");
+
+    store.settleInterruptedToolCalls(conversationId, { agentId });
+
+    const reloaded = new LocalStore(agentId, { storageDir });
+    const conversationAfterReload =
+      reloaded.retrieveConversation(conversationId);
+    expect(conversationAfterReload.in_context_message_ids).not.toContain(
+      partialAssistantId,
+    );
+    expect(reloaded.retrieveMessage(partialAssistantId ?? "")).toEqual([]);
   });
 
   test("recompiles cached system prompt when committed memory changes", async () => {
@@ -758,8 +896,10 @@ describe("local backend pi transcript", () => {
     const handles = (await listLocalModels(storageDir)).map(
       (model) => model.handle,
     );
+    const zaiHandles = handles.filter((handle) => handle.startsWith("zai/"));
+    expect(zaiHandles[0]).toBe("zai/glm-5.2");
     expect(handles).toContain("zai/glm-4.5-air");
-    expect(handles[0]).toBe("zai/glm-5.1");
+    expect(handles).toContain("zai/glm-5.2");
     expect(handles).toContain("zai/glm-5.1");
   });
 

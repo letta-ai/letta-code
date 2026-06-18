@@ -208,10 +208,10 @@ export interface ModEventResultMap {
   turn_start: ModTurnStartResult | undefined;
 }
 
-export interface ModEventContext {
+export interface ModInvocationContext extends ModContext {}
+
+export interface ModEventContext extends ModInvocationContext {
   conversation: ModConversationHandle;
-  context: ModContext;
-  getContext: () => ModContext;
   signal: AbortSignal;
 }
 
@@ -238,6 +238,7 @@ export interface ModEventEmissionResult<
 }
 
 export type ModCapabilityKind =
+  | "api"
   | "command"
   | "event"
   | "permission"
@@ -260,10 +261,18 @@ export type ModDiagnosticPhase =
   | "import"
   | "activate"
   | "command_override"
+  | "command.run"
+  | "deprecated_api"
   | "dispose"
   | "event"
+  | "permission.check"
+  | "permission.isEnabled"
   | "report"
-  | "stale_handle";
+  | "stale_handle"
+  | "status.evaluate"
+  | "statusline.render"
+  | "tool.isEnabled"
+  | "tool.run";
 
 export type ModDiagnosticSeverity = "error" | "warning";
 
@@ -306,23 +315,12 @@ export interface ModContext {
   backgroundAgents: ModBackgroundAgentContext[];
 }
 
-export interface ModCommandContext {
+export interface ModCommandContext extends ModInvocationContext {
   rawInput: string;
   command: string;
   args: string;
   argv: string[];
-  cwd: string;
-  agent: {
-    id: string;
-    name: string | null;
-  };
   conversation: ModConversationHandle & { id: string };
-  model: {
-    id: string | null;
-    displayName: string | null;
-  };
-  permissionMode: string | null;
-  getContext: () => ModContext;
 }
 
 export type ModCommandResult =
@@ -380,6 +378,12 @@ export interface ModCommand {
   runWhenBusy: boolean;
   showInTranscript: boolean;
   run: ModCommandRegistration["run"];
+  recordDiagnostic?: (
+    diagnostic: Pick<
+      ModDiagnostic,
+      "capability" | "error" | "phase" | "severity"
+    >,
+  ) => void;
 }
 
 export interface ModToolContentText {
@@ -411,19 +415,12 @@ export type ModToolRunResult =
       success?: boolean;
     };
 
-export interface ModToolRunContext {
+export interface ModToolRunContext extends ModInvocationContext {
   args: Record<string, unknown>;
-  cwd: string;
-  workingDirectory: string;
   toolCallId: string | null;
   signal: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
-  permissionMode: string | null;
-  agent: {
-    id: string | null;
-  };
   conversation: ModConversationHandle;
-  getContext: () => ModContext;
 }
 
 export type ToolApprovalPolicy = "auto" | "ask" | "alwaysAsk";
@@ -436,7 +433,7 @@ export interface ModToolRegistration {
   requiresApproval?: boolean;
   approvalPolicy?: ToolApprovalPolicy;
   parallelSafe?: boolean;
-  isEnabled?: (context: ModContext) => boolean;
+  isEnabled?: (context: ModInvocationContext) => boolean;
   run: (
     context: ModToolRunContext,
   ) => ModToolRunResult | Promise<ModToolRunResult>;
@@ -478,15 +475,14 @@ export type ModPermissionCheckResult =
     }
   | undefined;
 
-export interface ModPermissionCheckContext {
-  getContext: () => ModContext;
+export interface ModPermissionCheckContext extends ModInvocationContext {
   signal: AbortSignal;
 }
 
 export interface ModPermissionRegistration {
   id: string;
   description?: string;
-  isEnabled?: (context: ModContext) => boolean;
+  isEnabled?: (context: ModInvocationContext) => boolean;
   check: (
     event: ModPermissionCheckEvent,
     context: ModPermissionCheckContext,

@@ -7,11 +7,6 @@ import { emptyEventEmissionResult, type ModEvents } from "@/mods/event-emitter";
 import type { LocalModRegistry, ModEngine } from "@/mods/mod-engine";
 import { clearModPermissions } from "@/mods/permission-registry";
 import { clearModTools } from "@/mods/tool-registry";
-import type { ModContext } from "@/mods/types";
-
-interface CreateDisabledModAdapterOptions {
-  initialContext: ModContext;
-}
 
 function createDisabledModRegistry(): LocalModRegistry {
   return {
@@ -29,6 +24,7 @@ function createDisabledModRegistry(): LocalModRegistry {
     tools: {},
     ui: {
       panels: {},
+      statusRecorders: {},
       statuslineRenderer: null,
       statusOwners: {},
       statusValues: {},
@@ -54,14 +50,11 @@ function createDisabledModEngine(registry: LocalModRegistry): ModEngine {
   };
 }
 
-export function createDisabledModAdapter(
-  options: CreateDisabledModAdapterOptions,
-) {
+export function createDisabledModAdapter() {
   clearModPermissions();
   clearModTools();
   clearRegisteredPiProviders();
 
-  let context = options.initialContext;
   const registry = createDisabledModRegistry();
   const engine = createDisabledModEngine(registry);
   const snapshot = {
@@ -82,9 +75,6 @@ export function createDisabledModAdapter(
     getBackend() {
       return undefined;
     },
-    getContext() {
-      return context;
-    },
     getSnapshot() {
       return snapshot;
     },
@@ -94,9 +84,6 @@ export function createDisabledModAdapter(
     },
     subscribe(_listener: () => void) {
       return () => undefined;
-    },
-    updateContext(nextContext: ModContext) {
-      context = nextContext;
     },
   };
 }

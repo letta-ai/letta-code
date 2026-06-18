@@ -30,7 +30,7 @@ export default function activate(letta) {
 
   return letta.events.on("conversation_open", (event, ctx) => {
     console.log(`conversation ${event.reason}: ${event.agentName ?? event.agentId}`);
-    console.log(`cwd: ${ctx.context.workspace.currentDir}`);
+    console.log(`cwd: ${ctx.cwd}`);
   });
 }
 ```
@@ -180,13 +180,15 @@ Handlers also receive:
     getHistory(options?): Promise<Message[]>;
     sendMessageStream(messages, options?): Promise<AsyncIterable<chunk>>;
   };
-  context: letta.getContext();
-  getContext: () => letta.getContext();
+  agent: ModContext["agent"];
+  cwd: string;
+  model: ModContext["model"];
+  permissionMode: string | null;
   signal: AbortSignal;
 }
 ```
 
-`ctx.conversation` is bound when the event is dispatched. Use it for scoped conversation calls made while handling that event. If an event needs background model work, prefer `ctx.conversation.fork()` and send to the fork. Do not send to the active conversation from `turn_start`; that event is already in the path of sending a turn.
+`ctx` and `ctx.conversation` are bound when the event is dispatched. Use direct fields such as `ctx.agent`, `ctx.cwd`, `ctx.model`, and `ctx.permissionMode` for scoped state. If an event needs background model work, prefer `ctx.conversation.fork()` and send to the fork. Do not send to the active conversation from `turn_start`; that event is already in the path of sending a turn.
 
 Respect `ctx.signal` for long-running async work. It is aborted on `/reload` and app shutdown.
 

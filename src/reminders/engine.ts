@@ -11,6 +11,7 @@ import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
+import type { ShellContext } from "@/utils/shell-context";
 import {
   SHARED_REMINDER_CATALOG,
   type SharedReminderId,
@@ -39,6 +40,8 @@ export interface SharedReminderContext {
   sessionContextSource?: SessionContextSource;
   /** Reason the session context is being (re)generated. */
   sessionContextReason?: SessionContextReason;
+  /** Shell context detected at startup, if available. */
+  shellContext?: ShellContext;
 }
 
 export type ReminderTextPart = { type: "text"; text: string };
@@ -138,6 +141,7 @@ async function buildSessionContextReminder(
     cwd: context.workingDirectory,
     source: context.sessionContextSource,
     reason,
+    shellContext: context.shellContext,
   });
 
   context.state.hasSentSessionContext = true;

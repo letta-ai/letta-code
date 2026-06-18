@@ -1,6 +1,6 @@
 # Prompts
 
-All prompt files are imported as text via `promptAssets.ts` (or `create.ts` for sleeptime). Files use `.md`, `.mdx` (memory blocks with YAML frontmatter), or `.txt` (system reminders injected as XML tags).
+All prompt files are imported as text via `promptAssets.ts`. Files use `.md`, `.mdx` (memory blocks with YAML frontmatter), or `.txt` (system reminders injected as XML tags).
 
 ## System prompts
 
@@ -61,7 +61,6 @@ Injected when the user invokes a specific slash command.
 |------|------|-------------|
 | `remember.md` | `/remember` command | Instructs the agent to commit conversation context to memory |
 | `skill_creator_mode.md` | `/skill` command | Guides the agent through designing a new skill |
-| `sleeptime.md` | Sleep-time memory agent persona | Persona for the background agent that maintains memory blocks between sessions |
 
 ## System reminders (`.txt`)
 

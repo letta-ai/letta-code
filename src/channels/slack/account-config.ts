@@ -12,6 +12,7 @@ const SLACK_CONFIG_KEYS = new Set([
   "mode",
   "agent_id",
   "default_permission_mode",
+  "transcribe_voice",
 ]);
 
 function isString(value: unknown): value is string {
@@ -20,6 +21,10 @@ function isString(value: unknown): value is string {
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
+}
+
+function isBoolean(value: unknown): value is boolean {
+  return value === true || value === false;
 }
 
 function isDefaultPermissionMode(
@@ -50,7 +55,9 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         (config.mode === undefined || config.mode === "socket") &&
         (config.agent_id === undefined || isNullableString(config.agent_id)) &&
         (config.default_permission_mode === undefined ||
-          isDefaultPermissionMode(config.default_permission_mode))
+          isDefaultPermissionMode(config.default_permission_mode)) &&
+        (config.transcribe_voice === undefined ||
+          isBoolean(config.transcribe_voice))
       );
     },
 
@@ -69,6 +76,9 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
               config.default_permission_mode,
             ) as SlackDefaultPermissionMode)
           : undefined,
+        transcribeVoice: isBoolean(config.transcribe_voice)
+          ? config.transcribe_voice
+          : undefined,
       };
     },
 
@@ -80,6 +90,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         agent_id: account.agentId,
         default_permission_mode:
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
+        transcribe_voice: account.transcribeVoice === true,
       };
     },
 
@@ -91,6 +102,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         agent_id: account.agentId,
         default_permission_mode:
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
+        transcribe_voice: account.transcribeVoice === true,
       };
     },
 

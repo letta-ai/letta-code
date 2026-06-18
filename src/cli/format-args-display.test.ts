@@ -110,7 +110,7 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     expect(formatted.shellSemantic).toBeUndefined();
   });
 
-  test("summarizes Codex write_stdin polling with Codex-like language", () => {
+  test("summarizes Codex write_stdin polling as a background terminal check", () => {
     const args = JSON.stringify({
       session_id: 8,
       yield_time_ms: 1000,
@@ -118,7 +118,7 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
 
     const formatted = formatArgsDisplay(args, "write_stdin");
-    expect(formatted.displayName).toBe("Waited for background terminal");
+    expect(formatted.displayName).toBe("Checked background terminal");
     expect(formatted.display).toBe("(session 8)");
     expect(formatted.shellSemantic).toBeUndefined();
   });

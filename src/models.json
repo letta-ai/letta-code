@@ -909,6 +909,45 @@
       }
     },
     {
+      "id": "gpt-5.4-pro-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.4-pro",
+      "label": "GPT-5.4 Pro (ChatGPT)",
+      "description": "GPT-5.4 Pro (med reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-pro-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.4-pro",
+      "label": "GPT-5.4 Pro (ChatGPT)",
+      "description": "GPT-5.4 Pro (high reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.4-pro-plus-pro-xhigh",
+      "handle": "chatgpt-plus-pro/gpt-5.4-pro",
+      "label": "GPT-5.4 Pro (ChatGPT)",
+      "description": "GPT-5.4 Pro (max reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "gpt-5.4-fast-plus-pro-none",
       "handle": "chatgpt-plus-pro/gpt-5.4-fast",
       "label": "GPT-5.4 Fast (ChatGPT)",
@@ -1039,66 +1078,66 @@
       }
     },
     {
-      "id": "gpt-5.3-codex-plus-pro-none",
-      "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-      "label": "GPT-5.3 Codex (ChatGPT)",
-      "description": "GPT-5.3 Codex (no reasoning) via ChatGPT Plus/Pro",
+      "id": "gpt-5.3-codex-spark-plus-pro-none",
+      "handle": "chatgpt-plus-pro/gpt-5.3-codex-spark",
+      "label": "GPT-5.3 Codex Spark (ChatGPT)",
+      "description": "GPT-5.3 Codex Spark (no reasoning) via ChatGPT Plus/Pro",
       "updateArgs": {
         "reasoning_effort": "none",
         "verbosity": "low",
-        "context_window": 272000,
+        "context_window": 128000,
         "max_output_tokens": 128000,
         "parallel_tool_calls": true
       }
     },
     {
-      "id": "gpt-5.3-codex-plus-pro-low",
-      "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-      "label": "GPT-5.3 Codex (ChatGPT)",
-      "description": "GPT-5.3 Codex (low reasoning) via ChatGPT Plus/Pro",
+      "id": "gpt-5.3-codex-spark-plus-pro-low",
+      "handle": "chatgpt-plus-pro/gpt-5.3-codex-spark",
+      "label": "GPT-5.3 Codex Spark (ChatGPT)",
+      "description": "GPT-5.3 Codex Spark (low reasoning) via ChatGPT Plus/Pro",
       "updateArgs": {
         "reasoning_effort": "low",
         "verbosity": "low",
-        "context_window": 272000,
+        "context_window": 128000,
         "max_output_tokens": 128000,
         "parallel_tool_calls": true
       }
     },
     {
-      "id": "gpt-5.3-codex-plus-pro-medium",
-      "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-      "label": "GPT-5.3 Codex (ChatGPT)",
-      "description": "GPT-5.3 Codex (med reasoning) via ChatGPT Plus/Pro",
+      "id": "gpt-5.3-codex-spark-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.3-codex-spark",
+      "label": "GPT-5.3 Codex Spark (ChatGPT)",
+      "description": "GPT-5.3 Codex Spark (med reasoning) via ChatGPT Plus/Pro",
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "low",
-        "context_window": 272000,
+        "context_window": 128000,
         "max_output_tokens": 128000,
         "parallel_tool_calls": true
       }
     },
     {
-      "id": "gpt-5.3-codex-plus-pro-high",
-      "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-      "label": "GPT-5.3 Codex (ChatGPT)",
-      "description": "OpenAI's best coding model (high reasoning) via ChatGPT Plus/Pro",
+      "id": "gpt-5.3-codex-spark-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.3-codex-spark",
+      "label": "GPT-5.3 Codex Spark (ChatGPT)",
+      "description": "GPT-5.3 Codex Spark (high reasoning) via ChatGPT Plus/Pro",
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "low",
-        "context_window": 272000,
+        "context_window": 128000,
         "max_output_tokens": 128000,
         "parallel_tool_calls": true
       }
     },
     {
-      "id": "gpt-5.3-codex-plus-pro-xhigh",
-      "handle": "chatgpt-plus-pro/gpt-5.3-codex",
-      "label": "GPT-5.3 Codex (ChatGPT)",
-      "description": "GPT-5.3 Codex (max reasoning) via ChatGPT Plus/Pro",
+      "id": "gpt-5.3-codex-spark-plus-pro-xhigh",
+      "handle": "chatgpt-plus-pro/gpt-5.3-codex-spark",
+      "label": "GPT-5.3 Codex Spark (ChatGPT)",
+      "description": "GPT-5.3 Codex Spark (max reasoning) via ChatGPT Plus/Pro",
       "updateArgs": {
         "reasoning_effort": "xhigh",
         "verbosity": "low",
-        "context_window": 272000,
+        "context_window": 128000,
         "max_output_tokens": 128000,
         "parallel_tool_calls": true
       }
@@ -1602,7 +1641,7 @@
       "id": "glm-5.2",
       "handle": "zai/glm-5.2",
       "label": "GLM-5.2",
-      "description": "zAI's latest coding model",
+      "description": "zAI's latest reasoning and coding model with 1M context",
       "isFeatured": true,
       "free": true,
       "updateArgs": {
@@ -1616,6 +1655,7 @@
       "handle": "zai/glm-5.1",
       "label": "GLM-5.1",
       "description": "zAI's coding model",
+      "isFeatured": false,
       "free": true,
       "updateArgs": {
         "context_window": 180000,

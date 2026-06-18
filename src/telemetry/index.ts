@@ -6,6 +6,7 @@ import { submitTelemetryMetadata } from "@/backend/api/metadata";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
+import { isLoopbackHostname, parseUrl } from "@/utils/url";
 import { getVersion } from "@/version";
 
 export type TelemetrySurface =
@@ -113,7 +114,7 @@ export interface ReflectionEndData {
 export function isLettaCodeDesktopRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return env.LETTA_DESKTOP_DEBUG_PANEL === "1";
+  return env.LETTA_DESKTOP_MODE === "1";
 }
 
 export function getTerminalTelemetrySurface(
@@ -130,38 +131,16 @@ export function getListenerTelemetrySurface(
     : "letta_code_cli_server";
 }
 
-function parseTelemetryUrl(value: string): URL | null {
-  try {
-    return new URL(value);
-  } catch {
-    try {
-      return new URL(`http://${value}`);
-    } catch {
-      return null;
-    }
-  }
-}
-
 function isTelemetryCloudServerUrl(serverUrl: string): boolean {
-  const parsed = parseTelemetryUrl(serverUrl);
-  const cloud = parseTelemetryUrl(LETTA_CLOUD_API_URL);
+  const parsed = parseUrl(serverUrl, { allowMissingProtocol: true });
+  const cloud = parseUrl(LETTA_CLOUD_API_URL, { allowMissingProtocol: true });
   return Boolean(parsed && cloud && parsed.hostname === cloud.hostname);
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  return (
-    normalized === "localhost" ||
-    normalized === "0.0.0.0" ||
-    normalized === "::1" ||
-    normalized.startsWith("127.")
-  );
-}
-
 function isLikelyDeprecatedDockerBackendUrl(serverUrl: string): boolean {
-  const parsed = parseTelemetryUrl(serverUrl);
+  const parsed = parseUrl(serverUrl, { allowMissingProtocol: true });
   return Boolean(
-    parsed && isLoopbackHost(parsed.hostname) && parsed.port === "8283",
+    parsed && isLoopbackHostname(parsed.hostname) && parsed.port === "8283",
   );
 }
 
