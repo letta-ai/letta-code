@@ -19,6 +19,7 @@ import type {
   ConversationRuntime,
   ListenerRuntime,
 } from "@/websocket/listener/types";
+import { sanitizeConversationCreateBody } from "./conversation-body";
 import type {
   GetOrCreateScopedRuntime,
   RunDetachedListenerTask,
@@ -166,10 +167,14 @@ async function resolveRuntimeStartConversation(
     return conversation;
   }
 
-  const body = {
+  const rawBody = {
     ...(parsed.create_conversation?.body ?? {}),
     agent_id: agent.id,
   } satisfies ConversationCreateParams;
+  const body = sanitizeConversationCreateBody(
+    rawBody as Record<string, unknown>,
+    backend.capabilities,
+  ) as typeof rawBody;
   const conversation = await backend.createConversation(body);
   created.conversation = true;
   return conversation;

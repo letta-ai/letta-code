@@ -30,6 +30,7 @@ import {
   isConversationRetrieveCommand,
   isConversationUpdateCommand,
 } from "@/websocket/listener/protocol-inbound";
+import { sanitizeConversationCreateBody } from "./conversation-body";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 export type AgentConversationManagementCommand =
@@ -302,7 +303,13 @@ export async function handleAgentConversationManagementCommand(
 
   if (parsed.type === "conversation_create") {
     try {
-      const conversation = await backend.createConversation(parsed.body);
+      const sanitizedBody = sanitizeConversationCreateBody(
+        parsed.body as Record<string, unknown>,
+        backend.capabilities,
+      );
+      const conversation = await backend.createConversation(
+        sanitizedBody as typeof parsed.body,
+      );
       safeSocketSend(
         socket,
         {
