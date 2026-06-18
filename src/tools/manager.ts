@@ -16,7 +16,7 @@ import {
   getCachedDynamicMessageChannelToolDefinition,
   type MessageChannelToolDiscoveryScope,
 } from "@/channels/message-tool";
-import { getActiveChannelIds } from "@/channels/registry";
+import { getActiveChannelIds, getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import {
@@ -236,6 +236,15 @@ const STREAMING_SHELL_TOOLS = new Set([
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "replace"]);
+
+// Memory-mutating tools. Keep local to avoid importing toolset.ts, which imports this module.
+const MEMORY_MUTATING_TOOL_NAMES = new Set<string>([
+  "memory",
+  "memory_apply_patch",
+  "memory_insert",
+  "memory_replace",
+  "memory_rethink",
+]);
 
 // Maps internal tool names to server/model-facing tool names
 // This allows us to have multiple implementations (e.g., write_file_gemini, Write from Anthropic)
@@ -730,6 +739,12 @@ function buildExecutionRuntimeContextSnapshot(options?: {
     getCurrentWorkingDirectory();
   mergedScope.permissionMode =
     options?.permissionModeState?.mode ?? mergedScope.permissionMode;
+  if (options?.channelToolScope !== undefined) {
+    mergedScope.channelToolScope = options.channelToolScope;
+  }
+  if (options?.channelTurnSources?.length) {
+    mergedScope.channelTurnSources = [...options.channelTurnSources];
+  }
 
   return mergedScope;
 }
@@ -2037,6 +2052,39 @@ function getModToolStatus(result: unknown): "success" | "error" {
   return "success";
 }
 
+function getMemoryToolLifecycleSources(
+  toolName: string,
+  executionScope: RuntimeContextSnapshot,
+): ChannelTurnSource[] | undefined {
+  if (!MEMORY_MUTATING_TOOL_NAMES.has(toolName)) {
+    return undefined;
+  }
+  if (!executionScope.channelTurnSources?.length) {
+    return undefined;
+  }
+  return [...executionScope.channelTurnSources];
+}
+
+async function dispatchMemoryToolLifecycleEvent(
+  type: "tool_started" | "tool_finished",
+  toolName: string,
+  sources: ChannelTurnSource[],
+): Promise<void> {
+  try {
+    await getChannelRegistry().dispatchTurnLifecycleEvent({
+      type,
+      toolName,
+      sources,
+    });
+  } catch (error) {
+    debugLog(
+      "channels",
+      `Failed to dispatch memory tool lifecycle event ${type} for ${toolName}`,
+      error,
+    );
+  }
+}
+
 type ToolHookContext = {
   args: Record<string, unknown>;
   debugLabel: string;
@@ -2424,10 +2472,12 @@ export async function executeTool(
         workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
         permissionModeState: context.permissionModeState,
         runtimeContext: context.runtimeContext,
+        channelTurnSources: options?.channelTurnSources,
       })
     : buildExecutionRuntimeContextSnapshot({
         workingDirectory: context?.workingDirectory,
         permissionModeState: context?.permissionModeState,
+        channelTurnSources: options?.channelTurnSources,
       });
   const workingDirectory =
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
@@ -2668,7 +2718,30 @@ export async function executeTool(
         };
       }
 
-      const result = await tool.fn(enhancedArgs);
+      const memoryLifecycleSources = getMemoryToolLifecycleSources(
+        internalName,
+        executionScope,
+      );
+      if (memoryLifecycleSources) {
+        await dispatchMemoryToolLifecycleEvent(
+          "tool_started",
+          internalName,
+          memoryLifecycleSources,
+        );
+      }
+
+      let result: unknown;
+      try {
+        result = await tool.fn(enhancedArgs);
+      } finally {
+        if (memoryLifecycleSources) {
+          await dispatchMemoryToolLifecycleEvent(
+            "tool_finished",
+            internalName,
+            memoryLifecycleSources,
+          );
+        }
+      }
       const duration = Date.now() - startTime;
 
       // Broadcast file content after file-mutating tools so web clients update
