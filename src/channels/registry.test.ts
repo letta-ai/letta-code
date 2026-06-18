@@ -1324,6 +1324,34 @@ describe("pending channel control requests", () => {
     });
   });
 
+  test("channel replies clear pending control prompts when approval handling fails", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    let approvalResponses = 0;
+    registry.setApprovalResponseHandler(async () => {
+      approvalResponses += 1;
+      throw new Error("approval handler failed");
+    });
+
+    await registry.registerPendingControlRequest(
+      createPendingControlRequestEvent(),
+    );
+
+    await expect(adapter.onMessage?.(createInboundMessage("2"))).rejects.toThrow(
+      "approval handler failed",
+    );
+
+    expect(approvalResponses).toBe(1);
+    expect(registry.hasPendingControlRequest("req-ask-1")).toBe(false);
+  });
+
   test("/cancel bypasses pending channel control prompts", async () => {
     const replies: Array<{
       chatId: string;

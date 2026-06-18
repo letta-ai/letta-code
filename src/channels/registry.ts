@@ -1048,15 +1048,18 @@ export class ChannelRegistry {
       return true;
     }
 
-    const handled = await this.approvalResponseHandler({
-      runtime: {
-        agent_id: pending.event.source.agentId,
-        conversation_id: pending.event.source.conversationId,
-      },
-      response: parsed.response,
-    });
-
-    this.clearPendingControlRequest(requestId);
+    let handled: boolean;
+    try {
+      handled = await this.approvalResponseHandler({
+        runtime: {
+          agent_id: pending.event.source.agentId,
+          conversation_id: pending.event.source.conversationId,
+        },
+        response: parsed.response,
+      });
+    } finally {
+      this.clearPendingControlRequest(requestId);
+    }
 
     if (!handled) {
       await adapter.sendDirectReply(
