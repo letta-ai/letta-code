@@ -157,6 +157,8 @@ export interface ChannelPluginAccountPatch {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
+  showCompletedReaction?: boolean;
+  listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;

@@ -73,6 +73,7 @@ import {
 } from "./routing";
 import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
+  ChannelAccount,
   ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelDefaultPermissionMode,
@@ -827,6 +828,7 @@ export class ChannelRegistry {
         route.chatId === chatId &&
         route.agentId === agentId &&
         route.conversationId === conversationId &&
+        route.outboundEnabled !== false &&
         (!normalizedAccountId ||
           (route.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) ===
             normalizedAccountId) &&
@@ -1303,12 +1305,16 @@ export class ChannelRegistry {
   private shouldDropUnroutedSlackThreadInput(
     msg: InboundChannelMessage,
     accountId: string,
+    config: ChannelAccount | null,
   ): boolean {
     return (
       msg.channel === "slack" &&
       msg.chatType === "channel" &&
       msg.threadId != null &&
       msg.isMention !== true &&
+      (!config ||
+        !isSlackChannelAccount(config) ||
+        config.listenMode !== true) &&
       !this.hasExactEnabledRouteForMessage(msg, accountId)
     );
   }
@@ -1323,11 +1329,11 @@ export class ChannelRegistry {
       return;
     }
 
-    if (this.shouldDropUnroutedSlackThreadInput(msg, accountId)) {
+    const config = getChannelAccount(msg.channel, accountId);
+
+    if (this.shouldDropUnroutedSlackThreadInput(msg, accountId, config)) {
       return;
     }
-
-    const config = getChannelAccount(msg.channel, accountId);
 
     const getStatusRoute = (): ChannelRoute | null => {
       let statusRoute = getRouteFromStore(
@@ -1608,6 +1614,7 @@ export class ChannelRegistry {
   private async createSlackRoute(
     config: SlackChannelAccount,
     msg: InboundChannelMessage,
+    options: { outboundEnabled?: boolean } = {},
   ): Promise<ChannelRoute> {
     if (!config.agentId) {
       throw new Error("Slack app is missing an agent binding.");
@@ -1629,6 +1636,7 @@ export class ChannelRegistry {
       agentId: config.agentId,
       conversationId,
       enabled: true,
+      outboundEnabled: options.outboundEnabled !== false,
       createdAt: now,
       updatedAt: now,
     };
@@ -1654,6 +1662,9 @@ export class ChannelRegistry {
     isFirstRouteTurn: boolean;
   } | null> {
     if (!config.agentId) {
+      if (msg.chatType === "channel" && msg.isMention !== true) {
+        return null;
+      }
       await adapter.sendDirectReply(
         msg.chatId,
         buildSlackAppSetupInstructions(),
@@ -1699,13 +1710,38 @@ export class ChannelRegistry {
     }
 
     if (route) {
+      if (
+        msg.chatType === "channel" &&
+        msg.isMention === true &&
+        route.outboundEnabled === false
+      ) {
+        const updatedRoute: ChannelRoute = {
+          ...route,
+          outboundEnabled: true,
+          updatedAt: new Date().toISOString(),
+        };
+        addRoute(msg.channel, updatedRoute);
+        return {
+          route: updatedRoute,
+          isFirstRouteTurn: false,
+        };
+      }
       return {
         route,
         isFirstRouteTurn: false,
       };
     }
 
-    if (msg.chatType === "channel" && !msg.isMention) {
+    const shouldCreateListenOnlyRoute =
+      msg.chatType === "channel" &&
+      msg.isMention !== true &&
+      config.listenMode === true;
+
+    if (
+      msg.chatType === "channel" &&
+      msg.isMention !== true &&
+      !shouldCreateListenOnlyRoute
+    ) {
       return null;
     }
 
@@ -1727,7 +1763,9 @@ export class ChannelRegistry {
     });
 
     return {
-      route: await this.createSlackRoute(config, msg),
+      route: await this.createSlackRoute(config, msg, {
+        outboundEnabled: !shouldCreateListenOnlyRoute,
+      }),
       isFirstRouteTurn: true,
     };
   }

@@ -837,10 +837,15 @@ export function createSlackAdapter(
           } catch {}
         }
 
-        await sendLifecycleReaction(
-          source,
-          nextState === "completed" ? "white_check_mark" : "x",
-        );
+        if (
+          nextState !== "completed" ||
+          config.showCompletedReaction !== false
+        ) {
+          await sendLifecycleReaction(
+            source,
+            nextState === "completed" ? "white_check_mark" : "x",
+          );
+        }
         lifecycleStateByMessageKey.set(key, {
           state: nextState,
           updatedAt: Date.now(),

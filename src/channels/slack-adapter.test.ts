@@ -1237,6 +1237,67 @@ test("slack adapter adds eyes while a queued turn is processing, then swaps to c
   });
 });
 
+test("slack adapter can suppress the completed checkmark while preserving queued eyes", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    showCompletedReaction: false,
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000150",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000150",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.add).toHaveBeenCalledTimes(1);
+  expect(writeClient?.reactions.add).toHaveBeenCalledWith({
+    channel: "C123",
+    timestamp: "1712800000.000150",
+    name: "eyes",
+  });
+  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
+    channel: "C123",
+    timestamp: "1712800000.000150",
+    name: "eyes",
+  });
+});
+
 test("slack adapter swaps queued turns to x when the turn fails", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,

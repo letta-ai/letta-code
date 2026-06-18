@@ -67,6 +67,7 @@ export function loadRoutes(channelId: string): void {
             agentId: route.agentId,
             conversationId: route.conversationId,
             enabled: route.enabled !== false,
+            outboundEnabled: route.outboundEnabled !== false,
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:
               route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
@@ -97,6 +98,7 @@ export function loadRoutes(channelId: string): void {
             agentId: route.agentId,
             conversationId: route.conversationId,
             enabled: route.enabled !== false,
+            outboundEnabled: route.outboundEnabled !== false,
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:
               route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
@@ -216,6 +218,7 @@ export function addRoute(channelId: string, route: ChannelRoute): void {
       ...route,
       accountId: normalizeAccountId(route.accountId),
       threadId: route.threadId ?? null,
+      outboundEnabled: route.outboundEnabled !== false,
     },
   );
   saveRoutes(channelId);
@@ -262,6 +265,7 @@ export function setRouteInMemory(channelId: string, route: ChannelRoute): void {
       ...route,
       accountId: normalizeAccountId(route.accountId),
       threadId: route.threadId ?? null,
+      outboundEnabled: route.outboundEnabled !== false,
     },
   );
 }
