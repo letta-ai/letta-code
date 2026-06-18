@@ -45,7 +45,10 @@ describe("getQuestionsFromApproval (shared validator)", () => {
   });
 
   test("returns [] for non-string question/header/description", () => {
-    const baseOptions = [{ label: "A", description: "" }];
+    const baseOptions = [
+      { label: "A", description: "" },
+      { label: "B", description: "" },
+    ];
     const nonStringQuestion = JSON.stringify({
       questions: [
         {
@@ -57,6 +60,8 @@ describe("getQuestionsFromApproval (shared validator)", () => {
       ],
     });
     expect(getQuestionsFromApproval(approval(nonStringQuestion))).toEqual([]);
+    // Two valid options so the failure is attributable to the non-string
+    // `description`, not the 2–4 options bound.
     const nonStringDescription = JSON.stringify({
       questions: [
         {
@@ -67,6 +72,7 @@ describe("getQuestionsFromApproval (shared validator)", () => {
               label: string;
               description: string;
             },
+            { label: "B", description: "" },
           ],
           multiSelect: false,
         },

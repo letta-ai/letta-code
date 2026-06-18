@@ -242,7 +242,10 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
     // InlineQuestionApproval calls `question.includes(...)` and renders
     // `header` as a React child, so non-string values throw. multiSelect/
     // allowOther must be booleans (allowOther may be omitted).
-    const baseOptions = [{ label: "A", description: "" }];
+    const baseOptions = [
+      { label: "A", description: "" },
+      { label: "B", description: "" },
+    ];
     const nonStringQuestion = JSON.stringify({
       questions: [
         {
@@ -310,14 +313,22 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
   });
 
   test("returns [] if any single question is malformed (all-or-nothing)", () => {
+    // The first question is fully well-formed (2 options + multiSelect); only
+    // the second is malformed (missing options). This pins all-or-nothing: the
+    // validator must reject the whole batch because of the bad entry, not
+    // because the good one also happens to be invalid.
     const mixed = JSON.stringify({
       questions: [
         {
           header: "H",
           question: "Q?",
-          options: [{ label: "A", description: "" }],
+          options: [
+            { label: "A", description: "" },
+            { label: "B", description: "" },
+          ],
+          multiSelect: false,
         },
-        { header: "H2", question: "Q2?" }, // missing options
+        { header: "H2", question: "Q2?", multiSelect: false }, // missing options
       ],
     });
     expect(getQuestions(approval(mixed))).toEqual([]);
