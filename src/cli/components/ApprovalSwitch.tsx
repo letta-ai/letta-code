@@ -325,11 +325,26 @@ function getMemoryFileEditInfo(
   }
 }
 
-// Parse questions from AskUserQuestion args
-function getQuestions(approval: ApprovalRequest): Question[] {
+// Parse questions from AskUserQuestion args.
+// Validates shape defensively: a malformed tool call (e.g. `questions` emitted
+// as a JSON string rather than an array, or a question missing its required
+// `options` array) must never reach InlineQuestionApproval, which spreads
+// `options` without a guard and would crash the TUI. Returns [] for anything
+// malformed so ApprovalSwitch falls through to InlineGenericApproval, matching
+// how malformed Bash/Task args are already handled.
+export function getQuestions(approval: ApprovalRequest): Question[] {
   try {
     const args = JSON.parse(approval.toolArgs || "{}");
-    return (args.questions as Question[]) || [];
+    const questions = args.questions;
+    if (!Array.isArray(questions) || questions.length === 0) return [];
+    const wellFormed = questions.every(
+      (q) =>
+        q != null &&
+        typeof q === "object" &&
+        Array.isArray((q as Question).options) &&
+        (q as Question).options.length > 0,
+    );
+    return wellFormed ? (questions as Question[]) : [];
   } catch {
     return [];
   }
