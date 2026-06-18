@@ -337,13 +337,18 @@ export function getQuestions(approval: ApprovalRequest): Question[] {
     const args = JSON.parse(approval.toolArgs || "{}");
     const questions = args.questions;
     if (!Array.isArray(questions) || questions.length === 0) return [];
-    const wellFormed = questions.every(
-      (q) =>
-        q != null &&
-        typeof q === "object" &&
-        Array.isArray((q as Question).options) &&
-        (q as Question).options.length > 0,
-    );
+    const wellFormed = questions.every((q) => {
+      if (q == null || typeof q !== "object") return false;
+      const options = (q as { options?: unknown }).options;
+      if (!Array.isArray(options) || options.length === 0) return false;
+      return options.every(
+        (o) =>
+          o != null &&
+          typeof o === "object" &&
+          typeof (o as { label?: unknown }).label === "string" &&
+          (o as { label: string }).label.length > 0,
+      );
+    });
     return wellFormed ? (questions as Question[]) : [];
   } catch {
     return [];

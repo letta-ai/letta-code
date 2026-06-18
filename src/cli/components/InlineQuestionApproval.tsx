@@ -73,7 +73,9 @@ export const InlineQuestionApproval = memo(
     const baseOptions = currentQuestion
       ? [
           ...(Array.isArray(currentQuestion.options)
-            ? currentQuestion.options
+            ? currentQuestion.options.filter(
+                (o): o is QuestionOption => o != null && typeof o === "object",
+              )
             : []),
           ...(showOther ? [{ label: "Type something.", description: "" }] : []),
         ]

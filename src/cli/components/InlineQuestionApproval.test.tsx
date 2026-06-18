@@ -113,4 +113,26 @@ test("InlineQuestionApproval coerces non-array `options` instead of throwing (de
     const output = await renderWithOptions(bad);
     expect(typeof output).toBe("string");
   }
+
+  // An `options` array containing null/non-object entries must not throw when
+  // the render path reads option.label/option.description. The component
+  // filters out non-object entries as defense-in-depth.
+  const renderWithEntries = (options: unknown) =>
+    renderWithQuestions([
+      {
+        header: "H",
+        question: "Q?",
+        options,
+        multiSelect: false,
+      },
+    ] as QuestionsProp);
+  for (const badEntries of [
+    [null],
+    [42],
+    [null, { label: "A", description: "" }],
+    [{ label: "A", description: "" }, "bad"],
+  ]) {
+    const output = await renderWithEntries(badEntries);
+    expect(typeof output).toBe("string");
+  }
 });

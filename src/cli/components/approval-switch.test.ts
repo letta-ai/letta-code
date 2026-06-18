@@ -95,6 +95,68 @@ describe("getQuestions (AskUserQuestion shape validation)", () => {
     expect(getQuestions(approval(stringOptions))).toEqual([]);
   });
 
+  test("returns [] when an `options` entry is null/non-object/missing label", () => {
+    // The renderer derefs option.label (React key + display) and option.description,
+    // so a null/non-object entry (e.g. options: [null]) would throw downstream.
+    const nullEntry = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: [null as unknown as { label: string; description: string }],
+        },
+      ],
+    });
+    expect(getQuestions(approval(nullEntry))).toEqual([]);
+    const nonObjectEntry = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: [42 as unknown as { label: string; description: string }],
+        },
+      ],
+    });
+    expect(getQuestions(approval(nonObjectEntry))).toEqual([]);
+    const emptyLabel = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: [{ label: "", description: "x" }],
+        },
+      ],
+    });
+    expect(getQuestions(approval(emptyLabel))).toEqual([]);
+    const missingLabel = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: [{ description: "x" }] as unknown as {
+            label: string;
+            description: string;
+          }[],
+        },
+      ],
+    });
+    expect(getQuestions(approval(missingLabel))).toEqual([]);
+    // One bad entry invalidates the whole question (all-or-nothing).
+    const mixedEntries = JSON.stringify({
+      questions: [
+        {
+          header: "H",
+          question: "Q?",
+          options: [
+            { label: "A", description: "" },
+            null as unknown as { label: string; description: string },
+          ],
+        },
+      ],
+    });
+    expect(getQuestions(approval(mixedEntries))).toEqual([]);
+  });
+
   test("returns [] if any single question is malformed (all-or-nothing)", () => {
     const mixed = JSON.stringify({
       questions: [
