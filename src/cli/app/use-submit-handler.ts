@@ -69,6 +69,10 @@ import {
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
+import {
+  launchMemoryAuditorSubagent,
+  MEMORY_AUDITOR_DESCRIPTION,
+} from "@/cli/helpers/memory-auditor-launcher";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
@@ -3450,6 +3454,66 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+          }
+
+          return { submitted: true };
+        }
+
+        // Special handling for /memory-audit command - launch the memory auditor subagent
+        if (
+          trimmed === "/memory-audit" ||
+          trimmed.startsWith("/memory-audit ")
+        ) {
+          const cmd = commandRunner.start(msg, "Launching memory auditor...");
+
+          if (!isActiveMemfsEnabled(agentId)) {
+            cmd.fail("Memory filesystem is not enabled.");
+            return { submitted: true };
+          }
+
+          const auditInstruction = trimmed.slice("/memory-audit".length).trim();
+
+          try {
+            const result = await launchMemoryAuditorSubagent({
+              agentId,
+              conversationId: conversationIdRef.current ?? "default",
+              memfsEnabled: isActiveMemfsEnabled(agentId),
+              description: MEMORY_AUDITOR_DESCRIPTION,
+              instruction: auditInstruction || undefined,
+              completionConversationId: () => conversationIdRef.current,
+              recompileByConversation:
+                systemPromptRecompileByConversationRef.current,
+              recompileQueuedByConversation:
+                queuedSystemPromptRecompileByConversationRef.current,
+              onCompletionMessage: (completionMessage) => {
+                appendTaskNotificationEvents([completionMessage]);
+              },
+            });
+
+            if (!result.launched) {
+              if (result.reason === "already_active") {
+                cmd.fail(
+                  "A memory subagent is already running in the background.",
+                );
+              } else if (result.reason === "memfs_disabled") {
+                cmd.fail("Memory filesystem is not enabled.");
+              } else {
+                const errorDetails = formatErrorDetails(
+                  result.error ?? "Unknown error",
+                  agentId,
+                );
+                cmd.fail(`Failed to start memory auditor: ${errorDetails}`);
+              }
+              return { submitted: true };
+            }
+
+            cmd.finish(
+              "Auditing memory in the background. I'll report back when the audit completes.",
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to start memory auditor: ${errorDetails}`);
           }
 
           return { submitted: true };

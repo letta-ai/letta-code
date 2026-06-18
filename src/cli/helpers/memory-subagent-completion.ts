@@ -1,11 +1,12 @@
 import { recompileAgentSystemPrompt } from "@/agent/modify";
 import { isDebugEnabled } from "@/utils/debug";
+import { buildAgentReference } from "./app-urls";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
 } from "./system-prompt-warning";
 
-export type MemorySubagentType = "init" | "reflection";
+export type MemorySubagentType = "init" | "reflection" | "memory-auditor";
 
 type RecompileAgentSystemPromptFn = (
   conversationId: string,
@@ -19,6 +20,8 @@ export interface MemorySubagentCompletionArgs {
   subagentType: MemorySubagentType;
   success: boolean;
   error?: string;
+  /** The subagent's own agent ID, used to link to it on completion. */
+  subagentAgentId?: string;
 }
 
 export interface MemorySubagentCompletionDeps {
@@ -37,6 +40,9 @@ export async function handleMemorySubagentCompletion(
   deps: MemorySubagentCompletionDeps,
 ): Promise<string> {
   const { agentId, conversationId, subagentType, success, error } = args;
+  const subagentLink = args.subagentAgentId
+    ? buildAgentReference(args.subagentAgentId)
+    : null;
   const recompileAgentSystemPromptFn =
     deps.recompileAgentSystemPromptImpl ?? recompileAgentSystemPrompt;
   let recompileError: string | null = null;
@@ -86,14 +92,24 @@ export async function handleMemorySubagentCompletion(
       const detail = isDebugEnabled() ? `: ${error || "Unknown error"}` : "";
       return `Tried to reflect, but got lost in the palace${detail}`;
     }
+    if (subagentType === "memory-auditor") {
+      const detail = isDebugEnabled() ? `: ${error || "Unknown error"}` : "";
+      return `Tried to tidy the palace, but lost the map${detail}`;
+    }
     const normalizedError = error || "Unknown error";
     return `Memory initialization failed: ${normalizedError}`;
   }
 
-  const baseMessage =
+  let baseMessage =
     subagentType === "reflection"
       ? "Reflected on /palace, the halls remember more now."
-      : "Built a memory palace of you. Visit it with /palace.";
+      : subagentType === "memory-auditor"
+        ? "Memory has been tidied"
+        : "Built a memory palace of you. Visit it with /palace.";
+
+  if (subagentType === "memory-auditor" && subagentLink) {
+    baseMessage += ` (audit agent: ${subagentLink})`;
+  }
 
   if (!recompileError) {
     return baseMessage;
