@@ -7,6 +7,7 @@ import {
   fieldValuesFromProviderPlaceholders,
   filterProviderConfigs,
   hasConstellationProviderStoreCredentials,
+  isChatGPTUsageProvider,
   isProviderTargetLoading,
   nextProviderConnectionName,
   providerApiKeyFromInput,
@@ -58,6 +59,14 @@ function providerById(id: string): ByokProvider {
 }
 
 describe("ProviderSelector local provider API keys", () => {
+  test("recognizes ChatGPT OAuth providers for usage display", () => {
+    const chatgpt = providerById("openai-codex-oauth");
+    const openai = providerById("openai");
+
+    expect(isChatGPTUsageProvider(chatgpt)).toBe(true);
+    expect(isChatGPTUsageProvider(openai)).toBe(false);
+  });
+
   test("keeps LM Studio UI identity while using server provider type", () => {
     const lmstudio = providerById("lmstudio");
 

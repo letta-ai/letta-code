@@ -16,6 +16,7 @@ import {
   type ProviderStorageTarget,
   removeProviderByName,
 } from "@/providers/byok-providers";
+import { readChatGPTUsage } from "@/providers/chatgpt-usage-service";
 import { normalizeChatGPTOAuthProviderName } from "@/providers/openai-codex-provider";
 import { connectedRecordsForProvider } from "@/providers/provider-connections";
 import { type Settings, settingsManager } from "@/settings-manager";
@@ -48,6 +49,11 @@ type ProviderSelectionFlow =
 type ConnectedProvidersByTarget = Partial<
   Record<ProviderStorageTarget, Map<string, ProviderResponse>>
 >;
+
+type ChatGPTUsageStatus =
+  | { status: "loading" }
+  | { status: "ready"; summary: string }
+  | { status: "error"; message: string };
 
 interface ProviderSelectorProps {
   onCancel: () => void;
@@ -181,6 +187,21 @@ export function isProviderTargetLoading(input: {
   );
 }
 
+export function isChatGPTUsageProvider(provider: ByokProvider): boolean {
+  return (
+    provider.providerType === "chatgpt_oauth" ||
+    provider.oauthProviderId === "openai-codex" ||
+    provider.providerName === "chatgpt-plus-pro" ||
+    (provider.providerNames ?? []).includes("openai-codex")
+  );
+}
+
+function usageStatusText(status: ChatGPTUsageStatus | undefined): string {
+  if (!status || status.status === "loading") return "Usage: loading...";
+  if (status.status === "error") return `Usage unavailable: ${status.message}`;
+  return status.summary;
+}
+
 export function ProviderSelector({
   onCancel,
   onStartOAuth,
@@ -211,6 +232,9 @@ export function ProviderSelector({
     useState<ValidationState>("idle");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [optionIndex, setOptionIndex] = useState(0);
+  const [chatGPTUsageByProvider, setChatGPTUsageByProvider] = useState<
+    Record<string, ChatGPTUsageStatus>
+  >({});
   // Multi-field input state (for providers like Bedrock)
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [focusedFieldIndex, setFocusedFieldIndex] = useState(0);
@@ -404,6 +428,55 @@ export function ProviderSelector({
     },
     [getConnectedProviderRecords],
   );
+
+  const loadChatGPTUsageForProvider = useCallback(
+    (provider: ByokProvider, forceRefresh = false) => {
+      if (!isChatGPTUsageProvider(provider)) return;
+
+      const records = getConnectedProviderRecords(provider);
+      for (const record of records) {
+        const providerName = record.name;
+        setChatGPTUsageByProvider((previous) => ({
+          ...previous,
+          [providerName]: { status: "loading" },
+        }));
+
+        void readChatGPTUsage({
+          target: "local",
+          providerName,
+          forceRefresh,
+        })
+          .then((result) => {
+            if (!mountedRef.current) return;
+            setChatGPTUsageByProvider((previous) => ({
+              ...previous,
+              [providerName]: result.success
+                ? { status: "ready", summary: result.usage.summary }
+                : { status: "error", message: result.error.message },
+            }));
+          })
+          .catch((error) => {
+            if (!mountedRef.current) return;
+            setChatGPTUsageByProvider((previous) => ({
+              ...previous,
+              [providerName]: {
+                status: "error",
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to read ChatGPT usage.",
+              },
+            }));
+          });
+      }
+    },
+    [getConnectedProviderRecords],
+  );
+
+  useEffect(() => {
+    if (viewState.type !== "options") return;
+    loadChatGPTUsageForProvider(viewState.provider);
+  }, [loadChatGPTUsageForProvider, viewState]);
 
   // Get provider ID if connected
   const getProviderId = useCallback(
@@ -939,8 +1012,13 @@ export function ProviderSelector({
         viewState.provider,
         selectedTarget,
       );
+      const showUsageRefresh =
+        isChatGPTUsageProvider(viewState.provider) &&
+        connectedRecords.length > 0;
       const connectAnotherIndex = connectedRecords.length;
-      const backIndex = connectedRecords.length + (canConnectAnother ? 1 : 0);
+      const usageRefreshIndex =
+        connectAnotherIndex + (canConnectAnother ? 1 : 0);
+      const backIndex = usageRefreshIndex + (showUsageRefresh ? 1 : 0);
       const optionsLength = backIndex + 1;
       if (key.escape) {
         setViewState({ type: "list" });
@@ -960,6 +1038,8 @@ export function ProviderSelector({
             type: "oauthNameInput",
             provider: viewState.provider,
           });
+        } else if (showUsageRefresh && optionIndex === usageRefreshIndex) {
+          loadChatGPTUsageForProvider(viewState.provider, true);
         } else {
           setViewState({ type: "list" });
         }
@@ -1451,9 +1531,11 @@ export function ProviderSelector({
       provider,
       selectedTarget,
     );
+    const showUsage = isChatGPTUsageProvider(provider);
     const options = [
       ...connectedRecords.map((record) => `Disconnect ${record.name}`),
       ...(canConnectAnother ? [connectAnotherProviderOption(provider)] : []),
+      ...(showUsage && connectedRecords.length > 0 ? ["Refresh usage"] : []),
       "Back",
     ];
 
@@ -1465,16 +1547,34 @@ export function ProviderSelector({
           </Text>
           <Box height={1} />
           {connectedRecords.length > 0 ? (
-            connectedRecords.map((record) => (
-              <Box key={record.id} flexDirection="row">
-                <Text>{"  "}</Text>
-                <Text color="green">[✓]</Text>
-                <Text> </Text>
-                <Text bold>{record.name}</Text>
-                <Text dimColor> · </Text>
-                <Text color="green">Connected</Text>
-              </Box>
-            ))
+            connectedRecords.map((record) => {
+              const usageStatus = chatGPTUsageByProvider[record.name];
+              return (
+                <Box key={record.id} flexDirection="column">
+                  <Box flexDirection="row">
+                    <Text>{"  "}</Text>
+                    <Text color="green">[✓]</Text>
+                    <Text> </Text>
+                    <Text bold>{record.name}</Text>
+                    <Text dimColor> · </Text>
+                    <Text color="green">Connected</Text>
+                  </Box>
+                  {showUsage && (
+                    <Box flexDirection="row">
+                      <Text>{"      "}</Text>
+                      <Text
+                        color={
+                          usageStatus?.status === "error" ? "yellow" : undefined
+                        }
+                        dimColor={usageStatus?.status !== "error"}
+                      >
+                        {usageStatusText(usageStatus)}
+                      </Text>
+                    </Box>
+                  )}
+                </Box>
+              );
+            })
           ) : (
             <Text dimColor>{"  "}No connected providers.</Text>
           )}
