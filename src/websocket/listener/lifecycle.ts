@@ -54,6 +54,7 @@ import {
   findFallbackRuntime,
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
+import { startCronFileWatcher, stopCronFileWatcher } from "./cron-file-watcher";
 import { loadPersistedCwdMap } from "./cwd";
 import {
   installExternalToolBridge,
@@ -777,6 +778,7 @@ export function createRuntime(): ListenerRuntime {
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
     worktreeWatcherByConversation: new Map(),
+    cronFileWatcher: null,
     permissionModeByConversation: loadPersistedPermissionModeMap(),
     reminderStateByConversation: new Map(),
     contextTrackerByConversation: new Map(),
@@ -824,6 +826,10 @@ export function stopRuntime(
   runtime.systemPromptRecompileByConversation.clear();
   runtime.queuedSystemPromptRecompileByConversation.clear();
   stopAllWorktreeWatchers(runtime);
+  if (runtime.cronFileWatcher) {
+    stopCronFileWatcher(runtime.cronFileWatcher);
+    runtime.cronFileWatcher = null;
+  }
 
   if (!runtime.socket) {
     if (
@@ -1031,6 +1037,17 @@ export async function startConnectedListenerRuntime(
       processQueuedTurn,
     );
   }
+
+  // Watch crons.json so the UI refetches when crons change on disk — including
+  // writes from the `letta cron` CLI (e.g. the agent scheduling itself), which
+  // bypass the WS cron command handlers that normally emit `crons_updated`.
+  // Bound to the connection, not the scheduler lease: every connected listener
+  // should notify its own UI regardless of which process owns the scheduler.
+  if (runtime.cronFileWatcher) {
+    stopCronFileWatcher(runtime.cronFileWatcher);
+    runtime.cronFileWatcher = null;
+  }
+  runtime.cronFileWatcher = startCronFileWatcher({ transport });
 
   // Wire channel ingress (if channels are active).
   await wireChannelIngress(

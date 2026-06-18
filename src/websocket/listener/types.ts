@@ -225,6 +225,14 @@ export type ListenerRuntime = {
     string,
     import("@/websocket/listener/worktree-watcher").WorktreeWatcherState
   >;
+  /**
+   * Watcher on ~/.letta/crons.json that broadcasts `crons_updated` when crons
+   * change on disk (e.g. via the `letta cron` CLI), so the UI refetches even
+   * for writes that don't go through the WS cron command handlers.
+   */
+  cronFileWatcher?:
+    | import("@/websocket/listener/cron-file-watcher").CronFileWatcherState
+    | null;
   /** Agent IDs whose memfs repo has been cloned/pulled this session. Concurrent callers coalesce on the same promise. */
   memfsSyncedAgents: Map<string, Promise<void>>;
   /** Agent IDs with an in-flight secrets refresh. Concurrent callers coalesce on the same promise. */
