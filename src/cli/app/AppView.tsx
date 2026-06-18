@@ -962,10 +962,10 @@ export function AppView(props: AppViewProps) {
                         refreshDerived,
                         setCommandRunning,
                         target,
-                        onCodexConnected: () => {
+                        onCodexConnected: (providerName) => {
                           markLocalModelsAvailable();
                           setModelSelectorOptions({
-                            filterProvider: "chatgpt-plus-pro",
+                            filterProvider: providerName,
                             forceRefresh: true,
                           });
                           openOverlay(

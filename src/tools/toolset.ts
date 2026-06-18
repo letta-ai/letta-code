@@ -63,12 +63,25 @@ export type ToolsetPreference = ToolsetName | "auto";
 
 export function deriveToolsetFromModel(
   modelIdentifier: string,
+  providerType?: string | null,
 ): "codex" | "default" {
+  if (providerType === "chatgpt_oauth" || providerType === "openai-codex") {
+    return "codex";
+  }
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
   return isOpenAIModel(resolvedModel) ? "codex" : "default";
 }
 
-type ScopeModelCarrier = Pick<AgentState, "model" | "llm_config">;
+type ScopeModelCarrier = Pick<
+  AgentState,
+  "model" | "llm_config" | "model_settings"
+>;
+
+function providerTypeFromModelSettings(modelSettings: unknown): string | null {
+  if (!isRecord(modelSettings)) return null;
+  const providerType = modelSettings.provider_type;
+  return typeof providerType === "string" ? providerType : null;
+}
 
 export type PreparedScopeToolContext = {
   preparedToolContext: PreparedToolExecutionContext;
@@ -191,6 +204,7 @@ function areGoalToolsEnabledForScope(params: {
 
 export async function prepareToolExecutionContextForResolvedTarget(params: {
   modelIdentifier?: string | null;
+  providerType?: string | null;
   conversationId?: string | null;
   toolsetPreference: ToolsetPreference;
   exclude?: ToolName[];
@@ -206,6 +220,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
+    providerType,
     conversationId,
     toolsetPreference,
     exclude,
@@ -226,7 +241,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 
   if (toolsetPreference === "auto") {
     const derivedToolset = effectiveModel
-      ? deriveToolsetFromModel(effectiveModel)
+      ? deriveToolsetFromModel(effectiveModel, providerType)
       : "default";
     const scopedModContext = buildModInvocationContext({
       agent,
@@ -493,6 +508,9 @@ export async function prepareToolExecutionContextForScope(params: {
     overrideModel && overrideModel.length > 0
       ? (resolveModel(overrideModel) ?? overrideModel)
       : null;
+  let effectiveProviderType = providerTypeFromModelSettings(
+    (agent as { model_settings?: unknown }).model_settings,
+  );
 
   if (
     !effectiveModel &&
@@ -508,6 +526,10 @@ export async function prepareToolExecutionContextForScope(params: {
     if (typeof conversationModel === "string" && conversationModel.length > 0) {
       effectiveModel = resolveModel(conversationModel) ?? conversationModel;
     }
+    effectiveProviderType =
+      providerTypeFromModelSettings(
+        (conversation as { model_settings?: unknown }).model_settings,
+      ) ?? effectiveProviderType;
   }
 
   if (!effectiveModel) {
@@ -537,6 +559,7 @@ export async function prepareToolExecutionContextForScope(params: {
 
   const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
+    providerType: effectiveProviderType,
     conversationId: conversationId ?? undefined,
     toolsetPreference,
     exclude,
