@@ -78,6 +78,7 @@ describe("/secret command", () => {
     const result = await handleSecretCommand(["set", "new_token", "new-value"]);
 
     expect(result.output).toBe("Secret '$NEW_TOKEN' set.");
+    expect(result.refreshSecretsInfo).toBe(true);
     expect(updateAgentMock).toHaveBeenCalledWith(AGENT_ID, {
       secrets: {
         CLOUDFLARE_API_TOKEN: "cf-token",
@@ -94,6 +95,17 @@ describe("/secret command", () => {
     const result = await handleSecretCommand(["unset", "CLOUDFLARE_API_TOKEN"]);
 
     expect(result.output).toBe("Secret '$CLOUDFLARE_API_TOKEN' unset.");
+    expect(result.refreshSecretsInfo).toBe(true);
     expect(updateAgentMock).toHaveBeenCalledWith(AGENT_ID, { secrets: {} });
+  });
+
+  test("unchanged or invalid commands do not request a secrets reminder refresh", async () => {
+    const invalidSet = await handleSecretCommand(["set", "1bad", "value"]);
+    const missingValue = await handleSecretCommand(["set", "TOKEN"]);
+    const missingUnset = await handleSecretCommand(["unset", "MISSING_TOKEN"]);
+
+    expect(invalidSet.refreshSecretsInfo).toBeUndefined();
+    expect(missingValue.refreshSecretsInfo).toBeUndefined();
+    expect(missingUnset.refreshSecretsInfo).toBeUndefined();
   });
 });

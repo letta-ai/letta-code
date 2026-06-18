@@ -119,6 +119,7 @@ import {
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
+  markSecretsInfoReminderPending,
   type SharedReminderState,
 } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -3285,6 +3286,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           // Don't treat as command - continue to regular message handling below
         } else {
           // Known command - show in transcript and handle result
+          if (result.success && result.refreshSecretsInfo) {
+            markSecretsInfoReminderPending(sharedReminderStateRef.current);
+          }
           if (registryCmd) {
             registryCmd.finish(result.output, result.success);
           }
