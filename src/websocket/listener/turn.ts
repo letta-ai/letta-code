@@ -52,6 +52,7 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
+import { detectShellContext } from "@/utils/shell-context";
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import { enqueueMemoryGitSyncReminder } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
@@ -508,6 +509,7 @@ export async function handleIncomingMessage(
             agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
             state: runtime.reminderState,
             workingDirectory: turnWorkingDirectory,
+            shellContext: detectShellContext(),
           }),
         );
 

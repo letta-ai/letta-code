@@ -7,6 +7,7 @@ import type {
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
+import { detectShellContext } from "@/utils/shell-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
 import {
@@ -1845,6 +1846,7 @@ ${SYSTEM_REMINDER_CLOSE}
     systemInfoReminderEnabled,
     workingDirectory: getCurrentWorkingDirectory(),
     skillSources: resolvedSkillSources,
+    shellContext: detectShellContext(),
   });
   for (const part of sharedReminderParts) {
     pushPart(part.text);
