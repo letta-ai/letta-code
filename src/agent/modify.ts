@@ -263,6 +263,20 @@ function maxTokensForUpdatePayload(
     : undefined;
 }
 
+function mergeModelSettings(
+  existingSettings: unknown,
+  selectedModelSettings: ModelSettings,
+): ModelSettings {
+  if (!isRecord(existingSettings)) {
+    return selectedModelSettings;
+  }
+
+  return {
+    ...existingSettings,
+    ...selectedModelSettings,
+  };
+}
+
 /**
  * Updates an agent's model and model settings.
  *
@@ -293,9 +307,14 @@ export async function updateAgentLLMConfig(
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
 
-  const modelSettings = buildModelSettings(
+  const currentAgent = await backend.retrieveAgent(agentId);
+  const selectedModelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+  );
+  const modelSettings = mergeModelSettings(
+    currentAgent.model_settings,
+    selectedModelSettings,
   );
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
@@ -346,9 +365,22 @@ export async function updateConversationLLMConfig(
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
 
-  const modelSettings = buildModelSettings(
+  const currentConversation =
+    await backend.retrieveConversation(conversationId);
+  let existingModelSettings: unknown = currentConversation.model_settings;
+  if (!isRecord(existingModelSettings) && currentConversation.agent_id) {
+    const currentAgent = await backend.retrieveAgent(
+      currentConversation.agent_id,
+    );
+    existingModelSettings = currentAgent.model_settings;
+  }
+  const selectedModelSettings = buildModelSettings(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+  );
+  const modelSettings = mergeModelSettings(
+    existingModelSettings,
+    selectedModelSettings,
   );
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
