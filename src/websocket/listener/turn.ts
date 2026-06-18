@@ -61,6 +61,7 @@ import { extractTelemetryInputText } from "@/telemetry/input";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import { detectShellContext } from "@/utils/shell-context";
 import { createTelegramRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
@@ -508,6 +509,7 @@ export async function handleIncomingMessage(
             agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
             state: runtime.reminderState,
             workingDirectory: turnWorkingDirectory,
+            shellContext: detectShellContext(),
           }),
         );
 

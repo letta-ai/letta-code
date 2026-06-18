@@ -13,6 +13,7 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
+import { detectShellContext } from "@/utils/shell-context";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -1845,6 +1846,7 @@ ${SYSTEM_REMINDER_CLOSE}
     systemInfoReminderEnabled,
     workingDirectory: getCurrentWorkingDirectory(),
     skillSources: resolvedSkillSources,
+    shellContext: detectShellContext(),
   });
   for (const part of sharedReminderParts) {
     pushPart(part.text);
