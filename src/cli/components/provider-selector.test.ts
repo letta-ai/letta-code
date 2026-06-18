@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { commands } from "@/cli/commands/registry";
 import {
+  canConnectAnotherProvider,
+  connectAnotherProviderOption,
   connectedProviderSummary,
   fieldValuesFromProviderPlaceholders,
   filterProviderConfigs,
   hasConstellationProviderStoreCredentials,
   isProviderTargetLoading,
+  nextProviderConnectionName,
   providerApiKeyFromInput,
   providerSelectionFlow,
   shouldShowProviderStoreTabs,
@@ -272,6 +275,39 @@ describe("ProviderSelector connected provider actions", () => {
         chatgptWorkProvider,
       ]),
     ).toBe("2 connected");
+  });
+
+  test("surfaces connect-another only for API ChatGPT OAuth providers", () => {
+    const openai = getProviderConfigs("api").find(
+      (provider) => provider.id === "openai",
+    );
+    if (!openai) throw new Error("Expected openai provider config");
+
+    expect(canConnectAnotherProvider(codexProvider, "api")).toBe(true);
+    expect(canConnectAnotherProvider(codexProvider, "local")).toBe(false);
+    expect(canConnectAnotherProvider(openai, "api")).toBe(false);
+    expect(connectAnotherProviderOption(codexProvider)).toBe(
+      "Connect another ChatGPT / Codex plan",
+    );
+  });
+
+  test("suggests the next available ChatGPT OAuth provider name", () => {
+    expect(nextProviderConnectionName(codexProvider, [])).toBe(
+      "chatgpt-plus-pro",
+    );
+    expect(
+      nextProviderConnectionName(codexProvider, [chatgptDefaultProvider]),
+    ).toBe("chatgpt-plus-pro-2");
+    expect(
+      nextProviderConnectionName(codexProvider, [
+        chatgptDefaultProvider,
+        {
+          ...chatgptDefaultProvider,
+          id: "provider-chatgpt-plus-pro-2",
+          name: "chatgpt-plus-pro-2",
+        },
+      ]),
+    ).toBe("chatgpt-plus-pro-3");
   });
 
   test("removes the legacy slash disconnect command from discovery", () => {

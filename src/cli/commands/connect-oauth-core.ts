@@ -59,11 +59,16 @@ const DEFAULT_DEPS: OAuthFlowDeps = {
       (port as typeof OPENAI_OAUTH_CONFIG.defaultPort | undefined) ??
         OPENAI_OAUTH_CONFIG.defaultPort,
     ),
-  startCallbackServer: (expectedState: string, port?: number) =>
+  startCallbackServer: (
+    expectedState: string,
+    port?: number,
+    signal?: AbortSignal,
+  ) =>
     startLocalOAuthServer(
       expectedState,
       (port as typeof OPENAI_OAUTH_CONFIG.defaultPort | undefined) ??
         OPENAI_OAUTH_CONFIG.defaultPort,
+      signal,
     ),
   exchangeTokens: exchangeCodeForTokens,
   extractAccountId: extractAccountIdFromToken,

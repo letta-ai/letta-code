@@ -39,6 +39,9 @@ type ModelCategory =
   | "server-recommended"
   | "server-all";
 
+const CHATGPT_OAUTH_BASE_PROVIDER = "openai-codex";
+const CHATGPT_LABEL_SUFFIX_PATTERN = /\s+\(ChatGPT\)$/;
+
 // Re-export for consumers that import from ModelSelector
 export { buildByokProviderAliases, isByokHandleForSelector };
 
@@ -116,6 +119,22 @@ export type ModelSelectorSelection = Pick<
   UiModel,
   "id" | "handle" | "label" | "description" | "registryHandle" | "updateArgs"
 >;
+
+export function labelForChatGPTByokAlias(
+  label: string,
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex === -1) return label;
+
+  const providerAlias = handle.slice(0, slashIndex);
+  if (byokProviderAliases[providerAlias] !== CHATGPT_OAUTH_BASE_PROVIDER) {
+    return label;
+  }
+
+  return label.replace(CHATGPT_LABEL_SUFFIX_PATTERN, ` (${providerAlias})`);
+}
 
 export function toSelectorModelForHandle(handle: string): UiModel {
   const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
@@ -589,6 +608,11 @@ export function ModelSelector({
           ...staticModel,
           id: handle,
           handle: handle,
+          label: labelForChatGPTByokAlias(
+            staticModel.label,
+            handle,
+            byokProviderAliases,
+          ),
           updateArgs: withProviderTypeMetadata(
             handle,
             staticModel.updateArgs as Record<string, unknown> | undefined,
@@ -612,6 +636,7 @@ export function ModelSelector({
   }, [
     availableHandles,
     allApiHandles,
+    byokProviderAliases,
     pickPreferredStaticModel,
     searchQuery,
     isByokHandle,
@@ -724,6 +749,11 @@ export function ModelSelector({
           ...staticModel,
           id: handle,
           handle,
+          label: labelForChatGPTByokAlias(
+            staticModel.label,
+            handle,
+            byokProviderAliases,
+          ),
           updateArgs: withProviderTypeMetadata(
             handle,
             staticModel.updateArgs as Record<string, unknown> | undefined,
@@ -743,6 +773,7 @@ export function ModelSelector({
     return resolved;
   }, [
     availableHandles,
+    byokProviderAliases,
     pickPreferredStaticModel,
     toBaseHandle,
     withProviderTypeMetadata,

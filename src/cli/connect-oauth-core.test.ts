@@ -37,6 +37,7 @@ describe("connect OAuth core", () => {
     const storeOAuthState = mock(() => undefined);
     const clearOAuthState = mock(() => undefined);
     const openBrowser = mock(() => Promise.resolve());
+    const abortController = new AbortController();
     const statuses: string[] = [];
 
     const result = await runChatGPTOAuthConnectFlow(
@@ -45,6 +46,7 @@ describe("connect OAuth core", () => {
           statuses.push(status);
         },
         openBrowser,
+        signal: abortController.signal,
       },
       {
         startOAuth,
@@ -60,6 +62,11 @@ describe("connect OAuth core", () => {
     expect(result.providerName).toBe("chatgpt-plus-pro");
     expect(startOAuth).toHaveBeenCalledTimes(1);
     expect(startCallbackServer).toHaveBeenCalledTimes(1);
+    expect(startCallbackServer).toHaveBeenCalledWith(
+      "state-123",
+      1455,
+      abortController.signal,
+    );
     expect(exchangeTokens).toHaveBeenCalledWith(
       "oauth-code",
       "verifier-123",
