@@ -523,9 +523,8 @@ export interface SlackChannelAccount extends ChannelAccountBase {
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same
    * chat/thread stack into a single combined dispatch (trailing edge).
-   * Default `1000` ms. Set `0` to disable. Messages with attachments bypass
-   * the debounce. The env var `LETTA_SLACK_INBOUND_DEBOUNCE_MS` takes
-   * precedence if set.
+   * Default `0` (disabled). Messages with attachments bypass the debounce.
+   * The env var `LETTA_SLACK_INBOUND_DEBOUNCE_MS` takes precedence if set.
    */
   inboundDebounceMs?: number;
 }

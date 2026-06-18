@@ -405,7 +405,6 @@ export async function resolveSlackAccountDisplayName(
 }
 
 const APP_MENTION_RETRY_TTL_MS = 60_000;
-const DEFAULT_SLACK_INBOUND_DEBOUNCE_MS = 1_000;
 
 type SlackDebounceSource = "message" | "app_mention";
 
@@ -489,7 +488,7 @@ export function resolveSlackInboundDebounceMs(
   ) {
     return Math.trunc(fromConfig);
   }
-  return DEFAULT_SLACK_INBOUND_DEBOUNCE_MS;
+  return 0;
 }
 
 export function createSlackAdapter(
