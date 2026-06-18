@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getClientDefaultHeaders } from "@/backend/api/client";
 import { experimentManager } from "@/experiments/manager";
 import { settingsManager } from "@/settings-manager";
+import { getVersion } from "@/version";
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
@@ -59,6 +60,19 @@ afterEach(async () => {
 });
 
 describe("getClient experiment headers", () => {
+  test("includes shared Letta Code client metadata", async () => {
+    const headers = getClientDefaultHeaders();
+
+    expect(headers).toMatchObject({
+      "User-Agent": `letta-code/${getVersion()}`,
+      "X-Letta-Source": "letta-code",
+      "X-Letta-Client-Name": "letta-code",
+      "X-Letta-Client-Version": getVersion(),
+      "X-Letta-Client-Platform": process.platform,
+    });
+    expect(headers["X-Letta-Environment-Device-Id"]).toBeTruthy();
+  });
+
   test("uses LETTA_NODE when no explicit experiment override exists", async () => {
     process.env.LETTA_NODE = "1";
 
