@@ -5,10 +5,18 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, extname, isAbsolute, join } from "node:path";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import { getChannelDir } from "@/channels/config";
 import type {
   ChannelAdapter,
@@ -91,13 +99,12 @@ type SignalEnvelope = {
   syncMessage?: SignalSyncMessage | null;
 };
 
-type SignalSentSyncMessage = {
+type SignalSentSyncMessage = SignalDataMessage & {
   destination?: string | null;
   destinationNumber?: string | null;
   destinationUuid?: string | null;
   recipients?: string[] | null;
   timestamp?: number | null;
-  message?: SignalDataMessage | null;
 };
 
 type SignalSyncMessage = {
@@ -105,6 +112,7 @@ type SignalSyncMessage = {
 };
 
 type SignalReceivePayload = {
+  account?: string | null;
   envelope?: SignalEnvelope | null;
   exception?: { message?: string | null } | null;
 };
@@ -234,10 +242,7 @@ function envelopeFromSelfSyncMessage(
   account: SignalChannelAccount,
 ): SignalEnvelope | null {
   const sentMessage = envelope.syncMessage?.sentMessage;
-  if (
-    !sentMessage?.message ||
-    !syncMessageTargetsOwnAccount(sentMessage, account)
-  ) {
+  if (!sentMessage || !syncMessageTargetsOwnAccount(sentMessage, account)) {
     return null;
   }
   return {
@@ -245,7 +250,7 @@ function envelopeFromSelfSyncMessage(
     sourceUuid: account.accountUuid ?? envelope.sourceUuid,
     sourceName: "Note to Self",
     timestamp: sentMessage.timestamp ?? envelope.timestamp,
-    dataMessage: sentMessage.message,
+    dataMessage: sentMessage,
   };
 }
 
@@ -371,35 +376,20 @@ function inferSignalAttachmentKind(params: {
 function resolveSignalAttachmentPath(
   attachment: SignalAttachmentCandidate,
 ): string | null {
-  const candidates = [
+  for (const candidate of [
     attachment.localPath,
     attachment.path,
     attachment.storedFilename,
-    attachment.filename,
-  ];
-
-  for (const candidate of candidates) {
+  ]) {
     const value = candidate?.trim();
     if (!value) {
       continue;
     }
-    if (isAbsolute(value) || value.includes("/") || value.includes("\\")) {
-      try {
-        const stat = statSync(value);
-        if (stat.isFile()) {
-          return value;
-        }
-      } catch {
-        const resolvedRelative = resolveRelativeSignalAttachmentPath(value);
-        if (resolvedRelative) {
-          return resolvedRelative;
-        }
-      }
-    }
-
-    const resolvedRelative = resolveRelativeSignalAttachmentPath(value);
-    if (resolvedRelative) {
-      return resolvedRelative;
+    const resolvedCandidate = isAbsolute(value)
+      ? resolveAbsoluteSignalAttachmentPath(value)
+      : resolveRelativeSignalAttachmentPath(value);
+    if (resolvedCandidate) {
+      return resolvedCandidate;
     }
   }
 
@@ -427,31 +417,95 @@ function getSignalAttachmentSearchDirs(): string[] {
   return dirs;
 }
 
+function isPathInsideDirectory(filePath: string, directory: string): boolean {
+  const relativePath = relative(directory, filePath);
+  return (
+    relativePath === "" ||
+    (!!relativePath &&
+      !relativePath.startsWith("..") &&
+      !isAbsolute(relativePath))
+  );
+}
+
+function resolveFileIfPresent(filePath: string): string | null {
+  try {
+    const stat = statSync(filePath);
+    if (!stat.isFile()) {
+      return null;
+    }
+    return realpathSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function resolveAbsoluteSignalAttachmentPath(value: string): string | null {
+  const resolvedFile = resolveFileIfPresent(value);
+  if (!resolvedFile) {
+    return null;
+  }
+
+  for (const baseDir of getSignalAttachmentSearchDirs()) {
+    let realBaseDir: string;
+    try {
+      realBaseDir = realpathSync(baseDir);
+    } catch {
+      continue;
+    }
+    if (isPathInsideDirectory(resolvedFile, realBaseDir)) {
+      return resolvedFile;
+    }
+  }
+  return null;
+}
+
+function isSafeRelativeSignalAttachmentPath(value: string): boolean {
+  if (!value || isAbsolute(value)) {
+    return false;
+  }
+  return value
+    .split("/")
+    .every((segment) => segment && segment !== "." && segment !== "..");
+}
+
+function resolveRelativeFileUnderDirectory(
+  baseDir: string,
+  value: string,
+): string | null {
+  if (!isSafeRelativeSignalAttachmentPath(value)) {
+    return null;
+  }
+
+  let realBaseDir: string;
+  try {
+    realBaseDir = realpathSync(baseDir);
+  } catch {
+    return null;
+  }
+
+  const resolvedFile = resolveFileIfPresent(resolve(baseDir, value));
+  if (!resolvedFile || !isPathInsideDirectory(resolvedFile, realBaseDir)) {
+    return null;
+  }
+  return resolvedFile;
+}
+
 function resolveRelativeSignalAttachmentPath(value: string): string | null {
   const normalized = value.replace(/\\/g, "/");
   const suffix = normalized.startsWith("attachments/")
     ? normalized.slice("attachments/".length)
     : normalized;
+  const candidates = Array.from(new Set([normalized, suffix]));
 
   for (const baseDir of getSignalAttachmentSearchDirs()) {
-    const directCandidate = join(baseDir, normalized);
-    try {
-      const stat = statSync(directCandidate);
-      if (stat.isFile()) {
-        return directCandidate;
+    for (const candidate of candidates) {
+      const resolvedCandidate = resolveRelativeFileUnderDirectory(
+        baseDir,
+        candidate,
+      );
+      if (resolvedCandidate) {
+        return resolvedCandidate;
       }
-    } catch {
-      // Try the basename-style fallback next.
-    }
-
-    const nestedCandidate = join(baseDir, suffix);
-    try {
-      const stat = statSync(nestedCandidate);
-      if (stat.isFile()) {
-        return nestedCandidate;
-      }
-    } catch {
-      // Continue searching other signal-cli attachment dirs.
     }
   }
 
@@ -741,6 +795,12 @@ function signalInboundFromPayload(
 ): InboundChannelMessage | null {
   if (payload.exception?.message) {
     console.error(`[Signal] receive exception: ${payload.exception.message}`);
+  }
+  if (
+    payload.account &&
+    !signalIdentityMatchesAccount(payload.account, account)
+  ) {
+    return null;
   }
   let envelope = payload.envelope ?? undefined;
   if (!envelope) {

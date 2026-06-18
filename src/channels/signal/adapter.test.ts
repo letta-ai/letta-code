@@ -103,7 +103,7 @@ describe("signalInboundFromSseEvent", () => {
             sentMessage: {
               destination: "+15555550100",
               timestamp: 124,
-              message: { message: "sync note" },
+              message: "sync note",
             },
           },
         },
@@ -116,6 +116,22 @@ describe("signalInboundFromSseEvent", () => {
       senderName: "Note to Self",
       text: "sync note",
     });
+  });
+
+  test("drops events for other signal accounts", () => {
+    expect(
+      signalInboundFromSseEvent(
+        receiveEvent({
+          account: "+15555550999",
+          envelope: {
+            sourceNumber: "+15555550123",
+            timestamp: 123,
+            dataMessage: { message: "wrong account" },
+          },
+        }),
+        signalAccount({ account: "+15555550100" }),
+      ),
+    ).toBeNull();
   });
 
   test("drops non-self direct messages in self-chat mode", () => {
@@ -247,10 +263,13 @@ describe("signalInboundFromSseEvent", () => {
 
   test("copies inbound image attachments when media download is enabled", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "signal-media-test-"));
+    const attachmentsDir = join(tempDir, "attachments");
+    mkdirSync(attachmentsDir, { recursive: true });
     __testOverrideChannelsRoot(join(tempDir, "channels"));
+    __testOverrideSignalAttachmentSearchDirs([attachmentsDir]);
     try {
       const imageBytes = Buffer.from("fake-jpeg");
-      const sourcePath = join(tempDir, "photo.jpg");
+      const sourcePath = join(attachmentsDir, "photo.jpg");
       writeFileSync(sourcePath, imageBytes);
 
       const msg = signalInboundFromSseEvent(
@@ -265,6 +284,7 @@ describe("signalInboundFromSseEvent", () => {
                 {
                   id: "att-1",
                   contentType: "image/jpeg",
+                  localPath: sourcePath,
                   filename: sourcePath,
                   size: imageBytes.byteLength,
                 },
@@ -304,6 +324,7 @@ describe("signalInboundFromSseEvent", () => {
         },
       });
     } finally {
+      __testOverrideSignalAttachmentSearchDirs(null);
       __testOverrideChannelsRoot(null);
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -349,6 +370,47 @@ describe("signalInboundFromSseEvent", () => {
         mimeType: "image/png",
         kind: "image",
       });
+    } finally {
+      __testOverrideSignalAttachmentSearchDirs(null);
+      __testOverrideChannelsRoot(null);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not resolve attachment paths outside attachment dirs", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "signal-traversal-media-test-"));
+    const attachmentsDir = join(tempDir, "attachments");
+    mkdirSync(attachmentsDir, { recursive: true });
+    __testOverrideChannelsRoot(join(tempDir, "channels"));
+    __testOverrideSignalAttachmentSearchDirs([attachmentsDir]);
+    try {
+      const secretBytes = Buffer.from("not-a-signal-attachment");
+      writeFileSync(join(tempDir, "secret.jpg"), secretBytes);
+
+      const msg = signalInboundFromSseEvent(
+        receiveEvent({
+          envelope: {
+            sourceNumber: "+15555550123",
+            sourceName: "Alice",
+            timestamp: 334,
+            dataMessage: {
+              timestamp: 334,
+              attachments: [
+                {
+                  id: "att-escape",
+                  contentType: "image/jpeg",
+                  storedFilename: "attachments/../secret.jpg",
+                  size: secretBytes.byteLength,
+                },
+              ],
+            },
+          },
+        }),
+        signalAccount({ downloadMedia: true }),
+      );
+
+      expect(msg?.text).toBe("[image attached]");
+      expect(msg?.attachments).toBeUndefined();
     } finally {
       __testOverrideSignalAttachmentSearchDirs(null);
       __testOverrideChannelsRoot(null);

@@ -252,6 +252,9 @@ export class SignalRestClient {
     signal?: AbortSignal,
   ): Promise<void> {
     const url = new URL(`${this.baseUrl}/api/v1/events`);
+    if (this.account) {
+      url.searchParams.set("account", this.account);
+    }
 
     await new Promise<void>((resolve, reject) => {
       if (signal?.aborted) {
