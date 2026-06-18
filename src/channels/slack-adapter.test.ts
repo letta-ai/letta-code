@@ -1173,7 +1173,7 @@ test("slack adapter can add reactions to messages", async () => {
   });
 });
 
-test("slack adapter adds eyes while a queued turn is processing, then swaps to checkmark on completion", async () => {
+test("slack adapter removes queued eyes without a checkmark by default", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -1220,7 +1220,8 @@ test("slack adapter adds eyes while a queued turn is processing, then swaps to c
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(1, {
+  expect(writeClient?.reactions.add).toHaveBeenCalledTimes(1);
+  expect(writeClient?.reactions.add).toHaveBeenCalledWith({
     channel: "C123",
     timestamp: "1712800000.000100",
     name: "eyes",
@@ -1230,9 +1231,69 @@ test("slack adapter adds eyes while a queued turn is processing, then swaps to c
     timestamp: "1712800000.000100",
     name: "eyes",
   });
+});
+
+test("slack adapter adds a completed checkmark when explicitly enabled", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    showCompletedReaction: true,
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000125",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000125",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(1, {
+    channel: "C123",
+    timestamp: "1712800000.000125",
+    name: "eyes",
+  });
+  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
+    channel: "C123",
+    timestamp: "1712800000.000125",
+    name: "eyes",
+  });
   expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(2, {
     channel: "C123",
-    timestamp: "1712800000.000100",
+    timestamp: "1712800000.000125",
     name: "white_check_mark",
   });
 });

@@ -167,7 +167,7 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       transcribeVoice: parsed.transcribe_voice === true,
-      showCompletedReaction: parsed.show_completed_reaction !== false,
+      showCompletedReaction: parsed.show_completed_reaction === true,
       listenMode: parsed.listen_mode === true,
     };
   },

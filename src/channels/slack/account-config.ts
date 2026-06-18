@@ -102,7 +102,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         default_permission_mode:
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
         transcribe_voice: account.transcribeVoice === true,
-        show_completed_reaction: account.showCompletedReaction !== false,
+        show_completed_reaction: account.showCompletedReaction === true,
         listen_mode: account.listenMode === true,
       };
     },
@@ -116,7 +116,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         default_permission_mode:
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
         transcribe_voice: account.transcribeVoice === true,
-        show_completed_reaction: account.showCompletedReaction !== false,
+        show_completed_reaction: account.showCompletedReaction === true,
         listen_mode: account.listenMode === true,
       };
     },
