@@ -50,12 +50,14 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   acknowledge_message_reaction: "acknowledgeMessageReaction",
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
+  listen_mode: "listenMode",
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
   recipient_aliases: "recipientAliases",
   remove_stale_routes: "removeStaleRoutes",
   rich_draft_streaming: "richDraftStreaming",
   rich_private_chat_default: "richPrivateChatDefault",
+  show_completed_reaction: "showCompletedReaction",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
@@ -319,6 +321,10 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
       DEFAULT_SLACK_PERMISSION_MODE;
     (next as SlackChannelAccount).transcribeVoice =
       (next as SlackChannelAccount).transcribeVoice === true;
+    (next as SlackChannelAccount).showCompletedReaction =
+      (next as SlackChannelAccount).showCompletedReaction !== false;
+    (next as SlackChannelAccount).listenMode =
+      (next as SlackChannelAccount).listenMode === true;
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
@@ -468,6 +474,8 @@ function makeDefaultLegacyAccount(
     agentId: null,
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: config.transcribeVoice === true,
+    showCompletedReaction: config.showCompletedReaction !== false,
+    listenMode: config.listenMode === true,
     createdAt: now,
     updatedAt: now,
   };

@@ -317,6 +317,8 @@ export interface ChannelRoute {
   conversationId: string;
   /** Whether this route is active. */
   enabled: boolean;
+  /** Whether this route permits outbound MessageChannel sends. Defaults true. */
+  outboundEnabled?: boolean;
   /** ISO 8601 creation timestamp. */
   createdAt: string;
   /** ISO 8601 update timestamp. */
@@ -381,6 +383,10 @@ export interface SlackChannelConfig {
   allowedUsers: string[];
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
+  /** When false, successful turns remove 👀 without adding ✅. Default true. */
+  showCompletedReaction?: boolean;
+  /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
+  listenMode?: boolean;
 }
 
 export interface DiscordChannelConfig {
@@ -545,6 +551,10 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   defaultPermissionMode: SlackDefaultPermissionMode;
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
+  /** When false, successful turns remove 👀 without adding ✅. Default true. */
+  showCompletedReaction?: boolean;
+  /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
+  listenMode?: boolean;
   /**
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same

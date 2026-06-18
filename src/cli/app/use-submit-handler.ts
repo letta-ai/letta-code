@@ -125,6 +125,7 @@ import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { detectShellContext } from "@/utils/shell-context";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
@@ -3398,6 +3399,7 @@ ${SYSTEM_REMINDER_CLOSE}
           contentParts as unknown as MessageCreate["content"],
         systemInfoReminderEnabled,
         skillSources: getSkillSources(),
+        shellContext: detectShellContext(),
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
