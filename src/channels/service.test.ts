@@ -283,6 +283,49 @@ describe("channel service", () => {
     expect(listEnabledChannelIds()).toEqual(["telegram"]);
   });
 
+  test("listEnabledChannelIds can filter restored accounts by agent scope", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Local Telegram Bot",
+        enabled: true,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-local" },
+    );
+    bindChannelAccountLive(
+      "telegram",
+      "telegram-local",
+      "agent-local-123",
+      "conv-local",
+    );
+
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Cloud Slack App",
+        enabled: true,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-cloud",
+        dmPolicy: "pairing",
+      },
+      { accountId: "slack-cloud" },
+    );
+
+    expect(listEnabledChannelIds({ restoreAgentScope: "local" })).toEqual([
+      "telegram",
+    ]);
+    expect(listEnabledChannelIds({ restoreAgentScope: "cloud" })).toEqual([
+      "slack",
+    ]);
+    expect(listEnabledChannelIds({ restoreAgentScope: "all" })).toEqual([
+      "telegram",
+      "slack",
+    ]);
+  });
+
   test("updateChannelRouteLive updates the Slack route without changing the app's default agent", () => {
     createChannelAccountLive(
       "slack",

@@ -80,9 +80,32 @@ function slugifyName(name: string): string {
 function formatGitFailure(error: unknown): string {
   if (error instanceof GitCommandError) {
     const detail = error.result?.stderr.trim() || error.result?.stdout.trim();
-    return detail ? `${error.message}\n${detail}` : error.message;
+    const formatted = detail ? `${error.message}\n${detail}` : error.message;
+    return addWindowsPathLengthHint(formatted);
   }
-  return error instanceof Error ? error.message : String(error);
+  return addWindowsPathLengthHint(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+export function addWindowsPathLengthHint(
+  message: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== "win32") {
+    return message;
+  }
+
+  const normalized = message.toLowerCase();
+  const looksLikePathLengthFailure =
+    normalized.includes("filename too long") ||
+    normalized.includes("could not reset index file to revision");
+
+  if (!looksLikePathLengthFailure) {
+    return message;
+  }
+
+  return `${message}\n\nThis looks like a Windows path-length issue. Try:\n- git config --global core.longpaths true\n- move the repo to a shorter path, like C:\\src\\<repo>, and retry.`;
 }
 
 async function runGit(

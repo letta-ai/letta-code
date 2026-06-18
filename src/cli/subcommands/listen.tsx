@@ -17,6 +17,12 @@ import {
   requestDeviceCode,
 } from "@/auth/oauth";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import {
+  type ChannelRestoreAgentScope,
+  parseChannelRestoreAgentScope,
+  RESTORE_CHANNEL_AGENT_SCOPE_ENV,
+  RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
+} from "@/channels/restore-scope";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
@@ -173,11 +179,11 @@ async function resolveListenerStartupMode(
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
-  // When running under the desktop app (which sets LETTA_DESKTOP_DEBUG_PANEL),
+  // When running under the desktop app (which sets LETTA_DESKTOP_MODE),
   // the local proxy has a full environment server that expects device
   // registration. Treat it as "remote" so the listener registers and connects
   // via WebSocket, even when channels are active.
-  if (process.env.LETTA_DESKTOP_DEBUG_PANEL === "1") {
+  if (process.env.LETTA_DESKTOP_MODE === "1") {
     return { kind: "remote", serverUrl };
   }
 
@@ -198,6 +204,24 @@ async function resolveListenerStartupMode(
   }
 
   return { kind: "unsupported-self-hosted", serverUrl };
+}
+
+function getScopedChannelRestoreAgentScope(): ChannelRestoreAgentScope | null {
+  return parseChannelRestoreAgentScope(
+    process.env[RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV],
+  );
+}
+
+function resolveChannelRestoreAgentScope(
+  scopedRestoreAgentScope: ChannelRestoreAgentScope | null,
+): ChannelRestoreAgentScope {
+  return (
+    scopedRestoreAgentScope ??
+    parseChannelRestoreAgentScope(
+      process.env[RESTORE_CHANNEL_AGENT_SCOPE_ENV],
+    ) ??
+    (isLocalBackendEnvEnabled() ? "local" : "cloud")
+  );
 }
 
 async function refreshListenerAccessToken(
@@ -431,6 +455,33 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
 
+  // Register signal handlers so the listener can clean up child processes
+  // (subagents, bash commands, PTY sessions) before exiting. Without these,
+  // SIGTERM from the desktop app only kills the listener process itself,
+  // orphaning its descendants which accumulate over time.
+  const handleShutdownSignal = async (): Promise<void> => {
+    try {
+      const { stopListenerClient, isListenerActive } = await import(
+        "@/websocket/listen-client"
+      );
+      if (isListenerActive()) {
+        stopListenerClient();
+      }
+      // Stop channel adapters
+      const { getChannelRegistry } = await import("@/channels/registry");
+      const registry = getChannelRegistry();
+      if (registry) {
+        await registry.stopAll();
+      }
+    } catch {
+      // Best-effort cleanup — don't block exit
+    }
+    process.exit(0);
+  };
+
+  process.once("SIGTERM", handleShutdownSignal);
+  process.once("SIGINT", handleShutdownSignal);
+
   const exitWithTelemetry = async (
     code: number,
     exitReason: string,
@@ -454,13 +505,23 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Initialize channels if explicitly requested, or restore persisted enabled
   // channels when a desktop wrapper opts into boot-time channel restore.
+  const scopedRestoreAgentScope = getScopedChannelRestoreAgentScope();
+  const restoreEnabledChannels =
+    !values.channels &&
+    (process.env.LETTA_RESTORE_ENABLED_CHANNELS === "1" ||
+      scopedRestoreAgentScope !== null);
+  const restoreAgentScope = restoreEnabledChannels
+    ? resolveChannelRestoreAgentScope(scopedRestoreAgentScope)
+    : null;
   const channelNames = values.channels
     ? values.channels
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-    : process.env.LETTA_RESTORE_ENABLED_CHANNELS === "1"
-      ? (await import("@/channels/service")).listEnabledChannelIds()
+    : restoreEnabledChannels
+      ? (await import("@/channels/service")).listEnabledChannelIds({
+          restoreAgentScope,
+        })
       : [];
 
   if (channelNames.length > 0) {
@@ -487,6 +548,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     try {
       await initializeChannels(channelNames, {
         failOnStartupError: Boolean(values.channels),
+        restoreAgentScope,
         logger: debugMode
           ? (message) => console.log(`[${formatTimestamp()}] ${message}`)
           : undefined,

@@ -8,7 +8,10 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { create_worktree } from "@/tools/impl/create-worktree";
+import {
+  addWindowsPathLengthHint,
+  create_worktree,
+} from "@/tools/impl/create-worktree";
 import {
   clearToolsWithLock,
   executeTool,
@@ -368,5 +371,25 @@ describe("CreateWorktree tool", () => {
       "Current working directory is not inside a git repository",
     );
     expect(result.content[0]?.text).toContain("repo_path");
+  });
+
+  test("adds a windows path-length hint to git checkout failures", () => {
+    const message = addWindowsPathLengthHint(
+      "Failed to run git worktree add\nerror: unable to create file: filename too long\nfatal: could not reset index file to revision 'HEAD'",
+      "win32",
+    );
+
+    expect(message).toContain("Windows path-length issue");
+    expect(message).toContain("core.longpaths");
+    expect(message).toContain("C:\\src\\<repo>");
+  });
+
+  test("does not add the hint off windows", () => {
+    const message = addWindowsPathLengthHint(
+      "Failed to run git worktree add\nerror: unable to create file: filename too long",
+      "linux",
+    );
+
+    expect(message).not.toContain("Windows path-length issue");
   });
 });

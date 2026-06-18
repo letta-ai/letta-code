@@ -39,6 +39,8 @@ import {
   ensureChannelRegistry,
   getChannelRegistry,
 } from "./registry";
+import type { ChannelRestoreAgentScope } from "./restore-scope";
+import { shouldRestoreChannelAccountForAgentScope } from "./restore-scope";
 import {
   addRoute,
   getRoute,
@@ -1001,9 +1003,18 @@ export function listChannelSummaries(): ChannelSummary[] {
   });
 }
 
-export function listEnabledChannelIds(): SupportedChannelId[] {
+export function listEnabledChannelIds(options?: {
+  restoreAgentScope?: ChannelRestoreAgentScope | null;
+}): SupportedChannelId[] {
   return getSupportedChannelIds().filter((channelId) =>
-    listChannelAccounts(channelId).some((account) => account.enabled),
+    listChannelAccounts(channelId).some(
+      (account) =>
+        account.enabled &&
+        shouldRestoreChannelAccountForAgentScope(
+          account,
+          options?.restoreAgentScope,
+        ),
+    ),
   );
 }
 

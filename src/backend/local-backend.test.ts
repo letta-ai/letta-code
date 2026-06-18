@@ -35,6 +35,7 @@ import { emptyLocalUsage } from "@/backend/local/local-message";
 import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import { listLocalModels } from "@/backend/local/local-model-config";
 import {
+  LocalStore,
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
 } from "@/backend/local/local-store";
@@ -507,6 +508,74 @@ describe("local backend pi transcript", () => {
     expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
   });
 
+  test("fork skips ids already on disk from a separate LocalStore instance", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-store-fork-collision-"),
+    );
+    const agentId = "agent-fork";
+    const sourceId = "conv-source";
+    const existingId = "conv-existing";
+
+    // Store A creates a source conversation and an existing conversation that
+    // occupies the next seq slot, simulating a second LocalStore process that
+    // wrote a conversation to the shared storage directory.
+    const storeA = new LocalStore(agentId, { storageDir });
+    storeA.appendTurnInput(sourceId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    storeA.appendTurnInput(existingId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "existing" }],
+    });
+
+    // Store B loads from the same storage dir — it sees both conversations and
+    // sets conversationSeq to the max existing value.  A fork from Store B
+    // must not clobber the existing conversation even if its raw seq would
+    // land on that slot.
+    const storeB = new LocalStore(agentId, { storageDir });
+    const { id: forkedId } = storeB.forkConversation(sourceId);
+
+    // The fork must not reuse any id that already exists on disk.
+    expect(forkedId).not.toBe(sourceId);
+    expect(forkedId).not.toBe(existingId);
+
+    // The existing conversation must still be intact.
+    const existing = storeB.retrieveConversation(existingId);
+    expect(existing.id).toBe(existingId);
+  });
+
+  test("interrupt rolls back unpersisted partial assistant message before reload", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-store-interrupt-"));
+    const agentId = "agent-interrupt";
+    const conversationId = "conv-interrupt";
+
+    const store = new LocalStore(agentId, { storageDir });
+    store.appendTurnInput(conversationId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    store.appendStreamChunk(conversationId, agentId, {
+      message_type: "assistant_message",
+      content: [{ type: "text", text: "partial" }],
+    } as LettaStreamingResponse);
+
+    const conversationBeforeReload = store.retrieveConversation(conversationId);
+    const partialAssistantId =
+      conversationBeforeReload.in_context_message_ids?.at(-1);
+    expect(partialAssistantId).toBe("ui-msg-2");
+
+    store.settleInterruptedToolCalls(conversationId, { agentId });
+
+    const reloaded = new LocalStore(agentId, { storageDir });
+    const conversationAfterReload =
+      reloaded.retrieveConversation(conversationId);
+    expect(conversationAfterReload.in_context_message_ids).not.toContain(
+      partialAssistantId,
+    );
+    expect(reloaded.retrieveMessage(partialAssistantId ?? "")).toEqual([]);
+  });
+
   test("recompiles cached system prompt when committed memory changes", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-cache-"));
     const systemPrompts: string[] = [];
@@ -827,7 +896,10 @@ describe("local backend pi transcript", () => {
     const handles = (await listLocalModels(storageDir)).map(
       (model) => model.handle,
     );
+    const zaiHandles = handles.filter((handle) => handle.startsWith("zai/"));
+    expect(zaiHandles[0]).toBe("zai/glm-5.2");
     expect(handles).toContain("zai/glm-4.5-air");
+    expect(handles).toContain("zai/glm-5.2");
     expect(handles).toContain("zai/glm-5.1");
   });
 

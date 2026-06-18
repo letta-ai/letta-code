@@ -153,6 +153,38 @@ describe("ChannelRegistry", () => {
     );
   });
 
+  test("initializeChannels does not start accounts outside the restore scope", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "acct-cloud-slack",
+        enabled: true,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-cloud",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-06-17T00:00:00.000Z",
+        updatedAt: "2026-06-17T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+    const logs: string[] = [];
+
+    await expect(
+      initializeChannels(["slack"], {
+        restoreAgentScope: "local",
+        logger: (message) => logs.push(message),
+      }),
+    ).resolves.toBeInstanceOf(ChannelRegistry);
+
+    expect(logs).toContain(
+      '[Channels] Channel "slack" has no enabled accounts in local restore scope.',
+    );
+  });
+
   test("/help gets a direct channel reply instead of being delivered to the agent", async () => {
     __testOverrideLoadChannelAccounts(() => [
       {
