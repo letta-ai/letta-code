@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
@@ -194,6 +195,8 @@ export interface ModLearningAttemptSummary {
   passed: boolean;
   presentForbiddenResultMarkers: string[];
   presentForbiddenTraceMarkers: string[];
+  progressHtmlPath?: string;
+  progressJsonlPath?: string;
   reportHtmlPath?: string;
   reportPath: string;
   runDir: string;
@@ -272,6 +275,8 @@ export interface ModLearningReport {
   generationResult: CommandRunResult | null;
   passed: boolean;
   promotedToPath: string | null;
+  progressHtmlPath?: string;
+  progressJsonlPath?: string;
   reportHtmlPath?: string;
   reportPath: string;
   runDir: string;
@@ -2011,6 +2016,154 @@ function escapeHtml(value: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
+interface ModLearningProgressEvent {
+  progress: ModLearningProgress;
+  timestamp: string;
+}
+
+function progressHtmlPath(runDir: string): string {
+  return path.join(runDir, "progress.html");
+}
+
+function progressJsonlPath(runDir: string): string {
+  return path.join(runDir, "progress.jsonl");
+}
+
+function conversationUrl(
+  conversation: ModLearningHeadlessConversation,
+): string | null {
+  if (!conversation.agentId) return null;
+  return `https://app.letta.com/chat/${encodeURIComponent(conversation.agentId)}?conversation=${encodeURIComponent(conversation.conversationId)}`;
+}
+
+function progressScore(progress: ModLearningProgress): string {
+  if (progress.score === undefined) return "";
+  return `${progress.score}${progress.maxScore !== undefined ? `/${progress.maxScore}` : ""}`;
+}
+
+function renderProgressConversation(
+  conversation: ModLearningHeadlessConversation | undefined,
+): string {
+  if (!conversation) return "";
+  const url = conversationUrl(conversation);
+  const text = `${conversation.label}: ${conversation.conversationId}${conversation.agentId ? ` · ${conversation.agentId}` : ""}`;
+  return url
+    ? `<a href="${escapeHtml(url)}">${escapeHtml(text)}</a>`
+    : escapeHtml(text);
+}
+
+function renderLiveProgressHtml(params: {
+  events: ModLearningProgressEvent[];
+  jsonlPath: string;
+  runDir: string;
+  spec: ModLearningSpec;
+}): string {
+  const latest = params.events.at(-1)?.progress;
+  const rows = params.events
+    .map(({ progress, timestamp }) => {
+      const candidate = progress.candidateIndex
+        ? `${progress.candidateIndex}${progress.candidateCount ? `/${progress.candidateCount}` : ""}`
+        : "";
+      const status =
+        progress.passed === undefined ? "" : progress.passed ? "PASS" : "FAIL";
+      return `<tr><td>${escapeHtml(new Date(timestamp).toLocaleString())}</td><td>${escapeHtml(progress.phase)}</td><td>${escapeHtml(candidate)}</td><td>${escapeHtml(progress.message)}</td><td>${escapeHtml(progressScore(progress))}</td><td>${escapeHtml(status)}</td><td>${renderProgressConversation(progress.activeConversation)}</td><td><code>${escapeHtml(progress.candidateRunDir ?? progress.runDir)}</code></td></tr>`;
+    })
+    .join("\n");
+  const conversations = new Map<string, ModLearningHeadlessConversation>();
+  for (const event of params.events) {
+    const conversation = event.progress.activeConversation;
+    if (!conversation) continue;
+    conversations.set(
+      `${conversation.agentId ?? ""}:${conversation.conversationId}:${conversation.label}`,
+      conversation,
+    );
+  }
+  const conversationItems = [...conversations.values()]
+    .map(
+      (conversation) => `<li>${renderProgressConversation(conversation)}</li>`,
+    )
+    .join("\n");
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="refresh" content="3" />
+  <title>Live mod learning progress: ${escapeHtml(params.spec.name)}</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 28px; line-height: 1.45; }
+    .hero { border: 1px solid #8884; border-radius: 16px; padding: 18px; max-width: 1100px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-top: 12px; }
+    .card { border: 1px solid #8883; border-radius: 12px; padding: 12px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 18px; }
+    th, td { border-bottom: 1px solid #8883; padding: 8px; text-align: left; vertical-align: top; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; word-break: break-all; }
+    a { color: #7c3aed; }
+  </style>
+</head>
+<body>
+  <main class="hero">
+    <h1>Live mod learning progress: ${escapeHtml(params.spec.name)}</h1>
+    <p>This page auto-refreshes every 3 seconds while the learning run updates <code>progress.jsonl</code>.</p>
+    <div class="grid">
+      <div class="card"><strong>Latest phase</strong><br />${escapeHtml(latest?.phase ?? "waiting")}</div>
+      <div class="card"><strong>Latest message</strong><br />${escapeHtml(latest?.message ?? "waiting for first event")}</div>
+      <div class="card"><strong>Run directory</strong><br /><code>${escapeHtml(params.runDir)}</code></div>
+      <div class="card"><strong>Progress log</strong><br /><code>${escapeHtml(params.jsonlPath)}</code></div>
+    </div>
+  </main>
+
+  <h2>Agent / environment conversations</h2>
+  ${conversationItems ? `<ul>${conversationItems}</ul>` : "<p>No headless agent conversation has been observed yet.</p>"}
+
+  <h2>Timeline</h2>
+  <table>
+    <thead><tr><th>Time</th><th>Phase</th><th>Iter</th><th>Message</th><th>Score</th><th>Status</th><th>Agent/env run</th><th>Artifact dir</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</body>
+</html>\n`;
+}
+
+function createModLearningProgressRecorder(params: {
+  onProgress?: (progress: ModLearningProgress) => void;
+  runDir: string;
+  spec: ModLearningSpec;
+}): {
+  onProgress: (progress: ModLearningProgress) => void;
+  progressHtmlPath: string;
+  progressJsonlPath: string;
+} {
+  const htmlPath = progressHtmlPath(params.runDir);
+  const jsonlPath = progressJsonlPath(params.runDir);
+  const events: ModLearningProgressEvent[] = [];
+  const writeHtml = () => {
+    writeFileSync(
+      htmlPath,
+      renderLiveProgressHtml({
+        events,
+        jsonlPath,
+        runDir: params.runDir,
+        spec: params.spec,
+      }),
+      "utf8",
+    );
+  };
+  writeHtml();
+  return {
+    onProgress: (progress) => {
+      const event = { progress, timestamp: new Date().toISOString() };
+      events.push(event);
+      appendFileSync(jsonlPath, `${JSON.stringify(event)}\n`, "utf8");
+      writeHtml();
+      params.onProgress?.(progress);
+    },
+    progressHtmlPath: htmlPath,
+    progressJsonlPath: jsonlPath,
+  };
+}
+
 function renderHtmlReport(report: ModLearningReport): string {
   const status = report.passed ? "PASS" : "FAIL";
   const score = reportScore(report);
@@ -2066,6 +2219,8 @@ function renderHtmlReport(report: ModLearningReport): string {
     <p><strong>Score:</strong> ${score}${report.maxScore !== undefined ? `/${report.maxScore}` : ""} (${scorePct}%)</p>
     <div class="bar"><span style="width:${scorePct}%"></span></div>
     <p><strong>Run directory:</strong> <code>${escapeHtml(report.runDir)}</code></p>
+    ${report.progressHtmlPath ? `<p><strong>Live progress:</strong> <code>${escapeHtml(report.progressHtmlPath)}</code></p>` : ""}
+    ${report.progressJsonlPath ? `<p><strong>Progress log:</strong> <code>${escapeHtml(report.progressJsonlPath)}</code></p>` : ""}
     <p><strong>Candidate:</strong> <code>${escapeHtml(report.candidatePath)}</code></p>
     <p><strong>Markdown report:</strong> <code>${escapeHtml(report.reportPath)}</code></p>
   </main>
@@ -2088,6 +2243,12 @@ function renderMarkdownReport(report: ModLearningReport): string {
     `- Status: ${status}`,
     `- Evaluator: scenario-suite`,
     `- Run directory: ${report.runDir}`,
+    ...(report.progressHtmlPath
+      ? [`- Live progress: ${report.progressHtmlPath}`]
+      : []),
+    ...(report.progressJsonlPath
+      ? [`- Progress log: ${report.progressJsonlPath}`]
+      : []),
     ...(report.candidateCount && report.candidateCount > 1
       ? [
           `- Candidate attempts: ${report.attempts?.length ?? report.candidateCount}/${report.candidateCount}${report.stoppedEarlyAt ? ` (stopped early: ${report.stoppedEarlyReason ?? "complete"})` : ""}`,
@@ -2371,6 +2532,8 @@ async function runModLearningCandidate(
     maxScore,
     passed,
     promotedToPath,
+    progressHtmlPath: progressHtmlPath(topLevelRunDir),
+    progressJsonlPath: progressJsonlPath(topLevelRunDir),
     reportHtmlPath,
     reportPath,
     runDir,
@@ -2400,7 +2563,7 @@ export async function runModLearning(
 ): Promise<ModLearningReport> {
   const candidateCount = normalizeCandidateCount(options.candidateCount);
   const scenarioLimit = normalizeScenarioLimit(options.scenarioLimit);
-  const normalizedOptions: RunModLearningOptions = {
+  let normalizedOptions: RunModLearningOptions = {
     ...options,
     scenarioLimit,
   };
@@ -2431,6 +2594,15 @@ export async function runModLearning(
   const baseEnv = normalizedOptions.env ?? process.env;
 
   await mkdir(runDir, { recursive: true });
+  const progressRecorder = createModLearningProgressRecorder({
+    onProgress: normalizedOptions.onProgress,
+    runDir,
+    spec: normalizedOptions.spec,
+  });
+  normalizedOptions = {
+    ...normalizedOptions,
+    onProgress: progressRecorder.onProgress,
+  };
   await writeJsonArtifact(
     path.join(runDir, "env.snapshot.json"),
     normalizedOptions.spec,
@@ -2567,6 +2739,8 @@ export async function runModLearning(
     attempts,
     candidateCount,
     promotedToPath,
+    progressHtmlPath: progressRecorder.progressHtmlPath,
+    progressJsonlPath: progressRecorder.progressJsonlPath,
     reportHtmlPath,
     reportPath,
     runDir,

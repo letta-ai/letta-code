@@ -644,6 +644,7 @@ function formatProgress(
       progress.candidateCount,
       runningLabel,
     ),
+    `Live progress: ${displayPath(path.join(progress.runDir, "progress.html"), cwd)}`,
     `Run directory: ${displayPath(progress.runDir, cwd)}`,
     ...(progress.candidateRunDir && progress.candidateRunDir !== progress.runDir
       ? [`Attempt directory: ${displayPath(progress.candidateRunDir, cwd)}`]
@@ -664,6 +665,9 @@ export function formatModLearningSummary(
   const lines = [
     `Finished mod learning: ${report.spec.name}`,
     `Report: ${displayPath(report.reportPath, cwd)}`,
+    ...(report.progressHtmlPath
+      ? [`Live progress: ${displayPath(report.progressHtmlPath, cwd)}`]
+      : []),
     ...(report.reportHtmlPath
       ? [`HTML report: ${displayPath(report.reportHtmlPath, cwd)}`]
       : []),

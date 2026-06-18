@@ -246,6 +246,8 @@ describe("mod learning harness", () => {
     });
 
     expect(report.passed).toBe(true);
+    expect(report.progressHtmlPath).toBe(path.join(runDir, "progress.html"));
+    expect(report.progressJsonlPath).toBe(path.join(runDir, "progress.jsonl"));
     expect(calls).toHaveLength(2);
     expect(progress).toEqual([
       "preparing",
@@ -261,6 +263,11 @@ describe("mod learning harness", () => {
     expect(existsSync(path.join(runDir, "manifest.json"))).toBe(true);
     expect(existsSync(path.join(runDir, "history.json"))).toBe(true);
     expect(existsSync(path.join(runDir, "proposer-guide.md"))).toBe(true);
+    expect(existsSync(path.join(runDir, "progress.html"))).toBe(true);
+    expect(existsSync(path.join(runDir, "progress.jsonl"))).toBe(true);
+    expect(readFileSync(path.join(runDir, "progress.html"), "utf8")).toContain(
+      "Live mod learning progress",
+    );
     expect(existsSync(path.join(runDir, "report.md"))).toBe(true);
     expect(existsSync(path.join(runDir, "report.html"))).toBe(true);
     expect(readFileSync(path.join(runDir, "report.html"), "utf8")).toContain(
@@ -844,6 +851,7 @@ describe("mod learning harness", () => {
     });
     expect(existsSync(path.join(runDir, "history.md"))).toBe(true);
     expect(existsSync(path.join(runDir, "history.json"))).toBe(true);
+    expect(existsSync(path.join(runDir, "progress.html"))).toBe(true);
     expect(existsSync(path.join(runDir, "proposer-guide.md"))).toBe(true);
     expect(
       existsSync(path.join(runDir, "candidates", "001", "manifest.json")),

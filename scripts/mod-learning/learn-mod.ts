@@ -210,6 +210,7 @@ async function launchBackground(params: {
   console.log(`stdout ${stdoutPath}`);
   console.log(`stderr ${stderrPath}`);
   console.log(`progress tail -f ${stdoutPath}`);
+  console.log(`progress ${path.join(params.runDir, "progress.html")}`);
   console.log(`report ${path.join(params.runDir, "report.md")}`);
   console.log(`html ${path.join(params.runDir, "report.html")}`);
 }
@@ -294,6 +295,8 @@ async function main(): Promise<void> {
 
   const status = report.passed ? "PASS" : "FAIL";
   console.log(`${status} ${report.reportPath}`);
+  if (report.progressHtmlPath)
+    console.log(`progress ${report.progressHtmlPath}`);
   if (report.reportHtmlPath) console.log(`html ${report.reportHtmlPath}`);
   console.log(`candidate ${candidateForPromote(report)}`);
   if (report.passed) {
