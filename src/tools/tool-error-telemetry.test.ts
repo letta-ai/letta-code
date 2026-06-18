@@ -74,6 +74,7 @@ describe("tool error telemetry", () => {
       {
         agentId: "agent-1",
         conversationId: "conv-1",
+        stepId: "step-1",
         workingDirectory: process.cwd(),
       },
       () =>
@@ -92,6 +93,7 @@ describe("tool error telemetry", () => {
       conversationId: "conv-1",
       errorType: "tool_error",
       reason: "tool_returned_error",
+      stepId: "step-1",
       toolCallId: "call-1",
       toolName: "local_fail",
       toolType: "mod",
@@ -115,6 +117,7 @@ describe("tool error telemetry", () => {
       {
         agentId: "agent-1",
         conversationId: "conv-1",
+        stepId: "step-2",
         workingDirectory: process.cwd(),
       },
       () =>
@@ -133,6 +136,7 @@ describe("tool error telemetry", () => {
       conversationId: "conv-1",
       errorType: "TypeError",
       reason: "tool_exception",
+      stepId: "step-2",
       toolCallId: "call-2",
       toolName: "local_throw",
       toolType: "mod",

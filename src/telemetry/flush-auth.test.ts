@@ -215,6 +215,7 @@ describe("telemetry flush auth", () => {
       toolCallId: "call-1",
       agentId: "agent-1",
       conversationId: "conv-1",
+      stepId: "step-1",
     });
 
     expect(telemetryState.events).toHaveLength(1);
@@ -228,8 +229,12 @@ describe("telemetry flush auth", () => {
       backend: "constellation",
       conversation_id: "conv-1",
       error_type: "ShellExecutionError",
+      node_version: process.version,
+      os_arch: process.arch,
+      os_platform: process.platform,
       reason: "tool_exception",
       status: "error",
+      step_id: "step-1",
       tool_call_id: "call-1",
       tool_name: "Bash",
       tool_type: "built_in",

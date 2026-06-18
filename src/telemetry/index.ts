@@ -89,6 +89,10 @@ export interface ToolCallErrorData {
   tool_call_id?: string;
   agent_id?: string;
   conversation_id?: string;
+  step_id?: string;
+  os_platform: string;
+  os_arch: string;
+  node_version: string;
 }
 
 export interface ErrorData {
@@ -663,7 +667,8 @@ class TelemetryManager {
 
   /**
    * Track tool call failures with safe, constellation-only metadata.
-   * Do not include tool arguments, tool output, stderr, or user content here.
+   * Do not include tool arguments, tool output, stderr, user content, or
+   * raw exception messages here.
    */
   trackToolCallError(options: {
     toolName: string;
@@ -673,6 +678,7 @@ class TelemetryManager {
     toolCallId?: string;
     agentId?: string | null;
     conversationId?: string | null;
+    stepId?: string | null;
   }) {
     if (resolveTelemetryBackend() !== "constellation") {
       return;
@@ -687,6 +693,10 @@ class TelemetryManager {
       tool_call_id: options.toolCallId,
       agent_id: options.agentId ?? undefined,
       conversation_id: options.conversationId ?? undefined,
+      step_id: options.stepId ?? undefined,
+      os_platform: process.platform,
+      os_arch: process.arch,
+      node_version: process.version,
     };
     this.track("tool_call_error", data);
   }

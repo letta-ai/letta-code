@@ -604,6 +604,7 @@ export type ToolExecutionResult = {
 type ToolCallErrorTelemetryContext = {
   agentId?: string | null;
   conversationId?: string | null;
+  stepId?: string | null;
   errorType?: string;
   reason: ToolCallErrorReason;
   toolCallId?: string;
@@ -622,6 +623,7 @@ function trackToolCallErrorTelemetry(
     toolCallId: context.toolCallId,
     agentId: context.agentId,
     conversationId: context.conversationId,
+    stepId: context.stepId,
   });
 }
 
@@ -2231,6 +2233,7 @@ async function executeModTool(
       trackToolCallErrorTelemetry({
         agentId: executionScope.agentId,
         conversationId: executionScope.conversationId,
+        stepId: executionScope.stepId,
         errorType: "hook_blocked",
         reason: "pre_tool_hook_blocked",
         toolCallId: options.toolCallId,
@@ -2311,6 +2314,7 @@ async function executeModTool(
         trackToolCallErrorTelemetry({
           agentId: executionScope.agentId,
           conversationId: executionScope.conversationId,
+          stepId: executionScope.stepId,
           errorType: "tool_error",
           reason: "tool_returned_error",
           toolCallId: options.toolCallId,
@@ -2384,6 +2388,7 @@ async function executeModTool(
       trackToolCallErrorTelemetry({
         agentId: executionScope.agentId,
         conversationId: executionScope.conversationId,
+        stepId: executionScope.stepId,
         errorType,
         reason: "tool_exception",
         toolCallId: options.toolCallId,
@@ -2465,7 +2470,12 @@ export async function executeTool(
     ? getExecutionContextById(options.toolContextId)
     : undefined;
   if (options?.toolContextId && !context) {
+    const runtimeContext = getRuntimeContext();
     trackToolCallErrorTelemetry({
+      agentId: runtimeContext?.agentId ?? options.parentScope?.agentId,
+      conversationId:
+        runtimeContext?.conversationId ?? options.parentScope?.conversationId,
+      stepId: runtimeContext?.stepId,
       errorType: "tool_context_not_found",
       reason: "tool_context_not_found",
       toolCallId: options.toolCallId,
@@ -2508,6 +2518,7 @@ export async function executeTool(
       trackToolCallErrorTelemetry({
         agentId: executionScope.agentId,
         conversationId: executionScope.conversationId,
+        stepId: executionScope.stepId,
         errorType: "tool_not_found",
         reason: "tool_not_found",
         toolCallId: options?.toolCallId,
@@ -2540,6 +2551,7 @@ export async function executeTool(
         trackToolCallErrorTelemetry({
           agentId: executionScope.agentId,
           conversationId: executionScope.conversationId,
+          stepId: executionScope.stepId,
           errorType: "permission_denied",
           reason: "permission_denied",
           toolCallId: options?.toolCallId,
@@ -2583,6 +2595,7 @@ export async function executeTool(
         trackToolCallErrorTelemetry({
           agentId: executionScope.agentId,
           conversationId: executionScope.conversationId,
+          stepId: executionScope.stepId,
           errorType: "permission_denied",
           reason: "permission_denied",
           toolCallId: options?.toolCallId,
@@ -2603,6 +2616,7 @@ export async function executeTool(
       trackToolCallErrorTelemetry({
         agentId: executionScope.agentId,
         conversationId: executionScope.conversationId,
+        stepId: executionScope.stepId,
         errorType: "tool_error",
         reason: "tool_returned_error",
         toolCallId: options?.toolCallId,
@@ -2679,6 +2693,7 @@ export async function executeTool(
       trackToolCallErrorTelemetry({
         agentId: executionScope.agentId,
         conversationId: executionScope.conversationId,
+        stepId: executionScope.stepId,
         errorType: "permission_denied",
         reason: "permission_denied",
         toolCallId: options?.toolCallId,
@@ -2704,6 +2719,7 @@ export async function executeTool(
       trackToolCallErrorTelemetry({
         agentId: executionScope.agentId,
         conversationId: executionScope.conversationId,
+        stepId: executionScope.stepId,
         errorType: "hook_blocked",
         reason: "pre_tool_hook_blocked",
         toolCallId: options?.toolCallId,
@@ -2891,6 +2907,7 @@ export async function executeTool(
         trackToolCallErrorTelemetry({
           agentId: executionScope.agentId,
           conversationId: executionScope.conversationId,
+          stepId: executionScope.stepId,
           errorType: "tool_error",
           reason: "tool_returned_error",
           toolCallId: options?.toolCallId,
@@ -2961,6 +2978,7 @@ export async function executeTool(
       trackToolCallErrorTelemetry({
         agentId: executionScope.agentId,
         conversationId: executionScope.conversationId,
+        stepId: executionScope.stepId,
         errorType,
         reason: "tool_exception",
         toolCallId: options?.toolCallId,
