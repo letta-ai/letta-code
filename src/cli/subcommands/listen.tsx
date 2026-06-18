@@ -17,6 +17,12 @@ import {
   requestDeviceCode,
 } from "@/auth/oauth";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import {
+  type ChannelRestoreAgentScope,
+  parseChannelRestoreAgentScope,
+  RESTORE_CHANNEL_AGENT_SCOPE_ENV,
+  RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
+} from "@/channels/restore-scope";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
@@ -198,6 +204,24 @@ async function resolveListenerStartupMode(
   }
 
   return { kind: "unsupported-self-hosted", serverUrl };
+}
+
+function getScopedChannelRestoreAgentScope(): ChannelRestoreAgentScope | null {
+  return parseChannelRestoreAgentScope(
+    process.env[RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV],
+  );
+}
+
+function resolveChannelRestoreAgentScope(
+  scopedRestoreAgentScope: ChannelRestoreAgentScope | null,
+): ChannelRestoreAgentScope {
+  return (
+    scopedRestoreAgentScope ??
+    parseChannelRestoreAgentScope(
+      process.env[RESTORE_CHANNEL_AGENT_SCOPE_ENV],
+    ) ??
+    (isLocalBackendEnvEnabled() ? "local" : "cloud")
+  );
 }
 
 async function refreshListenerAccessToken(
@@ -481,13 +505,23 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Initialize channels if explicitly requested, or restore persisted enabled
   // channels when a desktop wrapper opts into boot-time channel restore.
+  const scopedRestoreAgentScope = getScopedChannelRestoreAgentScope();
+  const restoreEnabledChannels =
+    !values.channels &&
+    (process.env.LETTA_RESTORE_ENABLED_CHANNELS === "1" ||
+      scopedRestoreAgentScope !== null);
+  const restoreAgentScope = restoreEnabledChannels
+    ? resolveChannelRestoreAgentScope(scopedRestoreAgentScope)
+    : null;
   const channelNames = values.channels
     ? values.channels
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-    : process.env.LETTA_RESTORE_ENABLED_CHANNELS === "1"
-      ? (await import("@/channels/service")).listEnabledChannelIds()
+    : restoreEnabledChannels
+      ? (await import("@/channels/service")).listEnabledChannelIds({
+          restoreAgentScope,
+        })
       : [];
 
   if (channelNames.length > 0) {
@@ -514,6 +548,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     try {
       await initializeChannels(channelNames, {
         failOnStartupError: Boolean(values.channels),
+        restoreAgentScope,
         logger: debugMode
           ? (message) => console.log(`[${formatTimestamp()}] ${message}`)
           : undefined,
