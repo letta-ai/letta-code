@@ -10,6 +10,7 @@ import type {
   ChannelPluginMetadata,
 } from "./plugin-types";
 import { parseChannelConfigSchema } from "./schema-config";
+import { SLACK_CHANNEL_CONFIG_SCHEMA } from "./slack/account-config";
 import { FIRST_PARTY_CHANNEL_IDS, type FirstPartyChannelId } from "./types";
 
 type ChannelPluginRegistration = {
@@ -56,6 +57,7 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       runtimeModules: ["@slack/bolt", "@slack/web-api"],
       source: "first-party",
       firstParty: true,
+      configSchema: SLACK_CHANNEL_CONFIG_SCHEMA,
     },
     load: async () => {
       const { slackChannelPlugin } = await import("@/channels/slack/plugin");

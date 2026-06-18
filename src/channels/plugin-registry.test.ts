@@ -247,3 +247,23 @@ test("first-party custom channel has configSchema", () => {
   expect(urlField?.type).toBe("text");
   expect(urlField?.required).toBe(true);
 });
+
+test("first-party Slack channel exposes completed reaction config", async () => {
+  const metadata = getChannelPluginMetadata("slack");
+  const reactionField = metadata.configSchema?.fields.find(
+    (field) => field.key === "show_completed_reaction",
+  );
+
+  expect(reactionField).toEqual({
+    type: "boolean",
+    key: "show_completed_reaction",
+    label: "Show completed reaction",
+    description:
+      "Add a :white_check_mark: reaction after successful turns finish. When disabled, successful turns only remove :eyes:.",
+    default: true,
+    scope: "account",
+  });
+
+  const plugin = await loadChannelPlugin("slack");
+  expect(plugin.metadata.configSchema?.fields).toContainEqual(reactionField);
+});
