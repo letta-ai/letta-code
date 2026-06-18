@@ -1162,6 +1162,7 @@ export function isCreateAgentCommand(
     (c.personality === "memo" ||
       c.personality === "blank" ||
       c.personality === "tutorial" ||
+      c.personality === "meta" ||
       c.personality === "linus" ||
       c.personality === "kawaii") &&
     (c.model === undefined || typeof c.model === "string") &&

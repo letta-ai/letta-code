@@ -76,10 +76,11 @@ describe("personality helpers", () => {
     expect(getPersonalityHumanContent("codex")).toBe(defaultHuman);
   });
 
-  test("default create-agent personalities include memo, tutorial, blank, linus, and kawaii", () => {
+  test("default create-agent personalities include memo, tutorial, meta, blank, linus, and kawaii", () => {
     expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
       "memo",
       "tutorial",
+      "meta",
       "blank",
       "linus",
       "kawaii",

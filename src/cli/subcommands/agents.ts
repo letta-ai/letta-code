@@ -28,7 +28,7 @@ List Options:
 Create Options:
   --name <name>         Agent name (default: "Letta Code")
   --model <model>       Model handle (e.g., anthropic/claude-sonnet-4-20250514)
-  --personality <name>  Personality preset: letta-code, tutorial, blank, linus, kawaii, claude, codex
+  --personality <name>  Personality preset: letta-code, tutorial, meta, blank, linus, kawaii, claude, codex
   --description <text>  Agent description
   --tags <tag1,tag2>    Tags (comma-separated)
   --pinned              Pin the created agent globally
@@ -123,7 +123,7 @@ async function runCreateAction(
 
   if (personalityInput && !personality) {
     console.error(
-      `Unknown personality: ${personalityInput}. Valid: letta-code, tutorial, blank, linus, kawaii, claude, codex`,
+      `Unknown personality: ${personalityInput}. Valid: letta-code, tutorial, meta, blank, linus, kawaii, claude, codex`,
     );
     return 1;
   }

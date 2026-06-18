@@ -24,7 +24,15 @@ const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
 const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
 
 export interface PersonalityOption {
-  id: "blank" | "kawaii" | "codex" | "claude" | "linus" | "memo" | "tutorial";
+  id:
+    | "blank"
+    | "kawaii"
+    | "codex"
+    | "claude"
+    | "linus"
+    | "memo"
+    | "meta"
+    | "tutorial";
   label: string;
   description: string;
   /** Model ID from models.json to use when no explicit model is provided. */
@@ -41,6 +49,11 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
     id: "tutorial",
     label: "Tutor",
     description: "A tutor-guide that teaches Letta through real work",
+  },
+  {
+    id: "meta",
+    label: "MetaAgent",
+    description: "Improves Letta Code agents through memory, skills, and mods",
   },
   {
     id: "blank",
@@ -75,6 +88,7 @@ export type PersonalityId = PersonalityOption["id"];
 export const DEFAULT_CREATE_AGENT_PERSONALITIES = [
   "memo",
   "tutorial",
+  "meta",
   "blank",
   "linus",
   "kawaii",
@@ -87,6 +101,8 @@ const PERSONALITY_ALIASES: Record<string, PersonalityId> = {
   "letta-code": "memo",
   lettacode: "memo",
   memo: "memo",
+  "meta-agent": "meta",
+  metaagent: "meta",
 };
 
 export interface ApplyPersonalityToMemoryParams {
@@ -300,6 +316,10 @@ export function getPersonalityContent(personalityId: PersonalityId): string {
     return getPromptBody("persona_blank.mdx");
   }
 
+  if (personalityId === "meta") {
+    return getPromptBody("persona_meta.mdx");
+  }
+
   if (personalityId === "kawaii") {
     return getPromptBody("persona_kawaii.mdx");
   }
@@ -322,7 +342,11 @@ export function getDefaultHumanContent(): string {
 export function getPersonalityHumanContent(
   personalityId: PersonalityId,
 ): string {
-  if (personalityId === "memo" || personalityId === "tutorial") {
+  if (
+    personalityId === "memo" ||
+    personalityId === "tutorial" ||
+    personalityId === "meta"
+  ) {
     return getPromptBody("human_memo.mdx");
   }
 
@@ -362,15 +386,19 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
       ? "persona_memo.mdx"
       : personalityId === "tutorial"
         ? "persona_tutorial.mdx"
-        : personalityId === "blank"
-          ? "persona_blank.mdx"
-          : personalityId === "kawaii"
-            ? "persona_kawaii.mdx"
-            : personalityId === "linus"
-              ? "persona_linus.mdx"
-              : "persona.mdx";
+        : personalityId === "meta"
+          ? "persona_meta.mdx"
+          : personalityId === "blank"
+            ? "persona_blank.mdx"
+            : personalityId === "kawaii"
+              ? "persona_kawaii.mdx"
+              : personalityId === "linus"
+                ? "persona_linus.mdx"
+                : "persona.mdx";
   const humanTemplatePromptAssetName =
-    personalityId === "memo" || personalityId === "tutorial"
+    personalityId === "memo" ||
+    personalityId === "tutorial" ||
+    personalityId === "meta"
       ? "human_memo.mdx"
       : personalityId === "kawaii"
         ? "human_kawaii.mdx"

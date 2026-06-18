@@ -101,7 +101,7 @@ export const CLI_FLAG_CATALOG = {
     help: {
       argLabel: "<name>",
       description:
-        'Personality preset for --new-agent: "letta-code", "tutorial", "blank", "linus", "kawaii", "claude", or "codex"',
+        'Personality preset for --new-agent: "letta-code", "tutorial", "meta", "blank", "linus", "kawaii", "claude", or "codex"',
     },
   },
   toolset: {

@@ -203,6 +203,7 @@ describe("listen-client parseServerMessage", () => {
       expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
         "memo",
         "tutorial",
+        "meta",
         "blank",
         "linus",
         "kawaii",

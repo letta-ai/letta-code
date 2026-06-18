@@ -956,7 +956,7 @@ export async function handleHeadlessCommand(
     : null;
   if (personalityInput && !personality) {
     console.error(
-      `Error: Unknown personality "${personalityInput}". Valid: letta-code, tutorial, blank, linus, kawaii, claude, codex`,
+      `Error: Unknown personality "${personalityInput}". Valid: letta-code, tutorial, meta, blank, linus, kawaii, claude, codex`,
     );
     process.exit(1);
   }
