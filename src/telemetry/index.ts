@@ -444,6 +444,7 @@ class TelemetryManager {
       | UserInputData
       | ReflectionStartData
       | ReflectionEndData,
+    options?: { backend?: TelemetryBackend },
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
@@ -463,7 +464,7 @@ class TelemetryManager {
         session_id: this.sessionId,
         agent_id: eventAgentId,
         surface: this.surface,
-        backend: resolveTelemetryBackend(),
+        backend: options?.backend ?? resolveTelemetryBackend(),
       },
     };
 
@@ -680,7 +681,8 @@ class TelemetryManager {
     conversationId?: string | null;
     stepId?: string | null;
   }) {
-    if (resolveTelemetryBackend() !== "constellation") {
+    const backend = resolveTelemetryBackend();
+    if (backend !== "constellation") {
       return;
     }
 
@@ -698,7 +700,7 @@ class TelemetryManager {
       os_arch: process.arch,
       node_version: process.version,
     };
-    this.track("tool_call_error", data);
+    this.track("tool_call_error", data, { backend });
   }
 
   /**
