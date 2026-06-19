@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
@@ -11,6 +12,12 @@ import {
   parseAppServerListenUrl,
   startAppServer,
 } from "@/websocket/app-server";
+import {
+  authorizeUpgrade,
+  isUnauthenticatedNonLoopbackListener,
+  parseAppServerWebsocketAuthSettings,
+  policyFromSettings,
+} from "@/websocket/app-server-auth";
 
 const TEST_TIMEOUT_MS = 5000;
 
@@ -35,6 +42,36 @@ function waitForOpen(socket: WebSocket): Promise<void> {
     const handleError = (error: Error) => {
       cleanup();
       reject(error);
+    };
+    socket.once("open", handleOpen);
+    socket.once("error", handleError);
+  });
+}
+
+function expectWebSocketOpenFailure(
+  url: string,
+  headers?: Record<string, string>,
+): Promise<void> {
+  const socket = new WebSocket(url, { headers });
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      terminateClient(socket);
+      reject(new Error("Timed out waiting for websocket rejection"));
+    }, TEST_TIMEOUT_MS);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off("open", handleOpen);
+      socket.off("error", handleError);
+    };
+    const handleOpen = () => {
+      cleanup();
+      terminateClient(socket);
+      reject(new Error("Expected websocket connection to be rejected"));
+    };
+    const handleError = () => {
+      cleanup();
+      resolve();
     };
     socket.once("open", handleOpen);
     socket.once("error", handleError);
@@ -88,12 +125,27 @@ function closeClient(socket: WebSocket | null): void {
   }
 }
 
+function terminateClient(socket: WebSocket | null): void {
+  if (!socket || socket.readyState === WebSocket.CLOSED) return;
+  socket.terminate();
+}
+
+function loopbackChannelUrl(url: string): string {
+  const parsed = new URL(url);
+  parsed.hostname = "127.0.0.1";
+  return parsed.toString();
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 afterEach(() => {
   __testSetBackend(null);
 });
 
 describe("app-server native websocket", () => {
-  test("parses loopback websocket listen URLs", () => {
+  test("parses websocket listen URLs", () => {
     expect(parseAppServerListenUrl()).toEqual({
       host: "127.0.0.1",
       port: 0,
@@ -107,9 +159,46 @@ describe("app-server native websocket", () => {
     expect(() => parseAppServerListenUrl("stdio://")).toThrow(
       /only supports ws:\/\//,
     );
-    expect(() => parseAppServerListenUrl("ws://0.0.0.0:4500")).toThrow(
-      /loopback/,
-    );
+    expect(parseAppServerListenUrl("ws://0.0.0.0:4500")).toEqual({
+      host: "0.0.0.0",
+      port: 4500,
+      path: "/ws",
+    });
+  });
+
+  test("parses capability-token websocket auth settings", async () => {
+    expect(() =>
+      parseAppServerWebsocketAuthSettings({ wsAuth: "capability-token" }),
+    ).toThrow(/--ws-token-file.*--ws-token-sha256/);
+    expect(() =>
+      parseAppServerWebsocketAuthSettings({
+        wsAuth: "capability-token",
+        wsTokenFile: "/tmp/token",
+        wsTokenSha256: "ab".repeat(32),
+      }),
+    ).toThrow(/mutually exclusive/);
+    expect(() =>
+      parseAppServerWebsocketAuthSettings({
+        wsAuth: "capability-token",
+        wsTokenSha256: "not-a-sha256",
+      }),
+    ).toThrow(/64-character hex/);
+
+    const settings = parseAppServerWebsocketAuthSettings({
+      wsAuth: "capability-token",
+      wsTokenSha256: sha256Hex("super-secret-token"),
+    });
+    const policy = await policyFromSettings(settings);
+    expect(isUnauthenticatedNonLoopbackListener("0.0.0.0", {})).toBe(true);
+    expect(isUnauthenticatedNonLoopbackListener("127.0.0.2", {})).toBe(false);
+    expect(isUnauthenticatedNonLoopbackListener("0.0.0.0", policy)).toBe(false);
+    expect(
+      authorizeUpgrade({ authorization: "Bearer super-secret-token" }, policy),
+    ).toBeNull();
+    expect(authorizeUpgrade({}, policy)).toMatchObject({ statusCode: 401 });
+    expect(
+      authorizeUpgrade({ authorization: "Bearer wrong-token" }, policy),
+    ).toMatchObject({ statusCode: 401 });
   });
 
   test("serves health probes", async () => {
@@ -131,6 +220,56 @@ describe("app-server native websocket", () => {
       expect(browserHealth.status).toBe(403);
     } finally {
       await handle?.close();
+    }
+  });
+
+  test("rejects browser-origin websocket upgrades", async () => {
+    let handle: AppServerHandle | null = null;
+    try {
+      handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
+      await expectWebSocketOpenFailure(handle.controlUrl, {
+        Origin: "https://evil.example",
+      });
+    } finally {
+      await handle?.close();
+    }
+  });
+
+  test("requires capability-token auth for non-loopback websocket listeners", async () => {
+    await expect(startAppServer({ listen: "ws://0.0.0.0:0" })).rejects.toThrow(
+      /without auth/,
+    );
+  });
+
+  test("rejects missing and invalid capability tokens", async () => {
+    const authDir = await mkdtemp(join(os.tmpdir(), "letta-app-server-auth-"));
+    const tokenFile = join(authDir, "app-server-token");
+    let handle: AppServerHandle | null = null;
+    let control: WebSocket | null = null;
+    try {
+      await writeFile(tokenFile, "super-secret-token\n", "utf8");
+      handle = await startAppServer({
+        listen: "ws://0.0.0.0:0",
+        websocketAuth: parseAppServerWebsocketAuthSettings({
+          wsAuth: "capability-token",
+          wsTokenFile: tokenFile,
+        }),
+      });
+      const controlUrl = loopbackChannelUrl(handle.controlUrl);
+
+      await expectWebSocketOpenFailure(controlUrl);
+      await expectWebSocketOpenFailure(controlUrl, {
+        Authorization: "Bearer wrong-token",
+      });
+
+      control = new WebSocket(controlUrl, {
+        headers: { Authorization: "Bearer super-secret-token" },
+      });
+      await waitForOpen(control);
+    } finally {
+      terminateClient(control);
+      await handle?.close();
+      await rm(authDir, { recursive: true, force: true });
     }
   });
 

@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { startAppServer } from "@/websocket/app-server";
+import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth";
 
 function printAppServerHelp(): void {
   console.log(
@@ -9,11 +10,15 @@ Run a local Letta Code app-server using native v2 websocket frames.
 
 Options:
   --listen <url>  WebSocket listen URL. Defaults to ws://127.0.0.1:0
+  --ws-auth <mode>  WebSocket auth mode for non-loopback listeners. Supported: capability-token
+  --ws-token-file <path>  Absolute path to the capability-token file
+  --ws-token-sha256 <hex>  Hex-encoded SHA-256 digest of the capability token
   -h, --help      Show this help message
 
 Examples:
   letta app-server
-  letta app-server --listen ws://127.0.0.1:4500`,
+  letta app-server --listen ws://127.0.0.1:4500
+  letta app-server --listen ws://0.0.0.0:4500 --ws-auth capability-token --ws-token-file /path/to/token`,
   );
 }
 
@@ -50,6 +55,9 @@ export async function runAppServerSubcommand(argv: string[]): Promise<number> {
       options: {
         help: { type: "boolean", short: "h" },
         listen: { type: "string" },
+        "ws-auth": { type: "string" },
+        "ws-token-file": { type: "string" },
+        "ws-token-sha256": { type: "string" },
       },
     });
   } catch (error) {
@@ -63,11 +71,27 @@ export async function runAppServerSubcommand(argv: string[]): Promise<number> {
   }
 
   try {
+    const websocketAuth = parseAppServerWebsocketAuthSettings({
+      wsAuth:
+        typeof parsed.values["ws-auth"] === "string"
+          ? parsed.values["ws-auth"]
+          : undefined,
+      wsTokenFile:
+        typeof parsed.values["ws-token-file"] === "string"
+          ? parsed.values["ws-token-file"]
+          : undefined,
+      wsTokenSha256:
+        typeof parsed.values["ws-token-sha256"] === "string"
+          ? parsed.values["ws-token-sha256"]
+          : undefined,
+    });
+
     const handle = await startAppServer({
       listen:
         typeof parsed.values.listen === "string"
           ? parsed.values.listen
           : undefined,
+      websocketAuth,
       onListening: (info) => {
         console.log(`Listening on ${info.url}`);
         console.log(`Control: ${info.controlUrl}`);

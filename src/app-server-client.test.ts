@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   type AppServerSocketLike,
+  type AppServerSocketOptions,
   createAppServerClient,
   resolveAppServerChannelUrl,
 } from "./app-server-client";
@@ -14,7 +15,10 @@ class FakeSocket implements AppServerSocketLike {
   readonly sent: string[] = [];
   private readonly listeners = new Map<string, Set<Listener>>();
 
-  constructor(readonly url: string) {
+  constructor(
+    readonly url: string,
+    readonly options?: AppServerSocketOptions,
+  ) {
     FakeSocket.instances.push(this);
   }
 
@@ -79,6 +83,29 @@ describe("app-server client", () => {
         "stream",
       ),
     ).toBe("wss://example.test/ws?channel=stream&token=abc");
+  });
+
+  test("passes capability token as websocket authorization header", () => {
+    createAppServerClient({
+      url: "http://127.0.0.1:4500",
+      authToken: " super-secret-token\n",
+      WebSocket: FakeSocket,
+    });
+    const [control, stream] = FakeSocket.instances;
+    expect(control?.options).toEqual({
+      headers: { Authorization: "Bearer super-secret-token" },
+    });
+    expect(stream?.options).toEqual({
+      headers: { Authorization: "Bearer super-secret-token" },
+    });
+
+    expect(() =>
+      createAppServerClient({
+        url: "http://127.0.0.1:4500",
+        authToken: " \n",
+        WebSocket: FakeSocket,
+      }),
+    ).toThrow(/auth token must not be empty/);
   });
 
   test("connects both sockets and resolves request_id responses", async () => {
