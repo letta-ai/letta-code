@@ -241,7 +241,7 @@ export async function startAppServer(
   const authPolicy = await policyFromSettings(options.websocketAuth);
   if (isUnauthenticatedNonLoopbackListener(listen.host, authPolicy)) {
     throw new Error(
-      `refusing to start non-loopback websocket listener ${listen.host}:${listen.port} without auth; configure \`--ws-auth capability-token\``,
+      `refusing to start non-loopback websocket listener ${listen.host}:${listen.port} without auth; configure \`--ws-auth capability-token\` or \`--ws-auth signed-bearer-token\``,
     );
   }
   const wss = new WebSocketServer({ noServer: true });
@@ -320,17 +320,21 @@ export async function startAppServer(
 
   const server = createServer((request, response) => {
     const requestUrl = getRequestUrl(request, listen.host);
+    if (request.headers.origin) {
+      options.onLog?.(
+        `Rejecting app-server request with Origin header: ${request.url ?? "/"}`,
+      );
+      response.writeHead(403);
+      response.end();
+      return;
+    }
+
     if (requestUrl.pathname === "/readyz") {
       response.writeHead(200, { "content-type": "text/plain" });
       response.end("ok\n");
       return;
     }
     if (requestUrl.pathname === "/healthz") {
-      if (request.headers.origin) {
-        response.writeHead(403);
-        response.end();
-        return;
-      }
       response.writeHead(200, { "content-type": "text/plain" });
       response.end("ok\n");
       return;

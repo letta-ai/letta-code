@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
@@ -140,6 +140,21 @@ function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function base64Url(value: string | Buffer): string {
+  return Buffer.from(value).toString("base64url");
+}
+
+function signedBearerToken(
+  sharedSecret: string,
+  claims: Record<string, unknown>,
+): string {
+  const header = base64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const claimsSegment = base64Url(JSON.stringify(claims));
+  const payload = `${header}.${claimsSegment}`;
+  const signature = createHmac("sha256", sharedSecret).update(payload).digest();
+  return `${payload}.${base64Url(signature)}`;
+}
+
 afterEach(() => {
   __testSetBackend(null);
 });
@@ -201,6 +216,79 @@ describe("app-server native websocket", () => {
     ).toMatchObject({ statusCode: 401 });
   });
 
+  test("parses signed-bearer websocket auth settings", async () => {
+    const authDir = await mkdtemp(join(os.tmpdir(), "letta-app-server-jwt-"));
+    const sharedSecretFile = join(authDir, "app-server-signing-secret");
+    const shortSecretFile = join(authDir, "app-server-short-secret");
+    try {
+      await writeFile(
+        sharedSecretFile,
+        "0123456789abcdef0123456789abcdef\n",
+        "utf8",
+      );
+      await writeFile(shortSecretFile, "too-short\n", "utf8");
+
+      expect(() =>
+        parseAppServerWebsocketAuthSettings({
+          wsAuth: "signed-bearer-token",
+        }),
+      ).toThrow(/--ws-shared-secret-file/);
+      expect(() =>
+        parseAppServerWebsocketAuthSettings({
+          wsAuth: "signed-bearer-token",
+          wsSharedSecretFile: sharedSecretFile,
+          wsTokenSha256: "ab".repeat(32),
+        }),
+      ).toThrow(/capability-token/);
+      expect(() =>
+        parseAppServerWebsocketAuthSettings({
+          wsSharedSecretFile: sharedSecretFile,
+        }),
+      ).toThrow(/signed-bearer-token/);
+      await expect(
+        policyFromSettings(
+          parseAppServerWebsocketAuthSettings({
+            wsAuth: "signed-bearer-token",
+            wsSharedSecretFile: shortSecretFile,
+          }),
+        ),
+      ).rejects.toThrow(/at least 32 bytes/);
+
+      const policy = await policyFromSettings(
+        parseAppServerWebsocketAuthSettings({
+          wsAuth: "signed-bearer-token",
+          wsSharedSecretFile: sharedSecretFile,
+          wsIssuer: " codex-enroller ",
+          wsAudience: "codex-app-server",
+          wsMaxClockSkewSeconds: "1",
+        }),
+      );
+      const now = Math.floor(Date.now() / 1000);
+      const validToken = signedBearerToken("0123456789abcdef0123456789abcdef", {
+        exp: now + 60,
+        iss: "codex-enroller",
+        aud: "codex-app-server",
+      });
+      expect(
+        authorizeUpgrade({ authorization: `Bearer ${validToken}` }, policy),
+      ).toBeNull();
+
+      const expiredToken = signedBearerToken(
+        "0123456789abcdef0123456789abcdef",
+        {
+          exp: now - 30,
+          iss: "codex-enroller",
+          aud: "codex-app-server",
+        },
+      );
+      expect(
+        authorizeUpgrade({ authorization: `Bearer ${expiredToken}` }, policy),
+      ).toMatchObject({ statusCode: 401 });
+    } finally {
+      await rm(authDir, { recursive: true, force: true });
+    }
+  });
+
   test("serves health probes", async () => {
     let handle: AppServerHandle | null = null;
     try {
@@ -218,6 +306,11 @@ describe("app-server native websocket", () => {
         headers: { Origin: "https://example.com" },
       });
       expect(browserHealth.status).toBe(403);
+
+      const browserReady = await fetch(`${httpUrl}/readyz`, {
+        headers: { Origin: "https://example.com" },
+      });
+      expect(browserReady.status).toBe(403);
     } finally {
       await handle?.close();
     }
@@ -264,6 +357,52 @@ describe("app-server native websocket", () => {
 
       control = new WebSocket(controlUrl, {
         headers: { Authorization: "Bearer super-secret-token" },
+      });
+      await waitForOpen(control);
+    } finally {
+      terminateClient(control);
+      await handle?.close();
+      await rm(authDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects invalid and accepts valid signed bearer tokens", async () => {
+    const authDir = await mkdtemp(join(os.tmpdir(), "letta-app-server-jwt-"));
+    const sharedSecretFile = join(authDir, "app-server-signing-secret");
+    const sharedSecret = "0123456789abcdef0123456789abcdef";
+    let handle: AppServerHandle | null = null;
+    let control: WebSocket | null = null;
+    try {
+      await writeFile(sharedSecretFile, `${sharedSecret}\n`, "utf8");
+      handle = await startAppServer({
+        listen: "ws://0.0.0.0:0",
+        websocketAuth: parseAppServerWebsocketAuthSettings({
+          wsAuth: "signed-bearer-token",
+          wsSharedSecretFile: sharedSecretFile,
+          wsIssuer: "codex-enroller",
+          wsAudience: "codex-app-server",
+          wsMaxClockSkewSeconds: "1",
+        }),
+      });
+      const controlUrl = loopbackChannelUrl(handle.controlUrl);
+      const now = Math.floor(Date.now() / 1000);
+
+      const expiredToken = signedBearerToken(sharedSecret, {
+        exp: now - 30,
+        iss: "codex-enroller",
+        aud: "codex-app-server",
+      });
+      await expectWebSocketOpenFailure(controlUrl, {
+        Authorization: `Bearer ${expiredToken}`,
+      });
+
+      const validToken = signedBearerToken(sharedSecret, {
+        exp: now + 60,
+        iss: "codex-enroller",
+        aud: "codex-app-server",
+      });
+      control = new WebSocket(controlUrl, {
+        headers: { Authorization: `Bearer ${validToken}` },
       });
       await waitForOpen(control);
     } finally {
