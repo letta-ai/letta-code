@@ -10,9 +10,13 @@ import {
   finalizeAutoReflectionPayload,
 } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
+import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
 
 export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
+
+/** Max background wait for the reflection subagent's agent ID before emitting `reflection_start` (previously 1s inline, timed out ~100% of the time). */
+export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
 
 const reservedReflectionAgentIds = new Set<string>();
 
@@ -25,6 +29,15 @@ export type ReflectionLaunchSkippedReason =
   | "already_active"
   | "no_payload"
   | "error";
+
+function drainReflectionTelemetry(): void {
+  telemetry.drain().catch((error) => {
+    debugWarn(
+      "telemetry",
+      `Failed to flush reflection telemetry: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+}
 
 export type ReflectionLaunchResult =
   | {
@@ -60,6 +73,39 @@ export interface ReflectionLaunchOptions {
       reflectionAgentId?: string;
     },
   ) => void | Promise<void>;
+  feedbackContext?: {
+    parentAgentName?: string | null;
+    parentAgentDescription?: string | null;
+    model?: string | null;
+    surface?: string;
+  };
+}
+
+function isReflectionSubagentActiveForAgent(agentId: string): boolean {
+  return getSubagents().some((agent) => {
+    if (agent.type.toLowerCase() !== "reflection") {
+      return false;
+    }
+    if (agent.status !== "pending" && agent.status !== "running") {
+      return false;
+    }
+    return agent.parentAgentId === agentId;
+  });
+}
+
+export function tryReserveReflectionLaunch(agentId: string): boolean {
+  if (reservedReflectionAgentIds.has(agentId)) {
+    return false;
+  }
+  if (isReflectionSubagentActiveForAgent(agentId)) {
+    return false;
+  }
+  reservedReflectionAgentIds.add(agentId);
+  return true;
+}
+
+export function releaseReflectionLaunch(agentId: string): void {
+  reservedReflectionAgentIds.delete(agentId);
 }
 
 async function resolveSystemPrompt(
@@ -90,33 +136,6 @@ function resolveCompletionConversationId(
     return completionConversationId();
   }
   return completionConversationId ?? fallback;
-}
-
-function isReflectionSubagentActiveForAgent(agentId: string): boolean {
-  return getSubagents().some((agent) => {
-    if (agent.type.toLowerCase() !== "reflection") {
-      return false;
-    }
-    if (agent.status !== "pending" && agent.status !== "running") {
-      return false;
-    }
-    return agent.parentAgentId === agentId;
-  });
-}
-
-export function tryReserveReflectionLaunch(agentId: string): boolean {
-  if (reservedReflectionAgentIds.has(agentId)) {
-    return false;
-  }
-  if (isReflectionSubagentActiveForAgent(agentId)) {
-    return false;
-  }
-  reservedReflectionAgentIds.add(agentId);
-  return true;
-}
-
-export function releaseReflectionLaunch(agentId: string): void {
-  reservedReflectionAgentIds.delete(agentId);
 }
 
 export async function launchReflectionSubagent(
@@ -175,6 +194,18 @@ export async function launchReflectionSubagent(
 
     const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
       await import("@/tools/impl/task");
+
+    // Defer `reflection_start` until the agent ID resolves (background, bounded by REFLECTION_AGENT_ID_WAIT_MS).
+    const emitReflectionStart = (resolvedAgentId: string | null) => {
+      telemetry.trackReflectionStart(triggerSource, {
+        subagentId: resolvedAgentId ?? undefined,
+        conversationId,
+        startMessageId: autoPayload.startMessageId,
+        endMessageId: autoPayload.endMessageId,
+      });
+      drainReflectionTelemetry();
+    };
+
     const { subagentId } = spawnBackgroundSubagentTask({
       subagentType: "reflection",
       prompt: reflectionPrompt,
@@ -182,12 +213,36 @@ export async function launchReflectionSubagent(
       silentCompletion: true,
       transcriptPath: autoPayload.payloadPath,
       parentScope: { agentId, conversationId },
-      onComplete: async ({ success, error, agentId: reflectionAgentId }) => {
+      onComplete: async ({
+        success,
+        error,
+        agentId: reflectionAgentId,
+        stepCount,
+        durationMs,
+      }) => {
         try {
           telemetry.trackReflectionEnd(triggerSource, success, {
             subagentId: reflectionAgentId ?? undefined,
             conversationId,
             error,
+            stepCount,
+            durationMs,
+          });
+          drainReflectionTelemetry();
+          maybeSendReflectionThresholdFeedback({
+            parentAgentId: agentId,
+            parentAgentName: options.feedbackContext?.parentAgentName,
+            parentAgentDescription:
+              options.feedbackContext?.parentAgentDescription,
+            reflectionSubagentId: reflectionAgentId ?? undefined,
+            conversationId,
+            triggerSource,
+            success,
+            error,
+            stepCount,
+            durationMs,
+            surface: options.feedbackContext?.surface,
+            model: options.feedbackContext?.model,
           });
           await finalizeAutoReflectionPayload(
             agentId,
@@ -226,23 +281,30 @@ export async function launchReflectionSubagent(
       },
     });
     releaseOnComplete = true;
-    const reflectionAgentId = await waitForBackgroundSubagentAgentId(
+    // Fire-and-forget: emit `reflection_start` when the agent ID resolves or after timeout.
+    void waitForBackgroundSubagentAgentId(
       subagentId,
-      1000,
-    );
-    telemetry.trackReflectionStart(triggerSource, {
-      subagentId: reflectionAgentId ?? undefined,
-      conversationId,
-      startMessageId: autoPayload.startMessageId,
-      endMessageId: autoPayload.endMessageId,
-    });
+      REFLECTION_AGENT_ID_WAIT_MS,
+    )
+      .then((resolvedAgentId) => {
+        emitReflectionStart(resolvedAgentId);
+      })
+      .catch((err) => {
+        // Worst case — still emit with no subagent_id so we don't lose the event.
+        debugWarn(
+          "memory",
+          `Failed waiting for reflection agent ID: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        emitReflectionStart(null);
+      });
 
     debugLog("memory", `Launched reflection subagent (${triggerSource})`);
     return {
       launched: true,
       payloadPath: autoPayload.payloadPath,
       subagentId,
-      reflectionAgentId: reflectionAgentId ?? undefined,
       startMessageId: autoPayload.startMessageId,
       endMessageId: autoPayload.endMessageId,
     };

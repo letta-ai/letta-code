@@ -647,9 +647,9 @@ describe("reflectionTranscript helper", () => {
     const replayState = await getReflectionTranscriptState(agentId, replayConv);
     const freshState = await getReflectionTranscriptState(agentId, freshConv);
     expect(replayState.reflected_through_message_id).toBe("a-r");
-    expect(replayState.turns_since_last_successful_reflection).toBe(0);
+    expect(replayState.steps_since_last_successful_reflection).toBe(0);
     expect(freshState.reflected_through_message_id).toBe("a-f");
-    expect(freshState.turns_since_last_successful_reflection).toBe(0);
+    expect(freshState.steps_since_last_successful_reflection).toBe(0);
   });
 
   test("multi finalizer leaves cursors unchanged on failure", async () => {
@@ -671,7 +671,7 @@ describe("reflectionTranscript helper", () => {
 
     const state = await getReflectionTranscriptState(agentId, conv);
     expect(state.reflected_through_message_id).toBeUndefined();
-    expect(state.turns_since_last_successful_reflection).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
   });
 
   test("listReflectionTranscriptCandidates orders by recent transcript mtime", async () => {

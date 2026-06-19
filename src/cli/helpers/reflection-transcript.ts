@@ -1662,10 +1662,10 @@ export async function listReflectionTranscriptCandidates(
       transcriptPath: paths.transcriptPath,
       statePath: paths.statePath,
       lastUpdatedAt: await getTranscriptLastUpdatedAt(paths),
-      totalCompletedTurns: state.total_completed_turns,
-      reflectedCompletedTurns: state.reflected_completed_turns,
+      totalCompletedTurns: state.total_completed_steps,
+      reflectedCompletedTurns: state.reflected_completed_steps,
       turnsSinceLastSuccessfulReflection:
-        state.turns_since_last_successful_reflection,
+        state.steps_since_last_successful_reflection,
     });
   }
 
@@ -1883,7 +1883,7 @@ export async function buildMultiReflectionPayload(
         start_line: selection.startLineIndex,
         end_line: selection.endLineIndex,
         end_snapshot_line: selection.endLineIndex + 1,
-        completed_turns: countUserRows(entries),
+        completed_turns: countAssistantRows(entries),
         approx_chars: approxChars,
         last_updated_at: await getTranscriptLastUpdatedAt(paths),
       } satisfies MultiReflectionTranscriptSlice;

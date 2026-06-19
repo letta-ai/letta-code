@@ -22,7 +22,6 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
@@ -32,6 +31,7 @@ import {
   isActiveMemfsEnabled,
   isLocalMemfsActive,
 } from "@/agent/memory-runtime";
+import { sendMessageStreamWithBackend } from "@/agent/message";
 import {
   detectPersonalityFromPersonaFile,
   type PersonalityId,
@@ -40,20 +40,9 @@ import { recordSessionEnd } from "@/agent/session-history";
 import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
+import type { CustomCommand } from "@/cli/commands/custom";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
-import {
-  buildExtensionCommandPrompt,
-  parseExtensionCommandArgv,
-  parseExtensionSlashCommand,
-  runExtensionCommandWithTimeout,
-} from "@/cli/extensions/command-runtime";
-import type {
-  ExtensionCommand,
-  ExtensionCommandContext,
-  ExtensionConversationCloseReason,
-} from "@/cli/extensions/types";
-import type { LocalExtensionRuntime } from "@/cli/extensions/use-local-extension-runtime";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
@@ -109,18 +98,29 @@ import {
 } from "@/cli/helpers/system-prompt-warning.ts";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import {
+  buildModCommandPrompt,
+  parseModCommandArgv,
+  parseModSlashCommand,
+  runModCommandWithTimeout,
+} from "@/cli/mods/command-runtime";
+import type {
+  ModCommandContext,
+  ModConversationCloseReason,
+} from "@/cli/mods/types";
+import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
+import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
   runSessionStartHooks,
   runUserPromptSubmitHooks,
 } from "@/hooks";
+import { createModConversationHandle } from "@/mods/conversation-handle";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
@@ -128,18 +128,20 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "@/reminders/engine";
+import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
+  enqueueMemoryGitSyncReminder,
   type SharedReminderState,
-  syncReminderStateFromContextTracker,
 } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { detectShellContext } from "@/utils/shell-context";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
-import { isInteractiveCommand, isNonStateCommand } from "./command-routing";
+import { shouldSlashCommandBypassQueue } from "./command-routing";
 import { buildTextParts } from "./content-parts";
 import { buildGoalPrompt } from "./goal-loop";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
@@ -181,9 +183,11 @@ type ModelSelectorOptions = {
   forceRefresh?: boolean;
 };
 
-async function hasCustomCommand(commandName: string): Promise<boolean> {
+async function findCustomCommandByName(
+  commandName: string,
+): Promise<CustomCommand | undefined> {
   const { findCustomCommand } = await import("@/cli/commands/custom.js");
-  return Boolean(await findCustomCommand(commandName));
+  return findCustomCommand(commandName);
 }
 
 type SubmitHandlerContext = {
@@ -216,7 +220,7 @@ type SubmitHandlerContext = {
   currentModelProvider: string | null;
   effectiveContextWindowSize: number | undefined;
   emittedIdsRef: MutableRefObject<Set<string>>;
-  extensionRuntime: LocalExtensionRuntime;
+  modAdapter: LocalModAdapter;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
   generateConversationDescription: (options?: {
@@ -262,7 +266,7 @@ type SubmitHandlerContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
+  runEndHooks: (reason?: ModConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;
@@ -331,7 +335,7 @@ type SubmitHandlerContext = {
     keepRunning?: boolean,
   ) => void;
   userCancelledRef: MutableRefObject<boolean>;
-  onReload?: (agentId: string, conversationId: string) => Promise<void>;
+  onReload?: () => Promise<void>;
 };
 
 type ReflectCommandArgs =
@@ -356,7 +360,7 @@ function isReflectCommandFlag(value: string): boolean {
 function parseReflectCommandArgs(input: string): ReflectCommandArgs {
   const trimmed = input.trim();
   const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect";
-  const parts = parseExtensionCommandArgv(trimmed.slice(command.length).trim());
+  const parts = parseModCommandArgv(trimmed.slice(command.length).trim());
   if (parts.length === 0) {
     return { kind: "single" };
   }
@@ -383,7 +387,7 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
         .slice(index + 1, instructionEnd)
         .join(" ")
         .trim();
-      if (!instruction?.trim()) {
+      if (!instruction) {
         throw new Error("Usage: /reflect --instruction <instruction>");
       }
       instructions.push(instruction);
@@ -483,7 +487,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
-    extensionRuntime,
+    modAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort,
     generateConversationDescription,
@@ -709,24 +713,24 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       const isSlashCommand = userTextForInput.startsWith("/");
-      const parsedExtensionCommand = isSlashCommand
-        ? parseExtensionSlashCommand(userTextForInput.trim())
+      const parsedModCommand = isSlashCommand
+        ? parseModSlashCommand(userTextForInput.trim())
         : null;
-      const queueBypassExtensionCommand = parsedExtensionCommand
-        ? extensionRuntime.registry?.commands[parsedExtensionCommand.command]
+      const parsedSlashCommandName = parsedModCommand?.command ?? null;
+      const matchedCustomCommand = parsedSlashCommandName
+        ? await findCustomCommandByName(parsedSlashCommandName)
         : undefined;
-      const isExtensionCommandShadowedByCustom =
-        isAgentBusy() && queueBypassExtensionCommand?.runWhenBusy === true
-          ? await hasCustomCommand(parsedExtensionCommand?.command ?? "")
-          : false;
+      const matchedModCommand = parsedSlashCommandName
+        ? modAdapter.registry?.commands[parsedSlashCommandName]
+        : undefined;
       // Interactive/non-state slash commands bypass queueing so menus stay responsive
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
         isSlashCommand &&
-        (isInteractiveCommand(userTextForInput) ||
-          isNonStateCommand(userTextForInput) ||
-          (queueBypassExtensionCommand?.runWhenBusy === true &&
-            !isExtensionCommandShadowedByCustom));
+        shouldSlashCommandBypassQueue(userTextForInput, {
+          hasCustomCommand: Boolean(matchedCustomCommand),
+          ...(matchedModCommand ? { modCommand: matchedModCommand } : {}),
+        });
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
         const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
@@ -758,6 +762,169 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // Handle commands (messages starting with "/")
       if (aliasedMsg.startsWith("/")) {
         const trimmed = aliasedMsg.trim();
+
+        // Custom commands and mod commands override built-ins.
+        if (matchedCustomCommand) {
+          const { substituteArguments, expandBashCommands } = await import(
+            "@/cli/commands/custom.js"
+          );
+          const cmd = commandRunner.start(
+            trimmed,
+            `Running /${matchedCustomCommand.id}...`,
+          );
+
+          // Check for pending approvals before sending
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              `Pending approval(s). Resolve approvals before running /${matchedCustomCommand.id}.`,
+            );
+            return { submitted: false }; // Keep custom command in input box, user handles approval first
+          }
+
+          // Extract arguments (everything after command name)
+          const args = trimmed
+            .slice(`/${matchedCustomCommand.id}`.length)
+            .trim();
+
+          // Build prompt: 1) substitute args, 2) expand bash commands
+          let prompt = substituteArguments(matchedCustomCommand.content, args);
+          prompt = await expandBashCommands(prompt);
+
+          // Show command in transcript (running phase for visual feedback)
+          setCommandRunning(true);
+
+          try {
+            // Mark command as finished BEFORE sending to agent
+            // (matches /remember pattern - command succeeded in triggering agent)
+            cmd.finish("Running custom command...", true);
+
+            // Send prompt to agent
+            // NOTE: Unlike /remember, we DON'T append args separately because
+            // they're already substituted into the prompt via $ARGUMENTS
+            await processConversationWithQueuedApprovals([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(
+                  `${SYSTEM_REMINDER_OPEN}\n${prompt}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
+                otid: randomUUID(),
+              },
+            ]);
+          } catch (error) {
+            // Only catch errors from processConversation setup, not agent execution
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to run command: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
+        if (parsedModCommand && matchedModCommand) {
+          const showInTranscript = matchedModCommand.showInTranscript;
+          const shouldLockCommand = !matchedModCommand.runWhenBusy;
+          const cmd = showInTranscript
+            ? commandRunner.start(
+                trimmed,
+                `Running /${matchedModCommand.id}...`,
+              )
+            : null;
+          const getFeedbackCommand = () =>
+            cmd ??
+            commandRunner.start(trimmed, `Running /${matchedModCommand.id}...`);
+          if (shouldLockCommand) {
+            setCommandRunning(true);
+          }
+
+          try {
+            const modContext = modAdapter.context;
+            const cwd = getCurrentWorkingDirectory();
+            const conversation = createModConversationHandle({
+              agentId,
+              backend: modAdapter.getBackend(),
+              conversationId: conversationIdRef.current,
+              sendMessageStream: sendMessageStreamWithBackend,
+              workingDirectory: cwd,
+            });
+            const commandContext: ModCommandContext = {
+              ...modContext,
+              args: parsedModCommand.args,
+              argv: parseModCommandArgv(parsedModCommand.args),
+              command: parsedModCommand.command,
+              conversation: { ...conversation, id: conversationIdRef.current },
+              cwd,
+              model: {
+                ...modContext.model,
+                id:
+                  currentModelId ??
+                  llmConfigRef.current?.model ??
+                  modContext.model.id,
+              },
+              permissionMode: modContext.permissionMode,
+              rawInput: trimmed,
+            };
+            const result = await runModCommandWithTimeout(
+              matchedModCommand,
+              commandContext,
+            );
+
+            if (result.type === "prompt") {
+              if (!showInTranscript) {
+                getFeedbackCommand().fail(
+                  `/${matchedModCommand.id} returned a prompt with showInTranscript: false. Hidden mod commands must return output or handled and own their UI.`,
+                );
+                return { submitted: true };
+              }
+
+              if (matchedModCommand.runWhenBusy && isAgentBusy()) {
+                getFeedbackCommand().fail(
+                  `/${matchedModCommand.id} returned a prompt while the agent is running. Busy-safe mod commands must handle their own SDK calls or return output.`,
+                );
+                return { submitted: true };
+              }
+
+              const approvalCheck =
+                await checkPendingApprovalsForSlashCommand();
+              if (approvalCheck.blocked) {
+                getFeedbackCommand().fail(
+                  `Pending approval(s). Resolve approvals before running /${matchedModCommand.id}.`,
+                );
+                return { submitted: false };
+              }
+
+              cmd?.finish(`Running /${matchedModCommand.id}...`, true);
+              await processConversationWithQueuedApprovals([
+                {
+                  type: "message",
+                  role: "user",
+                  content: buildTextParts(buildModCommandPrompt(result)),
+                  otid: randomUUID(),
+                },
+              ]);
+            } else if (result.type === "output") {
+              getFeedbackCommand().finish(
+                result.output,
+                result.success ?? true,
+              );
+            } else {
+              cmd?.finish("Handled.", true, true);
+            }
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            getFeedbackCommand().fail(
+              `Failed to run /${matchedModCommand.id}: ${errorDetails}`,
+            );
+          } finally {
+            if (shouldLockCommand) {
+              setCommandRunning(false);
+            }
+          }
+
+          return { submitted: true };
+        }
 
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
@@ -940,30 +1107,23 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           if (onReload) {
             const cmd = commandRunner.start(
               "/reload",
-              "Reloading settings and restarting TUI effects...",
+              "Reloading settings and local mods...",
             );
-            cmd.finish("Reloading...", true);
-            try {
-              const { refreshCustomCommands } = await import(
-                "@/cli/commands/custom.js"
-              );
-              refreshCustomCommands();
-            } catch (error) {
-              debugLog(
-                "commands",
-                "refreshCustomCommands failed during /reload: %s",
-                error instanceof Error ? error.message : String(error),
-              );
-            }
+            setCommandRunning(true);
             // Defer the reload to let the command UI render first
-            setTimeout(
-              () =>
-                onReload(
-                  agentIdRef.current,
-                  conversationIdRef.current ?? "default",
-                ),
-              0,
-            );
+            setTimeout(() => {
+              void (async () => {
+                try {
+                  await onReload();
+                  cmd.finish("Reloaded settings and local mods", true);
+                } catch (error) {
+                  const errorDetails = formatErrorDetails(error, agentId);
+                  cmd.fail(`Failed: ${errorDetails}`);
+                } finally {
+                  setCommandRunning(false);
+                }
+              })();
+            }, 0);
           } else {
             const cmd = commandRunner.start("/reload", "Reload not available");
             cmd.fail("Reload is not available in this context");
@@ -1224,7 +1384,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               },
             );
             const request = args
-              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline extension.`
+              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline mod.`
               : "The user ran `/statusline` without arguments. Use the loaded skill's bare `/statusline` behavior.";
 
             cmd.finish("Running statusline setup...", true);
@@ -1558,7 +1718,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Create a new conversation for the current agent
             const conversation = await backend.createConversation({
               agent_id: agentId,
-              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
               ...(conversationName && { summary: conversationName }),
             });
 
@@ -1599,13 +1758,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: conversation.id,
-              previousConversationId: prevConversationId ?? null,
-              reason: "new",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: conversation.id,
+                previousConversationId: prevConversationId ?? null,
+                reason: "new",
+              },
+              modAdapter.context,
+            );
 
             // Update command with success
             cmd.finish(
@@ -1697,13 +1860,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: forked.id,
-              previousConversationId: forkPrevConversationId ?? null,
-              reason: "fork",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: forked.id,
+                previousConversationId: forkPrevConversationId ?? null,
+                reason: "fork",
+              },
+              modAdapter.context,
+            );
 
             cmd.finish(
               "Forked conversation (use /resume to switch back)",
@@ -1777,7 +1944,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Create a new conversation
             const conversation = await backend.createConversation({
               agent_id: agentId,
-              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
 
             setConversationAutoTitleEligibility(true);
@@ -1813,13 +1979,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionRuntime.emitEvent("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: conversation.id,
-              previousConversationId: clearPrevConversationId ?? null,
-              reason: "new",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: conversation.id,
+                previousConversationId: clearPrevConversationId ?? null,
+                reason: "new",
+              },
+              modAdapter.context,
+            );
 
             // Update command with success
             cmd.finish(
@@ -2114,9 +2284,46 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Update command with success
             cmd.finish(outputLines.join("\n"), true);
 
-            // Manual /compact bypasses stream compaction events, so trigger
-            // post-compaction reflection reminder/auto-launch on the next user turn.
-            contextTrackerRef.current.pendingReflectionTrigger = true;
+            // Manual /compact bypasses stream compaction events, so launch
+            // post-compaction reflection directly instead of waiting for the
+            // next turn's post-turn trigger evaluation. Best-effort — never
+            // fail the /compact itself.
+            try {
+              if (
+                getReflectionSettings(agentId).trigger === "compaction-event" &&
+                isActiveMemfsEnabled(agentId)
+              ) {
+                void launchReflectionSubagent({
+                  agentId,
+                  conversationId: compactConversationId,
+                  memfsEnabled: isActiveMemfsEnabled(agentId),
+                  triggerSource: "compaction-event",
+                  description: AUTO_REFLECTION_DESCRIPTION,
+                  completionConversationId: () => conversationIdRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
+                  onCompletionMessage: (completionMessage) => {
+                    appendTaskNotificationEvents([completionMessage]);
+                  },
+                  feedbackContext: {
+                    parentAgentName: agentName,
+                    parentAgentDescription: agentDescription,
+                    surface: "letta_code_tui",
+                    model: currentModelId,
+                  },
+                });
+              }
+            } catch (reflectionError) {
+              debugLog(
+                "memory",
+                "Skipping post-compaction reflection:",
+                reflectionError instanceof Error
+                  ? reflectionError.message
+                  : String(reflectionError),
+              );
+            }
             void generateConversationDescription({ force: true });
           } catch (error) {
             const apiError = error as {
@@ -2340,6 +2547,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         const profileCommandResult = await handleProfileCommand(msg, trimmed, {
           agentId,
           agentName,
+          conversationId,
           buffersRef,
           commandRunner,
           handleAgentSelect,
@@ -2912,6 +3120,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 onCompletionMessage: (completionMessage) => {
                   appendTaskNotificationEvents([completionMessage]);
                 },
+                feedbackContext: {
+                  parentAgentName: agentName,
+                  parentAgentDescription: agentDescription,
+                  surface: "letta_code_tui",
+                  model: currentModelId,
+                },
               });
 
               if (!result.launched) {
@@ -3432,181 +3646,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // === Custom command handling ===
-        // Check BEFORE falling through to executeCommand()
-        const { findCustomCommand, substituteArguments, expandBashCommands } =
-          await import("@/cli/commands/custom.js");
-        const customCommandName = trimmed.split(/\s+/)[0]?.slice(1) || ""; // e.g., "review" from "/review arg"
-        const matchedCustom = await findCustomCommand(customCommandName);
-
-        if (matchedCustom) {
-          const cmd = commandRunner.start(
-            trimmed,
-            `Running /${matchedCustom.id}...`,
-          );
-
-          // Check for pending approvals before sending
-          const approvalCheck = await checkPendingApprovalsForSlashCommand();
-          if (approvalCheck.blocked) {
-            cmd.fail(
-              `Pending approval(s). Resolve approvals before running /${matchedCustom.id}.`,
-            );
-            return { submitted: false }; // Keep custom command in input box, user handles approval first
-          }
-
-          // Extract arguments (everything after command name)
-          const args = trimmed.slice(`/${matchedCustom.id}`.length).trim();
-
-          // Build prompt: 1) substitute args, 2) expand bash commands
-          let prompt = substituteArguments(matchedCustom.content, args);
-          prompt = await expandBashCommands(prompt);
-
-          // Show command in transcript (running phase for visual feedback)
-          setCommandRunning(true);
-
-          try {
-            // Mark command as finished BEFORE sending to agent
-            // (matches /remember pattern - command succeeded in triggering agent)
-            cmd.finish("Running custom command...", true);
-
-            // Send prompt to agent
-            // NOTE: Unlike /remember, we DON'T append args separately because
-            // they're already substituted into the prompt via $ARGUMENTS
-            await processConversationWithQueuedApprovals([
-              {
-                type: "message",
-                role: "user",
-                content: buildTextParts(
-                  `${SYSTEM_REMINDER_OPEN}\n${prompt}\n${SYSTEM_REMINDER_CLOSE}`,
-                ),
-                otid: randomUUID(),
-              },
-            ]);
-          } catch (error) {
-            // Only catch errors from processConversation setup, not agent execution
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed to run command: ${errorDetails}`);
-          } finally {
-            setCommandRunning(false);
-          }
-
-          return { submitted: true };
-        }
-        // === END custom command handling ===
-
-        const matchedExtensionCommand: ExtensionCommand | undefined =
-          parsedExtensionCommand
-            ? extensionRuntime.registry?.commands[
-                parsedExtensionCommand.command
-              ]
-            : undefined;
-
-        if (parsedExtensionCommand && matchedExtensionCommand) {
-          const showInTranscript = matchedExtensionCommand.showInTranscript;
-          const shouldLockCommand = !matchedExtensionCommand.runWhenBusy;
-          const cmd = showInTranscript
-            ? commandRunner.start(
-                trimmed,
-                `Running /${matchedExtensionCommand.id}...`,
-              )
-            : null;
-          const getFeedbackCommand = () =>
-            cmd ??
-            commandRunner.start(
-              trimmed,
-              `Running /${matchedExtensionCommand.id}...`,
-            );
-          if (shouldLockCommand) {
-            setCommandRunning(true);
-          }
-
-          try {
-            const extensionContext = extensionRuntime.getContext();
-            const cwd = getCurrentWorkingDirectory();
-            const conversation = createExtensionConversationHandle({
-              agentId,
-              backend: extensionRuntime.getBackendApi(),
-              conversationId: conversationIdRef.current,
-              workingDirectory: cwd,
-            });
-            const commandContext: ExtensionCommandContext = {
-              agent: { id: agentId, name: agentName },
-              args: parsedExtensionCommand.args,
-              argv: parseExtensionCommandArgv(parsedExtensionCommand.args),
-              command: parsedExtensionCommand.command,
-              conversation: { ...conversation, id: conversationIdRef.current },
-              cwd,
-              getContext: extensionRuntime.getContext,
-              model: {
-                id:
-                  currentModelId ??
-                  llmConfigRef.current?.model ??
-                  extensionContext.model.id,
-                displayName: extensionContext.model.displayName,
-              },
-              permissionMode: extensionContext.permissionMode,
-              rawInput: trimmed,
-            };
-            const result = await runExtensionCommandWithTimeout(
-              matchedExtensionCommand,
-              commandContext,
-            );
-
-            if (result.type === "prompt") {
-              if (!showInTranscript) {
-                getFeedbackCommand().fail(
-                  `/${matchedExtensionCommand.id} returned a prompt with showInTranscript: false. Hidden extension commands must return output or handled and own their UI.`,
-                );
-                return { submitted: true };
-              }
-
-              if (matchedExtensionCommand.runWhenBusy && isAgentBusy()) {
-                getFeedbackCommand().fail(
-                  `/${matchedExtensionCommand.id} returned a prompt while the agent is running. Busy-safe extension commands must handle their own SDK calls or return output.`,
-                );
-                return { submitted: true };
-              }
-
-              const approvalCheck =
-                await checkPendingApprovalsForSlashCommand();
-              if (approvalCheck.blocked) {
-                getFeedbackCommand().fail(
-                  `Pending approval(s). Resolve approvals before running /${matchedExtensionCommand.id}.`,
-                );
-                return { submitted: false };
-              }
-
-              cmd?.finish(`Running /${matchedExtensionCommand.id}...`, true);
-              await processConversationWithQueuedApprovals([
-                {
-                  type: "message",
-                  role: "user",
-                  content: buildTextParts(buildExtensionCommandPrompt(result)),
-                  otid: randomUUID(),
-                },
-              ]);
-            } else if (result.type === "output") {
-              getFeedbackCommand().finish(
-                result.output,
-                result.success ?? true,
-              );
-            } else {
-              cmd?.finish("Handled.", true, true);
-            }
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            getFeedbackCommand().fail(
-              `Failed to run /${matchedExtensionCommand.id}: ${errorDetails}`,
-            );
-          } finally {
-            if (shouldLockCommand) {
-              setCommandRunning(false);
-            }
-          }
-
-          return { submitted: true };
-        }
-
         // Check if this is a known command before treating it as a slash command
         const { commands, executeCommand } = await import(
           "@/cli/commands/registry"
@@ -3757,9 +3796,6 @@ ${SYSTEM_REMINDER_CLOSE}
         bashCommandCacheRef.current = [];
       }
 
-      const reflectionSettings = getReflectionSettings(agentId);
-      const memfsEnabledForAgent = isActiveMemfsEnabled(agentId);
-
       // Build git memory sync reminder if uncommitted changes or unpushed commits
       let memoryGitReminder = "";
       const gitStatus = pendingGitReminderRef.current;
@@ -3767,8 +3803,8 @@ ${SYSTEM_REMINDER_CLOSE}
         const memoryDir = getScopedMemoryFilesystemRoot(agentId);
         const localMemfs = isLocalMemfsActive();
         const syncInstructions = localMemfs
-          ? `Commit when convenient by running these commands:\n\`\`\`bash\ncd ${JSON.stringify(memoryDir)}\ngit add system/\ngit commit -m "<type>: <what changed>"\n\`\`\``
-          : `Sync when convenient by running these commands:\n\`\`\`bash\ncd ${JSON.stringify(memoryDir)}\ngit add system/\ngit commit -m "<type>: <what changed>"\ngit push\n\`\`\``;
+          ? `Commit memory changes locally when appropriate. Inspect with:\n\`\`\`bash\ngit -C ${JSON.stringify(memoryDir)} status\n\`\`\``
+          : `Inspect and fix the memory repository when appropriate. Commit any intended memory changes locally; the harness pushes clean committed memory changes automatically after turns.\n\`\`\`bash\ngit -C ${JSON.stringify(memoryDir)} status\n\`\`\``;
         memoryGitReminder = `${SYSTEM_REMINDER_OPEN}
 ${localMemfs ? "MEMORY COMMIT" : "MEMORY SYNC"}: Your memory directory has uncommitted changes${localMemfs ? "." : " or is ahead of the remote."}
 
@@ -3791,31 +3827,6 @@ ${SYSTEM_REMINDER_CLOSE}
         if (!text) return;
         reminderParts.push({ type: "text", text });
       };
-      const maybeLaunchReflectionSubagent = async (
-        triggerSource: "step-count" | "compaction-event",
-      ) => {
-        const reflectionConversationId = conversationIdRef.current ?? "default";
-        const result = await launchReflectionSubagent({
-          agentId,
-          conversationId: reflectionConversationId,
-          memfsEnabled: memfsEnabledForAgent,
-          triggerSource,
-          description: AUTO_REFLECTION_DESCRIPTION,
-          completionConversationId: () => conversationIdRef.current,
-          recompileByConversation:
-            systemPromptRecompileByConversationRef.current,
-          recompileQueuedByConversation:
-            queuedSystemPromptRecompileByConversationRef.current,
-          onCompletionMessage: (completionMessage) => {
-            appendTaskNotificationEvents([completionMessage]);
-          },
-        });
-        return result.launched;
-      };
-      syncReminderStateFromContextTracker(
-        sharedReminderStateRef.current,
-        contextTrackerRef.current,
-      );
       const { getSkillSources } = await import("@/agent/context");
       const { parts: sharedReminderParts } = await buildSharedReminderParts({
         mode: "interactive",
@@ -3830,9 +3841,8 @@ ${SYSTEM_REMINDER_CLOSE}
         conversationBootstrapContent:
           contentParts as unknown as MessageCreate["content"],
         systemInfoReminderEnabled,
-        reflectionSettings,
         skillSources: getSkillSources(),
-        maybeLaunchReflectionSubagent,
+        shellContext: detectShellContext(),
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
@@ -3948,6 +3958,17 @@ ${SYSTEM_REMINDER_CLOSE}
         transcriptStartLineIndex,
       });
 
+      await runPostTurnMemorySync({
+        agentId,
+        isEnabled: isActiveMemfsEnabled,
+        debugLabel: "Post-turn memory sync",
+        enqueueReminder: (text) => {
+          enqueueMemoryGitSyncReminder(sharedReminderStateRef.current, {
+            text,
+          });
+        },
+      });
+
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
 
@@ -3965,7 +3986,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversationId,
       currentModelHandle,
       currentModelId,
-      extensionRuntime,
+      modAdapter,
       effectiveContextWindowSize,
       commandRunner,
       handleExit,
