@@ -172,37 +172,44 @@ OUTPUT FORMAT REQUIREMENT: All diagnostic output MUST be inside a single markdow
 
 \`\`\`
 ╔════════════════════════════════════════════════════════════════════════════════╗
-║  DIAGNOSTIC READOUT  ▪  UNIT ${agentId.slice(-8)}                              ║
+║  DIAGNOSTIC READOUT                                                            ║
+║  unit: ${agentId}
+║  conv: ${conversationId}
 ╠════════════════════════════════════════════════════════════════════════════════╣
 
 ▸ STEP 0: CORE IDENTITY
-  id       : [agent id]
-  name     : [agent name]  
-  model    : [model handle]
-  runtime  : [LOCAL or API]
+  id            : [full agent id]
+  conversation  : [full conversation id]
+  name          : [agent name]  
+  model         : [model handle]
+  runtime       : [LOCAL or API]
 
-▸ STEP 1: SYSTEM PROMPT
-  chars    : [number]
-  tokens   : [estimated, chars/4]
+▸ STEP 1: CONTEXT WINDOW OVERVIEW
+  ┌─────────────────────────────────────────────────────────────┐
+  │░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│
+  │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░│
+  │[===SYSTEM===][==MEMORY==][=MSGS=]                    [FREE] │
+  └─────────────────────────────────────────────────────────────┘
+  system_prompt   : [tokens] tokens ([percentage]%)
+  memory_blocks   : [tokens] tokens ([percentage]%)
+  messages        : [tokens] tokens ([percentage]%) ← [count] messages
+  ─────────────────────────────────
+  USED            : [total] tokens
+  CAPACITY        : [context window size, if known, else "unknown"]
 
-▸ STEP 2: MEMORY BLOCKS
-  [filename]: [bytes] bytes (~[tokens] tokens)
-  [filename]: [bytes] bytes (~[tokens] tokens)
+▸ STEP 2: MEMORY BLOCKS (top 5 by size)
+  [filename]: [tokens] tokens
+  [filename]: [tokens] tokens
   ...
-  ────────────────────────────────
-  TOTAL    : [bytes] bytes (~[tokens] tokens)
+  ─────────────────────────────────
+  TOTAL    : [tokens] tokens across [count] files
 
-▸ STEP 3: CONTEXT BUFFER  
-  in_context_messages : [count]
-  stored_messages     : [count]
-  temporal_range      : [first timestamp] → [last timestamp]
-
-▸ STEP 4: RECENT USER INPUTS
-  [1] [message id prefix] : [preview, max 60 chars]
-  [2] [message id prefix] : [preview, max 60 chars]
+▸ STEP 3: RECENT USER INPUTS (last 5)
+  [1] [message id prefix] : [preview, max 50 chars]
+  [2] [message id prefix] : [preview, max 50 chars]
   ...
 
-▸ STEP 5: ANOMALIES
+▸ STEP 4: ANOMALIES
   [List any gaps, missing data, unexpected values, or introspection failures]
   [If none: "None detected."]
 
