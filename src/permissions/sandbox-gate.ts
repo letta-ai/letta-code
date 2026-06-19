@@ -5,17 +5,11 @@ import {
   warnSandboxBackendUnavailable,
 } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
-import {
-  getLocalBackendCrossAgentTreeRoot,
-  getLocalBackendStorageDir,
-} from "@/utils/local-backend-paths";
 import { resolveAllowedMemoryRoots } from "./memory-paths";
-import { canonicalizeRoot, getDefaultAgentsTreeRoot } from "./sandbox-policy";
-
-function isLocalBackendEnvEnabled(env: NodeJS.ProcessEnv): boolean {
-  const value = env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.trim().toLowerCase();
-  return value === "1" || value === "true";
-}
+import {
+  canonicalizeRoot,
+  getCrossBackendAgentsTreeRoots,
+} from "./sandbox-policy";
 
 /**
  * Whether an agent process's shell commands will be confined by the kernel
@@ -45,16 +39,7 @@ export function willSandboxShell(
   }
 
   const cwdRoot = canonicalizeRoot(cwd);
-  const agentsTreeRoots = [getDefaultAgentsTreeRoot()];
-  if (isLocalBackendEnvEnabled(env)) {
-    agentsTreeRoots.push(
-      canonicalizeRoot(
-        getLocalBackendCrossAgentTreeRoot(
-          getLocalBackendStorageDir(undefined, env),
-        ),
-      ),
-    );
-  }
+  const agentsTreeRoots = getCrossBackendAgentsTreeRoots({ env });
   // A read-deny on a cwd ancestor empties the child env under Seatbelt; the
   // wrapper bails when cwd is inside the tree, so the guard must not defer then.
   for (const agentsTreeRoot of agentsTreeRoots) {

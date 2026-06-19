@@ -7,6 +7,10 @@ import {
   type FsSandboxPolicy,
   normalizeSandboxPath,
 } from "@/sandbox/policy";
+import {
+  getLocalBackendCrossAgentTreeRoot,
+  getLocalBackendStorageDir,
+} from "@/utils/local-backend-paths";
 
 /**
  * Builders that translate agent/memory context into a concrete
@@ -23,6 +27,33 @@ import {
 /** The per-agent tree to wall off, e.g. `/Users/me/.letta/agents`. */
 export function getDefaultAgentsTreeRoot(homeDir: string = homedir()): string {
   return canonicalizeRoot(join(homeDir, ".letta", "agents"));
+}
+
+export interface CrossBackendAgentsTreeRootsOptions {
+  homeDir?: string;
+  env?: NodeJS.ProcessEnv;
+  /** Explicit local backend storage dir, when already resolved by a caller. */
+  localBackendStorageDir?: string | null;
+}
+
+/**
+ * Every cross-agent memory tree the kernel sandbox must wall off. API/cloud
+ * agents live under `~/.letta/agents`; local-backend agents live under
+ * `<storage>/memfs`. A process running in either backend must deny both trees,
+ * then carve back only the current/parent agent roots it is allowed to touch.
+ */
+export function getCrossBackendAgentsTreeRoots(
+  options: CrossBackendAgentsTreeRootsOptions = {},
+): string[] {
+  const homeDir = options.homeDir ?? homedir();
+  const localBackendStorageDir =
+    options.localBackendStorageDir ??
+    getLocalBackendStorageDir(homeDir, options.env ?? process.env);
+
+  return [
+    getDefaultAgentsTreeRoot(homeDir),
+    canonicalizeRoot(getLocalBackendCrossAgentTreeRoot(localBackendStorageDir)),
+  ];
 }
 
 /**
@@ -68,6 +99,11 @@ function isWithinRoot(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
 }
 
+function isAncestorOfRoot(path: string, root: string): boolean {
+  const prefix = path === "/" ? "/" : `${path}/`;
+  return root.startsWith(prefix);
+}
+
 /**
  * Map memory roots to the agent directories to carve out of the walled-off
  * agents tree. A memory root under the tree
@@ -81,19 +117,66 @@ export function deriveSelfAgentRoots(
   memoryRoots: string[],
   agentsTreeRoot: string = getDefaultAgentsTreeRoot(),
 ): string[] {
+  return deriveSelfAgentRootsForTrees(memoryRoots, [agentsTreeRoot]);
+}
+
+export function deriveSelfAgentRootsForTrees(
+  memoryRoots: string[],
+  agentsTreeRoots: string[] = getCrossBackendAgentsTreeRoots(),
+): string[] {
+  const canonicalTrees = agentsTreeRoots.map(canonicalizeRoot);
   const out = new Set<string>();
   for (const root of memoryRoots) {
     const canon = canonicalizeRoot(root);
-    if (canon !== agentsTreeRoot && isWithinRoot(canon, agentsTreeRoot)) {
+    let matchedTree = false;
+    for (const agentsTreeRoot of canonicalTrees) {
+      if (canon === agentsTreeRoot) {
+        // Never carve the whole cross-agent tree back out.
+        matchedTree = true;
+        break;
+      }
+      if (!isWithinRoot(canon, agentsTreeRoot)) {
+        continue;
+      }
       const leaf = basename(canon);
       out.add(
         leaf === "memory" || leaf === "memory-worktrees"
           ? dirname(canon)
           : canon,
       );
-    } else {
+      matchedTree = true;
+      break;
+    }
+    if (!matchedTree) {
+      if (canonicalTrees.some((tree) => isAncestorOfRoot(canon, tree))) {
+        // An ancestor carve-out would re-expose the denied tree under bwrap
+        // (last mount wins) and is too broad under Seatbelt as well.
+        continue;
+      }
       out.add(canon);
     }
+  }
+  return [...out];
+}
+
+function deriveWritableMemoryRootsForTrees(
+  memoryRoots: string[],
+  agentsTreeRoots: string[],
+): string[] {
+  const canonicalTrees = agentsTreeRoots.map(canonicalizeRoot);
+  const out = new Set<string>();
+  for (const root of memoryRoots) {
+    const canon = canonicalizeRoot(root);
+    if (
+      canonicalTrees.some(
+        (tree) => canon === tree || isAncestorOfRoot(canon, tree),
+      )
+    ) {
+      // Never re-carve a whole denied tree, or an ancestor that would re-expose
+      // that tree under bwrap's last-mount-wins semantics.
+      continue;
+    }
+    out.add(canon);
   }
   return [...out];
 }
@@ -114,16 +197,18 @@ export interface MemoryModeSandboxInput {
    */
   harnessWritableRoots?: string[];
   /**
-   * The agents tree to wall off + carve self out of. Defaults to
-   * `~/.letta/agents` (API/cloud). The local backend passes its
-   * `lc-local-backend/memfs` tree instead — each agent's memory lives at
-   * `<tree>/<id>/memory` on both, so {@link deriveSelfAgentRoots} carves the
-   * same way regardless of which tree it is.
+   * The agents trees to wall off + carve self out of. Defaults to both
+   * `~/.letta/agents` (API/cloud) and `lc-local-backend/memfs` (local). Each
+   * agent's memory lives at `<tree>/<id>/memory` on both, so
+   * {@link deriveSelfAgentRootsForTrees} carves the same way regardless of
+   * backend.
    *
    * Resolved by the caller's layer (`tools/` / `agent/`, which may import
    * `backend/`): `permissions/` sits below `backend/`, so this builder takes the
    * already-resolved path rather than branching on a backend it cannot import.
    */
+  agentsTreeRoots?: string[];
+  /** @deprecated Use agentsTreeRoots. Preserved for existing single-tree tests. */
   agentsTreeRoot?: string;
 }
 
@@ -153,18 +238,19 @@ export interface MemoryModeSandboxInput {
  * the agent dir (the cwd's immediate parent) readable, process init can traverse
  * to the cwd and the env survives.
  *
- * The tree is parameterized so this one builder serves both backends: API/cloud
- * uses the default `~/.letta/agents` tree; the local backend passes its
- * `lc-local-backend/memfs` tree. Self memory is re-carved writable in
- * `writableRoots` because it is nested inside the denied tree (the base
- * `~/.letta` carve is overridden there by the deny).
+ * Both backend trees are denied by default so cloud/API agents cannot read local
+ * agent memories and local agents cannot read cloud/API memories. Self memory is
+ * re-carved writable in `writableRoots` because it is nested inside a denied
+ * tree (the base `~/.letta` carve is overridden there by the deny).
  */
 export function buildMemoryModeSandboxPolicy(
   input: MemoryModeSandboxInput,
 ): FsSandboxPolicy {
-  const agentsTreeRoot = input.agentsTreeRoot
-    ? canonicalizeRoot(input.agentsTreeRoot)
-    : getDefaultAgentsTreeRoot();
+  const agentsTreeRoots = input.agentsTreeRoots?.length
+    ? input.agentsTreeRoots.map(canonicalizeRoot)
+    : input.agentsTreeRoot
+      ? [canonicalizeRoot(input.agentsTreeRoot)]
+      : getCrossBackendAgentsTreeRoots();
 
   // Writes are scoped to the harness state dir. `~/.letta` is the always-on base
   // (covers settings/logs/conversations/transcripts/memory under the defaults);
@@ -178,11 +264,17 @@ export function buildMemoryModeSandboxPolicy(
 
   return buildFsSandboxPolicy({
     baseWritableRoots,
-    deniedRoots: [agentsTreeRoot],
-    readonlyRoots: deriveSelfAgentRoots(input.memoryRoots, agentsTreeRoot),
+    deniedRoots: agentsTreeRoots,
+    readonlyRoots: deriveSelfAgentRootsForTrees(
+      input.memoryRoots,
+      agentsTreeRoots,
+    ),
     // Self memory is nested inside the denied tree; re-carve it writable so the
     // deny (which overrides the base ~/.letta carve there) is itself overridden.
-    writableRoots: input.memoryRoots.map(canonicalizeRoot),
+    writableRoots: deriveWritableMemoryRootsForTrees(
+      input.memoryRoots,
+      agentsTreeRoots,
+    ),
     restrictWrites: true,
   });
 }
@@ -193,7 +285,9 @@ export interface CrossAgentSandboxInput {
    * tree — typically its own agent directory (`~/.letta/agents/<self-id>`).
    */
   selfRoots: string[];
-  /** The agents tree to wall off (read+write). Defaults to `~/.letta/agents`. */
+  /** The agents trees to wall off (read+write). Defaults to both backends. */
+  agentsTreeRoots?: string[];
+  /** @deprecated Use agentsTreeRoots. Preserved for existing single-tree tests. */
   agentsTreeRoot?: string;
 }
 
@@ -202,10 +296,10 @@ export interface CrossAgentSandboxInput {
  * or write *other* agents' memory. This is the kernel-enforced replacement for
  * the static cross-agent guard.
  *
- * Walls off the agents tree (read + write) and carves the agent's own directory
- * back out. Writes elsewhere — the repo, the home dir, temp — stay allowed
- * (`restrictWrites: false`): the only thing this policy removes is access to
- * other agents' memory, exactly like the guard it replaces.
+ * Walls off both backend agents trees (read + write) and carves the agent's own
+ * directory back out. Writes elsewhere — the repo, the home dir, temp — stay
+ * allowed (`restrictWrites: false`): the only thing this policy removes is
+ * access to other agents' memory, exactly like the guard it replaces.
  *
  * Unlike the memory-mode policy, this one DOES deny reads of the agents tree.
  * That is only safe when the process cwd is outside the tree (the parent
@@ -215,12 +309,14 @@ export interface CrossAgentSandboxInput {
 export function buildCrossAgentSandboxPolicy(
   input: CrossAgentSandboxInput,
 ): FsSandboxPolicy {
-  const agentsTreeRoot = input.agentsTreeRoot
-    ? canonicalizeRoot(input.agentsTreeRoot)
-    : getDefaultAgentsTreeRoot();
+  const agentsTreeRoots = input.agentsTreeRoots?.length
+    ? input.agentsTreeRoots.map(canonicalizeRoot)
+    : input.agentsTreeRoot
+      ? [canonicalizeRoot(input.agentsTreeRoot)]
+      : getCrossBackendAgentsTreeRoots();
 
   return buildFsSandboxPolicy({
-    deniedRoots: [agentsTreeRoot],
+    deniedRoots: agentsTreeRoots,
     writableRoots: input.selfRoots.map(canonicalizeRoot),
     restrictWrites: false,
   });

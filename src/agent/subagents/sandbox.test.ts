@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
+import { getLocalBackendCrossAgentTreeRoot } from "@/backend/local/paths";
+import {
+  canonicalizeRoot,
+  getDefaultAgentsTreeRoot,
+} from "@/permissions/sandbox-policy";
 import {
   isFsSandboxEnabled,
   type SandboxAvailability,
@@ -28,6 +33,12 @@ function baseInput() {
     env: { LETTA_FS_SANDBOX: "1" } as NodeJS.ProcessEnv,
     availability: SEATBELT,
   };
+}
+
+function defineValues(args: string[], prefix: string): string[] {
+  return args
+    .filter((a) => a.startsWith(prefix))
+    .map((a) => a.slice(prefix.length));
 }
 
 test("isFsSandboxEnabled is on by default and only an explicit off-switch disables it", () => {
@@ -59,6 +70,10 @@ test("wraps a memory-mode API subagent under the backend", () => {
   ]);
   expect(result?.sandboxEnv[SANDBOX_ENV_VAR]).toBe("seatbelt");
   expect(result?.backend).toBe("seatbelt");
+  expect(defineValues(result?.args ?? [], "-DDENIED_")).toEqual([
+    `0=${getDefaultAgentsTreeRoot()}`,
+    `1=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot())}`,
+  ]);
 });
 
 test("returns null when the flag is off", () => {
@@ -91,6 +106,10 @@ test("wraps a memory-mode LOCAL subagent (deny-list against the memfs tree)", ()
   expect(result).not.toBeNull();
   expect(result?.command).toBe(SANDBOX_EXEC_PATH);
   expect(result?.sandboxEnv[SANDBOX_ENV_VAR]).toBe("seatbelt");
+  expect(defineValues(result?.args ?? [], "-DDENIED_")).toEqual([
+    `0=${getDefaultAgentsTreeRoot()}`,
+    `1=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot(storageDir))}`,
+  ]);
 });
 
 test("returns null when no sandbox backend is available", () => {

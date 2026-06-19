@@ -1,15 +1,10 @@
-import {
-  getLocalBackendCrossAgentTreeRoot,
-  getLocalBackendStorageDir,
-  isLocalBackendEnvEnabled,
-} from "@/backend/local/paths";
+import { getLocalBackendStorageDir } from "@/backend/local/paths";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { willSandboxShell } from "@/permissions/sandbox-gate";
 import {
   buildCrossAgentSandboxPolicy,
-  canonicalizeRoot,
-  deriveSelfAgentRoots,
-  getDefaultAgentsTreeRoot,
+  deriveSelfAgentRootsForTrees,
+  getCrossBackendAgentsTreeRoots,
 } from "@/permissions/sandbox-policy";
 import {
   detectSandboxBackend,
@@ -68,22 +63,21 @@ export function applyShellSandbox(
   const avail = availability ?? detectSandboxBackend();
   if (!avail.backend) return unchanged;
 
-  // The local backend keeps memory under `lc-local-backend/memfs`, not
-  // `~/.letta/agents`; wall off that tree instead so cross-agent isolation
-  // actually applies. Resolved after the gate so the sandbox-off hot path does
-  // no filesystem work. Most agent shell cwd values are repo/workspace paths
-  // (outside both trees); when cwd is inside either tree, the gate bails to
-  // avoid Seatbelt's empty-env hazard.
+  // Wall off both backend forests, not only the active backend. A cloud/API
+  // agent can run shell commands on the user's machine, so it must not be able
+  // to traverse local-backend memfs; likewise a local agent must not traverse
+  // API/cloud memory projected under ~/.letta/agents. Resolved after the gate so
+  // the sandbox-off hot path does no filesystem work. Most agent shell cwd
+  // values are repo/workspace paths (outside both trees); when cwd is inside
+  // either tree, the gate bails to avoid Seatbelt's empty-env hazard.
   const localBackendStorageDir = getLocalBackendStorageDir(undefined, env);
-  const agentsTreeRoot = isLocalBackendEnvEnabled(env)
-    ? canonicalizeRoot(
-        getLocalBackendCrossAgentTreeRoot(localBackendStorageDir),
-      )
-    : getDefaultAgentsTreeRoot();
+  const agentsTreeRoots = getCrossBackendAgentsTreeRoots({
+    localBackendStorageDir,
+  });
   const memoryRoots = resolveAllowedMemoryRoots({ env }).roots;
-  const selfRoots = deriveSelfAgentRoots(memoryRoots, agentsTreeRoot);
+  const selfRoots = deriveSelfAgentRootsForTrees(memoryRoots, agentsTreeRoots);
 
-  const policy = buildCrossAgentSandboxPolicy({ selfRoots, agentsTreeRoot });
+  const policy = buildCrossAgentSandboxPolicy({ selfRoots, agentsTreeRoots });
   const wrapped = wrapLauncher(launcher, policy, {
     backend: avail.backend,
     bwrapPath: avail.bwrapPath,

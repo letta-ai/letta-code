@@ -22,6 +22,12 @@ function defineValue(args: string[], prefix: string): string | undefined {
   return args.find((a) => a.startsWith(prefix))?.slice(prefix.length);
 }
 
+function defineValues(args: string[], prefix: string): string[] {
+  return args
+    .filter((a) => a.startsWith(prefix))
+    .map((a) => a.slice(prefix.length));
+}
+
 test("no-op when the flag is off", () => {
   const result = applyShellSandbox(LAUNCHER, REPO_CWD, {}, SEATBELT);
   expect(result.backend).toBeNull();
@@ -118,10 +124,31 @@ test("wraps an agent shell launcher: denies agents tree, carves self, sets senti
   );
 });
 
-test("local backend: walls off the memfs tree, not ~/.letta/agents", () => {
-  // A local-backend parent agent (LETTA_LOCAL_BACKEND_EXPERIMENTAL=1) keeps its
-  // memory under lc-local-backend/memfs; the sandbox must deny THAT tree so
-  // cross-agent isolation actually applies (denying ~/.letta/agents is a no-op).
+test("api backend: also walls off the local memfs tree", () => {
+  const storageDir = join(REPO_CWD, "custom-local-backend");
+  const memfsTree = getLocalBackendCrossAgentTreeRoot(storageDir);
+  const apiMemDir = join(getDefaultAgentsTreeRoot(), "api-agent-xyz", "memory");
+  const result = applyShellSandbox(
+    LAUNCHER,
+    REPO_CWD,
+    {
+      LETTA_FS_SANDBOX: "1",
+      LETTA_LOCAL_BACKEND_DIR: storageDir,
+      MEMORY_DIR: apiMemDir,
+    },
+    SEATBELT,
+  );
+
+  expect(result.backend).toBe("seatbelt");
+  expect(defineValues(result.launcher, "-DDENIED_")).toEqual([
+    `0=${getDefaultAgentsTreeRoot()}`,
+    `1=${canonicalizeRoot(memfsTree)}`,
+  ]);
+});
+
+test("local backend: walls off both local memfs and ~/.letta/agents", () => {
+  // A local-backend parent agent keeps its memory under lc-local-backend/memfs,
+  // but it still must not read cloud/API memory projected under ~/.letta/agents.
   const storageDir = join(REPO_CWD, "custom-local-backend");
   const memfsTree = getLocalBackendCrossAgentTreeRoot(storageDir);
   const memDir = join(memfsTree, "local-agent-xyz", "memory");
@@ -138,9 +165,10 @@ test("local backend: walls off the memfs tree, not ~/.letta/agents", () => {
   );
 
   expect(result.backend).toBe("seatbelt");
-  const denied = defineValue(result.launcher, "-DDENIED_0=");
-  expect(denied).toBe(canonicalizeRoot(memfsTree));
-  expect(denied).not.toBe(getDefaultAgentsTreeRoot());
+  expect(defineValues(result.launcher, "-DDENIED_")).toEqual([
+    `0=${getDefaultAgentsTreeRoot()}`,
+    `1=${canonicalizeRoot(memfsTree)}`,
+  ]);
   // Self agent dir carved writable (both /memory and /memory-worktrees collapse
   // to the single agent dir).
   const writables = result.launcher.filter((a) => a.startsWith("-DWRITABLE_"));

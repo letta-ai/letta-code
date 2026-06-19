@@ -14,6 +14,7 @@ import {
   buildMemoryModeSandboxPolicy,
   canonicalizeRoot,
   deriveSelfAgentRoots,
+  getCrossBackendAgentsTreeRoots,
   getDefaultAgentsTreeRoot,
   getLettaHomeRoot,
 } from "@/permissions/sandbox-policy";
@@ -80,7 +81,7 @@ test("memory-mode policy: writes scoped to ~/.letta, agents tree read-denied wit
   // the base ~/.letta carve is overridden by the deny).
   expect(policy.writableRoots).toEqual([canonicalizeRoot(memoryRoot)]);
   // Cross-agent reads denied: the whole agents tree is walled off...
-  expect(policy.deniedRoots).toEqual([getDefaultAgentsTreeRoot()]);
+  expect(policy.deniedRoots).toEqual(getCrossBackendAgentsTreeRoots());
   // ...with the agent's own dir carved back out READ-only (env survival +
   // reading own state) — writes stay denied there by restrictWrites.
   expect(policy.readonlyRoots).toEqual([canonicalizeRoot(agentDir)]);
@@ -132,15 +133,14 @@ test("memory-mode policy (local backend): custom tree, ~/.letta base, self memor
   expect(policy.baseWritableRoots).toContain(canonicalizeRoot(storage));
 });
 
-test("memory-mode policy: tree defaults to ~/.letta/agents with write-scoping on", () => {
+test("memory-mode policy: defaults to both backend trees with write-scoping on", () => {
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-default");
   const memoryRoot = join(agentDir, "memory");
 
   const policy = buildMemoryModeSandboxPolicy({ memoryRoots: [memoryRoot] });
 
-  // Omitting agentsTreeRoot preserves the original API behavior exactly.
   expect(policy.restrictWrites).toBe(true);
-  expect(policy.deniedRoots).toEqual([getDefaultAgentsTreeRoot()]);
+  expect(policy.deniedRoots).toEqual(getCrossBackendAgentsTreeRoots());
 });
 
 test("cross-agent policy denies the agents tree and carves out self", () => {
@@ -161,12 +161,12 @@ test("cross-agent policy denies the agents tree and carves out self", () => {
   expect(policy.writableRoots).toEqual([selfDir]);
 });
 
-test("cross-agent policy defaults the agents tree to ~/.letta/agents", () => {
+test("cross-agent policy defaults to both backend agents trees", () => {
   const policy = buildCrossAgentSandboxPolicy({
     selfRoots: [canonicalizeRoot("/tmp")],
   });
 
-  expect(policy.deniedRoots).toEqual([getDefaultAgentsTreeRoot()]);
+  expect(policy.deniedRoots).toEqual(getCrossBackendAgentsTreeRoots());
 });
 
 test("deriveSelfAgentRoots collapses in-tree memory roots to the agent dir", () => {
@@ -183,4 +183,10 @@ test("deriveSelfAgentRoots keeps roots outside the tree as-is", () => {
   const tree = getDefaultAgentsTreeRoot();
   const outside = canonicalizeRoot("/tmp");
   expect(deriveSelfAgentRoots([outside], tree)).toEqual([outside]);
+});
+
+test("deriveSelfAgentRoots refuses to carve the whole tree or its ancestors", () => {
+  const tree = getDefaultAgentsTreeRoot();
+  expect(deriveSelfAgentRoots([tree], tree)).toEqual([]);
+  expect(deriveSelfAgentRoots([getLettaHomeRoot()], tree)).toEqual([]);
 });

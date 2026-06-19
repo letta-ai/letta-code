@@ -71,6 +71,21 @@ test("false when local backend cwd is inside the memfs tree", () => {
   expect(willSandboxShell(cwdInTree, env, SEATBELT)).toBe(false);
 });
 
+test("false when api backend cwd is inside the local memfs tree", () => {
+  const storageDir = join(REPO_CWD, "custom-local-backend");
+  const cwdInTree = join(
+    getLocalBackendCrossAgentTreeRoot(storageDir),
+    "self",
+    "memory",
+  );
+  const env = {
+    LETTA_FS_SANDBOX: "1",
+    LETTA_LOCAL_BACKEND_DIR: storageDir,
+    MEMORY_DIR: join(homedir(), ".letta", "agents", "self", "memory"),
+  };
+  expect(willSandboxShell(cwdInTree, env, SEATBELT)).toBe(false);
+});
+
 test("true for a parent with the flag on, a backend, cwd outside the tree, and self roots", () => {
   const env = { LETTA_FS_SANDBOX: "1", MEMORY_DIR: MEM };
   expect(willSandboxShell(REPO_CWD, env, SEATBELT)).toBe(true);

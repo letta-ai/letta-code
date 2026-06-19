@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { delimiter, isAbsolute, join } from "node:path";
 import type { SandboxBackend } from "./policy.js";
 import { SANDBOX_EXEC_PATH } from "./seatbelt.js";
 
@@ -111,7 +112,12 @@ function probe(platform: NodeJS.Platform): SandboxAvailability {
 
 function probeBwrap(): SandboxAvailability {
   // `bwrap` must exist on PATH (a bundled fallback can be wired in later).
-  const version = spawnSync("bwrap", ["--version"], { timeout: 5000 });
+  const bwrapPath = resolveExecutableOnPath("bwrap");
+  if (!bwrapPath) {
+    return { backend: null, reason: "bwrap not found on PATH" };
+  }
+
+  const version = spawnSync(bwrapPath, ["--version"], { timeout: 5000 });
   if (version.error || version.status !== 0) {
     return { backend: null, reason: "bwrap not found on PATH" };
   }
@@ -120,7 +126,7 @@ function probeBwrap(): SandboxAvailability {
   // some hardened/container hosts). A read-only root + /bin/true is the
   // cheapest mount that exercises the namespace machinery.
   const userns = spawnSync(
-    "bwrap",
+    bwrapPath,
     ["--ro-bind", "/", "/", "--unshare-user", "/bin/true"],
     { timeout: 5000 },
   );
@@ -131,5 +137,18 @@ function probeBwrap(): SandboxAvailability {
     };
   }
 
-  return { backend: "bwrap", bwrapPath: "bwrap", reason: "bwrap available" };
+  return { backend: "bwrap", bwrapPath, reason: "bwrap available" };
+}
+
+function resolveExecutableOnPath(
+  executable: string,
+  envPath: string | undefined = process.env.PATH,
+): string | null {
+  if (isAbsolute(executable) && existsSync(executable)) return executable;
+  for (const dir of (envPath ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, executable);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }

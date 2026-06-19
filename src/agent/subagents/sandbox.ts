@@ -1,5 +1,7 @@
-import { getLocalBackendCrossAgentTreeRoot } from "@/backend/local/paths";
-import { buildMemoryModeSandboxPolicy } from "@/permissions/sandbox-policy";
+import {
+  buildMemoryModeSandboxPolicy,
+  getCrossBackendAgentsTreeRoots,
+} from "@/permissions/sandbox-policy";
 import {
   detectSandboxBackend,
   isFsSandboxEnabled,
@@ -24,11 +26,11 @@ import { getTranscriptRoot } from "@/utils/transcript-paths";
  *
  * Both backends scope writes to the harness state dir (`~/.letta`): a memory
  * subagent may persist memory + harness metadata (settings, logs, conversations,
- * transcripts) but not the repo, home, or temp. The cross-agent tree nested
- * inside `~/.letta` stays read- and write-denied (`~/.letta/agents` on API,
- * `lc-local-backend/memfs` on local); self memory is re-carved writable. Carving
- * the whole `~/.letta` rather than each harness file avoids silently breaking
- * harness writes (settings, etc.) as new writers appear under it.
+ * transcripts) but not the repo, home, or temp. Both cross-agent trees
+ * (`~/.letta/agents` for API/cloud and `lc-local-backend/memfs` for local) stay
+ * read- and write-denied; self memory is re-carved writable. Carving the whole
+ * `~/.letta` rather than each harness file avoids silently breaking harness
+ * writes (settings, etc.) as new writers appear under it.
  */
 
 interface SubagentLauncher {
@@ -108,9 +110,10 @@ export function wrapSubagentLauncher(
   ];
   const policy = buildMemoryModeSandboxPolicy({
     memoryRoots: writableMemoryRoots,
-    agentsTreeRoot: isLocal
-      ? getLocalBackendCrossAgentTreeRoot(storageDir)
-      : undefined,
+    agentsTreeRoots: getCrossBackendAgentsTreeRoots({
+      env,
+      localBackendStorageDir: storageDir,
+    }),
     harnessWritableRoots,
   });
 
