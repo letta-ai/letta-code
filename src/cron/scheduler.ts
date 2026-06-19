@@ -12,7 +12,6 @@
  * On stop: clears interval, releases lease.
  */
 
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { getBackend } from "@/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
@@ -74,6 +73,18 @@ interface SchedulerState {
 
 let schedulerState: SchedulerState | null = null;
 
+/**
+ * Listener context stored independently of the scheduler lease.
+ * runCronTaskNow ("Send now") only needs an active listener — it doesn't
+ * need the tick loop or the lease. This lets it work even when another
+ * process holds the scheduler lease (e.g. desktop app vs local dev server).
+ */
+let listenerFireContext: {
+  socket: ListenerTransport;
+  opts: StartListenerOptions;
+  processQueuedTurn: ProcessQueuedTurn;
+} | null = null;
+
 // ── Constants ───────────────────────────────────────────────────────
 
 const TICK_INTERVAL_MS = 60_000;
@@ -111,7 +122,6 @@ async function resolveCronFireConversationId(
   if (task.conversation_id === NEW_CONVERSATION_TARGET) {
     const conversation = await getBackend().createConversation({
       agent_id: task.agent_id,
-      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
       summary: getCronConversationSummary(task),
     });
     return conversation.id;
@@ -399,7 +409,10 @@ export async function runCronTaskNow(taskId: string): Promise<{
     };
   }
 
-  if (!schedulerState) {
+  // Prefer the full scheduler state, but fall back to the listener context.
+  // "Send now" only needs the active listener — not the tick loop or the lease.
+  const ctx = schedulerState ?? listenerFireContext;
+  if (!ctx) {
     return {
       success: false,
       found: true,
@@ -412,9 +425,9 @@ export async function runCronTaskNow(taskId: string): Promise<{
   const fired = await fireCronTask(
     task,
     now,
-    schedulerState.socket,
-    schedulerState.opts,
-    schedulerState.processQueuedTurn,
+    ctx.socket,
+    ctx.opts,
+    ctx.processQueuedTurn,
   );
 
   if (!fired) {
@@ -426,7 +439,9 @@ export async function runCronTaskNow(taskId: string): Promise<{
     };
   }
 
-  refreshTaskCache(schedulerState);
+  if (schedulerState) {
+    refreshTaskCache(schedulerState);
+  }
   return { success: true, found: true, task: getTask(taskId) ?? task };
 }
 
@@ -533,6 +548,10 @@ export function startScheduler(
   processQueuedTurn: ProcessQueuedTurn,
   _retryCount = 0,
 ): void {
+  // Always store the listener context so runCronTaskNow ("Send now") works
+  // even when this process doesn't hold the scheduler lease.
+  listenerFireContext = { socket, opts, processQueuedTurn };
+
   if (schedulerState) return;
 
   let token: string;
@@ -601,6 +620,7 @@ export function startScheduler(
  * Stop the cron scheduler. Should be called when the WS listener disconnects.
  */
 export function stopScheduler(): void {
+  listenerFireContext = null;
   if (!schedulerState) return;
 
   clearInterval(schedulerState.tickInterval);

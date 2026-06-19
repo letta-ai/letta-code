@@ -10,7 +10,6 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { getClient } from "@/backend/api/client";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { ApprovalResponseBody } from "@/types/protocol_v2";
@@ -61,6 +60,8 @@ import {
   isFirstPartyChannelPlugin,
   loadChannelPlugin,
 } from "./plugin-registry";
+import type { ChannelRestoreAgentScope } from "./restore-scope";
+import { shouldRestoreChannelAccountForAgentScope } from "./restore-scope";
 import {
   addRoute,
   getRoute as getRouteFromStore,
@@ -72,6 +73,7 @@ import {
 } from "./routing";
 import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
+  ChannelAccount,
   ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelDefaultPermissionMode,
@@ -103,30 +105,73 @@ function channelDisplayName(channelId: string): string {
   }
 }
 
+type PairingInstructionOptions = {
+  agentId?: string | null;
+};
+
+type AccountAgentIdSource = {
+  agentId?: string | null;
+  binding?: {
+    agentId?: string | null;
+  };
+};
+
+function normalizeAgentId(agentId: string | null | undefined): string | null {
+  const normalized = agentId?.trim();
+  return normalized ? normalized : null;
+}
+
+function getConfiguredAgentId(config: unknown): string | null {
+  if (!config || typeof config !== "object") {
+    return null;
+  }
+  const source = config as AccountAgentIdSource;
+  return (
+    normalizeAgentId(source.agentId) ??
+    normalizeAgentId(source.binding?.agentId)
+  );
+}
+
 export function buildPairingInstructions(
   channelId: string,
   code: string,
+  options: PairingInstructionOptions = {},
 ): string {
   // First-party channels (telegram, slack, discord) have UI in the desktop
   // app. Community plugins installed under ~/.letta/channels/<id>/ do not,
   // so the user-facing copy needs to point at CLI commands instead.
   const displayName = channelDisplayName(channelId);
+  const configuredAgentId = normalizeAgentId(options.agentId);
+  const pairingCommand = `letta channels pair --channel ${channelId} --code ${code} --agent ${configuredAgentId ?? "<agent-id>"}`;
+  const agentLookupLines = configuredAgentId
+    ? []
+    : ["Find the target agent with: letta agents list"];
   if (!isFirstPartyChannelPlugin(channelId)) {
-    return (
-      `This chat isn't connected to a Letta agent yet.\n\n` +
-      `Pairing code: ${code} (expires in 15 minutes)\n\n` +
-      `On the machine where your listener runs:\n\n` +
-      `letta channels pair --channel ${channelId} --code ${code} --agent <agent-id>\n\n` +
-      `Find your agent id with letta agents list.`
-    );
+    return [
+      "Connect this chat to a Letta agent.",
+      "",
+      `Pairing code: ${code}`,
+      "",
+      "CLI on the listener machine:",
+      pairingCommand,
+      ...agentLookupLines,
+      "",
+      "This code expires in 15 minutes.",
+    ].join("\n");
   }
-  return (
-    `To connect this chat to a Letta agent, either open Channels > ${displayName} in Letta Code and finish connecting this chat there, or run this on the machine where your listener runs:\n\n` +
-    `letta channels pair --channel ${channelId} --code ${code} --agent <agent-id>\n\n` +
-    `Find your agent id with letta agents list.\n\n` +
-    `Pairing code: ${code}\n\n` +
-    `This code expires in 15 minutes.`
-  );
+  return [
+    "Connect this chat to a Letta agent.",
+    "",
+    `Pairing code: ${code}`,
+    "",
+    `In Letta Code: open Channels > ${displayName} and approve this pending chat.`,
+    "",
+    "CLI on the listener machine:",
+    pairingCommand,
+    ...agentLookupLines,
+    "",
+    "This code expires in 15 minutes.",
+  ].join("\n");
 }
 
 export function buildUnboundRouteInstructions(
@@ -783,6 +828,7 @@ export class ChannelRegistry {
         route.chatId === chatId &&
         route.agentId === agentId &&
         route.conversationId === conversationId &&
+        route.outboundEnabled !== false &&
         (!normalizedAccountId ||
           (route.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) ===
             normalizedAccountId) &&
@@ -1028,12 +1074,9 @@ export class ChannelRegistry {
   private findRawRouteForMessage(
     msg: InboundChannelMessage,
   ): ChannelRoute | null {
-    const route =
-      getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ??
-      (msg.threadId
-        ? getRouteRaw(msg.channel, msg.chatId, msg.accountId, null)
-        : undefined);
-    return route ?? null;
+    return (
+      getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ?? null
+    );
   }
 
   private loadAndFindRawRouteForMessage(
@@ -1245,6 +1288,37 @@ export class ChannelRegistry {
     return matches.length === 1 ? (matches[0] ?? null) : null;
   }
 
+  private hasExactEnabledRouteForMessage(
+    msg: InboundChannelMessage,
+    accountId: string,
+  ): boolean {
+    if (getRouteFromStore(msg.channel, msg.chatId, accountId, msg.threadId)) {
+      return true;
+    }
+
+    loadRoutes(msg.channel);
+    return Boolean(
+      getRouteFromStore(msg.channel, msg.chatId, accountId, msg.threadId),
+    );
+  }
+
+  private shouldDropUnroutedSlackThreadInput(
+    msg: InboundChannelMessage,
+    accountId: string,
+    config: ChannelAccount | null,
+  ): boolean {
+    return (
+      msg.channel === "slack" &&
+      msg.chatType === "channel" &&
+      msg.threadId != null &&
+      msg.isMention !== true &&
+      (!config ||
+        !isSlackChannelAccount(config) ||
+        config.listenMode !== true) &&
+      !this.hasExactEnabledRouteForMessage(msg, accountId)
+    );
+  }
+
   private async handleInboundMessage(
     msg: InboundChannelMessage,
   ): Promise<void> {
@@ -1256,6 +1330,10 @@ export class ChannelRegistry {
     }
 
     const config = getChannelAccount(msg.channel, accountId);
+
+    if (this.shouldDropUnroutedSlackThreadInput(msg, accountId, config)) {
+      return;
+    }
 
     const getStatusRoute = (): ChannelRoute | null => {
       let statusRoute = getRouteFromStore(
@@ -1477,7 +1555,9 @@ export class ChannelRegistry {
         });
         await adapter.sendDirectReply(
           msg.chatId,
-          buildPairingInstructions(msg.channel, code),
+          buildPairingInstructions(msg.channel, code, {
+            agentId: getConfiguredAgentId(config),
+          }),
         );
         return;
       }
@@ -1526,7 +1606,6 @@ export class ChannelRegistry {
     const client = await getClient();
     const conversation = await client.conversations.create({
       agent_id: agentId,
-      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
       ...(summary ? { summary } : {}),
     });
     return conversation.id;
@@ -1535,6 +1614,7 @@ export class ChannelRegistry {
   private async createSlackRoute(
     config: SlackChannelAccount,
     msg: InboundChannelMessage,
+    options: { outboundEnabled?: boolean } = {},
   ): Promise<ChannelRoute> {
     if (!config.agentId) {
       throw new Error("Slack app is missing an agent binding.");
@@ -1556,6 +1636,7 @@ export class ChannelRegistry {
       agentId: config.agentId,
       conversationId,
       enabled: true,
+      outboundEnabled: options.outboundEnabled !== false,
       createdAt: now,
       updatedAt: now,
     };
@@ -1581,6 +1662,9 @@ export class ChannelRegistry {
     isFirstRouteTurn: boolean;
   } | null> {
     if (!config.agentId) {
+      if (msg.chatType === "channel" && msg.isMention !== true) {
+        return null;
+      }
       await adapter.sendDirectReply(
         msg.chatId,
         buildSlackAppSetupInstructions(),
@@ -1626,13 +1710,38 @@ export class ChannelRegistry {
     }
 
     if (route) {
+      if (
+        msg.chatType === "channel" &&
+        msg.isMention === true &&
+        route.outboundEnabled === false
+      ) {
+        const updatedRoute: ChannelRoute = {
+          ...route,
+          outboundEnabled: true,
+          updatedAt: new Date().toISOString(),
+        };
+        addRoute(msg.channel, updatedRoute);
+        return {
+          route: updatedRoute,
+          isFirstRouteTurn: false,
+        };
+      }
       return {
         route,
         isFirstRouteTurn: false,
       };
     }
 
-    if (msg.chatType === "channel" && !msg.isMention) {
+    const shouldCreateListenOnlyRoute =
+      msg.chatType === "channel" &&
+      msg.isMention !== true &&
+      config.listenMode === true;
+
+    if (
+      msg.chatType === "channel" &&
+      msg.isMention !== true &&
+      !shouldCreateListenOnlyRoute
+    ) {
       return null;
     }
 
@@ -1654,7 +1763,9 @@ export class ChannelRegistry {
     });
 
     return {
-      route: await this.createSlackRoute(config, msg),
+      route: await this.createSlackRoute(config, msg, {
+        outboundEnabled: !shouldCreateListenOnlyRoute,
+      }),
       isFirstRouteTurn: true,
     };
   }
@@ -1988,7 +2099,11 @@ export class ChannelRegistry {
  */
 export async function initializeChannels(
   channelNames: string[],
-  options?: { failOnStartupError?: boolean; logger?: ChannelStartupLogger },
+  options?: {
+    failOnStartupError?: boolean;
+    logger?: ChannelStartupLogger;
+    restoreAgentScope?: ChannelRestoreAgentScope | null;
+  },
 ): Promise<ChannelRegistry> {
   const registry = ensureChannelRegistry();
   const failures: ChannelStartupFailure[] = [];
@@ -2017,9 +2132,17 @@ export async function initializeChannels(
     );
     await hydrateChannelAccountSecrets(channelId);
     const accounts = listChannelAccounts(channelId);
-    const enabledAccountIds = accounts
-      .filter((account) => account.enabled)
-      .map((account) => account.accountId);
+    const restorableAccounts = accounts.filter(
+      (account) =>
+        account.enabled &&
+        shouldRestoreChannelAccountForAgentScope(
+          account,
+          options?.restoreAgentScope,
+        ),
+    );
+    const enabledAccountIds = restorableAccounts.map(
+      (account) => account.accountId,
+    );
     logChannelStartup(
       options?.logger,
       `${channelId}: accounts=${accounts.length}, enabled=${enabledAccountIds.length > 0 ? enabledAccountIds.join(",") : "none"}`,
@@ -2032,18 +2155,17 @@ export async function initializeChannels(
     }
 
     if (enabledAccountIds.length === 0) {
-      const error = `Channel "${channelId}" has no enabled accounts.`;
+      const scopeSuffix = options?.restoreAgentScope
+        ? ` in ${options.restoreAgentScope} restore scope`
+        : "";
+      const error = `Channel "${channelId}" has no enabled accounts${scopeSuffix}.`;
       failures.push({ channelId, error });
       console.error(error);
       logChannelStartup(options?.logger, error);
       continue;
     }
 
-    for (const account of accounts) {
-      if (!account.enabled) {
-        continue;
-      }
-
+    for (const account of restorableAccounts) {
       try {
         await registry.startChannelAccount(channelId, account.accountId, {
           logger: options?.logger,

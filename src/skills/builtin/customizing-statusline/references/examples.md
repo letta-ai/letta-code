@@ -1,6 +1,6 @@
 # Statusline Examples
 
-Use these as patterns, not mandatory templates. Keep the final extension focused on the user's request.
+Use these as patterns, not mandatory templates. Keep the final mod focused on the user's request.
 
 ## Agent and model
 
@@ -28,9 +28,8 @@ export default function activate(letta) {
 
   const update = async () => {
     try {
-      const context = letta.getContext();
       const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
-        cwd: context.workspace.currentDir,
+        cwd: process.cwd(),
       });
       letta.ui.setStatus("branch", stdout.trim());
     } catch {
@@ -85,11 +84,10 @@ export default function activate(letta) {
 
   const update = async () => {
     try {
-      const context = letta.getContext();
       const { stdout } = await execFileAsync(
         "gh",
         ["pr", "view", "--json", "number,title", "--jq", "\"#\\(.number) \\(.title)\""],
-        { cwd: context.workspace.currentDir },
+        { cwd: process.cwd() },
       );
       const pr = stdout.trim();
       pr ? letta.ui.setStatus("pr", pr) : letta.ui.clearStatus("pr");

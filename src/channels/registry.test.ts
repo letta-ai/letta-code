@@ -117,6 +117,38 @@ describe("ChannelRegistry", () => {
     expect(logs.some((line) => line.includes("accounts=0"))).toBe(true);
   });
 
+  test("initializeChannels does not start accounts outside the restore scope", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "acct-cloud-slack",
+        enabled: true,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-cloud",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-06-17T00:00:00.000Z",
+        updatedAt: "2026-06-17T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+    const logs: string[] = [];
+
+    await expect(
+      initializeChannels(["slack"], {
+        restoreAgentScope: "local",
+        logger: (message) => logs.push(message),
+      }),
+    ).resolves.toBeInstanceOf(ChannelRegistry);
+
+    expect(logs).toContain(
+      '[Channels] Channel "slack" has no enabled accounts in local restore scope.',
+    );
+  });
+
   test("/help gets a direct channel reply instead of being delivered to the agent", async () => {
     __testOverrideLoadChannelAccounts(() => [
       {
@@ -887,6 +919,83 @@ describe("ChannelRegistry", () => {
       },
     ]);
     expect(replies[0]?.text).toBe("Started a reflection pass.");
+  });
+
+  test("Slack root channel routes do not catch unmentioned thread input", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    const reflections: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReflectionHandler(async (params) => {
+      reflections.push(params);
+      return { handled: true, text: "Started a reflection pass." };
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "ok i think i did it",
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: false,
+    });
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/reflection",
+      timestamp: Date.now(),
+      messageId: "1712800000.000201",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: false,
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(reflections).toHaveLength(0);
+    expect(replies).toHaveLength(0);
   });
 });
 

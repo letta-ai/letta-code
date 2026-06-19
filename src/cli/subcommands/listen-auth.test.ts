@@ -25,7 +25,7 @@ describe("listen subcommand auth resolution", () => {
   const originalConsoleWarn = console.warn;
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
-  const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
   const originalLocalBackend = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 
   beforeEach(() => {
@@ -41,7 +41,7 @@ describe("listen subcommand auth resolution", () => {
 
     delete process.env.LETTA_API_KEY;
     delete process.env.LETTA_BASE_URL;
-    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    delete process.env.LETTA_DESKTOP_MODE;
     delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 
     settingsManager.getSettingsWithSecureTokens = mock(async () => ({
@@ -79,9 +79,9 @@ describe("listen subcommand auth resolution", () => {
       process.env.LETTA_BASE_URL = originalBaseUrl;
     }
     if (originalDesktopDebugPanel === undefined) {
-      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      delete process.env.LETTA_DESKTOP_MODE;
     } else {
-      process.env.LETTA_DESKTOP_DEBUG_PANEL = originalDesktopDebugPanel;
+      process.env.LETTA_DESKTOP_MODE = originalDesktopDebugPanel;
     }
     if (originalLocalBackend === undefined) {
       delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
@@ -280,6 +280,27 @@ describe("listen subcommand auth resolution", () => {
       kind: "local-channels",
       serverUrl: "local-backend",
       backend: "local",
+    });
+    expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+    expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
+  test("uses remote registration for desktop local backend listeners with channels", async () => {
+    process.env.LETTA_BASE_URL = "http://localhost:61677";
+    process.env.LETTA_DESKTOP_MODE = "1";
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+
+    settingsManager.getSettingsWithSecureTokens = mock(async () => ({
+      env: {},
+    })) as unknown as typeof settingsManager.getSettingsWithSecureTokens;
+
+    const result = await __listenSubcommandTestUtils.resolveListenerStartupMode(
+      ["slack"],
+    );
+
+    expect(result).toEqual({
+      kind: "remote",
+      serverUrl: "http://localhost:61677",
     });
     expect(requestDeviceCodeMock).not.toHaveBeenCalled();
     expect(pollForTokenMock).not.toHaveBeenCalled();

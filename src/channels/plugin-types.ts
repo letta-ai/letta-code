@@ -157,12 +157,16 @@ export interface ChannelPluginAccountPatch {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
+  showCompletedReaction?: boolean;
+  listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
   transcribeVoice?: boolean;
+  richPrivateChatDefault?: boolean;
+  richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
 }

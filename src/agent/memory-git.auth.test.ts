@@ -35,8 +35,7 @@ import {
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;
-const ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL =
-  process.env.LETTA_DESKTOP_DEBUG_PANEL;
+const ORIGINAL_LETTA_DESKTOP_MODE = process.env.LETTA_DESKTOP_MODE;
 const ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL =
   process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
 const ORIGINAL_LETTA_API_KEY = process.env.LETTA_API_KEY;
@@ -64,10 +63,10 @@ afterEach(() => {
     process.env.LETTA_MEMFS_BASE_URL = ORIGINAL_LETTA_MEMFS_BASE_URL;
   }
 
-  if (ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL === undefined) {
-    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  if (ORIGINAL_LETTA_DESKTOP_MODE === undefined) {
+    delete process.env.LETTA_DESKTOP_MODE;
   } else {
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL;
+    process.env.LETTA_DESKTOP_MODE = ORIGINAL_LETTA_DESKTOP_MODE;
   }
 
   if (ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL === undefined) {
@@ -103,6 +102,13 @@ function commitFile(repo: string, fileName: string, content: string): string {
   git(repo, `add ${fileName}`);
   git(repo, `commit -m ${fileName}`);
   return git(repo, "rev-parse HEAD").trim();
+}
+
+function utf16leWithBom(content: string): Buffer {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(content, "utf16le"),
+  ]);
 }
 
 function makeSyncedRepo(): { repo: string; remote: string } {
@@ -166,7 +172,7 @@ describe("normalizeCredentialBaseUrl", () => {
     test("defaults to api.letta.com when LETTA_MEMFS_BASE_URL is unset, even if LETTA_BASE_URL is localhost", () => {
       process.env.LETTA_BASE_URL = "http://localhost:51338";
       delete process.env.LETTA_MEMFS_BASE_URL;
-      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      delete process.env.LETTA_DESKTOP_MODE;
       expect(getGitRemoteUrl("agent-123")).toBe(
         "https://api.letta.com/v1/git/agent-123/state.git",
       );
@@ -175,7 +181,7 @@ describe("normalizeCredentialBaseUrl", () => {
     test("keeps canonical memfs URL stable in desktop proxy transport sessions", () => {
       process.env.LETTA_BASE_URL = "http://localhost:51338";
       delete process.env.LETTA_MEMFS_BASE_URL;
-      process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+      process.env.LETTA_DESKTOP_MODE = "1";
       process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:51338";
 
       expect(getMemfsServerUrl()).toBe("https://api.letta.com");
@@ -604,6 +610,30 @@ describe("assertMemoryRepoCleanForWrite", () => {
     await assertMemoryRepoCleanForWrite(repo);
 
     expect(git(repo, "rev-parse HEAD").trim()).toBe(originalSha);
+  });
+
+  test("reports UTF-16 dirty markdown files", async () => {
+    const { repo } = makeSyncedRepo();
+    writeFileSync(
+      join(repo, "human.md"),
+      utf16leWithBom("---\ndescription: human\n---\nnotes"),
+    );
+
+    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
+      /Dirty markdown encoding issue\(s\): human\.md has UTF-16LE BOM/,
+    );
+  });
+
+  test("reports NUL bytes in dirty markdown files", async () => {
+    const { repo } = makeSyncedRepo();
+    writeFileSync(
+      join(repo, "human.md"),
+      Buffer.from("---\ndescription: human\n---\nnotes", "utf16le"),
+    );
+
+    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
+      /Dirty markdown encoding issue\(s\): human\.md contains NUL bytes, possibly UTF-16/,
+    );
   });
 });
 

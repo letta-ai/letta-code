@@ -27,7 +27,7 @@ import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor"
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
-} from "@/backend/dev/pi-provider-extension-registry";
+} from "@/backend/dev/pi-provider-mod-registry";
 import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -35,6 +35,7 @@ import { emptyLocalUsage } from "@/backend/local/local-message";
 import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import { listLocalModels } from "@/backend/local/local-model-config";
 import {
+  LocalStore,
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
 } from "@/backend/local/local-store";
@@ -67,6 +68,17 @@ async function firstConversationDir(storageDir: string): Promise<string> {
   if (!firstEntry)
     throw new Error("Expected at least one conversation directory");
   return join(storageDir, "conversations", firstEntry);
+}
+
+function localConversationDir(
+  storageDir: string,
+  conversationId: string,
+): string {
+  return join(
+    storageDir,
+    "conversations",
+    Buffer.from(`conversation:${conversationId}`).toString("base64url"),
+  );
 }
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
@@ -228,6 +240,64 @@ describe("local backend pi transcript", () => {
           summary: "Default rename",
         } as never),
       ).toThrow("Default conversation cannot be updated");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refreshes conversation metadata changed by another local backend process", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-external-conversation-update-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const agent = await backend.createAgent({ name: "Local" } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "Original title",
+      } as never);
+
+      const conversationPath = join(
+        localConversationDir(storageDir, conversation.id),
+        "conversation.json",
+      );
+      const externalRecord = JSON.parse(
+        await readFile(conversationPath, "utf8"),
+      ) as Record<string, unknown>;
+      await writeFile(
+        conversationPath,
+        `${JSON.stringify(
+          {
+            ...externalRecord,
+            summary: "Desktop rename",
+            updated_at: "2026-06-15T23:00:00.000Z",
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const futureMtime = new Date(Date.now() + 5_000);
+      await utimes(conversationPath, futureMtime, futureMtime);
+
+      const retrieved = (await backend.retrieveConversation(
+        conversation.id,
+      )) as { summary?: string | null };
+      expect(retrieved.summary).toBe("Desktop rename");
+
+      const listed = (await backend.listConversations({
+        agent_id: agent.id,
+      } as never)) as Array<{ id: string; summary?: string | null }>;
+      expect(listed.find((item) => item.id === conversation.id)?.summary).toBe(
+        "Desktop rename",
+      );
+
+      await backend.updateConversation(conversation.id, {
+        last_message_at: "2026-06-15T23:01:00.000Z",
+      } as never);
+      const persisted = JSON.parse(
+        await readFile(conversationPath, "utf8"),
+      ) as Record<string, unknown>;
+      expect(persisted.summary).toBe("Desktop rename");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -436,6 +506,74 @@ describe("local backend pi transcript", () => {
       await backendForDirectLookup.retrieveMessage("ui-msg-latest");
     expect(latestVariants[0]?.id).toBe("ui-msg-latest");
     expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
+  });
+
+  test("fork skips ids already on disk from a separate LocalStore instance", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-store-fork-collision-"),
+    );
+    const agentId = "agent-fork";
+    const sourceId = "conv-source";
+    const existingId = "conv-existing";
+
+    // Store A creates a source conversation and an existing conversation that
+    // occupies the next seq slot, simulating a second LocalStore process that
+    // wrote a conversation to the shared storage directory.
+    const storeA = new LocalStore(agentId, { storageDir });
+    storeA.appendTurnInput(sourceId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    storeA.appendTurnInput(existingId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "existing" }],
+    });
+
+    // Store B loads from the same storage dir — it sees both conversations and
+    // sets conversationSeq to the max existing value.  A fork from Store B
+    // must not clobber the existing conversation even if its raw seq would
+    // land on that slot.
+    const storeB = new LocalStore(agentId, { storageDir });
+    const { id: forkedId } = storeB.forkConversation(sourceId);
+
+    // The fork must not reuse any id that already exists on disk.
+    expect(forkedId).not.toBe(sourceId);
+    expect(forkedId).not.toBe(existingId);
+
+    // The existing conversation must still be intact.
+    const existing = storeB.retrieveConversation(existingId);
+    expect(existing.id).toBe(existingId);
+  });
+
+  test("interrupt rolls back unpersisted partial assistant message before reload", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-store-interrupt-"));
+    const agentId = "agent-interrupt";
+    const conversationId = "conv-interrupt";
+
+    const store = new LocalStore(agentId, { storageDir });
+    store.appendTurnInput(conversationId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    store.appendStreamChunk(conversationId, agentId, {
+      message_type: "assistant_message",
+      content: [{ type: "text", text: "partial" }],
+    } as LettaStreamingResponse);
+
+    const conversationBeforeReload = store.retrieveConversation(conversationId);
+    const partialAssistantId =
+      conversationBeforeReload.in_context_message_ids?.at(-1);
+    expect(partialAssistantId).toBe("ui-msg-2");
+
+    store.settleInterruptedToolCalls(conversationId, { agentId });
+
+    const reloaded = new LocalStore(agentId, { storageDir });
+    const conversationAfterReload =
+      reloaded.retrieveConversation(conversationId);
+    expect(conversationAfterReload.in_context_message_ids).not.toContain(
+      partialAssistantId,
+    );
+    expect(reloaded.retrieveMessage(partialAssistantId ?? "")).toEqual([]);
   });
 
   test("recompiles cached system prompt when committed memory changes", async () => {
@@ -670,6 +808,82 @@ describe("local backend pi transcript", () => {
     expect(systemPrompts[1]).not.toBe(systemPrompts[0]);
   });
 
+  test("compaction follows the conversation model override, not the agent base", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-model-"),
+    );
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "anthropic",
+        providerName: "lc-anthropic",
+        apiKey: "secret-key",
+      });
+
+      const executor: HeadlessTurnExecutor = {
+        async execute() {
+          return lettaStreamFromChunks([
+            {
+              message_type: "assistant_message",
+              content: [{ type: "text", text: "ok" }],
+            } as LettaStreamingResponse,
+            {
+              message_type: "stop_reason",
+              stop_reason: "end_turn",
+            } as LettaStreamingResponse,
+          ]);
+        },
+      };
+
+      let summarizerModelId: string | undefined;
+      const complete = async (
+        ...args: unknown[]
+      ): Promise<AssistantMessage> => {
+        summarizerModelId = (args[0] as { id?: string } | undefined)?.id;
+        return assistantMessage({
+          responseId: "summary-response",
+          stopReason: "stop",
+          content: [{ type: "text", text: "Compacted summary." }],
+        });
+      };
+
+      const backend = new LocalBackend({
+        storageDir,
+        executor,
+        complete,
+        memfsEnabled: false,
+      });
+      const agent = await backend.createAgent({
+        name: "Local",
+        model: "anthropic/claude-fable-5",
+        model_settings: { provider_type: "anthropic" },
+      } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: { provider_type: "anthropic" },
+      } as never);
+
+      await drain(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "first" }],
+        } as ConversationMessageCreateBody),
+      );
+
+      await backend.compactConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never);
+
+      // Agent base model is Fable; the conversation override is Sonnet 4.6.
+      // Compaction (and its summarizer) must follow the conversation, not the
+      // agent base model.
+      expect(summarizerModelId).toBe("claude-sonnet-4-6");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("lists pi catalog models for configured zAI coding provider", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-pi-zai-"));
     await createOrUpdateLocalProvider({
@@ -682,7 +896,10 @@ describe("local backend pi transcript", () => {
     const handles = (await listLocalModels(storageDir)).map(
       (model) => model.handle,
     );
+    const zaiHandles = handles.filter((handle) => handle.startsWith("zai/"));
+    expect(zaiHandles[0]).toBe("zai/glm-5.2");
     expect(handles).toContain("zai/glm-4.5-air");
+    expect(handles).toContain("zai/glm-5.2");
     expect(handles).toContain("zai/glm-5.1");
   });
 
@@ -700,9 +917,7 @@ describe("local backend pi transcript", () => {
     const fable = (await listLocalModels(storageDir)).find(
       (model) => model.handle === "anthropic/claude-fable-5",
     );
-    expect(fable?.max_context_window).toBe(
-      getModel("anthropic", "claude-fable-5")?.contextWindow,
-    );
+    expect(fable?.max_context_window).toBe(1_000_000);
   });
 
   test("lists pi catalog context windows for configured OpenRouter models", async () => {
@@ -771,7 +986,43 @@ describe("local backend pi transcript", () => {
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
   });
 
-  test("lists extension-registered local provider models with context windows", async () => {
+  test("discovers configured Ollama models without adding guessed defaults", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-ollama-discovery-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "ollama",
+      providerName: "lc-ollama",
+      apiKey: "not-needed",
+      baseURL: "http://localhost:11434/v1",
+      storageDir,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      if (url.endsWith("/v1/models")) {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({ models: [{ name: "qwen2.5-coder:7b" }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual([
+      "http://localhost:11434/v1/models",
+      "http://localhost:11434/api/tags",
+    ]);
+    expect(handles).toContain("ollama/qwen2.5-coder:7b");
+    expect(handles).not.toContain("ollama/llama2");
+  });
+
+  test("lists mod-registered local provider models with context windows", async () => {
     registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",
@@ -821,7 +1072,7 @@ describe("local backend pi transcript", () => {
     );
   });
 
-  test("uses extension-registered context windows for local agent state", async () => {
+  test("uses mod-registered context windows for local agent state", async () => {
     registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
       apiKey: "not-needed",

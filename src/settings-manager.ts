@@ -78,7 +78,6 @@ export interface Settings {
   tokenStreaming: boolean;
   reasoningTabCycleEnabled: boolean; // Tab cycles reasoning tiers only when explicitly enabled
   showCompactions?: boolean;
-  enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   autoConversationTitles: boolean; // Generate AI conversation titles when possible
   autoConversationTitlesRollbackApplied?: boolean; // One-time rollback marker for the default-on title experiment
@@ -165,12 +164,14 @@ export interface LocalProjectSettings {
   conversationGoalToolsByServer?: Record<string, Record<string, boolean>>;
 }
 
+// Hard-deprecated keys: ignored on load and stripped from disk on persist.
+const OBSOLETE_SETTINGS_KEYS = ["reflectionBehavior", "enableSleeptime"];
+
 const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
   tokenStreaming: false,
   reasoningTabCycleEnabled: false,
   showCompactions: false,
-  enableSleeptime: false,
   conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
   autoConversationTitles: false,
@@ -357,7 +358,9 @@ class SettingsManager {
     raw: Record<string, unknown>,
   ): Record<string, unknown> {
     const normalized = { ...raw };
-    delete normalized.reflectionBehavior;
+    for (const key of OBSOLETE_SETTINGS_KEYS) {
+      delete normalized[key];
+    }
     return normalized;
   }
 
@@ -444,14 +447,12 @@ class SettingsManager {
           string,
           unknown
         >;
-        const hadLegacyReflectionBehavior = Object.hasOwn(
-          loadedSettingsRaw,
-          "reflectionBehavior",
-        );
-        if (hadLegacyReflectionBehavior) {
-          delete loadedSettingsRaw.reflectionBehavior;
-          // Mark for deletion on next persist; keep startup backward-compatible.
-          this.markDirty("reflectionBehavior");
+        // Obsolete keys: drop from loaded settings and delete on next persist.
+        for (const legacyKey of OBSOLETE_SETTINGS_KEYS) {
+          if (Object.hasOwn(loadedSettingsRaw, legacyKey)) {
+            delete loadedSettingsRaw[legacyKey];
+            this.markDirty(legacyKey);
+          }
         }
         shouldRollbackAutoConversationTitles =
           loadedSettingsRaw.autoConversationTitlesRollbackApplied !== true;
@@ -999,8 +1000,10 @@ class SettingsManager {
         }
       }
 
-      // Hard-deprecate legacy field (now fully ignored). Always strip from disk.
-      delete existingSettings.reflectionBehavior;
+      // Hard-deprecate legacy fields (now fully ignored). Always strip from disk.
+      for (const key of OBSOLETE_SETTINGS_KEYS) {
+        delete existingSettings[key];
+      }
 
       // Only write keys we loaded from the file or explicitly set via updateSettings().
       // This preserves manual file edits for keys we never touched (e.g. defaults).
@@ -1118,17 +1121,16 @@ class SettingsManager {
 
       const content = await readFile(settingsPath);
       const localSettingsRaw = JSON.parse(content) as Record<string, unknown>;
-      const hadLegacyReflectionBehavior = Object.hasOwn(
-        localSettingsRaw,
-        "reflectionBehavior",
+      const hadLegacyKeys = OBSOLETE_SETTINGS_KEYS.some((key) =>
+        Object.hasOwn(localSettingsRaw, key),
       );
-      if (hadLegacyReflectionBehavior) {
-        delete localSettingsRaw.reflectionBehavior;
+      for (const key of OBSOLETE_SETTINGS_KEYS) {
+        delete localSettingsRaw[key];
       }
       const localSettings = localSettingsRaw as unknown as LocalProjectSettings;
 
       this.localProjectSettings.set(workingDirectory, localSettings);
-      if (hadLegacyReflectionBehavior) {
+      if (hadLegacyKeys) {
         try {
           await this.persistLocalProjectSettings(workingDirectory);
         } catch {
@@ -1219,8 +1221,10 @@ class SettingsManager {
         }
       }
 
-      // Hard-deprecate legacy field (now fully ignored). Always strip from disk.
-      delete existingSettings.reflectionBehavior;
+      // Hard-deprecate legacy fields (now fully ignored). Always strip from disk.
+      for (const key of OBSOLETE_SETTINGS_KEYS) {
+        delete existingSettings[key];
+      }
 
       // Merge: existing fields + our managed settings
       const merged = {

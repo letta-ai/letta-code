@@ -7,7 +7,6 @@ import type {
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { type BackendCapabilities, getBackend } from "@/backend";
-import { getClient } from "@/backend/api/client";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
 import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
@@ -25,7 +24,6 @@ import {
   isKnownPreset,
   type MemoryPromptMode,
   resolveAndBuildSystemPrompt,
-  SLEEPTIME_MEMORY_PERSONA,
 } from "./prompt-assets";
 import {
   LETTA_CODE_ORIGIN_TAG,
@@ -202,15 +200,12 @@ export interface CreateAgentOptions {
   updateArgs?: Record<string, unknown>;
   skillsDirectory?: string;
   parallelToolCalls?: boolean;
-  enableSleeptime?: boolean;
   /** System prompt preset (e.g., 'default', 'letta', 'source-claude') */
   systemPromptPreset?: string;
   /** Raw system prompt string (mutually exclusive with systemPromptPreset) */
   systemPromptCustom?: string;
   /** Which managed memory prompt mode to apply */
   memoryPromptMode?: MemoryPromptMode;
-  /** Block labels to initialize (from default blocks) */
-  initBlocks?: string[];
   /** Base tools to include */
   baseTools?: string[];
   /** Custom memory blocks (overrides default blocks) */
@@ -232,9 +227,7 @@ export async function createAgent(
   updateArgs?: Record<string, unknown>,
   skillsDirectory?: string,
   parallelToolCalls = true,
-  enableSleeptime = false,
   systemPromptPreset?: string,
-  initBlocks?: string[],
   baseTools?: string[],
 ) {
   // Support both old positional args and new options object
@@ -249,9 +242,7 @@ export async function createAgent(
       updateArgs,
       skillsDirectory,
       parallelToolCalls,
-      enableSleeptime,
       systemPromptPreset,
-      initBlocks,
       baseTools,
     };
   }
@@ -259,7 +250,8 @@ export async function createAgent(
   const name = options.name ?? DEFAULT_AGENT_NAME;
   const embeddingModelVal = options.embeddingModel;
   const parallelToolCallsVal = options.parallelToolCalls ?? true;
-  const enableSleeptimeVal = options.enableSleeptime ?? false;
+  // Subagents are ephemeral and don't carry memory blocks of their own.
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -300,7 +292,8 @@ export async function createAgent(
 
   // Determine which memory blocks to use:
   // 1. If options.memoryBlocks is provided, use those (custom blocks and/or block references)
-  // 2. Otherwise, use default blocks filtered by options.initBlocks
+  // 2. Subagents are ephemeral and get no memory blocks.
+  // 3. Otherwise, use the default blocks.
 
   // Separate block references from blocks to create
   const referencedBlockIds: string[] = [];
@@ -323,35 +316,8 @@ export async function createAgent(
     }
     filteredMemoryBlocks = createBlocks;
   } else {
-    // Load memory blocks from .mdx files
-    const defaultMemoryBlocks =
-      options.initBlocks && options.initBlocks.length === 0
-        ? []
-        : await getDefaultMemoryBlocks();
-
-    // Optional filter: only initialize a subset of memory blocks on creation
-    const allowedBlockLabels = options.initBlocks
-      ? new Set(
-          options.initBlocks.map((n) => n.trim()).filter((n) => n.length > 0),
-        )
-      : undefined;
-
-    if (allowedBlockLabels && allowedBlockLabels.size > 0) {
-      const knownLabels = new Set(defaultMemoryBlocks.map((b) => b.label));
-      for (const label of Array.from(allowedBlockLabels)) {
-        if (!knownLabels.has(label)) {
-          console.warn(
-            `Ignoring unknown init block "${label}". Valid blocks: ${Array.from(knownLabels).join(", ")}`,
-          );
-          allowedBlockLabels.delete(label);
-        }
-      }
-    }
-
-    filteredMemoryBlocks =
-      allowedBlockLabels && allowedBlockLabels.size > 0
-        ? defaultMemoryBlocks.filter((b) => allowedBlockLabels.has(b.label))
-        : defaultMemoryBlocks;
+    // Subagents get no blocks; everyone else gets the default .mdx blocks.
+    filteredMemoryBlocks = isSubagent ? [] : await getDefaultMemoryBlocks();
   }
 
   // Apply blockValues overrides to preset blocks
@@ -362,7 +328,7 @@ export async function createAgent(
         block.value = value;
       } else {
         console.warn(
-          `Ignoring --block-value for "${label}" - block not included in memory config`,
+          `Ignoring block value override for "${label}" - block not included in memory config`,
         );
       }
     }
@@ -383,7 +349,7 @@ export async function createAgent(
   }
 
   // Get the model's context window from its configuration (if known).
-  // If the caller specified a model *ID* (e.g. gpt-5.3-codex-plus-pro-high),
+  // If the caller specified a model *ID* (e.g. gpt-5.5-plus-pro-high),
   // use that identifier to preserve tier-specific updateArgs like reasoning_effort.
   // Otherwise, fall back to the resolved handle.
   const modelIdentifierForDefaults = options.model ?? modelHandle;
@@ -403,7 +369,6 @@ export async function createAgent(
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline
   // - block_ids: references to existing blocks (for shared memory)
-  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
   const tags = buildCreatedAgentTags({
     tags: options.tags,
     isSubagent,
@@ -433,7 +398,6 @@ export async function createAgent(
     include_base_tool_rules: false,
     initial_message_sequence: [],
     parallel_tool_calls: parallelToolCallsVal,
-    enable_sleeptime: enableSleeptimeVal,
     compaction_settings: {
       model: DEFAULT_SUMMARIZATION_MODEL,
     },
@@ -466,34 +430,8 @@ export async function createAgent(
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
   const fullAgent = await backend.retrieveAgent(agent.id, {
-    include: ["agent.managed_group", "agent.tags"],
+    include: ["agent.tags"],
   });
-
-  // Update persona block for sleeptime agent
-  if (enableSleeptimeVal && fullAgent.managed_group) {
-    const client = await getClient();
-    // Find the sleeptime agent in the managed group by checking agent_type
-    for (const groupAgentId of fullAgent.managed_group.agent_ids) {
-      try {
-        const groupAgent = await client.agents.retrieve(groupAgentId);
-        if (groupAgent.agent_type === "sleeptime_agent") {
-          // Update the persona block on the SLEEPTIME agent, not the primary agent
-          await client.agents.blocks.update("memory_persona", {
-            agent_id: groupAgentId,
-            value: SLEEPTIME_MEMORY_PERSONA,
-            description:
-              "Instructions for the sleep-time memory management agent",
-          });
-          break; // Found and updated sleeptime agent
-        }
-      } catch (error) {
-        console.warn(
-          `Failed to check/update agent ${groupAgentId}:`,
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
-  }
 
   // Persist system prompt preset — only for non-subagents and known presets or custom.
   // Guarded by isReady since settings may not be initialized in direct/test callers.

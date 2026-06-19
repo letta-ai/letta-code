@@ -728,6 +728,40 @@ function inferAccountIdFromChannelTurnSources(params: {
   return accountIds.size === 1 ? [...accountIds][0] : undefined;
 }
 
+function inferThreadIdFromChannelTurnSources(params: {
+  input: NormalizedMessageChannelInput;
+  scope: { agentId: string; conversationId: string };
+  accountId?: string;
+  channelTurnSources?: ChannelTurnSource[];
+}): string | null | undefined {
+  if (!params.input.chatId || params.input.threadId !== null) {
+    return undefined;
+  }
+
+  const threadIds = new Set<string | null>();
+  for (const source of params.channelTurnSources ?? []) {
+    if (
+      source.channel !== params.input.channel ||
+      source.chatId !== params.input.chatId ||
+      source.agentId !== params.scope.agentId ||
+      source.conversationId !== params.scope.conversationId
+    ) {
+      continue;
+    }
+    if (params.accountId && source.accountId !== params.accountId) {
+      continue;
+    }
+
+    threadIds.add(
+      source.threadId ??
+        (params.input.channel === "slack" ? source.messageId : null) ??
+        null,
+    );
+  }
+
+  return threadIds.size === 1 ? [...threadIds][0] : undefined;
+}
+
 async function resolveExplicitMessageChannelContext(params: {
   input: NormalizedMessageChannelInput;
   scope: { agentId: string; conversationId: string };
@@ -828,11 +862,17 @@ export async function message_channel(
       }
 
       const plugin = await loadChannelPlugin(input.channel);
+      const inferredThreadId = inferThreadIdFromChannelTurnSources({
+        input,
+        scope,
+        accountId: resolvedAccountId,
+        channelTurnSources: args.channelTurnSources,
+      });
       executionContext = {
         request: buildMessageChannelRequest(
           input,
           input.chatId,
-          input.threadId,
+          inferredThreadId ?? input.threadId,
         ),
         route,
         adapter,

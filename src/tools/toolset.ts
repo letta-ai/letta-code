@@ -7,7 +7,9 @@ import { getSupportedChannelIds } from "@/channels/plugin-registry";
 import { getChannelRegistry } from "@/channels/registry";
 import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
 import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
-import type { ExtensionEvents } from "@/extensions/event-emitter";
+import { buildModInvocationContext } from "@/mods/context";
+import type { ModEvents } from "@/mods/event-emitter";
+import type { ModContext } from "@/mods/types";
 import {
   type InheritedChannelContextPayload,
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
@@ -193,11 +195,14 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   toolsetPreference: ToolsetPreference;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
+  externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
-  extensionEvents?: ExtensionEvents;
+  modContext?: ModContext;
+  modEvents?: ModEvents;
   runtimeContext?: Partial<RuntimeContextSnapshot>;
+  agent?: AgentState | null;
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
@@ -205,11 +210,14 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     toolsetPreference,
     exclude,
     clientToolAllowlist,
+    externalToolScopeIds,
     workingDirectory,
     permissionModeState,
     channelToolScope,
-    extensionEvents,
+    modContext,
+    modEvents,
     runtimeContext,
+    agent,
   } = params;
   const effectiveModel =
     modelIdentifier && modelIdentifier.length > 0
@@ -220,6 +228,16 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     const derivedToolset = effectiveModel
       ? deriveToolsetFromModel(effectiveModel)
       : "default";
+    const scopedModContext = buildModInvocationContext({
+      agent,
+      base: modContext,
+      conversationId,
+      modelIdentifier: effectiveModel,
+      permissionMode:
+        permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
+      toolset: derivedToolset,
+      workingDirectory,
+    });
     const preparedToolContext = await prepareToolExecutionContextForModel(
       effectiveModel ?? undefined,
       {
@@ -231,10 +249,12 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
           ? getGoalToolNamesForToolset(derivedToolset)
           : undefined,
         clientToolAllowlist,
+        externalToolScopeIds,
         workingDirectory,
         permissionModeState,
         channelToolScope,
-        extensionEvents,
+        modContext: scopedModContext,
+        modEvents,
         runtimeContext,
       },
     );
@@ -248,6 +268,16 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     };
   }
 
+  const scopedModContext = buildModInvocationContext({
+    agent,
+    base: modContext,
+    conversationId,
+    modelIdentifier: effectiveModel,
+    permissionMode:
+      permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
+    toolset: toolsetPreference,
+    workingDirectory,
+  });
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     filterBuiltInToolNamesByClientAllowlist(
       appendUniqueTools(
@@ -262,10 +292,12 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     ),
     {
       clientToolAllowlist,
+      externalToolScopeIds,
       workingDirectory,
       permissionModeState,
       channelToolScope,
-      extensionEvents,
+      modContext: scopedModContext,
+      modEvents,
       runtimeContext,
     },
   );
@@ -300,7 +332,8 @@ export function resolveConversationChannelToolScope(
       if (
         route.agentId !== agentId ||
         route.conversationId !== conversationId ||
-        !route.enabled
+        !route.enabled ||
+        route.outboundEnabled === false
       ) {
         continue;
       }
@@ -430,11 +463,13 @@ export async function prepareToolExecutionContextForScope(params: {
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
+  externalToolScopeIds?: string[];
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   cachedAgent?: AgentState | null;
   channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
-  extensionEvents?: ExtensionEvents;
+  modContext?: ModContext;
+  modEvents?: ModEvents;
 }): Promise<PreparedScopeToolContext> {
   const {
     agentId,
@@ -443,11 +478,13 @@ export async function prepareToolExecutionContextForScope(params: {
     cachedEffectiveModel,
     exclude,
     clientToolAllowlist,
+    externalToolScopeIds,
     workingDirectory,
     permissionModeState,
     cachedAgent,
     channelTurnSources: explicitChannelTurnSources,
-    extensionEvents,
+    modContext,
+    modEvents,
   } = params;
 
   const backend = getBackend();
@@ -505,9 +542,12 @@ export async function prepareToolExecutionContextForScope(params: {
     toolsetPreference,
     exclude,
     clientToolAllowlist,
+    externalToolScopeIds,
     workingDirectory,
     permissionModeState,
-    extensionEvents,
+    modContext,
+    modEvents,
+    agent: agent as AgentState,
     runtimeContext: {
       agentId,
       conversationId: scopedConversationId,

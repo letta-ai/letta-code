@@ -368,14 +368,14 @@ export function handleMemoryProtocolCommand(
   // ── Memory history (git log for a specific file) ─────────────────
   if (isMemoryHistoryCommand(parsed)) {
     runDetachedListenerTask("memory_history", async () => {
-      const { getMemoryFilesystemRoot } = await import(
+      const { getScopedMemoryFilesystemRoot } = await import(
         "@/agent/memory-filesystem"
       );
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFileAsync = promisify(execFileCb);
 
-      const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+      const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
       const limit = parsed.limit ?? 50;
 
       const gitArgs = ["log", `--max-count=${limit}`, "--format=%H|%s|%aI|%an"];
@@ -422,14 +422,14 @@ export function handleMemoryProtocolCommand(
   // ── Memory file at ref (git show for content at a commit) ────────
   if (isMemoryFileAtRefCommand(parsed)) {
     runDetachedListenerTask("memory_file_at_ref", async () => {
-      const { getMemoryFilesystemRoot } = await import(
+      const { getScopedMemoryFilesystemRoot } = await import(
         "@/agent/memory-filesystem"
       );
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFileAsync = promisify(execFileCb);
 
-      const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+      const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
 
       try {
         const { stdout } = await execFileAsync(
@@ -475,14 +475,14 @@ export function handleMemoryProtocolCommand(
   // ── Memory commit diff (git show for full commit patch) ────────────
   if (isMemoryCommitDiffCommand(parsed)) {
     runDetachedListenerTask("memory_commit_diff", async () => {
-      const { getMemoryFilesystemRoot } = await import(
+      const { getScopedMemoryFilesystemRoot } = await import(
         "@/agent/memory-filesystem"
       );
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFileAsync = promisify(execFileCb);
 
-      const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+      const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
 
       try {
         const { stdout } = await execFileAsync(
@@ -547,7 +547,7 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getMemoryFilesystemRoot,
+          getScopedMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
@@ -562,7 +562,7 @@ export function handleMemoryProtocolCommand(
           sendFailure("path must be a non-empty relative path");
           return;
         }
-        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
@@ -649,7 +649,7 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getMemoryFilesystemRoot,
+          getScopedMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
@@ -666,7 +666,7 @@ export function handleMemoryProtocolCommand(
           );
           return;
         }
-        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
@@ -743,6 +743,21 @@ export function handleMemoryProtocolCommand(
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
 
+        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        if (commitResult.committed && !memorySyncMode) {
+          const { syncPendingMemoryCommitsAfterTurn } = await import(
+            "@/agent/memory-git"
+          );
+          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
+            memoryDir: memoryRoot,
+          }).catch((err) => {
+            console.warn(
+              `[write_memory_file] background push failed for ${parsed.agent_id}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
+        }
+
         // ── Notify UI so the memory view auto-refreshes ────────────────
         if (commitResult.committed) {
           safeSocketSend(
@@ -809,7 +824,7 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getMemoryFilesystemRoot,
+          getScopedMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
@@ -827,7 +842,7 @@ export function handleMemoryProtocolCommand(
           );
           return;
         }
-        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
@@ -918,6 +933,21 @@ export function handleMemoryProtocolCommand(
           },
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
+
+        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        if (commitResult.committed && !memorySyncMode) {
+          const { syncPendingMemoryCommitsAfterTurn } = await import(
+            "@/agent/memory-git"
+          );
+          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
+            memoryDir: memoryRoot,
+          }).catch((err) => {
+            console.warn(
+              `[delete_memory_file] background push failed for ${parsed.agent_id}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
+        }
 
         if (commitResult.committed) {
           safeSocketSend(

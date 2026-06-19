@@ -1,3 +1,13 @@
+import {
+  appendFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 type TimerHandle = ReturnType<typeof setTimeout>;
 
 export interface BackgroundProcessHandle {
@@ -34,6 +44,7 @@ export interface BackgroundTask {
 
 export const backgroundProcesses = new Map<string, BackgroundProcess>();
 export const backgroundTasks = new Map<string, BackgroundTask>();
+let backgroundOutputDir: string | undefined;
 let bashIdCounter = 1;
 export function getNextBashId() {
   return `bash_${bashIdCounter++}`;
@@ -257,33 +268,46 @@ export function setBackgroundTaskOutput(
 
 /**
  * Get a temp directory for background task output files.
- * Uses LETTA_SCRATCHPAD if set, otherwise falls back to os.tmpdir().
+ * Uses LETTA_SCRATCHPAD if set. Otherwise creates one private temp directory
+ * for this process so fixed log filenames do not collide across users or runs.
  */
 export function getBackgroundOutputDir(): string {
   const scratchpad = process.env.LETTA_SCRATCHPAD;
   if (scratchpad) {
     return scratchpad;
   }
-  // Fall back to system temp with a letta-specific subdirectory
-  const os = require("node:os");
-  const path = require("node:path");
-  return path.join(os.tmpdir(), "letta-background");
+
+  if (!backgroundOutputDir) {
+    backgroundOutputDir = mkdtempSync(join(tmpdir(), "letta-background-"));
+    chmodSync(backgroundOutputDir, 0o700);
+  }
+
+  return backgroundOutputDir;
+}
+
+export function __resetBackgroundOutputDirForTests(): void {
+  backgroundOutputDir = undefined;
+}
+
+function ensureBackgroundOutputDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+  if (!process.env.LETTA_SCRATCHPAD) {
+    chmodSync(dir, 0o700);
+  }
 }
 
 /**
  * Create a unique output file path for a background process/task.
  */
 export function createBackgroundOutputFile(id: string): string {
-  const fs = require("node:fs");
-  const path = require("node:path");
   const dir = getBackgroundOutputDir();
 
-  // Ensure directory exists
-  fs.mkdirSync(dir, { recursive: true });
+  ensureBackgroundOutputDir(dir);
 
-  const filePath = path.join(dir, `${id}.log`);
-  // Create empty file
-  fs.writeFileSync(filePath, "");
+  const filePath = join(dir, `${id}.log`);
+  writeFileSync(filePath, "", { mode: 0o600 });
+  chmodSync(filePath, 0o600);
   return filePath;
 }
 
@@ -291,6 +315,5 @@ export function createBackgroundOutputFile(id: string): string {
  * Append content to a background output file.
  */
 export function appendToOutputFile(filePath: string, content: string): void {
-  const fs = require("node:fs");
-  fs.appendFileSync(filePath, content);
+  appendFileSync(filePath, content);
 }

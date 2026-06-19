@@ -889,6 +889,67 @@ test("slack adapter allows file_share subtype messages through", async () => {
   );
 });
 
+test("slack adapter passes transcription opt-in to message and app_mention media resolution", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    transcribeVoice: true,
+  });
+
+  adapter.onMessage = mock(async () => {});
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const messageHandler = app?.messageHandler;
+  const mentionHandler = app?.eventHandlers.get("app_mention");
+  if (!messageHandler || !mentionHandler) {
+    throw new Error("Expected Slack handlers");
+  }
+
+  await messageHandler({
+    message: {
+      channel: "D123",
+      user: "U123",
+      text: "voice note",
+      ts: "1712800000.000100",
+    },
+  });
+  await mentionHandler({
+    event: {
+      channel: "C123",
+      user: "U123",
+      text: "<@U0AS42PTEAX> voice note",
+      ts: "1712800000.000101",
+    },
+  });
+
+  expect(resolveSlackInboundAttachmentsMock).toHaveBeenCalledTimes(2);
+  expect(resolveSlackInboundAttachmentsMock).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({
+      accountId: "slack-test-account",
+      token: "xoxb-test-token-1234567890",
+      rawEvent: expect.objectContaining({ channel: "D123" }),
+      transcribeVoice: true,
+    }),
+  );
+  expect(resolveSlackInboundAttachmentsMock).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({
+      accountId: "slack-test-account",
+      token: "xoxb-test-token-1234567890",
+      rawEvent: expect.objectContaining({ channel: "C123" }),
+      transcribeVoice: true,
+    }),
+  );
+});
+
 test("slack adapter allows thread_broadcast subtype replies through", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -1173,6 +1234,67 @@ test("slack adapter adds eyes while a queued turn is processing, then swaps to c
     channel: "C123",
     timestamp: "1712800000.000100",
     name: "white_check_mark",
+  });
+});
+
+test("slack adapter can suppress the completed checkmark while preserving queued eyes", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    showCompletedReaction: false,
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000150",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "C123",
+        chatType: "channel",
+        messageId: "1712800000.000150",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.add).toHaveBeenCalledTimes(1);
+  expect(writeClient?.reactions.add).toHaveBeenCalledWith({
+    channel: "C123",
+    timestamp: "1712800000.000150",
+    name: "eyes",
+  });
+  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
+    channel: "C123",
+    timestamp: "1712800000.000150",
+    name: "eyes",
   });
 });
 

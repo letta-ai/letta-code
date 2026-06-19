@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 
 import { getCurrentAgentId } from "@/agent/context";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 
 export interface ResolveAllowedMemoryRootsOptions {
   env?: NodeJS.ProcessEnv;
@@ -150,10 +150,10 @@ function getFallbackRoots(
   let primaryRoot: string | null = null;
 
   if (resolvedCurrentAgentId) {
-    const currentRoot = getMemoryFilesystemRoot(
-      resolvedCurrentAgentId,
+    const currentRoot = getScopedMemoryFilesystemRoot(resolvedCurrentAgentId, {
       homeDir,
-    );
+      env,
+    });
     addRootAndSiblingWorktree(currentRoot, fallbackRoots);
     primaryRoot = normalizeMemoryPath(currentRoot);
   }
@@ -162,7 +162,10 @@ function getFallbackRoots(
     resolvedParentAgentId &&
     resolvedParentAgentId !== resolvedCurrentAgentId
   ) {
-    const parentRoot = getMemoryFilesystemRoot(resolvedParentAgentId, homeDir);
+    const parentRoot = getScopedMemoryFilesystemRoot(resolvedParentAgentId, {
+      homeDir,
+      env,
+    });
     addRootAndSiblingWorktree(parentRoot, fallbackRoots);
     if (!primaryRoot) {
       primaryRoot = normalizeMemoryPath(parentRoot);

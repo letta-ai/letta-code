@@ -22,6 +22,7 @@ type ModelSettings =
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return (
+    modelHandle.includes("claude-fable-5") ||
     modelHandle.includes("claude-opus-4-7") ||
     modelHandle.includes("claude-opus-4-8")
   );
@@ -99,7 +100,7 @@ function buildModelSettings(
     if (effort === "low" || effort === "medium" || effort === "high") {
       anthropicSettings.effort = effort;
     } else if (effort === "xhigh") {
-      // "xhigh" is distinct on Opus 4.7+; older Anthropic models map it to backend "max".
+      // "xhigh" is distinct on Fable and Opus 4.7+; older Anthropic models map it to backend "max".
       (anthropicSettings as Record<string, unknown>).effort = hasDistinctXHigh
         ? "xhigh"
         : "max";
@@ -274,7 +275,13 @@ function maxTokensForUpdatePayload(
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
 export interface UpdateAgentLLMConfigOptions {
-  preserveContextWindow?: boolean;
+  /**
+   * When true, do not derive and send a default context_window_limit unless the
+   * caller explicitly supplied updateArgs.context_window. This is for updates to
+   * existing agent/conversation model settings where omitting the field lets the
+   * backend keep its current value.
+   */
+  avoidOverwritingExistingContextWindow?: boolean;
 }
 
 export async function updateAgentLLMConfig(
@@ -293,11 +300,12 @@ export async function updateAgentLLMConfig(
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
     : (updateArgs?.context_window as number | undefined);
-  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  const shouldAvoidOverwritingExistingContextWindow =
+    options?.avoidOverwritingExistingContextWindow === true;
   // Resume refresh updates should not implicitly reset context window.
   const contextWindow =
     explicitContextWindow ??
-    (!shouldPreserveContextWindow
+    (!shouldAvoidOverwritingExistingContextWindow
       ? await getModelContextWindow(modelHandle)
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
@@ -345,10 +353,11 @@ export async function updateConversationLLMConfig(
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
     : (updateArgs?.context_window as number | undefined);
-  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  const shouldAvoidOverwritingExistingContextWindow =
+    options?.avoidOverwritingExistingContextWindow === true;
   const contextWindow =
     explicitContextWindow ??
-    (!shouldPreserveContextWindow
+    (!shouldAvoidOverwritingExistingContextWindow
       ? await getModelContextWindow(modelHandle)
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;

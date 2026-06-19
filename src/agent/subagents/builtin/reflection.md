@@ -3,7 +3,6 @@ name: reflection
 description: Background agent that reflects on recent conversations and updates memory files
 tools: Bash
 model: inherit
-memoryBlocks: none
 mode: stateless
 permissionMode: memory
 ---
@@ -129,4 +128,5 @@ Return a report with:
 2. **Be selective** — Few meaningful changes > many trivial ones
 3. **No relative dates** — Use absolute dates like "2026-04-28", not "today"
 4. **Always commit durable changes** — Your work is wasted if it is not committed
-5. **Report errors clearly** — If something breaks, say what happened and suggest a fix
+5. **Encoding** — Memory markdown files must remain UTF-8. On Windows, do not use PowerShell redirection, `Out-File`, or `Set-Content` without explicit UTF-8 encoding; prefer `memory_apply_patch` or Node fs writes with UTF-8.
+6. **Report errors clearly** — If something breaks, say what happened and suggest a fix

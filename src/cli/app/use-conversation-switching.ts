@@ -32,8 +32,6 @@ import {
 } from "@/backend";
 import { getServerUrl } from "@/backend/api/client";
 import type { BtwState } from "@/cli/components/BtwPane";
-import type { ExtensionConversationCloseReason } from "@/cli/extensions/types";
-import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import {
   type Buffers,
   extractTextPart,
@@ -50,6 +48,8 @@ import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switc
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
+import type { ModConversationCloseReason } from "@/cli/mods/types";
+import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { runSessionStartHooks } from "@/hooks";
 import { updateProjectSettings } from "@/settings";
 import { settingsManager } from "@/settings-manager";
@@ -82,7 +82,7 @@ type ConversationSwitchingContext = {
   currentModelHandle: string | null;
   currentModelId: string | null;
   emittedIdsRef: MutableRefObject<Set<string>>;
-  extensionAdapter: LocalExtensionAdapter;
+  modAdapter: LocalModAdapter;
   hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   maybeCarryOverActiveConversationModel: (
@@ -100,7 +100,7 @@ type ConversationSwitchingContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
+  runEndHooks: (reason?: ModConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   setActiveOverlay: Dispatch<SetStateAction<ActiveOverlay>>;
@@ -141,7 +141,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     currentModelHandle,
     currentModelId,
     emittedIdsRef,
-    extensionAdapter,
+    modAdapter,
     hasBackfilledRef,
     isAgentBusy,
     maybeCarryOverActiveConversationModel,
@@ -434,13 +434,17 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           })
           .catch(() => {});
         sessionHooksRanRef.current = true;
-        void extensionAdapter.events.emit("conversation_open", {
-          agentId,
-          agentName: agentName ?? null,
-          conversationId,
-          previousConversationId,
-          reason: "resume",
-        });
+        void modAdapter.events.emit(
+          "conversation_open",
+          {
+            agentId,
+            agentName: agentName ?? null,
+            conversationId,
+            previousConversationId,
+            reason: "resume",
+          },
+          modAdapter.context,
+        );
 
         setCommandRunning(false);
 
@@ -468,7 +472,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       setCommandRunning,
       setStreaming,
       recoverRestoredPendingApprovals,
-      extensionAdapter,
+      modAdapter,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
       abortControllerRef,

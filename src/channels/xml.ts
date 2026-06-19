@@ -51,6 +51,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     `This is an external ${escapedChannel} turn. Plain assistant text is not delivered to the user.`,
     `If you should reply to the external user, use MessageChannel with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
     "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
+    'For lightweight acknowledgement, prefer MessageChannel action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.',
     "Do not produce a plain text assistant response as the user-visible reply.",
     "On supported channels, MessageChannel can also send proactively using channel + target (and accountId when needed).",
     "Only pass replyTo if you intentionally want the platform's quote/reply UI.",
@@ -136,6 +137,15 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
   }
 
   return `<attachment ${attrs.join(" ")} />`;
+}
+
+function canEmitInlineImageContentPart(mimeType: string): boolean {
+  const normalized = mimeType.split(";")[0]?.trim().toLowerCase();
+  return (
+    !!normalized &&
+    normalized.startsWith("image/") &&
+    normalized !== "image/svg+xml"
+  );
 }
 
 function buildReactionXml(msg: InboundChannelMessage): string | null {
@@ -309,7 +319,7 @@ export function formatChannelNotification(
         typeof attachment.imageDataBase64 !== "string" ||
         attachment.imageDataBase64.length === 0 ||
         typeof attachment.mimeType !== "string" ||
-        !attachment.mimeType.startsWith("image/")
+        !canEmitInlineImageContentPart(attachment.mimeType)
       ) {
         return [];
       }

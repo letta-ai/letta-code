@@ -1,5 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import {
+  GIT_MEMORY_ENABLED_TAG,
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";
@@ -319,7 +320,22 @@ export class LocalBackend extends HeadlessBackend {
   override async createAgent(
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
-    const [body] = args;
+    let [body, ...restArgs] = args;
+    // When local memfs is enabled, stamp the git-memory-enabled tag on the
+    // agent body so all downstream tag-checking paths (isMemfsEnabledOnServer,
+    // memfs-sync, etc.) see this agent as memfs-enabled from creation.
+    if (this.isLocalMemfsEnabled()) {
+      const bodyRecord = body as Record<string, unknown>;
+      const existingTags = Array.isArray(bodyRecord.tags)
+        ? (bodyRecord.tags as string[])
+        : [];
+      if (!existingTags.includes(GIT_MEMORY_ENABLED_TAG)) {
+        body = {
+          ...bodyRecord,
+          tags: [...existingTags, GIT_MEMORY_ENABLED_TAG],
+        } as typeof body;
+      }
+    }
     const requestedCompactionSettings = compactionSettingsRecord(
       (body as Record<string, unknown>).compaction_settings,
     );
@@ -332,7 +348,7 @@ export class LocalBackend extends HeadlessBackend {
     const compactionSettingsForStorage = localCompactionSettingsForStorage(
       requestedCompactionSettings,
     );
-    let agent = await super.createAgent(...args);
+    let agent = await super.createAgent(body, ...restArgs);
     if (compactionSettingsForStorage !== undefined) {
       agent = this.store.setAgentCompactionSettings(
         agent.id,
@@ -567,6 +583,46 @@ export class LocalBackend extends HeadlessBackend {
       : undefined;
   }
 
+  /**
+   * Resolve the model that compaction should use for a conversation.
+   *
+   * A normal turn runs on the conversation's model override (set via `/model`),
+   * but compaction previously read only the agent's base model — so switching
+   * a conversation's model never changed which model compaction (and its
+   * summarizer) used. This overlays the conversation's `model` / `model_settings`
+   * onto the agent record so compaction mirrors the turn path.
+   */
+  private effectiveAgentForConversation(
+    conversationId: string,
+    agentId: string,
+  ): LocalAgentRecord {
+    const agent = this.store.retrieveAgentRecord(agentId);
+    const conversation = this.store.retrieveConversation(
+      conversationId,
+      agentId,
+    ) as { model?: unknown; model_settings?: unknown };
+    const model =
+      typeof conversation.model === "string" ? conversation.model : undefined;
+    const conversationModelSettings = isRecord(conversation.model_settings)
+      ? conversation.model_settings
+      : undefined;
+    if (model === undefined && conversationModelSettings === undefined) {
+      return agent;
+    }
+    return {
+      ...agent,
+      ...(model !== undefined ? { model } : {}),
+      ...(conversationModelSettings !== undefined
+        ? {
+            model_settings: {
+              ...agent.model_settings,
+              ...conversationModelSettings,
+            },
+          }
+        : {}),
+    };
+  }
+
   private resolveCompactionSettings(
     agent: LocalAgentRecord,
     body?: ConversationMessageCompactBody,
@@ -635,7 +691,7 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats: LocalCompactionStats;
   }> {
-    const agent = this.store.retrieveAgentRecord(agentId);
+    const agent = this.effectiveAgentForConversation(conversationId, agentId);
     const settings = this.resolveCompactionSettings(agent, body);
     let result: {
       numMessagesBefore: number;

@@ -15,7 +15,6 @@ import {
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
@@ -56,7 +55,6 @@ import { ConversationSelector } from "./cli/components/ConversationSelector";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
-  parseJsonArrayFlag,
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
@@ -78,10 +76,7 @@ import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
 } from "./cli/subcommands/router";
-import {
-  disableExtensionsForProcess,
-  shouldDisableExtensions,
-} from "./extensions/disable";
+import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import { applyStartupPermissionMode } from "./permissions/startup";
 import {
   type Settings,
@@ -186,6 +181,7 @@ USAGE
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
+  letta app-server ...  Run local app-server websocket transport
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
@@ -209,6 +205,7 @@ SUBCOMMANDS
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
+  letta app-server [--listen ws://127.0.0.1:4500]
   letta connect <provider> [options]
   letta install <skill> [--agent <id> | -n <name>]
   letta skills list [--agent <id> | -n <name>]
@@ -749,7 +746,7 @@ async function main(): Promise<void> {
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
   // Parse command-line arguments from a shared schema used by both TUI and headless flows.
-  // Preprocess args to support --conv as an alias for --conversation.
+  // Preprocess args to support legacy aliases before strict parsing.
   const processedArgs = preprocessCliArgs([
     process.argv[0] ?? "node",
     process.argv[1] ?? "letta",
@@ -822,7 +819,6 @@ async function main(): Promise<void> {
   // --new: Create a new conversation (for concurrent sessions)
   const forceNewConversation = values.new ?? false;
 
-  const initBlocksRaw = values["init-blocks"];
   const baseToolsRaw = values["base-tools"];
   let specifiedAgentId = values.agent ?? null;
   try {
@@ -881,7 +877,6 @@ async function main(): Promise<void> {
   const systemPromptPreset = values.system ?? undefined;
   const systemCustom = values["system-custom"] ?? undefined;
   const personalityInput = values.personality ?? undefined;
-  const memoryBlocksJson = values["memory-blocks"] ?? undefined;
   const specifiedToolset = values.toolset ?? undefined;
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
@@ -890,11 +885,11 @@ async function main(): Promise<void> {
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const noSystemInfoReminderFlag = values["no-system-info-reminder"];
-  const extensionsDisabled = shouldDisableExtensions({
-    cliFlag: values["no-extensions"],
+  const modsDisabled = shouldDisableMods({
+    cliFlag: values["no-mods"],
   });
-  if (extensionsDisabled) {
-    disableExtensionsForProcess();
+  if (modsDisabled) {
+    disableModsForProcess();
   }
   const resolvedSkillSources = (() => {
     try {
@@ -1046,16 +1041,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // --init-blocks only makes sense when creating a brand new agent
-  if (initBlocksRaw && !forceNew) {
-    console.error(
-      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
-    );
-    process.exit(1);
-  }
-
-  const initBlocks = parseCsvListFlag(initBlocksRaw);
-
   // --base-tools only makes sense when creating a brand new agent
   if (baseToolsRaw && !forceNew) {
     console.error(
@@ -1077,12 +1062,6 @@ async function main(): Promise<void> {
   }
   if (personalityInput && !forceNew) {
     console.error("Error: --personality can only be used with --new-agent");
-    process.exit(1);
-  }
-  if (personalityInput && (memoryBlocksJson || initBlocksRaw)) {
-    console.error(
-      "Error: --personality cannot be combined with --memory-blocks or --init-blocks",
-    );
     process.exit(1);
   }
 
@@ -1128,35 +1107,6 @@ async function main(): Promise<void> {
       );
       console.error(
         `Error: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      process.exit(1);
-    }
-  }
-
-  // Parse memory blocks JSON if provided
-  let memoryBlocks:
-    | Array<{ label: string; value: string; description?: string }>
-    | undefined;
-  if (memoryBlocksJson) {
-    try {
-      memoryBlocks = parseJsonArrayFlag(
-        memoryBlocksJson,
-        "memory-blocks",
-      ) as Array<{ label: string; value: string; description?: string }>;
-      // Validate each block has required fields
-      for (const block of memoryBlocks) {
-        if (
-          typeof block.label !== "string" ||
-          typeof block.value !== "string"
-        ) {
-          throw new Error(
-            "Each memory block must have 'label' and 'value' string fields",
-          );
-        }
-      }
-    } catch (error) {
-      console.error(
-        `Error: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
     }
@@ -1603,7 +1553,6 @@ async function main(): Promise<void> {
 
   function LoadingApp({
     forceNew,
-    initBlocks,
     baseTools,
     agentIdArg,
     preResolvedAgent,
@@ -1615,7 +1564,6 @@ async function main(): Promise<void> {
     isRegistryImport,
   }: {
     forceNew: boolean;
-    initBlocks?: string[];
     baseTools?: string[];
     agentIdArg: string | null;
     preResolvedAgent?: AgentState | null;
@@ -2401,7 +2349,6 @@ async function main(): Promise<void> {
             systemPromptPreset,
             systemPromptCustom: systemCustom,
             memoryPromptMode: effectiveMemoryMode,
-            initBlocks,
             baseTools,
           });
           agent = result.agent;
@@ -2566,7 +2513,7 @@ async function main(): Promise<void> {
                   agent.id,
                   presetRefresh.modelHandle,
                   resumeRefreshUpdateArgs,
-                  { preserveContextWindow: true },
+                  { avoidOverwritingExistingContextWindow: true },
                 );
               }
             }
@@ -2688,7 +2635,6 @@ async function main(): Promise<void> {
           // --new flag: create a new conversation (for concurrent sessions)
           const conversation = await backend.createConversation({
             agent_id: agent.id,
-            isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
           });
           conversationIdToUse = conversation.id;
         } else {
@@ -2902,7 +2848,7 @@ async function main(): Promise<void> {
         startupHasAvailableLocalModels,
         releaseNotes,
         systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-        extensionsDisabled,
+        modsDisabled,
         fileAutocompleteFdPath,
       });
     }
@@ -2927,7 +2873,7 @@ async function main(): Promise<void> {
       releaseNotes,
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-      extensionsDisabled,
+      modsDisabled,
       fileAutocompleteFdPath,
     });
   }
@@ -2936,7 +2882,6 @@ async function main(): Promise<void> {
   render(
     React.createElement(LoadingApp, {
       forceNew: forceNew,
-      initBlocks: initBlocks,
       baseTools: baseTools,
       agentIdArg: specifiedAgentId,
       preResolvedAgent: nameResolvedAgent,

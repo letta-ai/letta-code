@@ -10,16 +10,23 @@ import {
 import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 import {
   applyPiEnvOverrides,
+  reasoningForSettings,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
+import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
+import { resolveAvailableLocalModelForTurn } from "./local-model-config";
 import type { LocalAgentRecord } from "./local-types";
 
 const ALL_WORD_LIMIT = 500;
 const SLIDING_WORD_LIMIT = 300;
 const SUMMARY_TRUNCATION_SUFFIX = "... [summary truncated to fit]";
 export const LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS = 2_000;
+const FABLE_5_MODEL_ID = "claude-fable-5";
+const FABLE_COMPACTION_SUMMARY_FALLBACK_MODEL = "anthropic/claude-opus-4-8";
+const FABLE_COMPACTION_SUMMARY_FALLBACK_CONTEXT_WINDOW = 1_000_000;
+const FABLE_COMPACTION_SUMMARY_FALLBACK_MAX_TOKENS = 128_000;
 const TRANSCRIPT_FALLBACK_MAX_CHARS = 120000;
 const TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS = [
   TRANSCRIPT_FALLBACK_MAX_CHARS,
@@ -363,28 +370,88 @@ async function defaultComplete(
   return completeSimple(model, context, options);
 }
 
+function isFableModel(model: Model<string>): boolean {
+  return model.id.includes(FABLE_5_MODEL_ID);
+}
+
+function fableCompactionSummaryFallbackSettings(
+  modelSettings: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...modelSettings,
+    provider_type: "anthropic",
+    parallel_tool_calls:
+      typeof modelSettings.parallel_tool_calls === "boolean"
+        ? modelSettings.parallel_tool_calls
+        : true,
+    context_window_limit:
+      typeof modelSettings.context_window_limit === "number"
+        ? modelSettings.context_window_limit
+        : FABLE_COMPACTION_SUMMARY_FALLBACK_CONTEXT_WINDOW,
+    max_tokens:
+      typeof modelSettings.max_tokens === "number"
+        ? modelSettings.max_tokens
+        : FABLE_COMPACTION_SUMMARY_FALLBACK_MAX_TOKENS,
+  };
+}
+
 async function runGenerateText(
   input: LocalAllCompactionInput,
   transcript: string,
   defaultPrompt: string,
 ): Promise<{ text: string }> {
   const systemPrompt = input.prompt ?? defaultPrompt;
-  const resolved = await resolvePiModelForAgent(
-    input.agent.model,
-    input.agent.model_settings,
+  let localModel = await resolveAvailableLocalModelForTurn({
+    model: input.agent.model,
+    modelSettings: input.agent.model_settings,
+    storageDir: input.localProviderAuthStorageDir,
+  });
+  let resolved = await resolvePiModelForAgent(
+    localModel.model,
+    localModel.modelSettings,
     { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
   );
+  if (
+    resolved.model.api === "anthropic-messages" &&
+    isFableModel(resolved.model)
+  ) {
+    // Fable 5 is a strong turn model, but compaction summaries can trip
+    // Anthropic's refusal path and pi-ai currently surfaces that as the opaque
+    // "An unknown error occurred". The summary model is an implementation
+    // detail of compaction, so avoid Fable for this auxiliary call while
+    // preserving the original Anthropic reasoning/settings shape.
+    localModel = await resolveAvailableLocalModelForTurn({
+      model: FABLE_COMPACTION_SUMMARY_FALLBACK_MODEL,
+      modelSettings: fableCompactionSummaryFallbackSettings(
+        localModel.modelSettings,
+      ),
+      storageDir: input.localProviderAuthStorageDir,
+    });
+    resolved = await resolvePiModelForAgent(
+      localModel.model,
+      localModel.modelSettings,
+      { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
+    );
+  }
   const run = input.complete ?? defaultComplete;
   const context: Context = {
     systemPrompt,
     messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
   };
+  const reasoning = reasoningForSettings(localModel.modelSettings);
   const options: SimpleStreamOptions & Record<string, unknown> = {
     ...resolved.providerOptions,
     ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
     ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
     ...(resolved.headers ? { headers: resolved.headers } : {}),
     ...(input.abortSignal ? { signal: input.abortSignal } : {}),
+    // Mirrors Pi's createSummarizationOptions, which passes the session
+    // thinking level into summarization requests. Required for adaptive
+    // thinking Anthropic models (for example claude-fable-5): without
+    // options.reasoning, pi-ai sends `thinking: {type: "disabled"}`, which
+    // those models reject with a 400 invalid_request_error — breaking every
+    // compaction (automatic and manual /compact).
+    ...(reasoning ? { reasoning } : {}),
     maxRetries: 0,
   };
   const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
@@ -579,11 +646,7 @@ export async function summarizeLocalMessagesSlidingWindow(
 }
 
 export function estimateLocalMessageTokens(messages: LocalMessage[]): number {
-  const chars = messages.reduce(
-    (total, message) => total + JSON.stringify(message).length,
-    0,
-  );
-  return Math.ceil(chars / 4);
+  return estimateLocalMessagesTokens(messages);
 }
 
 export function packageLocalSummaryMessage(

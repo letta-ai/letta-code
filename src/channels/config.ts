@@ -150,6 +150,8 @@ const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       groupMode: parseTelegramGroupMode(parsed.group_mode),
       transcribeVoice: parsed.transcribe_voice === true,
+      richPrivateChatDefault: parsed.rich_private_chat_default !== false,
+      richDraftStreaming: parsed.rich_draft_streaming === true,
     };
   },
 };
@@ -164,6 +166,9 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
       appToken: String(parsed.app_token ?? ""),
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      transcribeVoice: parsed.transcribe_voice === true,
+      showCompletedReaction: parsed.show_completed_reaction !== false,
+      listenMode: parsed.listen_mode === true,
     };
   },
 };

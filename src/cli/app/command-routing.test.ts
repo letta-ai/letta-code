@@ -7,20 +7,20 @@ describe("command routing", () => {
 
     expect(
       shouldSlashCommandBypassQueue("/reload", {
-        extensionCommand: { runWhenBusy: false },
+        modCommand: { runWhenBusy: false },
       }),
     ).toBe(false);
 
     expect(
       shouldSlashCommandBypassQueue("/review", {
-        extensionCommand: { runWhenBusy: true },
+        modCommand: { runWhenBusy: true },
       }),
     ).toBe(true);
 
     expect(
       shouldSlashCommandBypassQueue("/review", {
         hasCustomCommand: true,
-        extensionCommand: { runWhenBusy: true },
+        modCommand: { runWhenBusy: true },
       }),
     ).toBe(false);
   });

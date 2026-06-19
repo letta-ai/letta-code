@@ -68,7 +68,7 @@ export function SlashCommandAutocomplete({
   onActiveChange,
   agentId,
   workingDirectory = process.cwd(),
-  extensionCommands = {},
+  modCommands = {},
 }: AutocompleteProps) {
   const columns = useTerminalWidth();
   const terminalRows = useTerminalRows();
@@ -163,29 +163,27 @@ export function SlashCommandAutocomplete({
       }
     }
 
-    const extensionCommandMatches: CommandMatch[] = Object.values(
-      extensionCommands,
-    ).map((command) => ({
-      cmd: `/${command.id}`,
-      desc: `${command.description}${command.args ? ` ${command.args}` : ""} (extension)`,
-      order: command.order,
-    }));
+    const modCommandMatches: CommandMatch[] = Object.values(modCommands).map(
+      (command) => ({
+        cmd: `/${command.id}`,
+        desc: `${command.description}${command.args ? ` ${command.args}` : ""} (mod)`,
+        order: command.order,
+      }),
+    );
 
     const customCommandNames = new Set(customCommands.map((cmd) => cmd.cmd));
-    const extensionCommandNames = new Set(
-      extensionCommandMatches.map((cmd) => cmd.cmd),
-    );
+    const modCommandNames = new Set(modCommandMatches.map((cmd) => cmd.cmd));
     const visibleBuiltins = builtins.filter(
       (cmd) =>
-        !customCommandNames.has(cmd.cmd) && !extensionCommandNames.has(cmd.cmd),
+        !customCommandNames.has(cmd.cmd) && !modCommandNames.has(cmd.cmd),
     );
-    const visibleExtensionCommands = extensionCommandMatches.filter(
+    const visibleModCommands = modCommandMatches.filter(
       (cmd) => !customCommandNames.has(cmd.cmd),
     );
 
     const reservedCommands = new Set([
       ...visibleBuiltins.map((cmd) => cmd.cmd),
-      ...visibleExtensionCommands.map((cmd) => cmd.cmd),
+      ...visibleModCommands.map((cmd) => cmd.cmd),
       ...customCommands.map((cmd) => cmd.cmd),
     ]);
     const visibleSkillCommands = skillCommands.filter(
@@ -195,17 +193,11 @@ export function SlashCommandAutocomplete({
     // Merge command sources and sort by order.
     return [
       ...visibleBuiltins,
-      ...visibleExtensionCommands,
+      ...visibleModCommands,
       ...customCommands,
       ...visibleSkillCommands,
     ].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
-  }, [
-    agentId,
-    workingDirectory,
-    extensionCommands,
-    customCommands,
-    skillCommands,
-  ]);
+  }, [agentId, workingDirectory, modCommands, customCommands, skillCommands]);
 
   const queryInfo = useMemo(
     () => extractSearchQuery(currentInput, cursorPosition),

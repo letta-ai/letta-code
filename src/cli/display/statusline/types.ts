@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type * as DisplayComponents from "@/cli/display/DisplayComponents";
 import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
-import type { ExtensionContext } from "@/extensions/types";
+import type { ModContext } from "@/mods/types";
 
 export interface StatuslineUiContext {
   currentModelProvider: string | null;
@@ -13,7 +13,7 @@ export interface StatuslineUiContext {
   rightColumnWidth: number;
 }
 
-export interface StatuslineRenderContext extends ExtensionContext {
+export interface StatuslineRenderContext extends ModContext {
   rawPayload: StatusLinePayload;
   components: typeof DisplayComponents;
   statuses: Record<string, string>;

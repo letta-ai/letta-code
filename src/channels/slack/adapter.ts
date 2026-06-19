@@ -837,10 +837,15 @@ export function createSlackAdapter(
           } catch {}
         }
 
-        await sendLifecycleReaction(
-          source,
-          nextState === "completed" ? "white_check_mark" : "x",
-        );
+        if (
+          nextState !== "completed" ||
+          config.showCompletedReaction !== false
+        ) {
+          await sendLifecycleReaction(
+            source,
+            nextState === "completed" ? "white_check_mark" : "x",
+          );
+        }
         lifecycleStateByMessageKey.set(key, {
           state: nextState,
           updatedAt: Date.now(),
@@ -968,6 +973,7 @@ export function createSlackAdapter(
         accountId: config.accountId,
         token: config.botToken,
         rawEvent: message,
+        transcribeVoice: config.transcribeVoice === true,
       });
       const chatType = resolveSlackChatType(channelId);
       const threadId =
@@ -1108,6 +1114,7 @@ export function createSlackAdapter(
           accountId: config.accountId,
           token: config.botToken,
           rawEvent: event,
+          transcribeVoice: config.transcribeVoice === true,
         }),
         raw: event,
       };

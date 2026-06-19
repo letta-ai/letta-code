@@ -3,9 +3,13 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import {
   buildConversationSelectorHints,
   buildDefaultConversationEntry,
+  findConversationIndexById,
   formatConversationTimestampText,
   isConversationPinned,
+  isPinShortcut,
   mergePinnedConversationRecords,
+  normalizeConversationSearchInput,
+  sortPinnedConversations,
 } from "@/cli/components/ConversationSelector";
 
 describe("ConversationSelector timestamps", () => {
@@ -76,6 +80,41 @@ describe("ConversationSelector timestamps", () => {
 });
 
 describe("ConversationSelector pinned conversations", () => {
+  test("treats macOS Option+P glyphs as pin shortcuts", () => {
+    expect(isPinShortcut("π", {})).toBe(true);
+    expect(isPinShortcut("∏", {})).toBe(true);
+    expect(isPinShortcut("p", { meta: true })).toBe(true);
+    expect(isPinShortcut("p", { ctrl: true, meta: true })).toBe(false);
+  });
+
+  test("strips macOS Option+P glyphs from search input", () => {
+    expect(normalizeConversationSearchInput("π")).toBe("");
+    expect(normalizeConversationSearchInput("foo∏bar")).toBe("foobar");
+  });
+
+  test("keeps the toggled conversation selectable after pin sorting", () => {
+    const conversations = [
+      { conversation: { id: "default" }, isPinned: true },
+      { conversation: { id: "conv-a" }, isPinned: false },
+      { conversation: { id: "conv-b" }, isPinned: true },
+      { conversation: { id: "conv-c" }, isPinned: false },
+    ];
+
+    const sorted = sortPinnedConversations(
+      conversations.map((item) =>
+        item.conversation.id === "conv-a" ? { ...item, isPinned: true } : item,
+      ),
+    );
+
+    expect(sorted.map((item) => item.conversation.id)).toEqual([
+      "default",
+      "conv-a",
+      "conv-b",
+      "conv-c",
+    ]);
+    expect(findConversationIndexById(sorted, "conv-a")).toBe(1);
+  });
+
   test("hides the pin shortcut hint when default conversation is selected", () => {
     expect(
       buildConversationSelectorHints({ isSelectedDefaultConversation: true }),

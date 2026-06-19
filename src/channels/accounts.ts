@@ -45,7 +45,11 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   acknowledge_message_reaction: "acknowledgeMessageReaction",
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
+  listen_mode: "listenMode",
   remove_stale_routes: "removeStaleRoutes",
+  rich_draft_streaming: "richDraftStreaming",
+  rich_private_chat_default: "richPrivateChatDefault",
+  show_completed_reaction: "showCompletedReaction",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
 };
@@ -293,6 +297,12 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     (next as SlackChannelAccount).defaultPermissionMode =
       (migrated as ChannelDefaultPermissionMode | null) ??
       DEFAULT_SLACK_PERMISSION_MODE;
+    (next as SlackChannelAccount).transcribeVoice =
+      (next as SlackChannelAccount).transcribeVoice === true;
+    (next as SlackChannelAccount).showCompletedReaction =
+      (next as SlackChannelAccount).showCompletedReaction !== false;
+    (next as SlackChannelAccount).listenMode =
+      (next as SlackChannelAccount).listenMode === true;
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
@@ -316,6 +326,9 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
   }
+  if (isTelegramChannelAccount(next)) {
+    next.richPrivateChatDefault = next.richPrivateChatDefault !== false;
+  }
   return next;
 }
 
@@ -338,6 +351,8 @@ function makeDefaultLegacyAccount(
       dmPolicy: config.dmPolicy,
       allowedUsers: [...config.allowedUsers],
       transcribeVoice: config.transcribeVoice === true,
+      richPrivateChatDefault: config.richPrivateChatDefault !== false,
+      richDraftStreaming: config.richDraftStreaming === true,
       binding: {
         agentId: null,
         conversationId: null,
@@ -402,6 +417,9 @@ function makeDefaultLegacyAccount(
     allowedUsers: [...config.allowedUsers],
     agentId: null,
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
+    transcribeVoice: config.transcribeVoice === true,
+    showCompletedReaction: config.showCompletedReaction !== false,
+    listenMode: config.listenMode === true,
     createdAt: now,
     updatedAt: now,
   };

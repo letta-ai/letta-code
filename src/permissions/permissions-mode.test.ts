@@ -164,6 +164,69 @@ test("unrestricted mode - does NOT override deny rules", () => {
   expect(result.reason).toBe("Matched deny rule");
 });
 
+test("unrestricted mode - does NOT override alwaysAsk rules", () => {
+  permissionMode.setMode("unrestricted");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+    alwaysAsk: ["Bash(git push:*)"],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "git push origin main" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("alwaysAsk");
+  expect(result.matchedRule).toBe("Bash(git push:*)");
+  expect(result.reason).toBe("Matched alwaysAsk rule");
+});
+
+test("unrestricted mode - deny rules override alwaysAsk rules", () => {
+  permissionMode.setMode("unrestricted");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: ["Bash(git push:*)"],
+    ask: [],
+    alwaysAsk: ["Bash(git push:*)"],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "git push origin main" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("deny");
+  expect(result.reason).toBe("Matched deny rule");
+});
+
+test("unrestricted mode - regular ask rules still auto-allow", () => {
+  permissionMode.setMode("unrestricted");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: ["Bash(git push:*)"],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "git push origin main" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Permission mode: unrestricted");
+});
+
 // ============================================================================
 // Permission Mode: acceptEdits
 // ============================================================================
