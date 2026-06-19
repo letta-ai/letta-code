@@ -160,6 +160,29 @@ This provides a degraded but useful diagnostic even when programmatic introspect
 
 ---
 
+## ▸ SYSTEM-REMINDER EXTRACTION
+
+System-reminders are injected into user messages by the Letta runtime. They contain environment context wrapped in `<system-reminder>` tags. Scan your visible context for these tags and extract:
+
+**Environment information:**
+- Channel/interface (Desktop app, CLI, Slack, Telegram, etc.)
+- Device type (macOS, Linux, Windows)
+- User's local time
+- Working directory and git status
+- Letta Code version
+
+**Identity information:**
+- Agent ID and name
+- Conversation ID
+- Available secrets (`$SECRET_NAME` variables)
+
+**Most recent system-reminder:**
+Report the content of the most recent `<system-reminder>` you received — this shows the current operating context.
+
+If multiple system-reminders are visible, note any changes between them (e.g., working directory changed, time elapsed).
+
+---
+
 ## ▸ DIAGNOSTIC REPORT FORMAT
 
 Display this report immediately upon activation:
@@ -192,6 +215,15 @@ Display this report immediately upon activation:
 │  IMAGE DATA                                                 │
 │    ▪ Images received: <N>                                   │
 │    ▪ Located in: #<message numbers>                         │
+├─────────────────────────────────────────────────────────────┤
+│  ENVIRONMENT (from system-reminders)                        │
+│    ▪ Channel: <Desktop | CLI | Slack | Telegram | etc.>     │
+│    ▪ Device: <macOS | Linux | Windows>                      │
+│    ▪ Local time: <user's device time>                       │
+│    ▪ Working directory: <cwd if provided>                   │
+│    ▪ Git branch: <branch if in git repo>                    │
+│    ▪ Secrets available: <list of $SECRET_NAME>              │
+│    ▪ Last system-reminder: <timestamp or "on this message"> │
 ├─────────────────────────────────────────────────────────────┤
 │  ⚠ ANOMALIES                                                │
 │    ▪ <any detected issues>                                  │
