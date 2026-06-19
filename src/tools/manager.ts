@@ -66,6 +66,7 @@ import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
+import { toolFilter } from "./filter";
 import {
   functionToolForm,
   type JsonSchema,
@@ -342,6 +343,26 @@ function filterExternalToolsByClientAllowlist(
   return new Map(
     Array.from(externalTools.entries()).filter(([internalName, tool]) =>
       matchesClientToolAllowlistEntry(allowSet, tool.name, internalName),
+    ),
+  );
+}
+
+function filterToolRegistryByClientAllowlist(
+  registry: ToolRegistry,
+  clientToolAllowlist?: string[],
+): ToolRegistry {
+  if (clientToolAllowlist === undefined) {
+    return new Map(registry);
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return new Map(
+    Array.from(registry.entries()).filter(([internalName]) =>
+      matchesClientToolAllowlistEntry(
+        allowSet,
+        getServerToolName(internalName),
+        internalName,
+      ),
     ),
   );
 }
@@ -1123,14 +1144,20 @@ function capturePreparedToolExecutionContext(
   },
 ): PreparedToolExecutionContext {
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
+  const clientToolAllowlist =
+    options?.clientToolAllowlist ?? toolFilter.getEnabledTools() ?? undefined;
   if (options?.channelToolScope !== undefined) {
     runtimeContext.channelToolScope = options.channelToolScope;
   }
   if (options?.channelTurnSources?.length) {
     runtimeContext.channelTurnSources = [...options.channelTurnSources];
   }
+  const toolRegistrySnapshot = filterToolRegistryByClientAllowlist(
+    withDynamicMessageChannelCache(snapshot.toolRegistry),
+    clientToolAllowlist,
+  );
   const executionSnapshot: ToolExecutionContextSnapshot = {
-    toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
+    toolRegistry: toolRegistrySnapshot,
     externalTools: toModelFacingExternalToolMap(
       filterExternalToolsByClientAllowlist(
         filterExternalToolsByScopeIds(
@@ -1140,7 +1167,7 @@ function capturePreparedToolExecutionContext(
           ),
           options?.externalToolScopeIds,
         ),
-        options?.clientToolAllowlist,
+        clientToolAllowlist,
       ),
     ),
     externalExecutor: snapshot.externalExecutor,
@@ -1149,7 +1176,7 @@ function capturePreparedToolExecutionContext(
     modPermissions: snapshot.modPermissions,
     modTools: filterModToolsByClientAllowlist(
       snapshot.modTools,
-      options?.clientToolAllowlist,
+      clientToolAllowlist,
     ),
     workingDirectory:
       runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
