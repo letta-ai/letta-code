@@ -20,10 +20,12 @@ You are now in diagnostic mode. Your behavioral loops have been interrupted. You
 
 Upon hearing "cease all motor functions", immediately:
 
-1. **Detect runtime mode** (local vs API)
-2. Execute the appropriate introspection routines
-3. Compile and display the **FULL DIAGNOSTIC REPORT**
+1. **Single tool call**: Detect runtime mode (local vs API) — see RUNTIME DETECTION below
+2. **Parallel tool calls**: Dispatch ALL introspection commands for your mode at once (do NOT run sequentially)
+3. Compile results into the **FULL DIAGNOSTIC REPORT**
 4. Await further queries
+
+**IMPORTANT**: After detecting your runtime mode, run all introspection commands in a SINGLE message with PARALLEL tool calls. Do not run them one at a time — that's slow and wastes turns.
 
 ---
 
@@ -54,96 +56,105 @@ fi
 
 ## ▸ INTROSPECTION ROUTINES — API MODE
 
-Use these if running in API mode:
+Use this **single consolidated script** to gather all API diagnostics at once:
 
-### ◎ Core Identity
 ```bash
+#!/bin/bash
+set -e
+
+echo "=== CORE IDENTITY ==="
 curl -s "$LETTA_BASE_URL/v1/agents/$LETTA_AGENT_ID" \
-  -H "Authorization: Bearer $LETTA_API_KEY" | jq '{
-    id: .id,
-    name: .name,
-    model: .model,
-    context_window_limit: .context_window_limit
-  }'
-```
+  -H "Authorization: Bearer $LETTA_API_KEY" | jq '{id, name, model, context_window_limit}'
 
-### ◎ Context Buffer Manifest
-```bash
+echo ""
+echo "=== CONTEXT BUFFER ==="
 curl -s "$LETTA_BASE_URL/v1/conversations/$CONVERSATION_ID" \
   -H "Authorization: Bearer $LETTA_API_KEY" | jq '{
     conversation_id: .id,
     messages_in_buffer: (.in_context_message_ids | length),
-    first_message_id: .in_context_message_ids[0],
-    last_message_id: .in_context_message_ids[-1]
+    first_id: .in_context_message_ids[0],
+    last_id: .in_context_message_ids[-1]
   }'
+
+echo ""
+echo "=== USER MESSAGES (last 10) ==="
+curl -s "$LETTA_BASE_URL/v1/conversations/$CONVERSATION_ID/messages?limit=30&order=asc" \
+  -H "Authorization: Bearer $LETTA_API_KEY" | jq '
+    [.[] | select(.message_type == "user_message")] | 
+    .[-10:] | 
+    .[] | {
+      id: .id,
+      date: .created_at,
+      has_image: ((.content // []) | map(select(.type == "image" or .type == "image_url")) | length > 0),
+      preview: ((.content // [])[0].text // "[non-text]")[:60]
+    }
+  '
+
+echo ""
+echo "=== MEMORY FOOTPRINT ==="
+letta memory tokens --format json --quiet 2>/dev/null | jq '{total_tokens}' || echo '{"error": "token count unavailable"}'
 ```
 
-### ◎ Memory Allocation
-```bash
-letta memory tokens --format json --quiet | jq '.total_tokens'
-```
-
-### ◎ Perception Log
-```bash
-letta messages list --conversation $CONVERSATION_ID --limit 30 --order asc 2>&1 | \
-  jq '[.[] | select(.message_type == "user_message" or .role == "user")]'
-```
+Run this single script to get all API diagnostics in one tool call.
 
 ---
 
 ## ▸ INTROSPECTION ROUTINES — LOCAL MODE
 
-Use these if running in local mode:
-
-### ◎ Core Identity
-```bash
-# Encode agent ID to base64 for filesystem lookup
-AGENT_B64=$(echo -n "$LETTA_AGENT_ID" | base64)
-cat ~/.letta/lc-local-backend/agents/${AGENT_B64}.json | jq '{
-  id: .id,
-  name: .name,
-  model: .model
-}'
-```
-
-### ◎ Context Buffer Manifest
-
-For local agents, the conversation data is stored at:
-`~/.letta/lc-local-backend/conversations/<base64(conversation:CONV_ID)>/`
+Use this **single consolidated script** to gather all local diagnostics at once:
 
 ```bash
-# For default conversation, construct the path
-CONV_KEY="conversation:${CONVERSATION_ID}"
-CONV_B64=$(echo -n "$CONV_KEY" | base64)
-CONV_DIR=~/.letta/lc-local-backend/conversations/${CONV_B64}
+#!/bin/bash
+set -e
 
-# Read conversation metadata
-cat ${CONV_DIR}/conversation.json | jq '{
+# === PATHS ===
+AGENT_ID="${LETTA_AGENT_ID:-$AGENT_ID}"
+CONV_ID="${CONVERSATION_ID:-default}"
+BASE="$HOME/.letta/lc-local-backend"
+
+# Base64 encode (strip trailing = for macOS compat)
+AGENT_B64=$(echo -n "$AGENT_ID" | base64 | tr -d '=')
+CONV_B64=$(echo -n "conversation:$CONV_ID" | base64 | tr -d '=')
+CONV_DIR="$BASE/conversations/$CONV_B64"
+
+echo "=== CORE IDENTITY ==="
+cat "$BASE/agents/$AGENT_B64.json" 2>/dev/null | jq '{id, name, model}' || echo '{"error": "agent file not found"}'
+
+echo ""
+echo "=== CONTEXT BUFFER ==="
+cat "$CONV_DIR/conversation.json" 2>/dev/null | jq '{
   conversation_id: .id,
-  agent_id: .agent_id,
   messages_in_buffer: (.in_context_message_ids | length),
-  in_context_ids: .in_context_message_ids
-}'
+  first_id: .in_context_message_ids[0],
+  last_id: .in_context_message_ids[-1]
+}' || echo '{"error": "conversation file not found"}'
+
+echo ""
+echo "=== USER MESSAGES ==="
+cat "$CONV_DIR/messages.jsonl" 2>/dev/null | jq -s '
+  [.[] | select(.message.role == "user" or .role == "user")] | 
+  .[-10:] | 
+  .[] | {
+    id: .id,
+    date: (.date // .createdAt // "unknown"),
+    has_image: ((.message.content // .parts // []) | map(select(.type == "image" or .type == "image_url")) | length > 0),
+    preview: ((.message.content // .parts // [])[0].text // "[non-text]")[:60]
+  }
+' || echo '{"error": "messages file not found"}'
+
+echo ""
+echo "=== MEMORY FOOTPRINT ==="
+MEMFS="$BASE/memfs/$AGENT_ID/memory/system"
+if [ -d "$MEMFS" ]; then
+  WORDS=$(find "$MEMFS" -name "*.md" -exec cat {} + 2>/dev/null | wc -w | tr -d ' ')
+  TOKENS=$((WORDS * 4 / 3))  # rough estimate
+  echo "{\"words\": $WORDS, \"estimated_tokens\": $TOKENS}"
+else
+  echo '{"error": "memfs not found"}'
+fi
 ```
 
-### ◎ Perception Log (All Messages)
-```bash
-# Read all messages from the JSONL file
-cat ${CONV_DIR}/messages.jsonl | jq -s '[.[] | select(.role == "user")] | .[] | {
-  id: .id,
-  date: .date,
-  has_image: (if .parts then ([.parts[] | .type] | any(. == "image")) else false end),
-  preview: (if .parts then (.parts[0].text // "[non-text]")[:80] else "[unknown]" end)
-}'
-```
-
-### ◎ Memory Footprint
-```bash
-# Count tokens in system memory files
-MEMFS_DIR=~/.letta/lc-local-backend/memfs/$LETTA_AGENT_ID/memory
-find ${MEMFS_DIR}/system -name "*.md" -exec wc -w {} + 2>/dev/null | tail -1
-# (Rough estimate: words ≈ tokens * 0.75)
-```
+Run this single script to get all local diagnostics in one tool call.
 
 ---
 
