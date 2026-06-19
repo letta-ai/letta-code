@@ -229,6 +229,7 @@ async function emitListenerTurnStart(options: {
   input: Array<MessageCreate | ApprovalCreate>;
   runtime: ListenerRuntime;
   workingDirectory: string;
+  permissionMode?: string | null;
   cachedAgent?: AgentState | null;
 }): Promise<Array<MessageCreate | ApprovalCreate>> {
   try {
@@ -236,6 +237,7 @@ async function emitListenerTurnStart(options: {
     const context = createListenerModContext({
       sessionId: options.conversationId,
       workingDirectory: options.workingDirectory,
+      permissionMode: options.permissionMode ?? null,
       agent: options.cachedAgent ?? null,
     });
     const event = {
@@ -492,7 +494,9 @@ export async function handleIncomingMessage(
           : m,
       ),
     );
-    const inboundUserTranscriptLines =
+    // Build transcript lines after turn_start so transformed input is shown.
+    // This is reassigned below after emitListenerTurnStart.
+    let inboundUserTranscriptLines =
       buildInboundUserTranscriptLines(messagesToSend);
 
     const firstMessage = normalizedMessages[0];
@@ -584,14 +588,29 @@ export async function handleIncomingMessage(
       }
     }
 
-    let currentInput = await emitListenerTurnStart({
-      agentId,
-      conversationId,
-      input: messagesToSend,
-      runtime: runtime.listener,
-      workingDirectory: turnWorkingDirectory,
-      cachedAgent,
-    });
+    // Only emit turn_start for user messages, not approval-only continuations.
+    // A mod could otherwise rewrite approval payloads and break routing.
+    const hasUserMessage = messagesToSend.some(
+      (m) => "role" in m && m.role === "user",
+    );
+    let currentInput = hasUserMessage
+      ? await emitListenerTurnStart({
+          agentId,
+          conversationId,
+          input: messagesToSend,
+          runtime: runtime.listener,
+          workingDirectory: turnWorkingDirectory,
+          permissionMode: turnPermissionModeState.mode,
+          cachedAgent,
+        })
+      : messagesToSend;
+
+    // Rebuild transcript lines from the potentially transformed input so
+    // Desktop shows post-transform text, not the original user message.
+    if (currentInput !== messagesToSend) {
+      inboundUserTranscriptLines =
+        buildInboundUserTranscriptLines(currentInput);
+    }
     const providerFallback = createProviderFallbackState(cachedAgent);
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
