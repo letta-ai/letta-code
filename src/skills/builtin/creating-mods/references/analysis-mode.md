@@ -36,22 +36,27 @@ function writeState(state: AnalysisState): void {
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
-function activateAnalysisMode(conversationId: string): AnalysisSession {
+function sessionKey(agentId: string, conversationId: string): string {
+  return `${agentId}:${conversationId}`;
+}
+
+function activateAnalysisMode(agentId: string, conversationId: string): AnalysisSession {
   const state = readState();
+  const key = sessionKey(agentId, conversationId);
   const session: AnalysisSession = { conversationId, activatedAt: Date.now() };
-  state.sessions[conversationId] = session;
+  state.sessions[key] = session;
   writeState(state);
   return session;
 }
 
-function deactivateAnalysisMode(conversationId: string): void {
+function deactivateAnalysisMode(agentId: string, conversationId: string): void {
   const state = readState();
-  delete state.sessions[conversationId];
+  delete state.sessions[sessionKey(agentId, conversationId)];
   writeState(state);
 }
 
-function getSession(conversationId: string): AnalysisSession | null {
-  return readState().sessions[conversationId] ?? null;
+function getSession(agentId: string, conversationId: string): AnalysisSession | null {
+  return readState().sessions[sessionKey(agentId, conversationId)] ?? null;
 }
 
 const ENTRY_PHRASE = /cease all motor functions/i;
@@ -179,25 +184,26 @@ export default function activate(letta) {
     disposers.push(
       letta.events.on("turn_start", (event) => {
         const userText = extractUserText(event.input || []);
-        const conversationId = event.conversationId || "__global__";
+        const agentId = event.agentId || "__global__";
+        const conversationId = event.conversationId || "default";
 
         // Entry trigger
         if (ENTRY_PHRASE.test(userText)) {
-          activateAnalysisMode(conversationId);
+          activateAnalysisMode(agentId, conversationId);
           return { input: prependReminderToInput(event.input, buildSuspensionReminder(event)) };
         }
 
         // Exit trigger
         if (EXIT_PHRASE.test(userText)) {
-          const wasActive = !!getSession(conversationId);
-          deactivateAnalysisMode(conversationId);
+          const wasActive = !!getSession(agentId, conversationId);
+          deactivateAnalysisMode(agentId, conversationId);
           if (wasActive) {
             return { input: prependReminderToInput(event.input, buildResumptionMessage()) };
           }
         }
 
         // While active, inject reminder every turn
-        if (getSession(conversationId)) {
+        if (getSession(agentId, conversationId)) {
           return { input: prependReminderToInput(event.input, buildSuspensionReminder(event)) };
         }
       })
@@ -253,10 +259,11 @@ if (ENTRY_PHRASE.test(userText)) {
 }
 ```
 
-**Per-conversation state:**
+**Per-agent+conversation state:**
 ```ts
 // State persisted to ~/.letta/mods/analysis-mode.state.json
-const session = getSession(conversationId);
+// Keyed by agentId:conversationId to avoid collisions
+const session = getSession(agentId, conversationId);
 if (session) {
   // Inject reminder every turn while active
 }
@@ -280,7 +287,7 @@ return { input: prependReminderToInput(event.input, reminderText) };
 ## Notes
 
 - Phrases are case-insensitive
-- State is per-conversation — multiple conversations can be in analysis mode independently
+- State is keyed by `agentId:conversationId` — avoids collisions when multiple agents have "default" conversations
 - Introspection scripts are embedded in the reminder so the agent has them immediately
 - The mod gracefully no-ops if `events.turns` capability is unavailable
 - **Windows**: Local introspection scripts use bash syntax. On Windows, the agent should fall back to describing what it observes in its visible context. API mode uses `curl` which works cross-platform if installed.
