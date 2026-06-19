@@ -229,10 +229,13 @@ describe("telegram channel registry", () => {
     await adapter.onMessage?.(createInboundMessage());
 
     expect(createConversation).toHaveBeenCalledTimes(1);
-    expect(createConversation).toHaveBeenCalledWith({
-      agent_id: "agent-1",
-      summary: "[Telegram] Topic in Void Cafe: hello topic",
-    });
+    expect(createConversation).toHaveBeenCalledWith(
+      {
+        agent_id: "agent-1",
+        summary: "[Telegram] Topic in Void Cafe: hello topic",
+      },
+      undefined,
+    );
     expect(getRoute("telegram", "-100123", "telegram-bot", "42")).toMatchObject(
       {
         accountId: "telegram-bot",

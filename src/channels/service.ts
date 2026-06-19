@@ -69,6 +69,7 @@ import type {
   DiscordChannelMode,
   DmPolicy,
   PendingPairing,
+  SignalGroupMode,
   SlackChannelMode,
   SupportedChannelId,
   TelegramGroupMode,
@@ -77,6 +78,7 @@ import type {
 import {
   DEFAULT_SLACK_PERMISSION_MODE,
   isDiscordChannelAccount,
+  isSignalChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
   isWhatsAppChannelAccount,
@@ -107,7 +109,7 @@ export interface ChannelConfigSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
-  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode | SignalGroupMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
@@ -121,6 +123,7 @@ export interface ChannelConfigSnapshot {
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
+  recipientAliases?: Record<string, string>;
   transcribeVoice?: boolean;
   richPrivateChatDefault?: boolean;
   richDraftStreaming?: boolean;
@@ -182,6 +185,24 @@ function normalizeWhatsAppGroupMode(
     : undefined;
 }
 
+function normalizeSignalGroupMode(
+  value: ChannelAccountPatch["groupMode"],
+): SignalGroupMode | undefined {
+  return value === "disabled" || value === "mention" || value === "open"
+    ? value
+    : undefined;
+}
+
+function normalizeOptionalConfigString(
+  value: string | null | undefined,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export interface ChannelAccountSnapshot {
   [key: string]: unknown;
   channelId: string;
@@ -197,7 +218,7 @@ export interface ChannelAccountSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
-  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode | SignalGroupMode;
   transcribeVoice?: boolean;
   richPrivateChatDefault?: boolean;
   richDraftStreaming?: boolean;
@@ -218,6 +239,7 @@ export interface ChannelAccountSnapshot {
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
+  recipientAliases?: Record<string, string>;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
   createdAt: string;
@@ -276,6 +298,10 @@ async function resolveChannelAccountDisplayName(
       return normalizeDisplayName(
         await resolveDiscordAccountDisplayName(account.token),
       );
+    }
+
+    if (isSignalChannelAccount(account)) {
+      return normalizeDisplayName(account.account ?? account.baseUrl);
     }
 
     if (!isSlackChannelAccount(account)) {
@@ -450,6 +476,10 @@ function isAccountConfigured(account: ChannelAccount): boolean {
     return true;
   }
 
+  if (isSignalChannelAccount(account)) {
+    return account.baseUrl.trim().length > 0;
+  }
+
   if (!isSlackChannelAccount(account)) {
     return Object.keys(account.config).length > 0;
   }
@@ -555,6 +585,31 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
       groupMode: account.groupMode,
       allowedGroups: [...(account.allowedGroups ?? [])],
       mentionPatterns: [...(account.mentionPatterns ?? [])],
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
+  if (isSignalChannelAccount(account)) {
+    return {
+      channelId: "signal",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      configured: isAccountConfigured(account),
+      running,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelAccountProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      recipientAliases: { ...(account.recipientAliases ?? {}) },
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
@@ -673,6 +728,32 @@ function createAccountFromPatch(
       mentionPatterns: normalizedPatch.mentionPatterns ?? [],
       transcribeVoice: normalizedPatch.transcribeVoice === true,
       downloadMedia: normalizedPatch.downloadMedia === true,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  if (channelId === "signal") {
+    return {
+      channel: "signal",
+      accountId,
+      displayName: normalizeDisplayName(normalizedPatch.displayName),
+      enabled: normalizedPatch.enabled ?? false,
+      baseUrl: normalizedPatch.baseUrl ?? "",
+      account: normalizeOptionalConfigString(normalizedPatch.account),
+      accountUuid: normalizeOptionalConfigString(normalizedPatch.accountUuid),
+      agentId: normalizedPatch.agentId ?? null,
+      selfChatMode: normalizedPatch.selfChatMode === true,
+      dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      allowedUsers: normalizedPatch.allowedUsers ?? [],
+      groupMode:
+        normalizeSignalGroupMode(normalizedPatch.groupMode) ?? "disabled",
+      allowedGroups: normalizedPatch.allowedGroups ?? [],
+      mentionPatterns: normalizedPatch.mentionPatterns ?? [],
+      recipientAliases: normalizedPatch.recipientAliases ?? {},
+      transcribeVoice: normalizedPatch.transcribeVoice === true,
+      downloadMedia: normalizedPatch.downloadMedia ?? true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
       createdAt: now,
       updatedAt: now,
@@ -806,6 +887,44 @@ function mergeAccountPatch(
         normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
       downloadMedia:
         normalizedPatch.downloadMedia ?? existing.downloadMedia ?? false,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
+      updatedAt: nextUpdatedAt,
+    };
+  }
+
+  if (isSignalChannelAccount(existing)) {
+    return {
+      ...existing,
+      displayName:
+        normalizedPatch.displayName !== undefined
+          ? normalizeDisplayName(normalizedPatch.displayName)
+          : existing.displayName,
+      enabled: normalizedPatch.enabled ?? existing.enabled,
+      baseUrl: normalizedPatch.baseUrl ?? existing.baseUrl,
+      account:
+        normalizedPatch.account !== undefined
+          ? normalizeOptionalConfigString(normalizedPatch.account)
+          : existing.account,
+      accountUuid:
+        normalizedPatch.accountUuid !== undefined
+          ? normalizeOptionalConfigString(normalizedPatch.accountUuid)
+          : existing.accountUuid,
+      agentId: normalizedPatch.agentId ?? existing.agentId,
+      selfChatMode: normalizedPatch.selfChatMode ?? existing.selfChatMode,
+      dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      groupMode:
+        normalizeSignalGroupMode(normalizedPatch.groupMode) ??
+        existing.groupMode,
+      allowedGroups: normalizedPatch.allowedGroups ?? existing.allowedGroups,
+      mentionPatterns:
+        normalizedPatch.mentionPatterns ?? existing.mentionPatterns,
+      recipientAliases:
+        normalizedPatch.recipientAliases ?? existing.recipientAliases,
+      transcribeVoice:
+        normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      downloadMedia:
+        normalizedPatch.downloadMedia ?? existing.downloadMedia ?? true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
       updatedAt: nextUpdatedAt,
     };
@@ -986,6 +1105,27 @@ export function getChannelConfigSnapshot(
     };
   }
 
+  if (isSignalChannelAccount(account)) {
+    return {
+      channelId: "signal",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelConfigSnapshotProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      recipientAliases: { ...(account.recipientAliases ?? {}) },
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
+    };
+  }
+
   if (!isSlackChannelAccount(account)) {
     return {
       channelId: account.channel,
@@ -1060,6 +1200,9 @@ export async function setChannelConfigLive(
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       selfChatMode: normalizedPatch.selfChatMode,
+      baseUrl: normalizedPatch.baseUrl,
+      account: normalizedPatch.account,
+      accountUuid: normalizedPatch.accountUuid,
       groupMode: normalizedPatch.groupMode,
       allowedGroups: normalizedPatch.allowedGroups,
       mentionPatterns: normalizedPatch.mentionPatterns,
@@ -1097,6 +1240,9 @@ export async function setChannelConfigLive(
         removeStaleRoutes: normalizedPatch.removeStaleRoutes,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
         selfChatMode: normalizedPatch.selfChatMode,
+        baseUrl: normalizedPatch.baseUrl,
+        account: normalizedPatch.account,
+        accountUuid: normalizedPatch.accountUuid,
         groupMode: normalizedPatch.groupMode,
         allowedGroups: normalizedPatch.allowedGroups,
         mentionPatterns: normalizedPatch.mentionPatterns,
@@ -1335,9 +1481,12 @@ export function updateChannelAccountLive(
 
   const nextAccount = mergeAccountPatch(existing, patch);
   const shouldResetRoutes =
-    (isSlackChannelAccount(existing) || isDiscordChannelAccount(existing)) &&
+    (isSlackChannelAccount(existing) ||
+      isDiscordChannelAccount(existing) ||
+      isSignalChannelAccount(existing)) &&
     (isSlackChannelAccount(nextAccount) ||
-      isDiscordChannelAccount(nextAccount)) &&
+      isDiscordChannelAccount(nextAccount) ||
+      isSignalChannelAccount(nextAccount)) &&
     typeof nextAccount.agentId === "string" &&
     nextAccount.agentId !== existing.agentId;
 
@@ -1389,9 +1538,12 @@ export async function updateChannelAccountLiveWithSecrets(
 
   const nextAccount = mergeAccountPatch(existing, patch);
   const shouldResetRoutes =
-    (isSlackChannelAccount(existing) || isDiscordChannelAccount(existing)) &&
+    (isSlackChannelAccount(existing) ||
+      isDiscordChannelAccount(existing) ||
+      isSignalChannelAccount(existing)) &&
     (isSlackChannelAccount(nextAccount) ||
-      isDiscordChannelAccount(nextAccount)) &&
+      isDiscordChannelAccount(nextAccount) ||
+      isSignalChannelAccount(nextAccount)) &&
     typeof nextAccount.agentId === "string" &&
     nextAccount.agentId !== existing.agentId;
 
@@ -1483,9 +1635,10 @@ export function bindChannelAccountLive(
   } else if (
     isSlackChannelAccount(existing) ||
     isDiscordChannelAccount(existing) ||
-    isWhatsAppChannelAccount(existing)
+    isWhatsAppChannelAccount(existing) ||
+    isSignalChannelAccount(existing)
   ) {
-    // Slack, Discord, and WhatsApp use a top-level agentId.
+    // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId,
@@ -1523,9 +1676,10 @@ export function unbindChannelAccountLive(
   } else if (
     isSlackChannelAccount(existing) ||
     isDiscordChannelAccount(existing) ||
-    isWhatsAppChannelAccount(existing)
+    isWhatsAppChannelAccount(existing) ||
+    isSignalChannelAccount(existing)
   ) {
-    // Slack, Discord, and WhatsApp use a top-level agentId.
+    // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId: null,
