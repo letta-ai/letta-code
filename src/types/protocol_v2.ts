@@ -1807,42 +1807,6 @@ export interface GetCwdMapResponseMessage {
   error?: string;
 }
 
-export type ConversationPinScope = "global" | "local_project" | "both";
-export type ConversationPinAction = "pin" | "unpin" | "toggle";
-
-export interface ListConversationPinsCommand {
-  type: "list_conversation_pins";
-  request_id: string;
-  runtime: RuntimeScope;
-}
-
-export interface ListConversationPinsResponseMessage {
-  type: "list_conversation_pins_response";
-  request_id: string;
-  success: boolean;
-  pins: Array<{ conversation_id: string; is_local: boolean }>;
-  error?: string;
-}
-
-export interface SetConversationPinCommand {
-  type: "set_conversation_pin";
-  request_id: string;
-  runtime: RuntimeScope;
-  conversation_id: string;
-  action: ConversationPinAction;
-  scope?: ConversationPinScope;
-}
-
-export interface SetConversationPinResponseMessage {
-  type: "set_conversation_pin_response";
-  request_id: string;
-  success: boolean;
-  conversation_id: string;
-  pinned: boolean;
-  pins: Array<{ conversation_id: string; is_local: boolean }>;
-  error?: string;
-}
-
 export interface GetReflectionSettingsCommand {
   type: "get_reflection_settings";
   /** Echoed back in the response for request correlation. */
@@ -2705,8 +2669,6 @@ export type WsProtocolCommand =
   | ConversationMessagesListCommand
   | ConversationCompactCommand
   | GetCwdMapCommand
-  | ListConversationPinsCommand
-  | SetConversationPinCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | GetExperimentsCommand
@@ -2805,8 +2767,6 @@ export type WsProtocolMessage =
   | RuntimeStartResponseMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
-  | ListConversationPinsResponseMessage
-  | SetConversationPinResponseMessage
   | GetReflectionSettingsResponseMessage
   | SetReflectionSettingsResponseMessage
   | ChannelsListResponseMessage

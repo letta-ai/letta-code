@@ -240,7 +240,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent or conversation (/pin [name]|agent [name]|convo)",
+    desc: "Pin current agent (/pin [name])",
     order: 22,
     handler: () => {
       // Handled specially in App.tsx
@@ -248,7 +248,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/unpin": {
-    desc: "Unpin current agent globally, or use -l for local only",
+    desc: "Unpin current agent",
     order: 23,
     handler: () => {
       // Handled specially in App.tsx

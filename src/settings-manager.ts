@@ -2,7 +2,7 @@
 // In-memory settings manager that loads once and provides sync access
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { isCloudAgentId, isLocalAgentId } from "./agent/agent-id";
@@ -98,7 +98,6 @@ export interface Settings {
   >;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
-  pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
@@ -107,9 +106,7 @@ export interface Settings {
   experiments?: Partial<Record<ExperimentId, boolean>>;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
-  pinnedAgentsByServer?: Record<string, string[]>; // DEPRECATED: use agents array
-  pinnedConversationsByServer?: Record<string, Record<string, string[]>>; // server -> agentId -> conversation IDs
-  // Unified agent settings array (replaces pinnedAgentsByServer)
+  // Per-agent settings (global, keyed by agentId+serverKey)
   agents?: AgentSettings[];
   // Letta Cloud OAuth token management (stored separately in secrets)
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
@@ -144,7 +141,6 @@ export interface LocalProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands
   windowTitle?: WindowTitleConfig; // Local project-specific terminal window title
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
-  pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger?: "off" | "step-count" | "compaction-event";
   reflectionStepCount?: number;
@@ -157,15 +153,19 @@ export interface LocalProjectSettings {
   >;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
-  pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
-  pinnedConversationsByServer?: Record<string, Record<string, string[]>>; // server -> agentId -> conversation IDs
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
   conversationGoalsByServer?: Record<string, Record<string, ConversationGoal>>;
   conversationGoalToolsByServer?: Record<string, Record<string, boolean>>;
 }
 
 // Hard-deprecated keys: ignored on load and stripped from disk on persist.
-const OBSOLETE_SETTINGS_KEYS = ["reflectionBehavior", "enableSleeptime"];
+const OBSOLETE_SETTINGS_KEYS = [
+  "reflectionBehavior",
+  "enableSleeptime",
+  "pinnedAgents",
+  "pinnedAgentsByServer",
+  "pinnedConversationsByServer",
+];
 
 const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
@@ -337,80 +337,12 @@ class SettingsManager {
     this.secureTokensCache = {};
   }
 
-  private ensureInitialized(): void {
-    if (!this.initialized || !this.settings) {
-      throw new Error(
-        "Settings not initialized. Call settingsManager.initialize() first.",
-      );
-    }
-  }
-
   private readJsonObjectSync(path: string): Record<string, unknown> {
     if (!exists(path)) return {};
     try {
       return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
     } catch {
       return {};
-    }
-  }
-
-  private normalizeSettingsRecord(
-    raw: Record<string, unknown>,
-  ): Record<string, unknown> {
-    const normalized = { ...raw };
-    for (const key of OBSOLETE_SETTINGS_KEYS) {
-      delete normalized[key];
-    }
-    return normalized;
-  }
-
-  private settingsFromRaw(raw: Record<string, unknown>): Settings {
-    return {
-      ...DEFAULT_SETTINGS,
-      ...(this.normalizeSettingsRecord(raw) as Partial<Settings>),
-    };
-  }
-
-  private readSettingsSnapshot(): Settings {
-    this.ensureInitialized();
-    const raw = this.readJsonObjectSync(this.getSettingsPath());
-    const mergedRaw = this.normalizeSettingsRecord(raw);
-
-    if (this.settings) {
-      const currentRecord = this.settings as unknown as Record<string, unknown>;
-      for (const key of this.dirtyKeys) {
-        if (key in currentRecord) {
-          mergedRaw[key] = currentRecord[key];
-        } else {
-          delete mergedRaw[key];
-        }
-      }
-    }
-
-    const settings = this.settingsFromRaw(mergedRaw);
-    this.settings = settings;
-    for (const key of Object.keys(mergedRaw)) {
-      this.managedKeys.add(key);
-    }
-    return settings;
-  }
-
-  private writeSettingsRecordSync(raw: Record<string, unknown>): void {
-    const settingsPath = this.getSettingsPath();
-    const home = process.env.HOME || homedir();
-    const dirPath = join(home, ".letta");
-    if (!exists(dirPath)) {
-      mkdirSync(dirPath, { recursive: true });
-    }
-
-    const normalized = this.normalizeSettingsRecord(raw);
-    writeFileSync(settingsPath, JSON.stringify(normalized, null, 2), {
-      encoding: "utf-8",
-      flush: true,
-    });
-    this.settings = this.settingsFromRaw(normalized);
-    for (const key of Object.keys(normalized)) {
-      this.managedKeys.add(key);
     }
   }
 
@@ -447,6 +379,7 @@ class SettingsManager {
           string,
           unknown
         >;
+
         // Obsolete keys: drop from loaded settings and delete on next persist.
         for (const legacyKey of OBSOLETE_SETTINGS_KEYS) {
           if (Object.hasOwn(loadedSettingsRaw, legacyKey)) {
@@ -491,9 +424,6 @@ class SettingsManager {
       if (!isSubagentProcess()) {
         await this.migrateTokensToSecrets();
       }
-
-      // Migrate pinnedAgents/pinnedAgentsByServer to agents array
-      this.migrateToAgentsArray();
     } catch (error) {
       trackBoundaryError({
         errorType: "settings_load_failed",
@@ -512,7 +442,6 @@ class SettingsManager {
       if (!isSubagentProcess()) {
         await this.migrateTokensToSecrets();
       }
-      this.migrateToAgentsArray();
     }
   }
 
@@ -593,59 +522,6 @@ class SettingsManager {
     } catch (error) {
       console.warn("Failed to migrate tokens to secrets:", error);
       // Don't throw - app should still work with tokens in settings file
-    }
-  }
-
-  /**
-   * Migrate from legacy pinnedAgents/pinnedAgentsByServer to unified agents array.
-   * Runs on initialize if agents array doesn't exist yet.
-   */
-  private migrateToAgentsArray(): void {
-    if (!this.settings) return;
-    if (this.settings.agents) return; // Already migrated
-
-    const agents: AgentSettings[] = [];
-    const seen = new Set<string>(); // agentId+baseUrl dedup key
-
-    // Migrate from pinnedAgentsByServer (newest legacy format)
-    if (this.settings.pinnedAgentsByServer) {
-      for (const [serverKey, agentIds] of Object.entries(
-        this.settings.pinnedAgentsByServer,
-      )) {
-        for (const agentId of agentIds) {
-          // Normalize baseUrl: api.letta.com -> undefined
-          const baseUrl = serverKey === "api.letta.com" ? undefined : serverKey;
-          const key = `${agentId}@${baseUrl ?? "cloud"}`;
-          if (!seen.has(key)) {
-            agents.push({
-              agentId,
-              baseUrl,
-              pinned: true,
-            });
-            seen.add(key);
-          }
-        }
-      }
-    }
-
-    // Migrate from pinnedAgents (oldest legacy format - assumes Letta API)
-    if (this.settings.pinnedAgents) {
-      for (const agentId of this.settings.pinnedAgents) {
-        const key = `${agentId}@cloud`;
-        if (!seen.has(key)) {
-          agents.push({ agentId, pinned: true });
-          seen.add(key);
-        }
-      }
-    }
-
-    if (agents.length > 0) {
-      this.settings = { ...this.settings, agents };
-      this.markDirty("agents");
-      // Persist the migration (async, fire-and-forget)
-      this.persistSettings().catch((error) => {
-        console.warn("Failed to persist agents array migration:", error);
-      });
     }
   }
 
@@ -1121,6 +997,7 @@ class SettingsManager {
 
       const content = await readFile(settingsPath);
       const localSettingsRaw = JSON.parse(content) as Record<string, unknown>;
+
       const hadLegacyKeys = OBSOLETE_SETTINGS_KEYS.some((key) =>
         Object.hasOwn(localSettingsRaw, key),
       );
@@ -1137,6 +1014,7 @@ class SettingsManager {
           // Best-effort cleanup only; do not fail load path.
         }
       }
+
       return { ...localSettings };
     } catch (error) {
       console.error(
@@ -1745,301 +1623,46 @@ class SettingsManager {
   }
 
   // =====================================================================
-  // Profile Management Helpers
+  // Agent Pin Helpers (global-only, per-backend namespace)
   // =====================================================================
 
   /**
-   * Get globally pinned agent IDs from ~/.letta/settings.json for the current server.
-   * Looks up by server key first, falls back to legacy pinnedAgents for migration.
+   * Get pinned agent IDs for the current server from the global agents array.
    */
-  getGlobalPinnedAgents(): string[] {
+  getPinnedAgents(): string[] {
     const settings = this.getSettings();
     const serverKey = getCurrentServerKey(settings);
+    const normalizedBaseUrl =
+      serverKey === "api.letta.com" ? undefined : serverKey;
 
-    // Try server-indexed lookup first
-    if (settings.pinnedAgentsByServer?.[serverKey]) {
-      return settings.pinnedAgentsByServer[serverKey];
-    }
-
-    // Migrate from old profiles format if needed
-    if (settings.profiles && !settings.pinnedAgents) {
-      const agentIds = Object.values(settings.profiles);
-      this.updateSettings({ pinnedAgents: agentIds, profiles: undefined });
-      return agentIds;
-    }
-
-    // Fall back to legacy pinnedAgents
-    return settings.pinnedAgents || [];
-  }
-
-  /**
-   * Get locally pinned agent IDs from .letta/settings.local.json for the current server.
-   * Looks up by server key first, falls back to legacy pinnedAgents for migration.
-   */
-  getLocalPinnedAgents(workingDirectory: string = process.cwd()): string[] {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-
-    // Try server-indexed lookup first
-    if (localSettings.pinnedAgentsByServer?.[serverKey]) {
-      return localSettings.pinnedAgentsByServer[serverKey];
-    }
-
-    // Migrate from old profiles format if needed
-    if (localSettings.profiles && !localSettings.pinnedAgents) {
-      const agentIds = Object.values(localSettings.profiles);
-      this.updateLocalProjectSettings(
-        { pinnedAgents: agentIds, profiles: undefined },
-        workingDirectory,
-      );
-      return agentIds;
-    }
-
-    // Fall back to legacy pinnedAgents
-    return localSettings.pinnedAgents || [];
-  }
-
-  /**
-   * Get merged pinned agents (local + global), deduped.
-   * Returns array of { agentId, isLocal }.
-   */
-  getMergedPinnedAgents(
-    workingDirectory: string = process.cwd(),
-  ): Array<{ agentId: string; isLocal: boolean }> {
-    const globalAgents = this.getGlobalPinnedAgents();
-    const localAgents = this.getLocalPinnedAgents(workingDirectory);
-
-    const result: Array<{ agentId: string; isLocal: boolean }> = [];
-    const seenAgentIds = new Set<string>();
-
-    // Add local agents first (they take precedence)
-    for (const agentId of localAgents) {
-      result.push({ agentId, isLocal: true });
-      seenAgentIds.add(agentId);
-    }
-
-    // Add global agents that aren't also local
-    for (const agentId of globalAgents) {
-      if (!seenAgentIds.has(agentId)) {
-        result.push({ agentId, isLocal: false });
-        seenAgentIds.add(agentId);
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Get globally pinned conversation IDs for an agent on the current server.
-   */
-  getGlobalPinnedConversations(agentId: string): string[] {
-    const settings = this.readSettingsSnapshot();
-    const serverKey = getCurrentServerKey(settings);
-    return settings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
-  }
-
-  private readLocalProjectSettingsSnapshot(
-    workingDirectory: string,
-  ): LocalProjectSettings {
-    const raw = this.normalizeSettingsRecord(
-      this.readJsonObjectSync(
-        this.getLocalProjectSettingsPath(workingDirectory),
-      ),
-    );
-    const settings = {
-      ...DEFAULT_LOCAL_PROJECT_SETTINGS,
-      ...(raw as Partial<LocalProjectSettings>),
-    };
-    this.localProjectSettings.set(workingDirectory, settings);
-    return settings;
-  }
-
-  private writeLocalProjectSettingsRecordSync(
-    workingDirectory: string,
-    raw: Record<string, unknown>,
-  ): void {
-    const dirPath = join(workingDirectory, ".letta");
-    if (!exists(dirPath)) {
-      mkdirSync(dirPath, { recursive: true });
-    }
-
-    const normalized = this.normalizeSettingsRecord(raw);
-    writeFileSync(
-      this.getLocalProjectSettingsPath(workingDirectory),
-      JSON.stringify(normalized, null, 2),
-      { encoding: "utf-8", flush: true },
-    );
-    this.localProjectSettings.set(workingDirectory, {
-      ...DEFAULT_LOCAL_PROJECT_SETTINGS,
-      ...(normalized as Partial<LocalProjectSettings>),
-    });
-  }
-
-  /**
-   * Get locally pinned conversation IDs for an agent on the current server.
-   */
-  getLocalPinnedConversations(
-    agentId: string,
-    workingDirectory: string = process.cwd(),
-  ): string[] {
-    const globalSettings = this.readSettingsSnapshot();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings =
-      this.readLocalProjectSettingsSnapshot(workingDirectory);
     return (
-      localSettings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? []
+      settings.agents
+        ?.filter(
+          (a) => a.pinned && (a.baseUrl ?? undefined) === normalizedBaseUrl,
+        )
+        .map((a) => a.agentId) ?? []
     );
   }
 
   /**
-   * Get merged pinned conversation IDs for an agent (local first, then global).
+   * Check if an agent is pinned for the current server.
    */
-  getMergedPinnedConversations(
-    agentId: string,
-    workingDirectory: string = process.cwd(),
-  ): Array<{ conversationId: string; isLocal: boolean }> {
-    const localConversations = this.getLocalPinnedConversations(
-      agentId,
-      workingDirectory,
-    );
-    const globalConversations = this.getGlobalPinnedConversations(agentId);
-
-    const result: Array<{ conversationId: string; isLocal: boolean }> = [];
-    const seenConversationIds = new Set<string>();
-
-    for (const conversationId of localConversations) {
-      result.push({ conversationId, isLocal: true });
-      seenConversationIds.add(conversationId);
-    }
-
-    for (const conversationId of globalConversations) {
-      if (!seenConversationIds.has(conversationId)) {
-        result.push({ conversationId, isLocal: false });
-        seenConversationIds.add(conversationId);
-      }
-    }
-
-    return result;
+  isAgentPinned(agentId: string): boolean {
+    return this.getPinnedAgents().includes(agentId);
   }
 
-  pinConversationGlobal(agentId: string, conversationId: string): void {
-    this.ensureInitialized();
-    const raw = this.normalizeSettingsRecord(
-      this.readJsonObjectSync(this.getSettingsPath()),
-    );
-    const settings = this.settingsFromRaw(raw);
-    const serverKey = getCurrentServerKey(settings);
-    const current =
-      settings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
-    if (current.includes(conversationId)) return;
-
-    this.writeSettingsRecordSync({
-      ...raw,
-      pinnedConversationsByServer: {
-        ...(settings.pinnedConversationsByServer ?? {}),
-        [serverKey]: {
-          ...(settings.pinnedConversationsByServer?.[serverKey] ?? {}),
-          [agentId]: [...current, conversationId],
-        },
-      },
-    });
-    this.dirtyKeys.delete("pinnedConversationsByServer");
+  /**
+   * Pin an agent for the current server.
+   */
+  pinAgent(agentId: string): void {
+    this.upsertAgentSettings(agentId, { pinned: true });
   }
 
-  unpinConversationGlobal(agentId: string, conversationId: string): void {
-    this.ensureInitialized();
-    const raw = this.normalizeSettingsRecord(
-      this.readJsonObjectSync(this.getSettingsPath()),
-    );
-    const settings = this.settingsFromRaw(raw);
-    const serverKey = getCurrentServerKey(settings);
-    const current =
-      settings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
-
-    this.writeSettingsRecordSync({
-      ...raw,
-      pinnedConversationsByServer: {
-        ...(settings.pinnedConversationsByServer ?? {}),
-        [serverKey]: {
-          ...(settings.pinnedConversationsByServer?.[serverKey] ?? {}),
-          [agentId]: current.filter((id) => id !== conversationId),
-        },
-      },
-    });
-    this.dirtyKeys.delete("pinnedConversationsByServer");
-  }
-
-  pinConversationLocal(
-    agentId: string,
-    conversationId: string,
-    workingDirectory: string = process.cwd(),
-  ): void {
-    const globalSettings = this.readSettingsSnapshot();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const raw = this.normalizeSettingsRecord(
-      this.readJsonObjectSync(
-        this.getLocalProjectSettingsPath(workingDirectory),
-      ),
-    );
-    const localSettings = {
-      ...DEFAULT_LOCAL_PROJECT_SETTINGS,
-      ...(raw as Partial<LocalProjectSettings>),
-    };
-    const current =
-      localSettings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
-    if (current.includes(conversationId)) return;
-
-    this.writeLocalProjectSettingsRecordSync(workingDirectory, {
-      ...raw,
-      pinnedConversationsByServer: {
-        ...(localSettings.pinnedConversationsByServer ?? {}),
-        [serverKey]: {
-          ...(localSettings.pinnedConversationsByServer?.[serverKey] ?? {}),
-          [agentId]: [...current, conversationId],
-        },
-      },
-    });
-  }
-
-  unpinConversationLocal(
-    agentId: string,
-    conversationId: string,
-    workingDirectory: string = process.cwd(),
-  ): void {
-    const globalSettings = this.readSettingsSnapshot();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const raw = this.normalizeSettingsRecord(
-      this.readJsonObjectSync(
-        this.getLocalProjectSettingsPath(workingDirectory),
-      ),
-    );
-    const localSettings = {
-      ...DEFAULT_LOCAL_PROJECT_SETTINGS,
-      ...(raw as Partial<LocalProjectSettings>),
-    };
-    const current =
-      localSettings.pinnedConversationsByServer?.[serverKey]?.[agentId] ?? [];
-
-    this.writeLocalProjectSettingsRecordSync(workingDirectory, {
-      ...raw,
-      pinnedConversationsByServer: {
-        ...(localSettings.pinnedConversationsByServer ?? {}),
-        [serverKey]: {
-          ...(localSettings.pinnedConversationsByServer?.[serverKey] ?? {}),
-          [agentId]: current.filter((id) => id !== conversationId),
-        },
-      },
-    });
-  }
-
-  unpinConversationBoth(
-    agentId: string,
-    conversationId: string,
-    workingDirectory: string = process.cwd(),
-  ): void {
-    this.unpinConversationLocal(agentId, conversationId, workingDirectory);
-    this.unpinConversationGlobal(agentId, conversationId);
+  /**
+   * Unpin an agent for the current server.
+   */
+  unpinAgent(agentId: string): void {
+    this.upsertAgentSettings(agentId, { pinned: false });
   }
 
   // DEPRECATED: Keep for backwards compatibility
@@ -2057,84 +1680,13 @@ class SettingsManager {
 
   // DEPRECATED: Keep for backwards compatibility
   getMergedProfiles(
-    workingDirectory: string = process.cwd(),
+    _workingDirectory: string = process.cwd(),
   ): Array<{ name: string; agentId: string; isLocal: boolean }> {
-    const merged = this.getMergedPinnedAgents(workingDirectory);
-    return merged.map(({ agentId, isLocal }) => ({
-      name: "", // Name will be fetched from server
+    return this.getPinnedAgents().map((agentId) => ({
+      name: "",
       agentId,
-      isLocal,
+      isLocal: false,
     }));
-  }
-
-  /**
-   * Pin an agent to both local AND global settings for the current server.
-   * Writes to both server-indexed and legacy fields for backwards compat.
-   */
-  pinBoth(agentId: string, workingDirectory: string = process.cwd()): void {
-    this.pinGlobal(agentId);
-    this.pinLocal(agentId, workingDirectory);
-  }
-
-  // DEPRECATED: Keep for backwards compatibility
-  saveProfile(
-    _name: string,
-    agentId: string,
-    workingDirectory: string = process.cwd(),
-  ): void {
-    this.pinBoth(agentId, workingDirectory);
-  }
-
-  /**
-   * Pin an agent locally (to this project) for the current server.
-   * Writes to both server-indexed and legacy fields for backwards compat.
-   */
-  pinLocal(agentId: string, workingDirectory: string = process.cwd()): void {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const localAgents = this.getLocalPinnedAgents(workingDirectory);
-
-    if (!localAgents.includes(agentId)) {
-      const newAgents = [...localAgents, agentId];
-      const pinnedAgentsByServer = {
-        ...localSettings.pinnedAgentsByServer,
-        [serverKey]: newAgents,
-      };
-
-      this.updateLocalProjectSettings(
-        {
-          pinnedAgentsByServer,
-          pinnedAgents: newAgents, // Legacy field for backwards compat
-        },
-        workingDirectory,
-      );
-    }
-  }
-
-  /**
-   * Unpin an agent locally (from this project only) for the current server.
-   * Writes to both server-indexed and legacy fields for backwards compat.
-   */
-  unpinLocal(agentId: string, workingDirectory: string = process.cwd()): void {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const localAgents = this.getLocalPinnedAgents(workingDirectory);
-
-    const newAgents = localAgents.filter((id) => id !== agentId);
-    const pinnedAgentsByServer = {
-      ...localSettings.pinnedAgentsByServer,
-      [serverKey]: newAgents,
-    };
-
-    this.updateLocalProjectSettings(
-      {
-        pinnedAgentsByServer,
-        pinnedAgents: newAgents, // Legacy field for backwards compat
-      },
-      workingDirectory,
-    );
   }
 
   /**
@@ -2144,83 +1696,6 @@ class SettingsManager {
   shouldCreateDefaultAgents(): boolean {
     const settings = this.getSettings();
     return settings.createDefaultAgents !== false;
-  }
-
-  /**
-   * Pin an agent globally for the current server.
-   * Writes to both server-indexed and legacy fields for backwards compat.
-   */
-  pinGlobal(agentId: string): void {
-    const settings = this.getSettings();
-    const serverKey = getCurrentServerKey(settings);
-    const globalAgents = this.getGlobalPinnedAgents();
-
-    if (!globalAgents.includes(agentId)) {
-      const newAgents = [...globalAgents, agentId];
-      const pinnedAgentsByServer = {
-        ...settings.pinnedAgentsByServer,
-        [serverKey]: newAgents,
-      };
-
-      this.updateSettings({
-        pinnedAgentsByServer,
-        pinnedAgents: newAgents, // Legacy field for backwards compat
-      });
-    }
-  }
-
-  /**
-   * Unpin an agent globally for the current server.
-   * Writes to both server-indexed and legacy fields for backwards compat.
-   */
-  unpinGlobal(agentId: string): void {
-    const settings = this.getSettings();
-    const serverKey = getCurrentServerKey(settings);
-    const globalAgents = this.getGlobalPinnedAgents();
-
-    const newAgents = globalAgents.filter((id) => id !== agentId);
-    const pinnedAgentsByServer = {
-      ...settings.pinnedAgentsByServer,
-      [serverKey]: newAgents,
-    };
-
-    this.updateSettings({
-      pinnedAgentsByServer,
-      pinnedAgents: newAgents, // Legacy field for backwards compat
-    });
-  }
-
-  /**
-   * Unpin an agent from both local and global settings
-   */
-  unpinBoth(agentId: string, workingDirectory: string = process.cwd()): void {
-    this.unpinLocal(agentId, workingDirectory);
-    this.unpinGlobal(agentId);
-  }
-
-  // DEPRECATED: Keep for backwards compatibility
-  deleteProfile(
-    _name: string,
-    _workingDirectory: string = process.cwd(),
-  ): void {
-    // This no longer makes sense with the new model
-    // Would need an agentId to unpin
-    console.warn("deleteProfile is deprecated, use unpinBoth(agentId) instead");
-  }
-
-  // DEPRECATED: Keep for backwards compatibility
-  pinProfile(
-    _name: string,
-    agentId: string,
-    workingDirectory: string = process.cwd(),
-  ): void {
-    this.pinLocal(agentId, workingDirectory);
-  }
-
-  // DEPRECATED: Keep for backwards compatibility
-  unpinProfile(_name: string, _workingDirectory: string = process.cwd()): void {
-    // This no longer makes sense with the new model
-    console.warn("unpinProfile is deprecated, use unpinLocal(agentId) instead");
   }
 
   // =====================================================================
