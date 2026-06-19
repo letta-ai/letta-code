@@ -146,4 +146,5 @@ Before finishing, verify:
 | `references/permissions.md` | Enforcing dynamic tool allow/ask/deny policy before approval/execution |
 | `references/ui.md` | Panels, status values, or statusline capability guards are involved |
 | `references/plan-mode.md` | Recreating plan mode with commands, tools, events, permissions, and local state |
+| `references/analysis-mode.md` | Phrase-triggered diagnostic mode with turn reminders (simpler than plan-mode) |
 | `references/architecture.md` | Multiple capabilities, local state, cleanup, background model work, or non-trivial composition |
