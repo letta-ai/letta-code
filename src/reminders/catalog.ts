@@ -6,7 +6,6 @@ export type SharedReminderMode =
   | "subagent";
 
 export type SharedReminderId =
-  | "learn-mode"
   | "session-context"
   | "conversation-bootstrap"
   | "agent-info"
@@ -24,11 +23,6 @@ export interface SharedReminderDefinition {
 
 export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
   [
-    {
-      id: "learn-mode",
-      description: "First-turn MetaAgent learn-mode instructions",
-      modes: ["interactive"],
-    },
     {
       id: "session-context",
       description: "First-turn device/git/cwd context",

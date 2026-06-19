@@ -6,7 +6,6 @@ import {
   buildSessionContext,
   type SessionContextSource,
 } from "@/cli/helpers/session-context";
-import { buildLearnModeReminderFromEnv } from "@/cli/learn-mode";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
@@ -55,22 +54,6 @@ export interface SharedReminderBuildResult {
 type SharedReminderProvider = (
   context: SharedReminderContext,
 ) => Promise<string | null>;
-
-async function buildLearnModeReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (context.state.hasSentLearnMode) {
-    return null;
-  }
-
-  const reminder = buildLearnModeReminderFromEnv();
-  if (!reminder) {
-    return null;
-  }
-
-  context.state.hasSentLearnMode = true;
-  return reminder;
-}
 
 async function buildAgentInfoReminder(
   context: SharedReminderContext,
@@ -355,7 +338,6 @@ export const sharedReminderProviders: Record<
   SharedReminderId,
   SharedReminderProvider
 > = {
-  "learn-mode": buildLearnModeReminder,
   "agent-info": buildAgentInfoReminder,
   "conversation-bootstrap": buildConversationBootstrapReminderPart,
   "secrets-info": buildSecretsInfoReminder,

@@ -345,6 +345,7 @@ interface HeadlessCommandOptions {
   model?: string;
   noMods?: boolean;
   outputFormat: HeadlessLearningOutputFormat;
+  personality?: string;
 }
 
 function slugify(value: string): string {
@@ -930,6 +931,7 @@ function buildHeadlessArgs(
     options.outputFormat,
   ];
   if (options.noMods) args.push("--no-mods");
+  if (options.personality) args.push("--personality", options.personality);
   if (options.model) args.push("--model", options.model);
   if (options.backend) args.push("--backend", options.backend);
   if (options.maxTurns !== undefined)
@@ -2416,6 +2418,7 @@ async function runModLearningCandidate(
         model: options.generationModel,
         noMods: true,
         outputFormat: "json",
+        personality: "meta",
       }),
     ];
     await writeFile(

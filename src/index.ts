@@ -61,7 +61,6 @@ import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
-import { normalizeLearnStartupArgs } from "./cli/learn-mode";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   getStartupBackendLookupOrder,
@@ -169,7 +168,7 @@ USAGE
   letta --new           Create a new conversation (for concurrent sessions)
   letta --resume        Open agent selector UI to pick agent/conversation
   letta --new-agent     Create a new agent directly (skip profile selector)
-  letta learn           Create a MetaAgent session to improve another agent
+  letta learn <env>     Create or optimize a mod with the mod-learning workflow
   letta --agent <id>    Open a specific agent by ID
 
   # headless
@@ -676,17 +675,6 @@ async function main(): Promise<void> {
   try {
     const backendSelection = extractBackendFlag(rawCliArgs);
     subcommandArgs = normalizeUpdateCommandAliases(backendSelection.args);
-    const learnStartup = normalizeLearnStartupArgs(subcommandArgs);
-    if (learnStartup?.helpText) {
-      console.log(learnStartup.helpText);
-      process.exit(learnStartup.helpText.startsWith("Error:") ? 1 : 0);
-    }
-    if (learnStartup) {
-      subcommandArgs = learnStartup.args;
-      for (const [key, value] of Object.entries(learnStartup.env)) {
-        process.env[key] = value;
-      }
-    }
     if (backendSelection.backend) {
       explicitBackendMode = backendSelection.backend;
       configureBackendMode(backendSelection.backend);
