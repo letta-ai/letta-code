@@ -77,7 +77,10 @@ import {
   normalizeToolReturnWireMessage,
   populateInterruptQueue,
 } from "./interrupts";
-import { ensureListenerModAdapter } from "./mod-adapter";
+import {
+  createListenerModContext,
+  ensureListenerModAdapter,
+} from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -125,6 +128,7 @@ import type {
   ConversationRuntime,
   InboundMessagePayload,
   IncomingMessage,
+  ListenerRuntime,
 } from "./types";
 import { ensureListenerWarmStateForTurn } from "./warmup";
 
@@ -208,6 +212,45 @@ function escapeTaskNotificationSummary(summary: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function isTurnInputArray(
+  value: unknown,
+): value is Array<MessageCreate | ApprovalCreate> {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
+async function emitListenerTurnStart(options: {
+  agentId: string;
+  conversationId: string;
+  input: Array<MessageCreate | ApprovalCreate>;
+  runtime: ListenerRuntime;
+  workingDirectory: string;
+  permissionMode?: string | null;
+  cachedAgent?: AgentState | null;
+}): Promise<Array<MessageCreate | ApprovalCreate>> {
+  try {
+    const modAdapter = ensureListenerModAdapter(options.runtime);
+    const context = createListenerModContext({
+      sessionId: options.conversationId,
+      workingDirectory: options.workingDirectory,
+      permissionMode: options.permissionMode ?? null,
+      agent: options.cachedAgent ?? null,
+    });
+    const event = {
+      agentId: options.agentId,
+      conversationId: options.conversationId,
+      input: options.input,
+    };
+    await modAdapter.events.emit("turn_start", event, context);
+    return isTurnInputArray(event.input) ? event.input : options.input;
+  } catch {
+    // Mod turn_start handlers should not block sending the turn.
+    return options.input;
+  }
 }
 
 export function buildMaybeLaunchReflectionSubagent(params: {
@@ -451,7 +494,9 @@ export async function handleIncomingMessage(
           : m,
       ),
     );
-    const inboundUserTranscriptLines =
+    // Build transcript lines after turn_start so transformed input is shown.
+    // This is reassigned below after emitListenerTurnStart.
+    let inboundUserTranscriptLines =
       buildInboundUserTranscriptLines(messagesToSend);
 
     const firstMessage = normalizedMessages[0];
@@ -543,7 +588,29 @@ export async function handleIncomingMessage(
       }
     }
 
-    let currentInput = messagesToSend;
+    // Only emit turn_start for user messages, not approval-only continuations.
+    // A mod could otherwise rewrite approval payloads and break routing.
+    const hasUserMessage = messagesToSend.some(
+      (m) => "role" in m && m.role === "user",
+    );
+    let currentInput = hasUserMessage
+      ? await emitListenerTurnStart({
+          agentId,
+          conversationId,
+          input: messagesToSend,
+          runtime: runtime.listener,
+          workingDirectory: turnWorkingDirectory,
+          permissionMode: turnPermissionModeState.mode,
+          cachedAgent,
+        })
+      : messagesToSend;
+
+    // Rebuild transcript lines from the potentially transformed input so
+    // Desktop shows post-transform text, not the original user message.
+    if (currentInput !== messagesToSend) {
+      inboundUserTranscriptLines =
+        buildInboundUserTranscriptLines(currentInput);
+    }
     const providerFallback = createProviderFallbackState(cachedAgent);
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,

@@ -12,7 +12,7 @@ export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
   events: {
     lifecycle: false,
     tools: false,
-    turns: false,
+    turns: true,
   },
   permissions: false,
   providers: true,
