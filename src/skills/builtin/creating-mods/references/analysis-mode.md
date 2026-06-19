@@ -112,11 +112,14 @@ set -e
 AGENT_ID="\${LETTA_AGENT_ID:-\$AGENT_ID}"
 CONV_ID="\${CONVERSATION_ID:-default}"
 BASE="$HOME/.letta/lc-local-backend"
+MEMFS="$BASE/memfs/$AGENT_ID/memory"
 AGENT_B64=$(echo -n "$AGENT_ID" | base64 | tr -d '=')
 CONV_B64=$(echo -n "conversation:$CONV_ID" | base64 | tr -d '=')
 CONV_DIR="$BASE/conversations/$CONV_B64"
 
 echo "=== CORE IDENTITY ===" && cat "$BASE/agents/$AGENT_B64.json" 2>/dev/null | jq '{id, name, model}' || echo '{"error": "not found"}'
+echo "=== SYSTEM PROMPT ===" && cat "$BASE/agents/$AGENT_B64.json" 2>/dev/null | jq '{chars: (.system_prompt | length), estimated_tokens: ((.system_prompt | length) / 4 | floor)}' || echo '{"error": "not found"}'
+echo "=== MEMORY BLOCKS ===" && find "$MEMFS/system" -name "*.md" -exec wc -c {} \\; 2>/dev/null | awk '{sum+=$1; print $2": "$1" bytes"} END {print "total: "sum" bytes (~"int(sum/4)" tokens)"}' || echo '{"error": "not found"}'
 echo "=== CONTEXT BUFFER ===" && cat "$CONV_DIR/conversation.json" 2>/dev/null | jq '{messages: (.in_context_message_ids | length)}' || echo '{"error": "not found"}'
 echo "=== USER MESSAGES ===" && cat "$CONV_DIR/messages.jsonl" 2>/dev/null | jq -s '[.[] | select(.message.role == "user")][-10:] | .[] | {id, preview: (.message.content[0].text // "[non-text]")[:60]}' || echo '{"error": "not found"}'
 \`\`\``;
@@ -127,6 +130,8 @@ function buildApiIntrospectionScript(): string {
 \`\`\`bash
 set -e
 echo "=== CORE IDENTITY ===" && curl -s "$LETTA_BASE_URL/v1/agents/$LETTA_AGENT_ID" -H "Authorization: Bearer $LETTA_API_KEY" | jq '{id, name, model}'
+echo "=== SYSTEM PROMPT ===" && curl -s "$LETTA_BASE_URL/v1/agents/$LETTA_AGENT_ID" -H "Authorization: Bearer $LETTA_API_KEY" | jq '{chars: (.system_prompt | length), estimated_tokens: ((.system_prompt | length) / 4 | floor)}'
+echo "=== MEMORY BLOCKS ===" && curl -s "$LETTA_BASE_URL/v1/agents/$LETTA_AGENT_ID/core-memory/blocks" -H "Authorization: Bearer $LETTA_API_KEY" | jq '.[] | {label, chars: (.value | length), estimated_tokens: ((.value | length) / 4 | floor)}'
 echo "=== CONTEXT BUFFER ===" && curl -s "$LETTA_BASE_URL/v1/conversations/$CONVERSATION_ID" -H "Authorization: Bearer $LETTA_API_KEY" | jq '{messages: (.in_context_message_ids | length)}'
 echo "=== USER MESSAGES ===" && curl -s "$LETTA_BASE_URL/v1/conversations/$CONVERSATION_ID/messages?limit=30&order=asc" -H "Authorization: Bearer $LETTA_API_KEY" | jq '[.[] | select(.message_type == "user_message")][-10:] | .[] | {id, date: .created_at, preview: ((.content // [])[0].text // "[non-text]")[:60]}'
 \`\`\``;
