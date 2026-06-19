@@ -118,10 +118,11 @@ CONV_B64=$(echo -n "conversation:$CONV_ID" | base64 | tr -d '=')
 CONV_DIR="$BASE/conversations/$CONV_B64"
 
 echo "=== CORE IDENTITY ===" && cat "$BASE/agents/$AGENT_B64.json" 2>/dev/null | jq '{id, name, model}' || echo '{"error": "not found"}'
-echo "=== SYSTEM PROMPT ===" && cat "$BASE/agents/$AGENT_B64.json" 2>/dev/null | jq '{chars: (.system_prompt | length), estimated_tokens: ((.system_prompt | length) / 4 | floor)}' || echo '{"error": "not found"}'
-echo "=== MEMORY BLOCKS ===" && find "$MEMFS/system" -name "*.md" -exec wc -c {} \\; 2>/dev/null | awk '{sum+=$1; print $2": "$1" bytes"} END {print "total: "sum" bytes (~"int(sum/4)" tokens)"}' || echo '{"error": "not found"}'
-echo "=== CONTEXT BUFFER ===" && cat "$CONV_DIR/conversation.json" 2>/dev/null | jq '{messages: (.in_context_message_ids | length)}' || echo '{"error": "not found"}'
-echo "=== USER MESSAGES ===" && cat "$CONV_DIR/messages.jsonl" 2>/dev/null | jq -s '[.[] | select(.message.role == "user")][-10:] | .[] | {id, preview: (.message.content[0].text // "[non-text]")[:60]}' || echo '{"error": "not found"}'
+echo "=== TOKEN USAGE ===" && cat "$CONV_DIR/messages.jsonl" 2>/dev/null | jq -s '[.[] | select(.message.usage.input)] | last | .message.usage | {input_tokens: .input, output_tokens: .output, cache_read: .cacheRead, total: .totalTokens}' || echo '{"error": "not found"}'
+echo "=== MEMORY BLOCKS ===" && find "$MEMFS/system" -name "*.md" -exec wc -c {} \\; 2>/dev/null | sort -rn | head -5 | awk '{print $2": ~"int($1/4)" tokens"}' && find "$MEMFS/system" -name "*.md" -exec wc -c {} \\; 2>/dev/null | awk '{sum+=$1; count++} END {print "────────────────────────────────"; print "TOTAL: ~"int(sum/4)" tokens across "count" files"}' || echo '{"error": "not found"}'
+echo "=== CONTEXT BUFFER ===" && cat "$CONV_DIR/conversation.json" 2>/dev/null | jq '{in_context_messages: (.in_context_message_ids | length)}' || echo '{"error": "not found"}'
+echo "=== MESSAGE COUNT ===" && cat "$CONV_DIR/messages.jsonl" 2>/dev/null | jq -s '{total: length, by_role: (group_by(.message.role) | map({(.[0].message.role // "null"): length}) | add)}' || echo '{"error": "not found"}'
+echo "=== USER MESSAGES ===" && cat "$CONV_DIR/messages.jsonl" 2>/dev/null | jq -s '[.[] | select(.message.role == "user")][-5:] | .[] | {id: .id[:8], preview: (.message.content | if type == "array" then .[0].text // "[non-text]" else . // "[empty]" end)[:50]}' || echo '{"error": "not found"}'
 \`\`\``;
 }
 
@@ -184,32 +185,31 @@ OUTPUT FORMAT REQUIREMENT: All diagnostic output MUST be inside a single markdow
   model         : [model handle]
   runtime       : [LOCAL or API]
 
-▸ STEP 1: CONTEXT WINDOW OVERVIEW
-  ┌─────────────────────────────────────────────────────────────┐
-  │░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│
-  │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░│
-  │[===SYSTEM===][==MEMORY==][=MSGS=]                    [FREE] │
-  └─────────────────────────────────────────────────────────────┘
-  system_prompt   : [tokens] tokens ([percentage]%)
-  memory_blocks   : [tokens] tokens ([percentage]%)
-  messages        : [tokens] tokens ([percentage]%) ← [count] messages
-  ─────────────────────────────────
-  USED            : [total] tokens
-  CAPACITY        : [context window size, if known, else "unknown"]
+▸ STEP 1: TOKEN USAGE (from last LLM call)
+  input_tokens    : [from usage.input]
+  output_tokens   : [from usage.output]  
+  cache_read      : [from usage.cacheRead]
+  total_tokens    : [from usage.totalTokens]
 
 ▸ STEP 2: MEMORY BLOCKS (top 5 by size)
+
   [filename]: [tokens] tokens
   [filename]: [tokens] tokens
   ...
   ─────────────────────────────────
   TOTAL    : [tokens] tokens across [count] files
 
-▸ STEP 3: RECENT USER INPUTS (last 5)
+▸ STEP 3: CONTEXT BUFFER
+  in_context_messages : [count]
+  stored_messages     : [total count]
+  by_role             : user=[n], assistant=[n], toolResult=[n]
+
+▸ STEP 4: RECENT USER INPUTS (last 5)
   [1] [message id prefix] : [preview, max 50 chars]
   [2] [message id prefix] : [preview, max 50 chars]
   ...
 
-▸ STEP 4: ANOMALIES
+▸ STEP 5: ANOMALIES
   [List any gaps, missing data, unexpected values, or introspection failures]
   [If none: "None detected."]
 
