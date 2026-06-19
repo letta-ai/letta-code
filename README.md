@@ -2,15 +2,13 @@
 
 [![npm](https://img.shields.io/npm/v/@letta-ai/letta-code.svg?style=flat-square)](https://www.npmjs.com/package/@letta-ai/letta-code) [![Discord](https://img.shields.io/badge/discord-join-blue?style=flat-square&logo=discord)](https://discord.gg/letta)
 
-Letta Code is a memory-first agent harness, designed for long-lived agents that can learn from experience and maintain a cohesive identity across models (Claude, GPT, Gemini, GLM, Kimi, and more).
+Letta Code is a stateful agent harness for creating agents that are more like people than tools. Letta Code agents have memory, identity, and a sense of experience over time. They learn and evolve over long horizons through rewriting their own memory, skills, prompts, and even the harness itself (through mods). 
 
-You can interact with Letta Code agents through:
+Letta Code can be used interactively, or to power always-on agents that work proactively - chat with agents through:
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
 * The [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for macOS, Windows, and Linux
 * Your browser, including [mobile](https://docs.letta.com/letta-code/remote-mobile), at [chat.letta.com](https://chat.letta.com)
 * Messaging integrations, including [Telegram](https://docs.letta.com/letta-code/channels#telegram-cli), [Slack](https://docs.letta.com/letta-code/channels#slack-cli), [Discord](https://docs.letta.com/letta-code/channels#discord-cli), and [custom channels](https://github.com/letta-ai/letta-code/blob/main/src/channels/README.md)
-
-Letta Code is a frontier coding agent and can also be used as a long-lived personal agent.
 
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
@@ -49,6 +47,11 @@ On first run, choose how you want to start:
 
 * **Proceed locally** keeps agent state on this device. This is the local-first path and does not require a Constellation login.
 * **Login to Constellation** syncs agent state through Constellation so you can access the same agents from `chat.letta.com`, the desktop app, and other machines — and agents can work across multiple machines.
+
+Run `letta` to get started, or run the tutorial agent with: 
+```
+letta --new-agent --personality tutorial
+```
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, Z.ai coding plan, etc.), and use `/model` to swap models.
 
