@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { getReasoningTierOptionsForHandle } from "@/agent/model";
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
   labelForChatGPTByokAlias,
+  registryHandleForByokAlias,
+  toByokSelectorModel,
 } from "@/cli/components/ModelSelector";
 
 describe("ModelSelector custom BYOK provider detection", () => {
@@ -47,6 +50,70 @@ describe("ModelSelector custom BYOK provider detection", () => {
     expect(isByokHandleForSelector("chatgpt-personal/gpt-5.5", aliases)).toBe(
       true,
     );
+  });
+
+  test("resolves alias-backed BYOK handles to registry handles for reasoning tiers", () => {
+    const aliases = buildByokProviderAliases([
+      {
+        name: "chatgpt-personal",
+        provider_type: "chatgpt_oauth",
+      },
+      {
+        name: "openai-sarah",
+        provider_type: "openai",
+      },
+    ]);
+
+    expect(
+      registryHandleForByokAlias("chatgpt-personal/gpt-5.5", aliases),
+    ).toBe("chatgpt-plus-pro/gpt-5.5");
+    expect(registryHandleForByokAlias("openai-sarah/gpt-5.5", aliases)).toBe(
+      "openai/gpt-5.5",
+    );
+
+    const reasoningOptions = getReasoningTierOptionsForHandle(
+      registryHandleForByokAlias("chatgpt-personal/gpt-5.5", aliases),
+    );
+    expect(reasoningOptions.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("keeps alias handles while carrying canonical registry metadata", () => {
+    const aliases = buildByokProviderAliases([
+      {
+        name: "chatgpt-personal",
+        provider_type: "chatgpt_oauth",
+      },
+    ]);
+
+    const model = toByokSelectorModel(
+      {
+        id: "gpt-5.5-plus-pro-high",
+        handle: "chatgpt-plus-pro/gpt-5.5",
+        label: "GPT-5.5 (ChatGPT)",
+        description: "OpenAI's most capable model",
+        updateArgs: { reasoning_effort: "high" },
+      },
+      "chatgpt-personal/gpt-5.5",
+      aliases,
+      { reasoning_effort: "high", provider_type: "chatgpt_oauth" },
+    );
+
+    expect(model).toMatchObject({
+      id: "chatgpt-personal/gpt-5.5",
+      handle: "chatgpt-personal/gpt-5.5",
+      registryHandle: "chatgpt-plus-pro/gpt-5.5",
+      label: "GPT-5.5 (chatgpt-personal)",
+      updateArgs: {
+        reasoning_effort: "high",
+        provider_type: "chatgpt_oauth",
+      },
+    });
   });
 
   test("uses ChatGPT OAuth provider aliases in recommended BYOK labels", () => {

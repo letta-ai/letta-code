@@ -136,6 +136,55 @@ export function labelForChatGPTByokAlias(
   return label.replace(CHATGPT_LABEL_SUFFIX_PATTERN, ` (${providerAlias})`);
 }
 
+export function baseHandleForByokAlias(
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex === -1) return handle;
+
+  const provider = handle.slice(0, slashIndex);
+  const model = handle.slice(slashIndex + 1);
+  const baseProvider = byokProviderAliases[provider];
+
+  if (baseProvider) {
+    return `${baseProvider}/${model}`;
+  }
+  return handle;
+}
+
+export function registryHandleForByokAlias(
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const baseHandle = baseHandleForByokAlias(handle, byokProviderAliases);
+  return normalizeModelHandleForRegistry(baseHandle) ?? baseHandle;
+}
+
+export function toByokSelectorModel(
+  staticModel: UiModel,
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+  updateArgs?: Record<string, unknown>,
+): UiModel {
+  const resolvedUpdateArgs =
+    updateArgs ??
+    (staticModel.updateArgs as Record<string, unknown> | undefined);
+
+  return {
+    ...staticModel,
+    id: handle,
+    handle,
+    registryHandle: registryHandleForByokAlias(handle, byokProviderAliases),
+    label: labelForChatGPTByokAlias(
+      staticModel.label,
+      handle,
+      byokProviderAliases,
+    ),
+    updateArgs: resolvedUpdateArgs,
+  };
+}
+
 export function toSelectorModelForHandle(handle: string): UiModel {
   const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
   const modelInfo = getModelInfo(registryHandle);
@@ -574,19 +623,8 @@ export function ModelSelector({
   // e.g., "lc-anthropic/claude-3-5-haiku" -> "anthropic/claude-3-5-haiku"
   // e.g., "lc-gemini/gemini-2.0-flash" -> "google_ai/gemini-2.0-flash"
   const toBaseHandle = useCallback(
-    (handle: string): string => {
-      const slashIndex = handle.indexOf("/");
-      if (slashIndex === -1) return handle;
-
-      const provider = handle.slice(0, slashIndex);
-      const model = handle.slice(slashIndex + 1);
-      const baseProvider = byokProviderAliases[provider];
-
-      if (baseProvider) {
-        return `${baseProvider}/${model}`;
-      }
-      return handle;
-    },
+    (handle: string): string =>
+      baseHandleForByokAlias(handle, byokProviderAliases),
     [byokProviderAliases],
   );
 
@@ -604,20 +642,17 @@ export function ModelSelector({
       const staticModel = pickPreferredStaticModel(baseHandle);
       if (staticModel) {
         // Use models.json data but with the BYOK handle as the ID
-        matched.push({
-          ...staticModel,
-          id: handle,
-          handle: handle,
-          label: labelForChatGPTByokAlias(
-            staticModel.label,
+        matched.push(
+          toByokSelectorModel(
+            staticModel,
             handle,
             byokProviderAliases,
+            withProviderTypeMetadata(
+              handle,
+              staticModel.updateArgs as Record<string, unknown> | undefined,
+            ),
           ),
-          updateArgs: withProviderTypeMetadata(
-            handle,
-            staticModel.updateArgs as Record<string, unknown> | undefined,
-          ),
-        });
+        );
       }
     }
 
@@ -745,20 +780,17 @@ export function ModelSelector({
       // Try to resolve to a static model with label/description
       const staticModel = pickPreferredStaticModel(toBaseHandle(handle));
       if (staticModel) {
-        resolved.push({
-          ...staticModel,
-          id: handle,
-          handle,
-          label: labelForChatGPTByokAlias(
-            staticModel.label,
+        resolved.push(
+          toByokSelectorModel(
+            staticModel,
             handle,
             byokProviderAliases,
+            withProviderTypeMetadata(
+              handle,
+              staticModel.updateArgs as Record<string, unknown> | undefined,
+            ),
           ),
-          updateArgs: withProviderTypeMetadata(
-            handle,
-            staticModel.updateArgs as Record<string, unknown> | undefined,
-          ),
-        });
+        );
       } else {
         const fallbackModel = toSelectorModelForHandle(handle);
         resolved.push({
@@ -785,13 +817,23 @@ export function ModelSelector({
       recents: recentModels,
       supported: supportedModels,
       byok: byokModels,
-      "byok-all": byokAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-        updateArgs: withProviderTypeMetadata(handle, undefined),
-      })),
+      "byok-all": byokAllModels.map((handle) => {
+        const staticModel = pickPreferredStaticModel(toBaseHandle(handle));
+        const staticUpdateArgs = staticModel?.updateArgs as
+          | Record<string, unknown>
+          | undefined;
+
+        return {
+          id: handle,
+          handle,
+          label: handle,
+          description: staticModel?.description ?? "",
+          registryHandle: staticModel
+            ? registryHandleForByokAlias(handle, byokProviderAliases)
+            : undefined,
+          updateArgs: withProviderTypeMetadata(handle, staticUpdateArgs),
+        };
+      }),
       "server-recommended": serverRecommendedModels,
       "server-all": serverAllModelRows,
       all: allLettaModels,
@@ -804,6 +846,9 @@ export function ModelSelector({
       allLettaModels,
       serverRecommendedModels,
       serverAllModelRows,
+      byokProviderAliases,
+      pickPreferredStaticModel,
+      toBaseHandle,
       withProviderTypeMetadata,
     ],
   );
