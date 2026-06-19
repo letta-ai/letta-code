@@ -96,9 +96,13 @@ function prependReminderToInput(
   });
 }
 
+// NOTE: Local introspection uses bash syntax. On Windows, the agent should
+// fall back to describing what it can observe in context, or use PowerShell
+// equivalents if available. API mode uses curl which works cross-platform.
 function buildLocalIntrospectionScript(): string {
   return `
 \`\`\`bash
+# Bash/Unix only - on Windows, describe what you observe in your context instead
 set -e
 AGENT_ID="\${LETTA_AGENT_ID:-\$AGENT_ID}"
 CONV_ID="\${CONVERSATION_ID:-default}"
@@ -279,3 +283,4 @@ return { input: prependReminderToInput(event.input, reminderText) };
 - State is per-conversation — multiple conversations can be in analysis mode independently
 - Introspection scripts are embedded in the reminder so the agent has them immediately
 - The mod gracefully no-ops if `events.turns` capability is unavailable
+- **Windows**: Local introspection scripts use bash syntax. On Windows, the agent should fall back to describing what it observes in its visible context. API mode uses `curl` which works cross-platform if installed.
