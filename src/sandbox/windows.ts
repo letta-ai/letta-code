@@ -117,17 +117,25 @@ export function validateWindowsSandboxHelper(
 ): WindowsSandboxHelperResult {
   const base = mkTempSandboxDir();
   const denied = join(base, "victim");
+  const readonly = join(denied, "readonly-self");
+  const writable = join(denied, "writable-self");
   const allowed = join(base, "allowed");
   const blocked = join(base, "blocked");
   const secret = join(denied, "secret.txt");
+  const readableSelf = join(readonly, "readable.txt");
+  const writableSelf = join(writable, "writable.txt");
   const allowedOut = join(allowed, "ok.txt");
   const blockedOut = join(blocked, "bad.txt");
 
   try {
     mkdirSync(denied, { recursive: true });
+    mkdirSync(readonly, { recursive: true });
+    mkdirSync(writable, { recursive: true });
     mkdirSync(allowed, { recursive: true });
     mkdirSync(blocked, { recursive: true });
     writeFileSync(secret, "TOPSECRET", "utf8");
+    writeFileSync(readableSelf, "READABLE", "utf8");
+    writeFileSync(writableSelf, "WRITABLE", "utf8");
 
     const deny = spawnSync(
       helperPath,
@@ -150,6 +158,64 @@ export function validateWindowsSandboxHelper(
       return {
         ok: false,
         reason: `Windows sandbox helper self-test failed: denied root was readable${formatSpawnFailure(deny)}`,
+      };
+    }
+
+    const readonlyCarve = spawnSync(
+      helperPath,
+      [
+        "--restrict-writes",
+        "0",
+        "--denied-root",
+        denied,
+        "--readonly-root",
+        readonly,
+        "--",
+        "cmd.exe",
+        "/d",
+        "/s",
+        "/c",
+        `type "${readableSelf}"`,
+      ],
+      { cwd: base, encoding: "utf8", env, timeout: 10_000 },
+    );
+    if (
+      readonlyCarve.error ||
+      readonlyCarve.status !== 0 ||
+      !readonlyCarve.stdout?.includes("READABLE")
+    ) {
+      return {
+        ok: false,
+        reason: `Windows sandbox helper self-test failed: readonly carveout was not readable${formatSpawnFailure(readonlyCarve)}`,
+      };
+    }
+
+    const writableCarve = spawnSync(
+      helperPath,
+      [
+        "--restrict-writes",
+        "0",
+        "--denied-root",
+        denied,
+        "--writable-root",
+        writable,
+        "--",
+        "cmd.exe",
+        "/d",
+        "/s",
+        "/c",
+        `echo ok > "${writableSelf}" && type "${writableSelf}"`,
+      ],
+      { cwd: base, encoding: "utf8", env, timeout: 10_000 },
+    );
+    if (
+      writableCarve.error ||
+      writableCarve.status !== 0 ||
+      !writableCarve.stdout?.includes("ok")
+    ) {
+      return {
+        ok: false,
+        reason: `Windows sandbox helper self-test failed: writable carveout was not writable${formatSpawnFailure(writableCarve)}`,
       };
     }
 

@@ -247,13 +247,19 @@ public static class LettaWindowsSandbox
                 AddRuleIfPathExists(root, sandboxSid, DenyRights(), AccessControlType.Deny, appliedRules);
             }
 
+            foreach (var root in options.ReadonlyRoots)
+            {
+                AddReadonlyRuleIfPathExists(root, sandboxSid, appliedRules);
+            }
+
+            foreach (var root in options.WritableRoots)
+            {
+                AddWritableRule(root, sandboxSid, appliedRules);
+            }
+
             if (options.RestrictWrites)
             {
                 foreach (var root in options.BaseWritableRoots)
-                {
-                    AddWritableRule(root, sandboxSid, appliedRules);
-                }
-                foreach (var root in options.WritableRoots)
                 {
                     AddWritableRule(root, sandboxSid, appliedRules);
                 }
@@ -405,6 +411,16 @@ public static class LettaWindowsSandbox
     private static FileSystemRights WritableRights()
     {
         return FileSystemRights.Modify | FileSystemRights.Synchronize;
+    }
+
+    private static FileSystemRights ReadonlyRights()
+    {
+        return FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize;
+    }
+
+    private static void AddReadonlyRuleIfPathExists(string path, SecurityIdentifier sid, List<AppliedRule> appliedRules)
+    {
+        AddRuleIfPathExists(path, sid, ReadonlyRights(), AccessControlType.Allow, appliedRules);
     }
 
     private static void AddWritableRule(string path, SecurityIdentifier sid, List<AppliedRule> appliedRules)
