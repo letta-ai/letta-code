@@ -46,13 +46,20 @@ export interface AppServerSocketLike {
   once?(type: string, listener: (event: unknown) => void): void;
 }
 
+export interface AppServerSocketOptions {
+  headers?: Record<string, string>;
+}
+
 export type AppServerSocketConstructor = new (
   url: string,
+  options?: AppServerSocketOptions,
 ) => AppServerSocketLike;
 
 export interface AppServerClientOptions {
   /** Base app-server URL, e.g. ws://127.0.0.1:4500 or http://127.0.0.1:4500. */
   url: string;
+  /** Optional capability token sent as Authorization: Bearer <token>; requires a WebSocket implementation with header support. */
+  authToken?: string;
   /** Optional WebSocket constructor for Node/tests. Browsers use globalThis.WebSocket. */
   WebSocket?: AppServerSocketConstructor;
   /** Default timeout for request_id-correlated control requests. */
@@ -226,6 +233,19 @@ function parseProtocolMessage(event: unknown): WsProtocolMessage {
   return JSON.parse(messageDataToString(event)) as WsProtocolMessage;
 }
 
+function appServerSocketOptions(
+  authToken: string | undefined,
+): AppServerSocketOptions | undefined {
+  if (authToken === undefined) {
+    return undefined;
+  }
+  const token = authToken.trim();
+  if (!token) {
+    throw new Error("app-server auth token must not be empty");
+  }
+  return { headers: { Authorization: `Bearer ${token}` } };
+}
+
 function sameRuntime(a: RuntimeScope | undefined, b: RuntimeScope): boolean {
   return a?.agent_id === b.agent_id && a?.conversation_id === b.conversation_id;
 }
@@ -288,11 +308,14 @@ export class AppServerClient {
 
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    const socketOptions = appServerSocketOptions(options.authToken);
     this.control = new WebSocket(
       resolveAppServerChannelUrl(options.url, "control"),
+      socketOptions,
     );
     this.stream = new WebSocket(
       resolveAppServerChannelUrl(options.url, "stream"),
+      socketOptions,
     );
 
     attachSocketListener(this.control, "message", (event) => {
