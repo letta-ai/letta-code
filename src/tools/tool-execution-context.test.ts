@@ -37,6 +37,7 @@ import {
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { toolFilter } from "@/tools/filter";
 import {
   captureToolExecutionContext,
   clearCapturedToolExecutionContexts,
@@ -124,6 +125,7 @@ describe("tool execution context snapshot", () => {
     clearExternalTools();
     clearModPermissions();
     clearModTools();
+    toolFilter.reset();
     clearAllRoutes();
     __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
@@ -395,6 +397,69 @@ describe("tool execution context snapshot", () => {
 
     expect(prepared.loadedToolNames).toEqual([]);
     expect(prepared.clientTools).toEqual([]);
+  });
+
+  test("session tool filter excludes mod tools from current snapshots", async () => {
+    toolFilter.setEnabledTools("Bash");
+    await loadSpecificTools(["Bash"]);
+    registerEchoModTool(new AbortController().signal);
+
+    const prepared = await prepareCurrentToolExecutionContext();
+
+    expect(prepared.loadedToolNames).toEqual(["Bash"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Bash"]);
+
+    const denied = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+    expect(denied.status).toBe("error");
+    expect(asText(denied.toolReturn)).toContain("Tool not found: local_echo");
+  });
+
+  test("session tool filter excludes external tools from current snapshots", async () => {
+    toolFilter.setEnabledTools("Bash");
+    await loadSpecificTools(["Bash"]);
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "External tool filtered by session --tools",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+
+    const prepared = await prepareCurrentToolExecutionContext();
+
+    expect(prepared.loadedToolNames).toEqual(["Bash"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Bash"]);
+
+    const denied = await executeTool(
+      "RemoteFoo",
+      {},
+      { toolContextId: prepared.contextId },
+    );
+    expect(denied.status).toBe("error");
+    expect(asText(denied.toolReturn)).toContain("Tool not found: RemoteFoo");
+  });
+
+  test("empty session tool filter excludes mod tools from current snapshots", async () => {
+    toolFilter.setEnabledTools("");
+    await loadSpecificTools(["Bash"]);
+    registerEchoModTool(new AbortController().signal);
+
+    const prepared = await prepareCurrentToolExecutionContext();
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools).toEqual([]);
+
+    const denied = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+    expect(denied.status).toBe("error");
+    expect(asText(denied.toolReturn)).toContain("Tool not found: local_echo");
   });
 
   test("runtime-owned external tools stay scoped to their runtime", async () => {
