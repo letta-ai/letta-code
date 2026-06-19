@@ -21,11 +21,15 @@ import type { ListenerRuntime } from "@/websocket/listener/types";
 const DEFAULT_LISTEN_URL = "ws://127.0.0.1:0";
 const DEFAULT_WS_PATH = "/ws";
 const PENDING_STREAM_TIMEOUT_MS = 5000;
+export const APP_SERVER_AUTH_TOKEN_ENV = "LETTA_APP_SERVER_AUTH_TOKEN";
+export const APP_SERVER_PUBLIC_URL_ENV = "LETTA_APP_SERVER_PUBLIC_URL";
 
 type AppServerChannel = "control" | "stream";
 
 export interface StartAppServerOptions {
   listen?: string;
+  authToken?: string;
+  publicUrl?: string;
   connectionName?: string;
   onListening?: (info: AppServerListeningInfo) => void;
   onLog?: (message: string) => void;
@@ -44,6 +48,12 @@ export interface AppServerHandle extends AppServerListeningInfo {
 export interface ParsedAppServerListenUrl {
   host: string;
   port: number;
+  path: string;
+  public: boolean;
+}
+
+export interface ParsedAppServerPublicUrl {
+  baseUrl: string;
   path: string;
 }
 
@@ -130,6 +140,30 @@ function getRequestChannel(url: URL): AppServerChannel | null {
   return null;
 }
 
+function normalizeOptionalToken(token: string | undefined): string | undefined {
+  const trimmed = token?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function getRequestBearerToken(request: IncomingMessage): string | null {
+  const authorization = request.headers.authorization;
+  if (typeof authorization !== "string") return null;
+  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  return match?.[1] ?? null;
+}
+
+function isRequestAuthorized(
+  request: IncomingMessage,
+  requestUrl: URL,
+  authToken: string | undefined,
+): boolean {
+  if (!authToken) return true;
+  return (
+    getRequestBearerToken(request) === authToken ||
+    requestUrl.searchParams.get("token") === authToken
+  );
+}
+
 function attachStreamSocket(
   activeSession: ActiveAppServerSession,
   socket: WebSocket,
@@ -154,6 +188,7 @@ function attachStreamSocket(
 
 export function parseAppServerListenUrl(
   listen: string = DEFAULT_LISTEN_URL,
+  options: { allowPublic?: boolean } = {},
 ): ParsedAppServerListenUrl {
   let url: URL;
   try {
@@ -165,9 +200,10 @@ export function parseAppServerListenUrl(
   if (url.protocol !== "ws:") {
     throw new Error("app-server MVP only supports ws:// listen URLs");
   }
-  if (!isLoopbackHost(url.hostname)) {
+  const publicHost = !isLoopbackHost(url.hostname);
+  if (publicHost && !options.allowPublic) {
     throw new Error(
-      "app-server websocket listen host must be loopback for now",
+      "app-server websocket listen host must be loopback unless an auth token is configured",
     );
   }
   if (url.username || url.password || url.search || url.hash) {
@@ -182,7 +218,39 @@ export function parseAppServerListenUrl(
   }
 
   const path = url.pathname === "/" ? DEFAULT_WS_PATH : url.pathname;
-  return { host: normalizeListenHost(url.hostname), port, path };
+  return {
+    host: normalizeListenHost(url.hostname),
+    port,
+    path,
+    public: publicHost,
+  };
+}
+
+export function parseAppServerPublicUrl(
+  publicUrl: string,
+  fallbackPath = DEFAULT_WS_PATH,
+): ParsedAppServerPublicUrl {
+  let url: URL;
+  try {
+    url = new URL(publicUrl);
+  } catch {
+    throw new Error(`Invalid app-server public URL: ${publicUrl}`);
+  }
+
+  if (url.protocol !== "ws:" && url.protocol !== "wss:") {
+    throw new Error("app-server public URL must use ws:// or wss://");
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error(
+      "app-server public URL cannot include auth, query, or hash",
+    );
+  }
+
+  const path = url.pathname === "/" ? fallbackPath : url.pathname;
+  return {
+    baseUrl: `${url.protocol}//${url.host}`,
+    path,
+  };
 }
 
 async function startControlSession(params: {
@@ -248,7 +316,16 @@ export async function startAppServer(
 ): Promise<AppServerHandle> {
   await settingsManager.initialize();
 
-  const listen = parseAppServerListenUrl(options.listen);
+  const authToken = normalizeOptionalToken(
+    options.authToken ?? process.env[APP_SERVER_AUTH_TOKEN_ENV],
+  );
+  const listen = parseAppServerListenUrl(options.listen, {
+    allowPublic: Boolean(authToken),
+  });
+  const publicUrl = options.publicUrl ?? process.env[APP_SERVER_PUBLIC_URL_ENV];
+  const advertised = publicUrl
+    ? parseAppServerPublicUrl(publicUrl, listen.path)
+    : null;
   const wss = new WebSocketServer({ noServer: true });
   let activeSession: ActiveAppServerSession | null = null;
   let pendingStreamSocket: WebSocket | null = null;
@@ -351,6 +428,11 @@ export async function startAppServer(
       return;
     }
 
+    if (!isRequestAuthorized(request, requestUrl, authToken)) {
+      rejectUpgrade(socket, 401, "Unauthorized");
+      return;
+    }
+
     const channel = getRequestChannel(requestUrl);
     if (!channel) {
       rejectUpgrade(socket, 400, "Bad Request");
@@ -377,11 +459,12 @@ export async function startAppServer(
   });
 
   const address = getRequiredAddressInfo(server);
-  const baseUrl = `ws://${listen.host}:${address.port}`;
+  const baseUrl = advertised?.baseUrl ?? `ws://${listen.host}:${address.port}`;
+  const websocketPath = advertised?.path ?? listen.path;
   resolvedInfo = {
     url: baseUrl,
-    controlUrl: getChannelUrl(baseUrl, listen.path, "control"),
-    streamUrl: getChannelUrl(baseUrl, listen.path, "stream"),
+    controlUrl: getChannelUrl(baseUrl, websocketPath, "control"),
+    streamUrl: getChannelUrl(baseUrl, websocketPath, "stream"),
   };
   options.onListening?.(resolvedInfo);
 

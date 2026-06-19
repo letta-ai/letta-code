@@ -9,6 +9,7 @@ import { LocalBackend } from "@/backend/local";
 import {
   type AppServerHandle,
   parseAppServerListenUrl,
+  parseAppServerPublicUrl,
   startAppServer,
 } from "@/websocket/app-server";
 
@@ -98,17 +99,44 @@ describe("app-server native websocket", () => {
       host: "127.0.0.1",
       port: 0,
       path: "/ws",
+      public: false,
     });
     expect(parseAppServerListenUrl("ws://localhost:4500/custom")).toEqual({
       host: "localhost",
       port: 4500,
       path: "/custom",
+      public: false,
     });
     expect(() => parseAppServerListenUrl("stdio://")).toThrow(
       /only supports ws:\/\//,
     );
     expect(() => parseAppServerListenUrl("ws://0.0.0.0:4500")).toThrow(
-      /loopback/,
+      /auth token/,
+    );
+    expect(
+      parseAppServerListenUrl("ws://0.0.0.0:4500", { allowPublic: true }),
+    ).toEqual({
+      host: "0.0.0.0",
+      port: 4500,
+      path: "/ws",
+      public: true,
+    });
+  });
+
+  test("parses public app-server URLs for advertised client endpoints", () => {
+    expect(parseAppServerPublicUrl("wss://example.com", "/ws")).toEqual({
+      baseUrl: "wss://example.com",
+      path: "/ws",
+    });
+    expect(parseAppServerPublicUrl("wss://example.com/custom", "/ws")).toEqual({
+      baseUrl: "wss://example.com",
+      path: "/custom",
+    });
+    expect(() => parseAppServerPublicUrl("https://example.com")).toThrow(
+      /must use ws:\/\/ or wss:\/\//,
+    );
+    expect(() => parseAppServerPublicUrl("wss://example.com?x=1")).toThrow(
+      /cannot include auth, query, or hash/,
     );
   });
 
@@ -129,6 +157,51 @@ describe("app-server native websocket", () => {
         headers: { Origin: "https://example.com" },
       });
       expect(browserHealth.status).toBe(403);
+    } finally {
+      await handle?.close();
+    }
+  });
+
+  test("requires auth token for websocket upgrades when configured", async () => {
+    let handle: AppServerHandle | null = null;
+    let rejected: WebSocket | null = null;
+    let accepted: WebSocket | null = null;
+    try {
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        authToken: "test-token",
+      });
+
+      rejected = new WebSocket(handle.controlUrl);
+      await expect(waitForOpen(rejected)).rejects.toThrow();
+
+      const acceptedUrl = new URL(handle.controlUrl);
+      acceptedUrl.searchParams.set("token", "test-token");
+      accepted = new WebSocket(acceptedUrl);
+      await waitForOpen(accepted);
+    } finally {
+      closeClient(rejected);
+      closeClient(accepted);
+      await handle?.close();
+    }
+  });
+
+  test("allows public listen URLs when auth is configured", async () => {
+    let handle: AppServerHandle | null = null;
+    try {
+      handle = await startAppServer({
+        listen: "ws://0.0.0.0:0",
+        authToken: "test-token",
+        publicUrl: "wss://example.up.railway.app",
+      });
+
+      expect(handle.url).toBe("wss://example.up.railway.app");
+      expect(handle.controlUrl).toBe(
+        "wss://example.up.railway.app/ws?channel=control",
+      );
+      expect(handle.streamUrl).toBe(
+        "wss://example.up.railway.app/ws?channel=stream",
+      );
     } finally {
       await handle?.close();
     }
