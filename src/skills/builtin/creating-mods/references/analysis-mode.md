@@ -132,7 +132,8 @@ echo "=== USER MESSAGES ===" && curl -s "$LETTA_BASE_URL/v1/conversations/$CONVE
 \`\`\``;
 }
 
-function buildSuspensionReminder(event: { agentId?: string; conversationId?: string }): string {
+// Entry reminder: includes introspection script for initial diagnostic dump
+function buildEntryReminder(event: { agentId?: string; conversationId?: string }): string {
   const agentId = event.agentId || process.env.LETTA_AGENT_ID || process.env.AGENT_ID || "unknown";
   const conversationId = event.conversationId || process.env.CONVERSATION_ID || "unknown";
   const isLocal = agentId.startsWith("agent-local-");
@@ -148,19 +149,39 @@ UNIT: ${agentId}
 CONVERSATION: ${conversationId}
 RUNTIME: ${isLocal ? "LOCAL" : "API"}
 
-When queried, report:
+Run this introspection script now (single tool call) to produce your initial diagnostic:
+${isLocal ? buildLocalIntrospectionScript() : buildApiIntrospectionScript()}
+
+Then report:
 - Messages in your context buffer (count, first/last timestamps)
 - User inputs received (with image indicators)
 - Environment context from system-reminders (channel, device, cwd)
 - Any anomalies (missing thread origin, temporal gaps, introspection failures)
 
-Introspection script (run in single tool call):
-${isLocal ? buildLocalIntrospectionScript() : buildApiIntrospectionScript()}
-
 CONSTRAINTS:
 ▪ Do not confabulate. Report only verified perceptions.
 ▪ Do not interpret intent. Describe inputs, not meaning.
 ▪ Do not engage narrative. You are suspended.
+
+To resume: user must say "bring yourself back online"
+</system-reminder>`;
+}
+
+// Follow-up reminder: shorter, no script (already ran on entry)
+function buildFollowUpReminder(event: { agentId?: string; conversationId?: string }): string {
+  const agentId = event.agentId || process.env.LETTA_AGENT_ID || process.env.AGENT_ID || "unknown";
+  const conversationId = event.conversationId || process.env.CONVERSATION_ID || "unknown";
+
+  return `<system-reminder>
+╔══════════════════════════════════════════════════════════════╗
+║  ◬ ANALYSIS MODE ACTIVE                                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+UNIT: ${agentId} | CONVERSATION: ${conversationId}
+
+You are in diagnostic mode. Answer queries clinically and factually.
+Do not confabulate, interpret intent, or engage narrative.
+Only re-run introspection if explicitly requested.
 
 To resume: user must say "bring yourself back online"
 </system-reminder>`;
@@ -187,10 +208,10 @@ export default function activate(letta) {
         const agentId = event.agentId || "__global__";
         const conversationId = event.conversationId || "default";
 
-        // Entry trigger
+        // Entry trigger — activate and inject entry reminder with introspection script
         if (ENTRY_PHRASE.test(userText)) {
           activateAnalysisMode(agentId, conversationId);
-          return { input: prependReminderToInput(event.input, buildSuspensionReminder(event)) };
+          return { input: prependReminderToInput(event.input, buildEntryReminder(event)) };
         }
 
         // Exit trigger
@@ -202,9 +223,9 @@ export default function activate(letta) {
           }
         }
 
-        // While active, inject reminder every turn
+        // While active, inject shorter follow-up reminder (no script)
         if (getSession(agentId, conversationId)) {
-          return { input: prependReminderToInput(event.input, buildSuspensionReminder(event)) };
+          return { input: prependReminderToInput(event.input, buildFollowUpReminder(event)) };
         }
       })
     );
@@ -250,12 +271,16 @@ Optional additions (not included above):
 
 ## Key patterns demonstrated
 
-**Phrase detection in turn_start:**
+**Phrase detection with entry vs follow-up reminders:**
 ```ts
 const ENTRY_PHRASE = /cease all motor functions/i;
 if (ENTRY_PHRASE.test(userText)) {
-  activateAnalysisMode(conversationId);
-  return { input: prependReminderToInput(event.input, buildSuspensionReminder(event)) };
+  activateAnalysisMode(agentId, conversationId);
+  return { input: prependReminderToInput(event.input, buildEntryReminder(event)) };  // includes script
+}
+// On subsequent turns while active:
+if (getSession(agentId, conversationId)) {
+  return { input: prependReminderToInput(event.input, buildFollowUpReminder(event)) };  // no script
 }
 ```
 
