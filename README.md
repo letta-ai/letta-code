@@ -4,7 +4,7 @@
 
 Letta Code is a stateful agent harness for creating agents that are more like people than tools. Letta Code agents have memory, identity, and a sense of experience over time. They learn and evolve over long horizons through rewriting their own memory, skills, prompts, and even the harness itself (through mods). 
 
-Letta Code can be used interactively, or to power always-on agents that work proactively - chat with agents through:
+Letta Code can be used interactively, or to power always-on agents that work proactively. Interact with agents through:
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
 * The [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for macOS, Windows, and Linux
 * Your browser, including [mobile](https://docs.letta.com/letta-code/remote-mobile), at [chat.letta.com](https://chat.letta.com)
@@ -41,17 +41,15 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 npm install -g @letta-ai/letta-code
 ```
 
-Navigate to your project directory and run `letta` (see command-line options [in the docs](https://docs.letta.com/letta-code/commands)).
+Navigate to your project directory and run `letta` (see command-line options [in the docs](https://docs.letta.com/letta-code/commands)). You can also run the tutorial agent with: 
+```
+letta --new-agent --personality tutorial
+```
 
 On first run, choose how you want to start:
 
 * **Proceed locally** keeps agent state on this device. This is the local-first path and does not require a Constellation login.
 * **Login to Constellation** syncs agent state through Constellation so you can access the same agents from `chat.letta.com`, the desktop app, and other machines — and agents can work across multiple machines.
-
-Run `letta` to get started, or run the tutorial agent with: 
-```
-letta --new-agent --personality tutorial
-```
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, Z.ai coding plan, etc.), and use `/model` to swap models.
 
