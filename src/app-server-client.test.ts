@@ -318,6 +318,153 @@ describe("app-server client", () => {
     });
   });
 
+  test("runTurn waits through intermediate requires_approval stop_reason", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn({
+      runtime,
+      payload: {
+        kind: "create_message",
+        messages: [{ role: "user", content: "use a tool" }],
+      },
+    });
+
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "stream-1",
+      delta: {
+        type: "message",
+        message_type: "approval_request_message",
+        run_id: "run-approval",
+        tool_calls: [
+          {
+            tool_call_id: "call-1",
+            name: "Bash",
+            arguments: '{"command":"pwd"}',
+          },
+        ],
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 2,
+      emitted_at: "2026-06-11T00:00:00.001Z",
+      idempotency_key: "stream-2",
+      delta: {
+        type: "message",
+        message_type: "stop_reason",
+        run_id: "run-approval",
+        stop_reason: "requires_approval",
+      },
+    });
+    stream.receive({
+      type: "update_loop_status",
+      runtime,
+      event_seq: 3,
+      emitted_at: "2026-06-11T00:00:00.002Z",
+      idempotency_key: "loop-1",
+      loop_status: {
+        status: "EXECUTING_CLIENT_SIDE_TOOL",
+        active_run_ids: ["run-approval"],
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 4,
+      emitted_at: "2026-06-11T00:00:00.003Z",
+      idempotency_key: "stream-3",
+      delta: {
+        type: "message",
+        message_type: "stop_reason",
+        run_id: "run-final",
+        stop_reason: "end_turn",
+      },
+    });
+
+    expect(await turn).toMatchObject({
+      runtime,
+      stopReason: "end_turn",
+      runIds: ["run-approval", "run-final"],
+      completedBy: "stop_reason",
+    });
+  });
+
+  test("runTurn resolves requires_approval only when listener is waiting on approval", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn({
+      runtime,
+      payload: {
+        kind: "create_message",
+        messages: [{ role: "user", content: "use a tool" }],
+      },
+    });
+
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "stream-1",
+      delta: {
+        type: "message",
+        message_type: "approval_request_message",
+        run_id: "run-approval",
+        tool_calls: [
+          {
+            tool_call_id: "call-1",
+            name: "Bash",
+            arguments: '{"command":"rm -rf tmp"}',
+          },
+        ],
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 2,
+      emitted_at: "2026-06-11T00:00:00.001Z",
+      idempotency_key: "stream-2",
+      delta: {
+        type: "message",
+        message_type: "stop_reason",
+        run_id: "run-approval",
+        stop_reason: "requires_approval",
+      },
+    });
+    stream.receive({
+      type: "update_loop_status",
+      runtime,
+      event_seq: 3,
+      emitted_at: "2026-06-11T00:00:00.002Z",
+      idempotency_key: "loop-1",
+      loop_status: {
+        status: "WAITING_ON_APPROVAL",
+        active_run_ids: ["run-approval"],
+      },
+    });
+
+    expect(await turn).toMatchObject({
+      runtime,
+      stopReason: "requires_approval",
+      runIds: ["run-approval"],
+      completedBy: "loop_status_waiting_on_approval",
+    });
+  });
+
   test("runTurn does not treat idle status alone as terminal", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();

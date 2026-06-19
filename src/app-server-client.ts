@@ -86,6 +86,7 @@ type PendingRequest = {
 
 export type AppServerTurnCompletionSource =
   | "stop_reason"
+  | "loop_status_waiting_on_approval"
   | "loop_status_waiting_fallback";
 
 export interface AppServerTurnResult {
@@ -231,6 +232,12 @@ function sameRuntime(a: RuntimeScope | undefined, b: RuntimeScope): boolean {
 
 function isWaitingLoopStatus(message: LoopStatusUpdateMessage): boolean {
   return message.loop_status.status === "WAITING_ON_INPUT";
+}
+
+function isWaitingOnApprovalLoopStatus(
+  message: LoopStatusUpdateMessage,
+): boolean {
+  return message.loop_status.status === "WAITING_ON_APPROVAL";
 }
 
 function streamDeltaRunId(message: StreamDeltaMessage): string | null {
@@ -510,6 +517,7 @@ export class AppServerClient {
     const commandWithIds = this.withClientMessageIds(command);
     const runIds = new Set<string>();
     let observedTurnEvidence = false;
+    let observedRequiresApprovalStop = false;
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -569,7 +577,12 @@ export class AppServerClient {
             return;
           }
           if (messageType === "stop_reason") {
-            finish("stop_reason", message, streamDeltaStopReason(message));
+            const stopReason = streamDeltaStopReason(message);
+            if (stopReason === "requires_approval") {
+              observedRequiresApprovalStop = true;
+              return;
+            }
+            finish("stop_reason", message, stopReason);
           }
           return;
         }
@@ -578,6 +591,17 @@ export class AppServerClient {
           for (const runId of message.loop_status.active_run_ids) {
             observedTurnEvidence = true;
             runIds.add(runId);
+          }
+          if (
+            (observedTurnEvidence || observedRequiresApprovalStop) &&
+            isWaitingOnApprovalLoopStatus(message)
+          ) {
+            finish(
+              "loop_status_waiting_on_approval",
+              message,
+              "requires_approval",
+            );
+            return;
           }
           if (
             options.allowLoopStatusFallback === true &&
