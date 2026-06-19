@@ -2410,7 +2410,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         const profileCommandResult = await handleProfileCommand(msg, trimmed, {
           agentId,
           agentName,
-          conversationId,
           buffersRef,
           commandRunner,
           handleAgentSelect,
