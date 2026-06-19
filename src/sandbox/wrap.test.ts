@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import { buildFsSandboxPolicy } from "@/sandbox/policy";
 import { SANDBOX_EXEC_PATH } from "@/sandbox/seatbelt";
+import { WINDOWS_SANDBOX_HELPER_NAME } from "@/sandbox/windows";
 import { wrapLauncher } from "@/sandbox/wrap";
 
 const POLICY = buildFsSandboxPolicy({
@@ -40,4 +41,23 @@ test("bwrap wrapping uses the resolved binary path and -- separator", () => {
 test("bwrap wrapping defaults to bare 'bwrap' when no path given", () => {
   const wrapped = wrapLauncher(LAUNCHER, POLICY, { backend: "bwrap" });
   expect(wrapped?.[0]).toBe("bwrap");
+});
+
+test("windows wrapping uses the resolved helper path and -- separator", () => {
+  const wrapped = wrapLauncher(LAUNCHER, POLICY, {
+    backend: "windows",
+    windowsHelperPath: "C:/Users/me/.letta/sandbox/windows/helper.exe",
+  });
+
+  expect(wrapped?.[0]).toBe("C:/Users/me/.letta/sandbox/windows/helper.exe");
+  expect(wrapped).toContain("--restrict-writes");
+  expect(wrapped).toContain("--denied-root");
+  const sep = wrapped?.indexOf("--") ?? -1;
+  expect(wrapped?.slice(sep + 1)).toEqual(LAUNCHER);
+});
+
+test("windows wrapping defaults to the helper binary name when no path given", () => {
+  const wrapped = wrapLauncher(LAUNCHER, POLICY, { backend: "windows" });
+
+  expect(wrapped?.[0]).toBe(WINDOWS_SANDBOX_HELPER_NAME);
 });

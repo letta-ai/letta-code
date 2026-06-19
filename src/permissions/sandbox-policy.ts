@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, win32 } from "node:path";
 
 import {
   buildFsSandboxPolicy,
@@ -72,7 +72,8 @@ export function getLettaHomeRoot(homeDir: string = homedir()): string {
  * existing ancestor and re-append the missing tail.
  */
 export function canonicalizeRoot(input: string): string {
-  const abs = isAbsolute(input) ? input : resolve(input);
+  const abs =
+    isAbsolute(input) || win32.isAbsolute(input) ? input : resolve(input);
 
   let dir = abs;
   const tail: string[] = [];

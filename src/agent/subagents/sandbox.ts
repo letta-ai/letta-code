@@ -120,7 +120,11 @@ export function wrapSubagentLauncher(
   const wrapped = wrapLauncher(
     [input.launcher.command, ...input.launcher.args],
     policy,
-    { backend: availability.backend, bwrapPath: availability.bwrapPath },
+    {
+      backend: availability.backend,
+      bwrapPath: availability.bwrapPath,
+      windowsHelperPath: availability.windowsHelperPath,
+    },
   );
   if (!wrapped || wrapped.length === 0) return null;
 

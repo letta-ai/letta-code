@@ -22,6 +22,8 @@ export interface ShellSandboxContext {
   backend: SandboxBackend;
   /** Resolved bwrap binary path, when `backend === "bwrap"`. */
   bwrapPath?: string;
+  /** Resolved Windows helper path, when `backend === "windows"`. */
+  windowsHelperPath?: string;
   /** Both backend agents trees to wall off (canonical). */
   agentsTreeRoots: string[];
   /** The agent's resolvable memory roots, to carve self back out of the trees. */
@@ -76,6 +78,7 @@ export function resolveShellSandboxContext(
   return {
     backend: avail.backend,
     bwrapPath: avail.bwrapPath,
+    windowsHelperPath: avail.windowsHelperPath,
     agentsTreeRoots,
     memoryRoots,
   };

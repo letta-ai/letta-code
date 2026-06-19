@@ -3,12 +3,15 @@ import { existsSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { SandboxBackend } from "./policy.js";
 import { SANDBOX_EXEC_PATH } from "./seatbelt.js";
+import { ensureWindowsSandboxHelper } from "./windows.js";
 
 export interface SandboxAvailability {
   /** The usable backend, or null when none is available on this host. */
   backend: SandboxBackend | null;
   /** Resolved bwrap binary path, when `backend === "bwrap"`. */
   bwrapPath?: string;
+  /** Resolved Windows helper path, when `backend === "windows"`. */
+  windowsHelperPath?: string;
   /** Human-readable explanation, primarily for the null case. */
   reason: string;
 }
@@ -104,9 +107,25 @@ function probe(platform: NodeJS.Platform): SandboxAvailability {
     return probeBwrap();
   }
 
+  if (platform === "win32") {
+    return probeWindows();
+  }
+
   return {
     backend: null,
     reason: `no filesystem sandbox backend for platform "${platform}"`,
+  };
+}
+
+function probeWindows(): SandboxAvailability {
+  const helper = ensureWindowsSandboxHelper();
+  if (!helper.ok) {
+    return { backend: null, reason: helper.reason };
+  }
+  return {
+    backend: "windows",
+    windowsHelperPath: helper.helperPath,
+    reason: helper.reason,
   };
 }
 
