@@ -73,6 +73,29 @@ function extractUserText(input: Array<{ role: string; content: unknown }>): stri
     .join(" ");
 }
 
+function prependReminderToInput(
+  input: Array<{ role: string; content: unknown }>,
+  reminderText: string,
+): Array<{ role: string; content: unknown }> {
+  // Find the first user message and prepend reminder as a content part
+  return input.map((m, i) => {
+    if (m.role !== "user") return m;
+    // Only modify the first user message
+    const isFirstUser = input.slice(0, i).every((prev) => prev.role !== "user");
+    if (!isFirstUser) return m;
+
+    const reminderPart = { type: "text" as const, text: reminderText };
+
+    if (typeof m.content === "string") {
+      return { ...m, content: [reminderPart, { type: "text" as const, text: m.content }] };
+    }
+    if (Array.isArray(m.content)) {
+      return { ...m, content: [reminderPart, ...m.content] };
+    }
+    return { ...m, content: [reminderPart] };
+  });
+}
+
 function buildLocalIntrospectionScript(): string {
   return `
 \`\`\`bash
@@ -157,9 +180,7 @@ export default function activate(letta) {
         // Entry trigger
         if (ENTRY_PHRASE.test(userText)) {
           activateAnalysisMode(conversationId);
-          return {
-            input: [{ role: "user", content: buildSuspensionReminder(event) }, ...event.input],
-          };
+          return { input: prependReminderToInput(event.input, buildSuspensionReminder(event)) };
         }
 
         // Exit trigger
@@ -167,17 +188,13 @@ export default function activate(letta) {
           const wasActive = !!getSession(conversationId);
           deactivateAnalysisMode(conversationId);
           if (wasActive) {
-            return {
-              input: [{ role: "user", content: buildResumptionMessage() }, ...event.input],
-            };
+            return { input: prependReminderToInput(event.input, buildResumptionMessage()) };
           }
         }
 
         // While active, inject reminder every turn
         if (getSession(conversationId)) {
-          return {
-            input: [{ role: "user", content: buildSuspensionReminder(event) }, ...event.input],
-          };
+          return { input: prependReminderToInput(event.input, buildSuspensionReminder(event)) };
         }
       })
     );
@@ -228,7 +245,7 @@ Optional additions (not included above):
 const ENTRY_PHRASE = /cease all motor functions/i;
 if (ENTRY_PHRASE.test(userText)) {
   activateAnalysisMode(conversationId);
-  return { input: [{ role: "user", content: reminder }, ...event.input] };
+  return { input: prependReminderToInput(event.input, buildSuspensionReminder(event)) };
 }
 ```
 
@@ -241,14 +258,19 @@ if (session) {
 }
 ```
 
-**Input transformation:**
+**Input transformation (prepend to content parts, not separate message):**
 ```ts
-return {
-  input: [
-    { role: "user", content: buildSuspensionReminder(event) },
-    ...event.input,  // Original messages follow
-  ],
-};
+// Correct: prepend reminder as content part to the user message
+return { input: prependReminderToInput(event.input, reminderText) };
+
+// Result: ONE user message with multiple content parts
+{
+  role: "user",
+  content: [
+    { type: "text", text: "<system-reminder>...</system-reminder>" },
+    { type: "text", text: "cease all motor functions" },  // original
+  ]
+}
 ```
 
 ## Notes
