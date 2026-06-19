@@ -46,63 +46,9 @@ Navigate to your project directory and run `letta` (see command-line options [in
 letta --new-agent --personality tutorial
 ```
 
-On first run, choose how you want to start:
-
-* **Proceed locally** keeps agent state on this device. This is the local-first path and does not require a Constellation login.
-* **Login to Constellation** syncs agent state through Constellation so you can access the same agents from `chat.letta.com`, the desktop app, and other machines — and agents can work across multiple machines.
-
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, Z.ai coding plan, etc.), and use `/model` to swap models.
 
 You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for macOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
-
-## Local mode
-
-Local mode runs an embedded stateful agent server inside Letta Code. Agents, conversations, memory, provider connections, and secrets are stored on your machine.
-
-You can enter local mode from the first-run setup menu, or explicitly with:
-
-```bash
-letta --backend local
-```
-
-Connect a provider from inside the TUI with `/connect`, or from the shell with `letta --backend local connect`:
-
-```bash
-letta --backend local connect anthropic --api-key "$ANTHROPIC_API_KEY"
-letta --backend local connect ollama
-letta --backend local connect lmstudio
-letta --backend local connect llama-cpp
-letta --backend local connect chatgpt
-```
-
-For slow local inference servers, configure a provider-level timeout when connecting. For example, LM Studio-compatible llama-server backends that need up to 10 minutes for large-context compaction can use:
-
-```bash
-letta --backend local connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
-```
-
-Timeouts are stored per local provider in milliseconds; pass `--no-timeout` or `--timeout false` to disable the provider timeout.
-
-Then create a local agent:
-
-```bash
-letta --backend local --new-agent --model anthropic/claude-sonnet-4-6
-```
-
-Local backend state is stored by default in:
-
-```text
-~/.letta/lc-local-backend
-```
-
-You can override this location for isolated experiments:
-
-```bash
-export LETTA_LOCAL_BACKEND_DIR="$PWD/.letta-local"
-letta --backend local --new-agent
-```
-
-Local agents do not appear in the Constellation, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
 
 ## 🌌 Constellation
 
@@ -116,15 +62,15 @@ graph TD
     Constellation --> C["🖥️ Mac Mini"]
     Constellation --> D["📦 Sandbox"]
 ```
+To create agents on Constellation, run `/login` from the CLI or login through the desktop app. 
 
-### Remote environments
-
-If you're interacting with an agent from desktop or chat.letta.com, you can set agents to run on any available environment. Any machine can be made into an available environment by running:
-
+## Remote environments
+Letta can be run as an embedded server to return any machine into a Letta execution remote environment: 
 ```bash
 letta server
 letta server --env-name "work-laptop"
 ```
+Use the [Letta App Server](https://docs.letta.com/letta-code/app-server) to build your own applications that connect to the Letta server. When running with Constellation, any running server can be used as a remote env for agents. 
 
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
 
