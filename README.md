@@ -64,14 +64,12 @@ graph TD
 ```
 To create agents on Constellation, run `/login` from the CLI or login through the desktop app. 
 
-## Remote environments
-Letta can be run as an embedded server to return any machine into a Letta execution remote environment: 
+### Remote environments
+Agents on Constellation can run across multiple machines. Any machine can be made into an available environment by running:
 ```bash
 letta server
 letta server --env-name "work-laptop"
 ```
-Use the [Letta App Server](https://docs.letta.com/letta-code/app-server) to build your own applications that connect to the Letta server. When running with Constellation, any running server can be used as a remote env for agents. 
-
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
 
 ## Installing external skills
