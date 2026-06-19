@@ -27,6 +27,7 @@ let cachedWorkingLauncher: string[] | null = null;
 
 function rebuildCachedLauncher(
   command: string,
+  env: NodeJS.ProcessEnv,
   secretEnv?: Record<string, string>,
 ): string[] | null {
   if (!cachedWorkingLauncher) return null;
@@ -34,6 +35,7 @@ function rebuildCachedLauncher(
   if (!cachedExecutable) return null;
 
   const launchers = buildShellLaunchers(command, {
+    env,
     powershellEnvAliases: secretEnv ? Object.keys(secretEnv) : undefined,
   });
   return (
@@ -54,10 +56,11 @@ function getBackgroundLauncher(
   env: NodeJS.ProcessEnv,
   secretEnv?: Record<string, string>,
 ): string[] {
-  const cachedLauncher = rebuildCachedLauncher(command, secretEnv);
+  const cachedLauncher = rebuildCachedLauncher(command, env, secretEnv);
   if (cachedLauncher) return cachedLauncher;
 
   const launchers = buildShellLaunchers(command, {
+    env,
     powershellEnvAliases: secretEnv ? Object.keys(secretEnv) : undefined,
   });
   return selectAvailableShellLauncher(launchers, env) || [];
@@ -101,7 +104,11 @@ export async function spawnCommand(
 
   // On Windows, use fallback logic to handle PowerShell ENOENT errors (PR #482)
   if (cachedWorkingLauncher) {
-    const newLauncher = rebuildCachedLauncher(commandToRun, options.secretEnv);
+    const newLauncher = rebuildCachedLauncher(
+      commandToRun,
+      env,
+      options.secretEnv,
+    );
     if (newLauncher) {
       try {
         const result = await spawnWithLauncher(newLauncher, {
@@ -123,6 +130,7 @@ export async function spawnCommand(
   }
 
   const launchers = buildShellLaunchers(commandToRun, {
+    env,
     powershellEnvAliases: options.secretEnv
       ? Object.keys(options.secretEnv)
       : undefined,

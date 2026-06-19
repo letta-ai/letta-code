@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
+import { acceptsDashC, preferredShellFromEnv } from "@/utils/shell-detection";
 
 const SEP = "\u0000";
 type ShellLaunchOptions = {
@@ -108,11 +109,23 @@ export function buildPowerShellCommand(
 function windowsLaunchers(
   command: string,
   envAliases: string[] = [],
+  env: NodeJS.ProcessEnv = process.env,
+  login = false,
 ): string[][] {
   const trimmed = command.trim();
   if (!trimmed) return [];
   const launchers: string[][] = [];
   const seen = new Set<string>();
+
+  const preferredShell = preferredShellFromEnv(env);
+  if (preferredShell && acceptsDashC(preferredShell)) {
+    pushUnique(launchers, seen, [
+      preferredShell,
+      shellCommandFlag(preferredShell, login),
+      trimmed,
+    ]);
+  }
+
   const powerShellCommand = buildPowerShellCommand(trimmed, envAliases);
 
   // Match Codex's PowerShell order: prefer PowerShell Core (`pwsh`) when
@@ -224,7 +237,11 @@ export function selectAvailableShellLauncher(
   return launchers.at(-1);
 }
 
-function unixLaunchers(command: string, login: boolean): string[][] {
+function unixLaunchers(
+  command: string,
+  login: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): string[][] {
   const trimmed = command.trim();
   if (!trimmed) return [];
   const launchers: string[][] = [];
@@ -242,7 +259,7 @@ function unixLaunchers(command: string, login: boolean): string[][] {
 
   // Try user's preferred shell from $SHELL environment variable
   // Use login semantics only when explicitly requested.
-  const envShell = process.env.SHELL?.trim();
+  const envShell = env.SHELL?.trim();
   if (envShell) {
     pushUnique(launchers, seen, [
       envShell,
@@ -289,8 +306,9 @@ export function buildShellLaunchers(
   options?: ShellLaunchOptions,
 ): string[][] {
   const login = options?.login ?? false;
-  const commandToRun = withStrictShellPrelude(command, options?.env);
+  const env = options?.env ?? process.env;
+  const commandToRun = withStrictShellPrelude(command, env);
   return process.platform === "win32"
-    ? windowsLaunchers(commandToRun, options?.powershellEnvAliases)
-    : unixLaunchers(commandToRun, login);
+    ? windowsLaunchers(commandToRun, options?.powershellEnvAliases, env, login)
+    : unixLaunchers(commandToRun, login, env);
 }

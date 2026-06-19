@@ -118,7 +118,7 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
     return await runProcess(context);
   } catch (error) {
     if (error instanceof ShellExecutionError && error.code === "ENOENT") {
-      for (const fallback of buildFallbackCommands(command)) {
+      for (const fallback of buildFallbackCommands(command, context.env)) {
         try {
           return await runProcess({ ...context, command: fallback });
         } catch (retryError) {
@@ -136,14 +136,31 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
   }
 }
 
-function buildFallbackCommands(command: string[]): string[][] {
+function buildFallbackCommands(
+  command: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string[][] {
   if (!command.length) return [];
   const shellIndex = findShellExecutableIndex(command);
   if (shellIndex === null) return [];
   const script = extractShellScript(command, shellIndex);
   if (!script) return [];
-  const launchers = buildShellLaunchers(script);
+  const launchers = buildShellLaunchers(script, {
+    env,
+    login: usesLoginShellFlag(command, shellIndex),
+  });
   return launchers.filter((launcher) => !arraysEqual(launcher, command));
+}
+
+function usesLoginShellFlag(command: string[], shellIndex: number): boolean {
+  for (let i = shellIndex + 1; i < command.length; i += 1) {
+    const token = command[i];
+    if (!token) continue;
+    const normalized = token.toLowerCase();
+    if (normalized === "-lc") return true;
+    if (normalized === "-c" || normalized === "/c") return false;
+  }
+  return false;
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {
