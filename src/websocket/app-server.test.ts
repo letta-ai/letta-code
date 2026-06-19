@@ -71,6 +71,7 @@ function expectWebSocketOpenFailure(
     };
     const handleError = () => {
       cleanup();
+      terminateClient(socket);
       resolve();
     };
     socket.once("open", handleOpen);
