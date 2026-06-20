@@ -522,6 +522,70 @@ describe("app-server client", () => {
     await expect(turn).rejects.toThrow("Timed out waiting for app-server turn");
   });
 
+  test("runTurn ignores waiting-on-approval status before turn evidence", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn(
+      {
+        runtime,
+        payload: {
+          kind: "create_message",
+          messages: [{ role: "user", content: "hello" }],
+        },
+      },
+      { allowLoopStatusFallback: true },
+    );
+
+    stream.receive({
+      type: "update_loop_status",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "loop-1",
+      loop_status: {
+        status: "WAITING_ON_APPROVAL",
+        active_run_ids: ["stale-run"],
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 2,
+      emitted_at: "2026-06-11T00:00:00.001Z",
+      idempotency_key: "stream-1",
+      delta: {
+        type: "message",
+        message_type: "assistant_message",
+        run_id: "run-1",
+        content: "done",
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 3,
+      emitted_at: "2026-06-11T00:00:00.002Z",
+      idempotency_key: "stream-2",
+      delta: {
+        type: "message",
+        message_type: "stop_reason",
+        run_id: "run-1",
+        stop_reason: "end_turn",
+      },
+    });
+
+    expect(await turn).toMatchObject({
+      runtime,
+      stopReason: "end_turn",
+      runIds: ["run-1"],
+      completedBy: "stop_reason",
+    });
+  });
+
   test("runTurn rejects concurrent turns for the same runtime", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
