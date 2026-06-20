@@ -289,7 +289,7 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(1);
   });
 
-  test("emits default permission mode when Discord creates a conversation", async () => {
+  test("emits standard permission mode when Discord creates a conversation", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
       {
@@ -298,7 +298,7 @@ describe("discord channel registry", () => {
         enabled: true,
         token: "discord-token",
         agentId: "agent-1",
-        defaultPermissionMode: "unrestricted",
+        defaultPermissionMode: "standard",
         dmPolicy: "open",
         allowedUsers: [],
         createdAt: "2026-04-11T00:00:00.000Z",
@@ -330,7 +330,7 @@ describe("discord channel registry", () => {
       accountId: "discord-bot",
       agentId: "agent-1",
       conversationId: "conv-discord",
-      defaultPermissionMode: "unrestricted",
+      defaultPermissionMode: "standard",
     });
   });
 

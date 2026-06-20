@@ -477,7 +477,7 @@ export function buildDeviceStatus(
     memory_directory: scopedAgentId
       ? getScopedMemoryFilesystemRoot(scopedAgentId)
       : null,
-    ...(!scope
+    ...(params === undefined
       ? {
           cwd_map: Object.fromEntries(listener.workingDirectoryByConversation),
           boot_working_directory: listener.bootWorkingDirectory,

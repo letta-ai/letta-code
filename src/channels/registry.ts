@@ -2017,16 +2017,14 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "standard") {
-      this.eventHandler?.({
-        type: "discord_conversation_created",
-        channelId: "discord",
-        accountId: config.accountId,
-        agentId: config.agentId,
-        conversationId,
-        defaultPermissionMode: config.defaultPermissionMode,
-      });
-    }
+    this.eventHandler?.({
+      type: "discord_conversation_created",
+      channelId: "discord",
+      accountId: config.accountId,
+      agentId: config.agentId,
+      conversationId,
+      defaultPermissionMode: config.defaultPermissionMode,
+    });
     return route;
   }
 
