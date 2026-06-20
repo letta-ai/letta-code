@@ -611,12 +611,22 @@ export class AppServerClient {
         }
 
         if (message.type === "update_loop_status") {
+          const hadTurnEvidenceBeforeLoopStatus =
+            observedTurnEvidence || observedRequiresApprovalStop;
+          if (
+            !hadTurnEvidenceBeforeLoopStatus &&
+            (isWaitingOnApprovalLoopStatus(message) ||
+              (options.allowLoopStatusFallback === true &&
+                isWaitingLoopStatus(message)))
+          ) {
+            return;
+          }
           for (const runId of message.loop_status.active_run_ids) {
             observedTurnEvidence = true;
             runIds.add(runId);
           }
           if (
-            (observedTurnEvidence || observedRequiresApprovalStop) &&
+            hadTurnEvidenceBeforeLoopStatus &&
             isWaitingOnApprovalLoopStatus(message)
           ) {
             finish(
@@ -628,7 +638,7 @@ export class AppServerClient {
           }
           if (
             options.allowLoopStatusFallback === true &&
-            observedTurnEvidence &&
+            hadTurnEvidenceBeforeLoopStatus &&
             isWaitingLoopStatus(message)
           ) {
             finish("loop_status_waiting_fallback", message, null);
