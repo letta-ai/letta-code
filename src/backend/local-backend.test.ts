@@ -321,6 +321,32 @@ describe("local backend pi transcript", () => {
         name: "Hidden",
         hidden: true,
       } as never);
+      const legacySubagentId = "agent-local-legacy-subagent";
+      const legacySubagentPath = join(
+        storageDir,
+        "agents",
+        `${Buffer.from(legacySubagentId).toString("base64url")}.json`,
+      );
+      await writeFile(
+        legacySubagentPath,
+        `${JSON.stringify(
+          {
+            id: legacySubagentId,
+            name: "Legacy subagent",
+            description: null,
+            system: "",
+            tags: [
+              "origin:letta-code",
+              "role:subagent",
+              "type:general-purpose",
+            ],
+            model: "local/default",
+            model_settings: {},
+          },
+          null,
+          2,
+        )}\n`,
+      );
 
       expect((hidden as { hidden?: boolean }).hidden).toBe(true);
 
@@ -330,15 +356,35 @@ describe("local backend pi transcript", () => {
       expect(listedIds).toContain(visible.id);
       expect(listedIds).not.toContain(hidden.id);
 
+      await withEnv({ [LOCAL_BACKEND_DIR_ENV]: storageDir }, async () => {
+        const diskListedIds = listLocalAgentsFromDisk().map(
+          (agent) => agent.id,
+        );
+        expect(diskListedIds).toContain(visible.id);
+        expect(diskListedIds).not.toContain(hidden.id);
+        expect(diskListedIds).not.toContain(legacySubagentId);
+      });
+
       const reloaded = new LocalBackend({ storageDir, memfsEnabled: false });
       const reloadedListedIds = localAgentListIds(
         await reloaded.listAgents({ limit: 10 } as never),
       );
       expect(reloadedListedIds).toContain(visible.id);
       expect(reloadedListedIds).not.toContain(hidden.id);
+      expect(reloadedListedIds).not.toContain(legacySubagentId);
 
       const retrievedHidden = await reloaded.retrieveAgent(hidden.id);
       expect((retrievedHidden as { hidden?: boolean }).hidden).toBe(true);
+      const retrievedLegacySubagent =
+        await reloaded.retrieveAgent(legacySubagentId);
+      expect((retrievedLegacySubagent as { hidden?: boolean }).hidden).toBe(
+        true,
+      );
+
+      const migratedLegacySubagent = JSON.parse(
+        await readFile(legacySubagentPath, "utf8"),
+      ) as Record<string, unknown>;
+      expect(migratedLegacySubagent.hidden).toBe(true);
 
       await withEnv({ [LOCAL_BACKEND_DIR_ENV]: storageDir }, async () => {
         const diskListedIds = listLocalAgentsFromDisk().map(
@@ -346,6 +392,7 @@ describe("local backend pi transcript", () => {
         );
         expect(diskListedIds).toContain(visible.id);
         expect(diskListedIds).not.toContain(hidden.id);
+        expect(diskListedIds).not.toContain(legacySubagentId);
       });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
