@@ -140,6 +140,9 @@ function createLocalAgentRecord(
     tags: isStringArray(bodyRecord.tags) ? bodyRecord.tags : [],
     model: optionalString(bodyRecord.model) ?? defaultAgentModel,
     model_settings: supportedModelSettingsFromBody(bodyRecord),
+    ...(typeof bodyRecord.hidden === "boolean"
+      ? { hidden: bodyRecord.hidden }
+      : {}),
   };
 }
 
@@ -314,6 +317,9 @@ function normalizeAgentRecord(
       optionalString(legacyLlmConfig.model) ??
       defaultAgentModel,
     model_settings: modelSettings,
+    ...(typeof value.hidden === "boolean" || value.hidden === null
+      ? { hidden: value.hidden }
+      : {}),
     ...(compactionSettings !== undefined
       ? { compaction_settings: compactionSettings }
       : {}),
@@ -353,6 +359,7 @@ export function projectLocalAgentState(
     tags: record.tags,
     model: record.model,
     model_settings: record.model_settings,
+    ...(record.hidden !== undefined ? { hidden: record.hidden } : {}),
     ...(record.compaction_settings !== undefined
       ? { compaction_settings: record.compaction_settings }
       : {}),
@@ -1201,9 +1208,9 @@ export class LocalStore {
     const tags = isStringArray(bodyRecord.tags) ? bodyRecord.tags : [];
     const after = optionalString(bodyRecord.after);
     const limit = typeof bodyRecord.limit === "number" ? bodyRecord.limit : 20;
-    let agents = [...this.agents.values()].map((agent) =>
-      this.projectAgent(agent),
-    );
+    let agents = [...this.agents.values()]
+      .filter((agent) => agent.hidden !== true)
+      .map((agent) => this.projectAgent(agent));
 
     if (tags.length > 0) {
       agents = agents.filter((agent) =>
@@ -1341,6 +1348,9 @@ export class LocalStore {
       }),
       ...(isStringArray(bodyRecord.tags) && { tags: bodyRecord.tags }),
       ...(nextModel && { model: nextModel }),
+      ...(typeof bodyRecord.hidden === "boolean" && {
+        hidden: bodyRecord.hidden,
+      }),
       model_settings: nextModelSettings,
     };
     this.agents.set(agentId, updated);

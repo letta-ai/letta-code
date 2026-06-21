@@ -39,7 +39,9 @@ import {
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
 } from "@/backend/local/local-store";
+import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
 import { migrateLocalBackendTranscripts } from "@/backend/local/transcript-migration";
+import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
 
 async function firstConversationDir(storageDir: string): Promise<string> {
   const entries = await readdir(join(storageDir, "conversations"));
@@ -95,6 +97,11 @@ async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
 
 function pageItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
   return Array.isArray(value) ? value : value.getPaginatedItems();
+}
+
+function localAgentListIds(page: unknown): string[] {
+  const items = (page as { items?: Array<{ id: string }> }).items;
+  return Array.isArray(items) ? items.map((agent) => agent.id) : [];
 }
 
 async function withEnv<T>(
@@ -298,6 +305,48 @@ describe("local backend pi transcript", () => {
         await readFile(conversationPath, "utf8"),
       ) as Record<string, unknown>;
       expect(persisted.summary).toBe("Desktop rename");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("hides local hidden agents from backend and disk listings", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-hidden-agents-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const visible = await backend.createAgent({ name: "Visible" } as never);
+      const hidden = await backend.createAgent({
+        name: "Hidden",
+        hidden: true,
+      } as never);
+
+      expect((hidden as { hidden?: boolean }).hidden).toBe(true);
+
+      const listedIds = localAgentListIds(
+        await backend.listAgents({ limit: 10 } as never),
+      );
+      expect(listedIds).toContain(visible.id);
+      expect(listedIds).not.toContain(hidden.id);
+
+      const reloaded = new LocalBackend({ storageDir, memfsEnabled: false });
+      const reloadedListedIds = localAgentListIds(
+        await reloaded.listAgents({ limit: 10 } as never),
+      );
+      expect(reloadedListedIds).toContain(visible.id);
+      expect(reloadedListedIds).not.toContain(hidden.id);
+
+      const retrievedHidden = await reloaded.retrieveAgent(hidden.id);
+      expect((retrievedHidden as { hidden?: boolean }).hidden).toBe(true);
+
+      await withEnv({ [LOCAL_BACKEND_DIR_ENV]: storageDir }, async () => {
+        const diskListedIds = listLocalAgentsFromDisk().map(
+          (agent) => agent.id,
+        );
+        expect(diskListedIds).toContain(visible.id);
+        expect(diskListedIds).not.toContain(hidden.id);
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

@@ -30,6 +30,7 @@ export function listLocalAgentsFromDisk(): AgentState[] {
       const filePath = join(agentsDir, file);
       const raw = readFileSync(filePath, "utf8");
       const record = JSON.parse(raw) as LocalAgentRecord;
+      if (record.hidden === true) continue;
       const mtime = statSync(filePath).mtimeMs;
       agents.push({
         agent: projectLocalAgentState(
