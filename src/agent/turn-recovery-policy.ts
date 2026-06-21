@@ -17,6 +17,12 @@ import type { StopReasonType } from "@/types/protocol_v2";
 
 const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "waiting for approval";
+// Server reports there is NO tool call awaiting approval — the OPPOSITE of
+// APPROVAL_PENDING_DETAIL_FRAGMENT. The client's outbound approval continuation
+// is stale (its run already completed); recovered by stripping the stale
+// approval and retrying as a regular message, not by re-denying.
+const NO_AWAITING_APPROVAL_DETAIL_FRAGMENT =
+  "no tool call is currently awaiting approval";
 const CONVERSATION_BUSY_DETAIL_FRAGMENTS = [
   "is currently being processed",
   "busy with another active run",
@@ -133,6 +139,21 @@ export function isInvalidToolCallIdsError(detail: unknown): boolean {
 export function isApprovalPendingError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(APPROVAL_PENDING_DETAIL_FRAGMENT);
+}
+
+/**
+ * Backend reports there is NO tool call awaiting approval — the OPPOSITE state
+ * from {@link isApprovalPendingError}. The client sent a (stale) approval
+ * continuation, but the owning run already completed, so the server rejects it
+ * with "No tool call is currently awaiting approval. Please send a regular
+ * message...". This is an approval/tool-call desync for post-stop recovery and
+ * error-card suppression, but it must NOT be treated as approval-pending: its
+ * recovery disposition is to strip the stale approval and retry as a regular
+ * message (see {@link selectStaleApprovalRecoveryApprovals}), never to re-deny.
+ */
+export function isNoAwaitingApprovalError(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  return detail.toLowerCase().includes(NO_AWAITING_APPROVAL_DETAIL_FRAGMENT);
 }
 
 /** Conversation is busy (another request is being processed). */
@@ -474,6 +495,25 @@ export function rebuildInputWithFreshDenials(
   }
 
   return stripped;
+}
+
+/**
+ * Choose which server approvals to re-deny during stale-approval recovery.
+ *
+ * For the "no tool call is currently awaiting approval" desync the server has
+ * already discarded the approval, so re-denying re-trips the same error in a
+ * loop. Returning [] makes {@link rebuildInputWithFreshDenials} strip the stale
+ * approval payload and retry the turn as a regular message — exactly what the
+ * server instructs. All other desync classes (invalid tool call ids / waiting
+ * for approval) keep the existing denial path.
+ */
+export function selectStaleApprovalRecoveryApprovals(
+  existingApprovals: PendingApprovalInfo[],
+  ...errorTexts: Array<string | null | undefined>
+): PendingApprovalInfo[] {
+  return errorTexts.some((text) => isNoAwaitingApprovalError(text))
+    ? []
+    : existingApprovals;
 }
 
 // ── Retry gating ────────────────────────────────────────────────────

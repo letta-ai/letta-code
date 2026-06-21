@@ -17,6 +17,7 @@ import {
   buildFreshDenialApprovals,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
+  isNoAwaitingApprovalError,
   normalizeStreamErrorTypeToStopReason,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
@@ -72,7 +73,11 @@ import type {
 } from "./types";
 
 export function isApprovalToolCallDesyncError(detail: unknown): boolean {
-  return isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail);
+  return (
+    isInvalidToolCallIdsError(detail) ||
+    isApprovalPendingError(detail) ||
+    isNoAwaitingApprovalError(detail)
+  );
 }
 
 export function getApprovalToolCallDesyncErrorText(errorInfo: {
