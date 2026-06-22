@@ -124,6 +124,85 @@ test("resolveSlackChannelHistory retains forwarded Slack attachment text", async
   ]);
 });
 
+test("resolveSlackThreadHistory retains bot-authored Slack replies", async () => {
+  const { resolveSlackThreadHistory } = await loadSlackMediaModule();
+  const client = {
+    conversations: {
+      history: mock(async () => ({ messages: [] })),
+      replies: mock(async () => ({
+        messages: [
+          {
+            ts: "1712790000.000050",
+            user: "U111",
+            text: "Thread root",
+          },
+          {
+            ts: "1712795000.000060",
+            bot_id: "BDEPLOY",
+            text: "Deployment succeeded",
+            subtype: "bot_message",
+          },
+          {
+            ts: "1712800000.000100",
+            user: "U222",
+            text: "Current mention",
+          },
+        ],
+      })),
+    },
+  };
+
+  await expect(
+    resolveSlackThreadHistory({
+      channelId: "C123",
+      threadTs: "1712790000.000050",
+      currentMessageTs: "1712800000.000100",
+      client,
+    }),
+  ).resolves.toEqual([
+    {
+      text: "Deployment succeeded",
+      userId: undefined,
+      botId: "BDEPLOY",
+      ts: "1712795000.000060",
+    },
+  ]);
+});
+
+test("resolveSlackChannelHistory retains bot-authored Slack messages", async () => {
+  const { resolveSlackChannelHistory } = await loadSlackMediaModule();
+  const client = {
+    conversations: {
+      history: mock(async () => ({
+        messages: [
+          {
+            ts: "1712799500.000045",
+            bot_id: "BSTATUS",
+            text: "Automated channel status update",
+            subtype: "bot_message",
+          },
+        ],
+      })),
+      replies: mock(async () => ({ messages: [] })),
+    },
+  };
+
+  await expect(
+    resolveSlackChannelHistory({
+      channelId: "C123",
+      beforeTs: "1712800000.000100",
+      client,
+    }),
+  ).resolves.toEqual([
+    {
+      text: "Automated channel status update",
+      userId: undefined,
+      botId: "BSTATUS",
+      ts: "1712799500.000045",
+    },
+  ]);
+});
+
 test("resolveSlackInboundAttachments transcribes inbound audio when opted in", async () => {
   process.env.OPENAI_API_KEY = "test-openai-key";
   const fetchMock = mock(async (input: unknown) => {
