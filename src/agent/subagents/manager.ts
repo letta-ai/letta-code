@@ -913,6 +913,7 @@ interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
   extraTools?: string[];
+  parentAgentId?: string | null;
 }
 
 /**
@@ -952,7 +953,11 @@ export function buildSubagentArgs(
   } else {
     // Create new agent (original behavior)
     args.push("--new-agent", "--system", type);
-    args.push("--tags", `type:${type}`);
+    const subagentTags = [`type:${type}`];
+    if (options.parentAgentId) {
+      subagentTags.push(`parent:${options.parentAgentId}`);
+    }
+    args.push("--tags", subagentTags.join(","));
     // Default all newly spawned subagents to non-memfs mode.
     // This avoids memfs startup overhead unless explicitly enabled elsewhere.
     args.push("--no-memfs");
@@ -1076,6 +1081,16 @@ async function executeSubagent(
     const inheritedChannelContext =
       buildInheritedChannelContextPayload(runtimeContext);
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
+
+    let parentAgentId = parentAgentIdOverride;
+    if (!parentAgentId) {
+      try {
+        parentAgentId = getCurrentAgentId();
+      } catch {
+        // Context not available — subagent will have no parent scope.
+      }
+    }
+
     const cliArgs = buildSubagentArgs(
       type,
       config,
@@ -1087,6 +1102,7 @@ async function executeSubagent(
       {
         backendMode,
         promptTransport: "stdin",
+        parentAgentId,
         extraTools:
           config.fork && inheritedChannelContext
             ? ["MessageChannel"]
@@ -1095,18 +1111,6 @@ async function executeSubagent(
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
-    // Prefer an explicit parentAgentId captured at the synchronous
-    // spawn call site. Only fall back to the in-process context (which
-    // can drift across async yields in the listener) when no explicit
-    // ID was provided.
-    let parentAgentId = parentAgentIdOverride;
-    if (!parentAgentId) {
-      try {
-        parentAgentId = getCurrentAgentId();
-      } catch {
-        // Context not available — subagent will have no parent scope.
-      }
-    }
 
     // Resolve auth once in parent and forward to child to avoid per-subagent
     // keychain lookups under high parallel fan-out.

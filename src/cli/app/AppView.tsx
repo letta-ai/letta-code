@@ -260,7 +260,6 @@ type AppViewProps = {
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
   pendingIds: Set<string>;
-  pinDialogLocal: boolean;
   precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;
   profileConfirmPending: {
     name: string;
@@ -428,7 +427,6 @@ export function AppView(props: AppViewProps) {
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingIds,
-    pinDialogLocal,
     precomputedDiffsRef,
     profileConfirmPending,
     queueDisplay,
@@ -1669,7 +1667,6 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "pin" && (
               <PinDialog
                 currentName={agentName || ""}
-                local={pinDialogLocal}
                 onSubmit={async (newName) => {
                   const overlayCommand = completeOverlay("pin");
                   setCommandRunning(true);
@@ -1677,14 +1674,11 @@ export function AppView(props: AppViewProps) {
                   const cmd =
                     overlayCommand ??
                     commandRunner.start("/pin", "Pinning agent...");
-                  const scopeText = pinDialogLocal
-                    ? "to this project"
-                    : "globally";
                   const displayName =
                     newName || agentName || agentId.slice(0, 12);
 
                   cmd.update({
-                    output: `Pinning "${displayName}" ${scopeText}...`,
+                    output: `Pinning "${displayName}"...`,
                     phase: "running",
                   });
 
@@ -1698,17 +1692,13 @@ export function AppView(props: AppViewProps) {
                     }
 
                     // Pin the agent
-                    if (pinDialogLocal) {
-                      settingsManager.pinLocal(agentId);
-                    } else {
-                      settingsManager.pinGlobal(agentId);
-                    }
+                    settingsManager.pinAgent(agentId);
 
                     if (newName && newName !== agentName) {
                       cmd.agentHint = `Your name is now "${newName}" — acknowledge this and save your new name to memory.`;
                     }
                     cmd.finish(
-                      `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
+                      `Pinned "${newName || agentName || agentId.slice(0, 12)}".`,
                       true,
                     );
                   } catch (error) {

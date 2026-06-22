@@ -780,9 +780,6 @@ export function App({
   const [queuedOverlayAction, setQueuedOverlayAction] =
     useState<QueuedOverlayAction>(null);
 
-  // Pin dialog state
-  const [pinDialogLocal, setPinDialogLocal] = useState(false);
-
   // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
 
@@ -2918,10 +2915,9 @@ export function App({
       // Add combined status at the END so user sees it without scrolling
       const statusId = `status-resumed-${Date.now().toString(36)}`;
 
-      // Check if agent is pinned (locally or globally)
+      // Check if agent is pinned
       const isPinned = agentState?.id
-        ? settingsManager.getLocalPinnedAgents().includes(agentState.id) ||
-          settingsManager.getGlobalPinnedAgents().includes(agentState.id)
+        ? settingsManager.isAgentPinned(agentState.id)
         : false;
 
       // Build status message
@@ -4208,7 +4204,6 @@ export function App({
     markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPinDialogLocal,
     setProfileConfirmPending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
@@ -4835,10 +4830,9 @@ export function App({
       // Add status line showing agent info
       const statusId = `status-agent-${Date.now().toString(36)}`;
 
-      // Check if agent is pinned (locally or globally)
+      // Check if agent is pinned
       const isPinned = agentState?.id
-        ? settingsManager.getLocalPinnedAgents().includes(agentState.id) ||
-          settingsManager.getGlobalPinnedAgents().includes(agentState.id)
+        ? settingsManager.isAgentPinned(agentState.id)
         : false;
 
       // Build status message based on session type
@@ -5046,7 +5040,6 @@ export function App({
         pendingApprovals={pendingApprovals}
         pendingConversationSwitchRef={pendingConversationSwitchRef}
         pendingIds={pendingIds}
-        pinDialogLocal={pinDialogLocal}
         precomputedDiffsRef={precomputedDiffsRef}
         profileConfirmPending={profileConfirmPending}
         queueDisplay={queueDisplay}

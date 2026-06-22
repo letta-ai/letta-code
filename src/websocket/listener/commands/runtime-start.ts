@@ -137,7 +137,7 @@ async function resolveRuntimeStartAgent(
     const agent = await backend.createAgent(parsed.create_agent.body);
     created.agent = true;
     if (parsed.create_agent.pin_global !== false) {
-      settingsManager.pinGlobal(agent.id);
+      settingsManager.pinAgent(agent.id);
     }
     return agent;
   }

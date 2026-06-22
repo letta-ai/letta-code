@@ -119,6 +119,7 @@ import {
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
+  markSecretsInfoReminderPending,
   type SharedReminderState,
 } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -285,7 +286,6 @@ type SubmitHandlerContext = {
   markLocalModelsAvailable: () => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
-  setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
@@ -407,7 +407,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPinDialogLocal,
     setProfileConfirmPending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
@@ -2413,14 +2412,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         const profileCommandResult = await handleProfileCommand(msg, trimmed, {
           agentId,
           agentName,
-          conversationId,
           buffersRef,
           commandRunner,
           handleAgentSelect,
           refreshDerived,
           openOverlay,
           setCommandRunning,
-          setPinDialogLocal,
           setProfileConfirmPending,
           updateAgentName,
         });
@@ -3285,6 +3282,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           // Don't treat as command - continue to regular message handling below
         } else {
           // Known command - show in transcript and handle result
+          if (result.success && result.refreshSecretsInfo) {
+            markSecretsInfoReminderPending(sharedReminderStateRef.current);
+          }
           if (registryCmd) {
             registryCmd.finish(result.output, result.success);
           }

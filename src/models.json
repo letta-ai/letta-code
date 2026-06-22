@@ -1699,11 +1699,22 @@
       }
     },
     {
+      "id": "kimi-k2.7",
+      "handle": "openrouter/moonshotai/kimi-k2.7-code",
+      "label": "Kimi K2.7 Code",
+      "description": "Moonshot AI's coding-focused Kimi K2.7 model for long-context agentic programming tasks",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 262144,
+        "max_output_tokens": 16384,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "kimi-k2.6",
       "handle": "openrouter/moonshotai/kimi-k2.6",
       "label": "Kimi K2.6",
       "description": "Moonshot AI's next-gen multimodal coding and agent model",
-      "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
         "max_output_tokens": 64000,

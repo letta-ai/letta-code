@@ -216,12 +216,10 @@ SUBCOMMANDS
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
   - If profiles exist, you'll be prompted to select one or create a new agent
-  - Profiles can be "pinned" to specific projects for quick access
+  - Agents can be pinned for quick access with /pin
   - Use /profile save <name> to bookmark your current agent
 
-  Profiles are stored in:
-  - Global: ~/.letta/settings.json (available everywhere)
-  - Local: .letta/settings.local.json (pinned to project)
+  Agent pins are stored in ~/.letta/settings.json.
 
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
@@ -236,8 +234,8 @@ EXAMPLES
   # inside the interactive session
   /profile save MyAgent    # Save current agent as profile
   /profiles                # Open profile selector
-  /pin                     # Pin current profile to project
-  /unpin                   # Unpin profile from project
+  /pin                     # Pin current agent
+  /unpin                   # Unpin current agent
   /logout                  # Clear saved credentials and exit
 
   # headless with JSON output (includes stats)
@@ -265,19 +263,14 @@ async function printInfo() {
   await settingsManager.loadLocalProjectSettings(cwd);
 
   // Get pinned agents
-  const localPinned = settingsManager.getLocalPinnedAgents(cwd);
-  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const pinned = settingsManager.getPinnedAgents();
   const localSettings = settingsManager.getLocalProjectSettings(cwd);
   const lastAgent = localSettings.lastAgent;
 
   // Try to fetch agent names from API (if authenticated)
   const agentNames: Record<string, string> = {};
   const allAgentIds = [
-    ...new Set([
-      ...localPinned,
-      ...globalPinned,
-      ...(lastAgent ? [lastAgent] : []),
-    ]),
+    ...new Set([...pinned, ...(lastAgent ? [lastAgent] : [])]),
   ];
 
   if (allAgentIds.length > 0) {
@@ -315,7 +308,7 @@ async function printInfo() {
   // Show which agent will be resumed
   if (lastAgent) {
     console.log(`Will resume: ${formatAgent(lastAgent)}`);
-  } else if (localPinned.length > 0 || globalPinned.length > 0) {
+  } else if (pinned.length > 0) {
     console.log("Will resume: (will show selector)");
   } else {
     console.log("Will resume: (will create new agent)");
@@ -323,30 +316,17 @@ async function printInfo() {
 
   console.log("");
 
-  // Locally pinned agents
-  if (localPinned.length > 0) {
-    console.log("Locally pinned agents (this project):");
-    for (const id of localPinned) {
+  // Pinned agents
+  if (pinned.length > 0) {
+    console.log("Pinned agents:");
+    for (const id of pinned) {
       const isLast = id === lastAgent;
       const prefix = isLast ? "→ " : "  ";
       const suffix = isLast ? " (last used)" : "";
       console.log(`  ${prefix}${formatAgent(id)}${suffix}`);
     }
   } else {
-    console.log("Locally pinned agents: (none)");
-  }
-
-  console.log("");
-
-  // Globally pinned agents
-  if (globalPinned.length > 0) {
-    console.log("Globally pinned agents:");
-    for (const id of globalPinned) {
-      const isLocal = localPinned.includes(id);
-      console.log(`    ${formatAgent(id)}${isLocal ? " (also local)" : ""}`);
-    }
-  } else {
-    console.log("Globally pinned agents: (none)");
+    console.log("Pinned agents: (none)");
   }
 }
 
@@ -382,8 +362,7 @@ function getPinnedAgentIdsForBackendMode(backendMode: BackendMode): string[] {
   configureBackendMode(backendMode);
   try {
     return settingsManager
-      .getMergedPinnedAgents()
-      .map((entry) => entry.agentId)
+      .getPinnedAgents()
       .filter((id) => isAgentIdCompatibleWithBackend(id, backendMode));
   } finally {
     configureBackendMode(previousBackendMode);
@@ -1761,11 +1740,6 @@ async function main(): Promise<void> {
           LETTA_CLOUD_API_URL;
         const isCustomApiBackend =
           startupBackendMode !== "local" && !baseURL.includes("api.letta.com");
-        const isCredentiallessLocalStartup =
-          startupBackendMode === "local" &&
-          !isCustomApiBackend &&
-          !settings.refreshToken &&
-          !apiKey;
         setStartupHasCloudCredentials(Boolean(settings.refreshToken || apiKey));
         const startupModelsPromise =
           startupBackendMode === "local"
@@ -1943,15 +1917,13 @@ async function main(): Promise<void> {
           process.cwd(),
         );
         const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
-        const localPinnedAgentIds = settingsManager
-          .getLocalPinnedAgents(process.cwd())
+        const pinnedAgentIds = settingsManager
+          .getPinnedAgents()
           .filter((agentId) =>
             isAgentIdCompatibleWithBackend(agentId, startupBackendMode),
           );
-        const localPinnedAgentId =
-          localPinnedAgentIds.length === 1
-            ? (localPinnedAgentIds[0] ?? null)
-            : null;
+        const pinnedAgentId =
+          pinnedAgentIds.length === 1 ? (pinnedAgentIds[0] ?? null) : null;
         const localAgentId =
           startupBackendMode === "local" &&
           rawLocalAgentId &&
@@ -1965,10 +1937,10 @@ async function main(): Promise<void> {
             ? rawGlobalAgentId
             : null;
 
-        // Fetch local pin + LRU agents in parallel, de-duping shared IDs.
+        // Fetch pin + LRU agents in parallel, de-duping shared IDs.
         const agentIdsToValidate = [
           ...new Set(
-            [localPinnedAgentId, localAgentId, globalAgentId].filter(
+            [pinnedAgentId, localAgentId, globalAgentId].filter(
               (agentId): agentId is string => Boolean(agentId),
             ),
           ),
@@ -1988,8 +1960,8 @@ async function main(): Promise<void> {
           }
         }
 
-        const localPinnedAgentExists = localPinnedAgentId
-          ? cachedAgents.has(localPinnedAgentId)
+        const pinnedAgentExists = pinnedAgentId
+          ? cachedAgents.has(pinnedAgentId)
           : false;
         let localAgentExists = false;
         let globalAgentExists = false;
@@ -2007,11 +1979,7 @@ async function main(): Promise<void> {
         markMilestone("STARTUP_LRU_FETCH_DONE");
 
         // Step 3: Resolve startup target using pure decision logic
-        const mergedPinned = isCredentiallessLocalStartup
-          ? settingsManager
-              .getMergedPinnedAgents(process.cwd())
-              .filter((entry) => entry.isLocal)
-          : settingsManager.getMergedPinnedAgents(process.cwd());
+        const pinnedCount = pinnedAgentIds.length;
         const fallbackSession =
           startupBackendMode === "local" &&
           !localAgentExists &&
@@ -2023,9 +1991,9 @@ async function main(): Promise<void> {
         );
         const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
-          localPinnedAgentId,
-          localPinnedAgentExists,
-          localPinnedCount: localPinnedAgentIds.length,
+          pinnedAgentId,
+          pinnedAgentExists,
+          pinnedCount,
           localAgentId,
           localConversationId: localSession?.conversationId ?? null,
           localAgentExists,
@@ -2033,7 +2001,6 @@ async function main(): Promise<void> {
           globalAgentExists,
           fallbackAgentId: fallbackSession?.agentId ?? null,
           fallbackConversationId: fallbackSession?.conversationId ?? null,
-          mergedPinnedCount: mergedPinned.length,
           forceNew: false, // forceNew short-circuited above
           needsModelPicker,
         });

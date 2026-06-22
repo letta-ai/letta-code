@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import {
   formatOutboundChannelMessage,
+  markdownToSignalTextStyles,
   markdownToSlackMrkdwn,
   markdownToTelegramHtml,
 } from "@/tools/impl/message-channel";
@@ -21,6 +22,41 @@ test("formats Telegram markdown as HTML", () => {
 test("formats Slack markdown as mrkdwn", () => {
   expect(formatOutboundChannelMessage("slack", "**bold**")).toEqual({
     text: "*bold*",
+  });
+});
+
+test("formats Signal markdown as signal-cli text styles", () => {
+  expect(
+    markdownToSignalTextStyles("**Bold** _it_ ~~gone~~ `code` ||secret||"),
+  ).toEqual({
+    text: "Bold it gone code secret",
+    textStyle: [
+      "0:4:BOLD",
+      "5:2:ITALIC",
+      "8:4:STRIKETHROUGH",
+      "13:4:MONOSPACE",
+      "18:6:SPOILER",
+    ],
+  });
+});
+
+test("renders Signal headings, blockquotes, bullets, and fenced code", () => {
+  expect(
+    markdownToSignalTextStyles(
+      "## Title\n> quote\n* item\n```ts\nconst x = 1;\n```",
+    ),
+  ).toEqual({
+    text: "Title\nquote\n- item\nconst x = 1;",
+    textStyle: ["0:5:BOLD", "6:5:ITALIC", "19:12:MONOSPACE"],
+  });
+});
+
+test("converts Signal markdown links to auto-linkable plain text", () => {
+  expect(
+    markdownToSignalTextStyles("See [**docs**](https://example.com)"),
+  ).toEqual({
+    text: "See docs (https://example.com)",
+    textStyle: ["4:4:BOLD"],
   });
 });
 

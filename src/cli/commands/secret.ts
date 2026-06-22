@@ -12,6 +12,7 @@ import {
 
 export interface SecretCommandResult {
   output: string;
+  refreshSecretsInfo?: boolean;
 }
 
 /**
@@ -49,7 +50,10 @@ export async function handleSecretCommand(
 
       try {
         await setSecretOnServer(normalizedKey, value);
-        return { output: `Secret '$${normalizedKey}' set.` };
+        return {
+          output: `Secret '$${normalizedKey}' set.`,
+          refreshSecretsInfo: true,
+        };
       } catch (error) {
         return {
           output: `Failed to set secret: ${error instanceof Error ? error.message : String(error)}`,
@@ -95,7 +99,10 @@ export async function handleSecretCommand(
         const deleted = await deleteSecretOnServer(normalizedKey);
 
         if (deleted) {
-          return { output: `Secret '$${normalizedKey}' unset.` };
+          return {
+            output: `Secret '$${normalizedKey}' unset.`,
+            refreshSecretsInfo: true,
+          };
         }
 
         return {
@@ -118,7 +125,7 @@ export async function handleSecretCommand(
   /secret list            List available secret names
   /secret unset KEY       Unset a secret
 
-Secrets are stored on the Letta server. Available secret names are shown to the agent via a system reminder at session start.
+Secrets are stored on the Letta server. Available secret names are shown to the agent via system reminders at session start and after secret changes.
 The key must be all caps and can include underscores and numbers, but must start with a letter or underscore.
 Your agent can use $SECRET_NAME in shell commands and the value will be substituted at runtime, without the secret value being leaked into agent context.`,
       };

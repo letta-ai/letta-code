@@ -10,7 +10,7 @@
  */
 
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getClient } from "@/backend/api/client";
+import { getBackend } from "@/backend";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import type { ApprovalResponseBody } from "@/types/protocol_v2";
 import {
@@ -71,6 +71,7 @@ import {
   removeRouteInMemory,
   setRouteInMemory,
 } from "./routing";
+import { signalAllowedUsersIncludes } from "./signal/target";
 import { loadTargetStore, upsertChannelTarget } from "./targets";
 import type {
   ChannelAccount,
@@ -83,12 +84,14 @@ import type {
   ChannelTurnSource,
   DiscordChannelAccount,
   InboundChannelMessage,
+  SignalChannelAccount,
   SlackChannelAccount,
   TelegramChannelAccount,
   WhatsAppChannelAccount,
 } from "./types";
 import {
   isDiscordChannelAccount,
+  isSignalChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
   isWhatsAppChannelAccount,
@@ -119,6 +122,68 @@ type AccountAgentIdSource = {
 function normalizeAgentId(agentId: string | null | undefined): string | null {
   const normalized = agentId?.trim();
   return normalized ? normalized : null;
+}
+
+function normalizeSignalBaseUrlForConflictKey(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl);
+    url.hash = "";
+    url.search = "";
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return baseUrl.trim().replace(/\/+$/, "");
+  }
+}
+
+function findSignalBaseUrlConflict(
+  accounts: SignalChannelAccount[],
+): { baseUrl: string; accountIds: string[] } | null {
+  const byBaseUrl = new Map<string, string[]>();
+  for (const account of accounts) {
+    if (!account.enabled) continue;
+    const key = normalizeSignalBaseUrlForConflictKey(account.baseUrl);
+    const accountIds = byBaseUrl.get(key) ?? [];
+    accountIds.push(account.accountId);
+    byBaseUrl.set(key, accountIds);
+  }
+  for (const [baseUrl, accountIds] of byBaseUrl.entries()) {
+    if (accountIds.length > 1) {
+      return { baseUrl, accountIds };
+    }
+  }
+  return null;
+}
+
+function findSignalBaseUrlConflictForStart(
+  accounts: SignalChannelAccount[],
+  accountToStart: SignalChannelAccount,
+): { baseUrl: string; accountIds: string[] } | null {
+  const targetBaseUrl = normalizeSignalBaseUrlForConflictKey(
+    accountToStart.baseUrl,
+  );
+  const accountIds = accounts
+    .filter(
+      (account) =>
+        account.accountId !== accountToStart.accountId &&
+        account.enabled &&
+        normalizeSignalBaseUrlForConflictKey(account.baseUrl) === targetBaseUrl,
+    )
+    .map((account) => account.accountId);
+  if (accountIds.length === 0) {
+    return null;
+  }
+  return {
+    baseUrl: targetBaseUrl,
+    accountIds: [accountToStart.accountId, ...accountIds],
+  };
+}
+
+function buildSignalBaseUrlConflictError(conflict: {
+  baseUrl: string;
+  accountIds: string[];
+}): string {
+  return `Signal accounts ${conflict.accountIds.join(", ")} share base_url ${conflict.baseUrl}. Native signal-cli event streams cannot safely run multiple enabled accounts on the same daemon; disable all but one account or run separate signal-cli daemons on separate ports/config dirs.`;
 }
 
 function getConfiguredAgentId(config: unknown): string | null {
@@ -297,6 +362,27 @@ function buildWhatsAppConversationSummary(
   }
 
   return `[WhatsApp] Group${channelLabel || ` ${msg.chatId}`}`;
+}
+
+function buildSignalConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[Signal] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+
+  const textPreview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+
+  if (textPreview) {
+    return `[Signal] Group${channelLabel}: ${textPreview}`;
+  }
+
+  return `[Signal] Group${channelLabel || ` ${msg.chatId}`}`;
 }
 
 function buildChannelTurnSource(
@@ -607,13 +693,13 @@ export class ChannelRegistry {
           if (!firstSource) {
             continue;
           }
-          await handleTurnLifecycleEvent({
+          await handleTurnLifecycleEvent.call(adapter, {
             type: "queued",
             source: firstSource,
           });
           continue;
         }
-        await handleTurnLifecycleEvent({
+        await handleTurnLifecycleEvent.call(adapter, {
           ...event,
           sources: groupedSources,
         });
@@ -872,6 +958,20 @@ export class ChannelRegistry {
         `account not found: ${channelId}/${accountId}`,
       );
       return false;
+    }
+
+    if (isSignalChannelAccount(account)) {
+      const conflict = findSignalBaseUrlConflictForStart(
+        (await listChannelAccountsWithSecrets("signal")).filter(
+          isSignalChannelAccount,
+        ),
+        account,
+      );
+      if (conflict) {
+        const error = buildSignalBaseUrlConflictError(conflict);
+        logChannelStartup(options?.logger, error);
+        throw new Error(error);
+      }
     }
 
     logChannelStartup(
@@ -1520,6 +1620,32 @@ export class ChannelRegistry {
       return;
     }
 
+    // Signal uses a linked signal-cli account. DMs can use pairing, but
+    // account-bound DMs and configured groups auto-route like WhatsApp.
+    if (
+      msg.channel === "signal" &&
+      isSignalChannelAccount(config) &&
+      (msg.chatType === "channel" || config.dmPolicy !== "pairing")
+    ) {
+      const signalResult = await this.ensureSignalRoute(adapter, msg, config);
+      if (!signalResult) {
+        return;
+      }
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: signalResult.isFirstRouteTurn,
+          })
+        : msg;
+      this.deliverOrBuffer({
+        route: signalResult.route,
+        content: formatChannelNotification(preparedMessage),
+        turnSources: [
+          buildChannelTurnSource(signalResult.route, preparedMessage),
+        ],
+      });
+      return;
+    }
+
     // 1. Check pairing/allowlist policy
     if (config.dmPolicy === "allowlist") {
       if (!config.allowedUsers.includes(msg.senderId)) {
@@ -1588,14 +1714,18 @@ export class ChannelRegistry {
       return;
     }
 
-    // 3. Format as XML
-    const content = formatChannelNotification(msg);
+    // 3. Let adapters enrich inbound messages (e.g. thread context,
+    // transcription, attachment hydration), then format as XML/content parts.
+    const preparedMessage = adapter.prepareInboundMessage
+      ? await adapter.prepareInboundMessage(msg, { isFirstRouteTurn: false })
+      : msg;
+    const content = formatChannelNotification(preparedMessage);
 
     // 4. Deliver or buffer
     this.deliverOrBuffer({
       route,
       content,
-      turnSources: [buildChannelTurnSource(route, msg)],
+      turnSources: [buildChannelTurnSource(route, preparedMessage)],
     });
   }
 
@@ -1603,8 +1733,7 @@ export class ChannelRegistry {
     agentId: string,
     summary?: string,
   ): Promise<string> {
-    const client = await getClient();
-    const conversation = await client.conversations.create({
+    const conversation = await getBackend().createConversation({
       agent_id: agentId,
       ...(summary ? { summary } : {}),
     });
@@ -1888,16 +2017,14 @@ export class ChannelRegistry {
     };
 
     addRoute(msg.channel, route);
-    if (config.defaultPermissionMode !== "standard") {
-      this.eventHandler?.({
-        type: "discord_conversation_created",
-        channelId: "discord",
-        accountId: config.accountId,
-        agentId: config.agentId,
-        conversationId,
-        defaultPermissionMode: config.defaultPermissionMode,
-      });
-    }
+    this.eventHandler?.({
+      type: "discord_conversation_created",
+      channelId: "discord",
+      accountId: config.accountId,
+      agentId: config.agentId,
+      conversationId,
+      defaultPermissionMode: config.defaultPermissionMode,
+    });
     return route;
   }
 
@@ -2063,6 +2190,104 @@ export class ChannelRegistry {
     };
   }
 
+  private async createSignalRoute(
+    config: SignalChannelAccount,
+    msg: InboundChannelMessage,
+  ): Promise<ChannelRoute> {
+    if (!config.agentId) {
+      throw new Error("Signal account is missing an agent binding.");
+    }
+
+    const conversationId = await this.createConversationForAgent(
+      config.agentId,
+      buildSignalConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId: null,
+      agentId: config.agentId,
+      conversationId,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    return route;
+  }
+
+  private async ensureSignalRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    config: SignalChannelAccount,
+  ): Promise<{
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  } | null> {
+    if (!config.agentId) {
+      if (!msg.reaction && (msg.chatType !== "channel" || msg.isMention)) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "This Signal account isn't connected to a Letta agent yet.\n\n" +
+            "Open Channels > Signal in Letta Code, choose which agent this Signal account should represent, and try again.",
+        );
+      }
+      return null;
+    }
+
+    if (
+      msg.chatType === "direct" &&
+      config.dmPolicy === "allowlist" &&
+      !signalAllowedUsersIncludes(config.allowedUsers, msg.senderId)
+    ) {
+      if (!msg.reaction) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "You are not on the allowed users list for this Signal account.",
+        );
+      }
+      return null;
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    let route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
+    }
+
+    if (route) {
+      return { route, isFirstRouteTurn: false };
+    }
+
+    if (msg.chatType === "channel") {
+      const now = new Date().toISOString();
+      loadTargetStore(msg.channel);
+      upsertChannelTarget(msg.channel, {
+        accountId,
+        targetId: msg.chatId,
+        targetType: "channel",
+        chatId: msg.chatId,
+        label: msg.chatLabel ?? `Signal group ${msg.chatId}`,
+        discoveredAt: now,
+        lastSeenAt: now,
+        lastMessageId: msg.messageId,
+      });
+      this.eventHandler?.({
+        type: "targets_updated",
+        channelId: msg.channel,
+      });
+    }
+
+    return {
+      route: await this.createSignalRoute(config, msg),
+      isFirstRouteTurn: true,
+    };
+  }
+
   private deliverOrBuffer(delivery: ChannelInboundDelivery): void {
     if (this.isReady()) {
       this.messageHandler?.(delivery);
@@ -2163,6 +2388,19 @@ export async function initializeChannels(
       console.error(error);
       logChannelStartup(options?.logger, error);
       continue;
+    }
+
+    if (channelId === "signal") {
+      const conflict = findSignalBaseUrlConflict(
+        accounts.filter(isSignalChannelAccount),
+      );
+      if (conflict) {
+        const error = buildSignalBaseUrlConflictError(conflict);
+        failures.push({ channelId, error });
+        console.error(error);
+        logChannelStartup(options?.logger, error);
+        continue;
+      }
     }
 
     for (const account of restorableAccounts) {

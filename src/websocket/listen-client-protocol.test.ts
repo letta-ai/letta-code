@@ -223,9 +223,9 @@ describe("listen-client parseServerMessage", () => {
           createAgentForPersonality: createAgentForPersonalityMock,
         }));
 
-        const originalPinGlobal = settingsManager.pinGlobal;
-        const pinGlobalMock = mock(() => {});
-        settingsManager.pinGlobal = pinGlobalMock;
+        const originalPinAgent = settingsManager.pinAgent;
+        const pinAgentMock = mock(() => {});
+        settingsManager.pinAgent = pinAgentMock;
 
         await __listenClientTestUtils.handleCreateAgentCommand(
           {
@@ -236,14 +236,14 @@ describe("listen-client parseServerMessage", () => {
           socket as unknown as WebSocket,
         );
 
-        settingsManager.pinGlobal = originalPinGlobal;
+        settingsManager.pinAgent = originalPinAgent;
 
         expect(createAgentForPersonalityMock).toHaveBeenCalledTimes(1);
         expect(createAgentForPersonalityMock).toHaveBeenCalledWith({
           personalityId: personality,
           model: undefined,
         });
-        expect(pinGlobalMock).toHaveBeenCalledWith(`agent-${personality}`);
+        expect(pinAgentMock).toHaveBeenCalledWith(`agent-${personality}`);
 
         const messages = socket.sentPayloads.map((payload) =>
           JSON.parse(payload),
@@ -261,7 +261,7 @@ describe("listen-client parseServerMessage", () => {
       }
     });
 
-    test("does not globally pin when pin_global is false", async () => {
+    test("does not pin when pin_global is false", async () => {
       const socket = new MockSocket(WebSocket.OPEN);
       const createAgentForPersonalityMock = mock(async () => ({
         agent: {
@@ -275,9 +275,9 @@ describe("listen-client parseServerMessage", () => {
         createAgentForPersonality: createAgentForPersonalityMock,
       }));
 
-      const originalPinGlobal = settingsManager.pinGlobal;
-      const pinGlobalMock = mock(() => {});
-      settingsManager.pinGlobal = pinGlobalMock;
+      const originalPinAgent = settingsManager.pinAgent;
+      const pinAgentMock = mock(() => {});
+      settingsManager.pinAgent = pinAgentMock;
 
       await __listenClientTestUtils.handleCreateAgentCommand(
         {
@@ -289,8 +289,8 @@ describe("listen-client parseServerMessage", () => {
         socket as unknown as WebSocket,
       );
 
-      settingsManager.pinGlobal = originalPinGlobal;
-      expect(pinGlobalMock).not.toHaveBeenCalled();
+      settingsManager.pinAgent = originalPinAgent;
+      expect(pinAgentMock).not.toHaveBeenCalled();
     });
   });
 
@@ -3536,6 +3536,7 @@ describe("listen-client permission mode scope keys", () => {
 
   test("slack conversation created event seeds the new conversation permission mode", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.workingDirectoryByConversation.delete("conversation:conv-slack-1");
     const socket = new MockSocket(WebSocket.OPEN);
 
     __listenClientTestUtils.handleChannelRegistryEvent(
@@ -3562,10 +3563,34 @@ describe("listen-client permission mode scope keys", () => {
     ).toEqual({
       mode: "unrestricted",
     });
+    expect(
+      listener.workingDirectoryByConversation.get("conversation:conv-slack-1"),
+    ).toBe(listener.bootWorkingDirectory);
+
+    const emittedStatus = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload),
+    )[0];
+    expect(emittedStatus).toMatchObject({
+      type: "update_device_status",
+      runtime: {
+        agent_id: "agent-123",
+        conversation_id: "conv-slack-1",
+      },
+      device_status: {
+        current_working_directory: listener.bootWorkingDirectory,
+        cwd_map: {
+          "conversation:conv-slack-1": listener.bootWorkingDirectory,
+        },
+        boot_working_directory: listener.bootWorkingDirectory,
+      },
+    });
   });
 
   test("discord conversation created event seeds the new conversation permission mode", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.workingDirectoryByConversation.delete(
+      "conversation:conv-discord-1",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
 
     __listenClientTestUtils.handleChannelRegistryEvent(
@@ -3591,6 +3616,29 @@ describe("listen-client permission mode scope keys", () => {
       listener.permissionModeByConversation.get("conversation:conv-discord-1"),
     ).toEqual({
       mode: "acceptEdits",
+    });
+    expect(
+      listener.workingDirectoryByConversation.get(
+        "conversation:conv-discord-1",
+      ),
+    ).toBe(listener.bootWorkingDirectory);
+
+    const emittedStatus = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload),
+    )[0];
+    expect(emittedStatus).toMatchObject({
+      type: "update_device_status",
+      runtime: {
+        agent_id: "agent-123",
+        conversation_id: "conv-discord-1",
+      },
+      device_status: {
+        current_working_directory: listener.bootWorkingDirectory,
+        cwd_map: {
+          "conversation:conv-discord-1": listener.bootWorkingDirectory,
+        },
+        boot_working_directory: listener.bootWorkingDirectory,
+      },
     });
   });
 });

@@ -578,7 +578,7 @@ test("slack adapter forwards threaded channel replies as channel input", async (
   );
 });
 
-test("slack adapter hydrates prior Slack thread context on the first routed turn", async () => {
+test("slack adapter hydrates prior Slack thread context, including bot-authored entries, on the first routed turn", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -606,6 +606,11 @@ test("slack adapter hydrates prior Slack thread context on the first routed turn
       text: "Some follow-up before the bot was tagged",
       userId: "U222",
       ts: "1712795000.000060",
+    },
+    {
+      text: "Automated deployment note before the bot was tagged",
+      botId: "BDEPLOY",
+      ts: "1712796000.000070",
     },
   ]);
 
@@ -641,13 +646,79 @@ test("slack adapter hydrates prior Slack thread context on the first routed turn
       senderId: "U222",
       text: "Some follow-up before the bot was tagged",
     }),
+    expect.objectContaining({
+      messageId: "1712796000.000070",
+      senderId: "BDEPLOY",
+      senderName: "Bot (BDEPLOY)",
+      text: "Automated deployment note before the bot was tagged",
+    }),
   ]);
   expect(prepared?.threadContext?.label).toContain("Slack thread in #random");
   expect(resolveSlackThreadStarterMock).toHaveBeenCalledTimes(1);
   expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
 });
 
-test("slack adapter hydrates recent channel context when a mention creates a new thread", async () => {
+test("slack adapter rehydrates bot-authored Slack thread context on existing routed turns", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  resolveSlackThreadHistoryMock.mockResolvedValueOnce([
+    {
+      text: "Already-delivered human context",
+      userId: "U222",
+      ts: "1712795000.000060",
+    },
+    {
+      text: "Automated deployment note since the last human turn",
+      botId: "BDEPLOY",
+      ts: "1712796000.000070",
+    },
+  ]);
+
+  const prepared = await adapter.prepareInboundMessage?.(
+    {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatLabel: "#random",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "what did deploy say?",
+      timestamp: 1712800000100,
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: false,
+    },
+    { isFirstRouteTurn: false },
+  );
+
+  expect(prepared).toBeDefined();
+  expect(prepared?.threadContext?.starter).toBeUndefined();
+  expect(prepared?.threadContext?.history).toEqual([
+    expect.objectContaining({
+      messageId: "1712796000.000070",
+      senderId: "BDEPLOY",
+      senderName: "Bot (BDEPLOY)",
+      text: "Automated deployment note since the last human turn",
+    }),
+  ]);
+  expect(resolveSlackThreadStarterMock).not.toHaveBeenCalled();
+  expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackChannelHistoryMock).not.toHaveBeenCalled();
+});
+
+test("slack adapter hydrates recent channel context, including bot-authored entries, when a mention creates a new thread", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -666,6 +737,11 @@ test("slack adapter hydrates recent channel context when a mention creates a new
       text: "Earlier channel context before the mention",
       userId: "U111",
       ts: "1712799000.000040",
+    },
+    {
+      text: "Automated channel update before the mention",
+      botId: "BSTATUS",
+      ts: "1712799250.000042",
     },
     {
       text: "More recent channel context before the mention",
@@ -699,6 +775,12 @@ test("slack adapter hydrates recent channel context when a mention creates a new
       messageId: "1712799000.000040",
       senderId: "U111",
       text: "Earlier channel context before the mention",
+    }),
+    expect.objectContaining({
+      messageId: "1712799250.000042",
+      senderId: "BSTATUS",
+      senderName: "Bot (BSTATUS)",
+      text: "Automated channel update before the mention",
     }),
     expect.objectContaining({
       messageId: "1712799500.000045",
@@ -1036,6 +1118,43 @@ test("slack adapter ignores hidden bookkeeping thread wrapper events", async () 
   });
 
   expect(onMessage).not.toHaveBeenCalled();
+});
+
+test("slack adapter ignores live bot_message events as runnable input", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      bot_id: "BDEPLOY",
+      text: "deployment completed",
+      ts: "1712800000.000103",
+      thread_ts: "1712790000.000050",
+      subtype: "bot_message",
+    },
+  });
+
+  expect(onMessage).not.toHaveBeenCalled();
+  expect(resolveSlackInboundAttachmentsMock).not.toHaveBeenCalled();
 });
 
 test("slack adapter forwards reaction events into the routed Slack thread", async () => {

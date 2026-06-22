@@ -7,6 +7,13 @@ import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { loadTools } from "@/tools/manager";
 import {
+  type AppServerWebsocketAuthSettings,
+  authorizeUpgrade,
+  isUnauthenticatedNonLoopbackListener,
+  normalizeListenHost,
+  policyFromSettings,
+} from "@/websocket/app-server-auth";
+import {
   attachOpenListenerSocket,
   createRuntime,
   stopRuntime,
@@ -26,6 +33,7 @@ type AppServerChannel = "control" | "stream";
 
 export interface StartAppServerOptions {
   listen?: string;
+  websocketAuth?: AppServerWebsocketAuthSettings;
   connectionName?: string;
   onListening?: (info: AppServerListeningInfo) => void;
   onLog?: (message: string) => void;
@@ -52,19 +60,6 @@ type ActiveAppServerSession = {
   controlSocket: WebSocket;
   streamSocket: WebSocket | null;
 };
-
-function isLoopbackHost(host: string): boolean {
-  const normalized = normalizeListenHost(host);
-  return (
-    normalized === "localhost" ||
-    normalized === "127.0.0.1" ||
-    normalized === "::1"
-  );
-}
-
-function normalizeListenHost(host: string): string {
-  return host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
-}
 
 function getRequiredAddressInfo(server: Server): AddressInfo {
   const address = server.address();
@@ -109,10 +104,9 @@ function rejectUpgrade(
   statusCode: number,
   message: string,
 ): void {
-  socket.write(
+  socket.end(
     `HTTP/1.1 ${statusCode} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
   );
-  socket.destroy();
 }
 
 function getRequestUrl(request: IncomingMessage, host: string): URL {
@@ -164,11 +158,6 @@ export function parseAppServerListenUrl(
 
   if (url.protocol !== "ws:") {
     throw new Error("app-server MVP only supports ws:// listen URLs");
-  }
-  if (!isLoopbackHost(url.hostname)) {
-    throw new Error(
-      "app-server websocket listen host must be loopback for now",
-    );
   }
   if (url.username || url.password || url.search || url.hash) {
     throw new Error(
@@ -249,6 +238,12 @@ export async function startAppServer(
   await settingsManager.initialize();
 
   const listen = parseAppServerListenUrl(options.listen);
+  const authPolicy = await policyFromSettings(options.websocketAuth);
+  if (isUnauthenticatedNonLoopbackListener(listen.host, authPolicy)) {
+    throw new Error(
+      `refusing to start non-loopback websocket listener ${listen.host}:${listen.port} without auth; configure \`--ws-auth capability-token\` or \`--ws-auth signed-bearer-token\``,
+    );
+  }
   const wss = new WebSocketServer({ noServer: true });
   let activeSession: ActiveAppServerSession | null = null;
   let pendingStreamSocket: WebSocket | null = null;
@@ -325,17 +320,21 @@ export async function startAppServer(
 
   const server = createServer((request, response) => {
     const requestUrl = getRequestUrl(request, listen.host);
+    if (request.headers.origin) {
+      options.onLog?.(
+        `Rejecting app-server request with Origin header: ${request.url ?? "/"}`,
+      );
+      response.writeHead(403);
+      response.end();
+      return;
+    }
+
     if (requestUrl.pathname === "/readyz") {
       response.writeHead(200, { "content-type": "text/plain" });
       response.end("ok\n");
       return;
     }
     if (requestUrl.pathname === "/healthz") {
-      if (request.headers.origin) {
-        response.writeHead(403);
-        response.end();
-        return;
-      }
       response.writeHead(200, { "content-type": "text/plain" });
       response.end("ok\n");
       return;
@@ -346,6 +345,14 @@ export async function startAppServer(
 
   server.on("upgrade", (request, socket, head) => {
     const requestUrl = getRequestUrl(request, listen.host);
+    if (request.headers.origin) {
+      options.onLog?.(
+        `Rejecting app-server websocket request with Origin header: ${request.url ?? "/"}`,
+      );
+      rejectUpgrade(socket, 403, "Forbidden");
+      return;
+    }
+
     if (requestUrl.pathname !== listen.path && requestUrl.pathname !== "/") {
       rejectUpgrade(socket, 404, "Not Found");
       return;
@@ -354,6 +361,15 @@ export async function startAppServer(
     const channel = getRequestChannel(requestUrl);
     if (!channel) {
       rejectUpgrade(socket, 400, "Bad Request");
+      return;
+    }
+
+    const authError = authorizeUpgrade(request.headers, authPolicy);
+    if (authError) {
+      options.onLog?.(
+        `Rejecting app-server websocket client: ${authError.message}`,
+      );
+      rejectUpgrade(socket, authError.statusCode, authError.message);
       return;
     }
 

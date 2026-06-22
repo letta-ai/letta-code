@@ -1486,7 +1486,6 @@ export function createSlackAdapter(
       options?: { isFirstRouteTurn?: boolean },
     ): Promise<InboundChannelMessage> {
       if (
-        !options?.isFirstRouteTurn ||
         msg.channel !== "slack" ||
         msg.chatType !== "channel" ||
         !isNonEmptyString(msg.threadId) ||
@@ -1495,9 +1494,12 @@ export function createSlackAdapter(
         return msg;
       }
 
+      const isFirstRouteTurn = options?.isFirstRouteTurn === true;
       const shouldHydrateExistingThreadContext = msg.threadId !== msg.messageId;
       const shouldHydrateChannelBootstrapContext =
-        msg.isMention === true && msg.threadId === msg.messageId;
+        isFirstRouteTurn &&
+        msg.isMention === true &&
+        msg.threadId === msg.messageId;
 
       if (
         !shouldHydrateExistingThreadContext &&
@@ -1507,14 +1509,15 @@ export function createSlackAdapter(
       }
 
       const slackApp = await ensureApp();
-      const starter = shouldHydrateExistingThreadContext
-        ? await resolveSlackThreadStarter({
-            channelId: msg.chatId,
-            threadTs: msg.threadId,
-            client: slackApp.client,
-          })
-        : null;
-      const history = shouldHydrateExistingThreadContext
+      const starter =
+        shouldHydrateExistingThreadContext && isFirstRouteTurn
+          ? await resolveSlackThreadStarter({
+              channelId: msg.chatId,
+              threadTs: msg.threadId,
+              client: slackApp.client,
+            })
+          : null;
+      const resolvedHistory = shouldHydrateExistingThreadContext
         ? await resolveSlackThreadHistory({
             channelId: msg.chatId,
             threadTs: msg.threadId,
@@ -1528,6 +1531,14 @@ export function createSlackAdapter(
             client: slackApp.client,
             limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
           });
+      // Existing routed thread turns already deliver human messages into the
+      // Letta conversation. Bot-authored Slack messages are intentionally not
+      // runnable input, so rehydrate those skipped entries as context on the
+      // next human turn instead of waking the agent for every bot event.
+      const history =
+        shouldHydrateExistingThreadContext && !isFirstRouteTurn
+          ? resolvedHistory.filter((entry) => isNonEmptyString(entry.botId))
+          : resolvedHistory;
 
       if (!starter && history.length === 0) {
         return msg;
