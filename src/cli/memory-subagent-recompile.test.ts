@@ -195,4 +195,72 @@ describe("memory subagent recompile handling", () => {
       "agent-shared",
     );
   });
+
+  test("includes reflection failure detail", async () => {
+    const message = await handleMemorySubagentCompletion(
+      {
+        agentId: "agent-reflection-fail",
+        conversationId: "conv-reflection-fail",
+        subagentType: "reflection",
+        success: false,
+        error: "provider returned 500",
+      },
+      {
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
+        recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
+      },
+    );
+
+    expect(message).toBe(
+      "Tried to reflect, but got lost in the palace: provider returned 500",
+    );
+    expect(recompileAgentSystemPromptMock).not.toHaveBeenCalled();
+  });
+
+  test("truncates long multiline reflection failure detail", async () => {
+    const message = await handleMemorySubagentCompletion(
+      {
+        agentId: "agent-reflection-long-fail",
+        conversationId: "conv-reflection-long-fail",
+        subagentType: "reflection",
+        success: false,
+        error: `first line\n${"x".repeat(400)}\nfinal line`,
+      },
+      {
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
+        recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
+      },
+    );
+
+    const prefix = "Tried to reflect, but got lost in the palace: ";
+    expect(message.startsWith(prefix)).toBe(true);
+    expect(message).not.toContain("\n");
+    expect(message).not.toContain("final line");
+    expect(message.endsWith("...")).toBe(true);
+    expect(message.length).toBeLessThanOrEqual(prefix.length + 200);
+  });
+
+  test("init failure still includes error detail", async () => {
+    const message = await handleMemorySubagentCompletion(
+      {
+        agentId: "agent-init-fail",
+        conversationId: "conv-init-fail",
+        subagentType: "init",
+        success: false,
+        error: "memory root unavailable",
+      },
+      {
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
+        recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
+      },
+    );
+
+    expect(message).toBe(
+      "Memory initialization failed: memory root unavailable",
+    );
+    expect(recompileAgentSystemPromptMock).not.toHaveBeenCalled();
+  });
 });

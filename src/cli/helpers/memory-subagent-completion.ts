@@ -1,9 +1,23 @@
 import { recompileAgentSystemPrompt } from "@/agent/modify";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugWarn } from "@/utils/debug";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
 } from "./system-prompt-warning";
+
+const MAX_FAILURE_DETAIL_LENGTH = 200;
+
+function rawFailureDetail(error: string | undefined): string {
+  return error?.trim() || "Unknown error";
+}
+
+function normalizeFailureDetail(error: string | undefined): string {
+  const normalized = rawFailureDetail(error).replace(/\s+/g, " ").trim();
+  if (normalized.length <= MAX_FAILURE_DETAIL_LENGTH) {
+    return normalized;
+  }
+  return `${normalized.slice(0, MAX_FAILURE_DETAIL_LENGTH - 3).trimEnd()}...`;
+}
 
 export type MemorySubagentType = "init" | "reflection";
 
@@ -82,12 +96,17 @@ export async function handleMemorySubagentCompletion(
   }
 
   if (!success) {
+    const rawError = rawFailureDetail(error);
+    const detail = normalizeFailureDetail(error);
+    debugWarn(
+      "memory",
+      `Memory ${subagentType} subagent failed for ${agentId} in conversation ${conversationId}: ${rawError}`,
+    );
+
     if (subagentType === "reflection") {
-      const detail = isDebugEnabled() ? `: ${error || "Unknown error"}` : "";
-      return `Tried to reflect, but got lost in the palace${detail}`;
+      return `Tried to reflect, but got lost in the palace: ${detail}`;
     }
-    const normalizedError = error || "Unknown error";
-    return `Memory initialization failed: ${normalizedError}`;
+    return `Memory initialization failed: ${detail}`;
   }
 
   const baseMessage =
