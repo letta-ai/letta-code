@@ -149,6 +149,7 @@ async function handleAdd(
   }
 
   const dedicated = values.dedicated === true;
+  // Dedicated mode owns the target; accepting --conversation would be ambiguous.
   if (dedicated && values.conversation !== undefined) {
     console.error("Error: --dedicated cannot be used with --conversation.");
     return 1;
@@ -216,6 +217,7 @@ async function handleAdd(
   }
 
   try {
+    // Create it now so the schedule stores one stable, real conversation id.
     const conversationId = dedicated
       ? await createDedicatedCronConversation(agentId, name)
       : getConversationId(values.conversation);
