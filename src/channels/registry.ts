@@ -81,6 +81,7 @@ import type {
   ChannelRoute,
   ChannelStartupLogger,
   ChannelTurnLifecycleEvent,
+  ChannelTurnProgressEvent,
   ChannelTurnSource,
   DiscordChannelAccount,
   InboundChannelMessage,
@@ -706,6 +707,59 @@ export class ChannelRegistry {
       } catch (error) {
         console.error(
           `[Channels] Failed to handle ${event.type} lifecycle event for ${adapter.channelId ?? adapter.id}/${adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+  }
+
+  async dispatchTurnProgressEvent(
+    event: ChannelTurnProgressEvent,
+  ): Promise<void> {
+    const groups = new Map<
+      string,
+      {
+        adapter: ChannelAdapter;
+        sources: ChannelTurnSource[];
+      }
+    >();
+
+    for (const source of event.sources) {
+      const adapter = this.getAdapter(
+        source.channel,
+        source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+      );
+      if (!adapter?.handleTurnProgressEvent) {
+        continue;
+      }
+      const groupKey = this.getAdapterKey(
+        source.channel,
+        source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+      );
+      const existing = groups.get(groupKey);
+      if (existing) {
+        existing.sources.push(source);
+        continue;
+      }
+      groups.set(groupKey, {
+        adapter,
+        sources: [source],
+      });
+    }
+
+    for (const { adapter, sources: groupedSources } of groups.values()) {
+      const handleTurnProgressEvent = adapter.handleTurnProgressEvent;
+      if (!handleTurnProgressEvent) {
+        continue;
+      }
+      try {
+        await handleTurnProgressEvent.call(adapter, {
+          ...event,
+          sources: groupedSources,
+        });
+      } catch (error) {
+        console.error(
+          `[Channels] Failed to handle progress event for ${adapter.channelId ?? adapter.id}/${adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID}:`,
           error instanceof Error ? error.message : error,
         );
       }

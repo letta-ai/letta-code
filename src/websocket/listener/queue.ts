@@ -552,6 +552,7 @@ async function drainQueuedMessages(
       let turnError: string | undefined;
       let didThrow = false;
       runtime.activeChannelTurnSources = channelTurnSources;
+      runtime.activeChannelTurnBatchId = dequeuedBatch.batchId;
       try {
         await processQueuedTurn(queuedTurn, dequeuedBatch);
       } catch (error) {
@@ -560,6 +561,7 @@ async function drainQueuedMessages(
         throw error;
       } finally {
         runtime.activeChannelTurnSources = null;
+        runtime.activeChannelTurnBatchId = null;
         if (channelTurnSources.length > 0) {
           const outcome = mapTurnLifecycleOutcome(
             runtime.lastStopReason,
