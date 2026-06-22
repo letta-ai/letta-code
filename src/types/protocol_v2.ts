@@ -641,6 +641,7 @@ export interface SubagentSnapshot {
   subagent_id: string;
   subagent_type: string;
   description: string;
+  prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
   model?: string;
