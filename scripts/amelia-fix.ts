@@ -114,7 +114,7 @@ for await (const message of session.stream()) {
   }
   if (message.type === "result") {
     if (!message.success) {
-      console.error("Failed:", message.errorDetail ?? message.error);
+      console.error("Failed:", message.error);
       process.exit(1);
     }
     break;
