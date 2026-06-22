@@ -84,6 +84,7 @@ import type {
   ModPanelUpdate,
   ModPermission,
   ModPermissionRegistration,
+  ModSourceScope,
   ModTool,
   ModToolRegistration,
   ModToolStartEvent,
@@ -213,7 +214,7 @@ export interface LocalModRegistry {
 export interface LocalModSource {
   files: string[];
   root: string;
-  scope: "global" | "project" | "bundled";
+  scope: ModSourceScope;
   trusted: boolean;
 }
 
@@ -223,6 +224,7 @@ interface LocalModModule {
 }
 
 export interface ResolveLocalModSourcesOptions {
+  agentModsDirectory?: string;
   cacheDirectory?: string;
   globalModsDirectory?: string;
 }
@@ -271,13 +273,41 @@ function listModFiles(directory: string): string[] {
     .sort((a, b) => a.localeCompare(b));
 }
 
+function getModSourcePriority(scope: ModSourceScope): number {
+  switch (scope) {
+    case "bundled":
+      return 0;
+    case "global":
+      return 1;
+    case "agent":
+      return 2;
+    case "project":
+      return 3;
+  }
+}
+
+function canShadowOwner(owner: ModOwner, existingOwner?: ModOwner): boolean {
+  return (
+    existingOwner !== undefined &&
+    getModSourcePriority(owner.scope) >
+      getModSourcePriority(existingOwner.scope)
+  );
+}
+
+function isShadowedByOwner(owner: ModOwner, existingOwner?: ModOwner): boolean {
+  return (
+    existingOwner !== undefined &&
+    getModSourcePriority(owner.scope) <
+      getModSourcePriority(existingOwner.scope)
+  );
+}
+
 export function resolveLocalModSources(
   options: ResolveLocalModSourcesOptions = {},
 ): LocalModSource[] {
   const globalModsDirectory =
     options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory();
-
-  return [
+  const sources: LocalModSource[] = [
     {
       files: listModFiles(globalModsDirectory),
       root: globalModsDirectory,
@@ -285,6 +315,17 @@ export function resolveLocalModSources(
       trusted: true,
     },
   ];
+
+  if (options.agentModsDirectory) {
+    sources.push({
+      files: listModFiles(options.agentModsDirectory),
+      root: options.agentModsDirectory,
+      scope: "agent",
+      trusted: true,
+    });
+  }
+
+  return sources;
 }
 
 function createEmptyModRegistry(
@@ -1062,7 +1103,16 @@ function createLettaModApi(
         }
 
         const existing = registry.commands[normalized.id];
-        if (existing && !command.override) {
+        if (existing && isShadowedByOwner(owner, existing.owner)) {
+          throw new Error(
+            `Mod command '${normalized.id}' is already registered by higher-priority mod ${existing.path}`,
+          );
+        }
+        if (
+          existing &&
+          !command.override &&
+          !canShadowOwner(owner, existing.owner)
+        ) {
           throw new Error(
             `Mod command '${normalized.id}' is already registered by ${existing.path}`,
           );
@@ -1096,7 +1146,20 @@ function createLettaModApi(
 
         const existing = registry.tools[normalized.name];
         const existingGlobal = getModToolDefinition(normalized.name);
-        if ((existing || existingGlobal) && !tool.override) {
+        const existingOwner = existing?.owner ?? existingGlobal?.owner;
+        if (
+          (existing || existingGlobal) &&
+          isShadowedByOwner(owner, existingOwner)
+        ) {
+          throw new Error(
+            `Mod tool '${normalized.name}' is already registered by higher-priority mod ${existing?.path ?? existingGlobal?.path}`,
+          );
+        }
+        if (
+          (existing || existingGlobal) &&
+          !tool.override &&
+          !canShadowOwner(owner, existingOwner)
+        ) {
           throw new Error(
             `Mod tool '${normalized.name}' is already registered by ${existing?.path ?? existingGlobal?.path}`,
           );
@@ -1136,7 +1199,19 @@ function createLettaModApi(
         const normalized = normalizeModPermission(permission, owner);
         const existing = registry.permissions[normalized.id];
         const existingGlobal = getModPermissionDefinition(normalized.id);
-        if (existing || existingGlobal) {
+        const existingOwner = existing?.owner ?? existingGlobal?.owner;
+        if (
+          (existing || existingGlobal) &&
+          isShadowedByOwner(owner, existingOwner)
+        ) {
+          throw new Error(
+            `Mod permission '${normalized.id}' is already registered by higher-priority mod ${existing?.path ?? existingGlobal?.path}`,
+          );
+        }
+        if (
+          (existing || existingGlobal) &&
+          !canShadowOwner(owner, existingOwner)
+        ) {
           throw new Error(
             `Mod permission '${normalized.id}' is already registered by ${existing?.path ?? existingGlobal?.path}`,
           );

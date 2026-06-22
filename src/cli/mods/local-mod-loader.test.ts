@@ -90,6 +90,46 @@ describe("local mod loader", () => {
     }
   });
 
+  test("discovers agent mod source after global mod source", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      const agentMods = path.join(root, "memory", "mods");
+      mkdirSync(globalMods, { recursive: true });
+      mkdirSync(agentMods, { recursive: true });
+      writeFileSync(
+        path.join(globalMods, "global.ts"),
+        "export default () => {};\n",
+      );
+      writeFileSync(
+        path.join(agentMods, "agent.ts"),
+        "export default () => {};\n",
+      );
+
+      expect(
+        resolveLocalModSources({
+          agentModsDirectory: agentMods,
+          globalModsDirectory: globalMods,
+        }),
+      ).toEqual([
+        {
+          files: [path.join(globalMods, "global.ts")],
+          root: globalMods,
+          scope: "global",
+          trusted: true,
+        },
+        {
+          files: [path.join(agentMods, "agent.ts")],
+          root: agentMods,
+          scope: "agent",
+          trusted: true,
+        },
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("does not initialize SDK client when no mod files exist", async () => {
     const root = createTempDir();
     try {

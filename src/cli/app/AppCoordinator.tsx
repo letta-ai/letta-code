@@ -1,5 +1,6 @@
 // src/cli/app/AppCoordinator.tsx
 
+import { join } from "node:path";
 import type {
   AgentState,
   MessageCreate,
@@ -2353,7 +2354,12 @@ export function App({
       statusLinePayload,
     ],
   );
+  const agentModsDirectory =
+    statusLinePayload.memfs.enabled && statusLinePayload.memfs.memory_dir
+      ? join(statusLinePayload.memfs.memory_dir, "mods")
+      : null;
   const modAdapter = useLocalModAdapter(modContext, {
+    agentModsDirectory,
     disabled: modsDisabled,
   });
 
