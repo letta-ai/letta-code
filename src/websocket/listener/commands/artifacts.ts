@@ -16,6 +16,13 @@ interface ArtifactServerLog {
 interface ArtifactCallResult {
   result: unknown;
   logs: ArtifactServerLog[];
+  updatedPaths: string[];
+}
+
+interface ArtifactDataWrite {
+  absolutePath: string;
+  content: Buffer;
+  pathspec: string;
 }
 
 export class ArtifactCallServerError extends Error {
@@ -39,6 +46,19 @@ interface ArtifactServerContext {
   appRoot: string;
   serverRoot: string;
   data: ArtifactDataApi;
+}
+
+interface CreateDataApiInput {
+  dataPath: string;
+  memoryRoot: string;
+  onWrite: (write: ArtifactDataWrite) => void;
+}
+
+interface CommitArtifactDataWritesInput {
+  agentId: string;
+  appName: string;
+  memoryRoot: string;
+  writes: ArtifactDataWrite[];
 }
 
 const ARTIFACT_SERVER_CALL_TIMEOUT_MS = 8_000;
@@ -93,7 +113,9 @@ function ensureInsideRoot(root: string, candidate: string): void {
   }
 }
 
-function createDataApi(dataPath: string): ArtifactDataApi {
+function createDataApi(input: CreateDataApiInput): ArtifactDataApi {
+  const { dataPath, memoryRoot, onWrite } = input;
+  ensureInsideRoot(memoryRoot, dataPath);
   return {
     path: dataPath,
     read: () => {
@@ -110,9 +132,80 @@ function createDataApi(dataPath: string): ArtifactDataApi {
       mkdirSync(dirname(dataPath), { recursive: true });
       const content =
         typeof value === "string" ? value : JSON.stringify(value, null, 2);
-      writeFileSync(dataPath, `${content}\n`, "utf8");
+      const buffer = Buffer.from(`${content}\n`, "utf8");
+      writeFileSync(dataPath, buffer);
+      const rel = relative(memoryRoot, dataPath);
+      onWrite({
+        absolutePath: dataPath,
+        content: buffer,
+        pathspec: rel.split(sep).join("/"),
+      });
     },
   };
+}
+
+async function getArtifactCommitAuthor(agentId: string): Promise<{
+  agentId: string;
+  authorName: string;
+  authorEmail: string;
+}> {
+  let agentName = agentId;
+  try {
+    const { getBackend } = await import("@/backend");
+    const backend = getBackend();
+    const agent = await backend.retrieveAgent(agentId);
+    if (agent.name && agent.name.trim().length > 0) {
+      agentName = agent.name.trim();
+    }
+  } catch {
+    // Best-effort — fall back to agent id as the author name.
+  }
+
+  return {
+    agentId,
+    authorName: agentName,
+    authorEmail: `${agentId}@letta.com`,
+  };
+}
+
+async function getArtifactMemorySyncMode(): Promise<"local" | undefined> {
+  const { getBackend } = await import("@/backend");
+  const backend = getBackend();
+  return backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs
+    ? "local"
+    : undefined;
+}
+
+async function commitArtifactDataWrites(
+  input: CommitArtifactDataWritesInput,
+): Promise<string[]> {
+  if (input.writes.length === 0) return [];
+
+  const writesByPathspec = new Map<string, ArtifactDataWrite>();
+  for (const write of input.writes) {
+    writesByPathspec.set(write.pathspec, write);
+  }
+
+  const pathspecs = [...writesByPathspec.keys()];
+  const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+  const author = await getArtifactCommitAuthor(input.agentId);
+  const memorySyncMode = await getArtifactMemorySyncMode();
+  const commitResult = await commitAndSyncMemoryWrite({
+    memoryDir: input.memoryRoot,
+    pathspecs,
+    reason: `Update artifact data for ${input.appName}`,
+    author,
+    ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
+    replay: async () => {
+      for (const write of writesByPathspec.values()) {
+        await mkdir(dirname(write.absolutePath), { recursive: true });
+        await writeFile(write.absolutePath, write.content);
+      }
+      return pathspecs;
+    },
+  });
+
+  return commitResult.committed ? pathspecs : [];
 }
 
 function stripMemoryMarkdownFrontmatter(content: string): string {
@@ -315,6 +408,7 @@ function withArtifactServerTimeout<T>(input: {
 
 export async function callArtifactServerFunction(input: {
   command: ArtifactCallCommand;
+  agentId: string;
   memoryRoot: string;
 }): Promise<ArtifactCallResult> {
   validateAppName(input.command.app_name);
@@ -333,12 +427,20 @@ export async function callArtifactServerFunction(input: {
     );
   }
 
+  const dataWrites: ArtifactDataWrite[] = [];
+
   const context: ArtifactServerContext = {
     appName: input.command.app_name,
     appRoot,
     serverRoot,
-    data: createDataApi(join(serverRoot, "data.json")),
+    data: createDataApi({
+      dataPath: join(serverRoot, "data.json"),
+      memoryRoot: input.memoryRoot,
+      onWrite: (write) => dataWrites.push(write),
+    }),
   };
+
+  let updatedPaths: string[] = [];
 
   const { value, logs } = await captureArtifactServerLogs(async () => {
     console.debug(
@@ -371,8 +473,15 @@ export async function callArtifactServerFunction(input: {
     console.debug(
       `artifact_call: completed ${input.command.function_name} for ${input.command.app_name}`,
     );
-    return toJsonSafeValue(result);
+    const safeResult = toJsonSafeValue(result);
+    updatedPaths = await commitArtifactDataWrites({
+      agentId: input.agentId,
+      appName: input.command.app_name,
+      memoryRoot: input.memoryRoot,
+      writes: dataWrites,
+    });
+    return safeResult;
   });
 
-  return { result: value, logs };
+  return { result: value, logs, updatedPaths };
 }

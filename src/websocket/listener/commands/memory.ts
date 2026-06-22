@@ -1159,11 +1159,24 @@ export function handleMemoryProtocolCommand(
 
         const artifactCall = await callArtifactServerFunction({
           command: parsed,
+          agentId: parsed.agent_id,
           memoryRoot,
         });
         console.log(
           `[Listen] artifact_call succeeded: app=${parsed.app_name} function=${parsed.function_name} request=${parsed.request_id}`,
         );
+        if (artifactCall.updatedPaths.length > 0) {
+          safeSocketSend(
+            socket,
+            {
+              type: "memory_updated",
+              affected_paths: artifactCall.updatedPaths,
+              timestamp: Date.now(),
+            },
+            "listener_artifact_call_send_failed",
+            "listener_artifact_call",
+          );
+        }
         safeSocketSend(
           socket,
           {
