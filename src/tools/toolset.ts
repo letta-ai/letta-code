@@ -123,7 +123,8 @@ function getToolNamesForToolset(
       tools = [...GEMINI_DEFAULT_TOOLS];
       break;
     case "none":
-      return [];
+      tools = [];
+      break;
     default:
       tools = [...ANTHROPIC_DEFAULT_TOOLS];
       break;
