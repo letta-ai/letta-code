@@ -1,7 +1,6 @@
 // Postinstall patcher for vendoring our Ink modifications without patch-package.
 // Copies patched runtime files from ./src/vendor into node_modules.
 
-import { execSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -16,6 +15,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = dirname(__dirname);
 const require = createRequire(import.meta.url);
+const NODE_SHEBANG = "#!/usr/bin/env node";
+const POLYGLOT_SHEBANG = `#!/bin/sh
+":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"`;
 
 async function copyToResolved(srcRel, targetSpecifier) {
   const src = join(pkgRoot, srcRel);
@@ -111,26 +113,20 @@ await copyToResolved(
 
 console.log("[patch] Ink runtime patched");
 
-// On Unix with Bun available, use polyglot shebang to prefer Bun runtime.
-// This enables Bun.secrets for secure keychain storage instead of fallback.
-// Windows always uses #!/usr/bin/env node (polyglot shebang breaks npm wrappers).
-if (process.platform !== "win32") {
-  try {
-    execSync("bun --version", { stdio: "ignore" });
-    const lettaPath = join(pkgRoot, "letta.js");
-    if (existsSync(lettaPath)) {
-      let content = readFileSync(lettaPath, "utf-8");
-      if (content.startsWith("#!/usr/bin/env node")) {
-        content = content.replace(
-          "#!/usr/bin/env node",
-          `#!/bin/sh
-":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"`,
-        );
-        writeFileSync(lettaPath, content);
-        console.log("[patch] Configured letta to prefer Bun runtime");
-      }
+// Non-Windows builds should prefer Bun at runtime for Bun.secrets keyring access.
+// Windows npm wrappers break on the polyglot shebang, so revert it there.
+const lettaPath = join(pkgRoot, "letta.js");
+if (existsSync(lettaPath)) {
+  let content = readFileSync(lettaPath, "utf-8");
+  if (process.platform === "win32") {
+    if (content.startsWith(POLYGLOT_SHEBANG)) {
+      content = content.replace(POLYGLOT_SHEBANG, NODE_SHEBANG);
+      writeFileSync(lettaPath, content);
+      console.log("[patch] Configured letta to use Node runtime on Windows");
     }
-  } catch {
-    // Bun not available, keep node shebang
+  } else if (content.startsWith(NODE_SHEBANG)) {
+    content = content.replace(NODE_SHEBANG, POLYGLOT_SHEBANG);
+    writeFileSync(lettaPath, content);
+    console.log("[patch] Configured letta to prefer Bun runtime");
   }
 }

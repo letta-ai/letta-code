@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -165,6 +165,50 @@ describe("channel credential storage", () => {
     __setChannelKeychainAvailableForTests(false);
 
     expect(await getActiveChannelCredentialsStoreMode()).toBe("file");
+  });
+
+  test("file mode warns about keyring secret refs it cannot hydrate", async () => {
+    __setChannelCredentialsStoreModeForTests("auto");
+    __setChannelKeychainAvailableForTests(false);
+    mkdirSync(join(channelsRoot, "slack"), { recursive: true });
+    writeFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      `${JSON.stringify(
+        {
+          accounts: [
+            {
+              ...makeSlackAccount(),
+              botToken: "__letta_channel_secret_present__",
+              appToken: "__letta_channel_secret_present__",
+              __letta_secret_refs: {
+                botToken: true,
+                appToken: true,
+              },
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const originalConsoleError = console.error;
+    const consoleError = mock(() => {});
+    console.error = consoleError as typeof console.error;
+    try {
+      await expect(
+        hydrateChannelAccountSecrets("slack"),
+      ).resolves.toBeUndefined();
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("keyring-backed secret references"),
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("keyring unavailable"),
+    );
   });
 
   test("explicit keyring mode errors when keyring is unavailable", async () => {

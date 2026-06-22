@@ -593,6 +593,18 @@ export async function hydrateChannelAccountSecrets(
   const mode = await getActiveChannelCredentialsStoreMode();
   const store = getStore(channelId);
   if (mode !== "keyring") {
+    for (const account of store.accounts) {
+      const refs = getSecretRefs(account);
+      if (Object.keys(refs).length > 0) {
+        console.error(
+          `[Channels] Account ${account.channel}/${account.accountId} has keyring-backed secret references ` +
+            `but the credential store is in "${mode}" mode (keyring unavailable). ` +
+            `Token values cannot be hydrated — channel adapters will fail with invalid credentials. ` +
+            `Run "letta channels configure ${account.channel}" to re-enter credentials in file mode, ` +
+            `or ensure the process runs under Bun with keyring access.`,
+        );
+      }
+    }
     return;
   }
 
