@@ -1,11 +1,10 @@
 #!/usr/bin/env tsx
 /**
- * Amelia Fix — SDK script that addresses review comments on a PR.
+ * Amelia — SDK script triggered by @amelia-letta mentions on PR comments.
  *
- * Triggered by the amelia-fix.yml workflow when a user comments
- * "/amelia fix" on a PR. Resumes the same conversation where the
- * review was done (found via Letta API conversation summary), then
- * sends a fix prompt that runs in a cloud sandbox.
+ * Resumes the same conversation where the review was done (found via
+ * Letta API conversation summary) for context, then runs the user's
+ * prompt in a cloud sandbox.
  */
 
 import { LettaCodeClient } from "@letta-ai/letta-code-sdk";
@@ -14,6 +13,15 @@ const prNumber = process.env.PR_NUMBER;
 const repo = process.env.REPO;
 const githubToken = process.env.GITHUB_TOKEN;
 const lettaApiKey = process.env.LETTA_API_KEY;
+const userComment = process.env.USER_PROMPT || "";
+
+// Extract the prompt from the comment (everything after @amelia-letta)
+const userPrompt = userComment.replace(/^@amelia-letta\s*/i, "").trim();
+
+if (!userPrompt) {
+  console.error("No prompt found after @amelia-letta mention");
+  process.exit(1);
+}
 
 if (!prNumber || !repo || !githubToken || !lettaApiKey) {
   console.error(
@@ -77,30 +85,22 @@ await using session = conversationId
     });
 
 // ---------------------------------------------------------------------------
-// 3. Send the fix prompt
+// 3. Send the user's prompt with PR context
 // ---------------------------------------------------------------------------
 
-const prompt = `Address the review comments on PR #${prNumber} in ${repo}.
+const prompt = `You are working on PR #${prNumber} in ${repo}.
 
-Steps:
+Your GitHub token is in $GITHUB_TOKEN. To get started:
 1. Clone the repo: git clone https://x-access-token:${githubToken}@github.com/${repo}.git workspace && cd workspace
 2. Get the PR branch: curl -s -H "Authorization: token ${githubToken}" https://api.github.com/repos/${repo}/pulls/${prNumber} | jq -r .head.ref
 3. Checkout the PR branch
-4. Fetch your unresolved review comments:
-   curl -s -H "Authorization: token ${githubToken}" \\
-     "https://api.github.com/repos/${repo}/pulls/${prNumber}/comments"
-   Filter for comments authored by "amelia-letta-code" (your bot login)
-5. For each unresolved comment, read the code at the flagged location, apply the fix
-6. Run lint/typecheck if the repo has it: npx biome check --write . || true
-7. Commit all changes, then push to the PR branch
 
-Important:
-- Only fix issues you flagged in your own review comments. Don't make unrelated changes.
-- If a comment is a suggestion block, apply the suggested fix.
-- If a comment is a general concern, use your judgment to fix the root cause.
-- Commit message: "fix: address review comments on PR #${prNumber}"
-- Co-author: Letta Code <noreply@letta.com>
-- After pushing, reply with a summary of what you fixed.`;
+Then do the following:
+${userPrompt}
+
+When done, commit and push your changes to the PR branch.
+- Commit co-author: Letta Code <noreply@letta.com>
+- Reply with a summary of what you did.`;
 
 await session.send(prompt);
 
