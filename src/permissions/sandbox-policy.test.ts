@@ -13,7 +13,7 @@ import {
   buildCrossAgentSandboxPolicy,
   buildMemoryModeSandboxPolicy,
   canonicalizeRoot,
-  deriveSelfAgentRoots,
+  deriveSelfAgentRootsForTrees,
   getCrossBackendAgentsTreeRoots,
   getDefaultAgentsTreeRoot,
   getLettaHomeRoot,
@@ -63,8 +63,8 @@ test("getDefaultAgentsTreeRoot ends with the agents tree path", () => {
 });
 
 test("memory-mode policy: writes scoped to ~/.letta, agents tree read-denied with agent dir carved readonly", () => {
-  // Use the real agents tree so deriveSelfAgentRoots resolves the agent dir
-  // (the policy always denies getDefaultAgentsTreeRoot(), keyed to homedir()).
+  // Use the real agents tree so deriveSelfAgentRootsForTrees resolves the agent
+  // dir (the policy always denies getDefaultAgentsTreeRoot(), keyed to homedir()).
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-self");
   const memoryRoot = join(agentDir, "memory");
 
@@ -118,7 +118,7 @@ test("memory-mode policy (local backend): custom tree, ~/.letta base, self memor
 
   const policy = buildMemoryModeSandboxPolicy({
     memoryRoots: [memoryRoot],
-    agentsTreeRoot: memfsTree,
+    agentsTreeRoots: [memfsTree],
     harnessWritableRoots: [storage],
   });
 
@@ -151,7 +151,7 @@ test("cross-agent policy denies the agents tree and carves out self", () => {
 
   const policy = buildCrossAgentSandboxPolicy({
     selfRoots: [selfDir],
-    agentsTreeRoot: agentsTree,
+    agentsTreeRoots: [agentsTree],
   });
 
   // Default-allow writes (the repo/home stay writable); only the agents tree
@@ -169,24 +169,26 @@ test("cross-agent policy defaults to both backend agents trees", () => {
   expect(policy.deniedRoots).toEqual(getCrossBackendAgentsTreeRoots());
 });
 
-test("deriveSelfAgentRoots collapses in-tree memory roots to the agent dir", () => {
+test("deriveSelfAgentRootsForTrees collapses in-tree memory roots to the agent dir", () => {
   const tree = getDefaultAgentsTreeRoot();
   const agentDir = join(tree, "abc");
-  const roots = deriveSelfAgentRoots(
+  const roots = deriveSelfAgentRootsForTrees(
     [join(agentDir, "memory"), join(agentDir, "memory-worktrees")],
-    tree,
+    [tree],
   );
   expect(roots).toEqual([canonicalizeRoot(agentDir)]);
 });
 
-test("deriveSelfAgentRoots keeps roots outside the tree as-is", () => {
+test("deriveSelfAgentRootsForTrees keeps roots outside the tree as-is", () => {
   const tree = getDefaultAgentsTreeRoot();
   const outside = canonicalizeRoot("/tmp");
-  expect(deriveSelfAgentRoots([outside], tree)).toEqual([outside]);
+  expect(deriveSelfAgentRootsForTrees([outside], [tree])).toEqual([outside]);
 });
 
-test("deriveSelfAgentRoots refuses to carve the whole tree or its ancestors", () => {
+test("deriveSelfAgentRootsForTrees refuses to carve the whole tree or its ancestors", () => {
   const tree = getDefaultAgentsTreeRoot();
-  expect(deriveSelfAgentRoots([tree], tree)).toEqual([]);
-  expect(deriveSelfAgentRoots([getLettaHomeRoot()], tree)).toEqual([]);
+  expect(deriveSelfAgentRootsForTrees([tree], [tree])).toEqual([]);
+  expect(deriveSelfAgentRootsForTrees([getLettaHomeRoot()], [tree])).toEqual(
+    [],
+  );
 });

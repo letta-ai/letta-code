@@ -105,6 +105,31 @@ function isAncestorOfRoot(path: string, root: string): boolean {
 }
 
 /**
+ * True when a canonical path IS one of the trees or an ancestor of one. Such a
+ * path must never be carved back out: re-exposing a whole tree (or an ancestor
+ * that contains it) would re-expose the denied roots under bwrap's
+ * last-mount-wins semantics, and is too broad under Seatbelt as well.
+ */
+function isTreeOrAncestorOfTree(
+  path: string,
+  canonicalTrees: string[],
+): boolean {
+  return canonicalTrees.some(
+    (tree) => path === tree || isAncestorOfRoot(path, tree),
+  );
+}
+
+/**
+ * Resolve the caller-supplied agents trees (canonicalizing each), or fall back
+ * to both backend trees when none were given. Shared by the policy builders.
+ */
+function resolveAgentsTreeRootsInput(roots?: string[]): string[] {
+  return roots?.length
+    ? roots.map(canonicalizeRoot)
+    : getCrossBackendAgentsTreeRoots();
+}
+
+/**
  * Map memory roots to the agent directories to carve out of the walled-off
  * agents tree. A memory root under the tree
  * (`~/.letta/agents/<id>/memory[-worktrees]`) yields the whole agent dir
@@ -113,13 +138,6 @@ function isAncestorOfRoot(path: string, root: string): boolean {
  * not empty the child env under Seatbelt. Roots outside the tree (a custom
  * `MEMORY_DIR`) are returned as-is.
  */
-export function deriveSelfAgentRoots(
-  memoryRoots: string[],
-  agentsTreeRoot: string = getDefaultAgentsTreeRoot(),
-): string[] {
-  return deriveSelfAgentRootsForTrees(memoryRoots, [agentsTreeRoot]);
-}
-
 export function deriveSelfAgentRootsForTrees(
   memoryRoots: string[],
   agentsTreeRoots: string[] = getCrossBackendAgentsTreeRoots(),
@@ -128,31 +146,23 @@ export function deriveSelfAgentRootsForTrees(
   const out = new Set<string>();
   for (const root of memoryRoots) {
     const canon = canonicalizeRoot(root);
-    let matchedTree = false;
-    for (const agentsTreeRoot of canonicalTrees) {
-      if (canon === agentsTreeRoot) {
-        // Never carve the whole cross-agent tree back out.
-        matchedTree = true;
-        break;
-      }
-      if (!isWithinRoot(canon, agentsTreeRoot)) {
-        continue;
-      }
+    const containingTree = canonicalTrees.find(
+      (tree) => canon !== tree && isWithinRoot(canon, tree),
+    );
+    if (containingTree) {
+      // A memory root nested inside a tree: carve back the whole agent dir so
+      // the cwd's immediate parent stays traversable (Seatbelt empty-env bug).
       const leaf = basename(canon);
       out.add(
         leaf === "memory" || leaf === "memory-worktrees"
           ? dirname(canon)
           : canon,
       );
-      matchedTree = true;
-      break;
+      continue;
     }
-    if (!matchedTree) {
-      if (canonicalTrees.some((tree) => isAncestorOfRoot(canon, tree))) {
-        // An ancestor carve-out would re-expose the denied tree under bwrap
-        // (last mount wins) and is too broad under Seatbelt as well.
-        continue;
-      }
+    // Outside every tree: keep as-is, unless it's a tree itself or an ancestor
+    // of one (carving those back out would re-expose the denied tree).
+    if (!isTreeOrAncestorOfTree(canon, canonicalTrees)) {
       out.add(canon);
     }
   }
@@ -167,16 +177,11 @@ function deriveWritableMemoryRootsForTrees(
   const out = new Set<string>();
   for (const root of memoryRoots) {
     const canon = canonicalizeRoot(root);
-    if (
-      canonicalTrees.some(
-        (tree) => canon === tree || isAncestorOfRoot(canon, tree),
-      )
-    ) {
-      // Never re-carve a whole denied tree, or an ancestor that would re-expose
-      // that tree under bwrap's last-mount-wins semantics.
-      continue;
+    // Never re-carve a whole denied tree, or an ancestor that would re-expose
+    // that tree under bwrap's last-mount-wins semantics.
+    if (!isTreeOrAncestorOfTree(canon, canonicalTrees)) {
+      out.add(canon);
     }
-    out.add(canon);
   }
   return [...out];
 }
@@ -208,8 +213,6 @@ export interface MemoryModeSandboxInput {
    * already-resolved path rather than branching on a backend it cannot import.
    */
   agentsTreeRoots?: string[];
-  /** @deprecated Use agentsTreeRoots. Preserved for existing single-tree tests. */
-  agentsTreeRoot?: string;
 }
 
 /**
@@ -246,11 +249,7 @@ export interface MemoryModeSandboxInput {
 export function buildMemoryModeSandboxPolicy(
   input: MemoryModeSandboxInput,
 ): FsSandboxPolicy {
-  const agentsTreeRoots = input.agentsTreeRoots?.length
-    ? input.agentsTreeRoots.map(canonicalizeRoot)
-    : input.agentsTreeRoot
-      ? [canonicalizeRoot(input.agentsTreeRoot)]
-      : getCrossBackendAgentsTreeRoots();
+  const agentsTreeRoots = resolveAgentsTreeRootsInput(input.agentsTreeRoots);
 
   // Writes are scoped to the harness state dir. `~/.letta` is the always-on base
   // (covers settings/logs/conversations/transcripts/memory under the defaults);
@@ -287,8 +286,6 @@ export interface CrossAgentSandboxInput {
   selfRoots: string[];
   /** The agents trees to wall off (read+write). Defaults to both backends. */
   agentsTreeRoots?: string[];
-  /** @deprecated Use agentsTreeRoots. Preserved for existing single-tree tests. */
-  agentsTreeRoot?: string;
 }
 
 /**
@@ -309,11 +306,7 @@ export interface CrossAgentSandboxInput {
 export function buildCrossAgentSandboxPolicy(
   input: CrossAgentSandboxInput,
 ): FsSandboxPolicy {
-  const agentsTreeRoots = input.agentsTreeRoots?.length
-    ? input.agentsTreeRoots.map(canonicalizeRoot)
-    : input.agentsTreeRoot
-      ? [canonicalizeRoot(input.agentsTreeRoot)]
-      : getCrossBackendAgentsTreeRoots();
+  const agentsTreeRoots = resolveAgentsTreeRootsInput(input.agentsTreeRoots);
 
   return buildFsSandboxPolicy({
     deniedRoots: agentsTreeRoots,
