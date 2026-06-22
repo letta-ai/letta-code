@@ -4,7 +4,7 @@
  *
  * Resumes the same conversation where the review was done (found via
  * Letta API conversation summary) for context, then runs the user's
- * prompt in a cloud sandbox.
+ * prompt in a cloud sandbox. Posts the response back as a PR comment.
  */
 
 import { LettaCodeClient } from "@letta-ai/letta-code-sdk";
@@ -98,15 +98,21 @@ Your GitHub token is in $GITHUB_TOKEN. To get started:
 Then do the following:
 ${userPrompt}
 
-When done, commit and push your changes to the PR branch.
+If you made code changes, commit and push them to the PR branch.
 - Commit co-author: Letta Code <noreply@letta.com>
-- Reply with a summary of what you did.`;
+If you didn't make changes (e.g. answering a question), just reply with your response.
+
+Either way, end your response with a clear summary of what you did or said.`;
 
 await session.send(prompt);
+
+// Collect the final assistant response to post as a PR comment
+let finalResponse = "";
 
 for await (const message of session.stream()) {
   if (message.type === "assistant") {
     console.log(message.content);
+    finalResponse += message.content;
   }
   if (message.type === "result") {
     if (!message.success) {
@@ -114,6 +120,32 @@ for await (const message of session.stream()) {
       process.exit(1);
     }
     break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Post the response as a PR comment
+// ---------------------------------------------------------------------------
+
+if (finalResponse.trim()) {
+  const commentRes = await fetch(
+    `https://api.github.com/repos/${repo}/issues/${prNumber}/comments`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `token ${githubToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        body: finalResponse.trim(),
+      }),
+    },
+  );
+
+  if (!commentRes.ok) {
+    console.error(`Failed to post comment: ${commentRes.status}`);
+  } else {
+    console.log("Posted response as PR comment");
   }
 }
 
