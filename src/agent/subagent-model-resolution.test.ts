@@ -268,8 +268,6 @@ describe("buildSubagentArgs", () => {
       { parentAgentId: "agent-parent-123" },
     );
 
-    // --tags must appear exactly once (the headless CLI keeps only the last
-    // occurrence), carrying both type and parent as a comma-separated value.
     const tagFlagCount = args.filter((a) => a === "--tags").length;
     expect(tagFlagCount).toBe(1);
     const tagsValue = args[args.indexOf("--tags") + 1];

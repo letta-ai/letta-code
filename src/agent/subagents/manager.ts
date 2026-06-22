@@ -912,14 +912,6 @@ interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
   extraTools?: string[];
-  /**
-   * The agent id of the primary agent spawning this subagent. When provided
-   * (and a new agent is being created), the subagent is tagged with
-   * `parent:<id>` so the spawning agent's subagents can be enumerated later
-   * via listAgents (powering the subagent roster panel). Persists the
-   * parent→child link that otherwise only exists in the device's in-memory
-   * subagent store.
-   */
   parentAgentId?: string | null;
 }
 
@@ -960,12 +952,6 @@ export function buildSubagentArgs(
   } else {
     // Create new agent (original behavior)
     args.push("--new-agent", "--system", type);
-    // The headless CLI parses --tags as a single comma-separated string
-    // (parseCsvListFlag), so combine all tags into one value rather than
-    // passing --tags multiple times (later occurrences overwrite earlier).
-    // `parent:<id>` lets the spawning agent's subagents be enumerated later
-    // (agent-scoped subagent roster); `type:<type>` lets the UI partition the
-    // roster into "Subagents" vs "Reflection subagents".
     const subagentTags = [`type:${type}`];
     if (options.parentAgentId) {
       subagentTags.push(`parent:${options.parentAgentId}`);
@@ -1095,11 +1081,6 @@ async function executeSubagent(
       buildInheritedChannelContextPayload(runtimeContext);
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
 
-    // Prefer an explicit parentAgentId captured at the synchronous
-    // spawn call site. Only fall back to the in-process context (which
-    // can drift across async yields in the listener) when no explicit
-    // ID was provided. Resolved before buildSubagentArgs so it can be
-    // baked into the subagent's `parent:<id>` tag.
     let parentAgentId = parentAgentIdOverride;
     if (!parentAgentId) {
       try {
