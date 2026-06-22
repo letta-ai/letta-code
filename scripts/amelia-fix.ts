@@ -73,7 +73,7 @@ console.log(
 // ---------------------------------------------------------------------------
 
 const sessionOptions = {
-  permissionMode: "unrestricted" as const,
+  permissionMode: "bypassPermissions" as const,
   disallowedTools: ["AskUserQuestion"],
   systemInfoReminder: false,
 };
