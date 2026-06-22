@@ -94,6 +94,9 @@ Your GitHub token is in $GITHUB_TOKEN. To get started:
 2. Get the PR branch: curl -s -H "Authorization: token ${githubToken}" https://api.github.com/repos/${repo}/pulls/${prNumber} | jq -r .head.ref
 3. Checkout the PR branch
 
+SECURITY NOTE: The token is interpolated into the prompt and visible in conversation history.
+Follow-up: Move to Constellation secrets once SDK supports environment variable injection.
+
 Then do the following:
 ${userPrompt}
 

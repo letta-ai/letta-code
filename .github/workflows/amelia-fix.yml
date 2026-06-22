@@ -6,10 +6,10 @@ on:
 
 jobs:
   fix:
-    # Only run on PR comments that mention @amelia-letta
     if: |
       github.event.issue.pull_request &&
-      startsWith(github.event.comment.body, '@amelia-letta')
+      startsWith(github.event.comment.body, '@amelia-letta') &&
+      (github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'COLLABORATOR')
     runs-on: ubuntu-latest
     permissions:
       contents: write
