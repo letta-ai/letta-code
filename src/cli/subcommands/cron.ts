@@ -110,6 +110,7 @@ async function validateConversationTarget(
   agentId: string,
   conversationId: string,
 ): Promise<void> {
+  // These are scheduler sentinels, not persisted conversation ids resolved here.
   if (
     conversationId === DEFAULT_CONVERSATION_TARGET ||
     conversationId === NEW_CONVERSATION_TARGET
@@ -117,6 +118,8 @@ async function validateConversationTarget(
     return;
   }
 
+  // Everything else must be a real id before addTask persists it; labels or
+  // names would create scheduled tasks that cannot be resolved when they run.
   let conversation: { agent_id?: string | null };
   try {
     conversation = await getBackend().retrieveConversation(conversationId);
