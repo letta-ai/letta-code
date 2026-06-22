@@ -74,6 +74,12 @@ class FakeSlackApp {
     },
     chat: {
       postMessage: mock(async () => ({ ts: "1712800000.000100" })),
+      update: mock(async () => ({ ts: "1712800000.000100" })),
+    },
+    assistant: {
+      threads: {
+        setStatus: mock(async () => ({ ok: true })),
+      },
     },
     conversations: {
       history: mock(async () => ({ messages: [] })),
@@ -129,6 +135,12 @@ class FakeSlackWriteClient {
   readonly options: Record<string, unknown> | undefined;
   readonly chat = {
     postMessage: mock(async () => ({ ts: "1712800000.000100" })),
+    update: mock(async () => ({ ts: "1712800000.000100" })),
+  };
+  readonly assistant = {
+    threads: {
+      setStatus: mock(async () => ({ ok: true })),
+    },
   };
   readonly reactions = {
     add: mock(async () => ({ ok: true })),
@@ -224,6 +236,8 @@ const slackAccountDefaults = {
 } as const;
 
 const originalFetch = globalThis.fetch;
+const originalProgressThrottleEnv =
+  process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
 const fetchMock = mock(
   async () =>
     new Response("uploaded", {
@@ -243,6 +257,7 @@ beforeEach(() => {
   resolveSlackChannelHistoryMock.mockReset();
   resolveSlackChannelHistoryMock.mockImplementation(async () => []);
   fetchMock.mockClear();
+  process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS = "0";
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
 
@@ -251,6 +266,8 @@ afterEach(() => {
     instance.client.auth.test.mockClear();
     instance.client.users.info.mockClear();
     instance.client.chat.postMessage.mockClear();
+    instance.client.chat.update.mockClear();
+    instance.client.assistant.threads.setStatus.mockClear();
     instance.client.conversations.history.mockClear();
     instance.client.conversations.replies.mockClear();
     instance.client.reactions.add.mockClear();
@@ -263,10 +280,18 @@ afterEach(() => {
   }
   for (const instance of FakeSlackWriteClient.instances) {
     instance.chat.postMessage.mockClear();
+    instance.chat.update.mockClear();
+    instance.assistant.threads.setStatus.mockClear();
     instance.reactions.add.mockClear();
     instance.reactions.remove.mockClear();
     instance.files.getUploadURLExternal.mockClear();
     instance.files.completeUploadExternal.mockClear();
+  }
+  if (originalProgressThrottleEnv === undefined) {
+    delete process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
+  } else {
+    process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS =
+      originalProgressThrottleEnv;
   }
   globalThis.fetch = originalFetch;
 });
@@ -1546,6 +1571,80 @@ test("slack adapter adds eyes while a queued turn is processing, then swaps to c
     channel: "C123",
     timestamp: "1712800000.000100",
     name: "white_check_mark",
+  });
+});
+
+test("slack adapter posts and updates one progress card per routed thread", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Preparing <tool> @channel & token=abc",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    thread_ts: "1712790000.000050",
+    text: "Letta Code is working on this thread.\nStatus: Working on it",
+  });
+  expect(writeClient?.chat.update).toHaveBeenCalledTimes(2);
+
+  const updateCalls = writeClient?.chat.update.mock.calls as
+    | Array<[{ channel: string; ts: string; text: string }]>
+    | undefined;
+  const firstUpdate = updateCalls?.[0]?.[0];
+  expect(firstUpdate?.channel).toBe("C123");
+  expect(firstUpdate?.ts).toBe("1712800000.000100");
+  expect(firstUpdate?.text).toContain("Preparing tool");
+  expect(firstUpdate?.text).not.toContain("<");
+  expect(firstUpdate?.text).not.toContain("@channel");
+  expect(firstUpdate?.text).not.toContain("token=abc");
+
+  const secondUpdate = updateCalls?.[1]?.[0];
+  expect(secondUpdate?.text).toBe(
+    "Letta Code finished this turn.\nStatus: Completed",
+  );
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledWith({
+    channel_id: "C123",
+    thread_ts: "1712790000.000050",
+    status: "Working on it",
   });
 });
 

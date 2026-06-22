@@ -93,6 +93,40 @@ export interface ChannelTurnSource {
 
 export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
 
+export type ChannelTurnProgressKind =
+  | "thinking"
+  | "responding"
+  | "tool"
+  | "approval"
+  | "command"
+  | "status"
+  | "retry"
+  | "error";
+
+export type ChannelTurnProgressState =
+  | "started"
+  | "updated"
+  | "completed"
+  | "error"
+  | "waiting";
+
+export interface ChannelTurnProgressUpdate {
+  kind: ChannelTurnProgressKind;
+  state: ChannelTurnProgressState;
+  /** Sanitized, user-facing status text. Never include tool args or output. */
+  message: string;
+  toolCallId?: string;
+  toolName?: string;
+  command?: string;
+  runId?: string;
+}
+
+export interface ChannelTurnProgressEvent extends ChannelTurnProgressUpdate {
+  type: "progress";
+  batchId?: string;
+  sources: ChannelTurnSource[];
+}
+
 export type ChannelControlRequestKind =
   | "ask_user_question"
   | "generic_tool_approval";
@@ -185,6 +219,13 @@ export interface ChannelAdapter {
    * without coupling queue/lifecycle state to a specific channel.
    */
   handleTurnLifecycleEvent?(event: ChannelTurnLifecycleEvent): Promise<void>;
+
+  /**
+   * Optional progress hook for channel-originated turns. Payloads are generic
+   * and sanitized before they reach adapters; adapters decide how to render and
+   * throttle their platform-specific UX.
+   */
+  handleTurnProgressEvent?(event: ChannelTurnProgressEvent): Promise<void>;
 
   /**
    * Optional hook for control requests that originate from a channel turn.

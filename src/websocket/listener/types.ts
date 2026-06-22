@@ -140,6 +140,7 @@ export type ConversationRuntime = {
   agentId: string | null;
   conversationId: string;
   activeChannelTurnSources: ChannelTurnSource[] | null;
+  activeChannelTurnBatchId: string | null;
   messageQueue: Promise<void>;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;

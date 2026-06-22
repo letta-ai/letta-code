@@ -12,6 +12,8 @@ import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelTurnLifecycleEvent,
+  ChannelTurnOutcome,
+  ChannelTurnProgressEvent,
   ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
@@ -37,6 +39,20 @@ type SlackWriteClient = {
       text: string;
       thread_ts?: string;
     }) => Promise<{ ts?: string }>;
+    update: (args: {
+      channel: string;
+      ts: string;
+      text: string;
+    }) => Promise<{ ts?: string }>;
+  };
+  assistant?: {
+    threads?: {
+      setStatus?: (args: {
+        channel_id: string;
+        thread_ts: string;
+        status: string;
+      }) => Promise<unknown>;
+    };
   };
   reactions: {
     add: (args: {
@@ -241,6 +257,11 @@ const SLACK_INGRESS_DEDUPE_MAX = 2_000;
 const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_LIFECYCLE_STATE_MAX = 2_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
+const SLACK_PROGRESS_CARD_TEXT_MAX = 300;
+const SLACK_PROGRESS_CARD_STATE_TTL_MS = SLACK_LIFECYCLE_STATE_TTL_MS;
+const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
+const SLACK_ASSISTANT_STATUS_TEXT_MAX = 100;
+const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
 
 // Threads the agent has sent messages to should auto-subscribe: when a user
 // replies in such a thread without mentioning the agent, the reply is still
@@ -250,6 +271,114 @@ const SLACK_AGENT_THREAD_TTL_MS = 24 * 60 * 60 * 1000;
 const SLACK_AGENT_THREAD_MAX = 2_000;
 
 type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
+type SlackProgressCardState =
+  | "processing"
+  | "completed"
+  | "error"
+  | "cancelled";
+
+type SlackProgressCardEntry = {
+  source: ChannelTurnSource;
+  messageTs?: string;
+  status: SlackProgressCardState;
+  latestText: string;
+  lastSentText?: string;
+  lastSentAt: number;
+  pendingTimer?: ReturnType<typeof setTimeout>;
+  pendingFlush?: Promise<void>;
+  updatedAt: number;
+};
+
+export function resolveSlackProgressUpdateThrottleMs(): number {
+  const raw = process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
+  if (!raw) {
+    return DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
+  }
+  return Math.min(parsed, 30_000);
+}
+
+function replaceSlackControlCharacters(value: string): string {
+  let result = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] ?? "";
+    const code = character.charCodeAt(0);
+    result += code <= 31 || code === 127 ? " " : character;
+  }
+  return result;
+}
+
+function sanitizeSlackProgressText(text: string, maxLength: number): string {
+  const redacted = text.replace(
+    /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|\S+)/gi,
+    "$1=[redacted]",
+  );
+  const normalized = replaceSlackControlCharacters(redacted)
+    .replace(/[<>]/g, "")
+    .replace(/&/g, "and")
+    .replace(/@(?=channel|here|everyone|[A-Za-z0-9._-]+)/gi, "@\u200b")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+export function formatSlackProgressCardText(
+  status: SlackProgressCardState,
+  progressText: string,
+): string {
+  const safeProgressText = sanitizeSlackProgressText(
+    progressText,
+    SLACK_PROGRESS_CARD_TEXT_MAX,
+  );
+  const statusLine =
+    status === "processing"
+      ? "Letta Code is working on this thread."
+      : status === "completed"
+        ? "Letta Code finished this turn."
+        : status === "cancelled"
+          ? "Letta Code stopped this turn."
+          : "Letta Code hit an error.";
+  return safeProgressText
+    ? `${statusLine}\nStatus: ${safeProgressText}`
+    : statusLine;
+}
+
+function formatSlackAssistantStatusText(
+  status: SlackProgressCardState,
+  progressText: string,
+): string {
+  const fallback =
+    status === "processing"
+      ? "Working on it"
+      : status === "completed"
+        ? "Done"
+        : status === "cancelled"
+          ? "Stopped"
+          : "Error";
+  return sanitizeSlackProgressText(
+    progressText || fallback,
+    SLACK_ASSISTANT_STATUS_TEXT_MAX,
+  );
+}
+
+function resolveSlackLifecycleProgressText(outcome: ChannelTurnOutcome): {
+  status: SlackProgressCardState;
+  text: string;
+} {
+  if (outcome === "completed") {
+    return { status: "completed", text: "Completed" };
+  }
+  if (outcome === "cancelled") {
+    return { status: "cancelled", text: "Cancelled" };
+  }
+  return { status: "error", text: "Failed" };
+}
 
 /**
  * Tracks Slack channel threads the agent has sent messages to, so that
@@ -589,6 +718,8 @@ export function createSlackAdapter(
     { state: SlackLifecycleState; updatedAt: number }
   >();
   const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
+  const progressCardByReplyKey = new Map<string, SlackProgressCardEntry>();
+  const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
 
   // ── Inbound debounce (optional) ───────────────────────────────
   // When `inboundDebounceMs > 0`, short back-to-back messages from the same
@@ -882,6 +1013,252 @@ export function createSlackAdapter(
       thread_ts: replyToMessageId,
     });
     rememberMessageThread(response.ts, replyToMessageId);
+  }
+
+  function getSlackProgressReplyKey(source: ChannelTurnSource): string | null {
+    return getLifecycleReplyKey(source);
+  }
+
+  function getSlackProgressReplyTs(source: ChannelTurnSource): string | null {
+    const replyToMessageId = source.threadId ?? source.messageId;
+    return isNonEmptyString(replyToMessageId) ? replyToMessageId : null;
+  }
+
+  function getUniqueSlackProgressSources(
+    sources: ChannelTurnSource[],
+  ): ChannelTurnSource[] {
+    const seen = new Set<string>();
+    const unique: ChannelTurnSource[] = [];
+    for (const source of sources) {
+      const key = getSlackProgressReplyKey(source);
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      unique.push(source);
+    }
+    return unique;
+  }
+
+  async function setSlackAssistantThreadStatus(
+    source: ChannelTurnSource,
+    status: SlackProgressCardState,
+    progressText: string,
+  ): Promise<void> {
+    const threadTs = getSlackProgressReplyTs(source);
+    if (!threadTs) {
+      return;
+    }
+    await ensureApp();
+    const slackClient = await ensureWriteClient();
+    const assistantThreads = slackClient.assistant?.threads;
+    if (!assistantThreads?.setStatus) {
+      return;
+    }
+    try {
+      await assistantThreads.setStatus({
+        channel_id: source.chatId,
+        thread_ts: threadTs,
+        status: formatSlackAssistantStatusText(status, progressText),
+      });
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to set assistant thread status:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  function scheduleProgressCardFlush(
+    key: string,
+    entry: SlackProgressCardEntry,
+    delayMs: number,
+  ): void {
+    if (entry.pendingTimer) {
+      return;
+    }
+    entry.pendingTimer = setTimeout(() => {
+      entry.pendingTimer = undefined;
+      void flushSlackProgressCard(key, entry);
+    }, delayMs);
+    const timer = entry.pendingTimer as ReturnType<typeof setTimeout> & {
+      unref?: () => void;
+    };
+    timer.unref?.();
+  }
+
+  async function flushSlackProgressCard(
+    key: string,
+    entry: SlackProgressCardEntry,
+  ): Promise<void> {
+    if (entry.pendingFlush) {
+      await entry.pendingFlush;
+      const latestText = formatSlackProgressCardText(
+        entry.status,
+        entry.latestText,
+      );
+      if (entry.lastSentText !== latestText) {
+        await flushSlackProgressCard(key, entry);
+      }
+      return;
+    }
+
+    const operation = (async () => {
+      const replyToMessageId = getSlackProgressReplyTs(entry.source);
+      if (!replyToMessageId) {
+        return;
+      }
+      const text = formatSlackProgressCardText(entry.status, entry.latestText);
+      if (entry.messageTs && entry.lastSentText === text) {
+        entry.lastSentAt = Date.now();
+        return;
+      }
+
+      await setSlackAssistantThreadStatus(
+        entry.source,
+        entry.status,
+        entry.latestText,
+      );
+      await ensureApp();
+      const slackClient = await ensureWriteClient();
+      if (!entry.messageTs) {
+        const response = await slackClient.chat.postMessage({
+          channel: entry.source.chatId,
+          text,
+          thread_ts: replyToMessageId,
+        });
+        if (response.ts) {
+          entry.messageTs = response.ts;
+          rememberMessageThread(response.ts, replyToMessageId);
+        }
+      } else {
+        const response = await slackClient.chat.update({
+          channel: entry.source.chatId,
+          ts: entry.messageTs,
+          text,
+        });
+        if (response.ts) {
+          entry.messageTs = response.ts;
+        }
+      }
+      entry.lastSentText = text;
+      entry.lastSentAt = Date.now();
+    })()
+      .catch((error) => {
+        console.warn(
+          "[Slack] Failed to update progress card:",
+          error instanceof Error ? error.message : error,
+        );
+      })
+      .finally(() => {
+        if (progressCardByReplyKey.get(key) === entry) {
+          entry.pendingFlush = undefined;
+        }
+      });
+
+    entry.pendingFlush = operation;
+    await operation;
+  }
+
+  function pruneSlackProgressCardState(now: number = Date.now()): void {
+    for (const [key, entry] of progressCardByReplyKey) {
+      if (
+        !entry.pendingTimer &&
+        !entry.pendingFlush &&
+        entry.updatedAt + SLACK_PROGRESS_CARD_STATE_TTL_MS <= now
+      ) {
+        progressCardByReplyKey.delete(key);
+      }
+    }
+
+    if (progressCardByReplyKey.size <= SLACK_PROGRESS_CARD_STATE_MAX) {
+      return;
+    }
+
+    const oldestEntries = Array.from(progressCardByReplyKey.entries()).sort(
+      (a, b) => a[1].updatedAt - b[1].updatedAt,
+    );
+    const overflowCount =
+      progressCardByReplyKey.size - SLACK_PROGRESS_CARD_STATE_MAX;
+    let removed = 0;
+    for (const [key, entry] of oldestEntries) {
+      if (removed >= overflowCount) {
+        break;
+      }
+      if (entry.pendingTimer || entry.pendingFlush) {
+        continue;
+      }
+      progressCardByReplyKey.delete(key);
+      removed += 1;
+    }
+  }
+
+  async function upsertSlackProgressCard(
+    source: ChannelTurnSource,
+    status: SlackProgressCardState,
+    progressText: string,
+    options: { force?: boolean } = {},
+  ): Promise<void> {
+    const key = getSlackProgressReplyKey(source);
+    if (!key) {
+      return;
+    }
+    const now = Date.now();
+    pruneSlackProgressCardState(now);
+    const entry =
+      progressCardByReplyKey.get(key) ??
+      ({
+        source,
+        status,
+        latestText: progressText,
+        lastSentAt: 0,
+        updatedAt: now,
+      } satisfies SlackProgressCardEntry);
+    entry.source = source;
+    entry.status = status;
+    entry.latestText = progressText;
+    entry.updatedAt = now;
+    progressCardByReplyKey.set(key, entry);
+
+    if (options.force && entry.pendingTimer) {
+      clearTimeout(entry.pendingTimer);
+      entry.pendingTimer = undefined;
+    }
+    const elapsed = now - entry.lastSentAt;
+    if (
+      options.force ||
+      entry.lastSentAt === 0 ||
+      progressUpdateThrottleMs === 0 ||
+      elapsed >= progressUpdateThrottleMs
+    ) {
+      await flushSlackProgressCard(key, entry);
+      return;
+    }
+    scheduleProgressCardFlush(
+      key,
+      entry,
+      Math.max(0, progressUpdateThrottleMs - elapsed),
+    );
+  }
+
+  async function finishSlackProgressCards(
+    sources: ChannelTurnSource[],
+    outcome: ChannelTurnOutcome,
+  ): Promise<void> {
+    const progress = resolveSlackLifecycleProgressText(outcome);
+    const uniqueSources = getUniqueSlackProgressSources(sources);
+    await Promise.all(
+      uniqueSources.map(async (source) => {
+        const key = getSlackProgressReplyKey(source);
+        const entry = key ? progressCardByReplyKey.get(key) : undefined;
+        if (!entry) {
+          return;
+        }
+        await upsertSlackProgressCard(source, progress.status, progress.text, {
+          force: true,
+        });
+      }),
+    );
   }
 
   function scheduleLifecycleTransition(
@@ -1420,6 +1797,12 @@ export function createSlackAdapter(
       seenIngressMessageKeys.clear();
       lifecycleStateByMessageKey.clear();
       lifecycleOperationByMessageKey.clear();
+      for (const entry of progressCardByReplyKey.values()) {
+        if (entry.pendingTimer) {
+          clearTimeout(entry.pendingTimer);
+        }
+      }
+      progressCardByReplyKey.clear();
       pendingTopLevelDebounceKeys.clear();
       appMentionRetryKeys.clear();
       appMentionDispatchedKeys.clear();
@@ -1444,6 +1827,13 @@ export function createSlackAdapter(
       }
 
       if (event.type === "processing") {
+        await Promise.all(
+          getUniqueSlackProgressSources(event.sources).map((source) =>
+            upsertSlackProgressCard(source, "processing", "Working on it", {
+              force: true,
+            }),
+          ),
+        );
         return;
       }
 
@@ -1459,6 +1849,7 @@ export function createSlackAdapter(
           scheduleLifecycleTransition(source, nextState),
         ),
       );
+      await finishSlackProgressCards(event.sources, event.outcome);
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) {
@@ -1485,6 +1876,19 @@ export function createSlackAdapter(
             );
           }
         }),
+      );
+    },
+
+    async handleTurnProgressEvent(
+      event: ChannelTurnProgressEvent,
+    ): Promise<void> {
+      if (!running) {
+        return;
+      }
+      await Promise.all(
+        getUniqueSlackProgressSources(event.sources).map((source) =>
+          upsertSlackProgressCard(source, "processing", event.message),
+        ),
       );
     },
 
