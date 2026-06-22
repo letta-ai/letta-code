@@ -1447,13 +1447,29 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("chatgpt_usage_read");
   });
 
-  test("rejects chatgpt_usage_read command for non-local target", () => {
+  test("parses chatgpt_usage_read command for api target", () => {
     const parsed = parseServerMessage(
       Buffer.from(
         JSON.stringify({
           type: "chatgpt_usage_read",
           request_id: "chatgpt-usage-2",
           target: "api",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("rejects chatgpt_usage_read command for unknown target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-3",
+          target: "project",
         }),
       ),
     );
@@ -1466,7 +1482,7 @@ describe("listen-client parseServerMessage", () => {
       Buffer.from(
         JSON.stringify({
           type: "chatgpt_usage_read",
-          request_id: "chatgpt-usage-3",
+          request_id: "chatgpt-usage-4",
           target: "local",
           force_refresh: "true",
         }),

@@ -909,7 +909,7 @@ export function isChatGPTUsageReadCommand(
   return (
     c.type === "chatgpt_usage_read" &&
     typeof c.request_id === "string" &&
-    c.target === "local" &&
+    (c.target === "local" || c.target === "api") &&
     (c.provider_name === undefined || typeof c.provider_name === "string") &&
     (c.force_refresh === undefined || typeof c.force_refresh === "boolean")
   );

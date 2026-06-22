@@ -1,3 +1,10 @@
+import { hostname } from "node:os";
+import {
+  LETTA_CLOUD_API_URL,
+  refreshAccessToken as refreshLettaAccessToken,
+  type TokenResponse,
+} from "@/auth/oauth";
+import { getLettaCodeHeaders } from "@/backend/api/http-headers";
 import {
   getLocalOAuthApiKey,
   getLocalProviderRecordByName,
@@ -5,11 +12,14 @@ import {
   type LocalProviderRecord,
 } from "@/backend/local/local-provider-auth-store";
 import type { ProviderStorageTarget } from "@/providers/byok-providers";
+import { type Settings, settingsManager } from "@/settings-manager";
 
 const CHATGPT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const CLOUD_CHATGPT_USAGE_PATH = "/v1/providers/chatgpt-usage";
 const OPENAI_CODEX_OAUTH_PROVIDER_ID = "openai-codex";
 const CACHE_TTL_MS = 30_000;
 const DEFAULT_TIMEOUT_MS = 15_000;
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 export interface ChatGPTUsageWindow {
   label: string;
@@ -25,6 +35,13 @@ export interface ChatGPTUsageCredits {
   unlimited?: boolean | null;
 }
 
+export interface ChatGPTUsageIndividualLimit {
+  limit: string;
+  used: string;
+  remainingPercent: number;
+  resetsAt: number;
+}
+
 export interface ChatGPTUsageSnapshot {
   providerName: string;
   fetchedAt: string;
@@ -36,9 +53,11 @@ export interface ChatGPTUsageSnapshot {
   secondary: ChatGPTUsageWindow | null;
   additional: ChatGPTUsageWindow[];
   credits?: ChatGPTUsageCredits | null;
+  individualLimit?: ChatGPTUsageIndividualLimit | null;
 }
 
 export type ChatGPTUsageErrorCode =
+  | "bad_request"
   | "not_connected"
   | "unsupported_target"
   | "refresh_failed"
@@ -66,6 +85,14 @@ export interface ReadChatGPTUsageInput {
   timeoutMs?: number;
   fetch?: typeof fetch;
   now?: () => number;
+  getSettings?: () => Promise<
+    Pick<Settings, "env" | "refreshToken" | "tokenExpiresAt">
+  >;
+  refreshAccessToken?: (
+    refreshToken: string,
+    deviceId: string,
+    deviceName?: string,
+  ) => Promise<TokenResponse>;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -263,6 +290,51 @@ function normalizeCredits(
   };
 }
 
+function normalizeIndividualLimit(
+  value: unknown,
+): ChatGPTUsageIndividualLimit | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const limit = getString(record, ["limit"]);
+  const used = getString(record, ["used"]);
+  const remainingPercent = getNumber(record, [
+    "remaining_percent",
+    "remainingPercent",
+  ]);
+  const resetsAt = getTimestampSeconds(record, ["resets_at", "resetsAt"]);
+
+  if (
+    limit === null ||
+    used === null ||
+    remainingPercent === null ||
+    resetsAt === null
+  ) {
+    return null;
+  }
+
+  return {
+    limit,
+    used,
+    remainingPercent,
+    resetsAt,
+  };
+}
+
+function normalizeCloudUsageWindow(
+  value: unknown,
+  fallbackLabel: string,
+  nowMs: number,
+): ChatGPTUsageWindow | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  return normalizeUsageWindow(
+    record,
+    getString(record, ["label", "name"]) ?? fallbackLabel,
+    nowMs,
+  );
+}
+
 function formatPercent(value: number): string {
   const rounded = Math.round(value);
   return Number.isInteger(value) || Math.abs(value - rounded) < 0.05
@@ -404,6 +476,9 @@ export function normalizeWhamUsageResponse(input: {
     secondary,
     additional,
     credits: normalizeCredits(raw, rateLimit),
+    individualLimit: normalizeIndividualLimit(
+      getValue(rateLimit, ["individual_limit", "individualLimit"]),
+    ),
   };
 
   return {
@@ -412,6 +487,63 @@ export function normalizeWhamUsageResponse(input: {
       snapshotWithoutSummary,
       new Date(nowMs),
     ),
+  };
+}
+
+export function normalizeCloudChatGPTUsageResponse(input: {
+  raw: unknown;
+  providerName: string;
+  nowMs?: number;
+}): ChatGPTUsageSnapshot | null {
+  const raw = asRecord(input.raw);
+  if (!raw) return null;
+
+  const nowMs = input.nowMs ?? Date.now();
+  const fetchedAt =
+    getString(raw, ["fetchedAt", "fetched_at"]) ??
+    new Date(nowMs).toISOString();
+  const additional = getRecordArray(raw, [
+    "additional",
+    "additional_rate_limits",
+    "additionalRateLimits",
+  ])
+    .map((window, index) =>
+      normalizeCloudUsageWindow(window, `limit ${index + 1}`, nowMs),
+    )
+    .filter((window): window is ChatGPTUsageWindow => !!window);
+
+  const snapshotWithoutSummary = {
+    providerName:
+      getString(raw, ["providerName", "provider_name"]) ?? input.providerName,
+    fetchedAt,
+    planType: getString(raw, ["planType", "plan_type"]),
+    limitReached: getBoolean(raw, ["limitReached", "limit_reached"]),
+    rateLimitReachedType: getString(raw, [
+      "rateLimitReachedType",
+      "rate_limit_reached_type",
+    ]),
+    primary: normalizeCloudUsageWindow(
+      getValue(raw, ["primary", "primary_window", "primaryWindow"]),
+      "primary",
+      nowMs,
+    ),
+    secondary: normalizeCloudUsageWindow(
+      getValue(raw, ["secondary", "secondary_window", "secondaryWindow"]),
+      "secondary",
+      nowMs,
+    ),
+    additional,
+    credits: normalizeCredits(raw, raw),
+    individualLimit: normalizeIndividualLimit(
+      getValue(raw, ["individualLimit", "individual_limit"]),
+    ),
+  };
+
+  return {
+    ...snapshotWithoutSummary,
+    summary:
+      getString(raw, ["summary"]) ??
+      formatChatGPTUsageSnapshot(snapshotWithoutSummary, new Date(nowMs)),
   };
 }
 
@@ -427,6 +559,25 @@ function retryAfterMs(response: Response): number | undefined {
     : undefined;
 }
 
+function retryAfterMsFromBody(raw: JsonRecord | null): number | undefined {
+  const value = getNumber(raw ?? undefined, ["retryAfterMs", "retry_after_ms"]);
+  return value === null ? undefined : Math.max(0, value);
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    return asRecord(await response.json()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function responseMessage(raw: JsonRecord | null, fallback: string): string {
+  return (
+    getString(raw ?? undefined, ["message", "error", "detail"]) ?? fallback
+  );
+}
+
 function chatGPTUsageError(
   code: ChatGPTUsageErrorCode,
   message: string,
@@ -440,6 +591,70 @@ function chatGPTUsageError(
       ...(retryAfter !== undefined ? { retryAfterMs: retryAfter } : {}),
     },
   };
+}
+
+function cloudBaseUrl(settings: Pick<Settings, "env">): string {
+  return (
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    LETTA_CLOUD_API_URL
+  ).replace(/\/+$/, "");
+}
+
+async function cloudApiKey(input: {
+  settings: Pick<Settings, "env" | "refreshToken" | "tokenExpiresAt">;
+  now: number;
+  refreshAccessToken?: ReadChatGPTUsageInput["refreshAccessToken"];
+}): Promise<{ apiKey: string | null; error?: ChatGPTUsageError }> {
+  const settings = input.settings;
+  const envApiKey = process.env.LETTA_API_KEY;
+  let apiKey = envApiKey || settings.env?.LETTA_API_KEY || null;
+
+  if (
+    !envApiKey &&
+    settings.refreshToken &&
+    (!apiKey ||
+      (settings.tokenExpiresAt !== undefined &&
+        settings.tokenExpiresAt - input.now < TOKEN_REFRESH_BUFFER_MS))
+  ) {
+    try {
+      const refresh = input.refreshAccessToken ?? refreshLettaAccessToken;
+      const tokens = await refresh(
+        settings.refreshToken,
+        settingsManager.getOrCreateDeviceId(),
+        hostname(),
+      );
+      apiKey = tokens.access_token;
+      settingsManager.updateSettings({
+        env: { LETTA_API_KEY: tokens.access_token },
+        refreshToken: tokens.refresh_token || settings.refreshToken,
+        tokenExpiresAt: input.now + tokens.expires_in * 1000,
+      });
+    } catch (error) {
+      return {
+        apiKey: null,
+        error: {
+          code: "refresh_failed",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to refresh the Letta Cloud access token.",
+        },
+      };
+    }
+  }
+
+  if (!apiKey) {
+    return {
+      apiKey: null,
+      error: {
+        code: "unauthorized",
+        message: "Sign in to Letta Cloud to read ChatGPT usage.",
+      },
+    };
+  }
+
+  return { apiKey };
 }
 
 function localProviderNames(providerName: string | undefined): string[] {
@@ -467,18 +682,180 @@ function isConnectedChatGPTOAuthRecord(
   return !!record && isChatGPTOAuthRecord(record);
 }
 
+async function readCloudChatGPTUsage(
+  input: ReadChatGPTUsageInput,
+  now: number,
+): Promise<ChatGPTUsageReadResult> {
+  const providerName = input.providerName?.trim();
+  if (!providerName) {
+    return chatGPTUsageError(
+      "bad_request",
+      "A ChatGPT provider name is required for cloud usage.",
+    );
+  }
+
+  let settings: Pick<Settings, "env" | "refreshToken" | "tokenExpiresAt">;
+  try {
+    settings = await (
+      input.getSettings ?? (() => settingsManager.getSettingsWithSecureTokens())
+    )();
+  } catch (error) {
+    return chatGPTUsageError(
+      "unauthorized",
+      error instanceof Error
+        ? error.message
+        : "Failed to read Letta Cloud credentials.",
+    );
+  }
+
+  const baseUrl = cloudBaseUrl(settings);
+  const cacheKey = `api:${baseUrl}:${providerName}`;
+  const cached = usageCache.get(cacheKey);
+  if (!input.forceRefresh && cached && cached.expiresAt > now) {
+    return cached.result;
+  }
+
+  const auth = await cloudApiKey({
+    settings,
+    now,
+    refreshAccessToken: input.refreshAccessToken,
+  });
+  if (auth.error || !auth.apiKey) {
+    return {
+      success: false,
+      error: auth.error ?? {
+        code: "unauthorized",
+        message: "Sign in to Letta Cloud to read ChatGPT usage.",
+      },
+    };
+  }
+
+  const url = new URL(`${baseUrl}${CLOUD_CHATGPT_USAGE_PATH}`);
+  url.searchParams.set("provider_name", providerName);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+
+  let response: Response;
+  try {
+    response = await (input.fetch ?? fetch)(url, {
+      method: "GET",
+      headers: {
+        ...getLettaCodeHeaders(auth.apiKey),
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    return chatGPTUsageError(
+      "network_error",
+      error instanceof Error
+        ? error.message
+        : "Failed to fetch ChatGPT usage from Letta Cloud.",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (response.status === 400) {
+    const raw = await readJsonRecord(response);
+    return chatGPTUsageError(
+      "bad_request",
+      responseMessage(raw, "Letta Cloud rejected the ChatGPT usage request."),
+    );
+  }
+  if (response.status === 401) {
+    const raw = await readJsonRecord(response);
+    return chatGPTUsageError(
+      "unauthorized",
+      responseMessage(raw, "Sign in to Letta Cloud to read ChatGPT usage."),
+    );
+  }
+  if (response.status === 403) {
+    const raw = await readJsonRecord(response);
+    return chatGPTUsageError(
+      "forbidden",
+      responseMessage(raw, "ChatGPT usage is not available for this account."),
+    );
+  }
+  if (response.status === 404) {
+    const raw = await readJsonRecord(response);
+    if (!raw) {
+      return chatGPTUsageError(
+        "network_error",
+        "Letta Cloud ChatGPT usage endpoint is unavailable.",
+      );
+    }
+    return chatGPTUsageError(
+      "not_connected",
+      responseMessage(raw, "No cloud ChatGPT OAuth provider is connected."),
+    );
+  }
+  if (response.status === 429) {
+    const raw = await readJsonRecord(response);
+    return chatGPTUsageError(
+      "rate_limited",
+      responseMessage(raw, "ChatGPT usage is rate limited. Try again later."),
+      retryAfterMsFromBody(raw) ?? retryAfterMs(response),
+    );
+  }
+  if (!response.ok) {
+    const raw = await readJsonRecord(response);
+    return chatGPTUsageError(
+      "network_error",
+      responseMessage(
+        raw,
+        `Letta Cloud ChatGPT usage request failed with HTTP ${response.status}.`,
+      ),
+    );
+  }
+
+  const raw = await readJsonRecord(response);
+  if (!raw) {
+    return chatGPTUsageError(
+      "bad_response",
+      "Letta Cloud ChatGPT usage returned invalid JSON.",
+    );
+  }
+
+  const usage = normalizeCloudChatGPTUsageResponse({
+    raw,
+    providerName,
+    nowMs: now,
+  });
+  if (!usage) {
+    return chatGPTUsageError(
+      "bad_response",
+      "Letta Cloud ChatGPT usage returned an invalid payload.",
+    );
+  }
+
+  const result: Extract<ChatGPTUsageReadResult, { success: true }> = {
+    success: true,
+    usage,
+  };
+  usageCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
+  return result;
+}
+
 export async function readChatGPTUsage(
   input: ReadChatGPTUsageInput = {},
 ): Promise<ChatGPTUsageReadResult> {
   const target = input.target ?? "local";
+  const now = input.now?.() ?? Date.now();
+  if (target === "api") {
+    return readCloudChatGPTUsage(input, now);
+  }
   if (target !== "local") {
     return chatGPTUsageError(
       "unsupported_target",
-      "ChatGPT usage is only available for locally stored ChatGPT OAuth providers.",
+      "ChatGPT usage is only available for local or cloud ChatGPT OAuth providers.",
     );
   }
 
-  const now = input.now?.() ?? Date.now();
   const providerNames = localProviderNames(input.providerName);
   const record = providerNames
     .map((name) => getLocalProviderRecordByName(name, input.storageDir))

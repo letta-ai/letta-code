@@ -442,7 +442,7 @@ export function ProviderSelector({
         }));
 
         void readChatGPTUsage({
-          target: "local",
+          target: selectedTarget,
           providerName,
           forceRefresh,
         })
@@ -470,7 +470,7 @@ export function ProviderSelector({
           });
       }
     },
-    [getConnectedProviderRecords],
+    [getConnectedProviderRecords, selectedTarget],
   );
 
   useEffect(() => {

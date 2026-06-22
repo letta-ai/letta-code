@@ -1364,6 +1364,7 @@ export interface ListModelsCommand {
 }
 
 export type ConnectProviderStorageTarget = "local";
+export type ChatGPTUsageReadTarget = "local" | "api";
 
 export interface ListConnectProvidersCommand {
   type: "list_connect_providers";
@@ -1403,8 +1404,8 @@ export interface ChatGPTUsageReadCommand {
   type: "chatgpt_usage_read";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Provider store to inspect. MVP supports local provider storage. */
-  target: ConnectProviderStorageTarget;
+  /** Provider store to inspect. */
+  target: ChatGPTUsageReadTarget;
   /** Optional connected ChatGPT provider alias. Defaults to the built-in alias. */
   provider_name?: string;
   /** Skip the short listener-side cache. */
@@ -1498,6 +1499,13 @@ export interface ChatGPTUsageCreditsPayload {
   unlimited?: boolean | null;
 }
 
+export interface ChatGPTUsageIndividualLimitPayload {
+  limit: string;
+  used: string;
+  remainingPercent: number;
+  resetsAt: number;
+}
+
 export interface ChatGPTUsageSnapshotPayload {
   providerName: string;
   fetchedAt: string;
@@ -1509,10 +1517,12 @@ export interface ChatGPTUsageSnapshotPayload {
   secondary: ChatGPTUsageWindowPayload | null;
   additional: ChatGPTUsageWindowPayload[];
   credits?: ChatGPTUsageCreditsPayload | null;
+  individualLimit?: ChatGPTUsageIndividualLimitPayload | null;
 }
 
 export interface ChatGPTUsageReadErrorPayload {
   code:
+    | "bad_request"
     | "not_connected"
     | "unsupported_target"
     | "refresh_failed"
@@ -1529,7 +1539,7 @@ export interface ChatGPTUsageReadResponseMessage {
   type: "chatgpt_usage_read_response";
   request_id: string;
   success: boolean;
-  target: ConnectProviderStorageTarget;
+  target: ChatGPTUsageReadTarget;
   usage?: ChatGPTUsageSnapshotPayload;
   error?: ChatGPTUsageReadErrorPayload;
 }
