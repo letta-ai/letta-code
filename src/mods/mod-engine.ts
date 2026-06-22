@@ -38,6 +38,10 @@ import {
   recordDeprecatedContextApiSourceDiagnostics,
 } from "@/mods/deprecated-api";
 import {
+  isModFileExtension,
+  isTypeScriptModFileExtension,
+} from "@/mods/file-extensions";
+import {
   appendModDiagnostic,
   recordModDiagnostic,
   recordStaleHandleUse,
@@ -95,8 +99,6 @@ export const LEGACY_GLOBAL_EXTENSIONS_DIRECTORY =
   getLegacyGlobalExtensionsDirectory();
 export const MOD_CACHE_DIRECTORY = getModCacheDirectory();
 
-const MOD_FILE_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".tsx"]);
-const TYPESCRIPT_MOD_FILE_EXTENSIONS = new Set([".ts", ".tsx"]);
 const requireFromRuntime = createRequire(import.meta.url);
 
 export type StatuslineRenderFunction = (
@@ -265,7 +267,7 @@ function listModFiles(directory: string): string[] {
     .filter((entry) => {
       if (!entry.isFile()) return false;
       if (entry.name.startsWith(".")) return false;
-      return MOD_FILE_EXTENSIONS.has(path.extname(entry.name));
+      return isModFileExtension(path.extname(entry.name));
     })
     .map((entry) => path.join(directory, entry.name))
     .sort((a, b) => a.localeCompare(b));
@@ -483,7 +485,7 @@ function transpileTypeScriptMod(modPath: string, source: string): string {
 
 function prepareModForImport(modPath: string, source: string): string {
   const fileExtension = path.extname(modPath);
-  if (TYPESCRIPT_MOD_FILE_EXTENSIONS.has(fileExtension)) {
+  if (isTypeScriptModFileExtension(fileExtension)) {
     return transpileTypeScriptMod(modPath, source);
   }
 
@@ -1277,7 +1279,7 @@ export async function loadLocalMods(
             );
           },
         );
-        failurePhase = TYPESCRIPT_MOD_FILE_EXTENSIONS.has(path.extname(modPath))
+        failurePhase = isTypeScriptModFileExtension(path.extname(modPath))
           ? "transpile"
           : "import";
         const importPath = createImportableModPath(modPath, cacheDirectory);
