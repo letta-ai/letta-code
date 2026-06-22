@@ -1,23 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { MOD_CAPABILITY_IDS, type ModCapabilityId } from "@/mods/capabilities";
 
 export const LETTA_PACKAGE_MANIFEST_VERSION = 1;
 
-export const LETTA_PACKAGE_CAPABILITIES = [
-  "tools",
-  "commands",
-  "providers",
-  "permissions",
-  "events.lifecycle",
-  "events.turns",
-  "events.tools",
-  "ui.panels",
-  "ui.statusValues",
-  "ui.statusline",
-] as const;
-
-export type LettaPackageCapability =
-  (typeof LETTA_PACKAGE_CAPABILITIES)[number];
+export type LettaPackageCapability = ModCapabilityId;
 
 export interface LettaPackageEngines {
   lettaCodeCli?: string;
@@ -55,7 +42,7 @@ const MANIFEST_KEYS = new Set([
   "engines",
 ]);
 const ENGINE_KEYS = new Set(["lettaCodeCli", "lettaCodeDesktop"]);
-const CAPABILITIES = new Set<string>(LETTA_PACKAGE_CAPABILITIES);
+const CAPABILITIES = new Set<string>(MOD_CAPABILITY_IDS);
 const MOD_ENTRY_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".tsx"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

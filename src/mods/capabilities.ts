@@ -1,5 +1,20 @@
 import type { ModCapabilities } from "@/mods/types";
 
+export const MOD_CAPABILITY_IDS = [
+  "tools",
+  "commands",
+  "providers",
+  "permissions",
+  "events.lifecycle",
+  "events.turns",
+  "events.tools",
+  "ui.panels",
+  "ui.statusValues",
+  "ui.statusline",
+] as const;
+
+export type ModCapabilityId = (typeof MOD_CAPABILITY_IDS)[number];
+
 export const DEFAULT_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
   commands: true,
