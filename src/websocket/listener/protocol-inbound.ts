@@ -4,6 +4,7 @@ import { isSupportedChannelId } from "@/channels/plugin-registry";
 import type { ExperimentId } from "@/experiments/types";
 import type {
   AbortMessageCommand,
+  ArtifactCallCommand,
   ChangeDeviceStateCommand,
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -48,6 +49,7 @@ import type {
   ListConversationPinsCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
+  ListMemoryDirectoryCommand,
   ListModelsCommand,
   MemoryCommitDiffCommand,
   MemoryFileAtRefCommand,
@@ -590,6 +592,22 @@ export function isReadMemoryFileCommand(
   );
 }
 
+export function isListMemoryDirectoryCommand(
+  value: unknown,
+): value is ListMemoryDirectoryCommand {
+  if (!value || typeof value !== "object") return false;
+  const type = Reflect.get(value, "type");
+  const requestId = Reflect.get(value, "request_id");
+  const agentId = Reflect.get(value, "agent_id");
+  const path = Reflect.get(value, "path");
+  return (
+    type === "list_memory_directory" &&
+    typeof requestId === "string" &&
+    typeof agentId === "string" &&
+    typeof path === "string"
+  );
+}
+
 export function isWriteMemoryFileCommand(
   value: unknown,
 ): value is WriteMemoryFileCommand {
@@ -633,6 +651,24 @@ export function isDeleteMemoryFileCommand(
     typeof c.agent_id === "string" &&
     typeof c.path === "string" &&
     (c.commit_message === undefined || typeof c.commit_message === "string")
+  );
+}
+
+export function isArtifactCallCommand(
+  value: unknown,
+): value is ArtifactCallCommand {
+  if (!value || typeof value !== "object") return false;
+  const type = Reflect.get(value, "type");
+  const requestId = Reflect.get(value, "request_id");
+  const agentId = Reflect.get(value, "agent_id");
+  const appName = Reflect.get(value, "app_name");
+  const functionName = Reflect.get(value, "function_name");
+  return (
+    type === "artifact_call" &&
+    typeof requestId === "string" &&
+    typeof agentId === "string" &&
+    typeof appName === "string" &&
+    typeof functionName === "string"
   );
 }
 
@@ -1682,8 +1718,10 @@ export function parseServerMessage(
       isMemoryFileAtRefCommand(parsed) ||
       isMemoryCommitDiffCommand(parsed) ||
       isReadMemoryFileCommand(parsed) ||
+      isListMemoryDirectoryCommand(parsed) ||
       isWriteMemoryFileCommand(parsed) ||
       isDeleteMemoryFileCommand(parsed) ||
+      isArtifactCallCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||

@@ -3,9 +3,11 @@ import type { EnsureLocalMemfsCheckoutOptions } from "@/agent/memory-filesystem"
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { ListMemoryCommand } from "@/types/protocol_v2";
 import {
+  isArtifactCallCommand,
   isDeleteMemoryFileCommand,
   isEnableMemfsCommand,
   isListMemoryCommand,
+  isListMemoryDirectoryCommand,
   isMemoryCommitDiffCommand,
   isMemoryFileAtRefCommand,
   isMemoryHistoryCommand,
@@ -627,6 +629,130 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
+  // ── List a directory from the MemFS working tree ──────────────────
+  if (isListMemoryDirectoryCommand(parsed)) {
+    runDetachedListenerTask("list_memory_directory", async () => {
+      const includeFiles = parsed.include_files !== false;
+      const sendFailure = (error: string): void => {
+        safeSocketSend(
+          socket,
+          {
+            type: "list_memory_directory_response",
+            request_id: parsed.request_id,
+            agent_id: parsed.agent_id,
+            path: parsed.path,
+            folders: [],
+            files: [],
+            success: false,
+            error,
+          },
+          "listener_list_memory_directory_send_failed",
+          "listener_list_memory_directory",
+        );
+      };
+
+      try {
+        const {
+          getMemoryFilesystemRoot,
+          ensureLocalMemfsCheckout,
+          isMemfsEnabledOnServer,
+        } = await import("@/agent/memory-filesystem");
+        const { existsSync } = await import("node:fs");
+        const { readdir } = await import("node:fs/promises");
+        const { isAbsolute, join, normalize, relative, sep } = await import(
+          "node:path"
+        );
+
+        if (isAbsolute(parsed.path)) {
+          sendFailure("path must be relative to the memory root");
+          return;
+        }
+
+        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const absolutePath = normalize(join(memoryRoot, parsed.path));
+        const rel = relative(memoryRoot, absolutePath);
+        if (
+          rel.startsWith("..") ||
+          isAbsolute(rel) ||
+          rel.split(sep).includes("..")
+        ) {
+          sendFailure("path must resolve inside the memory root");
+          return;
+        }
+
+        if (!existsSync(join(memoryRoot, ".git"))) {
+          const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
+          if (!enabled) {
+            sendFailure("memfs is not enabled for this agent");
+            return;
+          }
+          await ensureLocalMemfsCheckout(parsed.agent_id);
+          if (!existsSync(join(memoryRoot, ".git"))) {
+            sendFailure("failed to initialize local memory checkout");
+            return;
+          }
+        }
+
+        if (!existsSync(absolutePath)) {
+          safeSocketSend(
+            socket,
+            {
+              type: "list_memory_directory_response",
+              request_id: parsed.request_id,
+              agent_id: parsed.agent_id,
+              path: rel.split(sep).join("/"),
+              folders: [],
+              files: [],
+              success: true,
+            },
+            "listener_list_memory_directory_send_failed",
+            "listener_list_memory_directory",
+          );
+          return;
+        }
+
+        const entries = await readdir(absolutePath, { withFileTypes: true });
+        const folders = entries
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name)
+          .sort((a, b) => a.localeCompare(b));
+        const files = includeFiles
+          ? entries
+              .filter((entry) => entry.isFile())
+              .map((entry) => entry.name)
+              .sort((a, b) => a.localeCompare(b))
+          : [];
+
+        safeSocketSend(
+          socket,
+          {
+            type: "list_memory_directory_response",
+            request_id: parsed.request_id,
+            agent_id: parsed.agent_id,
+            path: rel.split(sep).join("/"),
+            folders,
+            files,
+            success: true,
+          },
+          "listener_list_memory_directory_send_failed",
+          "listener_list_memory_directory",
+        );
+      } catch (err) {
+        trackListenerError(
+          "listener_list_memory_directory_failed",
+          err,
+          "listener_memory_directory_list",
+        );
+        sendFailure(
+          err instanceof Error
+            ? err.message
+            : "Failed to list memory directory",
+        );
+      }
+    });
+    return true;
+  }
+
   // ── Write a file into MemFS (durable agent memory write + commit + push) ─
   if (isWriteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("write_memory_file", async () => {
@@ -970,6 +1096,105 @@ export function handleMemoryProtocolCommand(
         sendFailure(
           err instanceof Error ? err.message : "Failed to delete memory file",
         );
+      }
+    });
+    return true;
+  }
+
+  // ── Call external artifact app server function ─────────────────────
+  if (isArtifactCallCommand(parsed)) {
+    runDetachedListenerTask("artifact_call", async () => {
+      console.log(
+        `[Listen] artifact_call received: agent=${parsed.agent_id} app=${parsed.app_name} function=${parsed.function_name} request=${parsed.request_id}`,
+      );
+      const sendFailure = (input: { error: string; logs?: unknown }): void => {
+        console.error(
+          `[Listen] artifact_call failed: app=${parsed.app_name} function=${parsed.function_name} request=${parsed.request_id} error=${input.error}`,
+        );
+        safeSocketSend(
+          socket,
+          {
+            type: "artifact_call_response",
+            request_id: parsed.request_id,
+            agent_id: parsed.agent_id,
+            app_name: parsed.app_name,
+            function_name: parsed.function_name,
+            success: false,
+            error: input.error,
+            logs: input.logs,
+          },
+          "listener_artifact_call_send_failed",
+          "listener_artifact_call",
+        );
+      };
+
+      try {
+        const {
+          getMemoryFilesystemRoot,
+          ensureLocalMemfsCheckout,
+          isMemfsEnabledOnServer,
+        } = await import("@/agent/memory-filesystem");
+        const { existsSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { callArtifactServerFunction } = await import("./artifacts");
+
+        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        if (!existsSync(join(memoryRoot, ".git"))) {
+          const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
+          if (!enabled) {
+            sendFailure({
+              error: "artifact_call: memfs is not enabled for this agent",
+            });
+            return;
+          }
+          await ensureLocalMemfsCheckout(parsed.agent_id);
+          if (!existsSync(join(memoryRoot, ".git"))) {
+            sendFailure({
+              error:
+                "artifact_call: failed to initialize local memory checkout",
+            });
+            return;
+          }
+        }
+
+        const artifactCall = await callArtifactServerFunction({
+          command: parsed,
+          memoryRoot,
+        });
+        console.log(
+          `[Listen] artifact_call succeeded: app=${parsed.app_name} function=${parsed.function_name} request=${parsed.request_id}`,
+        );
+        safeSocketSend(
+          socket,
+          {
+            type: "artifact_call_response",
+            request_id: parsed.request_id,
+            agent_id: parsed.agent_id,
+            app_name: parsed.app_name,
+            function_name: parsed.function_name,
+            result: artifactCall.result,
+            logs: artifactCall.logs,
+            success: true,
+          },
+          "listener_artifact_call_send_failed",
+          "listener_artifact_call",
+        );
+      } catch (err) {
+        trackListenerError(
+          "listener_artifact_call_failed",
+          err,
+          "listener_artifact_call",
+        );
+        sendFailure({
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to call artifact function",
+          logs:
+            err instanceof Error && Array.isArray(Reflect.get(err, "logs"))
+              ? Reflect.get(err, "logs")
+              : undefined,
+        });
       }
     });
     return true;

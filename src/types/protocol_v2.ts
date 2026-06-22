@@ -870,6 +870,21 @@ export interface ReadMemoryFileCommand {
   encoding?: "utf8" | "base64";
 }
 
+/** List a directory from the agent's MemFS working tree. */
+export interface ListMemoryDirectoryCommand {
+  type: "list_memory_directory";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to list. */
+  agent_id: string;
+  /** Relative to the memory root. */
+  path: string;
+  /** Include regular files in the response. Defaults to true. */
+  include_files?: boolean;
+  /** Return all descendant entries in one response. Defaults to false. */
+  recursive?: boolean;
+}
+
 /**
  * Write a file into the agent's MemFS and commit + push.
  *
@@ -907,6 +922,21 @@ export interface DeleteMemoryFileCommand {
   path: string;
   /** Optional commit message; defaults to a sensible fallback. */
   commit_message?: string;
+}
+
+/** Call a function exported by external/<app_name>/server/server.js. */
+export interface ArtifactCallCommand {
+  type: "artifact_call";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose MemFS external app should run. */
+  agent_id: string;
+  /** App directory name under external/. */
+  app_name: string;
+  /** Function name returned by server/server.js. */
+  function_name: string;
+  /** JSON-serializable function arguments. */
+  args?: unknown;
 }
 
 export interface MemoryCommitDiffCommand {
@@ -1854,8 +1884,10 @@ export type WsProtocolCommand =
   | MemoryFileAtRefCommand
   | MemoryCommitDiffCommand
   | ReadMemoryFileCommand
+  | ListMemoryDirectoryCommand
   | WriteMemoryFileCommand
   | DeleteMemoryFileCommand
+  | ArtifactCallCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand
