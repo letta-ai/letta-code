@@ -242,6 +242,14 @@ public static class LettaWindowsSandbox
         {
             var sandboxSid = new SecurityIdentifier(CreateSandboxSid());
 
+            if (options.RestrictWrites)
+            {
+                foreach (var root in options.BaseWritableRoots)
+                {
+                    AddWritableRule(root, sandboxSid, appliedRules);
+                }
+            }
+
             foreach (var root in options.DeniedRoots)
             {
                 AddRuleIfPathExists(root, sandboxSid, DenyRights(), AccessControlType.Deny, appliedRules);
@@ -255,14 +263,6 @@ public static class LettaWindowsSandbox
             foreach (var root in options.WritableRoots)
             {
                 AddWritableRule(root, sandboxSid, appliedRules);
-            }
-
-            if (options.RestrictWrites)
-            {
-                foreach (var root in options.BaseWritableRoots)
-                {
-                    AddWritableRule(root, sandboxSid, appliedRules);
-                }
             }
 
             if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, out originalToken))

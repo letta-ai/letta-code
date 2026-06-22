@@ -13,6 +13,11 @@ import { SANDBOX_EXEC_PATH } from "@/sandbox/seatbelt";
 import { applyShellSandbox } from "@/tools/impl/shell-sandbox";
 
 const SEATBELT: SandboxAvailability = { backend: "seatbelt", reason: "test" };
+const WINDOWS: SandboxAvailability = {
+  backend: "windows",
+  windowsHelperPath: "C:/helper.exe",
+  reason: "test",
+};
 const NO_BACKEND: SandboxAvailability = { backend: null, reason: "test" };
 const LAUNCHER = ["/bin/zsh", "-c", "echo hi"];
 // The parent agent's cwd is the repo — outside ~/.letta/agents.
@@ -26,6 +31,16 @@ function defineValues(args: string[], prefix: string): string[] {
   return args
     .filter((a) => a.startsWith(prefix))
     .map((a) => a.slice(prefix.length));
+}
+
+function flagValues(args: string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === flag) {
+      values.push(args[i + 1] as string);
+    }
+  }
+  return values;
 }
 
 test("no-op when the flag is off", () => {
@@ -174,6 +189,32 @@ test("local backend: walls off both local memfs and ~/.letta/agents", () => {
   const writables = result.launcher.filter((a) => a.startsWith("-DWRITABLE_"));
   expect(writables).toEqual([
     `-DWRITABLE_0=${canonicalizeRoot(join(memfsTree, "local-agent-xyz"))}`,
+  ]);
+});
+
+test("Windows shell wrapper denies both backend trees", () => {
+  const storageDir = join(REPO_CWD, "custom-local-backend");
+  const localTree = getLocalBackendCrossAgentTreeRoot(storageDir);
+  const memDir = join(getDefaultAgentsTreeRoot(), "api-agent", "memory");
+  const result = applyShellSandbox(
+    LAUNCHER,
+    REPO_CWD,
+    {
+      LETTA_FS_SANDBOX: "1",
+      LETTA_LOCAL_BACKEND_DIR: storageDir,
+      MEMORY_DIR: memDir,
+    },
+    WINDOWS,
+  );
+
+  expect(result.backend).toBe("windows");
+  expect(result.launcher[0]).toBe("C:/helper.exe");
+  expect(flagValues(result.launcher, "--denied-root")).toEqual([
+    getDefaultAgentsTreeRoot(),
+    canonicalizeRoot(localTree),
+  ]);
+  expect(flagValues(result.launcher, "--writable-root")).toEqual([
+    canonicalizeRoot(join(getDefaultAgentsTreeRoot(), "api-agent")),
   ]);
 });
 
