@@ -3,7 +3,6 @@ name: reflection
 description: Background agent that reflects on recent conversations and updates memory files
 tools: Bash
 model: inherit
-mode: stateless
 permissionMode: memory
 ---
 

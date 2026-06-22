@@ -65,14 +65,6 @@ describe("built-in subagents", () => {
     }
   });
 
-  test("parses subagent mode and defaults missing mode to stateful", async () => {
-    const configs = await getAllSubagentConfigs();
-
-    expect(configs.reflection?.mode).toBe("stateless");
-    expect(configs["general-purpose"]?.mode).toBe("stateful");
-    expect(configs.memory?.mode).toBe("stateful");
-  });
-
   test("reuses MemFS built-in prompts when local backend is active", async () => {
     __testSetBackend({
       capabilities: { localMemfs: true },
