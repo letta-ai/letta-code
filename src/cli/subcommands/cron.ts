@@ -111,6 +111,7 @@ async function validateConversationTarget(
   conversationId: string,
 ): Promise<void> {
   // These are scheduler sentinels, not persisted conversation ids resolved here.
+  // Scheduler/runtime resolves "default" to the agent default conversation; "new" creates a fresh one at fire time.
   if (
     conversationId === DEFAULT_CONVERSATION_TARGET ||
     conversationId === NEW_CONVERSATION_TARGET
