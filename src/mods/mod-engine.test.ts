@@ -88,8 +88,10 @@ function createEngine(
   root: string,
   capabilities?: ModCapabilities,
   backend?: Backend,
+  agentModsDirectory?: string,
 ): ModEngine {
   return createModEngine({
+    ...(agentModsDirectory ? { agentModsDirectory } : {}),
     cacheDirectory: path.join(root, "mod-cache"),
     ...(backend ? { getBackend: () => backend } : {}),
     ...(capabilities ? { capabilities } : {}),
@@ -156,6 +158,162 @@ describe("mod engine", () => {
 
       unsubscribe();
       engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("agent commands shadow global commands without explicit override", async () => {
+    const root = createTempDir();
+    try {
+      const globalMods = path.join(root, "global-mods");
+      const agentMods = path.join(root, "memory", "mods");
+      const globalPath = path.join(globalMods, "command.ts");
+      const agentPath = path.join(agentMods, "command.ts");
+      mkdirSync(globalMods, { recursive: true });
+      mkdirSync(agentMods, { recursive: true });
+      writeFileSync(
+        globalPath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "hello",
+            description: "Global hello",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        agentPath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "hello",
+            description: "Agent hello",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+
+      const engine = createEngine(root, undefined, undefined, agentMods);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+      expect(snapshot.loadedPaths).toEqual([globalPath, agentPath]);
+      expect(snapshot.commands.hello).toMatchObject({
+        description: "Agent hello",
+        owner: {
+          generation: 1,
+          id: `agent:${agentPath}`,
+          path: agentPath,
+          scope: "agent",
+        },
+      });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("agent tools shadow global tools and update the process registry", async () => {
+    const root = createTempDir();
+    try {
+      const globalMods = path.join(root, "global-mods");
+      const agentMods = path.join(root, "memory", "mods");
+      const globalPath = path.join(globalMods, "tool.ts");
+      const agentPath = path.join(agentMods, "tool.ts");
+      mkdirSync(globalMods, { recursive: true });
+      mkdirSync(agentMods, { recursive: true });
+      writeFileSync(
+        globalPath,
+        `export default function(letta) {
+          letta.tools.register({
+            name: "echo_tool",
+            description: "Global echo",
+            parameters: { type: "object", properties: {} },
+            run() { return "global"; },
+          });
+        }`,
+      );
+      writeFileSync(
+        agentPath,
+        `export default function(letta) {
+          letta.tools.register({
+            name: "echo_tool",
+            description: "Agent echo",
+            parameters: { type: "object", properties: {} },
+            run() { return "agent"; },
+          });
+        }`,
+      );
+
+      const engine = createEngine(root, undefined, undefined, agentMods);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+      expect(snapshot.tools.echo_tool).toMatchObject({
+        description: "Agent echo",
+        owner: { path: agentPath, scope: "agent" },
+      });
+      expect(getModToolDefinition("echo_tool")).toMatchObject({
+        description: "Agent echo",
+        owner: { path: agentPath, scope: "agent" },
+      });
+
+      engine.dispose();
+      expect(getModToolDefinition("echo_tool")).toBeUndefined();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("agent permissions shadow global permissions", async () => {
+    const root = createTempDir();
+    try {
+      const globalMods = path.join(root, "global-mods");
+      const agentMods = path.join(root, "memory", "mods");
+      const globalPath = path.join(globalMods, "permission.ts");
+      const agentPath = path.join(agentMods, "permission.ts");
+      mkdirSync(globalMods, { recursive: true });
+      mkdirSync(agentMods, { recursive: true });
+      writeFileSync(
+        globalPath,
+        `export default function(letta) {
+          letta.permissions.register({
+            id: "shell-policy",
+            description: "Global shell policy",
+            check() { return { decision: "ask" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        agentPath,
+        `export default function(letta) {
+          letta.permissions.register({
+            id: "shell-policy",
+            description: "Agent shell policy",
+            check() { return { decision: "deny" }; },
+          });
+        }`,
+      );
+
+      const engine = createEngine(root, undefined, undefined, agentMods);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+      expect(snapshot.permissions["shell-policy"]).toMatchObject({
+        description: "Agent shell policy",
+        owner: { path: agentPath, scope: "agent" },
+      });
+      expect(getModPermissionDefinition("shell-policy")).toMatchObject({
+        description: "Agent shell policy",
+        owner: { path: agentPath, scope: "agent" },
+      });
+
+      engine.dispose();
+      expect(getModPermissionDefinition("shell-policy")).toBeUndefined();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

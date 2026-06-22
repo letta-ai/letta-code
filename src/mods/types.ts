@@ -126,7 +126,7 @@ export interface ModConversationHandle {
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
-export type ModSourceScope = "global" | "project" | "bundled";
+export type ModSourceScope = "global" | "project" | "bundled" | "agent";
 
 export interface ModOwner {
   id: string;
