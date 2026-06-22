@@ -256,6 +256,48 @@ describe("buildSubagentArgs", () => {
     expect(args).toContain("--no-memfs");
   });
 
+  test("tags new subagents with type and combines parent into one --tags value", () => {
+    const args = buildSubagentArgs(
+      "explore",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { parentAgentId: "agent-parent-123" },
+    );
+
+    // --tags must appear exactly once (the headless CLI keeps only the last
+    // occurrence), carrying both type and parent as a comma-separated value.
+    const tagFlagCount = args.filter((a) => a === "--tags").length;
+    expect(tagFlagCount).toBe(1);
+    const tagsValue = args[args.indexOf("--tags") + 1];
+    expect(tagsValue).toBe("type:explore,parent:agent-parent-123");
+  });
+
+  test("omits parent tag when no parentAgentId is provided", () => {
+    const args = buildSubagentArgs("explore", baseConfig, null, "hello");
+
+    const tagsValue = args[args.indexOf("--tags") + 1];
+    expect(tagsValue).toBe("type:explore");
+  });
+
+  test("does not tag when deploying an existing agent (fork/recall)", () => {
+    const args = buildSubagentArgs(
+      "fork",
+      baseConfig,
+      null,
+      "hello",
+      "agent-existing",
+      undefined,
+      undefined,
+      { parentAgentId: "agent-parent-123" },
+    );
+
+    expect(args).not.toContain("--tags");
+  });
+
   test("passes --backend local and --no-memfs for local backend subagents", () => {
     const args = buildSubagentArgs(
       "test-subagent",
