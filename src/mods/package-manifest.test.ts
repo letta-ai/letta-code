@@ -111,6 +111,7 @@ describe("Letta package manifest", () => {
       "/tmp/mod.ts",
       "../mod.ts",
       "mods/../mod.ts",
+      "mods\\index.ts",
       "mods/index.json",
       "C:/Users/caren/mod.ts",
       "C:\\Users\\caren\\mod.ts",

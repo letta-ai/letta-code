@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { MOD_CAPABILITY_IDS, type ModCapabilityId } from "@/mods/capabilities";
+import { isModCapabilityId, type ModCapabilityId } from "@/mods/capabilities";
+import { isModFileExtension } from "@/mods/file-extensions";
 
 export const LETTA_PACKAGE_MANIFEST_VERSION = 1;
 
@@ -42,8 +43,6 @@ const MANIFEST_KEYS = new Set([
   "engines",
 ]);
 const ENGINE_KEYS = new Set(["lettaCodeCli", "lettaCodeDesktop"]);
-const CAPABILITIES = new Set<string>(MOD_CAPABILITY_IDS);
-const MOD_ENTRY_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".tsx"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -71,6 +70,7 @@ function isWindowsAbsolutePath(value: string): boolean {
 function isSafeRelativeModPath(value: string): boolean {
   if (!value.trim()) return false;
   if (value.includes("\0")) return false;
+  if (value.includes("\\")) return false;
   if (path.posix.isAbsolute(value) || path.isAbsolute(value)) return false;
   if (isWindowsAbsolutePath(value)) return false;
 
@@ -81,7 +81,7 @@ function isSafeRelativeModPath(value: string): boolean {
   if (normalized === ".." || normalized.startsWith("../")) return false;
   if (normalized.split("/").includes("..")) return false;
 
-  return MOD_ENTRY_EXTENSIONS.has(path.posix.extname(normalized));
+  return isModFileExtension(path.posix.extname(normalized));
 }
 
 function isValidSemverIdentifier(value: string): boolean {
@@ -201,11 +201,11 @@ function validateCapabilities(
       addError(errors, entryPath, "capability must be a string");
       return;
     }
-    if (!CAPABILITIES.has(entry)) {
+    if (!isModCapabilityId(entry)) {
       addError(errors, entryPath, `unknown capability '${entry}'`);
       return;
     }
-    capabilities.push(entry as LettaPackageCapability);
+    capabilities.push(entry);
   });
 
   return capabilities;

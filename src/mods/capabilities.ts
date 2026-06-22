@@ -15,6 +15,12 @@ export const MOD_CAPABILITY_IDS = [
 
 export type ModCapabilityId = (typeof MOD_CAPABILITY_IDS)[number];
 
+const MOD_CAPABILITY_ID_SET = new Set<string>(MOD_CAPABILITY_IDS);
+
+export function isModCapabilityId(value: string): value is ModCapabilityId {
+  return MOD_CAPABILITY_ID_SET.has(value);
+}
+
 export const DEFAULT_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
   commands: true,
