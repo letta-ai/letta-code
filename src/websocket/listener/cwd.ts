@@ -16,6 +16,37 @@ export function getWorkingDirectoryScopeKey(
   return `conversation:${normalizedConversationId}`;
 }
 
+/**
+ * The directory a scope inherits when it has no explicit per-scope override.
+ *
+ * For a concrete conversation this is the agent's saved "default working
+ * directory" (the folder chosen via the desktop "Default working directory"
+ * dialog, stored under the `agent:<id>::conversation:default` scope key), and
+ * only the boot directory when no such default exists. For the agent-default
+ * scope itself (conversationId === "default") there is no higher tier, so it
+ * inherits the boot directory directly.
+ *
+ * Without this, a saved per-agent default only ever applied to the pre-send
+ * "default" conversation preview: once a real conversation id was created its
+ * scope key had no entry and resolution fell straight back to the boot cwd, so
+ * every new chat silently ignored the saved default.
+ */
+function getInheritedWorkingDirectory(
+  runtime: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): string {
+  if (normalizeConversationId(conversationId) !== "default") {
+    const agentDefault = runtime.workingDirectoryByConversation.get(
+      getWorkingDirectoryScopeKey(agentId, "default"),
+    );
+    if (agentDefault !== undefined) {
+      return agentDefault;
+    }
+  }
+  return runtime.bootWorkingDirectory;
+}
+
 export function getConversationWorkingDirectory(
   runtime: ListenerRuntime,
   agentId?: string | null,
@@ -24,7 +55,7 @@ export function getConversationWorkingDirectory(
   const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
   return (
     runtime.workingDirectoryByConversation.get(scopeKey) ??
-    runtime.bootWorkingDirectory
+    getInheritedWorkingDirectory(runtime, agentId, conversationId)
   );
 }
 
@@ -65,7 +96,16 @@ export function setConversationWorkingDirectory(
   workingDirectory: string,
 ): void {
   const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
-  if (workingDirectory === runtime.bootWorkingDirectory) {
+  // Only persist an explicit override when it differs from what the scope
+  // would already inherit (the per-agent default, else the boot directory).
+  // This keeps the map free of redundant entries while ensuring an explicit
+  // choice that differs from the inherited default is preserved.
+  const inherited = getInheritedWorkingDirectory(
+    runtime,
+    agentId,
+    conversationId,
+  );
+  if (workingDirectory === inherited) {
     runtime.workingDirectoryByConversation.delete(scopeKey);
   } else {
     runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
