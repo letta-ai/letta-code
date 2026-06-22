@@ -4,10 +4,10 @@
  *
  * Resumes the same conversation where the review was done (found via
  * Letta API conversation summary) for context, then runs the user's
- * prompt in a cloud sandbox. Posts the response back as a PR comment.
+ * prompt locally via the Letta Code SDK. Posts the response back as a PR comment.
  */
 
-import { LettaCodeClient } from "@letta-ai/letta-code-sdk";
+import { resumeSession, createSession } from "@letta-ai/letta-code-sdk";
 
 const prNumber = process.env.PR_NUMBER;
 const repo = process.env.REPO;
@@ -68,21 +68,19 @@ console.log(
 );
 
 // ---------------------------------------------------------------------------
-// 2. Connect to cloud backend and resume (or create) session
+// 2. Resume (or create) a session via the SDK
+//    The SDK spawns the Letta Code CLI locally as a subprocess.
 // ---------------------------------------------------------------------------
 
-const client = new LettaCodeClient({
-  backend: "cloud",
-  apiKey: lettaApiKey,
-});
+const sessionOptions = {
+  permissionMode: "unrestricted" as const,
+  disallowedTools: ["AskUserQuestion"],
+  systemInfoReminder: false,
+};
 
 await using session = conversationId
-  ? client.resumeSession(conversationId, {
-      permissionMode: "bypassPermissions",
-    })
-  : client.createSession(AGENT_ID, {
-      permissionMode: "bypassPermissions",
-    });
+  ? resumeSession(conversationId, sessionOptions)
+  : createSession(AGENT_ID, sessionOptions);
 
 // ---------------------------------------------------------------------------
 // 3. Send the user's prompt with PR context

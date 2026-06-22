@@ -5,7 +5,7 @@ on:
     types: [created]
 
 jobs:
- fix:
+  fix:
     # Only run on PR comments that mention @amelia-letta
     if: |
       github.event.issue.pull_request &&
@@ -20,6 +20,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Install Letta Code CLI
+        run: npm install -g @letta-ai/letta-code@latest
 
       - run: npm install @letta-ai/letta-code-sdk tsx
 
