@@ -2,12 +2,12 @@
 /**
  * Amelia — SDK script triggered by @amelia-letta mentions on PR comments.
  *
- * Resumes the same conversation where the review was done (found via
- * Letta API conversation summary) for context, then runs the user's
- * prompt locally via the Letta Code SDK. Posts the response back as a PR comment.
+ * Uses the Letta Agent SDK to run in a cloud sandbox. Resumes the same
+ * conversation where the review was done (found via Letta API) for context.
+ * Posts the response back as a PR comment.
  */
 
-import { resumeSession, createSession } from "@letta-ai/letta-code-sdk";
+import { LettaCodeClient } from "@letta-ai/letta-agent-sdk";
 
 const prNumber = process.env.PR_NUMBER;
 const repo = process.env.REPO;
@@ -34,8 +34,7 @@ const AGENT_ID = "agent-cd664b86-4d28-49b7-8ad6-60677eaff9be";
 
 // ---------------------------------------------------------------------------
 // 1. Look up the review conversation via Letta API
-//    Same mechanism as letta-code-action's findConversationBySummary:
-//    searches for a conversation with summary "owner/repo/pr-123"
+//    The SDK doesn't expose conversation search, so we use REST directly.
 // ---------------------------------------------------------------------------
 
 const summary = `${repo}/pr-${prNumber}`;
@@ -68,19 +67,21 @@ console.log(
 );
 
 // ---------------------------------------------------------------------------
-// 2. Resume (or create) a session via the SDK
-//    The SDK spawns the Letta Code CLI locally as a subprocess.
+// 2. Connect to Constellation and run in a cloud sandbox
 // ---------------------------------------------------------------------------
+
+const client = new LettaCodeClient({
+  backend: "cloud",
+  apiKey: lettaApiKey,
+});
 
 const sessionOptions = {
   permissionMode: "bypassPermissions" as const,
-  disallowedTools: ["AskUserQuestion"],
-  systemInfoReminder: false,
 };
 
 await using session = conversationId
-  ? resumeSession(conversationId, sessionOptions)
-  : createSession(AGENT_ID, sessionOptions);
+  ? client.resumeSession(conversationId, sessionOptions)
+  : client.createSession(AGENT_ID, sessionOptions);
 
 // ---------------------------------------------------------------------------
 // 3. Send the user's prompt with PR context

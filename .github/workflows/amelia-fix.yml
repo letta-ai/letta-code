@@ -24,7 +24,7 @@ jobs:
       - name: Install Letta Code CLI
         run: npm install -g @letta-ai/letta-code@latest
 
-      - run: npm install @letta-ai/letta-code-sdk tsx
+      - run: npm install @letta-ai/letta-agent-sdk tsx
 
       - name: Run Amelia
         env:
