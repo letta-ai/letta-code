@@ -9,6 +9,7 @@ import {
   removeManagedModPackage,
   setManagedModPackageEnabled,
 } from "@/mods/package-registry";
+import { scaffoldLocalModPackage } from "@/mods/package-scaffolder";
 import { resolveDefaultGlobalModsDirectory } from "@/mods/paths";
 
 interface LooseModSection {
@@ -39,6 +40,12 @@ const MODS_OPTIONS = {
   "agent-id": { type: "string" },
 } as const;
 
+const MODS_PACKAGE_OPTIONS = {
+  ...MODS_OPTIONS,
+  name: { type: "string" },
+  out: { type: "string" },
+} as const;
+
 const RELOAD_HINT =
   "Run /reload in active sessions for changes to take effect.";
 
@@ -47,6 +54,7 @@ function printUsage(): void {
     `
 Usage:
   letta mods list [--agent <id>]
+  letta mods package <mod-file> --name <package-name> [--out <dir>]
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
@@ -63,6 +71,15 @@ function parseModsArgs(argv: string[]) {
   return parseArgs({
     args: argv,
     options: MODS_OPTIONS,
+    strict: true,
+    allowPositionals: true,
+  });
+}
+
+function parseModsPackageArgs(argv: string[]) {
+  return parseArgs({
+    args: argv,
+    options: MODS_PACKAGE_OPTIONS,
     strict: true,
     allowPositionals: true,
   });
@@ -269,6 +286,67 @@ async function runPackageMutation(
   }
 }
 
+async function runPackageScaffold(argv: string[]): Promise<number> {
+  let parsed: ReturnType<typeof parseModsPackageArgs>;
+  try {
+    parsed = parseModsPackageArgs(argv);
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    printUsage();
+    return 1;
+  }
+
+  if (parsed.values.help) {
+    printUsage();
+    return 0;
+  }
+  if (getExplicitAgentId(parsed.values)) {
+    console.error(`--agent is not supported for 'letta mods package'.`);
+    printUsage();
+    return 1;
+  }
+
+  const [sourceFile, extra] = parsed.positionals;
+  if (!sourceFile) {
+    console.error(`Missing mod file.`);
+    printUsage();
+    return 1;
+  }
+  if (extra) {
+    console.error(`Unexpected argument: ${extra}`);
+    printUsage();
+    return 1;
+  }
+  const packageName = parsed.values.name;
+  if (typeof packageName !== "string" || !packageName.trim()) {
+    console.error(`Missing required --name <package-name>.`);
+    printUsage();
+    return 1;
+  }
+
+  try {
+    const result = scaffoldLocalModPackage({
+      ...(typeof parsed.values.out === "string" && parsed.values.out.trim()
+        ? { outputDirectory: parsed.values.out }
+        : {}),
+      packageName,
+      sourceFile,
+    });
+    console.log(`Created mod package ${result.outputDirectory}`);
+    console.log(`Copied ${result.sourceFile} -> ${result.targetModPath}`);
+    console.log(
+      "The original loose mod is still present and may still load until you remove it.",
+    );
+    console.log(`Install with: ${result.installCommand}`);
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
 export async function runModsSubcommand(
   argv: string[],
   options: RunModsOptions = {},
@@ -283,6 +361,8 @@ export async function runModsSubcommand(
   switch (action) {
     case "list":
       return runList(rest, options);
+    case "package":
+      return runPackageScaffold(rest);
     case "enable":
     case "disable":
     case "remove":
