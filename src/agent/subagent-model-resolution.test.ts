@@ -245,7 +245,6 @@ describe("buildSubagentArgs", () => {
     allowedTools: "all",
     recommendedModel: "inherit",
     skills: [],
-    mode: "stateful",
     fork: false,
     background: false,
   };

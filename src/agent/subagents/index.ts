@@ -52,8 +52,6 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
 /**
  * Subagent configuration
  */
-export type SubagentMode = "stateful" | "stateless";
-
 export interface SubagentConfig {
   /** Unique identifier for the subagent */
   name: string;
@@ -67,8 +65,6 @@ export interface SubagentConfig {
   recommendedModel: string;
   /** Skills to auto-load */
   skills: string[];
-  /** Stateless agents should not persist private working memory. */
-  mode: SubagentMode;
   /** Whether this subagent should fork the parent conversation before launch. */
   fork: boolean;
   /** Whether this subagent should run in the background by default. */
@@ -155,12 +151,6 @@ function parseSkills(skillsStr: string | undefined): string[] {
   return parseCommaSeparatedList(skillsStr);
 }
 
-function parseSubagentMode(modeStr: string | undefined): SubagentMode {
-  return modeStr?.trim().toLowerCase() === "stateless"
-    ? "stateless"
-    : "stateful";
-}
-
 /**
  * Validate subagent frontmatter
  * Only validates required fields - optional fields are validated at runtime where needed
@@ -215,7 +205,6 @@ function parseSubagentContent(content: string): SubagentConfig {
     allowedTools: parseTools(getStringField(frontmatter, "tools")),
     recommendedModel: getStringField(frontmatter, "model") || "inherit",
     skills: parseSkills(getStringField(frontmatter, "skills")),
-    mode: parseSubagentMode(getStringField(frontmatter, "mode")),
     fork: getStringField(frontmatter, "fork")?.toLowerCase() === "true",
     background:
       getStringField(frontmatter, "background")?.toLowerCase() === "true",
