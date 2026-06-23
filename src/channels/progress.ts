@@ -1,4 +1,5 @@
 import { formatArgsDisplay } from "@/cli/helpers/format-args-display";
+import { isShellTool } from "@/cli/helpers/tool-name-mapping";
 import {
   formatWebSearchProgressTitle,
   isWebSearchToolName,
@@ -89,6 +90,11 @@ type ToolCallSummary = {
   argumentsText?: string;
 };
 
+type ToolReturnSummary = {
+  summary: ToolCallSummary;
+  status: "completed" | "error";
+};
+
 function parseToolArguments(
   value: string | undefined,
 ): Record<string, unknown> | null {
@@ -106,16 +112,22 @@ function formatToolProgressTitle(
   summary: ToolCallSummary,
   state: ChannelTurnProgressUpdate["state"],
 ): string | undefined {
-  if (!isWebSearchToolName(summary.name)) {
-    return undefined;
+  const parsedArguments = parseToolArguments(summary.argumentsText);
+  if (isWebSearchToolName(summary.name)) {
+    const title = formatWebSearchProgressTitle(parsedArguments ?? {}, state);
+    const sanitized = sanitizeChannelProgressText(title);
+    return sanitized || undefined;
   }
 
-  const title = formatWebSearchProgressTitle(
-    parseToolArguments(summary.argumentsText) ?? {},
-    state,
-  );
-  const sanitized = sanitizeChannelProgressText(title);
-  return sanitized || undefined;
+  if (summary.name && isShellTool(summary.name) && parsedArguments) {
+    const description = firstNonEmptyString(parsedArguments.description);
+    const sanitized = sanitizeChannelProgressText(description);
+    if (sanitized) {
+      return `Bash: ${sanitized}`;
+    }
+  }
+
+  return undefined;
 }
 
 function formatToolProgressDetails(
@@ -136,7 +148,8 @@ function formatToolProgressDetails(
   if (!sanitized || sanitized === "…") {
     return undefined;
   }
-  return `Input: ${sanitized}`;
+  const label = summary.name && isShellTool(summary.name) ? "Command" : "Input";
+  return `${label}: ${sanitized}`;
 }
 
 function extractToolCallSummary(value: unknown): ToolCallSummary | null {
@@ -210,6 +223,44 @@ function extractToolCalls(delta: Record<string, unknown>): ToolCallSummary[] {
     }
     seen.add(key);
     summaries.push(summary);
+  }
+  return summaries;
+}
+
+function extractToolReturns(
+  delta: Record<string, unknown>,
+): ToolReturnSummary[] {
+  const candidates: unknown[] = [];
+  if (Array.isArray(delta.tool_returns)) {
+    candidates.push(...delta.tool_returns);
+  }
+  if (Array.isArray(delta.toolReturns)) {
+    candidates.push(...delta.toolReturns);
+  }
+  if (candidates.length === 0) {
+    candidates.push(delta);
+  }
+
+  const summaries: ToolReturnSummary[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const record = asRecord(candidate);
+    if (!record) {
+      continue;
+    }
+    const summary = extractToolCallSummary(record);
+    if (!summary) {
+      continue;
+    }
+    const key = `${summary.id ?? ""}:${summary.name ?? ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    summaries.push({
+      summary,
+      status: getToolStatus(record),
+    });
   }
   return summaries;
 }
@@ -360,29 +411,25 @@ export function buildChannelTurnProgressUpdatesFromDelta(
     }
 
     case "tool_return_message": {
-      const status = getToolStatus(record);
-      const toolCallId = firstNonEmptyString(
-        record.tool_call_id,
-        record.toolCallId,
-      );
-      return [
-        withRunId(
-          {
-            kind: "tool",
-            state: status,
-            message: status === "error" ? "Tool failed" : "Tool finished",
-            ...(toolCallId
-              ? {
-                  toolCallId: sanitizeChannelProgressIdentifier(
-                    toolCallId,
-                    "tool-call",
-                  ),
-                }
-              : {}),
-          },
-          runId,
-        ),
-      ];
+      const toolReturns = extractToolReturns(record);
+      if (toolReturns.length === 0) {
+        return [];
+      }
+      for (const { summary, status } of toolReturns) {
+        updates.push(
+          withRunId(
+            {
+              kind: "tool",
+              state: status,
+              message: status === "error" ? "Tool failed" : "Tool finished",
+              ...(summary.id ? { toolCallId: summary.id } : {}),
+              ...(summary.name ? { toolName: summary.name } : {}),
+            },
+            runId,
+          ),
+        );
+      }
+      return updates;
     }
 
     case "client_tool_start":
