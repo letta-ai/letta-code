@@ -44,6 +44,7 @@ import {
 } from "@/mods/tool-registry";
 import type {
   ModContext,
+  ModSecretResolver,
   ModToolRunContext,
   ToolApprovalPolicy,
 } from "@/mods/types";
@@ -65,6 +66,7 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
+import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
 import {
@@ -1940,6 +1942,126 @@ function isMultimodalContent(
   );
 }
 
+const MOD_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+
+type InvocationSecretRedactions = Map<string, string>;
+
+function normalizeModSecretName(name: string): string {
+  const normalized = name.toUpperCase();
+  if (!MOD_SECRET_NAME_PATTERN.test(normalized)) {
+    throw new Error(
+      `Invalid secret name '${name}'. Use uppercase letters, numbers, and underscores only. Must start with a letter or underscore.`,
+    );
+  }
+  return normalized;
+}
+
+function scrubInvocationSecretRedactions(
+  input: string,
+  redactions: InvocationSecretRedactions,
+): string {
+  let result = input;
+  const entries = Array.from(redactions.entries()).sort(
+    ([, a], [, b]) => b.length - a.length,
+  );
+  for (const [name, value] of entries) {
+    if (value.length > 0) {
+      result = result.replaceAll(value, `${name}=<REDACTED>`);
+    }
+  }
+  return result;
+}
+
+function scrubModToolString(
+  input: string,
+  agentId: string | undefined,
+  redactions: InvocationSecretRedactions,
+): string {
+  return scrubInvocationSecretRedactions(
+    scrubSecretsFromString(input, agentId),
+    redactions,
+  );
+}
+
+function scrubModToolReturnContent(
+  content: ToolReturnContent,
+  agentId: string | undefined,
+  redactions: InvocationSecretRedactions,
+): ToolReturnContent {
+  if (typeof content === "string") {
+    return scrubModToolString(content, agentId, redactions);
+  }
+  return content.map((block) =>
+    block.type === "text"
+      ? { ...block, text: scrubModToolString(block.text, agentId, redactions) }
+      : block,
+  );
+}
+
+function scrubModToolLines(
+  lines: string[] | undefined,
+  agentId: string | undefined,
+  redactions: InvocationSecretRedactions,
+): string[] | undefined {
+  return lines?.map((line) => scrubModToolString(line, agentId, redactions));
+}
+
+function createScrubbedError(error: unknown, message: string): Error {
+  const scrubbedError = new Error(message);
+  if (error instanceof Error) {
+    scrubbedError.name = error.name;
+  }
+  return scrubbedError;
+}
+
+function createModSecretResolver(options: {
+  addRedaction: (name: string, value: string) => void;
+  agentId: string | null | undefined;
+}): ModSecretResolver {
+  let agentSecretsPromise: Promise<Record<string, string>> | null = null;
+
+  const loadAgentSecrets = async (): Promise<Record<string, string>> => {
+    if (!options.agentId) return {};
+    agentSecretsPromise ??= refreshAndListSecrets(options.agentId).then(
+      (entries) =>
+        Object.fromEntries(entries.map(({ key, value }) => [key, value])),
+    );
+    return agentSecretsPromise;
+  };
+
+  return async (name, resolverOptions) => {
+    const key = normalizeModSecretName(name);
+    let agentLookupError: unknown;
+
+    if (options.agentId) {
+      try {
+        const agentSecrets = await loadAgentSecrets();
+        if (Object.hasOwn(agentSecrets, key)) {
+          const value = agentSecrets[key] ?? "";
+          options.addRedaction(key, value);
+          return value;
+        }
+      } catch (error) {
+        agentLookupError = error;
+      }
+    }
+
+    if (resolverOptions?.envFallback === true) {
+      const value = process.env[key];
+      if (value !== undefined) {
+        options.addRedaction(key, value);
+        return value;
+      }
+    }
+
+    if (agentLookupError !== undefined) {
+      throw agentLookupError;
+    }
+
+    return null;
+  };
+}
+
 function flattenToolResponse(result: unknown): ToolReturnContent {
   if (result === null || result === undefined) {
     return "";
@@ -2216,6 +2338,12 @@ async function executeModTool(
     tool.activationSignal,
   ]);
   const { signal } = linkedSignal;
+  const redactions: InvocationSecretRedactions = new Map();
+  const addRedaction = (name: string, value: string): void => {
+    if (value.length > 0) {
+      redactions.set(name, value);
+    }
+  };
 
   const run = async (): Promise<ToolExecutionResult> => {
     const preHookResult = await runPreToolUseHooks(
@@ -2241,12 +2369,20 @@ async function executeModTool(
         args: args as Record<string, unknown>,
         toolCallId: options.toolCallId ?? null,
         signal,
+        secret: createModSecretResolver({
+          addRedaction,
+          agentId: modContext.agent.id,
+        }),
         ...(options.onOutput
           ? {
               onOutput: (chunk: string, stream: "stdout" | "stderr") => {
                 options.onOutput?.(
                   stripAnsi(
-                    scrubSecretsFromString(chunk, options.scopedAgentId),
+                    scrubModToolString(
+                      chunk,
+                      options.scopedAgentId,
+                      redactions,
+                    ),
                   ),
                   stream,
                 );
@@ -2276,14 +2412,22 @@ async function executeModTool(
       );
       const duration = Date.now() - startTime;
       const recordResult = isRecord(result) ? result : undefined;
-      const stdout = isStringArray(recordResult?.stdout)
-        ? recordResult.stdout
-        : undefined;
-      const stderr = isStringArray(recordResult?.stderr)
-        ? recordResult.stderr
-        : undefined;
+      const stdout = scrubModToolLines(
+        isStringArray(recordResult?.stdout) ? recordResult.stdout : undefined,
+        options.scopedAgentId,
+        redactions,
+      );
+      const stderr = scrubModToolLines(
+        isStringArray(recordResult?.stderr) ? recordResult.stderr : undefined,
+        options.scopedAgentId,
+        redactions,
+      );
       const toolStatus = getModToolStatus(result);
-      const flattenedResponse = flattenToolResponse(result);
+      const flattenedResponse = scrubModToolReturnContent(
+        flattenToolResponse(result),
+        options.scopedAgentId,
+        redactions,
+      );
       const responseSize =
         typeof flattenedResponse === "string"
           ? flattenedResponse.length
@@ -2329,11 +2473,6 @@ async function executeModTool(
         ...(stderr && { stderr }),
       };
     } catch (error) {
-      tool.recordDiagnostic?.({
-        capability: { id: toolName, kind: "tool" },
-        error: error instanceof Error ? error : new Error(String(error)),
-        phase: "tool.run",
-      });
       const duration = Date.now() - startTime;
       const isAbort =
         signal.aborted ||
@@ -2346,11 +2485,21 @@ async function executeModTool(
         : error instanceof Error
           ? error.name
           : "unknown";
-      const errorMessage = isAbort
-        ? INTERRUPTED_BY_USER
-        : error instanceof Error
-          ? error.message
-          : String(error);
+      const errorMessage = scrubModToolString(
+        isAbort
+          ? INTERRUPTED_BY_USER
+          : error instanceof Error
+            ? error.message
+            : String(error),
+        options.scopedAgentId,
+        redactions,
+      );
+
+      tool.recordDiagnostic?.({
+        capability: { id: toolName, kind: "tool" },
+        error: createScrubbedError(error, errorMessage),
+        phase: "tool.run",
+      });
 
       telemetry.trackToolUsage(
         toolName,
@@ -2401,6 +2550,7 @@ function toolExecutionModContext(
   options: { workingDirectory: string; modContext?: ModContext },
 ): ModContext {
   return buildModInvocationContext({
+    agent: { id: executionScope.agentId ?? null },
     base: options.modContext,
     conversationId: executionScope.conversationId ?? null,
     permissionMode: executionScope.permissionMode ?? null,
