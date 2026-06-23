@@ -1,4 +1,4 @@
-# CreateWorktree
+# EnterWorktree
 
 Create a fresh isolated git worktree for this conversation, or switch this conversation into an existing one.
 

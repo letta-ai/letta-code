@@ -29,7 +29,7 @@ import { getActiveRuntime } from "@/websocket/listener/runtime";
 import { restartWorktreeWatcher } from "@/websocket/listener/worktree-watcher";
 import { getShellEnv } from "./shell-env.js";
 
-interface CreateWorktreeArgs {
+interface EnterWorktreeArgs {
   name?: string;
   path?: string;
   branch_name?: string;
@@ -42,7 +42,7 @@ interface CreateWorktreeArgs {
   _executionContextId?: string;
 }
 
-interface CreateWorktreeResult {
+interface EnterWorktreeResult {
   content: Array<{ type: "text"; text: string }>;
   status: "success" | "error";
   worktree_path?: string;
@@ -77,8 +77,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function getStringArg(
-  args: CreateWorktreeArgs,
-  key: keyof CreateWorktreeArgs,
+  args: EnterWorktreeArgs,
+  key: keyof EnterWorktreeArgs,
 ): string | undefined {
   const value = args[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -261,7 +261,7 @@ async function resolveWorktreeSourceRoot(params: {
     throw new Error(
       [
         `Current working directory is not inside a git repository: ${params.currentCwd}`,
-        "Pass `repo_path` to CreateWorktree or start the session from inside the target repo.",
+        "Pass `repo_path` to EnterWorktree or start the session from inside the target repo.",
         formatGitFailure(error),
       ].join("\n"),
     );
@@ -284,7 +284,7 @@ async function resolvePrimaryWorktreeRoot(repoRoot: string): Promise<string> {
  * managed `.letta/worktrees/` directory under it.
  */
 async function resolveWorktreeContext(params: {
-  args: CreateWorktreeArgs;
+  args: EnterWorktreeArgs;
   runtimeContext: ReturnType<typeof getRuntimeContext>;
 }): Promise<{
   currentCwd: string;
@@ -1002,10 +1002,10 @@ function buildEnteredMessage(params: {
  * re-provision anything.
  */
 async function enterExistingWorktree(params: {
-  args: CreateWorktreeArgs;
+  args: EnterWorktreeArgs;
   requestedPath: string;
   runtimeContext: ReturnType<typeof getRuntimeContext>;
-}): Promise<CreateWorktreeResult> {
+}): Promise<EnterWorktreeResult> {
   const { args, requestedPath, runtimeContext } = params;
   const { currentCwd, repoRoot, managedDir } = await resolveWorktreeContext({
     args,
@@ -1028,7 +1028,7 @@ async function enterExistingWorktree(params: {
     )
   ) {
     throw new Error(
-      `Refusing to enter ${requestedPath}: only worktrees under ${managedDir} (created by CreateWorktree) can be switched into.`,
+      `Refusing to enter ${requestedPath}: only worktrees under ${managedDir} (created by EnterWorktree) can be switched into.`,
     );
   }
 
@@ -1059,7 +1059,7 @@ async function enterExistingWorktree(params: {
 
   const shouldSwitchCwd = args.switch_cwd !== false;
   // Acquire the cross-agent lock before switching. A conflict throws and aborts
-  // the enter (caught by create_worktree's handler). When we are not switching
+  // the enter (caught by enter_worktree's handler). When we are not switching
   // the session in, we do not take ownership, so we skip the lock.
   const lockNote = shouldSwitchCwd
     ? await claimWorktreeLock({
@@ -1094,17 +1094,17 @@ async function enterExistingWorktree(params: {
   };
 }
 
-export async function create_worktree(
+export async function enter_worktree(
   rawArgs: Record<string, unknown>,
-): Promise<CreateWorktreeResult> {
+): Promise<EnterWorktreeResult> {
   if (!isObject(rawArgs)) {
     return {
-      content: [{ type: "text", text: "Invalid CreateWorktree arguments" }],
+      content: [{ type: "text", text: "Invalid EnterWorktree arguments" }],
       status: "error",
     };
   }
 
-  const args = rawArgs as unknown as CreateWorktreeArgs;
+  const args = rawArgs as unknown as EnterWorktreeArgs;
   const requestedPath = getStringArg(args, "path");
 
   try {

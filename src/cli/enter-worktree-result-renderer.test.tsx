@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
 import { render } from "ink";
 import stripAnsi from "strip-ansi";
-import { parseCreateWorktreeResult } from "@/cli/components/CreateWorktreeResultRenderer";
+import { parseEnterWorktreeResult } from "@/cli/components/EnterWorktreeResultRenderer";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 
 class CaptureStream extends Writable {
@@ -30,7 +30,7 @@ function createInputStream(): NodeJS.ReadStream {
   return input;
 }
 
-const createWorktreeResult = [
+const enterWorktreeResult = [
   "Created worktree.",
   "",
   "Path: /Users/loaner/dev/letta-code-prod/.letta/worktrees/render-test-worktree",
@@ -44,20 +44,20 @@ const createWorktreeResult = [
   "- Read README, AGENTS.md, or other project setup docs before running commands.",
 ].join("\n");
 
-async function renderCreateWorktreeToolCall(): Promise<string> {
+async function renderEnterWorktreeToolCall(): Promise<string> {
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
   const instance = render(
     <ToolCallMessage
       line={{
         kind: "tool_call",
-        id: "call-create-worktree",
-        toolCallId: "call-create-worktree",
-        name: "CreateWorktree",
+        id: "call-enter-worktree",
+        toolCallId: "call-enter-worktree",
+        name: "EnterWorktree",
         argsText: JSON.stringify({
           name: "render-test-worktree",
           switch_cwd: false,
         }),
-        resultText: createWorktreeResult,
+        resultText: enterWorktreeResult,
         resultOk: true,
         phase: "finished",
       }}
@@ -79,8 +79,8 @@ async function renderCreateWorktreeToolCall(): Promise<string> {
   return stripAnsi(stdout.chunks.join(""));
 }
 
-test("parses CreateWorktree tool result fields", () => {
-  expect(parseCreateWorktreeResult(createWorktreeResult)).toEqual({
+test("parses EnterWorktree tool result fields", () => {
+  expect(parseEnterWorktreeResult(enterWorktreeResult)).toEqual({
     path: "/Users/loaner/dev/letta-code-prod/.letta/worktrees/render-test-worktree",
     branch: "letta/render-test-worktree-a90824a8",
     base: "origin/main",
@@ -88,10 +88,10 @@ test("parses CreateWorktree tool result fields", () => {
   });
 });
 
-test("CreateWorktree tool result renders a compact structured summary", async () => {
-  const output = await renderCreateWorktreeToolCall();
+test("EnterWorktree tool result renders a compact structured summary", async () => {
+  const output = await renderEnterWorktreeToolCall();
 
-  expect(output).toContain("CreateWorktree");
+  expect(output).toContain("EnterWorktree");
   expect(output).toContain("Created worktree");
   expect(output).toContain("Path:");
   expect(output).toContain("render-test-worktree");
