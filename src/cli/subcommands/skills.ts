@@ -13,6 +13,11 @@ import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { parseArgs, TextDecoder, TextEncoder } from "node:util";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { isLocalAgentId } from "@/agent/agent-id";
+import {
+  installLocalManagedModPackage,
+  isLocalLettaModPackageDirectory,
+} from "@/mods/package-installer";
+import { resolveDefaultGlobalModsDirectory } from "@/mods/paths";
 import { parseFrontmatter } from "@/utils/frontmatter";
 
 const HERMES_REPO_URL = "https://github.com/NousResearch/hermes-agent.git";
@@ -67,6 +72,10 @@ type FetchSkillFile = (
   ...args: Parameters<typeof fetch>
 ) => ReturnType<typeof fetch>;
 
+interface RunInstallOptions {
+  globalModsDirectory?: string;
+}
+
 const CLAWHUB_API_BASE_URL = "https://clawhub.ai/api/v1";
 
 let activeAgentPromptStatus: { stop: () => void } | null = null;
@@ -75,11 +84,12 @@ function printUsage(): void {
   console.log(
     `
 Usage:
-  letta install <skill> [--agent <id> | -n <agent name>] [--force]
+  letta install <thing> [--agent <id> | -n <agent name>] [--force]
   letta skills list [--agent <id> | -n <agent name>]
   letta skills delete <skill_name> --agent <id>
 
 Sources:
+  ./path/to/package     Local mod package with package.json#letta
   official/<path>         Hermes official optional skill, e.g. official/finance/stocks
   clawhub/<slug>          ClawHub registry skill, e.g. clawhub/nano-banana-pro
   clawhub:<slug>          ClawHub registry skill, optionally <slug>@<version>
@@ -922,7 +932,10 @@ function stopAgentPromptStatus(): void {
   activeAgentPromptStatus = null;
 }
 
-async function runInstall(argv: string[]): Promise<number> {
+async function runInstall(
+  argv: string[],
+  options: RunInstallOptions = {},
+): Promise<number> {
   let parsed: ReturnType<typeof parseSkillsArgs>;
   try {
     parsed = parseSkillsArgs(argv);
@@ -946,6 +959,41 @@ async function runInstall(argv: string[]): Promise<number> {
     return 1;
   }
 
+  if (specifier.startsWith("npm:")) {
+    console.error(
+      "Network mod package install is not supported yet. Pass a local package path.",
+    );
+    return 1;
+  }
+
+  const maybeLocalPath = resolve(specifier);
+  if (isLocalLettaModPackageDirectory(maybeLocalPath)) {
+    if (
+      parsed.values.agent ||
+      parsed.values["agent-id"] ||
+      parsed.values.name
+    ) {
+      console.error("Agent-scoped mod package install is not supported yet.");
+      return 1;
+    }
+    try {
+      const result = installLocalManagedModPackage({
+        modsRoot:
+          options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
+        packageDirectory: maybeLocalPath,
+      });
+      console.log(
+        "Warning: mods are trusted local code and can execute on startup.",
+      );
+      console.log(`Installed ${result.source}@${result.version}`);
+      console.log("Run /reload in active sessions for changes to take effect.");
+      return 0;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+  }
+
   try {
     const agentId = await initializeAndResolveAgent(
       parsed.values,
@@ -966,8 +1014,11 @@ async function runInstall(argv: string[]): Promise<number> {
   }
 }
 
-export async function runInstallSubcommand(argv: string[]): Promise<number> {
-  return runInstall(argv);
+export async function runInstallSubcommand(
+  argv: string[],
+  options: RunInstallOptions = {},
+): Promise<number> {
+  return runInstall(argv, options);
 }
 
 async function runList(argv: string[]): Promise<number> {

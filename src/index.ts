@@ -186,7 +186,7 @@ USAGE
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
-  letta install ...     Install a skill into an agent memfs repository
+  letta install ...     Install a skill or local mod package
   letta skills ...      List or delete installed agent skills
 
 OPTIONS
@@ -212,7 +212,7 @@ SUBCOMMANDS
   letta mods remove <package-spec>
   letta app-server [--listen ws://127.0.0.1:4500]
   letta connect <provider> [options]
-  letta install <skill> [--agent <id> | -n <name>]
+  letta install <thing> [--agent <id> | -n <name>]
   letta skills list [--agent <id> | -n <name>]
   letta skills delete <skill_name> --agent <id>
   letta backend [api|local]
