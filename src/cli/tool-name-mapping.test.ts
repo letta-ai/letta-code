@@ -10,6 +10,11 @@ describe("toolNameMapping display mappings", () => {
   test("maps memory_apply_patch to a friendly label", () => {
     expect(getDisplayToolName("memory_apply_patch")).toBe("Memory Patch");
   });
+
+  test("maps web search tools to friendly labels", () => {
+    expect(getDisplayToolName("web_search")).toBe("Web Search");
+    expect(getDisplayToolName("WebSearch")).toBe("Web Search");
+  });
 });
 
 describe("toolNameMapping.isMemoryTool", () => {
