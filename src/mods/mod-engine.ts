@@ -47,6 +47,10 @@ import {
   recordStaleHandleUse,
 } from "@/mods/mod-diagnostics";
 import {
+  type ManagedModPackageDiagnostic,
+  resolveManagedModPackages,
+} from "@/mods/package-registry";
+import {
   getGlobalModsDirectory,
   getLegacyGlobalExtensionsDirectory,
   getModCacheDirectory,
@@ -214,6 +218,7 @@ export interface LocalModRegistry {
 }
 
 export interface LocalModSource {
+  diagnostics?: ManagedModPackageDiagnostic[];
   files: string[];
   root: string;
   scope: ModSourceScope;
@@ -309,9 +314,14 @@ export function resolveLocalModSources(
 ): LocalModSource[] {
   const globalModsDirectory =
     options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory();
+  const managedPackages = resolveManagedModPackages(globalModsDirectory);
+  const globalDiagnostics = managedPackages.diagnostics;
   const sources: LocalModSource[] = [
     {
-      files: listModFiles(globalModsDirectory),
+      ...(globalDiagnostics.length > 0
+        ? { diagnostics: globalDiagnostics }
+        : {}),
+      files: [...listModFiles(globalModsDirectory), ...managedPackages.files],
       root: globalModsDirectory,
       scope: "global",
       trusted: true,
@@ -396,6 +406,7 @@ function snapshotRegistryForReaders(
     permissions: { ...registry.permissions },
     sources: registry.sources.map((source) => ({
       ...source,
+      ...(source.diagnostics ? { diagnostics: [...source.diagnostics] } : {}),
       files: [...source.files],
     })),
     tools: { ...registry.tools },
@@ -1331,6 +1342,19 @@ export async function loadLocalMods(
   const registry = createEmptyModRegistry(sources, generation, capabilities);
 
   for (const source of sources) {
+    for (const diagnostic of source.diagnostics ?? []) {
+      const owner = createModOwner(diagnostic.path, source, generation);
+      recordModDiagnostic(
+        registry,
+        {
+          error: diagnostic.error,
+          owner,
+          phase: "package_manifest",
+        },
+        options.onDiagnostic,
+      );
+    }
+
     for (const modPath of source.files) {
       const owner = createModOwner(modPath, source, generation);
       const abortController = new AbortController();

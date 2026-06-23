@@ -260,6 +260,7 @@ export type ModDiagnosticPhase =
   | "transpile"
   | "import"
   | "activate"
+  | "package_manifest"
   | "command_override"
   | "command.run"
   | "deprecated_api"
