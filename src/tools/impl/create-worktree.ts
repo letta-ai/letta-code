@@ -10,13 +10,17 @@ import {
   rmdir,
   stat,
   symlink,
-  unlink,
-  writeFile,
 } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { getRuntimeContext } from "@/runtime-context";
 import type { WorktreeProjectConfig } from "@/settings-manager";
+import {
+  acquireWorktreeLock,
+  describeHolder,
+  releaseWorktreeLock,
+  type WorktreeLock,
+  type WorktreeLockOwner,
+} from "@/utils/worktree-lock";
 import {
   switchConversationWorkingDirectory,
   switchCurrentRuntimeWorkingDirectory,
@@ -273,6 +277,33 @@ async function resolvePrimaryWorktreeRoot(repoRoot: string): Promise<string> {
     : repoRoot;
 }
 
+/**
+ * Resolves the common prelude shared by the create and enter flows: the current
+ * cwd, the repo root for `repo_path`/cwd, the primary checkout root, and the
+ * managed `.letta/worktrees/` directory under it.
+ */
+async function resolveWorktreeContext(params: {
+  args: CreateWorktreeArgs;
+  runtimeContext: ReturnType<typeof getRuntimeContext>;
+}): Promise<{
+  currentCwd: string;
+  repoRoot: string;
+  primaryRoot: string;
+  managedDir: string;
+}> {
+  const currentCwd =
+    params.runtimeContext?.workingDirectory ||
+    process.env.USER_CWD ||
+    process.cwd();
+  const repoRoot = await resolveWorktreeSourceRoot({
+    currentCwd,
+    requestedRepoPath: getStringArg(params.args, "repo_path"),
+  });
+  const primaryRoot = await resolvePrimaryWorktreeRoot(repoRoot);
+  const managedDir = path.join(primaryRoot, ".letta", "worktrees");
+  return { currentCwd, repoRoot, primaryRoot, managedDir };
+}
+
 async function resolveDefaultBaseRef(repoRoot: string): Promise<string> {
   const remoteHead = await runGit(
     ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
@@ -472,6 +503,16 @@ function isUnsafeRelativePath(relPath: string): boolean {
   return normalized === ".." || normalized.startsWith(`..${path.sep}`);
 }
 
+/** True when `child` is `parent` or nested under it (path-based, no realpath). */
+function isPathWithin(child: string, parent: string): boolean {
+  const resolvedChild = path.resolve(child);
+  const resolvedParent = path.resolve(parent);
+  return (
+    resolvedChild === resolvedParent ||
+    resolvedChild.startsWith(resolvedParent + path.sep)
+  );
+}
+
 /**
  * Symlinks `relDir` from the primary checkout into the worktree so large,
  * gitignored directories (node_modules, populated hook dirs) are shared instead
@@ -482,37 +523,45 @@ async function symlinkDirIntoWorktree(
   primaryRoot: string,
   worktreePath: string,
   relDir: string,
-): Promise<string> {
+): Promise<{ linked: boolean; note: string }> {
+  const skip = (note: string) => ({ linked: false, note });
   if (isUnsafeRelativePath(relDir)) {
-    return `⚠ skipped symlink for "${relDir}" (absolute path or escapes the repo)`;
+    return skip(
+      `⚠ skipped symlink for "${relDir}" (absolute path or escapes the repo)`,
+    );
   }
   const normalized = path.normalize(relDir);
   const source = path.join(primaryRoot, normalized);
   const sourceStats = await lstat(source).catch(() => null);
   if (!sourceStats) {
-    return ""; // nothing to link (e.g. dependencies not installed in the primary checkout)
+    return skip(""); // nothing to link (e.g. dependencies not installed in the primary checkout)
   }
 
   const dest = path.join(worktreePath, normalized);
   const existing = await lstat(dest).catch(() => null);
   if (existing) {
     if (existing.isSymbolicLink()) {
-      return "";
+      return skip("");
     }
     if (existing.isDirectory()) {
       const entries = await readdir(dest);
       if (entries.length > 0) {
-        return `⚠ left "${normalized}" as-is (already populated in the worktree)`;
+        return skip(
+          `⚠ left "${normalized}" as-is (already populated in the worktree)`,
+        );
       }
       await rmdir(dest);
     } else {
-      return `⚠ left "${normalized}" as-is (unexpected non-directory)`;
+      return skip(`⚠ left "${normalized}" as-is (unexpected non-directory)`);
     }
   }
 
   await mkdir(path.dirname(dest), { recursive: true });
   await symlink(source, dest, "dir");
-  return `symlinked ${normalized} from the primary checkout`;
+  return {
+    linked: true,
+    note: `symlinked ${normalized} from the primary checkout`,
+  };
 }
 
 /**
@@ -539,23 +588,21 @@ async function linkGitHooks(
   if (isUnsafeRelativePath(hooksPath)) {
     return "";
   }
-  const source = path.join(primaryRoot, hooksPath);
-  const sourceStats = await lstat(source).catch(() => null);
-  if (!sourceStats?.isDirectory()) {
+  // Skip when the primary checkout has no populated hooks dir (e.g. husky not
+  // installed). readdir also fails cleanly when the path is absent or a file,
+  // so this doubles as the existence/kind check.
+  const entries = await readdir(path.join(primaryRoot, hooksPath)).catch(
+    () => [] as string[],
+  );
+  if (entries.length === 0) {
     return "";
   }
-  const entries = await readdir(source).catch(() => [] as string[]);
-  if (entries.length === 0) {
-    return ""; // hooks dir not populated in the primary checkout (e.g. husky not installed)
-  }
-  const note = await symlinkDirIntoWorktree(
+  const { linked, note } = await symlinkDirIntoWorktree(
     primaryRoot,
     worktreePath,
     hooksPath,
   );
-  return note.startsWith("symlinked")
-    ? `wired git hooks (${hooksPath} → primary checkout)`
-    : note;
+  return linked ? `wired git hooks (${hooksPath} → primary checkout)` : note;
 }
 
 async function copyLocalSettingsFile(
@@ -679,7 +726,10 @@ export async function provisionWorktree(params: {
   };
 
   for (const dir of config.symlinkDirectories) {
-    await record(() => symlinkDirIntoWorktree(primaryRoot, worktreePath, dir));
+    await record(
+      async () =>
+        (await symlinkDirIntoWorktree(primaryRoot, worktreePath, dir)).note,
+    );
   }
   if (config.linkHooks) {
     await record(() => linkGitHooks(primaryRoot, worktreePath));
@@ -740,35 +790,10 @@ async function switchSessionToWorktree(params: {
   return true;
 }
 
-/**
- * Cross-agent advisory lock so two conversations do not both switch into the
- * same worktree and clobber each other's uncommitted work. The lock is a small
- * JSON file written into the worktree's per-worktree git admin directory
- * (`<common>/worktrees/<name>/`), which keeps it out of the working tree and
- * lets `git worktree remove` clean it up automatically.
- */
-const LOCK_FILENAME = "letta-enter.lock";
-
-export interface WorktreeLockOwner {
-  conversationId: string | null;
-  agentId: string | null;
-}
-
-export interface WorktreeLock {
-  conversationId: string | null;
-  agentId: string | null;
-  pid: number;
-  hostname: string;
-  acquiredAt: string;
-}
-
-export type WorktreeLockOutcome =
-  | {
-      outcome: "acquired" | "reentrant" | "reclaimed" | "forced";
-      lock: WorktreeLock;
-      previous?: WorktreeLock;
-    }
-  | { outcome: "conflict"; heldBy: WorktreeLock };
+// Session-aware orchestration around the cross-agent worktree lock. The pure
+// file-backed primitive (acquire/release, ownership, liveness) lives in
+// `@/utils/worktree-lock`; the helpers here add git-dir resolution,
+// runtime-context ownership, and the user-facing conflict message.
 
 /** Resolves the per-worktree git admin directory, or null if it cannot. */
 async function resolveWorktreeGitDir(
@@ -794,84 +819,6 @@ function lockOwner(
   };
 }
 
-async function readWorktreeLock(gitDir: string): Promise<WorktreeLock | null> {
-  try {
-    const raw = await readFile(path.join(gitDir, LOCK_FILENAME), "utf8");
-    const parsed = JSON.parse(raw) as Partial<WorktreeLock>;
-    if (typeof parsed.pid !== "number") {
-      return null;
-    }
-    return {
-      conversationId:
-        typeof parsed.conversationId === "string"
-          ? parsed.conversationId
-          : null,
-      agentId: typeof parsed.agentId === "string" ? parsed.agentId : null,
-      pid: parsed.pid,
-      hostname: typeof parsed.hostname === "string" ? parsed.hostname : "",
-      acquiredAt:
-        typeof parsed.acquiredAt === "string" ? parsed.acquiredAt : "",
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function writeWorktreeLock(
-  gitDir: string,
-  lock: WorktreeLock,
-): Promise<void> {
-  await writeFile(
-    path.join(gitDir, LOCK_FILENAME),
-    `${JSON.stringify(lock, null, 2)}\n`,
-  );
-}
-
-function processIsAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-  try {
-    // Signal 0 performs error checking without actually sending a signal.
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // ESRCH => no such process. EPERM => the process exists but we may not
-    // signal it, which still means it is alive.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-function isHeldByUs(lock: WorktreeLock, owner: WorktreeLockOwner): boolean {
-  if (owner.conversationId) {
-    return lock.conversationId === owner.conversationId;
-  }
-  // Anonymous owner (no conversation id): the lock is ours only if this exact
-  // process wrote it without a conversation id either.
-  return (
-    lock.conversationId === null &&
-    lock.hostname === os.hostname() &&
-    lock.pid === process.pid
-  );
-}
-
-/**
- * A lock is stale (safe to reclaim) when the process that wrote it is gone. We
- * can only judge liveness on the same host; locks from another machine are
- * treated as live and require `force` to override.
- */
-function isStaleLock(lock: WorktreeLock): boolean {
-  const sameHost = !lock.hostname || lock.hostname === os.hostname();
-  return sameHost && !processIsAlive(lock.pid);
-}
-
-function describeHolder(lock: WorktreeLock): string {
-  if (lock.conversationId) {
-    return `conversation ${lock.conversationId}`;
-  }
-  return `process ${lock.pid}${lock.hostname ? ` on ${lock.hostname}` : ""}`;
-}
-
 function formatLockConflict(lock: WorktreeLock, worktreePath: string): string {
   const since = lock.acquiredAt ? ` since ${lock.acquiredAt}` : "";
   return [
@@ -879,58 +826,6 @@ function formatLockConflict(lock: WorktreeLock, worktreePath: string): string {
     `Refusing to switch into ${worktreePath} to avoid two agents editing it concurrently.`,
     "If that agent is no longer active, retry with `force: true` to take over the lock.",
   ].join("\n");
-}
-
-/**
- * Acquires (or refreshes) the advisory lock for a worktree on behalf of
- * `owner`. Returns a `conflict` outcome when the worktree is actively held by a
- * different, live owner and `force` is not set; otherwise writes the lock and
- * reports how it was obtained.
- */
-export async function acquireWorktreeLock(params: {
-  worktreeGitDir: string;
-  owner: WorktreeLockOwner;
-  force?: boolean;
-}): Promise<WorktreeLockOutcome> {
-  const { worktreeGitDir, owner } = params;
-  const force = params.force === true;
-  const existing = await readWorktreeLock(worktreeGitDir);
-
-  let outcome: "acquired" | "reentrant" | "reclaimed" | "forced";
-  if (!existing) {
-    outcome = "acquired";
-  } else if (isHeldByUs(existing, owner)) {
-    outcome = "reentrant";
-  } else if (isStaleLock(existing)) {
-    outcome = "reclaimed";
-  } else if (force) {
-    outcome = "forced";
-  } else {
-    return { outcome: "conflict", heldBy: existing };
-  }
-
-  const lock: WorktreeLock = {
-    conversationId: owner.conversationId,
-    agentId: owner.agentId,
-    pid: process.pid,
-    hostname: os.hostname(),
-    acquiredAt: new Date().toISOString(),
-  };
-  await writeWorktreeLock(worktreeGitDir, lock);
-  return { outcome, lock, previous: existing ?? undefined };
-}
-
-/** Releases `owner`'s lock on a worktree. No-op if it is held by someone else. */
-export async function releaseWorktreeLock(params: {
-  worktreeGitDir: string;
-  owner: WorktreeLockOwner;
-}): Promise<boolean> {
-  const existing = await readWorktreeLock(params.worktreeGitDir);
-  if (!existing || !isHeldByUs(existing, params.owner)) {
-    return false;
-  }
-  await unlink(path.join(params.worktreeGitDir, LOCK_FILENAME)).catch(() => {});
-  return true;
 }
 
 /**
@@ -943,6 +838,7 @@ export async function releaseWorktreeLock(params: {
 async function claimWorktreeLock(params: {
   worktreePath: string;
   previousCwd: string;
+  managedDir: string;
   runtimeContext: ReturnType<typeof getRuntimeContext>;
   force: boolean;
 }): Promise<string> {
@@ -961,9 +857,15 @@ async function claimWorktreeLock(params: {
     throw new Error(formatLockConflict(result.heldBy, params.worktreePath));
   }
 
-  const previousGitDir = await resolveWorktreeGitDir(params.previousCwd);
-  if (previousGitDir && previousGitDir !== targetGitDir) {
-    await releaseWorktreeLock({ worktreeGitDir: previousGitDir, owner });
+  // Release the lock on the worktree we are leaving. A lock can only ever be
+  // held on a managed worktree, so skip the git-dir lookup entirely when the
+  // previous cwd is outside `.letta/worktrees/` (the common case: switching in
+  // from the main checkout).
+  if (isPathWithin(params.previousCwd, params.managedDir)) {
+    const previousGitDir = await resolveWorktreeGitDir(params.previousCwd);
+    if (previousGitDir && previousGitDir !== targetGitDir) {
+      await releaseWorktreeLock({ worktreeGitDir: previousGitDir, owner });
+    }
   }
 
   switch (result.outcome) {
@@ -1076,14 +978,10 @@ async function enterExistingWorktree(params: {
   runtimeContext: ReturnType<typeof getRuntimeContext>;
 }): Promise<CreateWorktreeResult> {
   const { args, requestedPath, runtimeContext } = params;
-  const currentCwd =
-    runtimeContext?.workingDirectory || process.env.USER_CWD || process.cwd();
-  const repoRoot = await resolveWorktreeSourceRoot({
-    currentCwd,
-    requestedRepoPath: getStringArg(args, "repo_path"),
+  const { currentCwd, repoRoot, managedDir } = await resolveWorktreeContext({
+    args,
+    runtimeContext,
   });
-  const primaryRoot = await resolvePrimaryWorktreeRoot(repoRoot);
-  const managedDir = path.join(primaryRoot, ".letta", "worktrees");
 
   const resolvedTarget = await realpath(
     path.resolve(currentCwd, requestedPath),
@@ -1138,6 +1036,7 @@ async function enterExistingWorktree(params: {
     ? await claimWorktreeLock({
         worktreePath: resolvedTarget,
         previousCwd: currentCwd,
+        managedDir,
         runtimeContext,
         force: args.force === true,
       })
@@ -1214,16 +1113,10 @@ export async function create_worktree(
       };
     }
 
-    const currentCwd =
-      runtimeContext?.workingDirectory || process.env.USER_CWD || process.cwd();
-    const repoRoot = await resolveWorktreeSourceRoot({
-      currentCwd,
-      requestedRepoPath: getStringArg(args, "repo_path"),
-    });
-    const primaryRoot = await resolvePrimaryWorktreeRoot(repoRoot);
-    const worktreesDir = path.join(primaryRoot, ".letta", "worktrees");
+    const { currentCwd, repoRoot, primaryRoot, managedDir } =
+      await resolveWorktreeContext({ args, runtimeContext });
     const slug = slugifyName(name);
-    const worktreePath = await chooseUniqueWorktreePath(worktreesDir, slug);
+    const worktreePath = await chooseUniqueWorktreePath(managedDir, slug);
     const branchName = await chooseUniqueBranchName(
       repoRoot,
       slug,
@@ -1240,7 +1133,7 @@ export async function create_worktree(
       throw new Error(`Base ref does not exist: ${baseRef}`);
     }
 
-    await mkdir(worktreesDir, { recursive: true });
+    await mkdir(managedDir, { recursive: true });
     // `--no-track` keeps the new branch from adopting the base ref (e.g.
     // origin/main) as its upstream, which would otherwise produce misleading
     // ahead/behind status and risk an accidental push to the base branch.
@@ -1279,6 +1172,7 @@ export async function create_worktree(
         const lockNote = await claimWorktreeLock({
           worktreePath: normalizedWorktreePath,
           previousCwd: currentCwd,
+          managedDir,
           runtimeContext,
           force: false,
         });

@@ -17,10 +17,8 @@ import {
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
-  acquireWorktreeLock,
   addWindowsPathLengthHint,
   create_worktree,
-  releaseWorktreeLock,
 } from "@/tools/impl/create-worktree";
 import {
   clearToolsWithLock,
@@ -29,6 +27,10 @@ import {
   prepareCurrentToolExecutionContext,
   releaseToolExecutionContext,
 } from "@/tools/manager";
+import {
+  acquireWorktreeLock,
+  releaseWorktreeLock,
+} from "@/utils/worktree-lock";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 import { setActiveRuntime } from "@/websocket/listener/runtime";

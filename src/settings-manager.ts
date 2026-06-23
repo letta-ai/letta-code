@@ -129,6 +129,10 @@ export interface StartupBackendSettings {
   envBaseUrl?: string;
 }
 
+// Shape of the `worktree` block in `.letta/settings.json`. The worktree tool
+// reads this directly from disk (see readProvisionConfig) rather than through
+// the settings manager, because provisioning runs against the primary checkout,
+// which may not be the loaded project root.
 export interface WorktreeProjectConfig {
   // Directories symlinked from the primary checkout into new worktrees to avoid
   // duplicating large gitignored trees. Defaults to ["node_modules"] when unset;
@@ -148,7 +152,6 @@ export interface WorktreeProjectConfig {
 export interface ProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   windowTitle?: WindowTitleConfig; // Project-specific terminal window title
-  worktree?: WorktreeProjectConfig; // Per-worktree provisioning settings
 }
 
 export interface LocalProjectSettings {
