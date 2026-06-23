@@ -49,6 +49,7 @@ describe("local mod package scaffolder", () => {
     expect(result).toMatchObject({
       installCommand: `letta install ${outputDirectory}`,
       manifestEntry: "mods/hello.ts",
+      modGuidePath: path.join(outputDirectory, "MOD.md"),
       outputDirectory,
       packageName: "@caren/hello-mod",
       sourceFile,
@@ -62,6 +63,7 @@ describe("local mod package scaffolder", () => {
       version: "0.1.0",
       type: "module",
       keywords: ["letta-mod"],
+      files: ["README.md", "MOD.md", "mods"],
       letta: {
         manifestVersion: 1,
         mods: ["mods/hello.ts"],
@@ -75,6 +77,12 @@ describe("local mod package scaffolder", () => {
     });
     expect(readFileSync(result.readmePath, "utf8")).toContain(
       "letta install .",
+    );
+    expect(readFileSync(result.modGuidePath, "utf8")).toContain(
+      "TODO: Describe what this mod does.",
+    );
+    expect(readFileSync(result.modGuidePath, "utf8")).toContain(
+      "`mods/hello.ts`",
     );
   });
 
@@ -92,6 +100,7 @@ describe("local mod package scaffolder", () => {
     expect(existsSync(path.join(result.outputDirectory, "package.json"))).toBe(
       true,
     );
+    expect(existsSync(path.join(result.outputDirectory, "MOD.md"))).toBe(true);
   });
 
   test("created package can be installed by local package installer", () => {

@@ -21,6 +21,7 @@ export interface ScaffoldLocalModPackageResult {
   installCommand: string;
   manifestEntry: string;
   outputDirectory: string;
+  modGuidePath: string;
   packageJsonPath: string;
   packageName: string;
   readmePath: string;
@@ -78,6 +79,7 @@ function createPackageJson(packageName: string, manifestEntry: string) {
     version: DEFAULT_PACKAGE_VERSION,
     type: "module",
     keywords: [LETTA_MOD_KEYWORD],
+    files: ["README.md", "MOD.md", "mods"],
     letta: {
       manifestVersion: LETTA_PACKAGE_MANIFEST_VERSION,
       mods: [manifestEntry],
@@ -100,6 +102,27 @@ Run /reload in active sessions for changes to take effect.
 `;
 }
 
+function createModGuide(packageName: string, manifestEntry: string): string {
+  return `# ${packageName}
+
+## Purpose
+
+TODO: Describe what this mod does.
+
+## Behavior
+
+TODO: Describe commands, tools, events, permissions, providers, or UI surfaces this mod registers.
+
+## Entry points
+
+- \`${manifestEntry}\`
+
+## Safety
+
+This mod is trusted local code and can execute with the user's local permissions. Review the source before installing or modifying it.
+`;
+}
+
 export function scaffoldLocalModPackage(
   options: ScaffoldLocalModPackageOptions,
 ): ScaffoldLocalModPackageResult {
@@ -118,6 +141,7 @@ export function scaffoldLocalModPackage(
   const targetModPath = path.join(targetModsDirectory, modFileName);
   const packageJsonPath = path.join(outputDirectory, "package.json");
   const readmePath = path.join(outputDirectory, "README.md");
+  const modGuidePath = path.join(outputDirectory, "MOD.md");
   const installCommand = `letta install ${outputDirectory}`;
 
   try {
@@ -128,6 +152,7 @@ export function scaffoldLocalModPackage(
       `${JSON.stringify(createPackageJson(packageName, manifestEntry), null, 2)}\n`,
     );
     writeFileSync(readmePath, createReadme(packageName));
+    writeFileSync(modGuidePath, createModGuide(packageName, manifestEntry));
   } catch (error) {
     rmSync(outputDirectory, { force: true, recursive: true });
     throw error;
@@ -136,6 +161,7 @@ export function scaffoldLocalModPackage(
   return {
     installCommand,
     manifestEntry,
+    modGuidePath,
     outputDirectory,
     packageJsonPath,
     packageName,
