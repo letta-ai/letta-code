@@ -1747,6 +1747,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
     message: "Searching web",
     toolCallId: "call-web",
     toolName: "web_search",
+    toolTitle: "Searching articles for “letta blog”",
   });
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -1790,7 +1791,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       chunks: [
         expect.objectContaining({
           id: "task_call-web",
-          title: "web_search",
+          title: "Searching articles for “letta blog”",
           status: "in_progress",
         }),
       ],
@@ -1824,7 +1825,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-web",
-        title: "web_search",
+        title: "Searched articles for “letta blog”",
         status: "complete",
       }),
       expect.objectContaining({
@@ -1987,6 +1988,75 @@ test("slack adapter does not show a tool card for turns without tool progress", 
     channel_id: "C123",
     thread_ts: "1712790000.000050",
     status: "",
+  });
+});
+
+test("slack adapter finishes an active progress card when MessageChannel sends", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Searching web",
+    toolCallId: "call-web",
+    toolName: "web_search",
+    toolTitle: "Searching articles for “letta blog”",
+  });
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Done — found it.",
+    threadId: "1712790000.000050",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    text: "Done — found it.",
+    thread_ts: "1712790000.000050",
+  });
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_call-web",
+        title: "Searched articles for “letta blog”",
+        status: "complete",
+      }),
+      expect.objectContaining({
+        type: "blocks",
+        blocks: expect.arrayContaining([
+          expect.objectContaining({ type: "actions" }),
+        ]),
+      }),
+    ]),
   });
 });
 
