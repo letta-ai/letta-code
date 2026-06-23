@@ -63,6 +63,34 @@ test("channel progress adds semantic web_search titles from safe args", () => {
   ]);
 });
 
+test("channel progress uses Letta Code display names for tool titles", () => {
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        id: "call-1",
+        function: {
+          name: "fetch_webpage",
+          arguments: JSON.stringify({ url: "https://cameron.stream/blog" }),
+        },
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: fetch_webpage",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "fetch_webpage",
+      toolTitle: "Fetch Webpage",
+    },
+  ]);
+});
+
 test("channel progress uses Bash descriptions as tool titles", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "tool_call_message",
