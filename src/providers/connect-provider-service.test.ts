@@ -39,6 +39,7 @@ describe("connect provider service", () => {
           },
         ],
         connected: { is_connected: false },
+        connected_providers: [],
       },
     ]);
     expect(JSON.stringify(entries)).not.toContain("secret-value");
@@ -85,6 +86,7 @@ describe("connect provider service", () => {
     const entries = buildConnectProviderEntries(providers, connected, "local");
 
     expect(entries[0]?.connected).toEqual({ is_connected: false });
+    expect(entries[0]?.connected_providers).toEqual([]);
     expect(entries[1]?.connected).toEqual({
       is_connected: true,
       id: "local-provider-lc-anthropic",
@@ -94,8 +96,109 @@ describe("connect provider service", () => {
       base_url: "https://example.test",
       region: "us-east-1",
     });
+    expect(entries[1]?.connected_providers).toEqual([
+      {
+        is_connected: true,
+        id: "local-provider-lc-anthropic",
+        provider_name: "lc-anthropic",
+        provider_type: "anthropic",
+        auth_type: "api",
+        base_url: "https://example.test",
+        region: "us-east-1",
+      },
+    ]);
     expect(JSON.stringify(entries)).not.toContain("secret-value");
     expect(JSON.stringify(entries)).not.toContain("secret-access-key");
+  });
+
+  test("marks ChatGPT OAuth aliases connected by provider type", () => {
+    const providers: ByokProvider[] = [
+      {
+        id: "codex",
+        displayName: "ChatGPT / Codex plan",
+        description: "Connect your ChatGPT coding plan",
+        providerType: "chatgpt_oauth",
+        providerName: "chatgpt-plus-pro",
+        isOAuth: true,
+      },
+    ];
+    const connected = new Map<string, ProviderResponse>([
+      [
+        "openai",
+        {
+          id: "provider-base-openai",
+          name: "openai",
+          provider_type: "openai",
+          provider_category: "base",
+        },
+      ],
+      [
+        "chatgpt-work",
+        {
+          id: "provider-chatgpt-work",
+          name: "chatgpt-work",
+          provider_type: "chatgpt_oauth",
+          provider_category: "byok",
+        },
+      ],
+    ]);
+
+    const [entry] = buildConnectProviderEntries(providers, connected, "api");
+
+    expect(entry?.connected).toEqual({
+      is_connected: true,
+      id: "provider-chatgpt-work",
+      provider_name: "chatgpt-work",
+      provider_type: "chatgpt_oauth",
+    });
+    expect(entry?.connected_providers).toEqual([
+      {
+        is_connected: true,
+        id: "provider-chatgpt-work",
+        provider_name: "chatgpt-work",
+        provider_type: "chatgpt_oauth",
+      },
+    ]);
+  });
+
+  test("lists all connected aliases while preserving the built-in name first", () => {
+    const providers: ByokProvider[] = [
+      {
+        id: "codex",
+        displayName: "ChatGPT / Codex plan",
+        description: "Connect your ChatGPT coding plan",
+        providerType: "chatgpt_oauth",
+        providerName: "chatgpt-plus-pro",
+        isOAuth: true,
+      },
+    ];
+    const connected = new Map<string, ProviderResponse>([
+      [
+        "chatgpt-work",
+        {
+          id: "provider-chatgpt-work",
+          name: "chatgpt-work",
+          provider_type: "chatgpt_oauth",
+          provider_category: "byok",
+        },
+      ],
+      [
+        "chatgpt-plus-pro",
+        {
+          id: "provider-chatgpt-plus-pro",
+          name: "chatgpt-plus-pro",
+          provider_type: "chatgpt_oauth",
+          provider_category: "byok",
+        },
+      ],
+    ]);
+
+    const [entry] = buildConnectProviderEntries(providers, connected, "api");
+
+    expect(entry?.connected.provider_name).toBe("chatgpt-plus-pro");
+    expect(
+      entry?.connected_providers.map((provider) => provider.provider_name),
+    ).toEqual(["chatgpt-plus-pro", "chatgpt-work"]);
   });
 
   test("serializes auth methods instead of default fields", () => {

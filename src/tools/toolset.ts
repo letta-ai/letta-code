@@ -63,12 +63,25 @@ export type ToolsetPreference = ToolsetName | "auto";
 
 export function deriveToolsetFromModel(
   modelIdentifier: string,
+  providerType?: string | null,
 ): "codex" | "default" {
+  if (providerType === "chatgpt_oauth" || providerType === "openai-codex") {
+    return "codex";
+  }
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
   return isOpenAIModel(resolvedModel) ? "codex" : "default";
 }
 
-type ScopeModelCarrier = Pick<AgentState, "model" | "llm_config">;
+type ScopeModelCarrier = Pick<
+  AgentState,
+  "model" | "llm_config" | "model_settings"
+>;
+
+function providerTypeFromModelSettings(modelSettings: unknown): string | null {
+  if (!isRecord(modelSettings)) return null;
+  const providerType = modelSettings.provider_type;
+  return typeof providerType === "string" ? providerType : null;
+}
 
 export type PreparedScopeToolContext = {
   preparedToolContext: PreparedToolExecutionContext;
@@ -192,6 +205,7 @@ function areGoalToolsEnabledForScope(params: {
 
 export async function prepareToolExecutionContextForResolvedTarget(params: {
   modelIdentifier?: string | null;
+  providerType?: string | null;
   conversationId?: string | null;
   toolsetPreference: ToolsetPreference;
   exclude?: ToolName[];
@@ -207,6 +221,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 }): Promise<PreparedScopeToolContext> {
   const {
     modelIdentifier,
+    providerType,
     conversationId,
     toolsetPreference,
     exclude,
@@ -227,7 +242,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 
   if (toolsetPreference === "auto") {
     const derivedToolset = effectiveModel
-      ? deriveToolsetFromModel(effectiveModel)
+      ? deriveToolsetFromModel(effectiveModel, providerType)
       : "default";
     const scopedModContext = buildModInvocationContext({
       agent,
@@ -495,6 +510,9 @@ export async function prepareToolExecutionContextForScope(params: {
     overrideModel && overrideModel.length > 0
       ? (resolveModel(overrideModel) ?? overrideModel)
       : null;
+  let effectiveProviderType = providerTypeFromModelSettings(
+    (agent as { model_settings?: unknown }).model_settings,
+  );
 
   if (
     !effectiveModel &&
@@ -510,6 +528,10 @@ export async function prepareToolExecutionContextForScope(params: {
     if (typeof conversationModel === "string" && conversationModel.length > 0) {
       effectiveModel = resolveModel(conversationModel) ?? conversationModel;
     }
+    effectiveProviderType =
+      providerTypeFromModelSettings(
+        (conversation as { model_settings?: unknown }).model_settings,
+      ) ?? effectiveProviderType;
   }
 
   if (!effectiveModel) {
@@ -539,6 +561,7 @@ export async function prepareToolExecutionContextForScope(params: {
 
   const result = await prepareToolExecutionContextForResolvedTarget({
     modelIdentifier: effectiveModel,
+    providerType: effectiveProviderType,
     conversationId: conversationId ?? undefined,
     toolsetPreference,
     exclude,
@@ -840,9 +863,17 @@ export async function forceToolsetSwitch(
 export async function switchToolsetForModel(
   modelIdentifier: string,
   agentId: string,
+  providerType?: string | null,
 ): Promise<ToolsetName> {
   // Resolve model ID to handle when possible so provider checks stay consistent
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
+  const typedToolsetName = deriveToolsetFromModel(resolvedModel, providerType);
+  const stringOnlyToolsetName = deriveToolsetFromModel(resolvedModel);
+
+  if (typedToolsetName !== stringOnlyToolsetName) {
+    await forceToolsetSwitch(typedToolsetName, agentId);
+    return typedToolsetName;
+  }
 
   // Load the appropriate set for the target model
   // Note: loadTools acquires a switch lock that causes sendMessageStream to wait,
@@ -867,6 +898,5 @@ export async function switchToolsetForModel(
   // Ensure base server memory tool is attached
   await ensureCorrectMemoryTool(agentId, resolvedModel);
 
-  const toolsetName = deriveToolsetFromModel(resolvedModel);
-  return toolsetName;
+  return typedToolsetName;
 }

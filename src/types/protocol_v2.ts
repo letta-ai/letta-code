@@ -1365,6 +1365,7 @@ export interface ListModelsCommand {
 }
 
 export type ConnectProviderStorageTarget = "local";
+export type ChatGPTUsageReadTarget = "local" | "api";
 
 export interface ListConnectProvidersCommand {
   type: "list_connect_providers";
@@ -1396,6 +1397,20 @@ export interface DisconnectProviderCommand {
   target: ConnectProviderStorageTarget;
   /** Provider id from list_connect_providers. */
   provider_id: string;
+  /** Optional connected provider name to remove when a row has multiple aliases. */
+  provider_name?: string;
+}
+
+export interface ChatGPTUsageReadCommand {
+  type: "chatgpt_usage_read";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Provider store to inspect. */
+  target: ChatGPTUsageReadTarget;
+  /** Optional connected ChatGPT provider alias. Defaults to the built-in alias. */
+  provider_name?: string;
+  /** Skip the short listener-side cache. */
+  force_refresh?: boolean;
 }
 
 export interface ConnectProviderField {
@@ -1436,7 +1451,10 @@ export interface ConnectProviderEntry {
   requires_api_key: boolean;
   fields?: ConnectProviderField[];
   auth_methods?: ConnectProviderAuthMethod[];
+  /** First connected provider, preserved for older clients. */
   connected: ConnectProviderConnectionState;
+  /** All connected provider aliases represented by this row. */
+  connected_providers: ConnectProviderConnectionState[];
 }
 
 export interface ListConnectProvidersResponseMessage {
@@ -1466,6 +1484,65 @@ export interface DisconnectProviderResponseMessage {
   providers: ConnectProviderEntry[];
   models_may_have_changed: boolean;
   error?: string;
+}
+
+export interface ChatGPTUsageWindowPayload {
+  label: string;
+  usedPercent: number | null;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface ChatGPTUsageCreditsPayload {
+  balance?: string | null;
+  availableCount?: number | null;
+  hasCredits?: boolean | null;
+  unlimited?: boolean | null;
+}
+
+export interface ChatGPTUsageIndividualLimitPayload {
+  limit: string;
+  used: string;
+  remainingPercent: number;
+  resetsAt: number;
+}
+
+export interface ChatGPTUsageSnapshotPayload {
+  providerName: string;
+  fetchedAt: string;
+  summary: string;
+  planType?: string | null;
+  limitReached?: boolean | null;
+  rateLimitReachedType?: string | null;
+  primary: ChatGPTUsageWindowPayload | null;
+  secondary: ChatGPTUsageWindowPayload | null;
+  additional: ChatGPTUsageWindowPayload[];
+  credits?: ChatGPTUsageCreditsPayload | null;
+  individualLimit?: ChatGPTUsageIndividualLimitPayload | null;
+}
+
+export interface ChatGPTUsageReadErrorPayload {
+  code:
+    | "bad_request"
+    | "not_connected"
+    | "unsupported_target"
+    | "refresh_failed"
+    | "unauthorized"
+    | "forbidden"
+    | "rate_limited"
+    | "network_error"
+    | "bad_response";
+  message: string;
+  retryAfterMs?: number;
+}
+
+export interface ChatGPTUsageReadResponseMessage {
+  type: "chatgpt_usage_read_response";
+  request_id: string;
+  success: boolean;
+  target: ChatGPTUsageReadTarget;
+  usage?: ChatGPTUsageSnapshotPayload;
+  error?: ChatGPTUsageReadErrorPayload;
 }
 
 export interface UpdateModelPayload {
@@ -2642,6 +2719,7 @@ export type WsProtocolCommand =
   | ListConnectProvidersCommand
   | ConnectProviderCommand
   | DisconnectProviderCommand
+  | ChatGPTUsageReadCommand
   | UpdateModelCommand
   | UpdateToolsetCommand
   | CronListCommand
@@ -2736,6 +2814,7 @@ export type WsProtocolMessage =
   | ListConnectProvidersResponseMessage
   | ConnectProviderResponseMessage
   | DisconnectProviderResponseMessage
+  | ChatGPTUsageReadResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
   | CronListResponseMessage
