@@ -15,7 +15,8 @@ interface ArtifactInteractArgs {
     | "wait_for_selector"
     | "wait_for_text"
     | "wait_for_change"
-    | "wait_for_idle";
+    | "wait_for_idle"
+    | "wait_for_data_change";
   selector?: string;
   value?: string;
   text?: string;

@@ -226,9 +226,22 @@ Wait until DOM mutations settle, then return a fresh snapshot:
 }
 ```
 
-Supported actions: `snapshot`, `click`, `input`, `select`, `keydown`, `submit`, `wait_for_selector`, `wait_for_text`, `wait_for_change`, `wait_for_idle`.
+Wait for persisted artifact data (`server/data.json`) to change:
 
-Recommended UI test loop after an action: `click`/`input`/`submit` → `wait_for_change` or `wait_for_idle` → `snapshot` → inspect `artifact_debug_logs` if behavior is unexpected.
+```json
+{
+  "app_name": "todo-app",
+  "action": "wait_for_data_change",
+  "timeout_ms": 5000,
+  "log_limit": 0
+}
+```
+
+Use `wait_for_data_change` when verifying that a server call or UI action persisted data, especially now that UI-origin data commits can complete in the background after the UI response.
+
+Supported actions: `snapshot`, `click`, `input`, `select`, `keydown`, `submit`, `wait_for_selector`, `wait_for_text`, `wait_for_change`, `wait_for_idle`, `wait_for_data_change`.
+
+Recommended UI test loop after an action: `click`/`input`/`submit` → `wait_for_change` or `wait_for_idle` → `snapshot` → `wait_for_data_change` if persistence matters → inspect `artifact_debug_logs` if behavior is unexpected.
 
 If `artifact_interact` reports that the iframe is not ready, retry once after the artifact panel opens or switches to the requested artifact.
 

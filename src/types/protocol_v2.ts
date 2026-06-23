@@ -967,7 +967,8 @@ export type ArtifactInteractAction =
   | "wait_for_selector"
   | "wait_for_text"
   | "wait_for_change"
-  | "wait_for_idle";
+  | "wait_for_idle"
+  | "wait_for_data_change";
 
 export interface ArtifactInteractResponseCommand {
   type: "artifact_interact_response";

@@ -730,7 +730,8 @@ function isArtifactInteractAction(
     value === "wait_for_selector" ||
     value === "wait_for_text" ||
     value === "wait_for_change" ||
-    value === "wait_for_idle"
+    value === "wait_for_idle" ||
+    value === "wait_for_data_change"
   );
 }
 
