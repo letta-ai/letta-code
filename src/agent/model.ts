@@ -110,7 +110,8 @@ export function getChatGptFastRegistryHandleForModelHandle(
   const [provider] = modelHandle.split("/");
   if (
     provider !== LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
-    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER
+    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER &&
+    provider !== OPENAI_CODEX_PROVIDER_NAME
   ) {
     return null;
   }
