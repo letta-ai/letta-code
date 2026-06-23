@@ -877,6 +877,23 @@ export function setManagedModPackageEnabled(params: {
   };
 }
 
+export function getManagedModPackage(params: {
+  modsRoot: string;
+  specifier: string;
+}): ManagedModPackageMutationResult {
+  const registry = readMutablePackageRegistry(params.modsRoot);
+  const match = findPackageIndex(
+    params.modsRoot,
+    registry.packagesValue,
+    params.specifier,
+  );
+
+  return {
+    package: mutationItem(match.metadata, match.index, match.metadata.enabled),
+    registryPath: registry.registryPath,
+  };
+}
+
 export function upsertManagedModPackage(params: {
   enabled?: boolean;
   entries: string[];

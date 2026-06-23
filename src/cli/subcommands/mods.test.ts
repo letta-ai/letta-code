@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -9,11 +11,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import {
   formatModsList,
   listMods,
   runModsSubcommand,
 } from "@/cli/subcommands/mods";
+import { __testOverrideNpmManagedModPackageInstaller } from "@/mods/package-installer";
 
 const tempRoots: string[] = [];
 
@@ -46,6 +50,15 @@ function captureConsole(): {
       console.error = originalError;
     },
   };
+}
+
+function createChildProcess(): ChildProcess {
+  const child = new EventEmitter() as ChildProcess;
+  Object.assign(child, {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+  });
+  return child;
 }
 
 function writeManagedPackage(params: {
@@ -99,7 +112,32 @@ function writeManagedPackage(params: {
   return packageRoot;
 }
 
+function writeInstalledNpmPackage(params: {
+  cwd: string;
+  version?: string;
+}): void {
+  const packageRoot = join(params.cwd, "node_modules", "@caren", "my-mod");
+  mkdirSync(join(packageRoot, "mods"), { recursive: true });
+  writeFileSync(join(packageRoot, "mods", "index.ts"), "export {};\n");
+  writeFileSync(
+    join(packageRoot, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@caren/my-mod",
+        version: params.version ?? "0.2.0",
+        letta: {
+          manifestVersion: 1,
+          mods: ["mods/index.ts"],
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
 afterEach(() => {
+  __testOverrideNpmManagedModPackageInstaller({});
   for (const dir of tempRoots.splice(0)) {
     rmSync(dir, { force: true, recursive: true });
   }
@@ -275,6 +313,7 @@ describe("mods subcommand", () => {
       expect(consoleCapture.logs.join("\n")).toContain("Usage:");
       expect(consoleCapture.logs.join("\n")).toContain("letta mods list");
       expect(consoleCapture.logs.join("\n")).toContain("letta mods package");
+      expect(consoleCapture.logs.join("\n")).toContain("letta mods update");
       expect(consoleCapture.errors).toEqual([]);
     } finally {
       consoleCapture.restore();
@@ -370,6 +409,62 @@ describe("mods subcommand", () => {
       expect(exitCode).toBe(1);
       expect(consoleCapture.errors.join("\n")).toContain(
         "--agent is not supported for 'letta mods package'",
+      );
+    } finally {
+      consoleCapture.restore();
+    }
+  });
+
+  test("update command installs latest npm package and prints old to new version", async () => {
+    const root = createTempDir();
+    const modsRoot = join(root, "mods");
+    mkdirSync(modsRoot, { recursive: true });
+    writeManagedPackage({ modsRoot });
+    __testOverrideNpmManagedModPackageInstaller({
+      spawnImpl: (_cmd, _args, options) => {
+        if (!options.cwd) throw new Error("expected cwd");
+        writeInstalledNpmPackage({ cwd: options.cwd.toString() });
+        const child = createChildProcess();
+        queueMicrotask(() => child.emit("exit", 0));
+        return child;
+      },
+    });
+    const consoleCapture = captureConsole();
+
+    try {
+      const exitCode = await runModsSubcommand(
+        ["update", "npm:@caren/my-mod"],
+        { globalModsDirectory: modsRoot },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Updated npm:@caren/my-mod 0.1.0 -> 0.2.0",
+      );
+      expect(consoleCapture.logs.join("\n")).toContain("Run /reload");
+      expect(
+        JSON.parse(readFileSync(join(modsRoot, "packages.json"), "utf8"))
+          .packages[0].version,
+      ).toBe("0.2.0");
+    } finally {
+      consoleCapture.restore();
+    }
+  });
+
+  test("update command rejects agent option", async () => {
+    const consoleCapture = captureConsole();
+
+    try {
+      const exitCode = await runModsSubcommand([
+        "update",
+        "npm:@caren/my-mod",
+        "--agent",
+        "agent-123",
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(consoleCapture.errors.join("\n")).toContain(
+        "--agent is not supported for 'letta mods update'",
       );
     } finally {
       consoleCapture.restore();
