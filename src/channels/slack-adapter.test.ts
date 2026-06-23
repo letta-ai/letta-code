@@ -136,6 +136,9 @@ class FakeSlackWriteClient {
   readonly chat = {
     postMessage: mock(async () => ({ ts: "1712800000.000100" })),
     update: mock(async () => ({ ts: "1712800000.000100" })),
+    startStream: mock(async () => ({ ok: true, ts: "1712800000.000300" })),
+    appendStream: mock(async () => ({ ok: true, ts: "1712800000.000300" })),
+    stopStream: mock(async () => ({ ok: true, ts: "1712800000.000300" })),
   };
   readonly assistant = {
     threads: {
@@ -281,6 +284,9 @@ afterEach(() => {
   for (const instance of FakeSlackWriteClient.instances) {
     instance.chat.postMessage.mockClear();
     instance.chat.update.mockClear();
+    instance.chat.startStream.mockClear();
+    instance.chat.appendStream.mockClear();
+    instance.chat.stopStream.mockClear();
     instance.assistant.threads.setStatus.mockClear();
     instance.reactions.add.mockClear();
     instance.reactions.remove.mockClear();
@@ -1574,7 +1580,134 @@ test("slack adapter adds eyes while a queued turn is processing, then swaps to c
   });
 });
 
-test("slack adapter posts and updates one progress card per routed thread", async () => {
+test("slack adapter streams native task progress and clears thread status", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Preparing <tool> @channel & token=abc",
+    toolCallId: "call-1",
+    toolName: "shell_exec",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
+  expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
+    channel: "C123",
+    thread_ts: "1712790000.000050",
+    task_display_mode: "dense",
+    recipient_user_id: "U123",
+    recipient_team_id: "T123",
+    chunks: [
+      {
+        type: "markdown_text",
+        text: "Working on it…",
+      },
+      {
+        type: "plan_update",
+        title: "Letta Code progress",
+      },
+      {
+        type: "task_update",
+        id: "turn",
+        title: "Working on this thread",
+        status: "in_progress",
+      },
+    ],
+  });
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
+  const appendCalls = writeClient?.chat.appendStream.mock
+    .calls as unknown as Array<
+    [
+      {
+        channel: string;
+        ts: string;
+        markdown_text?: string;
+        chunks?: Array<Record<string, unknown>>;
+      },
+    ]
+  >;
+  const appendCall = appendCalls[0]?.[0];
+  expect(appendCall).toMatchObject({
+    channel: "C123",
+    ts: "1712800000.000300",
+  });
+  expect(appendCall?.chunks?.[0]).toMatchObject({
+    type: "task_update",
+    id: "tool:call-1",
+    title: "Preparing tool @​channel and token=[redacted]",
+    status: "in_progress",
+    details: "Tool: shell_exec",
+  });
+  expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: [
+      {
+        type: "task_update",
+        id: "tool:call-1",
+        title: "Preparing tool @​channel and token=[redacted]",
+        status: "complete",
+      },
+      {
+        type: "task_update",
+        id: "turn",
+        title: "Completed",
+        status: "complete",
+      },
+      {
+        type: "markdown_text",
+        text: "✅ Done.",
+      },
+    ],
+  });
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
+    channel_id: "C123",
+    thread_ts: "1712790000.000050",
+    status: "",
+  });
+});
+
+test("slack adapter falls back to a Block Kit progress card when streaming is unavailable", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -1602,14 +1735,6 @@ test("slack adapter posts and updates one progress card per routed thread", asyn
     batchId: "batch-1",
     sources: [source],
   });
-  await adapter.handleTurnProgressEvent?.({
-    type: "progress",
-    batchId: "batch-1",
-    sources: [source],
-    kind: "tool",
-    state: "started",
-    message: "Preparing <tool> @channel & token=abc",
-  });
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
     batchId: "batch-1",
@@ -1618,33 +1743,29 @@ test("slack adapter posts and updates one progress card per routed thread", asyn
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
     thread_ts: "1712790000.000050",
     text: "Letta Code is working on this thread.\nStatus: Working on it",
+    blocks: expect.arrayContaining([
+      expect.objectContaining({ type: "section" }),
+      expect.objectContaining({ type: "context" }),
+    ]),
   });
-  expect(writeClient?.chat.update).toHaveBeenCalledTimes(2);
-
-  const updateCalls = writeClient?.chat.update.mock.calls as
-    | Array<[{ channel: string; ts: string; text: string }]>
-    | undefined;
-  const firstUpdate = updateCalls?.[0]?.[0];
-  expect(firstUpdate?.channel).toBe("C123");
-  expect(firstUpdate?.ts).toBe("1712800000.000100");
-  expect(firstUpdate?.text).toContain("Preparing tool");
-  expect(firstUpdate?.text).not.toContain("<");
-  expect(firstUpdate?.text).not.toContain("@channel");
-  expect(firstUpdate?.text).not.toContain("token=abc");
-
-  const secondUpdate = updateCalls?.[1]?.[0];
-  expect(secondUpdate?.text).toBe(
-    "Letta Code finished this turn.\nStatus: Completed",
-  );
-  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledWith({
+  expect(writeClient?.chat.update).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000100",
+    text: "Letta Code finished this turn.\nStatus: Completed",
+    blocks: expect.arrayContaining([
+      expect.objectContaining({ type: "section" }),
+      expect.objectContaining({ type: "context" }),
+    ]),
+  });
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
     channel_id: "C123",
     thread_ts: "1712790000.000050",
-    status: "Working on it",
+    status: "",
   });
 });
 

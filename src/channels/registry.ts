@@ -390,7 +390,14 @@ function buildChannelTurnSource(
   route: ChannelRoute,
   msg: Pick<
     InboundChannelMessage,
-    "channel" | "accountId" | "chatId" | "chatType" | "messageId" | "threadId"
+    | "channel"
+    | "accountId"
+    | "chatId"
+    | "chatType"
+    | "senderId"
+    | "senderTeamId"
+    | "messageId"
+    | "threadId"
   >,
 ): ChannelTurnSource {
   return {
@@ -398,6 +405,8 @@ function buildChannelTurnSource(
     accountId: msg.accountId,
     chatId: msg.chatId,
     chatType: msg.chatType,
+    senderId: msg.senderId,
+    senderTeamId: msg.senderTeamId,
     messageId: msg.messageId,
     threadId: msg.threadId,
     agentId: route.agentId,
