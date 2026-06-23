@@ -85,6 +85,10 @@ export interface ChannelTurnSource {
   accountId?: string;
   chatId: string;
   chatType?: ChannelChatType;
+  /** Platform user who triggered the turn, when known. Slack streaming needs this in channel threads. */
+  senderId?: string;
+  /** Platform team/workspace for the triggering user, when known. */
+  senderTeamId?: string;
   messageId?: string;
   threadId?: string | null;
   agentId: string;
@@ -252,6 +256,8 @@ export interface InboundChannelMessage {
   chatId: string;
   /** Platform-specific sender user ID. */
   senderId: string;
+  /** Platform-specific sender team/workspace ID, when available. */
+  senderTeamId?: string;
   /** Sender display name, if available. */
   senderName?: string;
   /** Chat/channel label, if available (for discovery UIs). */
