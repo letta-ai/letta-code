@@ -659,6 +659,15 @@ function expectedRootRelativePathForSource(source: string): string | null {
   const packageName = source.slice("npm:".length);
   const normalizedPackageName = normalizeRelativePath(packageName);
   if (!normalizedPackageName) return null;
+  const packageNameParts = normalizedPackageName.split("/");
+  const isScopedPackage =
+    packageNameParts.length === 2 &&
+    Boolean(packageNameParts[0]?.startsWith("@")) &&
+    Boolean(packageNameParts[0]?.slice(1)) &&
+    Boolean(packageNameParts[1]);
+  const isUnscopedPackage =
+    packageNameParts.length === 1 && !packageNameParts[0]?.startsWith("@");
+  if (!isScopedPackage && !isUnscopedPackage) return null;
   return `${MOD_PACKAGES_DIRECTORY_NAME}/npm/${normalizedPackageName}`;
 }
 

@@ -260,6 +260,30 @@ describe("managed mod package registry", () => {
     expect(readRegistry(modsRoot).packages).toHaveLength(1);
   });
 
+  test("remove refuses scoped namespace package sources", () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    const scopedRoot = path.join(modsRoot, "packages", "npm", "@caren");
+    mkdirSync(scopedRoot, { recursive: true });
+    writeRegistry(modsRoot, [
+      {
+        enabled: true,
+        root: "packages/npm/@caren",
+        source: "npm:@caren",
+        version: "0.1.0",
+      },
+    ]);
+
+    expect(() =>
+      removeManagedModPackage({
+        modsRoot,
+        specifier: "npm:@caren@0.1.0",
+      }),
+    ).toThrow("does not match expected package root");
+    expect(existsSync(scopedRoot)).toBe(true);
+    expect(readRegistry(modsRoot).packages).toHaveLength(1);
+  });
+
   test("source-only spec errors when multiple versions match", () => {
     const root = createTempDir();
     const modsRoot = path.join(root, "mods");
