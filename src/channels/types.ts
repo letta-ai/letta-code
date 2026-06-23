@@ -121,6 +121,8 @@ export interface ChannelTurnProgressUpdate {
   message: string;
   toolCallId?: string;
   toolName?: string;
+  /** Optional sanitized display title for tool progress rows. */
+  toolTitle?: string;
   command?: string;
   runId?: string;
 }

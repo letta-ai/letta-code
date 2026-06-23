@@ -396,6 +396,7 @@ type SlackProgressCardEntry = {
   latestText: string;
   latestUpdate?: ChannelTurnProgressEvent;
   toolNamesByCallId?: Map<string, string>;
+  toolTitlesByCallId?: Map<string, string>;
   toolTasksById?: Map<string, SlackProgressToolTask>;
   pendingStreamChunks?: SlackStreamChunk[];
   hiddenToolCallIds?: Set<string>;
@@ -547,7 +548,14 @@ function buildTerminalSlackStreamChunks(
     if (task.status === "complete" || task.status === "error") {
       continue;
     }
-    const terminalTask = { ...task, status: terminalTaskStatus };
+    const terminalTask = {
+      ...task,
+      title: formatSlackToolTitleForTerminalStatus(
+        task.title,
+        terminalTaskStatus,
+      ),
+      status: terminalTaskStatus,
+    };
     chunks.push({ type: "task_update", ...terminalTask });
     entry.toolTasksById?.set(task.id, terminalTask);
   }
@@ -573,17 +581,60 @@ function rememberSlackToolName(
   entry: SlackProgressCardEntry,
   update: ChannelTurnProgressEvent | undefined,
 ): void {
-  if (!update?.toolCallId || !update.toolName) {
+  if (!update?.toolCallId) {
     return;
   }
-  if (isSlackHiddenToolName(update.toolName)) {
+  if (update.toolName && isSlackHiddenToolName(update.toolName)) {
     entry.hiddenToolCallIds ??= new Set();
     entry.hiddenToolCallIds.add(update.toolCallId);
     entry.toolNamesByCallId?.delete(update.toolCallId);
+    entry.toolTitlesByCallId?.delete(update.toolCallId);
     return;
   }
-  entry.toolNamesByCallId ??= new Map();
-  entry.toolNamesByCallId.set(update.toolCallId, update.toolName);
+  if (update.toolName) {
+    entry.toolNamesByCallId ??= new Map();
+    entry.toolNamesByCallId.set(update.toolCallId, update.toolName);
+  }
+  if (update.toolTitle) {
+    entry.toolTitlesByCallId ??= new Map();
+    entry.toolTitlesByCallId.set(update.toolCallId, update.toolTitle);
+  }
+}
+
+function isSlackHiddenToolUpdate(
+  entry: SlackProgressCardEntry | undefined,
+  update: ChannelTurnProgressEvent,
+): boolean {
+  return Boolean(
+    (update.toolName && isSlackHiddenToolName(update.toolName)) ||
+      (update.toolCallId && entry?.hiddenToolCallIds?.has(update.toolCallId)),
+  );
+}
+
+function formatSlackToolTitleForState(
+  title: string,
+  update: ChannelTurnProgressEvent,
+): string {
+  if (update.state === "completed" && title.startsWith("Searching ")) {
+    return `Searched ${title.slice("Searching ".length)}`;
+  }
+  if (update.state === "error" && title.startsWith("Searching ")) {
+    return `Attempted to search ${title.slice("Searching ".length)}`;
+  }
+  return title;
+}
+
+function formatSlackToolTitleForTerminalStatus(
+  title: string,
+  status: SlackStreamTaskStatus,
+): string {
+  if (status === "complete" && title.startsWith("Searching ")) {
+    return `Searched ${title.slice("Searching ".length)}`;
+  }
+  if (status === "error" && title.startsWith("Searching ")) {
+    return `Attempted to search ${title.slice("Searching ".length)}`;
+  }
+  return title;
 }
 
 function resolveSlackToolActionName(
@@ -592,6 +643,16 @@ function resolveSlackToolActionName(
 ): string | null {
   if (update.toolCallId && entry.hiddenToolCallIds?.has(update.toolCallId)) {
     return null;
+  }
+  const rememberedTitle = update.toolCallId
+    ? entry.toolTitlesByCallId?.get(update.toolCallId)
+    : undefined;
+  const toolTitle = update.toolTitle ?? rememberedTitle;
+  if (toolTitle) {
+    return sanitizeSlackProgressText(
+      formatSlackToolTitleForState(toolTitle, update),
+      SLACK_STREAM_CHUNK_TEXT_MAX,
+    );
   }
   if (update.toolName) {
     if (isSlackHiddenToolName(update.toolName)) {
@@ -1716,10 +1777,7 @@ export function createSlackAdapter(
     pruneSlackProgressCardState(now);
     const existingEntry = progressCardByReplyKey.get(key);
     if (options.update?.kind === "tool") {
-      if (
-        options.update.toolName &&
-        isSlackHiddenToolName(options.update.toolName)
-      ) {
+      if (isSlackHiddenToolUpdate(existingEntry, options.update)) {
         return;
       }
       if (!existingEntry && !options.update.toolName) {
@@ -1829,6 +1887,33 @@ export function createSlackAdapter(
         await clearSlackAssistantThreadStatus(source);
       }),
     );
+  }
+
+  async function finishSlackProgressCardForOutboundMessage(
+    msg: OutboundChannelMessage,
+  ): Promise<void> {
+    if (msg.channel !== "slack" || msg.reaction) {
+      return;
+    }
+    const replyToMessageId = msg.threadId ?? msg.replyToMessageId;
+    if (!isNonEmptyString(replyToMessageId)) {
+      return;
+    }
+    const entry = progressCardByReplyKey.get(
+      `${msg.chatId}:${replyToMessageId}`,
+    );
+    if (!entry) {
+      return;
+    }
+
+    try {
+      await finishSlackProgressCards([entry.source], "completed");
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to finish progress card after outbound message:",
+        error,
+      );
+    }
   }
 
   function markIngressMessageSeen(
@@ -2429,6 +2514,7 @@ export function createSlackAdapter(
         ) {
           agentThreadTracker.remember(msg.chatId, outboundThreadId);
         }
+        await finishSlackProgressCardForOutboundMessage(msg);
         return result;
       }
 
@@ -2454,6 +2540,8 @@ export function createSlackAdapter(
       ) {
         agentThreadTracker.remember(msg.chatId, outboundThreadId);
       }
+
+      await finishSlackProgressCardForOutboundMessage(msg);
 
       return { messageId: response.ts ?? "" };
     },

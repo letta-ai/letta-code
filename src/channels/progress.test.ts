@@ -32,6 +32,37 @@ test("channel progress converts tool call deltas without leaking args", () => {
   ]);
 });
 
+test("channel progress adds semantic web_search titles from safe args", () => {
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        id: "call-1",
+        function: {
+          name: "web_search",
+          arguments: JSON.stringify({
+            query: "letta blog",
+            category: "article",
+          }),
+        },
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: web_search",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "web_search",
+      toolTitle: "Searching articles for “letta blog”",
+    },
+  ]);
+});
+
 test("channel progress sanitizes status text before adapters see it", () => {
   expect(
     sanitizeChannelProgressText(
