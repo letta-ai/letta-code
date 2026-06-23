@@ -10,7 +10,11 @@ import {
   setManagedModPackageEnabled,
 } from "@/mods/package-registry";
 import { scaffoldLocalModPackage } from "@/mods/package-scaffolder";
-import { resolveDefaultGlobalModsDirectory } from "@/mods/paths";
+import {
+  getGlobalModsDirectory,
+  getLegacyGlobalExtensionsDirectory,
+  resolveDefaultGlobalModsDirectory,
+} from "@/mods/paths";
 
 interface LooseModSection {
   files: string[];
@@ -20,6 +24,7 @@ interface LooseModSection {
 export interface ModsList {
   agent?: LooseModSection;
   harness: LooseModSection;
+  legacyHarness?: LooseModSection;
   packageDiagnostics: ManagedModPackageDiagnostic[];
   packages: ManagedModPackageListItem[];
 }
@@ -28,6 +33,7 @@ export interface ListModsOptions {
   agentId?: string | null;
   agentModsDirectory?: string | null;
   globalModsDirectory?: string;
+  legacyGlobalExtensionsDirectory?: string | null;
 }
 
 interface RunModsOptions {
@@ -114,11 +120,20 @@ export function listMods(options: ListModsOptions = {}): ModsList {
     options.agentModsDirectory ??
     (options.agentId ? getAgentModsDirectory(options.agentId) : null);
   const globalModsDirectory =
-    options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory();
+    options.globalModsDirectory ?? getGlobalModsDirectory();
+  const legacyGlobalExtensionsDirectory =
+    options.legacyGlobalExtensionsDirectory ??
+    (options.globalModsDirectory ? null : getLegacyGlobalExtensionsDirectory());
   const sources = resolveLocalModSources({
     ...(agentModsDirectory ? { agentModsDirectory } : {}),
     globalModsDirectory,
+    ...(legacyGlobalExtensionsDirectory
+      ? { legacyGlobalExtensionsDirectory }
+      : {}),
   });
+  const legacyHarness = sources.find(
+    (source) => source.scope === "legacy_global",
+  );
   const harness = sources.find((source) => source.scope === "global");
   const agent = sources.find((source) => source.scope === "agent");
   const managedPackages = listManagedModPackages(globalModsDirectory);
@@ -126,6 +141,7 @@ export function listMods(options: ListModsOptions = {}): ModsList {
   return {
     ...(agent ? { agent: toSection(agent) } : {}),
     harness: harness ? toSection(harness) : { files: [], root: "" },
+    ...(legacyHarness ? { legacyHarness: toSection(legacyHarness) } : {}),
     packageDiagnostics: managedPackages.diagnostics,
     packages: managedPackages.packages,
   };
@@ -179,6 +195,11 @@ export function formatModsList(mods: ModsList): string {
   const sections: string[] = [];
   if (mods.agent) {
     sections.push(formatLooseModSection("Agent mods", mods.agent));
+  }
+  if (mods.legacyHarness) {
+    sections.push(
+      formatLooseModSection("Legacy extensions", mods.legacyHarness),
+    );
   }
   sections.push(formatLooseModSection("Harness mods", mods.harness));
   sections.push(formatInstalledPackagesSection(mods));

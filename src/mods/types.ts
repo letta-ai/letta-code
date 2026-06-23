@@ -126,7 +126,12 @@ export interface ModConversationHandle {
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
 }
 
-export type ModSourceScope = "global" | "project" | "bundled" | "agent";
+export type ModSourceScope =
+  | "legacy_global"
+  | "global"
+  | "project"
+  | "bundled"
+  | "agent";
 
 export interface ModOwner {
   id: string;
@@ -260,6 +265,7 @@ export type ModDiagnosticPhase =
   | "transpile"
   | "import"
   | "activate"
+  | "legacy_extension"
   | "package_manifest"
   | "command_override"
   | "command.run"

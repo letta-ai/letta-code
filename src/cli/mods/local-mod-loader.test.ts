@@ -21,6 +21,7 @@ import {
 } from "@/cli/mods/local-mod-loader";
 import { getModErrorDiagnostics } from "@/mods/mod-diagnostics";
 import { clearModTools } from "@/mods/tool-registry";
+import type { ModDiagnostic } from "@/mods/types";
 
 function createTempDir(): string {
   return mkdtempSync(path.join(tmpdir(), "letta-mods-"));
@@ -80,6 +81,43 @@ describe("local mod loader", () => {
             path.join(globalMods, "a.ts"),
             path.join(globalMods, "b.tsx"),
           ],
+          root: globalMods,
+          scope: "global",
+          trusted: true,
+        },
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("discovers legacy extensions before global mods", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      const legacyExtensions = path.join(root, "legacy-extensions");
+      const legacyPath = path.join(legacyExtensions, "review.ts");
+      const modPath = path.join(globalMods, "web-search.ts");
+      mkdirSync(globalMods, { recursive: true });
+      mkdirSync(legacyExtensions, { recursive: true });
+      writeFileSync(legacyPath, "export default () => {};\n");
+      writeFileSync(modPath, "export default () => {};\n");
+
+      expect(
+        resolveLocalModSources({
+          globalModsDirectory: globalMods,
+          legacyGlobalExtensionsDirectory: legacyExtensions,
+        }),
+      ).toEqual([
+        {
+          files: [legacyPath],
+          legacyMigrationTargetRoot: globalMods,
+          root: legacyExtensions,
+          scope: "legacy_global",
+          trusted: true,
+        },
+        {
+          files: [modPath],
           root: globalMods,
           scope: "global",
           trusted: true,
@@ -916,6 +954,77 @@ export default function(letta) {
       expect(
         Object.values(registry.ui.panels).map((panel) => panel.content),
       ).toEqual([["from a"], ["from b"]]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads legacy extensions with warnings and lets mods shadow them", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const modDir = options.globalModsDirectory;
+      const legacyExtensions = path.join(root, "legacy-extensions");
+      const legacyPath = path.join(legacyExtensions, "review.ts");
+      const modPath = path.join(modDir, "review.ts");
+      mkdirSync(modDir, { recursive: true });
+      mkdirSync(legacyExtensions, { recursive: true });
+      writeFileSync(
+        legacyPath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "review",
+            description: "Legacy review",
+            run() { return { type: "output", output: "legacy" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "review",
+            description: "Mods review",
+            run() { return { type: "output", output: "mods" }; },
+          });
+        }`,
+      );
+
+      const seenDiagnostics: ModDiagnostic[] = [];
+      const registry = await loadLocalMods({
+        ...options,
+        legacyGlobalExtensionsDirectory: legacyExtensions,
+        onDiagnostic: (diagnostic) => seenDiagnostics.push(diagnostic),
+      });
+
+      expect(registry.loadedPaths).toEqual([legacyPath, modPath]);
+      expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
+      expect(registry.commands.review).toMatchObject({
+        description: "Mods review",
+        owner: { path: modPath, scope: "global" },
+      });
+      expect(registry.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            error: expect.objectContaining({
+              message: `Loaded legacy extension from ${legacyPath}. Move it to ${modPath}.`,
+            }),
+            owner: expect.objectContaining({
+              path: legacyPath,
+              scope: "legacy_global",
+            }),
+            phase: "legacy_extension",
+            severity: "warning",
+          }),
+        ]),
+      );
+      expect(seenDiagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            phase: "legacy_extension",
+          }),
+        ]),
+      );
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
