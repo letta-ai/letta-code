@@ -199,6 +199,18 @@ describe("local managed mod package installer", () => {
     expect(() =>
       parseNpmManagedModPackageInstallSpecifier("npm:@caren"),
     ).toThrow("Invalid npm mod package specifier");
+    expect(() =>
+      parseNpmManagedModPackageInstallSpecifier("npm:alias@npm:other"),
+    ).toThrow("Invalid npm package version or tag");
+    expect(() =>
+      parseNpmManagedModPackageInstallSpecifier("npm:my-mod@file:.."),
+    ).toThrow("Invalid npm package version or tag");
+    expect(() =>
+      parseNpmManagedModPackageInstallSpecifier("npm:my-mod@../local"),
+    ).toThrow();
+    expect(() =>
+      parseNpmManagedModPackageInstallSpecifier("npm:my-mod@foo\\bar"),
+    ).toThrow("Invalid npm package version or tag");
   });
 
   test("installs a local package into the managed package directory", () => {

@@ -579,6 +579,12 @@ function getInstalledPackageDirectory(
   return path.join(nodeModulesDirectory, ...packageName.split("/"));
 }
 
+function isPlainNpmVersionOrTag(value: string): boolean {
+  if (!value.trim()) return false;
+  if (value !== value.trim()) return false;
+  return !/[\s:/\\]/.test(value);
+}
+
 export function parseNpmManagedModPackageInstallSpecifier(
   specifier: string,
 ): NpmManagedModPackageInstallSpecifier {
@@ -596,6 +602,9 @@ export function parseNpmManagedModPackageInstallSpecifier(
     version = trimmed.slice(atIndex + 1);
     if (!version) {
       throw new Error(`Invalid npm mod package specifier: ${specifier}`);
+    }
+    if (!isPlainNpmVersionOrTag(version)) {
+      throw new Error(`Invalid npm package version or tag: ${version}`);
     }
   }
 
