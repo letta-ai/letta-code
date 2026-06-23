@@ -47,6 +47,10 @@ import {
   recordStaleHandleUse,
 } from "@/mods/mod-diagnostics";
 import {
+  type ManagedModPackageDiagnostic,
+  resolveManagedModPackages,
+} from "@/mods/package-registry";
+import {
   getGlobalModsDirectory,
   getLegacyGlobalExtensionsDirectory,
   getModCacheDirectory,
@@ -214,7 +218,9 @@ export interface LocalModRegistry {
 }
 
 export interface LocalModSource {
+  diagnostics?: ManagedModPackageDiagnostic[];
   files: string[];
+  managedPackageRoots?: string[];
   root: string;
   scope: ModSourceScope;
   trusted: boolean;
@@ -309,9 +315,21 @@ export function resolveLocalModSources(
 ): LocalModSource[] {
   const globalModsDirectory =
     options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory();
+  const managedPackages = resolveManagedModPackages(globalModsDirectory);
+  const globalDiagnostics = managedPackages.diagnostics;
   const sources: LocalModSource[] = [
     {
-      files: listModFiles(globalModsDirectory),
+      ...(globalDiagnostics.length > 0
+        ? { diagnostics: globalDiagnostics }
+        : {}),
+      files: [...listModFiles(globalModsDirectory), ...managedPackages.files],
+      ...(managedPackages.packages.length > 0
+        ? {
+            managedPackageRoots: managedPackages.packages.map(
+              (pkg) => pkg.root,
+            ),
+          }
+        : {}),
       root: globalModsDirectory,
       scope: "global",
       trusted: true,
@@ -396,7 +414,11 @@ function snapshotRegistryForReaders(
     permissions: { ...registry.permissions },
     sources: registry.sources.map((source) => ({
       ...source,
+      ...(source.diagnostics ? { diagnostics: [...source.diagnostics] } : {}),
       files: [...source.files],
+      ...(source.managedPackageRoots
+        ? { managedPackageRoots: [...source.managedPackageRoots] }
+        : {}),
     })),
     tools: { ...registry.tools },
     ui: {
@@ -491,6 +513,27 @@ function ensureModCache(cacheDirectory: string): void {
   ensureRuntimeDependencySymlink(cacheDirectory, "react");
 }
 
+function isPathInsideOrEqual(childPath: string, parentPath: string): boolean {
+  const child = path.resolve(childPath);
+  const parent = path.resolve(parentPath);
+  const relative = path.relative(parent, child);
+  return (
+    relative === "" ||
+    (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative))
+  );
+}
+
+function getManagedPackageImportCacheDirectory(
+  modPath: string,
+  source: LocalModSource,
+): string | null {
+  const matchingRoot = source.managedPackageRoots?.find((packageRoot) =>
+    isPathInsideOrEqual(modPath, packageRoot),
+  );
+  if (!matchingRoot) return null;
+  return path.dirname(modPath);
+}
+
 function formatTranspileDiagnostic(diagnostic: ts.Diagnostic): string {
   const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
   if (!diagnostic.file || diagnostic.start == null) {
@@ -536,18 +579,28 @@ function prepareModForImport(modPath: string, source: string): string {
 function createImportableModPath(
   modPath: string,
   cacheDirectory: string,
+  source: LocalModSource,
 ): string {
-  ensureModCache(cacheDirectory);
+  const importCacheDirectory =
+    getManagedPackageImportCacheDirectory(modPath, source) ?? cacheDirectory;
+  if (importCacheDirectory === cacheDirectory) {
+    ensureModCache(importCacheDirectory);
+  } else {
+    mkdirSync(importCacheDirectory, { recursive: true });
+  }
 
-  const source = readFileSync(modPath, "utf8");
-  const hash = createHash("sha256").update(source).digest("hex").slice(0, 16);
+  const sourceText = readFileSync(modPath, "utf8");
+  const hash = createHash("sha256")
+    .update(sourceText)
+    .digest("hex")
+    .slice(0, 16);
   const fileExtension = path.extname(modPath);
-  const importableSource = prepareModForImport(modPath, source);
+  const importableSource = prepareModForImport(modPath, sourceText);
   const baseName = path
     .basename(modPath, fileExtension)
     .replace(/[^a-zA-Z0-9_-]/g, "-");
   const importPath = path.join(
-    cacheDirectory,
+    importCacheDirectory,
     `.letta-mod-${baseName}-${hash}.mjs`,
   );
 
@@ -556,12 +609,12 @@ function createImportableModPath(
   }
 
   try {
-    for (const entry of readdirSync(cacheDirectory)) {
+    for (const entry of readdirSync(importCacheDirectory)) {
       if (
         entry.startsWith(`.letta-mod-${baseName}-`) &&
         entry !== path.basename(importPath)
       ) {
-        unlinkSync(path.join(cacheDirectory, entry));
+        unlinkSync(path.join(importCacheDirectory, entry));
       }
     }
   } catch {
@@ -1331,6 +1384,19 @@ export async function loadLocalMods(
   const registry = createEmptyModRegistry(sources, generation, capabilities);
 
   for (const source of sources) {
+    for (const diagnostic of source.diagnostics ?? []) {
+      const owner = createModOwner(diagnostic.path, source, generation);
+      recordModDiagnostic(
+        registry,
+        {
+          error: diagnostic.error,
+          owner,
+          phase: "package_manifest",
+        },
+        options.onDiagnostic,
+      );
+    }
+
     for (const modPath of source.files) {
       const owner = createModOwner(modPath, source, generation);
       const abortController = new AbortController();
@@ -1357,7 +1423,11 @@ export async function loadLocalMods(
         failurePhase = isTypeScriptModFileExtension(path.extname(modPath))
           ? "transpile"
           : "import";
-        const importPath = createImportableModPath(modPath, cacheDirectory);
+        const importPath = createImportableModPath(
+          modPath,
+          cacheDirectory,
+          source,
+        );
         failurePhase = "import";
         const module = (await import(
           `${pathToFileURL(importPath).href}?mod=${mtimeMs}`

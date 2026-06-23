@@ -130,6 +130,151 @@ describe("local mod loader", () => {
     }
   });
 
+  test("discovers managed package entries after loose global mods", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      const packageRoot = path.join(
+        globalMods,
+        "packages",
+        "npm",
+        "@caren",
+        "my-mod",
+      );
+      const packageMod = path.join(packageRoot, "mods", "index.ts");
+      const packageExtra = path.join(packageRoot, "mods", "extra.ts");
+      const looseMod = path.join(globalMods, "loose.ts");
+      mkdirSync(path.dirname(packageMod), { recursive: true });
+      writeFileSync(looseMod, "export default () => {};\n");
+      writeFileSync(packageMod, "export default () => {};\n");
+      writeFileSync(packageExtra, "export default () => {};\n");
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          letta: {
+            manifestVersion: 1,
+            mods: ["./mods/index.ts"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/my-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/my-mod",
+              entries: ["./mods/index.ts"],
+            },
+          ],
+        }),
+      );
+
+      expect(
+        resolveLocalModSources({
+          globalModsDirectory: globalMods,
+        }),
+      ).toEqual([
+        {
+          files: [looseMod, packageMod],
+          managedPackageRoots: [packageRoot],
+          root: globalMods,
+          scope: "global",
+          trusted: true,
+        },
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("skips disabled managed packages", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      mkdirSync(globalMods, { recursive: true });
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/my-disabled-mod",
+              version: "0.1.0",
+              enabled: false,
+              root: "packages/npm/@caren/my-disabled-mod",
+              entries: ["./mods/index.ts"],
+            },
+          ],
+        }),
+      );
+
+      expect(
+        resolveLocalModSources({
+          globalModsDirectory: globalMods,
+        }),
+      ).toEqual([
+        {
+          files: [],
+          root: globalMods,
+          scope: "global",
+          trusted: true,
+        },
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("reports invalid managed package manifests", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      const packageRoot = path.join(
+        globalMods,
+        "packages",
+        "npm",
+        "@caren",
+        "bad-mod",
+      );
+      const packageJsonPath = path.join(packageRoot, "package.json");
+      mkdirSync(packageRoot, { recursive: true });
+      writeFileSync(
+        packageJsonPath,
+        JSON.stringify({ name: "@caren/bad-mod" }),
+      );
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/bad-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/bad-mod",
+              entries: ["./mods/index.ts"],
+            },
+          ],
+        }),
+      );
+
+      const sources = resolveLocalModSources({
+        globalModsDirectory: globalMods,
+      });
+
+      expect(sources).toHaveLength(1);
+      expect(sources[0]?.files).toEqual([]);
+      expect(sources[0]?.diagnostics).toHaveLength(1);
+      expect(sources[0]?.diagnostics?.[0]?.path).toBe(packageJsonPath);
+      expect(sources[0]?.diagnostics?.[0]?.error.message).toContain(
+        "package.json#letta",
+      );
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("does not initialize SDK client when no mod files exist", async () => {
     const root = createTempDir();
     try {
@@ -421,6 +566,83 @@ describe("local mod loader", () => {
         createStatuslineContext(),
       );
       expect(output).toMatchObject({ props: { children: "Letta Code" } });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads managed package mods with package node_modules imports", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const globalMods = options.globalModsDirectory;
+      const packageRoot = path.join(
+        globalMods,
+        "packages",
+        "npm",
+        "@caren",
+        "dep-mod",
+      );
+      const modDir = path.join(packageRoot, "mods");
+      const dependencyRoot = path.join(packageRoot, "node_modules", "fake-dep");
+      mkdirSync(modDir, { recursive: true });
+      mkdirSync(dependencyRoot, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "index.js"),
+        `import { label } from "fake-dep";
+export default function(letta) {
+  letta.ui.setStatus("dep", label);
+}
+`,
+      );
+      writeFileSync(
+        path.join(dependencyRoot, "package.json"),
+        JSON.stringify({
+          name: "fake-dep",
+          version: "1.0.0",
+          type: "module",
+          exports: "./index.js",
+        }),
+      );
+      writeFileSync(
+        path.join(dependencyRoot, "index.js"),
+        `export const label = "dependency";\n`,
+      );
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          name: "@caren/dep-mod",
+          version: "0.1.0",
+          letta: {
+            manifestVersion: 1,
+            mods: ["mods/index.js"],
+          },
+        }),
+      );
+      mkdirSync(globalMods, { recursive: true });
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/dep-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/dep-mod",
+              entries: ["mods/index.js"],
+            },
+          ],
+        }),
+      );
+
+      const registry = await loadLocalMods(options);
+
+      expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
+      expect(registry.ui.statusValues.dep).toBe("dependency");
+      const generatedFiles = readdirSync(modDir).filter((entry) =>
+        entry.startsWith(".letta-mod-index-"),
+      );
+      expect(generatedFiles).toHaveLength(1);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

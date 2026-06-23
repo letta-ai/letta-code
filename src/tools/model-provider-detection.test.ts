@@ -46,6 +46,12 @@ describe("deriveToolsetFromModel", () => {
     expect(deriveToolsetFromModel("openai-codex/gpt-5.5")).toBe("codex");
   });
 
+  test("maps custom ChatGPT OAuth aliases to codex toolset via provider type", () => {
+    expect(
+      deriveToolsetFromModel("chatgpt-work/gpt-5.5", "chatgpt_oauth"),
+    ).toBe("codex");
+  });
+
   test("maps Gemini models to default (anthropic) toolset", () => {
     expect(deriveToolsetFromModel("google_ai/gemini-2.5-pro")).toBe("default");
     expect(deriveToolsetFromModel("gemini-pro")).toBe("default");

@@ -40,7 +40,8 @@ function buildModelSettings(
     typeof updateArgs?.provider_type === "string"
       ? updateArgs.provider_type
       : undefined;
-  // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
+  // Include ChatGPT OAuth/Codex providers, including user-defined aliases whose
+  // provider_type is supplied by the server model catalog.
   const isOpenAICodex =
     explicitProviderType === "chatgpt_oauth" ||
     modelHandle.startsWith("openai-codex/");

@@ -215,6 +215,7 @@ import {
   getPreferredAgentModelHandle,
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
+  providerTypeFromModelSettings,
 } from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
@@ -3108,9 +3109,14 @@ export function App({
           if (persistedToolsetPreference === "auto") {
             if (agentModelHandle) {
               const { switchToolsetForModel } = await import("@/tools/toolset");
+              const providerType =
+                providerTypeFromModelSettings(agent.model_settings) ??
+                agent.llm_config?.model_endpoint_type ??
+                null;
               const derivedToolset = await switchToolsetForModel(
                 agentModelHandle,
                 agentId,
+                providerType,
               );
               setCurrentToolset(derivedToolset);
             } else {
@@ -3405,7 +3411,10 @@ export function App({
         setCurrentModelId(modelInfo?.id ?? effectiveModelHandle);
         setLlmConfig({
           ...agentState.llm_config,
-          ...mapHandleToLlmConfigPatch(effectiveModelHandle),
+          ...mapHandleToLlmConfigPatch(
+            effectiveModelHandle,
+            providerTypeFromModelSettings(resolvedConversationModelSettings),
+          ),
           ...(typeof reasoningEffort === "string"
             ? { reasoning_effort: reasoningEffort }
             : {}),

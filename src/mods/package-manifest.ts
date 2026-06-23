@@ -67,7 +67,7 @@ function isWindowsAbsolutePath(value: string): boolean {
   return path.win32.isAbsolute(value) || /^[a-zA-Z]:[\\/]/.test(value);
 }
 
-function isSafeRelativeModPath(value: string): boolean {
+export function isSafeLettaPackageModEntryPath(value: string): boolean {
   if (!value.trim()) return false;
   if (value.includes("\0")) return false;
   if (value.includes("\\")) return false;
@@ -170,7 +170,7 @@ function validateMods(
       addError(errors, entryPath, "mod entry must be a string path");
       return;
     }
-    if (!isSafeRelativeModPath(entry)) {
+    if (!isSafeLettaPackageModEntryPath(entry)) {
       addError(
         errors,
         entryPath,

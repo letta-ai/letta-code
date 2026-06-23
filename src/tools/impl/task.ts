@@ -361,6 +361,7 @@ export function spawnBackgroundSubagentTask(
     true,
     silentCompletion,
     resolvedParentScope,
+    prompt,
   );
 
   const taskId = getNextTaskId();
@@ -734,6 +735,7 @@ export async function task(args: TaskArgs): Promise<string> {
     false,
     false,
     resolvedParentScope,
+    prompt,
   );
 
   // Foreground tasks now also write transcripts so users can inspect full output

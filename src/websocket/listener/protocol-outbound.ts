@@ -1018,6 +1018,7 @@ export function buildSubagentSnapshot(
       subagent_id: a.id,
       subagent_type: a.type,
       description: a.description,
+      prompt: a.prompt,
       status: a.status,
       agent_url: a.agentURL,
       model: a.model,
