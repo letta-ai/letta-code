@@ -168,7 +168,7 @@ describe("local mod loader", () => {
     }
   });
 
-  test("discovers managed package entries after loose global mods", () => {
+  test("discovers managed package entries after harness mod files", () => {
     const root = createTempDir();
     try {
       const { globalModsDirectory: globalMods } = createLoadOptions(root);
@@ -181,9 +181,9 @@ describe("local mod loader", () => {
       );
       const packageMod = path.join(packageRoot, "mods", "index.ts");
       const packageExtra = path.join(packageRoot, "mods", "extra.ts");
-      const looseMod = path.join(globalMods, "loose.ts");
+      const modFile = path.join(globalMods, "mod-file.ts");
       mkdirSync(path.dirname(packageMod), { recursive: true });
-      writeFileSync(looseMod, "export default () => {};\n");
+      writeFileSync(modFile, "export default () => {};\n");
       writeFileSync(packageMod, "export default () => {};\n");
       writeFileSync(packageExtra, "export default () => {};\n");
       writeFileSync(
@@ -216,7 +216,7 @@ describe("local mod loader", () => {
         }),
       ).toEqual([
         {
-          files: [looseMod, packageMod],
+          files: [modFile, packageMod],
           managedPackageRoots: [packageRoot],
           root: globalMods,
           scope: "global",

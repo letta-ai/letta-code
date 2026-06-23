@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe("local mod package scaffolder", () => {
-  test("creates a package scaffold from a loose mod file", () => {
+  test("creates a package scaffold from a mod file", () => {
     const root = createTempDir();
     const sourceFile = path.join(root, "hello.ts");
     const outputDirectory = path.join(root, "hello-package");
