@@ -14,6 +14,14 @@ interface ArtifactCallArgs {
   app_name: string;
   function_name: string;
   args?: unknown;
+  log_limit?: number;
+}
+
+function getLogLimit(value: number | undefined, defaultLimit: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return defaultLimit;
+  }
+  return Math.max(0, Math.min(100, Math.floor(value)));
 }
 
 function emitMemoryUpdated(affectedPaths: string[]): void {
@@ -83,13 +91,16 @@ export async function artifact_call(args: ArtifactCallArgs): Promise<{
     })),
   });
   emitMemoryUpdated(result.updatedPaths);
+  const logLimit = getLogLimit(args.log_limit, 5);
 
   return {
     content: JSON.stringify(
       {
         result: result.result,
         updated_paths: result.updatedPaths,
-        logs: result.logs,
+        logs: logLimit === 0 ? [] : result.logs.slice(-logLimit),
+        logs_truncated: result.logs.length > logLimit,
+        total_logs: result.logs.length,
       },
       null,
       2,

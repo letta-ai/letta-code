@@ -21,11 +21,17 @@ interface ArtifactInteractArgs {
   text?: string;
   key?: string;
   timeout_ms?: number;
+  log_limit?: number;
 }
 
 function getTimeoutMs(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 7000;
   return Math.max(1000, Math.min(30000, value));
+}
+
+function getLogLimit(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 5;
+  return Math.max(0, Math.min(100, Math.floor(value)));
 }
 
 export async function artifact_interact(args: ArtifactInteractArgs): Promise<{
@@ -63,6 +69,7 @@ export async function artifact_interact(args: ArtifactInteractArgs): Promise<{
       text: args.text,
       key: args.key,
       timeout_ms: timeoutMs,
+      log_limit: getLogLimit(args.log_limit),
     }),
   );
 
@@ -76,6 +83,8 @@ export async function artifact_interact(args: ArtifactInteractArgs): Promise<{
         result: response.result,
         error: response.error,
         logs: response.logs,
+        total_logs: response.total_logs,
+        logs_truncated: response.logs_truncated,
       },
       null,
       2,

@@ -746,6 +746,8 @@ export function isArtifactInteractResponseCommand(
   const success = Reflect.get(value, "success");
   const error = Reflect.get(value, "error");
   const logs = Reflect.get(value, "logs");
+  const totalLogs = Reflect.get(value, "total_logs");
+  const logsTruncated = Reflect.get(value, "logs_truncated");
   return (
     type === "artifact_interact_response" &&
     typeof requestId === "string" &&
@@ -755,7 +757,9 @@ export function isArtifactInteractResponseCommand(
     typeof success === "boolean" &&
     (error === undefined || typeof error === "string") &&
     (logs === undefined ||
-      (Array.isArray(logs) && logs.every(isArtifactDebugLogEntry)))
+      (Array.isArray(logs) && logs.every(isArtifactDebugLogEntry))) &&
+    (totalLogs === undefined || typeof totalLogs === "number") &&
+    (logsTruncated === undefined || typeof logsTruncated === "boolean")
   );
 }
 

@@ -27,6 +27,8 @@ Use this skill when debugging an artifact app in `external/artifacts/<artifact-n
 
 Use `artifact_debug_logs` to read logs captured by the open artifact panel. These logs are kept only in the running Letta Code process; they are not written to MemFS.
 
+Artifact tools return compact log tails by default to avoid wasting context. Use `artifact_debug_logs` when detailed logs are needed, and pass `limit` only as high as necessary.
+
 Examples:
 
 ```json
@@ -37,7 +39,12 @@ Lists artifacts with available log snapshots.
 ```json
 { "app_name": "todo-app" }
 ```
-Reads HTML logs and server/system logs for `todo-app`.
+Reads the latest HTML logs and server/system logs for `todo-app` (defaults to the last 50 per source).
+
+```json
+{ "app_name": "todo-app", "limit": 20 }
+```
+Reads only the last 20 logs per source.
 
 ```json
 { "app_name": "todo-app", "clear": true }
@@ -69,11 +76,15 @@ Example with args:
 }
 ```
 
-`artifact_call` returns JSON containing the result, updated memory paths, and server logs. It also appends returned server logs to the in-memory artifact debug snapshot.
+`artifact_call` returns JSON containing the result, updated memory paths, and a compact server log tail. It also appends returned server logs to the in-memory artifact debug snapshot.
+
+By default, `artifact_call` returns only the last 5 server logs. Use `log_limit` sparingly, or use `artifact_debug_logs` for detailed log inspection.
 
 ## Browser/UI interaction
 
 Use `artifact_interact` to act inside the open artifact iframe. It routes through the connected UI runtime and performs safe DOM actions without arbitrary eval.
+
+By default, `artifact_interact` returns only the last 5 HTML/server logs. Use `log_limit: 0` to omit logs when only the snapshot/result is needed. Use `artifact_debug_logs` for detailed logs.
 
 Inspect the current UI:
 
@@ -144,6 +155,16 @@ Wait until DOM mutations settle, then return a fresh snapshot:
 Supported actions: `snapshot`, `click`, `input`, `select`, `keydown`, `submit`, `wait_for_selector`, `wait_for_text`, `wait_for_change`, `wait_for_idle`.
 
 Recommended loop after an action: `click`/`input`/`submit` → `wait_for_change` or `wait_for_idle` → `snapshot` → inspect `artifact_debug_logs` if behavior is unexpected.
+
+For routine UI checks, prefer compact calls:
+
+```json
+{
+  "app_name": "todo-app",
+  "action": "snapshot",
+  "log_limit": 0
+}
+```
 
 If the tool reports that the iframe is not ready, retry once after the artifact panel opens or switches to the requested artifact.
 

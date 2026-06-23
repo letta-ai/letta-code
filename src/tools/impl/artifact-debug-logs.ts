@@ -8,6 +8,12 @@ import {
 interface ArtifactDebugLogsArgs {
   app_name?: string;
   clear?: boolean;
+  limit?: number;
+}
+
+function getLogLimit(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 50;
+  return Math.max(0, Math.min(200, Math.floor(value)));
 }
 
 export async function artifact_debug_logs(
@@ -69,16 +75,21 @@ export async function artifact_debug_logs(
     return `[${log.timestamp}] [${log.source}] [${log.level}]${details ? ` ${details}` : ""} ${log.message}`;
   };
 
+  const limit = getLogLimit(args.limit);
+  const htmlLogs = limit === 0 ? [] : snapshot.htmlLogs.slice(-limit);
+  const serverLogs = limit === 0 ? [] : snapshot.serverLogs.slice(-limit);
+
   return {
     content: [
       `Artifact: ${snapshot.appName}`,
       `Updated: ${snapshot.updatedAt}`,
+      `Showing last ${limit} logs per source. HTML total: ${snapshot.htmlLogs.length}. Server/system total: ${snapshot.serverLogs.length}.`,
       "",
       "HTML logs:",
-      snapshot.htmlLogs.map(formatLog).join("\n") || "(none)",
+      htmlLogs.map(formatLog).join("\n") || "(none)",
       "",
       "Server/system logs:",
-      snapshot.serverLogs.map(formatLog).join("\n") || "(none)",
+      serverLogs.map(formatLog).join("\n") || "(none)",
     ].join("\n"),
   };
 }

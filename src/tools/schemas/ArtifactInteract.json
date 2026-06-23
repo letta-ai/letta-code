@@ -41,6 +41,10 @@
     "timeout_ms": {
       "type": "number",
       "description": "Timeout for wait actions and the overall UI response."
+    },
+    "log_limit": {
+      "type": "number",
+      "description": "Maximum number of trailing HTML/server logs to include in the tool response. Defaults to 5. Use 0 to omit logs; use artifact_debug_logs for detailed logs."
     }
   },
   "required": ["app_name", "action"],

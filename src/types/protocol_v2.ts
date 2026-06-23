@@ -979,6 +979,8 @@ export interface ArtifactInteractResponseCommand {
   result?: unknown;
   error?: string;
   logs?: ArtifactDebugLogEntry[];
+  total_logs?: number;
+  logs_truncated?: boolean;
 }
 
 export interface MemoryCommitDiffCommand {

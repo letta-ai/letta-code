@@ -9,6 +9,10 @@
     "clear": {
       "type": "boolean",
       "description": "When true, clear the stored in-memory debug snapshot for app_name."
+    },
+    "limit": {
+      "type": "number",
+      "description": "Maximum number of trailing logs to show per source. Defaults to 50. Use a higher value only when needed."
     }
   },
   "additionalProperties": false
