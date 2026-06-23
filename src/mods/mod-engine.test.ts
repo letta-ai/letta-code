@@ -215,6 +215,223 @@ describe("mod engine", () => {
     }
   });
 
+  test("loads managed package entries from the global mods directory", async () => {
+    const root = createTempDir();
+    try {
+      const globalMods = path.join(root, "global-mods");
+      const packageRoot = path.join(
+        globalMods,
+        "packages",
+        "npm",
+        "@caren",
+        "hello-mod",
+      );
+      const packagePath = path.join(packageRoot, "mods", "command.ts");
+      const undeclaredPath = path.join(packageRoot, "mods", "undeclared.ts");
+      mkdirSync(path.dirname(packagePath), { recursive: true });
+      writeFileSync(
+        packagePath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "packaged-hello",
+            description: "Packaged hello",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        undeclaredPath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "undeclared",
+            description: "Should not load",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          letta: {
+            manifestVersion: 1,
+            mods: ["./mods/command.ts"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/hello-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/hello-mod",
+              entries: ["./mods/command.ts"],
+            },
+          ],
+        }),
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+      expect(snapshot.loadedPaths).toEqual([packagePath]);
+      expect(snapshot.commands["packaged-hello"]).toMatchObject({
+        description: "Packaged hello",
+        owner: { path: packagePath, scope: "global" },
+      });
+      expect(snapshot.commands.undeclared).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("reports invalid managed package entries without loading them", async () => {
+    const root = createTempDir();
+    try {
+      const globalMods = path.join(root, "global-mods");
+      const packageRoot = path.join(
+        globalMods,
+        "packages",
+        "npm",
+        "@caren",
+        "bad-entry",
+      );
+      const packagePath = path.join(packageRoot, "mods", "command.ts");
+      mkdirSync(path.dirname(packagePath), { recursive: true });
+      writeFileSync(
+        packagePath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "bad-entry",
+            description: "Bad entry",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          letta: {
+            manifestVersion: 1,
+            mods: ["./mods/other.ts"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/bad-entry",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/bad-entry",
+              entries: ["./mods/command.ts"],
+            },
+          ],
+        }),
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+      const errors = getModErrorDiagnostics(snapshot.diagnostics);
+
+      expect(snapshot.loadedPaths).toEqual([]);
+      expect(snapshot.commands["bad-entry"]).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.phase).toBe("package_manifest");
+      expect(errors[0]?.error.message).toContain("not declared");
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("agent commands shadow managed global package commands", async () => {
+    const root = createTempDir();
+    try {
+      const globalMods = path.join(root, "global-mods");
+      const agentMods = path.join(root, "memory", "mods");
+      const packageRoot = path.join(
+        globalMods,
+        "packages",
+        "npm",
+        "@caren",
+        "hello-mod",
+      );
+      const packagePath = path.join(packageRoot, "mods", "command.ts");
+      const agentPath = path.join(agentMods, "command.ts");
+      mkdirSync(path.dirname(packagePath), { recursive: true });
+      mkdirSync(agentMods, { recursive: true });
+      writeFileSync(
+        packagePath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "hello",
+            description: "Packaged hello",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          letta: {
+            manifestVersion: 1,
+            mods: ["./mods/command.ts"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/hello-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/hello-mod",
+              entries: ["./mods/command.ts"],
+            },
+          ],
+        }),
+      );
+      writeFileSync(
+        agentPath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "hello",
+            description: "Agent hello",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+
+      const engine = createEngine(root, undefined, undefined, agentMods);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+      expect(snapshot.loadedPaths).toEqual([packagePath, agentPath]);
+      expect(snapshot.commands.hello).toMatchObject({
+        description: "Agent hello",
+        owner: { path: agentPath, scope: "agent" },
+      });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("agent tools shadow global tools and update the process registry", async () => {
     const root = createTempDir();
     try {
