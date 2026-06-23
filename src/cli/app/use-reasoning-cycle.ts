@@ -20,6 +20,7 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   deriveReasoningEffort,
   mapHandleToLlmConfigPatch,
+  providerTypeFromModelSettings,
 } from "./model-config";
 import type { CommandStarter } from "./types";
 
@@ -263,7 +264,14 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             ...(updatedAgent?.llm_config ??
               llmConfigRef.current ??
               ({} as LlmConfig)),
-            ...mapHandleToLlmConfigPatch(desired.modelHandle),
+            ...mapHandleToLlmConfigPatch(
+              desired.modelHandle,
+              providerTypeFromModelSettings(
+                isDefaultConversation
+                  ? (updatedAgent?.model_settings ?? null)
+                  : conversationModelSettings,
+              ),
+            ),
             reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
             ...(typeof resolvedConversationContextWindowLimit === "number"
               ? { context_window: resolvedConversationContextWindowLimit }

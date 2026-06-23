@@ -38,10 +38,18 @@ import {
   recordDeprecatedContextApiSourceDiagnostics,
 } from "@/mods/deprecated-api";
 import {
+  isModFileExtension,
+  isTypeScriptModFileExtension,
+} from "@/mods/file-extensions";
+import {
   appendModDiagnostic,
   recordModDiagnostic,
   recordStaleHandleUse,
 } from "@/mods/mod-diagnostics";
+import {
+  type ManagedModPackageDiagnostic,
+  resolveManagedModPackages,
+} from "@/mods/package-registry";
 import {
   getGlobalModsDirectory,
   getLegacyGlobalExtensionsDirectory,
@@ -84,6 +92,7 @@ import type {
   ModPanelUpdate,
   ModPermission,
   ModPermissionRegistration,
+  ModSourceScope,
   ModTool,
   ModToolRegistration,
   ModToolStartEvent,
@@ -95,8 +104,6 @@ export const LEGACY_GLOBAL_EXTENSIONS_DIRECTORY =
   getLegacyGlobalExtensionsDirectory();
 export const MOD_CACHE_DIRECTORY = getModCacheDirectory();
 
-const MOD_FILE_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".tsx"]);
-const TYPESCRIPT_MOD_FILE_EXTENSIONS = new Set([".ts", ".tsx"]);
 const requireFromRuntime = createRequire(import.meta.url);
 
 export type StatuslineRenderFunction = (
@@ -211,9 +218,10 @@ export interface LocalModRegistry {
 }
 
 export interface LocalModSource {
+  diagnostics?: ManagedModPackageDiagnostic[];
   files: string[];
   root: string;
-  scope: "global" | "project" | "bundled";
+  scope: ModSourceScope;
   trusted: boolean;
 }
 
@@ -223,6 +231,7 @@ interface LocalModModule {
 }
 
 export interface ResolveLocalModSourcesOptions {
+  agentModsDirectory?: string;
   cacheDirectory?: string;
   globalModsDirectory?: string;
 }
@@ -265,10 +274,39 @@ function listModFiles(directory: string): string[] {
     .filter((entry) => {
       if (!entry.isFile()) return false;
       if (entry.name.startsWith(".")) return false;
-      return MOD_FILE_EXTENSIONS.has(path.extname(entry.name));
+      return isModFileExtension(path.extname(entry.name));
     })
     .map((entry) => path.join(directory, entry.name))
     .sort((a, b) => a.localeCompare(b));
+}
+
+function getModSourcePriority(scope: ModSourceScope): number {
+  switch (scope) {
+    case "bundled":
+      return 0;
+    case "global":
+      return 1;
+    case "agent":
+      return 2;
+    case "project":
+      return 3;
+  }
+}
+
+function canShadowOwner(owner: ModOwner, existingOwner?: ModOwner): boolean {
+  return (
+    existingOwner !== undefined &&
+    getModSourcePriority(owner.scope) >
+      getModSourcePriority(existingOwner.scope)
+  );
+}
+
+function isShadowedByOwner(owner: ModOwner, existingOwner?: ModOwner): boolean {
+  return (
+    existingOwner !== undefined &&
+    getModSourcePriority(owner.scope) <
+      getModSourcePriority(existingOwner.scope)
+  );
 }
 
 export function resolveLocalModSources(
@@ -276,15 +314,30 @@ export function resolveLocalModSources(
 ): LocalModSource[] {
   const globalModsDirectory =
     options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory();
-
-  return [
+  const managedPackages = resolveManagedModPackages(globalModsDirectory);
+  const globalDiagnostics = managedPackages.diagnostics;
+  const sources: LocalModSource[] = [
     {
-      files: listModFiles(globalModsDirectory),
+      ...(globalDiagnostics.length > 0
+        ? { diagnostics: globalDiagnostics }
+        : {}),
+      files: [...listModFiles(globalModsDirectory), ...managedPackages.files],
       root: globalModsDirectory,
       scope: "global",
       trusted: true,
     },
   ];
+
+  if (options.agentModsDirectory) {
+    sources.push({
+      files: listModFiles(options.agentModsDirectory),
+      root: options.agentModsDirectory,
+      scope: "agent",
+      trusted: true,
+    });
+  }
+
+  return sources;
 }
 
 function createEmptyModRegistry(
@@ -353,6 +406,7 @@ function snapshotRegistryForReaders(
     permissions: { ...registry.permissions },
     sources: registry.sources.map((source) => ({
       ...source,
+      ...(source.diagnostics ? { diagnostics: [...source.diagnostics] } : {}),
       files: [...source.files],
     })),
     tools: { ...registry.tools },
@@ -483,7 +537,7 @@ function transpileTypeScriptMod(modPath: string, source: string): string {
 
 function prepareModForImport(modPath: string, source: string): string {
   const fileExtension = path.extname(modPath);
-  if (TYPESCRIPT_MOD_FILE_EXTENSIONS.has(fileExtension)) {
+  if (isTypeScriptModFileExtension(fileExtension)) {
     return transpileTypeScriptMod(modPath, source);
   }
 
@@ -1062,7 +1116,16 @@ function createLettaModApi(
         }
 
         const existing = registry.commands[normalized.id];
-        if (existing && !command.override) {
+        if (existing && isShadowedByOwner(owner, existing.owner)) {
+          throw new Error(
+            `Mod command '${normalized.id}' is already registered by higher-priority mod ${existing.path}`,
+          );
+        }
+        if (
+          existing &&
+          !command.override &&
+          !canShadowOwner(owner, existing.owner)
+        ) {
           throw new Error(
             `Mod command '${normalized.id}' is already registered by ${existing.path}`,
           );
@@ -1096,7 +1159,20 @@ function createLettaModApi(
 
         const existing = registry.tools[normalized.name];
         const existingGlobal = getModToolDefinition(normalized.name);
-        if ((existing || existingGlobal) && !tool.override) {
+        const existingOwner = existing?.owner ?? existingGlobal?.owner;
+        if (
+          (existing || existingGlobal) &&
+          isShadowedByOwner(owner, existingOwner)
+        ) {
+          throw new Error(
+            `Mod tool '${normalized.name}' is already registered by higher-priority mod ${existing?.path ?? existingGlobal?.path}`,
+          );
+        }
+        if (
+          (existing || existingGlobal) &&
+          !tool.override &&
+          !canShadowOwner(owner, existingOwner)
+        ) {
           throw new Error(
             `Mod tool '${normalized.name}' is already registered by ${existing?.path ?? existingGlobal?.path}`,
           );
@@ -1136,7 +1212,19 @@ function createLettaModApi(
         const normalized = normalizeModPermission(permission, owner);
         const existing = registry.permissions[normalized.id];
         const existingGlobal = getModPermissionDefinition(normalized.id);
-        if (existing || existingGlobal) {
+        const existingOwner = existing?.owner ?? existingGlobal?.owner;
+        if (
+          (existing || existingGlobal) &&
+          isShadowedByOwner(owner, existingOwner)
+        ) {
+          throw new Error(
+            `Mod permission '${normalized.id}' is already registered by higher-priority mod ${existing?.path ?? existingGlobal?.path}`,
+          );
+        }
+        if (
+          (existing || existingGlobal) &&
+          !canShadowOwner(owner, existingOwner)
+        ) {
           throw new Error(
             `Mod permission '${normalized.id}' is already registered by ${existing?.path ?? existingGlobal?.path}`,
           );
@@ -1254,6 +1342,19 @@ export async function loadLocalMods(
   const registry = createEmptyModRegistry(sources, generation, capabilities);
 
   for (const source of sources) {
+    for (const diagnostic of source.diagnostics ?? []) {
+      const owner = createModOwner(diagnostic.path, source, generation);
+      recordModDiagnostic(
+        registry,
+        {
+          error: diagnostic.error,
+          owner,
+          phase: "package_manifest",
+        },
+        options.onDiagnostic,
+      );
+    }
+
     for (const modPath of source.files) {
       const owner = createModOwner(modPath, source, generation);
       const abortController = new AbortController();
@@ -1277,7 +1378,7 @@ export async function loadLocalMods(
             );
           },
         );
-        failurePhase = TYPESCRIPT_MOD_FILE_EXTENSIONS.has(path.extname(modPath))
+        failurePhase = isTypeScriptModFileExtension(path.extname(modPath))
           ? "transpile"
           : "import";
         const importPath = createImportableModPath(modPath, cacheDirectory);

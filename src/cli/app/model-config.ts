@@ -111,8 +111,35 @@ export function getPreferredAgentModelHandle(
   return buildModelHandleFromLlmConfig(agent.llm_config);
 }
 
+export function providerTypeFromModelSettings(
+  modelSettings: unknown,
+): string | null {
+  if (
+    typeof modelSettings !== "object" ||
+    modelSettings === null ||
+    !("provider_type" in modelSettings)
+  ) {
+    return null;
+  }
+  const providerType = (modelSettings as { provider_type?: unknown })
+    .provider_type;
+  return typeof providerType === "string" && providerType.length > 0
+    ? providerType
+    : null;
+}
+
+export function providerTypeFromUpdateArgs(
+  updateArgs: Record<string, unknown> | undefined | null,
+): string | null {
+  const providerType = updateArgs?.provider_type;
+  return typeof providerType === "string" && providerType.length > 0
+    ? providerType
+    : null;
+}
+
 export function mapHandleToLlmConfigPatch(
   modelHandle: string,
+  providerType?: string | null,
 ): Partial<LlmConfig> {
   const [provider, ...modelParts] = modelHandle.split("/");
   const modelName = modelParts.join("/");
@@ -121,10 +148,31 @@ export function mapHandleToLlmConfigPatch(
       model: modelHandle,
     };
   }
+  const knownEndpointTypes = new Set([
+    "anthropic",
+    "bedrock",
+    "chatgpt_oauth",
+    "google_ai",
+    "google_vertex",
+    "minimax",
+    "moonshot",
+    "moonshot_coding",
+    "openai",
+    "openrouter",
+    "zai",
+    "zai_coding",
+  ]);
   const endpointType =
-    provider === OPENAI_CODEX_PROVIDER_NAME || provider === "openai-codex"
-      ? "chatgpt_oauth"
-      : provider;
+    typeof providerType === "string" && providerType.length > 0
+      ? providerType
+      : provider === OPENAI_CODEX_PROVIDER_NAME || provider === "openai-codex"
+        ? "chatgpt_oauth"
+        : knownEndpointTypes.has(provider)
+          ? provider
+          : null;
+  if (!endpointType) {
+    return { model: modelHandle };
+  }
   return {
     model: modelName,
     model_endpoint_type: endpointType as LlmConfig["model_endpoint_type"],

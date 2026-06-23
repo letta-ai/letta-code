@@ -1,5 +1,6 @@
 // src/cli/app/AppCoordinator.tsx
 
+import { join } from "node:path";
 import type {
   AgentState,
   MessageCreate,
@@ -214,6 +215,7 @@ import {
   getPreferredAgentModelHandle,
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
+  providerTypeFromModelSettings,
 } from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
@@ -2353,7 +2355,12 @@ export function App({
       statusLinePayload,
     ],
   );
+  const agentModsDirectory =
+    statusLinePayload.memfs.enabled && statusLinePayload.memfs.memory_dir
+      ? join(statusLinePayload.memfs.memory_dir, "mods")
+      : null;
   const modAdapter = useLocalModAdapter(modContext, {
+    agentModsDirectory,
     disabled: modsDisabled,
   });
 
@@ -3102,9 +3109,14 @@ export function App({
           if (persistedToolsetPreference === "auto") {
             if (agentModelHandle) {
               const { switchToolsetForModel } = await import("@/tools/toolset");
+              const providerType =
+                providerTypeFromModelSettings(agent.model_settings) ??
+                agent.llm_config?.model_endpoint_type ??
+                null;
               const derivedToolset = await switchToolsetForModel(
                 agentModelHandle,
                 agentId,
+                providerType,
               );
               setCurrentToolset(derivedToolset);
             } else {
@@ -3399,7 +3411,10 @@ export function App({
         setCurrentModelId(modelInfo?.id ?? effectiveModelHandle);
         setLlmConfig({
           ...agentState.llm_config,
-          ...mapHandleToLlmConfigPatch(effectiveModelHandle),
+          ...mapHandleToLlmConfigPatch(
+            effectiveModelHandle,
+            providerTypeFromModelSettings(resolvedConversationModelSettings),
+          ),
           ...(typeof reasoningEffort === "string"
             ? { reasoning_effort: reasoningEffort }
             : {}),

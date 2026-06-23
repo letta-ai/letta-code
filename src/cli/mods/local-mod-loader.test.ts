@@ -90,6 +90,190 @@ describe("local mod loader", () => {
     }
   });
 
+  test("discovers agent mod source after global mod source", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      const agentMods = path.join(root, "memory", "mods");
+      mkdirSync(globalMods, { recursive: true });
+      mkdirSync(agentMods, { recursive: true });
+      writeFileSync(
+        path.join(globalMods, "global.ts"),
+        "export default () => {};\n",
+      );
+      writeFileSync(
+        path.join(agentMods, "agent.ts"),
+        "export default () => {};\n",
+      );
+
+      expect(
+        resolveLocalModSources({
+          agentModsDirectory: agentMods,
+          globalModsDirectory: globalMods,
+        }),
+      ).toEqual([
+        {
+          files: [path.join(globalMods, "global.ts")],
+          root: globalMods,
+          scope: "global",
+          trusted: true,
+        },
+        {
+          files: [path.join(agentMods, "agent.ts")],
+          root: agentMods,
+          scope: "agent",
+          trusted: true,
+        },
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("discovers managed package entries after loose global mods", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      const packageRoot = path.join(
+        globalMods,
+        "packages",
+        "npm",
+        "@caren",
+        "my-mod",
+      );
+      const packageMod = path.join(packageRoot, "mods", "index.ts");
+      const packageExtra = path.join(packageRoot, "mods", "extra.ts");
+      const looseMod = path.join(globalMods, "loose.ts");
+      mkdirSync(path.dirname(packageMod), { recursive: true });
+      writeFileSync(looseMod, "export default () => {};\n");
+      writeFileSync(packageMod, "export default () => {};\n");
+      writeFileSync(packageExtra, "export default () => {};\n");
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          letta: {
+            manifestVersion: 1,
+            mods: ["./mods/index.ts"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/my-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/my-mod",
+              entries: ["./mods/index.ts"],
+            },
+          ],
+        }),
+      );
+
+      expect(
+        resolveLocalModSources({
+          globalModsDirectory: globalMods,
+        }),
+      ).toEqual([
+        {
+          files: [looseMod, packageMod],
+          root: globalMods,
+          scope: "global",
+          trusted: true,
+        },
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("skips disabled managed packages", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      mkdirSync(globalMods, { recursive: true });
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/my-disabled-mod",
+              version: "0.1.0",
+              enabled: false,
+              root: "packages/npm/@caren/my-disabled-mod",
+              entries: ["./mods/index.ts"],
+            },
+          ],
+        }),
+      );
+
+      expect(
+        resolveLocalModSources({
+          globalModsDirectory: globalMods,
+        }),
+      ).toEqual([
+        {
+          files: [],
+          root: globalMods,
+          scope: "global",
+          trusted: true,
+        },
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("reports invalid managed package manifests", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      const packageRoot = path.join(
+        globalMods,
+        "packages",
+        "npm",
+        "@caren",
+        "bad-mod",
+      );
+      const packageJsonPath = path.join(packageRoot, "package.json");
+      mkdirSync(packageRoot, { recursive: true });
+      writeFileSync(
+        packageJsonPath,
+        JSON.stringify({ name: "@caren/bad-mod" }),
+      );
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/bad-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/bad-mod",
+              entries: ["./mods/index.ts"],
+            },
+          ],
+        }),
+      );
+
+      const sources = resolveLocalModSources({
+        globalModsDirectory: globalMods,
+      });
+
+      expect(sources).toHaveLength(1);
+      expect(sources[0]?.files).toEqual([]);
+      expect(sources[0]?.diagnostics).toHaveLength(1);
+      expect(sources[0]?.diagnostics?.[0]?.path).toBe(packageJsonPath);
+      expect(sources[0]?.diagnostics?.[0]?.error.message).toContain(
+        "package.json#letta",
+      );
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("does not initialize SDK client when no mod files exist", async () => {
     const root = createTempDir();
     try {

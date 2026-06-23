@@ -92,6 +92,22 @@ describe("connect subcommand", () => {
     );
   });
 
+  test("passes custom ChatGPT provider name to OAuth flow", async () => {
+    const { stdout, deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(
+      ["chatgpt", "--name", "chatgpt-work"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.isChatGPTOAuthConnected).toHaveBeenCalledWith("chatgpt-work");
+    expect(deps.runChatGPTOAuthConnectFlow).toHaveBeenCalledWith(
+      expect.objectContaining({ providerName: "chatgpt-work" }),
+    );
+    expect(stdout.join("\n")).toContain("Provider 'chatgpt-work' saved.");
+  });
+
   test("connects API key provider from positional key", async () => {
     const { deps } = createIoDeps();
 

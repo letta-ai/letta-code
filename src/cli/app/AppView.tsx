@@ -943,7 +943,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
-                onStartOAuth={async (provider, target) => {
+                onStartOAuth={async (provider, target, providerName) => {
                   const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
@@ -960,10 +960,10 @@ export function AppView(props: AppViewProps) {
                         refreshDerived,
                         setCommandRunning,
                         target,
-                        onCodexConnected: () => {
+                        onCodexConnected: (providerName) => {
                           markLocalModelsAvailable();
                           setModelSelectorOptions({
-                            filterProvider: "chatgpt-plus-pro",
+                            filterProvider: providerName,
                             forceRefresh: true,
                           });
                           openOverlay(
@@ -974,7 +974,12 @@ export function AppView(props: AppViewProps) {
                           );
                         },
                       },
-                      `/connect ${provider.id === "openai-codex-oauth" ? "chatgpt" : provider.id}`,
+                      `/connect ${
+                        provider.id === "openai-codex-oauth" ||
+                        provider.providerType === "chatgpt_oauth"
+                          ? "chatgpt"
+                          : provider.id
+                      }${providerName ? ` --name ${providerName}` : ""}`,
                     );
                   } finally {
                     setActiveConnectCommandId(null);
