@@ -15,26 +15,20 @@ describe("interactive reflection transcript wiring", () => {
     expect(source).toContain("description: AUTO_REFLECTION_DESCRIPTION");
   });
 
-  test("conversation loop evaluates reflection after the transcript append on end_turn", () => {
+  test("conversation loop evaluates reflection after the transcript append", () => {
     const conversationLoopPath = fileURLToPath(
       new URL("./use-conversation-loop.ts", import.meta.url),
     );
     const loopSource = readFileSync(conversationLoopPath, "utf-8");
 
-    const endTurnIndex = loopSource.indexOf(
-      'if (stopReasonToHandle === "end_turn")',
-    );
     const appendIndex = loopSource.indexOf(
-      "appendTranscriptDeltaJsonl(",
-      endTurnIndex,
+      "appendTranscriptDeltaJsonlForStopReason(",
     );
     const reflectionIndex = loopSource.indexOf(
       "await maybeRunPostTurnReflection();",
-      endTurnIndex,
     );
 
-    expect(endTurnIndex).toBeGreaterThanOrEqual(0);
-    expect(appendIndex).toBeGreaterThan(endTurnIndex);
+    expect(appendIndex).toBeGreaterThanOrEqual(0);
     expect(reflectionIndex).toBeGreaterThan(appendIndex);
   });
 
@@ -65,10 +59,13 @@ describe("interactive reflection transcript wiring", () => {
     expect(loopSource).toContain("const transcriptTurnStartLineIndex =");
     expect(loopSource).toContain('if (stopReasonToHandle === "end_turn")');
     expect(loopSource).toContain("toLines(buffersRef.current).slice(");
-    expect(loopSource).toContain("appendTranscriptDeltaJsonl(");
+    expect(loopSource).toContain("appendTranscriptDeltaJsonlForStopReason(");
+    expect(loopSource).toContain("stopReasonToHandle,");
 
     expect(
+      loopSource.indexOf("appendTranscriptDeltaJsonlForStopReason("),
+    ).toBeLessThan(
       loopSource.indexOf('if (stopReasonToHandle === "end_turn")'),
-    ).toBeLessThan(loopSource.indexOf("appendTranscriptDeltaJsonl("));
+    );
   });
 });

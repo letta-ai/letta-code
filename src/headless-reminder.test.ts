@@ -98,6 +98,6 @@ describe("headless shared reminder wiring", () => {
     expect(source).toContain("const userOtid = randomUUID();");
     expect(source).toContain("buffers.userLineIdByOtid.set(userOtid");
     expect(source).toContain("content: enrichedContent, otid: userOtid");
-    expect(source).toContain("appendTranscriptDeltaJsonl(");
+    expect(source).toContain("appendTranscriptDeltaJsonlForStopReason(");
   });
 });

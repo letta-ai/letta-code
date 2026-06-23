@@ -89,7 +89,7 @@ import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
 } from "./cli/helpers/reflection-launcher";
-import { appendTranscriptDeltaJsonl } from "./cli/helpers/reflection-transcript";
+import { appendTranscriptDeltaJsonlForStopReason } from "./cli/helpers/reflection-transcript";
 import {
   type DrainStreamHook,
   drainStreamWithResume,
@@ -4353,9 +4353,14 @@ async function runBidirectionalMode(
             ? "error"
             : "success";
 
-        if (subtype === "success" && lastStopReason === "end_turn") {
+        if (subtype === "success") {
           try {
-            await appendTranscriptDeltaJsonl(agent.id, conversationId, lines);
+            await appendTranscriptDeltaJsonlForStopReason(
+              agent.id,
+              conversationId,
+              lines,
+              lastStopReason,
+            );
           } catch (transcriptError) {
             debugWarn(
               "memory",
@@ -4366,6 +4371,9 @@ async function runBidirectionalMode(
               }`,
             );
           }
+        }
+
+        if (subtype === "success" && lastStopReason === "end_turn") {
           try {
             await maybeLaunchPostTurnReflection({
               agentId: agent.id,

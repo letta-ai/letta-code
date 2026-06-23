@@ -10,6 +10,7 @@ import {
 } from "@/agent/subagents/context-budget";
 import {
   appendTranscriptDeltaJsonl,
+  appendTranscriptDeltaJsonlForStopReason,
   buildAutoReflectionPayload,
   buildMultiReflectionPayload,
   buildParentMemorySnapshot,
@@ -56,6 +57,97 @@ describe("reflectionTranscript helper", () => {
     restoreDirectoryLimitEnv();
     delete process.env.LETTA_TRANSCRIPT_ROOT;
     await rm(testRoot, { recursive: true, force: true });
+  });
+
+  test("stop-reason append records approval-ready tool calls", async () => {
+    const appended = await appendTranscriptDeltaJsonlForStopReason(
+      agentId,
+      conversationId,
+      [
+        {
+          kind: "tool_call",
+          id: "tool-call-approval",
+          toolCallId: "tool-call-approval",
+          name: "Bash",
+          argsText: '{"command":"pwd"}',
+          phase: "ready",
+        },
+      ],
+      "requires_approval",
+    );
+
+    expect(appended).toBe(1);
+
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    const raw = await readFile(paths.transcriptPath, "utf-8");
+    const rows = raw
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "tool_call",
+      name: "Bash",
+      argsText: '{"command":"pwd"}',
+      source_line_id: "tool-call-approval",
+    });
+
+    const skipped = await appendTranscriptDeltaJsonlForStopReason(
+      agentId,
+      conversationId,
+      [
+        {
+          kind: "assistant",
+          id: "assistant-cancelled",
+          text: "not recorded",
+          phase: "finished",
+        },
+      ],
+      "cancelled",
+    );
+    expect(skipped).toBe(0);
+  });
+
+  test("append updates matching source lines instead of duplicating them", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "tool_call",
+        id: "tool-call-1",
+        toolCallId: "tool-call-1",
+        name: "Bash",
+        argsText: '{"command":"pwd"}',
+        phase: "ready",
+      },
+    ]);
+
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "tool_call",
+        id: "tool-call-1",
+        toolCallId: "tool-call-1",
+        name: "Bash",
+        argsText: '{"command":"pwd"}',
+        resultText: "/tmp/project",
+        resultOk: true,
+        phase: "finished",
+      },
+    ]);
+
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    const raw = await readFile(paths.transcriptPath, "utf-8");
+    const rows = raw
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "tool_call",
+      name: "Bash",
+      argsText: '{"command":"pwd"}',
+      resultText: "/tmp/project",
+      resultOk: true,
+      source_line_id: "tool-call-1",
+    });
   });
 
   test("auto payload advances message-id state on success", async () => {
