@@ -62,7 +62,7 @@ describe("local mod package scaffolder", () => {
       name: "@caren/hello-mod",
       version: "0.1.0",
       type: "module",
-      keywords: ["letta-mod"],
+      keywords: ["letta-package", "letta-mod"],
       files: ["README.md", "MOD.md", "mods"],
       letta: {
         manifestVersion: 1,
