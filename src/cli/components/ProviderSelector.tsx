@@ -16,7 +16,10 @@ import {
   type ProviderStorageTarget,
   removeProviderByName,
 } from "@/providers/byok-providers";
-import { readChatGPTUsage } from "@/providers/chatgpt-usage-service";
+import {
+  formatChatGPTUsageQuotaRows,
+  readChatGPTUsage,
+} from "@/providers/chatgpt-usage-service";
 import { normalizeChatGPTOAuthProviderName } from "@/providers/openai-codex-provider";
 import { connectedRecordsForProvider } from "@/providers/provider-connections";
 import { type Settings, settingsManager } from "@/settings-manager";
@@ -52,7 +55,7 @@ type ConnectedProvidersByTarget = Partial<
 
 type ChatGPTUsageStatus =
   | { status: "loading" }
-  | { status: "ready"; summary: string }
+  | { status: "ready"; rows: string[] }
   | { status: "error"; message: string };
 
 interface ProviderSelectorProps {
@@ -196,10 +199,10 @@ export function isChatGPTUsageProvider(provider: ByokProvider): boolean {
   );
 }
 
-function usageStatusText(status: ChatGPTUsageStatus | undefined): string {
-  if (!status || status.status === "loading") return "Usage: loading...";
-  if (status.status === "error") return `Usage unavailable: ${status.message}`;
-  return status.summary;
+function usageStatusRows(status: ChatGPTUsageStatus | undefined): string[] {
+  if (!status || status.status === "loading") return ["Loading..."];
+  if (status.status === "error") return [`Unavailable: ${status.message}`];
+  return status.rows;
 }
 
 export function ProviderSelector({
@@ -451,7 +454,10 @@ export function ProviderSelector({
             setChatGPTUsageByProvider((previous) => ({
               ...previous,
               [providerName]: result.success
-                ? { status: "ready", summary: result.usage.summary }
+                ? {
+                    status: "ready",
+                    rows: formatChatGPTUsageQuotaRows(result.usage),
+                  }
                 : { status: "error", message: result.error.message },
             }));
           })
@@ -1560,16 +1566,22 @@ export function ProviderSelector({
                     <Text color="green">Connected</Text>
                   </Box>
                   {showUsage && (
-                    <Box flexDirection="row">
-                      <Text>{"      "}</Text>
-                      <Text
-                        color={
-                          usageStatus?.status === "error" ? "yellow" : undefined
-                        }
-                        dimColor={usageStatus?.status !== "error"}
-                      >
-                        {usageStatusText(usageStatus)}
-                      </Text>
+                    <Box flexDirection="column">
+                      {usageStatusRows(usageStatus).map((row) => (
+                        <Box key={row} flexDirection="row">
+                          <Text>{"      "}</Text>
+                          <Text
+                            color={
+                              usageStatus?.status === "error"
+                                ? "yellow"
+                                : undefined
+                            }
+                            dimColor={usageStatus?.status !== "error"}
+                          >
+                            {row}
+                          </Text>
+                        </Box>
+                      ))}
                     </Box>
                   )}
                 </Box>

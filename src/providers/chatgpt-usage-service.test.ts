@@ -1,5 +1,13 @@
 import { describe, expect, mock, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  LOCAL_CHATGPT_PROVIDER_NAME,
+  setLocalOAuthProvider,
+} from "@/backend/local/local-provider-auth-store";
+import {
+  formatChatGPTUsageQuotaRows,
   formatChatGPTUsageSnapshot,
   normalizeWhamUsageResponse,
   readChatGPTUsage,
@@ -84,8 +92,11 @@ describe("ChatGPT usage service", () => {
     });
     expect(snapshot.credits).toEqual({ balance: "12.5" });
     expect(snapshot.summary).toBe(
-      "Usage: 5h 74.5% left resets in 2h · 7d 88% left resets in 5d · 1h 60% left resets in 30m · credits 12.5",
+      "Usage: 5h 74.5% left resets in 2h · 7d 88% left resets in 5d · extra 1h 60% left resets in 30m · credits 12.5",
     );
+    expect(
+      formatChatGPTUsageQuotaRows(snapshot, new Date("2026-06-18T12:00:00Z")),
+    ).toEqual(["5h 74.5% left resets in 2h", "7d 88% left resets in 5d"]);
   });
 
   test("accepts camelCase fields and millisecond reset timestamps", () => {
@@ -119,6 +130,97 @@ describe("ChatGPT usage service", () => {
     expect(
       formatChatGPTUsageSnapshot(snapshot, new Date("2026-06-18T12:00:00Z")),
     ).toBe("Usage: no active quota window reported");
+  });
+
+  test("normalizes the Codex WHAM usage payload shape", () => {
+    const snapshot = normalizeWhamUsageResponse({
+      providerName: "chatgpt-plus-pro",
+      nowMs: Date.parse("2026-06-18T12:00:00Z"),
+      raw: {
+        plan_type: "pro",
+        rate_limit: {
+          allowed: true,
+          limit_reached: false,
+          primary_window: {
+            used_percent: 42,
+            limit_window_seconds: 300,
+            reset_after_seconds: 0,
+            reset_at: 123,
+          },
+          secondary_window: {
+            used_percent: 84,
+            limit_window_seconds: 3600,
+            reset_after_seconds: 0,
+            reset_at: 456,
+          },
+        },
+        additional_rate_limits: [
+          {
+            limit_name: "codex_other",
+            metered_feature: "codex_other",
+            rate_limit: {
+              allowed: true,
+              limit_reached: false,
+              primary_window: {
+                used_percent: 70,
+                limit_window_seconds: 900,
+                reset_after_seconds: 0,
+                reset_at: 789,
+              },
+            },
+          },
+        ],
+        credits: {
+          has_credits: true,
+          unlimited: false,
+          balance: "9.99",
+        },
+        rate_limit_reset_credits: {
+          available_count: 3,
+        },
+        spend_control: {
+          reached: false,
+          individual_limit: {
+            limit: "25000",
+            used: "8000",
+            remaining: "17000",
+            used_percent: 32,
+            remaining_percent: 68,
+            reset_after_seconds: 3600,
+            reset_at: 789,
+          },
+        },
+        rate_limit_reached_type: {
+          type: "workspace_member_credits_depleted",
+        },
+      },
+    });
+
+    expect(snapshot.planType).toBe("pro");
+    expect(snapshot.limitReached).toBe(false);
+    expect(snapshot.rateLimitReachedType).toBe(
+      "workspace_member_credits_depleted",
+    );
+    expect(snapshot.additional).toEqual([
+      {
+        label: "codex_other",
+        usedPercent: 70,
+        windowDurationMins: 15,
+        resetsAt: 789,
+      },
+    ]);
+    expect(snapshot.credits).toEqual({
+      balance: "9.99",
+      availableCount: 3,
+      hasCredits: true,
+      unlimited: false,
+    });
+    expect(snapshot.individualLimit).toEqual({
+      limit: "25000",
+      used: "8000",
+      remainingPercent: 68,
+      resetsAt: 789,
+    });
   });
 
   test("reads api-target usage from the Letta Cloud provider endpoint", async () => {
@@ -254,5 +356,98 @@ describe("ChatGPT usage service", () => {
       code: "network_error",
       message: "Letta Cloud ChatGPT usage endpoint is unavailable.",
     });
+  });
+
+  test("keeps the cloud usage timeout active while reading the response body", async () => {
+    const fetchMock = mock(
+      async (_url: Parameters<typeof fetch>[0], init?: RequestInit) =>
+        ({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () =>
+                reject(new Error("aborted")),
+              );
+            }),
+        }) as Response,
+    ) as unknown as typeof fetch;
+
+    const result = await withEnv(
+      { LETTA_API_KEY: undefined, LETTA_BASE_URL: undefined },
+      () =>
+        readChatGPTUsage({
+          target: "api",
+          providerName: "chatgpt-jin",
+          forceRefresh: true,
+          fetch: fetchMock,
+          timeoutMs: 1,
+          getSettings: async () => ({
+            env: {
+              LETTA_API_KEY: "letta-access-token",
+              LETTA_BASE_URL: "https://api.test.letta.com",
+            },
+            refreshToken: undefined,
+            tokenExpiresAt: undefined,
+          }),
+        }),
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: {
+        code: "network_error",
+        message: "Letta Cloud ChatGPT usage request timed out.",
+      },
+    });
+  });
+
+  test("keeps the local WHAM timeout active while reading the response body", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "chatgpt-usage-timeout-"));
+    try {
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: LOCAL_CHATGPT_PROVIDER_NAME,
+        providerType: "chatgpt_oauth",
+        auth: {
+          type: "oauth",
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
+          accountId: "account-id",
+        },
+      });
+
+      const fetchMock = mock(
+        async (_url: Parameters<typeof fetch>[0], init?: RequestInit) =>
+          ({
+            ok: true,
+            status: 200,
+            json: () =>
+              new Promise((_resolve, reject) => {
+                init?.signal?.addEventListener("abort", () =>
+                  reject(new Error("aborted")),
+                );
+              }),
+          }) as Response,
+      ) as unknown as typeof fetch;
+
+      const result = await readChatGPTUsage({
+        target: "local",
+        storageDir,
+        fetch: fetchMock,
+        timeoutMs: 1,
+      });
+
+      expect(result).toEqual({
+        success: false,
+        error: {
+          code: "network_error",
+          message: "ChatGPT usage request timed out.",
+        },
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 });

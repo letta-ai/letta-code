@@ -113,7 +113,8 @@ function asRecord(value: unknown): JsonRecord | undefined {
 function getValue(record: JsonRecord | undefined, keys: string[]): unknown {
   if (!record) return undefined;
   for (const key of keys) {
-    if (key in record) return record[key];
+    const value = record[key];
+    if (value !== undefined && value !== null) return value;
   }
   return undefined;
 }
@@ -262,14 +263,15 @@ function normalizeCredits(
       "rate_limit_reset_credits",
       "rateLimitResetCredits",
     ]);
-  if (!credits) return null;
+  const resetCredits =
+    getRecord(raw, ["rate_limit_reset_credits", "rateLimitResetCredits"]) ??
+    getRecord(rateLimit, ["rate_limit_reset_credits", "rateLimitResetCredits"]);
+  if (!credits && !resetCredits) return null;
 
   const balance = getString(credits, ["balance", "credit_balance", "amount"]);
-  const availableCount = getNumber(credits, [
-    "available_count",
-    "availableCount",
-    "count",
-  ]);
+  const availableCount =
+    getNumber(credits, ["available_count", "availableCount", "count"]) ??
+    getNumber(resetCredits, ["available_count", "availableCount", "count"]);
   const hasCredits = getBoolean(credits, ["has_credits", "hasCredits"]);
   const unlimited = getBoolean(credits, ["unlimited", "is_unlimited"]);
 
@@ -291,9 +293,13 @@ function normalizeCredits(
 }
 
 function normalizeIndividualLimit(
-  value: unknown,
+  raw: JsonRecord | undefined,
+  nowMs: number,
 ): ChatGPTUsageIndividualLimit | null {
-  const record = asRecord(value);
+  const spendControl = getRecord(raw, ["spend_control", "spendControl"]);
+  const record =
+    getRecord(raw, ["individual_limit", "individualLimit"]) ??
+    getRecord(spendControl, ["individual_limit", "individualLimit"]);
   if (!record) return null;
 
   const limit = getString(record, ["limit"]);
@@ -302,7 +308,20 @@ function normalizeIndividualLimit(
     "remaining_percent",
     "remainingPercent",
   ]);
-  const resetsAt = getTimestampSeconds(record, ["resets_at", "resetsAt"]);
+  const resetAfterSeconds = getNumber(record, [
+    "reset_after_seconds",
+    "resetAfterSeconds",
+  ]);
+  const resetsAt =
+    getTimestampSeconds(record, [
+      "reset_at",
+      "resetAt",
+      "resets_at",
+      "resetsAt",
+    ]) ??
+    (resetAfterSeconds === null
+      ? null
+      : Math.floor(nowMs / 1000 + resetAfterSeconds));
 
   if (
     limit === null ||
@@ -333,6 +352,55 @@ function normalizeCloudUsageWindow(
     getString(record, ["label", "name"]) ?? fallbackLabel,
     nowMs,
   );
+}
+
+function normalizeAdditionalRateLimit(
+  details: JsonRecord,
+  index: number,
+  nowMs: number,
+): ChatGPTUsageWindow[] {
+  const label =
+    getString(details, [
+      "limit_name",
+      "limitName",
+      "metered_feature",
+      "meteredFeature",
+      "label",
+      "name",
+      "model",
+      "limit_id",
+      "limitId",
+    ]) ?? `limit ${index + 1}`;
+  const nestedRateLimit = getRecord(details, ["rate_limit", "rateLimit"]);
+  const source = nestedRateLimit ?? details;
+  const primary = normalizeUsageWindow(
+    getValue(source, ["primary_window", "primaryWindow", "primary"]),
+    label,
+    nowMs,
+  );
+  const secondary = normalizeUsageWindow(
+    getValue(source, ["secondary_window", "secondaryWindow", "secondary"]),
+    `${label} secondary`,
+    nowMs,
+  );
+  const direct = nestedRateLimit
+    ? null
+    : normalizeUsageWindow(details, label, nowMs);
+
+  return [primary, secondary, direct].filter(
+    (window): window is ChatGPTUsageWindow => !!window,
+  );
+}
+
+function getRateLimitReachedType(raw: JsonRecord | undefined): string | null {
+  const value = getValue(raw, [
+    "rate_limit_reached_type",
+    "rateLimitReachedType",
+  ]);
+  if (typeof value === "string" && value.trim()) return value.trim();
+
+  const record = asRecord(value);
+  return getString(record, ["type", "kind"]);
 }
 
 function formatPercent(value: number): string {
@@ -374,13 +442,22 @@ function formatWindowLabel(window: ChatGPTUsageWindow): string {
   return window.label;
 }
 
+function formatNamedWindowLabel(window: ChatGPTUsageWindow): string {
+  const normalizedLabel = window.label.replace(/_/g, " ").trim();
+  const duration = formatDuration(window.windowDurationMins);
+  return duration ? `${normalizedLabel} ${duration}` : normalizedLabel;
+}
+
 function formatUsageWindow(
   window: ChatGPTUsageWindow | null,
   now: Date,
+  options: { includeName?: boolean } = {},
 ): string | null {
   if (!window) return null;
 
-  const label = formatWindowLabel(window);
+  const label = options.includeName
+    ? formatNamedWindowLabel(window)
+    : formatWindowLabel(window);
   const parts: string[] = [label];
   if (window.usedPercent !== null) {
     const remaining = Math.max(0, 100 - window.usedPercent);
@@ -415,7 +492,9 @@ export function formatChatGPTUsageSnapshot(
   const windows = [
     formatUsageWindow(snapshot.primary, now),
     formatUsageWindow(snapshot.secondary, now),
-    ...snapshot.additional.map((window) => formatUsageWindow(window, now)),
+    ...snapshot.additional.map((window) =>
+      formatUsageWindow(window, now, { includeName: true }),
+    ),
   ].filter((item): item is string => !!item);
 
   const credits = formatCredits(snapshot.credits);
@@ -425,6 +504,18 @@ export function formatChatGPTUsageSnapshot(
     return "Usage: no active quota window reported";
   }
   return `Usage: ${windows.join(" · ")}`;
+}
+
+export function formatChatGPTUsageQuotaRows(
+  snapshot: ChatGPTUsageSnapshot,
+  now: Date = new Date(),
+): string[] {
+  const rows = [
+    formatUsageWindow(snapshot.primary, now),
+    formatUsageWindow(snapshot.secondary, now),
+  ].filter((item): item is string => !!item);
+
+  return rows.length > 0 ? rows : [snapshot.summary.replace(/^Usage:\s*/, "")];
 }
 
 export function normalizeWhamUsageResponse(input: {
@@ -448,37 +539,38 @@ export function normalizeWhamUsageResponse(input: {
     "secondary",
     nowMs,
   );
-  const additional = getRecordArray(rateLimit, [
-    "additional_rate_limits",
-    "additionalRateLimits",
-    "additional",
-  ])
-    .map((window, index) =>
-      normalizeUsageWindow(
-        window,
-        getString(window, ["label", "name", "model", "limit_id", "limitId"]) ??
-          `limit ${index + 1}`,
-        nowMs,
-      ),
-    )
-    .filter((window): window is ChatGPTUsageWindow => !!window);
+  const additionalSources = [
+    ...getRecordArray(raw, [
+      "additional_rate_limits",
+      "additionalRateLimits",
+      "additional",
+    ]),
+    ...(raw === rateLimit
+      ? []
+      : getRecordArray(rateLimit, [
+          "additional_rate_limits",
+          "additionalRateLimits",
+          "additional",
+        ])),
+  ];
+  const additional = additionalSources.flatMap((details, index) =>
+    normalizeAdditionalRateLimit(details, index, nowMs),
+  );
+  const spendControl = getRecord(raw, ["spend_control", "spendControl"]);
 
   const snapshotWithoutSummary = {
     providerName: input.providerName,
     fetchedAt,
     planType: getString(raw, ["plan_type", "planType"]),
-    limitReached: getBoolean(rateLimit, ["limit_reached", "limitReached"]),
-    rateLimitReachedType: getString(raw, [
-      "rate_limit_reached_type",
-      "rateLimitReachedType",
-    ]),
+    limitReached:
+      getBoolean(rateLimit, ["limit_reached", "limitReached"]) ??
+      getBoolean(spendControl, ["reached"]),
+    rateLimitReachedType: getRateLimitReachedType(raw),
     primary,
     secondary,
     additional,
     credits: normalizeCredits(raw, rateLimit),
-    individualLimit: normalizeIndividualLimit(
-      getValue(rateLimit, ["individual_limit", "individualLimit"]),
-    ),
+    individualLimit: normalizeIndividualLimit(raw, nowMs),
   };
 
   return {
@@ -534,9 +626,7 @@ export function normalizeCloudChatGPTUsageResponse(input: {
     ),
     additional,
     credits: normalizeCredits(raw, raw),
-    individualLimit: normalizeIndividualLimit(
-      getValue(raw, ["individualLimit", "individual_limit"]),
-    ),
+    individualLimit: normalizeIndividualLimit(raw, nowMs),
   };
 
   return {
@@ -734,10 +824,11 @@ async function readCloudChatGPTUsage(
   url.searchParams.set("provider_name", providerName);
 
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  );
+  let didTimeOut = false;
+  const timeout = setTimeout(() => {
+    didTimeOut = true;
+    controller.abort();
+  }, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
   let response: Response;
   try {
@@ -750,95 +841,130 @@ async function readCloudChatGPTUsage(
       signal: controller.signal,
     });
   } catch (error) {
+    clearTimeout(timeout);
     return chatGPTUsageError(
       "network_error",
-      error instanceof Error
-        ? error.message
-        : "Failed to fetch ChatGPT usage from Letta Cloud.",
+      didTimeOut
+        ? "Letta Cloud ChatGPT usage request timed out."
+        : error instanceof Error
+          ? error.message
+          : "Failed to fetch ChatGPT usage from Letta Cloud.",
     );
-  } finally {
-    clearTimeout(timeout);
   }
 
-  if (response.status === 400) {
-    const raw = await readJsonRecord(response);
-    return chatGPTUsageError(
-      "bad_request",
-      responseMessage(raw, "Letta Cloud rejected the ChatGPT usage request."),
-    );
-  }
-  if (response.status === 401) {
-    const raw = await readJsonRecord(response);
-    return chatGPTUsageError(
-      "unauthorized",
-      responseMessage(raw, "Sign in to Letta Cloud to read ChatGPT usage."),
-    );
-  }
-  if (response.status === 403) {
-    const raw = await readJsonRecord(response);
-    return chatGPTUsageError(
-      "forbidden",
-      responseMessage(raw, "ChatGPT usage is not available for this account."),
-    );
-  }
-  if (response.status === 404) {
+  try {
+    if (response.status === 400) {
+      const raw = await readJsonRecord(response);
+      return chatGPTUsageError(
+        didTimeOut ? "network_error" : "bad_request",
+        didTimeOut
+          ? "Letta Cloud ChatGPT usage request timed out."
+          : responseMessage(
+              raw,
+              "Letta Cloud rejected the ChatGPT usage request.",
+            ),
+      );
+    }
+    if (response.status === 401) {
+      const raw = await readJsonRecord(response);
+      return chatGPTUsageError(
+        didTimeOut ? "network_error" : "unauthorized",
+        didTimeOut
+          ? "Letta Cloud ChatGPT usage request timed out."
+          : responseMessage(
+              raw,
+              "Sign in to Letta Cloud to read ChatGPT usage.",
+            ),
+      );
+    }
+    if (response.status === 403) {
+      const raw = await readJsonRecord(response);
+      return chatGPTUsageError(
+        didTimeOut ? "network_error" : "forbidden",
+        didTimeOut
+          ? "Letta Cloud ChatGPT usage request timed out."
+          : responseMessage(
+              raw,
+              "ChatGPT usage is not available for this account.",
+            ),
+      );
+    }
+    if (response.status === 404) {
+      const raw = await readJsonRecord(response);
+      if (didTimeOut) {
+        return chatGPTUsageError(
+          "network_error",
+          "Letta Cloud ChatGPT usage request timed out.",
+        );
+      }
+      if (!raw) {
+        return chatGPTUsageError(
+          "network_error",
+          "Letta Cloud ChatGPT usage endpoint is unavailable.",
+        );
+      }
+      return chatGPTUsageError(
+        "not_connected",
+        responseMessage(raw, "No cloud ChatGPT OAuth provider is connected."),
+      );
+    }
+    if (response.status === 429) {
+      const raw = await readJsonRecord(response);
+      return chatGPTUsageError(
+        "rate_limited",
+        didTimeOut
+          ? "Letta Cloud ChatGPT usage request timed out."
+          : responseMessage(
+              raw,
+              "ChatGPT usage is rate limited. Try again later.",
+            ),
+        retryAfterMsFromBody(raw) ?? retryAfterMs(response),
+      );
+    }
+    if (!response.ok) {
+      const raw = await readJsonRecord(response);
+      return chatGPTUsageError(
+        "network_error",
+        didTimeOut
+          ? "Letta Cloud ChatGPT usage request timed out."
+          : responseMessage(
+              raw,
+              `Letta Cloud ChatGPT usage request failed with HTTP ${response.status}.`,
+            ),
+      );
+    }
+
     const raw = await readJsonRecord(response);
     if (!raw) {
       return chatGPTUsageError(
-        "network_error",
-        "Letta Cloud ChatGPT usage endpoint is unavailable.",
+        didTimeOut ? "network_error" : "bad_response",
+        didTimeOut
+          ? "Letta Cloud ChatGPT usage request timed out."
+          : "Letta Cloud ChatGPT usage returned invalid JSON.",
       );
     }
-    return chatGPTUsageError(
-      "not_connected",
-      responseMessage(raw, "No cloud ChatGPT OAuth provider is connected."),
-    );
-  }
-  if (response.status === 429) {
-    const raw = await readJsonRecord(response);
-    return chatGPTUsageError(
-      "rate_limited",
-      responseMessage(raw, "ChatGPT usage is rate limited. Try again later."),
-      retryAfterMsFromBody(raw) ?? retryAfterMs(response),
-    );
-  }
-  if (!response.ok) {
-    const raw = await readJsonRecord(response);
-    return chatGPTUsageError(
-      "network_error",
-      responseMessage(
-        raw,
-        `Letta Cloud ChatGPT usage request failed with HTTP ${response.status}.`,
-      ),
-    );
-  }
 
-  const raw = await readJsonRecord(response);
-  if (!raw) {
-    return chatGPTUsageError(
-      "bad_response",
-      "Letta Cloud ChatGPT usage returned invalid JSON.",
-    );
-  }
+    const usage = normalizeCloudChatGPTUsageResponse({
+      raw,
+      providerName,
+      nowMs: now,
+    });
+    if (!usage) {
+      return chatGPTUsageError(
+        "bad_response",
+        "Letta Cloud ChatGPT usage returned an invalid payload.",
+      );
+    }
 
-  const usage = normalizeCloudChatGPTUsageResponse({
-    raw,
-    providerName,
-    nowMs: now,
-  });
-  if (!usage) {
-    return chatGPTUsageError(
-      "bad_response",
-      "Letta Cloud ChatGPT usage returned an invalid payload.",
-    );
+    const result: Extract<ChatGPTUsageReadResult, { success: true }> = {
+      success: true,
+      usage,
+    };
+    usageCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
+    return result;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const result: Extract<ChatGPTUsageReadResult, { success: true }> = {
-    success: true,
-    usage,
-  };
-  usageCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
-  return result;
 }
 
 export async function readChatGPTUsage(
@@ -904,10 +1030,11 @@ export async function readChatGPTUsage(
         ? record.auth.accountId
         : undefined;
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  );
+  let didTimeOut = false;
+  const timeout = setTimeout(() => {
+    didTimeOut = true;
+    controller.abort();
+  }, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
   let response: Response;
   try {
@@ -922,58 +1049,67 @@ export async function readChatGPTUsage(
       signal: controller.signal,
     });
   } catch (error) {
+    clearTimeout(timeout);
     return chatGPTUsageError(
       "network_error",
-      error instanceof Error ? error.message : "Failed to fetch ChatGPT usage.",
+      didTimeOut
+        ? "ChatGPT usage request timed out."
+        : error instanceof Error
+          ? error.message
+          : "Failed to fetch ChatGPT usage.",
     );
+  }
+
+  try {
+    if (response.status === 401) {
+      return chatGPTUsageError(
+        "unauthorized",
+        "ChatGPT rejected the OAuth token. Reconnect ChatGPT Plus/Pro and try again.",
+      );
+    }
+    if (response.status === 403) {
+      return chatGPTUsageError(
+        "forbidden",
+        "ChatGPT usage is not available for this account.",
+      );
+    }
+    if (response.status === 429) {
+      return chatGPTUsageError(
+        "rate_limited",
+        "ChatGPT usage is rate limited. Try again later.",
+        retryAfterMs(response),
+      );
+    }
+    if (!response.ok) {
+      return chatGPTUsageError(
+        "network_error",
+        `ChatGPT usage request failed with HTTP ${response.status}.`,
+      );
+    }
+
+    let raw: unknown;
+    try {
+      raw = await response.json();
+    } catch {
+      return chatGPTUsageError(
+        didTimeOut ? "network_error" : "bad_response",
+        didTimeOut
+          ? "ChatGPT usage request timed out."
+          : "ChatGPT usage returned invalid JSON.",
+      );
+    }
+
+    const result: Extract<ChatGPTUsageReadResult, { success: true }> = {
+      success: true,
+      usage: normalizeWhamUsageResponse({
+        raw,
+        providerName: record.name,
+        nowMs: now,
+      }),
+    };
+    usageCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
+    return result;
   } finally {
     clearTimeout(timeout);
   }
-
-  if (response.status === 401) {
-    return chatGPTUsageError(
-      "unauthorized",
-      "ChatGPT rejected the OAuth token. Reconnect ChatGPT Plus/Pro and try again.",
-    );
-  }
-  if (response.status === 403) {
-    return chatGPTUsageError(
-      "forbidden",
-      "ChatGPT usage is not available for this account.",
-    );
-  }
-  if (response.status === 429) {
-    return chatGPTUsageError(
-      "rate_limited",
-      "ChatGPT usage is rate limited. Try again later.",
-      retryAfterMs(response),
-    );
-  }
-  if (!response.ok) {
-    return chatGPTUsageError(
-      "network_error",
-      `ChatGPT usage request failed with HTTP ${response.status}.`,
-    );
-  }
-
-  let raw: unknown;
-  try {
-    raw = await response.json();
-  } catch {
-    return chatGPTUsageError(
-      "bad_response",
-      "ChatGPT usage returned invalid JSON.",
-    );
-  }
-
-  const result: Extract<ChatGPTUsageReadResult, { success: true }> = {
-    success: true,
-    usage: normalizeWhamUsageResponse({
-      raw,
-      providerName: record.name,
-      nowMs: now,
-    }),
-  };
-  usageCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
-  return result;
 }
