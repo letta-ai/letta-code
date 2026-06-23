@@ -18,11 +18,11 @@ Behavior:
 - By default, switches the active conversation/session cwd to the new worktree.
 - Does not copy uncommitted changes from the current checkout.
 - Automatically provisions the new worktree so it is usable without a manual setup pass:
-  - Symlinks heavy gitignored dependency directories from the primary checkout (default: `node_modules`) so dependencies do not need reinstalling. Because they are symlinked, a package install in the worktree would modify the primary checkout's dependencies — set `symlink_dependencies: false` to skip this and get an isolated worktree when you need to install, upgrade, or change packages.
   - Wires git hooks: if `core.hooksPath` is relative (e.g. husky's `.husky/_`, whose contents are gitignored and absent in a fresh worktree), it symlinks the populated hooks directory from the primary checkout so pre-commit hooks run.
   - Copies `.letta/settings.local.json` into the worktree when present.
   - Copies gitignored files/directories listed in a repo-root `.worktreeinclude` file (and in the `worktree.include` project setting) — use this for config like `.env`.
-- Dependency symlinking can be disabled per-call with `symlink_dependencies: false`, or project-wide via the `worktree` block in `.letta/settings.json` (`symlinkDirectories`, `copyLocalSettings`, `linkHooks`, `include`). Provisioning is best-effort: it reports what was done/skipped in the result and never aborts worktree creation.
+- Dependencies are NOT shared by default: the worktree starts isolated, so install them with the repo's package manager if needed (modern managers like Bun/pnpm install quickly from a shared cache). Opt into sharing with `symlink_dependencies: true`, which symlinks heavy gitignored dependency directories (default: `node_modules`) from the primary checkout to avoid reinstalling — but only when the worktree will NOT change packages, because a package install into a symlinked `node_modules` writes through to the primary checkout's dependencies.
+- Provisioning is configurable project-wide via the `worktree` block in `.letta/settings.json` (`symlinkDirectories`, `copyLocalSettings`, `linkHooks`, `include`) and is best-effort: it reports what was done/skipped in the result and never aborts worktree creation.
 
 Entering an existing worktree (`path`):
 - Switches the conversation/session cwd into the worktree at `path` without creating or re-provisioning anything.
@@ -38,4 +38,4 @@ After success:
 - Continue using the returned worktree path as the current workspace.
 - Confirm you are in the new worktree with `git status` before editing.
 - Read README, AGENTS.md, or other project setup docs before running commands.
-- Review the "Provisioning" section of the result. If dependencies were symlinked, they are ready to use and you should NOT run a package install (it would mutate the primary checkout's `node_modules`); recreate the worktree with `symlink_dependencies: false` if you need isolated or different packages. Only run an install when dependencies were not symlinked, or the worktree's lockfile differs from the primary checkout — and check the repo first: if it uses Bun, run `bun install`; if pnpm, yarn, or npm, use that package manager instead.
+- Dependencies are not shared by default. If the project has dependencies, install them in the worktree with the repo's package manager — check the repo first: if it uses Bun, run `bun install`; if pnpm, yarn, or npm, use that manager instead. (If you created the worktree with `symlink_dependencies: true`, they are already present via a symlink to the primary checkout — do NOT run an install, as it would mutate the primary checkout's `node_modules`.)

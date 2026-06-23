@@ -716,10 +716,12 @@ async function copyIncludedFiles(
  * Every step is best-effort — failures are reported as notes and never abort
  * worktree creation.
  *
- * `symlinkDependencies` (default true) gates only the dependency-directory
- * symlinks: pass false when the worktree needs its own isolated dependencies,
- * so a package install here won't write through to the primary checkout.
- * Returns `linkedDependencies` so the caller can tailor its guidance.
+ * `symlinkDependencies` (opt-in; defaulted off at the tool layer) gates only
+ * the dependency-directory symlinks. When true, node_modules is shared from the
+ * primary checkout to avoid reinstalling — but a package install in the worktree
+ * then writes through to the primary checkout, so worktrees stay isolated unless
+ * it is explicitly requested. Returns `linkedDependencies` so the caller can
+ * tailor its guidance.
  */
 export async function provisionWorktree(params: {
   primaryRoot: string;
@@ -756,10 +758,6 @@ export async function provisionWorktree(params: {
         return note;
       });
     }
-  } else if (config.symlinkDirectories.length > 0) {
-    notes.push(
-      `did not symlink ${config.symlinkDirectories.join(", ")} (symlink_dependencies=false) — install this worktree's own dependencies`,
-    );
   }
 
   if (config.linkHooks) {
@@ -1189,7 +1187,10 @@ export async function create_worktree(
       const provisioned = await provisionWorktree({
         primaryRoot,
         worktreePath: normalizedWorktreePath,
-        symlinkDependencies: args.symlink_dependencies !== false,
+        // Opt-in: only share node_modules when explicitly requested, so a
+        // worktree stays isolated by default and a package install here cannot
+        // write through to the primary checkout's dependencies.
+        symlinkDependencies: args.symlink_dependencies === true,
       });
       provisionNotes = provisioned.notes;
       linkedDependencies = provisioned.linkedDependencies;

@@ -31,7 +31,7 @@
     },
     "symlink_dependencies": {
       "type": "boolean",
-      "description": "Whether to symlink heavy gitignored dependency directories (default: node_modules) from the primary checkout into the new worktree so dependencies don't need reinstalling. Defaults to true. Set to false when this worktree needs its OWN isolated dependencies — e.g. you intend to install, upgrade, or change packages — because a package install into a symlinked node_modules would modify the primary checkout's dependencies. (New worktrees only.)"
+      "description": "Whether to symlink heavy gitignored dependency directories (default: node_modules) from the primary checkout into the new worktree to avoid reinstalling. Defaults to FALSE so the worktree stays isolated. Only set to true when you are confident this worktree will NOT install, upgrade, or change packages, because a package install into a symlinked node_modules writes through to (and can corrupt) the primary checkout's dependencies. When false, run the repo's package manager in the worktree if you need dependencies. (New worktrees only.)"
     },
     "force": {
       "type": "boolean",

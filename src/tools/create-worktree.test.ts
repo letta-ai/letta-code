@@ -385,7 +385,7 @@ describe("CreateWorktree tool", () => {
     expect(result.content[0]?.text).toContain("repo_path");
   });
 
-  test("symlinks node_modules from the primary checkout into the worktree", async () => {
+  test("symlinks node_modules from the primary checkout when symlink_dependencies is true", async () => {
     const repo = await trackRepo();
     await mkdir(path.join(repo, "node_modules", "left-pad"), {
       recursive: true,
@@ -400,6 +400,7 @@ describe("CreateWorktree tool", () => {
         name: "symlink-deps",
         refresh_base: false,
         switch_cwd: false,
+        symlink_dependencies: true,
       }),
     );
 
@@ -415,7 +416,7 @@ describe("CreateWorktree tool", () => {
     expect(result.content[0]?.text).toContain("symlinked node_modules");
   });
 
-  test("does not symlink dependencies when symlink_dependencies is false", async () => {
+  test("does not symlink dependencies by default (opt-in)", async () => {
     const repo = await trackRepo();
     await mkdir(path.join(repo, "node_modules", "left-pad"), {
       recursive: true,
@@ -430,7 +431,6 @@ describe("CreateWorktree tool", () => {
         name: "isolated-deps",
         refresh_base: false,
         switch_cwd: false,
-        symlink_dependencies: false,
       }),
     );
 
@@ -443,7 +443,9 @@ describe("CreateWorktree tool", () => {
       path.join(result.worktree_path, "node_modules"),
     ).catch(() => null);
     expect(linked).toBeNull();
-    expect(result.content[0]?.text).toContain("symlink_dependencies=false");
+    expect(result.content[0]?.text).toContain(
+      "Dependencies were not symlinked",
+    );
   });
 
   test("copies gitignored files listed in .worktreeinclude (e.g. .env)", async () => {
