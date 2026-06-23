@@ -92,7 +92,7 @@
     "check:test-coverage": "node scripts/check-test-coverage.cjs",
     "check:bundled-skill-scripts": "node scripts/check-bundled-skill-scripts.js",
     "check": "bun run scripts/check.js",
-    "dev": "LETTA_DEBUG=${LETTA_DEBUG:-1} LETTA_RESPONSES_WS=${LETTA_RESPONSES_WS:-1} bun --loader=.md:text --loader=.mdx:text --loader=.txt:text run src/index.ts",
+    "dev": "node scripts/dev.cjs",
     "build": "node scripts/postinstall-patches.js && bun run build.js",
     "test:update-chain:manual": "bun run src/test-utils/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/test-utils/update-chain-smoke.ts --mode startup",
