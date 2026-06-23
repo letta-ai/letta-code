@@ -54,7 +54,6 @@ import {
   getGlobalModsDirectory,
   getLegacyGlobalExtensionsDirectory,
   getModCacheDirectory,
-  resolveDefaultGlobalModsDirectory,
 } from "@/mods/paths";
 import {
   getModPermissionDefinition,
@@ -220,6 +219,7 @@ export interface LocalModRegistry {
 export interface LocalModSource {
   diagnostics?: ManagedModPackageDiagnostic[];
   files: string[];
+  legacyMigrationTargetRoot?: string;
   managedPackageRoots?: string[];
   root: string;
   scope: ModSourceScope;
@@ -235,6 +235,7 @@ export interface ResolveLocalModSourcesOptions {
   agentModsDirectory?: string;
   cacheDirectory?: string;
   globalModsDirectory?: string;
+  legacyGlobalExtensionsDirectory?: string;
 }
 
 export interface LoadLocalModsOptions extends ResolveLocalModSourcesOptions {
@@ -283,14 +284,16 @@ function listModFiles(directory: string): string[] {
 
 function getModSourcePriority(scope: ModSourceScope): number {
   switch (scope) {
-    case "bundled":
+    case "legacy_global":
       return 0;
-    case "global":
+    case "bundled":
       return 1;
-    case "agent":
+    case "global":
       return 2;
-    case "project":
+    case "agent":
       return 3;
+    case "project":
+      return 4;
   }
 }
 
@@ -314,27 +317,43 @@ export function resolveLocalModSources(
   options: ResolveLocalModSourcesOptions = {},
 ): LocalModSource[] {
   const globalModsDirectory =
-    options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory();
+    options.globalModsDirectory ?? getGlobalModsDirectory();
+  const legacyGlobalExtensionsDirectory =
+    options.legacyGlobalExtensionsDirectory ??
+    (options.globalModsDirectory
+      ? undefined
+      : getLegacyGlobalExtensionsDirectory());
   const managedPackages = resolveManagedModPackages(globalModsDirectory);
   const globalDiagnostics = managedPackages.diagnostics;
-  const sources: LocalModSource[] = [
-    {
-      ...(globalDiagnostics.length > 0
-        ? { diagnostics: globalDiagnostics }
-        : {}),
-      files: [...listModFiles(globalModsDirectory), ...managedPackages.files],
-      ...(managedPackages.packages.length > 0
-        ? {
-            managedPackageRoots: managedPackages.packages.map(
-              (pkg) => pkg.root,
-            ),
-          }
-        : {}),
-      root: globalModsDirectory,
-      scope: "global",
+  const sources: LocalModSource[] = [];
+
+  if (
+    legacyGlobalExtensionsDirectory &&
+    path.resolve(legacyGlobalExtensionsDirectory) !==
+      path.resolve(globalModsDirectory) &&
+    existsSync(legacyGlobalExtensionsDirectory)
+  ) {
+    sources.push({
+      files: listModFiles(legacyGlobalExtensionsDirectory),
+      legacyMigrationTargetRoot: globalModsDirectory,
+      root: legacyGlobalExtensionsDirectory,
+      scope: "legacy_global",
       trusted: true,
-    },
-  ];
+    });
+  }
+
+  sources.push({
+    ...(globalDiagnostics.length > 0 ? { diagnostics: globalDiagnostics } : {}),
+    files: [...listModFiles(globalModsDirectory), ...managedPackages.files],
+    ...(managedPackages.packages.length > 0
+      ? {
+          managedPackageRoots: managedPackages.packages.map((pkg) => pkg.root),
+        }
+      : {}),
+    root: globalModsDirectory,
+    scope: "global",
+    trusted: true,
+  });
 
   if (options.agentModsDirectory) {
     sources.push({
@@ -1366,6 +1385,46 @@ function getModFactory(module: LocalModModule): unknown {
     : module.activate;
 }
 
+function getLegacyExtensionMigrationTarget(
+  source: LocalModSource,
+  modPath: string,
+): string {
+  const targetRoot =
+    source.legacyMigrationTargetRoot ?? getGlobalModsDirectory();
+  const relativePath = path.relative(source.root, modPath);
+  if (
+    !relativePath ||
+    relativePath.startsWith("..") ||
+    path.isAbsolute(relativePath)
+  ) {
+    return path.join(targetRoot, path.basename(modPath));
+  }
+  return path.join(targetRoot, relativePath);
+}
+
+function recordLegacyExtensionLoadedDiagnostic(
+  registry: LocalModRegistry,
+  owner: ModOwner,
+  source: LocalModSource,
+  onDiagnostic: ((diagnostic: ModDiagnostic) => void) | undefined,
+): void {
+  const error = new Error(
+    `Loaded legacy extension from ${owner.path}. Move it to ${getLegacyExtensionMigrationTarget(source, owner.path)}.`,
+  );
+  error.name = "LegacyExtensionLoaded";
+  error.stack = undefined;
+  recordModDiagnostic(
+    registry,
+    {
+      error,
+      owner,
+      phase: "legacy_extension",
+      severity: "warning",
+    },
+    onDiagnostic,
+  );
+}
+
 export async function loadLocalMods(
   options: LoadLocalModsOptions,
 ): Promise<LocalModRegistry> {
@@ -1403,6 +1462,15 @@ export async function loadLocalMods(
       let failurePhase: ModDiagnostic["phase"] = "import";
       registry.ownerAbortControllers[owner.id] = abortController;
       registry.owners[owner.id] = owner;
+
+      if (source.scope === "legacy_global") {
+        recordLegacyExtensionLoadedDiagnostic(
+          registry,
+          owner,
+          source,
+          options.onDiagnostic,
+        );
+      }
 
       try {
         const mtimeMs = statSync(modPath).mtimeMs;
