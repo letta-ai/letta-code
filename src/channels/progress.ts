@@ -140,6 +140,13 @@ function formatToolProgressDetails(
     return undefined;
   }
 
+  // Keep Slack task rows compact. Non-shell inputs are often duplicated by the
+  // title or too verbose for the native card; shell commands are the one detail
+  // worth keeping because descriptions can hide the exact command being run.
+  if (!isShellTool(summary.name)) {
+    return undefined;
+  }
+
   const { display } = formatArgsDisplay(summary.argumentsText, summary.name);
   const sanitized = sanitizeChannelProgressText(
     display,
@@ -148,8 +155,7 @@ function formatToolProgressDetails(
   if (!sanitized || sanitized === "…") {
     return undefined;
   }
-  const label = summary.name && isShellTool(summary.name) ? "Command" : "Input";
-  return `${label}: ${sanitized}`;
+  return `Command: ${sanitized}`;
 }
 
 function extractToolCallSummary(value: unknown): ToolCallSummary | null {
