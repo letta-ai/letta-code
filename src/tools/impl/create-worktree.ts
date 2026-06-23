@@ -21,10 +21,10 @@ import {
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 import { restartWorktreeWatcher } from "@/websocket/listener/worktree-watcher";
 import { getShellEnv } from "./shell-env.js";
-import { validateRequiredParams } from "./validation.js";
 
 interface CreateWorktreeArgs {
-  name: string;
+  name?: string;
+  path?: string;
   branch_name?: string;
   base_ref?: string;
   repo_path?: string;
@@ -690,10 +690,221 @@ export async function provisionWorktree(params: {
   return notes;
 }
 
+/**
+ * Switches the active session/conversation working directory to `worktreePath`,
+ * using the listener-aware path when a runtime is attached and falling back to
+ * a plain process chdir otherwise. Shared by the create and enter flows.
+ */
+async function switchSessionToWorktree(params: {
+  worktreePath: string;
+  shouldSwitchCwd: boolean;
+  runtimeContext: ReturnType<typeof getRuntimeContext>;
+  executionContextId?: string;
+}): Promise<boolean> {
+  if (!params.shouldSwitchCwd) {
+    return false;
+  }
+  const { worktreePath, runtimeContext } = params;
+
+  const listener = getActiveRuntime();
+  if (listener && runtimeContext?.conversationId) {
+    await switchConversationWorkingDirectory({
+      runtime: listener,
+      agentId: runtimeContext.agentId ?? null,
+      conversationId: runtimeContext.conversationId,
+      workingDirectory: worktreePath,
+      updateCurrentRuntimeContext: true,
+    });
+    restartWorktreeWatcher({
+      runtime: listener,
+      agentId: runtimeContext.agentId ?? null,
+      conversationId: runtimeContext.conversationId,
+    });
+    return true;
+  }
+
+  await switchCurrentRuntimeWorkingDirectory(worktreePath);
+  if (params.executionContextId) {
+    const { updateToolExecutionContextWorkingDirectory } = await import(
+      "@/tools/manager"
+    );
+    updateToolExecutionContextWorkingDirectory(
+      params.executionContextId,
+      worktreePath,
+    );
+  }
+  return true;
+}
+
+interface RegisteredWorktree {
+  worktreePath: string;
+  branch?: string;
+  isMain: boolean;
+  prunable: boolean;
+}
+
+/**
+ * Parses `git worktree list --porcelain`. The first block is always the main
+ * working tree; linked worktrees follow.
+ */
+async function listRegisteredWorktrees(
+  repoRoot: string,
+): Promise<RegisteredWorktree[]> {
+  const stdout = await gitStdout(["worktree", "list", "--porcelain"], repoRoot);
+  const entries: RegisteredWorktree[] = [];
+  let current: {
+    worktreePath: string;
+    branch?: string;
+    prunable: boolean;
+  } | null = null;
+
+  const flush = (): void => {
+    if (current) {
+      entries.push({
+        worktreePath: current.worktreePath,
+        branch: current.branch,
+        prunable: current.prunable,
+        isMain: entries.length === 0,
+      });
+      current = null;
+    }
+  };
+
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      flush();
+      current = {
+        worktreePath: line.slice("worktree ".length),
+        prunable: false,
+      };
+    } else if (current && line.startsWith("branch ")) {
+      current.branch = line
+        .slice("branch ".length)
+        .replace(/^refs\/heads\//, "");
+    } else if (
+      current &&
+      (line === "prunable" || line.startsWith("prunable "))
+    ) {
+      current.prunable = true;
+    }
+  }
+  flush();
+  return entries;
+}
+
+function buildEnteredMessage(params: {
+  worktreePath: string;
+  branchName?: string;
+  switchedCwd: boolean;
+}): string {
+  const lines = [
+    "Switched to existing worktree.",
+    "",
+    `Path: ${params.worktreePath}`,
+    `Branch: ${params.branchName ?? "(detached)"}`,
+    "",
+    params.switchedCwd
+      ? "This conversation's working directory is now this worktree."
+      : "The conversation working directory was left unchanged.",
+    "",
+    "Next steps:",
+    "- Confirm you are in the worktree with `git status` before editing.",
+    "- This worktree already existed, so it was not re-provisioned; its dependencies, hooks, and ignored files are whatever it already had.",
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Switches the session into an existing worktree. Validation-only: the target
+ * must be a registered, non-prunable linked worktree of this repository, living
+ * under the managed `.letta/worktrees/` directory. Does not create or
+ * re-provision anything.
+ */
+async function enterExistingWorktree(params: {
+  args: CreateWorktreeArgs;
+  requestedPath: string;
+  runtimeContext: ReturnType<typeof getRuntimeContext>;
+}): Promise<CreateWorktreeResult> {
+  const { args, requestedPath, runtimeContext } = params;
+  const currentCwd =
+    runtimeContext?.workingDirectory || process.env.USER_CWD || process.cwd();
+  const repoRoot = await resolveWorktreeSourceRoot({
+    currentCwd,
+    requestedRepoPath: getStringArg(args, "repo_path"),
+  });
+  const primaryRoot = await resolvePrimaryWorktreeRoot(repoRoot);
+  const managedDir = path.join(primaryRoot, ".letta", "worktrees");
+
+  const resolvedTarget = await realpath(
+    path.resolve(currentCwd, requestedPath),
+  ).catch(() => null);
+  if (!resolvedTarget) {
+    throw new Error(`Worktree path does not exist: ${requestedPath}`);
+  }
+
+  const resolvedManagedDir = await realpath(managedDir).catch(() => null);
+  if (
+    !resolvedManagedDir ||
+    !(
+      resolvedTarget === resolvedManagedDir ||
+      resolvedTarget.startsWith(resolvedManagedDir + path.sep)
+    )
+  ) {
+    throw new Error(
+      `Refusing to enter ${requestedPath}: only worktrees under ${managedDir} (created by CreateWorktree) can be switched into.`,
+    );
+  }
+
+  const registered = await listRegisteredWorktrees(repoRoot);
+  let match: RegisteredWorktree | undefined;
+  for (const entry of registered) {
+    const entryReal = await realpath(entry.worktreePath).catch(() => null);
+    if (entryReal && entryReal === resolvedTarget) {
+      match = entry;
+      break;
+    }
+  }
+  if (!match) {
+    throw new Error(
+      `${requestedPath} is not a registered worktree of this repository. Run \`git worktree list\` to see registered worktrees.`,
+    );
+  }
+  if (match.isMain) {
+    throw new Error(
+      `${requestedPath} is the main working tree, not a linked worktree.`,
+    );
+  }
+  if (match.prunable) {
+    throw new Error(
+      `${requestedPath} is marked prunable by git (its directory or administrative files are missing or broken).`,
+    );
+  }
+
+  const switchedCwd = await switchSessionToWorktree({
+    worktreePath: resolvedTarget,
+    shouldSwitchCwd: args.switch_cwd !== false,
+    runtimeContext,
+    executionContextId: getStringArg(args, "_executionContextId"),
+  });
+
+  const message = buildEnteredMessage({
+    worktreePath: resolvedTarget,
+    branchName: match.branch,
+    switchedCwd,
+  });
+
+  return {
+    content: [{ type: "text", text: message }],
+    status: "success",
+    worktree_path: resolvedTarget,
+    branch_name: match.branch,
+    switched_cwd: switchedCwd,
+  };
+}
+
 export async function create_worktree(
   rawArgs: Record<string, unknown>,
 ): Promise<CreateWorktreeResult> {
-  validateRequiredParams(rawArgs, ["name"], "CreateWorktree");
   if (!isObject(rawArgs)) {
     return {
       content: [{ type: "text", text: "Invalid CreateWorktree arguments" }],
@@ -702,16 +913,43 @@ export async function create_worktree(
   }
 
   const args = rawArgs as unknown as CreateWorktreeArgs;
-  const name = getStringArg(args, "name");
-  if (!name) {
-    return {
-      content: [{ type: "text", text: "Worktree name cannot be empty" }],
-      status: "error",
-    };
-  }
+  const requestedPath = getStringArg(args, "path");
 
   try {
     const runtimeContext = getRuntimeContext();
+
+    // Enter mode: switch into an existing worktree rather than creating one.
+    if (requestedPath) {
+      if (
+        getStringArg(args, "name") ||
+        getStringArg(args, "branch_name") ||
+        getStringArg(args, "base_ref")
+      ) {
+        throw new Error(
+          "`path` switches into an existing worktree and cannot be combined with `name`, `branch_name`, or `base_ref`.",
+        );
+      }
+      return await enterExistingWorktree({
+        args,
+        requestedPath,
+        runtimeContext,
+      });
+    }
+
+    // Create mode.
+    const name = getStringArg(args, "name");
+    if (!name) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Provide `name` to create a new worktree, or `path` to switch into an existing one.",
+          },
+        ],
+        status: "error",
+      };
+    }
+
     const currentCwd =
       runtimeContext?.workingDirectory || process.env.USER_CWD || process.cwd();
     const repoRoot = await resolveWorktreeSourceRoot({
@@ -771,40 +1009,12 @@ export async function create_worktree(
       ];
     }
 
-    const shouldSwitchCwd = args.switch_cwd !== false;
-    let switchedCwd = false;
-
-    if (shouldSwitchCwd) {
-      const listener = getActiveRuntime();
-      if (listener && runtimeContext?.conversationId) {
-        await switchConversationWorkingDirectory({
-          runtime: listener,
-          agentId: runtimeContext.agentId ?? null,
-          conversationId: runtimeContext.conversationId,
-          workingDirectory: normalizedWorktreePath,
-          updateCurrentRuntimeContext: true,
-        });
-        switchedCwd = true;
-        restartWorktreeWatcher({
-          runtime: listener,
-          agentId: runtimeContext.agentId ?? null,
-          conversationId: runtimeContext.conversationId,
-        });
-      } else {
-        await switchCurrentRuntimeWorkingDirectory(normalizedWorktreePath);
-        const executionContextId = getStringArg(args, "_executionContextId");
-        if (executionContextId) {
-          const { updateToolExecutionContextWorkingDirectory } = await import(
-            "@/tools/manager"
-          );
-          updateToolExecutionContextWorkingDirectory(
-            executionContextId,
-            normalizedWorktreePath,
-          );
-        }
-        switchedCwd = true;
-      }
-    }
+    const switchedCwd = await switchSessionToWorktree({
+      worktreePath: normalizedWorktreePath,
+      shouldSwitchCwd: args.switch_cwd !== false,
+      runtimeContext,
+      executionContextId: getStringArg(args, "_executionContextId"),
+    });
 
     const message = buildSuccessMessage({
       worktreePath: normalizedWorktreePath,

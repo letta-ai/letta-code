@@ -497,6 +497,89 @@ describe("CreateWorktree tool", () => {
     expect(result.content[0]?.text).toContain("wired git hooks");
   });
 
+  test("switches into an existing managed worktree via path", async () => {
+    const repo = await trackRepo();
+    setActiveRuntime(null);
+
+    const created = await runWithRuntimeContext(
+      { workingDirectory: repo },
+      () =>
+        create_worktree({
+          name: "Existing Feature",
+          refresh_base: false,
+          switch_cwd: false,
+        }),
+    );
+    expect(created.status).toBe("success");
+    if (!created.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+
+    const entered = await runWithRuntimeContext(
+      { workingDirectory: repo },
+      () => create_worktree({ path: created.worktree_path }),
+    );
+
+    expect(entered.status).toBe("success");
+    expect(entered.switched_cwd).toBe(true);
+    expect(entered.worktree_path).toBe(created.worktree_path);
+    expect(entered.branch_name).toBe(created.branch_name);
+    expect(process.cwd()).toBe(created.worktree_path);
+    expect(entered.content[0]?.text).toContain("Switched to existing worktree");
+  });
+
+  test("refuses to enter a worktree outside .letta/worktrees", async () => {
+    const repo = await trackRepo();
+    const external = await mkdtemp(
+      path.join(tmpdir(), "letta-create-worktree-external-"),
+    );
+    tempDirs.push(external);
+    const externalWorktree = path.join(external, "wt");
+    git(
+      [
+        "worktree",
+        "add",
+        "--no-track",
+        "-b",
+        "external-branch",
+        externalWorktree,
+        "HEAD",
+      ],
+      repo,
+    );
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({ path: externalWorktree }),
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("only worktrees under");
+  });
+
+  test("refuses to enter an unregistered directory under .letta/worktrees", async () => {
+    const repo = await trackRepo();
+    const ghost = path.join(repo, ".letta", "worktrees", "ghost");
+    await mkdir(ghost, { recursive: true });
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({ path: ghost }),
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("not a registered worktree");
+  });
+
+  test("rejects combining path with name", async () => {
+    const repo = await trackRepo();
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({ path: repo, name: "nope" }),
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("cannot be combined");
+  });
+
   test("adds a windows path-length hint to git checkout failures", () => {
     const message = addWindowsPathLengthHint(
       "Failed to run git worktree add\nerror: unable to create file: filename too long\nfatal: could not reset index file to revision 'HEAD'",

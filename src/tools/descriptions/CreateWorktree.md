@@ -1,8 +1,10 @@
 # CreateWorktree
 
-Create a fresh isolated git worktree for this conversation.
+Create a fresh isolated git worktree for this conversation, or switch this conversation into an existing one.
 
 Use this tool when starting a new feature, bug fix, refactor, or other file-editing task where isolated branch work is useful, especially if the user or other agents may be working in the same repository. Prefer worktrees by default unless the user explicitly asks to work in the current checkout or says they do not want worktrees.
+
+Pass `name` (and optionally `branch_name`/`base_ref`) to create a new worktree. Pass `path` instead to switch into an existing worktree that was created under `.letta/worktrees/` — for example to resume work or hand off to a worktree another conversation started.
 
 Prefer this tool over manually running `git worktree add` with Bash because it creates the worktree in Letta Code's canonical location, bases it on the latest default branch, and updates this conversation/session's working directory when supported.
 
@@ -21,6 +23,11 @@ Behavior:
   - Copies `.letta/settings.local.json` into the worktree when present.
   - Copies gitignored files/directories listed in a repo-root `.worktreeinclude` file (and in the `worktree.include` project setting) — use this for config like `.env`.
 - Provisioning is configurable via the `worktree` block in `.letta/settings.json` (`symlinkDirectories`, `copyLocalSettings`, `linkHooks`, `include`) and is best-effort: it reports what was done/skipped in the result and never aborts worktree creation.
+
+Entering an existing worktree (`path`):
+- Switches the conversation/session cwd into the worktree at `path` without creating or re-provisioning anything.
+- `path` must be a registered, non-prunable linked worktree of this repository, living under `.letta/worktrees/`. The main working tree and unmanaged worktrees are rejected.
+- Mutually exclusive with `name`, `branch_name`, and `base_ref`.
 
 After success:
 - Continue using the returned worktree path as the current workspace.
