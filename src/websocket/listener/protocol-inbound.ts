@@ -6,6 +6,8 @@ import type {
   AbortMessageCommand,
   ArtifactCallCommand,
   ArtifactDebugLogsSnapshotCommand,
+  ArtifactInteractAction,
+  ArtifactInteractResponseCommand,
   ChangeDeviceStateCommand,
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -712,6 +714,46 @@ export function isArtifactDebugLogsSnapshotCommand(
     htmlLogs.every(isArtifactDebugLogEntry) &&
     Array.isArray(serverLogs) &&
     serverLogs.every(isArtifactDebugLogEntry)
+  );
+}
+
+function isArtifactInteractAction(
+  value: unknown,
+): value is ArtifactInteractAction {
+  return (
+    value === "snapshot" ||
+    value === "click" ||
+    value === "input" ||
+    value === "select" ||
+    value === "keydown" ||
+    value === "submit" ||
+    value === "wait_for_selector" ||
+    value === "wait_for_text"
+  );
+}
+
+export function isArtifactInteractResponseCommand(
+  value: unknown,
+): value is ArtifactInteractResponseCommand {
+  if (!value || typeof value !== "object") return false;
+  const type = Reflect.get(value, "type");
+  const requestId = Reflect.get(value, "request_id");
+  const agentId = Reflect.get(value, "agent_id");
+  const appName = Reflect.get(value, "app_name");
+  const action = Reflect.get(value, "action");
+  const success = Reflect.get(value, "success");
+  const error = Reflect.get(value, "error");
+  const logs = Reflect.get(value, "logs");
+  return (
+    type === "artifact_interact_response" &&
+    typeof requestId === "string" &&
+    typeof agentId === "string" &&
+    typeof appName === "string" &&
+    isArtifactInteractAction(action) &&
+    typeof success === "boolean" &&
+    (error === undefined || typeof error === "string") &&
+    (logs === undefined ||
+      (Array.isArray(logs) && logs.every(isArtifactDebugLogEntry)))
   );
 }
 
@@ -1766,6 +1808,7 @@ export function parseServerMessage(
       isDeleteMemoryFileCommand(parsed) ||
       isArtifactCallCommand(parsed) ||
       isArtifactDebugLogsSnapshotCommand(parsed) ||
+      isArtifactInteractResponseCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||

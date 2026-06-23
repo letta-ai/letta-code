@@ -957,6 +957,28 @@ export interface ArtifactDebugLogsSnapshotCommand {
   server_logs: ArtifactDebugLogEntry[];
 }
 
+export type ArtifactInteractAction =
+  | "snapshot"
+  | "click"
+  | "input"
+  | "select"
+  | "keydown"
+  | "submit"
+  | "wait_for_selector"
+  | "wait_for_text";
+
+export interface ArtifactInteractResponseCommand {
+  type: "artifact_interact_response";
+  request_id: string;
+  agent_id: string;
+  app_name: string;
+  action: ArtifactInteractAction;
+  success: boolean;
+  result?: unknown;
+  error?: string;
+  logs?: ArtifactDebugLogEntry[];
+}
+
 export interface MemoryCommitDiffCommand {
   type: "memory_commit_diff";
   /** Echoed back in the response for request correlation. */
@@ -1907,6 +1929,7 @@ export type WsProtocolCommand =
   | DeleteMemoryFileCommand
   | ArtifactCallCommand
   | ArtifactDebugLogsSnapshotCommand
+  | ArtifactInteractResponseCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand

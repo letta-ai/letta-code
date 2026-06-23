@@ -5,6 +5,7 @@ import type { ListMemoryCommand } from "@/types/protocol_v2";
 import {
   isArtifactCallCommand,
   isArtifactDebugLogsSnapshotCommand,
+  isArtifactInteractResponseCommand,
   isDeleteMemoryFileCommand,
   isEnableMemfsCommand,
   isListMemoryCommand,
@@ -16,6 +17,7 @@ import {
   isWriteMemoryFileCommand,
 } from "@/websocket/listener/protocol-inbound";
 import { setArtifactDebugSnapshot } from "./artifact-debug-store";
+import { resolveArtifactInteractResponse } from "./artifact-interact-requests";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
@@ -1111,6 +1113,11 @@ export function handleMemoryProtocolCommand(
       htmlLogs: parsed.html_logs,
       serverLogs: parsed.server_logs,
     });
+    return true;
+  }
+
+  if (isArtifactInteractResponseCommand(parsed)) {
+    resolveArtifactInteractResponse(parsed);
     return true;
   }
 

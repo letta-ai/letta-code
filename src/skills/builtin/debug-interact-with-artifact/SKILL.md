@@ -16,10 +16,12 @@ Use this skill when debugging an artifact app in `external/artifacts/<artifact-n
    - `external/artifacts/<artifact-name>/server/server.js`
    - `external/artifacts/<artifact-name>/server/data.json`
 3. Read runtime logs with `artifact_debug_logs`.
-4. Exercise server behavior with `artifact_call`.
-5. Fix artifact files with memory file tools.
-6. Re-read logs or call functions again to verify.
-7. Clear debug logs with `artifact_debug_logs({ app_name, clear: true })` after debugging.
+4. Inspect visible UI state with `artifact_interact` action `snapshot`.
+5. Exercise browser behavior with `artifact_interact` actions like `click`, `input`, `submit`, and waits.
+6. Exercise server behavior with `artifact_call` when debugging `server/server.js` directly.
+7. Fix artifact files with memory file tools.
+8. Re-read logs or interact/call again to verify.
+9. Clear debug logs with `artifact_debug_logs({ app_name, clear: true })` after debugging.
 
 ## In-memory logs
 
@@ -69,13 +71,68 @@ Example with args:
 
 `artifact_call` returns JSON containing the result, updated memory paths, and server logs. It also appends returned server logs to the in-memory artifact debug snapshot.
 
+## Browser/UI interaction
+
+Use `artifact_interact` to act inside the open artifact iframe. It routes through the connected UI runtime and performs safe DOM actions without arbitrary eval.
+
+Inspect the current UI:
+
+```json
+{ "app_name": "todo-app", "action": "snapshot" }
+```
+
+Click a button:
+
+```json
+{
+  "app_name": "todo-app",
+  "action": "click",
+  "selector": "button[data-testid='add-todo']"
+}
+```
+
+Fill an input and submit:
+
+```json
+{
+  "app_name": "todo-app",
+  "action": "input",
+  "selector": "input[name='todo']",
+  "value": "Buy milk"
+}
+```
+
+```json
+{
+  "app_name": "todo-app",
+  "action": "submit",
+  "selector": "form"
+}
+```
+
+Wait for UI changes:
+
+```json
+{
+  "app_name": "todo-app",
+  "action": "wait_for_text",
+  "text": "Buy milk",
+  "timeout_ms": 5000
+}
+```
+
+Supported actions: `snapshot`, `click`, `input`, `select`, `keydown`, `submit`, `wait_for_selector`, `wait_for_text`.
+
+If the tool reports that the iframe is not ready, retry once after the artifact panel opens or switches to the requested artifact.
+
 ## Browser/UI interaction limits
 
 The browser iframe is sandboxed. Prefer to debug browser-only issues by:
 
 - reading HTML logs from `artifact_debug_logs`,
-- adding temporary `console.log` diagnostics to `ui/index.html`,
-- asking the user to reproduce the UI interaction,
+- taking a UI snapshot with `artifact_interact`,
+- using safe `artifact_interact` actions to reproduce clicks/input,
+- adding temporary `console.log` diagnostics to `ui/index.html` only when the safe actions are insufficient,
 - then removing temporary diagnostics before finishing.
 
 Do not write debug logs into memory files unless the user explicitly asks. Keep diagnostics temporary and clean them up.
