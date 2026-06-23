@@ -1,21 +1,35 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { type LocalModSource, resolveLocalModSources } from "@/mods/mod-engine";
+import {
+  listManagedModPackages,
+  type ManagedModPackageDiagnostic,
+  type ManagedModPackageListItem,
+  removeManagedModPackage,
+  setManagedModPackageEnabled,
+} from "@/mods/package-registry";
+import { resolveDefaultGlobalModsDirectory } from "@/mods/paths";
 
 interface LooseModSection {
   files: string[];
   root: string;
 }
 
-export interface LooseModsList {
+export interface ModsList {
   agent?: LooseModSection;
   harness: LooseModSection;
+  packageDiagnostics: ManagedModPackageDiagnostic[];
+  packages: ManagedModPackageListItem[];
 }
 
-export interface ListLooseModsOptions {
+export interface ListModsOptions {
   agentId?: string | null;
   agentModsDirectory?: string | null;
+  globalModsDirectory?: string;
+}
+
+interface RunModsOptions {
   globalModsDirectory?: string;
 }
 
@@ -25,11 +39,17 @@ const MODS_OPTIONS = {
   "agent-id": { type: "string" },
 } as const;
 
+const RELOAD_HINT =
+  "Run /reload in active sessions for changes to take effect.";
+
 function printUsage(): void {
   console.log(
     `
 Usage:
   letta mods list [--agent <id>]
+  letta mods enable <package-spec>
+  letta mods disable <package-spec>
+  letta mods remove <package-spec>
 
 Options:
   --agent <id>       Include loose mods from this agent's MemFS directory
@@ -61,31 +81,36 @@ export function getAgentModsDirectory(agentId: string): string {
   return join(getScopedMemoryFilesystemRoot(agentId), "mods");
 }
 
+function directFilesForSource(source: LocalModSource): string[] {
+  return source.files.filter((file) => dirname(file) === source.root);
+}
+
 function toSection(source: LocalModSource): LooseModSection {
   return {
-    files: [...source.files],
+    files: directFilesForSource(source),
     root: source.root,
   };
 }
 
-export function listLooseMods(
-  options: ListLooseModsOptions = {},
-): LooseModsList {
+export function listMods(options: ListModsOptions = {}): ModsList {
   const agentModsDirectory =
     options.agentModsDirectory ??
     (options.agentId ? getAgentModsDirectory(options.agentId) : null);
+  const globalModsDirectory =
+    options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory();
   const sources = resolveLocalModSources({
     ...(agentModsDirectory ? { agentModsDirectory } : {}),
-    ...(options.globalModsDirectory
-      ? { globalModsDirectory: options.globalModsDirectory }
-      : {}),
+    globalModsDirectory,
   });
   const harness = sources.find((source) => source.scope === "global");
   const agent = sources.find((source) => source.scope === "agent");
+  const managedPackages = listManagedModPackages(globalModsDirectory);
 
   return {
     ...(agent ? { agent: toSection(agent) } : {}),
     harness: harness ? toSection(harness) : { files: [], root: "" },
+    packageDiagnostics: managedPackages.diagnostics,
+    packages: managedPackages.packages,
   };
 }
 
@@ -105,16 +130,48 @@ function formatLooseModSection(
   return lines.join("\n");
 }
 
-export function formatLooseModsList(mods: LooseModsList): string {
+function formatPackageSpecifier(pkg: ManagedModPackageListItem): string {
+  return `${pkg.source}@${pkg.version}`;
+}
+
+function formatInstalledPackagesSection(
+  mods: Pick<ModsList, "packageDiagnostics" | "packages">,
+): string {
+  const lines = ["Installed packages"];
+  if (mods.packages.length === 0 && mods.packageDiagnostics.length === 0) {
+    lines.push("  (none)");
+    return lines.join("\n");
+  }
+
+  for (const pkg of mods.packages) {
+    const status = pkg.enabled ? "enabled" : "disabled";
+    const capabilities = pkg.capabilities.join(", ");
+    lines.push(
+      capabilities
+        ? `  ${status}  ${formatPackageSpecifier(pkg)}    ${capabilities}`
+        : `  ${status}  ${formatPackageSpecifier(pkg)}`,
+    );
+  }
+  for (const diagnostic of mods.packageDiagnostics) {
+    lines.push(`  error    ${diagnostic.path}    ${diagnostic.error.message}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatModsList(mods: ModsList): string {
   const sections: string[] = [];
   if (mods.agent) {
     sections.push(formatLooseModSection("Agent mods", mods.agent));
   }
   sections.push(formatLooseModSection("Harness mods", mods.harness));
+  sections.push(formatInstalledPackagesSection(mods));
   return sections.join("\n\n");
 }
 
-async function runList(argv: string[]): Promise<number> {
+async function runList(
+  argv: string[],
+  options: RunModsOptions = {},
+): Promise<number> {
   let parsed: ReturnType<typeof parseModsArgs>;
   try {
     parsed = parseModsArgs(argv);
@@ -137,12 +194,85 @@ async function runList(argv: string[]): Promise<number> {
   }
 
   const agentId = getExplicitAgentId(parsed.values);
-  const mods = listLooseMods({ agentId });
-  console.log(formatLooseModsList(mods));
+  const mods = listMods({
+    agentId,
+    ...(options.globalModsDirectory
+      ? { globalModsDirectory: options.globalModsDirectory }
+      : {}),
+  });
+  console.log(formatModsList(mods));
   return 0;
 }
 
-export async function runModsSubcommand(argv: string[]): Promise<number> {
+async function runPackageMutation(
+  action: "disable" | "enable" | "remove",
+  argv: string[],
+  options: RunModsOptions = {},
+): Promise<number> {
+  let parsed: ReturnType<typeof parseModsArgs>;
+  try {
+    parsed = parseModsArgs(argv);
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    printUsage();
+    return 1;
+  }
+
+  if (parsed.values.help) {
+    printUsage();
+    return 0;
+  }
+  if (getExplicitAgentId(parsed.values)) {
+    console.error(`--agent is only supported for 'letta mods list'.`);
+    printUsage();
+    return 1;
+  }
+
+  const [specifier, extra] = parsed.positionals;
+  if (!specifier) {
+    console.error(`Missing package specifier.`);
+    printUsage();
+    return 1;
+  }
+  if (extra) {
+    console.error(`Unexpected argument: ${extra}`);
+    printUsage();
+    return 1;
+  }
+
+  try {
+    const modsRoot =
+      options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory();
+    const result =
+      action === "remove"
+        ? removeManagedModPackage({ modsRoot, specifier })
+        : setManagedModPackageEnabled({
+            enabled: action === "enable",
+            modsRoot,
+            specifier,
+          });
+    const packageSpec = formatPackageSpecifier(result.package);
+    const status =
+      action === "remove"
+        ? "removed"
+        : action === "enable"
+          ? "enabled"
+          : "disabled";
+    console.log(`${status} ${packageSpec}`);
+    console.log(RELOAD_HINT);
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+export async function runModsSubcommand(
+  argv: string[],
+  options: RunModsOptions = {},
+): Promise<number> {
   const [action, ...rest] = argv;
 
   if (!action || action === "help" || action === "--help" || action === "-h") {
@@ -152,7 +282,11 @@ export async function runModsSubcommand(argv: string[]): Promise<number> {
 
   switch (action) {
     case "list":
-      return runList(rest);
+      return runList(rest, options);
+    case "enable":
+    case "disable":
+    case "remove":
+      return runPackageMutation(action, rest, options);
     default:
       console.error(`Unknown mods action: ${action}`);
       printUsage();

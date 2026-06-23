@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   isSafeLettaPackageModEntryPath,
+  type LettaPackageCapability,
   readLettaPackageManifest,
 } from "@/mods/package-manifest";
 
@@ -25,6 +26,31 @@ export interface ResolveManagedModPackagesResult {
   diagnostics: ManagedModPackageDiagnostic[];
   files: string[];
   packages: ManagedModPackageSource[];
+}
+
+export interface ManagedModPackageListItem {
+  capabilities: LettaPackageCapability[];
+  enabled: boolean;
+  entries: string[];
+  files: string[];
+  registryIndex: number;
+  root: string;
+  rootRelativePath: string;
+  source: string;
+  version: string;
+}
+
+export interface ListManagedModPackagesResult {
+  diagnostics: ManagedModPackageDiagnostic[];
+  packages: ManagedModPackageListItem[];
+  registryExists: boolean;
+  registryPath: string;
+}
+
+export interface ManagedModPackageMutationResult {
+  package: ManagedModPackageListItem;
+  registryPath: string;
+  removedRoot?: string;
 }
 
 const PACKAGE_ENTRY_KEYS = new Set([
@@ -117,6 +143,84 @@ function parseJsonFile(filePath: string):
   }
 }
 
+function getRegistryPath(modsRoot: string): string {
+  return path.join(modsRoot, MOD_PACKAGES_REGISTRY_FILENAME);
+}
+
+function readRegistryObject(modsRoot: string):
+  | {
+      diagnostics: ManagedModPackageDiagnostic[];
+      ok: true;
+      packagesValue: unknown[];
+      registry: Record<string, unknown>;
+      registryPath: string;
+    }
+  | {
+      diagnostics: ManagedModPackageDiagnostic[];
+      ok: false;
+      registryExists: boolean;
+      registryPath: string;
+    } {
+  const registryPath = getRegistryPath(modsRoot);
+  if (!existsSync(registryPath)) {
+    return { diagnostics: [], ok: false, registryExists: false, registryPath };
+  }
+
+  const registryResult = parseJsonFile(registryPath);
+  if (!registryResult.ok) {
+    return {
+      diagnostics: [registryResult.error],
+      ok: false,
+      registryExists: true,
+      registryPath,
+    };
+  }
+  if (!isRecord(registryResult.value)) {
+    return {
+      diagnostics: [
+        createDiagnostic(registryPath, "packages.json must be an object"),
+      ],
+      ok: false,
+      registryExists: true,
+      registryPath,
+    };
+  }
+
+  const diagnostics: ManagedModPackageDiagnostic[] = [];
+  for (const key of getUnknownKeys(
+    registryResult.value,
+    PACKAGE_REGISTRY_KEYS,
+  )) {
+    diagnostics.push(
+      createDiagnostic(
+        `packages.json.${key}`,
+        `unknown registry field '${key}'`,
+      ),
+    );
+  }
+
+  const packagesValue = registryResult.value.packages;
+  if (!Array.isArray(packagesValue)) {
+    diagnostics.push(
+      createDiagnostic("packages.json.packages", "packages must be an array"),
+    );
+    return {
+      diagnostics,
+      ok: false,
+      registryExists: true,
+      registryPath,
+    };
+  }
+
+  return {
+    diagnostics,
+    ok: true,
+    packagesValue,
+    registry: registryResult.value,
+    registryPath,
+  };
+}
+
 function validatePackageEntries(
   value: unknown,
   diagnosticPath: string,
@@ -187,7 +291,7 @@ function resolvePackageEntry(
   return resolveRelativePath(packageRoot, normalized);
 }
 
-function resolvePackage(
+function validatePackageMetadata(
   modsRoot: string,
   rawEntry: unknown,
   index: number,
@@ -197,10 +301,15 @@ function resolvePackage(
       ok: false;
     }
   | {
-      diagnostics: [];
+      diagnostics: ManagedModPackageDiagnostic[];
+      enabled: boolean;
+      entries: string[];
       files: string[];
       ok: true;
-      packageSource: ManagedModPackageSource | null;
+      packageRoot: string;
+      rootRelativePath: string;
+      source: string;
+      version: string;
     } {
   const diagnosticPath = `packages[${index}]`;
   if (!isRecord(rawEntry)) {
@@ -252,31 +361,25 @@ function resolvePackage(
       ),
     );
   }
+  if (typeof rawEntry.root !== "string") {
+    diagnostics.push(
+      createDiagnostic(
+        `${diagnosticPath}.root`,
+        "package root must be a string",
+      ),
+    );
+  }
 
   if (
     diagnostics.length > 0 ||
     typeof source !== "string" ||
     typeof version !== "string" ||
-    typeof enabled !== "boolean"
+    typeof enabled !== "boolean" ||
+    typeof rawEntry.root !== "string"
   ) {
     return { diagnostics, ok: false };
   }
 
-  if (enabled === false) {
-    return { diagnostics: [], files: [], ok: true, packageSource: null };
-  }
-
-  if (typeof rawEntry.root !== "string") {
-    return {
-      diagnostics: [
-        createDiagnostic(
-          `${diagnosticPath}.root`,
-          "package root must be a string",
-        ),
-      ],
-      ok: false,
-    };
-  }
   const packageRoot = resolveRelativePath(modsRoot, rawEntry.root);
   if (!packageRoot) {
     return {
@@ -298,7 +401,61 @@ function resolvePackage(
     return { diagnostics: entriesResult.diagnostics, ok: false };
   }
 
-  const packageJsonPath = path.join(packageRoot, "package.json");
+  const files: string[] = [];
+  for (const entry of entriesResult.entries) {
+    const entryPath = resolvePackageEntry(packageRoot, entry);
+    if (!entryPath) {
+      diagnostics.push(
+        createDiagnostic(
+          `${diagnosticPath}.entries`,
+          `Package entry '${entry}' resolves outside the package root`,
+        ),
+      );
+      continue;
+    }
+    files.push(entryPath);
+  }
+  if (diagnostics.length > 0) {
+    return { diagnostics, ok: false };
+  }
+
+  return {
+    diagnostics: [],
+    enabled,
+    entries: entriesResult.entries,
+    files,
+    ok: true,
+    packageRoot,
+    rootRelativePath: rawEntry.root,
+    source,
+    version,
+  };
+}
+
+function resolvePackage(
+  modsRoot: string,
+  rawEntry: unknown,
+  index: number,
+):
+  | {
+      diagnostics: ManagedModPackageDiagnostic[];
+      ok: false;
+    }
+  | {
+      diagnostics: [];
+      files: string[];
+      ok: true;
+      packageSource: ManagedModPackageSource | null;
+    } {
+  const metadata = validatePackageMetadata(modsRoot, rawEntry, index);
+  if (!metadata.ok) {
+    return { diagnostics: metadata.diagnostics, ok: false };
+  }
+  if (!metadata.enabled) {
+    return { diagnostics: [], files: [], ok: true, packageSource: null };
+  }
+
+  const packageJsonPath = path.join(metadata.packageRoot, "package.json");
   const manifestResult = readLettaPackageManifest(packageJsonPath);
   if (!manifestResult.ok) {
     return {
@@ -327,22 +484,26 @@ function resolvePackage(
     manifestResult.manifest.mods.map(normalizeModEntry),
   );
   const files: string[] = [];
-  for (const entry of entriesResult.entries) {
+  const diagnostics: ManagedModPackageDiagnostic[] = [];
+  for (const entry of metadata.entries) {
     const normalizedEntry = normalizeModEntry(entry);
     if (!manifestEntries.has(normalizedEntry)) {
       diagnostics.push(
         createDiagnostic(
-          `${diagnosticPath}.entries`,
+          `packages[${index}].entries`,
           `Package entry '${entry}' is not declared in package.json#letta.mods`,
         ),
       );
       continue;
     }
-    const entryPath = resolvePackageEntry(packageRoot, normalizedEntry);
+    const entryPath = resolvePackageEntry(
+      metadata.packageRoot,
+      normalizedEntry,
+    );
     if (!entryPath) {
       diagnostics.push(
         createDiagnostic(
-          `${diagnosticPath}.entries`,
+          `packages[${index}].entries`,
           `Package entry '${entry}' resolves outside the package root`,
         ),
       );
@@ -360,11 +521,11 @@ function resolvePackage(
     files,
     ok: true,
     packageSource: {
-      entries: entriesResult.entries,
+      entries: metadata.entries,
       files,
-      root: packageRoot,
-      source,
-      version,
+      root: metadata.packageRoot,
+      source: metadata.source,
+      version: metadata.version,
     },
   };
 }
@@ -372,49 +533,20 @@ function resolvePackage(
 export function resolveManagedModPackages(
   modsRoot: string,
 ): ResolveManagedModPackagesResult {
-  const registryPath = path.join(modsRoot, MOD_PACKAGES_REGISTRY_FILENAME);
-  if (!existsSync(registryPath)) {
-    return { diagnostics: [], files: [], packages: [] };
-  }
-
-  const registryResult = parseJsonFile(registryPath);
+  const registryResult = readRegistryObject(modsRoot);
   if (!registryResult.ok) {
-    return { diagnostics: [registryResult.error], files: [], packages: [] };
-  }
-  if (!isRecord(registryResult.value)) {
-    return {
-      diagnostics: [
-        createDiagnostic(registryPath, "packages.json must be an object"),
-      ],
-      files: [],
-      packages: [],
-    };
+    if (!registryResult.registryExists) {
+      return { diagnostics: [], files: [], packages: [] };
+    }
+    return { diagnostics: registryResult.diagnostics, files: [], packages: [] };
   }
 
-  const diagnostics: ManagedModPackageDiagnostic[] = [];
-  for (const key of getUnknownKeys(
-    registryResult.value,
-    PACKAGE_REGISTRY_KEYS,
-  )) {
-    diagnostics.push(
-      createDiagnostic(
-        `packages.json.${key}`,
-        `unknown registry field '${key}'`,
-      ),
-    );
-  }
-
-  const packagesValue = registryResult.value.packages;
-  if (!Array.isArray(packagesValue)) {
-    diagnostics.push(
-      createDiagnostic("packages.json.packages", "packages must be an array"),
-    );
-    return { diagnostics, files: [], packages: [] };
-  }
-
+  const diagnostics: ManagedModPackageDiagnostic[] = [
+    ...registryResult.diagnostics,
+  ];
   const files: string[] = [];
   const packages: ManagedModPackageSource[] = [];
-  packagesValue.forEach((entry, index) => {
+  registryResult.packagesValue.forEach((entry, index) => {
     const result = resolvePackage(modsRoot, entry, index);
     diagnostics.push(...result.diagnostics);
     if (!result.ok) return;
@@ -425,4 +557,267 @@ export function resolveManagedModPackages(
   });
 
   return { diagnostics, files, packages };
+}
+
+export function listManagedModPackages(
+  modsRoot: string,
+): ListManagedModPackagesResult {
+  const registryResult = readRegistryObject(modsRoot);
+  if (!registryResult.ok) {
+    return {
+      diagnostics: registryResult.diagnostics,
+      packages: [],
+      registryExists: registryResult.registryExists,
+      registryPath: registryResult.registryPath,
+    };
+  }
+
+  const diagnostics: ManagedModPackageDiagnostic[] = [
+    ...registryResult.diagnostics,
+  ];
+  const packages: ManagedModPackageListItem[] = [];
+  registryResult.packagesValue.forEach((entry, index) => {
+    const metadata = validatePackageMetadata(modsRoot, entry, index);
+    diagnostics.push(...metadata.diagnostics);
+    if (!metadata.ok) return;
+
+    const packageJsonPath = path.join(metadata.packageRoot, "package.json");
+    const manifestResult = readLettaPackageManifest(packageJsonPath);
+    let capabilities: LettaPackageCapability[] = [];
+    if (!manifestResult.ok) {
+      diagnostics.push(
+        ...manifestResult.errors.map((error) =>
+          createDiagnostic(
+            packageJsonPath,
+            `Invalid package manifest at ${error.path}: ${error.message}`,
+          ),
+        ),
+      );
+    } else if (manifestResult.manifest) {
+      capabilities = manifestResult.manifest.capabilities ?? [];
+    } else {
+      diagnostics.push(
+        createDiagnostic(
+          packageJsonPath,
+          "Package does not include a package.json#letta manifest",
+        ),
+      );
+    }
+
+    packages.push({
+      capabilities,
+      enabled: metadata.enabled,
+      entries: metadata.entries,
+      files: metadata.files,
+      registryIndex: index,
+      root: metadata.packageRoot,
+      rootRelativePath: metadata.rootRelativePath,
+      source: metadata.source,
+      version: metadata.version,
+    });
+  });
+
+  return {
+    diagnostics,
+    packages,
+    registryExists: true,
+    registryPath: registryResult.registryPath,
+  };
+}
+
+function parseManagedPackageSpec(specifier: string): {
+  source: string;
+  version?: string;
+} {
+  const trimmed = specifier.trim();
+  if (!trimmed) {
+    throw new Error("Missing package specifier.");
+  }
+  const slashIndex = trimmed.lastIndexOf("/");
+  const atIndex = trimmed.lastIndexOf("@");
+  if (atIndex > slashIndex) {
+    const source = trimmed.slice(0, atIndex);
+    const version = trimmed.slice(atIndex + 1);
+    if (!source || !version) {
+      throw new Error(`Invalid package specifier: ${specifier}`);
+    }
+    return { source, version };
+  }
+
+  return { source: trimmed };
+}
+
+function formatManagedPackageSpecifier(pkg: {
+  source: string;
+  version: string;
+}): string {
+  return `${pkg.source}@${pkg.version}`;
+}
+
+function expectedRootRelativePathForSource(source: string): string | null {
+  if (!source.startsWith("npm:")) return null;
+  const packageName = source.slice("npm:".length);
+  const normalizedPackageName = normalizeRelativePath(packageName);
+  if (!normalizedPackageName) return null;
+  return `${MOD_PACKAGES_DIRECTORY_NAME}/npm/${normalizedPackageName}`;
+}
+
+function assertSafePackageRemovalRoot(
+  metadata: Extract<ReturnType<typeof validatePackageMetadata>, { ok: true }>,
+): void {
+  const normalizedRoot = normalizeRelativePath(metadata.rootRelativePath);
+  const expectedRoot = expectedRootRelativePathForSource(metadata.source);
+  if (!normalizedRoot || !expectedRoot || normalizedRoot !== expectedRoot) {
+    throw new Error(
+      `Refusing to remove ${formatManagedPackageSpecifier(metadata)} because registry root '${metadata.rootRelativePath}' does not match expected package root '${expectedRoot ?? "(unknown)"}'.`,
+    );
+  }
+}
+
+function readMutablePackageRegistry(modsRoot: string): {
+  packagesValue: unknown[];
+  registry: Record<string, unknown>;
+  registryPath: string;
+} {
+  const result = readRegistryObject(modsRoot);
+  if (!result.ok) {
+    if (!result.registryExists) {
+      throw new Error("No managed mod packages are installed.");
+    }
+    throw new Error(
+      result.diagnostics[0]?.error.message ?? "Invalid packages.json",
+    );
+  }
+  if (result.diagnostics.length > 0) {
+    throw new Error(
+      result.diagnostics[0]?.error.message ?? "Invalid packages.json",
+    );
+  }
+  return {
+    packagesValue: result.packagesValue,
+    registry: result.registry,
+    registryPath: result.registryPath,
+  };
+}
+
+function getPackageMetadataForMutation(
+  modsRoot: string,
+  rawEntry: unknown,
+  index: number,
+): Extract<ReturnType<typeof validatePackageMetadata>, { ok: true }> {
+  const metadata = validatePackageMetadata(modsRoot, rawEntry, index);
+  if (!metadata.ok) {
+    throw new Error(
+      metadata.diagnostics[0]?.error.message ?? "Invalid package entry",
+    );
+  }
+  return metadata;
+}
+
+function findPackageIndex(
+  modsRoot: string,
+  packagesValue: unknown[],
+  specifier: string,
+): {
+  index: number;
+  metadata: Extract<ReturnType<typeof validatePackageMetadata>, { ok: true }>;
+} {
+  const spec = parseManagedPackageSpec(specifier);
+  const matches: Array<{
+    index: number;
+    metadata: Extract<ReturnType<typeof validatePackageMetadata>, { ok: true }>;
+  }> = [];
+
+  packagesValue.forEach((entry, index) => {
+    const metadata = getPackageMetadataForMutation(modsRoot, entry, index);
+    if (metadata.source !== spec.source) return;
+    if (spec.version && metadata.version !== spec.version) return;
+    matches.push({ index, metadata });
+  });
+
+  if (matches.length === 0) {
+    throw new Error(`Managed mod package not found: ${specifier}`);
+  }
+  const firstMatch = matches[0];
+  if (!firstMatch) {
+    throw new Error(`Managed mod package not found: ${specifier}`);
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple versions match ${specifier}. Pass a versioned specifier like ${formatManagedPackageSpecifier(firstMatch.metadata)}.`,
+    );
+  }
+
+  return firstMatch;
+}
+
+function writePackageRegistry(
+  registryPath: string,
+  registry: Record<string, unknown>,
+): void {
+  writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`);
+}
+
+function mutationItem(
+  metadata: Extract<ReturnType<typeof validatePackageMetadata>, { ok: true }>,
+  index: number,
+  enabled: boolean,
+): ManagedModPackageListItem {
+  return {
+    capabilities: [],
+    enabled,
+    entries: metadata.entries,
+    files: metadata.files,
+    registryIndex: index,
+    root: metadata.packageRoot,
+    rootRelativePath: metadata.rootRelativePath,
+    source: metadata.source,
+    version: metadata.version,
+  };
+}
+
+export function setManagedModPackageEnabled(params: {
+  enabled: boolean;
+  modsRoot: string;
+  specifier: string;
+}): ManagedModPackageMutationResult {
+  const registry = readMutablePackageRegistry(params.modsRoot);
+  const match = findPackageIndex(
+    params.modsRoot,
+    registry.packagesValue,
+    params.specifier,
+  );
+  const rawEntry = registry.packagesValue[match.index];
+  if (!isRecord(rawEntry)) {
+    throw new Error("Invalid package entry");
+  }
+  rawEntry.enabled = params.enabled;
+  writePackageRegistry(registry.registryPath, registry.registry);
+
+  return {
+    package: mutationItem(match.metadata, match.index, params.enabled),
+    registryPath: registry.registryPath,
+  };
+}
+
+export function removeManagedModPackage(params: {
+  modsRoot: string;
+  specifier: string;
+}): ManagedModPackageMutationResult {
+  const registry = readMutablePackageRegistry(params.modsRoot);
+  const match = findPackageIndex(
+    params.modsRoot,
+    registry.packagesValue,
+    params.specifier,
+  );
+  assertSafePackageRemovalRoot(match.metadata);
+  registry.packagesValue.splice(match.index, 1);
+  writePackageRegistry(registry.registryPath, registry.registry);
+  rmSync(match.metadata.packageRoot, { force: true, recursive: true });
+
+  return {
+    package: mutationItem(match.metadata, match.index, match.metadata.enabled),
+    registryPath: registry.registryPath,
+    removedRoot: match.metadata.packageRoot,
+  };
 }
