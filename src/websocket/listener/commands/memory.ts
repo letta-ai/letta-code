@@ -4,6 +4,7 @@ import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { ListMemoryCommand } from "@/types/protocol_v2";
 import {
   isArtifactCallCommand,
+  isArtifactDebugLogsSnapshotCommand,
   isDeleteMemoryFileCommand,
   isEnableMemfsCommand,
   isListMemoryCommand,
@@ -14,6 +15,7 @@ import {
   isReadMemoryFileCommand,
   isWriteMemoryFileCommand,
 } from "@/websocket/listener/protocol-inbound";
+import { setArtifactDebugSnapshot } from "./artifact-debug-store";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
@@ -1097,6 +1099,17 @@ export function handleMemoryProtocolCommand(
           err instanceof Error ? err.message : "Failed to delete memory file",
         );
       }
+    });
+    return true;
+  }
+
+  // ── Store in-memory artifact debug logs from web/desktop UI ──────────
+  if (isArtifactDebugLogsSnapshotCommand(parsed)) {
+    setArtifactDebugSnapshot({
+      agentId: parsed.agent_id,
+      appName: parsed.app_name,
+      htmlLogs: parsed.html_logs,
+      serverLogs: parsed.server_logs,
     });
     return true;
   }

@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "app_name": {
+      "type": "string",
+      "description": "Artifact directory name under external/artifacts. Omit to list available debug snapshots."
+    },
+    "clear": {
+      "type": "boolean",
+      "description": "When true, clear the stored in-memory debug snapshot for app_name."
+    }
+  },
+  "additionalProperties": false
+}

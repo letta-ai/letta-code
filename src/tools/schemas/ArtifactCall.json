@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "app_name": {
+      "type": "string",
+      "description": "Artifact directory name under external/artifacts."
+    },
+    "function_name": {
+      "type": "string",
+      "description": "Function exported by server/server.js."
+    },
+    "args": {
+      "description": "JSON-serializable arguments to pass to the artifact server function."
+    }
+  },
+  "required": ["app_name", "function_name"],
+  "additionalProperties": false
+}

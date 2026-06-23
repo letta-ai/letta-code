@@ -939,6 +939,24 @@ export interface ArtifactCallCommand {
   args?: unknown;
 }
 
+export interface ArtifactDebugLogEntry {
+  source: "html" | "server" | "system";
+  level: "log" | "info" | "warn" | "error" | "debug";
+  message: string;
+  timestamp: string;
+  requestId?: string;
+  functionName?: string;
+}
+
+/** Update the in-memory artifact debug log snapshot for an open artifact panel. */
+export interface ArtifactDebugLogsSnapshotCommand {
+  type: "artifact_debug_logs_snapshot";
+  agent_id: string;
+  app_name: string;
+  html_logs: ArtifactDebugLogEntry[];
+  server_logs: ArtifactDebugLogEntry[];
+}
+
 export interface MemoryCommitDiffCommand {
   type: "memory_commit_diff";
   /** Echoed back in the response for request correlation. */
@@ -1888,6 +1906,7 @@ export type WsProtocolCommand =
   | WriteMemoryFileCommand
   | DeleteMemoryFileCommand
   | ArtifactCallCommand
+  | ArtifactDebugLogsSnapshotCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | UpdateModelCommand

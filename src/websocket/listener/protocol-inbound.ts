@@ -5,6 +5,7 @@ import type { ExperimentId } from "@/experiments/types";
 import type {
   AbortMessageCommand,
   ArtifactCallCommand,
+  ArtifactDebugLogsSnapshotCommand,
   ChangeDeviceStateCommand,
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -669,6 +670,48 @@ export function isArtifactCallCommand(
     typeof agentId === "string" &&
     typeof appName === "string" &&
     typeof functionName === "string"
+  );
+}
+
+function isArtifactDebugLogEntry(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const source = Reflect.get(value, "source");
+  const level = Reflect.get(value, "level");
+  const message = Reflect.get(value, "message");
+  const timestamp = Reflect.get(value, "timestamp");
+  const requestId = Reflect.get(value, "requestId");
+  const functionName = Reflect.get(value, "functionName");
+  return (
+    (source === "html" || source === "server" || source === "system") &&
+    (level === "log" ||
+      level === "info" ||
+      level === "warn" ||
+      level === "error" ||
+      level === "debug") &&
+    typeof message === "string" &&
+    typeof timestamp === "string" &&
+    (requestId === undefined || typeof requestId === "string") &&
+    (functionName === undefined || typeof functionName === "string")
+  );
+}
+
+export function isArtifactDebugLogsSnapshotCommand(
+  value: unknown,
+): value is ArtifactDebugLogsSnapshotCommand {
+  if (!value || typeof value !== "object") return false;
+  const type = Reflect.get(value, "type");
+  const agentId = Reflect.get(value, "agent_id");
+  const appName = Reflect.get(value, "app_name");
+  const htmlLogs = Reflect.get(value, "html_logs");
+  const serverLogs = Reflect.get(value, "server_logs");
+  return (
+    type === "artifact_debug_logs_snapshot" &&
+    typeof agentId === "string" &&
+    typeof appName === "string" &&
+    Array.isArray(htmlLogs) &&
+    htmlLogs.every(isArtifactDebugLogEntry) &&
+    Array.isArray(serverLogs) &&
+    serverLogs.every(isArtifactDebugLogEntry)
   );
 }
 
@@ -1722,6 +1765,7 @@ export function parseServerMessage(
       isWriteMemoryFileCommand(parsed) ||
       isDeleteMemoryFileCommand(parsed) ||
       isArtifactCallCommand(parsed) ||
+      isArtifactDebugLogsSnapshotCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isUpdateModelCommand(parsed) ||

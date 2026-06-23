@@ -352,6 +352,8 @@ function filterExtensionToolsByClientAllowlist(
 
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
+  "ArtifactCall",
+  "ArtifactDebugLogs",
   "Bash",
   "TaskOutput",
   "CreateWorktree",
@@ -376,12 +378,16 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
   // "request_user_input",
   "apply_patch",
+  "artifact_call",
+  "artifact_debug_logs",
   "memory_apply_patch",
   "update_plan",
   "view_image",
 ];
 
 export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
+  "artifact_call",
+  "artifact_debug_logs",
   "run_shell_command",
   "read_file_gemini",
   "list_directory",
@@ -401,6 +407,8 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
+  "ArtifactCall",
+  "ArtifactDebugLogs",
   "CreateWorktree",
   "memory_apply_patch",
   "Task",
@@ -418,6 +426,8 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
+  "ArtifactCall",
+  "ArtifactDebugLogs",
   "CreateWorktree",
   "memory",
   "Skill",
@@ -437,6 +447,8 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
 // Tool permissions configuration
 const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   AskUserQuestion: { requiresApproval: true },
+  ArtifactCall: { requiresApproval: false },
+  ArtifactDebugLogs: { requiresApproval: false },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
@@ -471,6 +483,8 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   list_dir: { requiresApproval: false },
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
+  artifact_call: { requiresApproval: false },
+  artifact_debug_logs: { requiresApproval: false },
   update_plan: { requiresApproval: false },
   get_goal: { requiresApproval: false },
   create_goal: { requiresApproval: false },
