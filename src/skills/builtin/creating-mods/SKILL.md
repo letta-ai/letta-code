@@ -5,15 +5,22 @@ description: Creates and edits trusted local Letta Code mods, including tools, s
 
 # Creating Mods
 
-Use this skill to create or update trusted global Letta Code mods in:
-
-```text
-~/.letta/mods/
-```
-
-Mods are trusted local code for Letta Code. They add small composable capabilities through mod APIs, not by importing app internals. Dynamic agent/conversation/workspace/model state is passed as `ctx` to tool, command, event, permission, status, and statusline callbacks; do not read mutable global context for model-callable behavior. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`) and guard optional UI with `letta.capabilities`.
+Use this skill to create or update trusted Letta Code mod files. Mods are trusted local code that add small composable capabilities through mod APIs, not by importing app internals. Dynamic agent/conversation/workspace/model state is passed as `ctx` to tool, command, event, permission, status, and statusline callbacks; do not read mutable global context for model-callable behavior. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`) and guard optional UI with `letta.capabilities`.
 
 Capabilities vary by surface. TUI/headless may load tools, commands, events, UI, and providers; the desktop listener loads provider-only mods for local provider discovery. Always guard optional capabilities.
+
+## Choose where the mod file lives
+
+Default to a single mod file unless the user asks for something larger.
+
+| Location | Use when |
+| --- | --- |
+| `~/.letta/mods/foo.ts` | The behavior should apply to local sessions on this machine. Use this by default. |
+| `$MEMORY_DIR/mods/foo.ts` | The behavior should travel with one agent's MemFS/memory. |
+
+Do not create project mods.
+
+Packaging is an upgrade path, not the default authoring path. If the user asks to share, publish, distribute, or use third-party package dependencies, first build a working mod file, then use `letta mods package <mod-file> --name <package-name>`. Package install/update/download/publish details belong outside this skill.
 
 ## Choose the right capability
 
@@ -34,9 +41,10 @@ Default to a **tool** when the model should decide when to use the capability. D
 
 ## Workflow
 
-1. Inspect `~/.letta/mods/` for related files.
-2. Preserve unrelated mod code. Prefer a focused new file if merging would be messy.
-3. Choose the mod shape and load only the needed recipe:
+1. Pick the target scope: harness mod file (`~/.letta/mods/`) by default, or agent mod file (`$MEMORY_DIR/mods/`) only when the behavior should travel with this agent.
+2. Inspect the relevant mods directory for related files.
+3. Preserve unrelated mod code. Prefer a focused new file if merging would be messy.
+4. Choose the mod shape and load only the needed recipe:
    - tools: `references/tools.md`
    - commands: `references/commands.md`
    - local custom providers: `references/providers.md`
@@ -44,11 +52,11 @@ Default to a **tool** when the model should decide when to use the capability. D
    - permissions: `references/permissions.md`
    - panels/status/capabilities: `references/ui.md`
    - complex plan-mode composition: `references/plan-mode.md`
-4. For multi-capability or stateful mods, also read `references/architecture.md`.
-5. Write a single-file mod unless the user asks for something larger.
-6. Return disposers for registered providers/commands/tools/events, timers, subscriptions, and panels that should close on reload.
-7. Do a basic review: valid names, descriptions present, schemas are object schemas, optional capabilities guarded, scoped APIs used, cleanup returned.
-8. Tell the user the absolute file path changed and to run `/reload`. If a mod breaks startup or command handling, recover with `letta --no-mods` or `LETTA_DISABLE_MODS=1 letta`.
+5. For multi-capability or stateful mods, also read `references/architecture.md`.
+6. Write a single-file mod unless the user asks for something larger.
+7. Return disposers for registered providers/commands/tools/events, timers, subscriptions, and panels that should close on reload.
+8. Do a basic review: valid names, descriptions present, schemas are object schemas, optional capabilities guarded, scoped APIs used, cleanup returned.
+9. Tell the user the absolute file path changed and to run `/reload`. If a mod breaks startup or command handling, recover with `letta --no-mods` or `LETTA_DISABLE_MODS=1 letta`.
 
 ## Core mod shape
 
@@ -107,10 +115,10 @@ Agents can inspect local mod diagnostics at:
 
 ## Rules
 
-- Global trusted code only for now. Do not create project mods.
+- Do not create project mods.
 - Custom provider mods are local-backend/local-agent only. They do not add providers for Constellation/cloud agents.
 - Provider mods may run in a provider-only listener context; keep provider registration independent from commands/tools/UI and guard everything else.
-- Do not assume extra npm packages are available.
+- Direct mod files should not assume third-party npm packages are available. Use Node/Bun built-ins unless packaging is explicitly requested.
 - Do not do surprising side effects on startup; mods activate on app start and `/reload`.
 - Keep user-facing output short and intentional.
 - Prefer Node/Bun standard APIs (`node:child_process`, `node:fs`, etc.) for local work.
