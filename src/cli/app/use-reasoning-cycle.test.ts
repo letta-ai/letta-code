@@ -111,6 +111,32 @@ describe("resolveReasoningCycleTierLookupHandle", () => {
       } as unknown as AgentState["model_settings"]),
     ).toBe("chatgpt-plus-pro/gpt-5.5");
   });
+
+  test("uses ChatGPT OAuth registry handles for custom ChatGPT aliases", () => {
+    expect(
+      resolveReasoningCycleTierLookupHandle("chatgpt-personal/gpt-5.5", {
+        provider_type: "chatgpt_oauth",
+      } as unknown as AgentState["model_settings"]),
+    ).toBe("chatgpt-plus-pro/gpt-5.5");
+  });
+
+  test("keeps local provider handles unchanged for fallback tiers", () => {
+    expect(
+      resolveReasoningCycleTierLookupHandle("lmstudio/local-model", {
+        provider_type: "lmstudio_openai",
+      } as unknown as AgentState["model_settings"]),
+    ).toBe("lmstudio/local-model");
+    expect(
+      resolveReasoningCycleTierLookupHandle("llama.cpp/local-model", {
+        provider_type: "llama_cpp",
+      } as unknown as AgentState["model_settings"]),
+    ).toBe("llama.cpp/local-model");
+    expect(
+      resolveReasoningCycleTierLookupHandle("ollama-cloud/local-model", {
+        provider_type: "ollama_cloud",
+      } as unknown as AgentState["model_settings"]),
+    ).toBe("ollama-cloud/local-model");
+  });
 });
 
 describe("serviceTierForReasoningCycle", () => {
@@ -130,6 +156,15 @@ describe("serviceTierForReasoningCycle", () => {
         service_tier: null,
       } as unknown as AgentState["model_settings"]),
     ).toBeNull();
+  });
+
+  test("preserves canonical ChatGPT priority service tier", () => {
+    expect(
+      serviceTierForReasoningCycle("chatgpt-plus-pro/gpt-5.5", {
+        provider_type: "chatgpt_oauth",
+        service_tier: "priority",
+      } as unknown as AgentState["model_settings"]),
+    ).toBe("priority");
   });
 
   test("ignores non-ChatGPT Fast-capable models", () => {

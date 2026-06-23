@@ -252,6 +252,9 @@ describe("getReasoningTierOptionsForHandle", () => {
       getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.4"),
     ).toBe("chatgpt-plus-pro/gpt-5.4-fast");
     expect(
+      getChatGptFastRegistryHandleForModelHandle("chatgpt-plus-pro/gpt-5.5"),
+    ).toBe("chatgpt-plus-pro/gpt-5.5-fast");
+    expect(
       getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.5-fast"),
     ).toBeNull();
   });

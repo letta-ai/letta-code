@@ -150,6 +150,10 @@ export function resolveReasoningCycleTierLookupHandle(
     return normalizedHandle;
   }
 
+  if (isLocalModelHandle(modelHandle)) {
+    return modelHandle;
+  }
+
   const providerType = providerTypeFromModelSettings(modelSettings);
   const modelName = modelNameFromHandle(modelHandle);
   if (!providerType || !modelName) {
@@ -479,7 +483,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       const next = sorted[nextIndex];
       if (!next) return;
       const serviceTier = serviceTierForReasoningCycle(
-        modelHandle,
+        tierLookupHandle,
         modelSettingsForEffort,
       );
 
