@@ -124,13 +124,6 @@ type SlackTextObject = {
   emoji?: boolean;
 };
 
-type SlackBlockElement = {
-  type: "button";
-  text: SlackTextObject;
-  url: string;
-  action_id: string;
-};
-
 type SlackBlock =
   | {
       type: "section";
@@ -142,10 +135,6 @@ type SlackBlock =
     }
   | {
       type: "divider";
-    }
-  | {
-      type: "actions";
-      elements: SlackBlockElement[];
     };
 
 type SlackStreamTaskStatus = "pending" | "in_progress" | "complete" | "error";
@@ -492,13 +481,6 @@ function formatSlackFallbackProgressBlocks(
   ];
 }
 
-function buildSlackConversationReference(
-  source: ChannelTurnSource,
-): string | null {
-  const url = buildSlackConversationUrl(source);
-  return url ? `<${url}|Open conversation>` : null;
-}
-
 function buildSlackConversationUrl(source: ChannelTurnSource): string | null {
   if (isLocalAgentId(source.agentId)) {
     return null;
@@ -509,51 +491,11 @@ function buildSlackConversationUrl(source: ChannelTurnSource): string | null {
   return url;
 }
 
-function buildSlackConversationActionChunk(
+function buildSlackConversationTaskOutput(
   source: ChannelTurnSource,
-): SlackStreamChunk | null {
+): string | null {
   const url = buildSlackConversationUrl(source);
-  if (!url) {
-    return null;
-  }
-  return {
-    type: "blocks",
-    blocks: [
-      {
-        type: "actions",
-        elements: [
-          {
-            type: "button",
-            text: {
-              type: "plain_text",
-              text: "Open conversation",
-              emoji: false,
-            },
-            url,
-            action_id: "open_conversation",
-          },
-        ],
-      },
-    ],
-  };
-}
-
-function formatSlackStreamMarkdown(entry: SlackProgressCardEntry): string {
-  const conversationReference = buildSlackConversationReference(entry.source);
-  const suffix = conversationReference ? ` ${conversationReference}.` : "";
-  const status = entry.status;
-  if (status === "completed") {
-    return conversationReference
-      ? `${conversationReference} for details.`
-      : "Conversation complete.";
-  }
-  if (status === "cancelled") {
-    return `Stopped.${suffix}`;
-  }
-  if (status === "error") {
-    return `I hit an error.${suffix}`;
-  }
-  return "Continuing in the fallback progress card.";
+  return url ? `<${url}|Open conversation>` : null;
 }
 
 function buildTerminalSlackStreamChunks(
@@ -569,20 +511,15 @@ function buildTerminalSlackStreamChunks(
         SLACK_STREAM_CHUNK_TEXT_MAX,
       ),
       status: terminalTaskStatus,
+      ...(entry.status === "completed"
+        ? {
+            output:
+              buildSlackConversationTaskOutput(entry.source) ??
+              "Conversation complete.",
+          }
+        : {}),
     },
   ];
-  const actionChunk =
-    entry.status === "completed"
-      ? buildSlackConversationActionChunk(entry.source)
-      : null;
-  if (actionChunk) {
-    chunks.push(actionChunk);
-  } else {
-    chunks.push({
-      type: "markdown_text",
-      text: formatSlackStreamMarkdown(entry),
-    });
-  }
   return chunks;
 }
 
@@ -1332,10 +1269,6 @@ export function createSlackAdapter(
       thread_ts: replyToMessageId,
       task_display_mode: "dense",
       chunks: [
-        {
-          type: "markdown_text",
-          text: "Working on it…",
-        },
         {
           type: "task_update",
           id: "progress",
