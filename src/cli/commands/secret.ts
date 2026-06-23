@@ -1,7 +1,7 @@
 /**
  * /secret command handler for managing secrets.
- * Secrets are stored on the Letta server and can be referenced
- * via $SECRET_NAME syntax in shell commands.
+ * Secrets are stored per agent and can be referenced via $SECRET_NAME syntax
+ * in shell commands.
  */
 
 import {
@@ -125,7 +125,7 @@ export async function handleSecretCommand(
   /secret list            List available secret names
   /secret unset KEY       Unset a secret
 
-Secrets are stored on the Letta server. Available secret names are shown to the agent via system reminders at session start and after secret changes.
+Secrets are stored per agent. Cloud agent secrets are stored on the Letta server; local agent secrets are stored in your OS credential manager. Available secret names are shown to the agent via system reminders at session start and after secret changes.
 The key must be all caps and can include underscores and numbers, but must start with a letter or underscore.
 Your agent can use $SECRET_NAME in shell commands and the value will be substituted at runtime, without the secret value being leaked into agent context.`,
       };
