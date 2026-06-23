@@ -1,3 +1,7 @@
+import {
+  formatWebSearchProgressTitle,
+  isWebSearchToolName,
+} from "@/cli/helpers/web-search-display";
 import type { StreamDelta } from "@/types/protocol_v2";
 import type { ChannelTurnProgressUpdate } from "./types";
 
@@ -80,7 +84,37 @@ export function sanitizeChannelProgressIdentifier(
 type ToolCallSummary = {
   id?: string;
   name?: string;
+  argumentsText?: string;
 };
+
+function parseToolArguments(
+  value: string | undefined,
+): Record<string, unknown> | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function formatToolProgressTitle(
+  summary: ToolCallSummary,
+  state: ChannelTurnProgressUpdate["state"],
+): string | undefined {
+  if (!isWebSearchToolName(summary.name)) {
+    return undefined;
+  }
+
+  const title = formatWebSearchProgressTitle(
+    parseToolArguments(summary.argumentsText) ?? {},
+    state,
+  );
+  const sanitized = sanitizeChannelProgressText(title);
+  return sanitized || undefined;
+}
 
 function extractToolCallSummary(value: unknown): ToolCallSummary | null {
   const record = asRecord(value);
@@ -104,12 +138,23 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     tool?.name,
     nestedToolFunction?.name,
   );
+  const argumentsText = firstNonEmptyString(
+    record.arguments,
+    record.args,
+    record.input,
+    nestedFunction?.arguments,
+    nestedFunction?.args,
+    tool?.arguments,
+    nestedToolFunction?.arguments,
+    nestedToolFunction?.args,
+  );
   if (!id && !name) {
     return null;
   }
   return {
     ...(id ? { id: sanitizeChannelProgressIdentifier(id, "tool-call") } : {}),
     ...(name ? { name: sanitizeChannelProgressIdentifier(name, "tool") } : {}),
+    ...(argumentsText ? { argumentsText } : {}),
   };
 }
 
@@ -236,6 +281,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
         ];
       }
       for (const tool of tools) {
+        const toolTitle = formatToolProgressTitle(tool, "waiting");
         updates.push(
           withRunId(
             {
@@ -244,6 +290,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
               message: `Waiting for approval${toolNameForMessage(tool)}`,
               ...(tool.id ? { toolCallId: tool.id } : {}),
               ...(tool.name ? { toolName: tool.name } : {}),
+              ...(toolTitle ? { toolTitle } : {}),
             },
             runId,
           ),
@@ -267,6 +314,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
         ];
       }
       for (const tool of tools) {
+        const toolTitle = formatToolProgressTitle(tool, "started");
         updates.push(
           withRunId(
             {
@@ -275,6 +323,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
               message: `Preparing tool${toolNameForMessage(tool)}`,
               ...(tool.id ? { toolCallId: tool.id } : {}),
               ...(tool.name ? { toolName: tool.name } : {}),
+              ...(toolTitle ? { toolTitle } : {}),
             },
             runId,
           ),

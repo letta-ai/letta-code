@@ -18,7 +18,9 @@ import {
   isSearchTool,
   isShellTool,
   isTodoTool,
+  isWebSearchTool,
 } from "./tool-name-mapping.js";
+import { formatWebSearchArgsDisplay } from "./web-search-display.js";
 
 function formatItemCount(count: number): string {
   return `${String(count)} item${count === 1 ? "" : "s"}`;
@@ -312,6 +314,12 @@ export function formatArgsDisplay(
             } else if (displayPath) {
               display = displayPath;
             }
+            return { display, parsed };
+          }
+
+          // Web search: show the same compact target/query label used in chat.
+          if (isWebSearchTool(toolName)) {
+            display = formatWebSearchArgsDisplay(parsed);
             return { display, parsed };
           }
 

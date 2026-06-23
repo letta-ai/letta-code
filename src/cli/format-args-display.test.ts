@@ -166,4 +166,15 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     expect(formatted.displayName).toBeUndefined();
     expect(formatted.display).toBe("· cat");
   });
+
+  test("formats web_search args with target and query", () => {
+    const args = JSON.stringify({
+      query: "letta blog",
+      category: "article",
+    });
+
+    expect(formatArgsDisplay(args, "web_search").display).toBe(
+      "articles for “letta blog”",
+    );
+  });
 });
