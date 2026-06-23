@@ -728,7 +728,9 @@ function isArtifactInteractAction(
     value === "keydown" ||
     value === "submit" ||
     value === "wait_for_selector" ||
-    value === "wait_for_text"
+    value === "wait_for_text" ||
+    value === "wait_for_change" ||
+    value === "wait_for_idle"
   );
 }
 

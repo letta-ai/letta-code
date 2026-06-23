@@ -1,1 +1,1 @@
-Interact with an open artifact UI iframe from the agent. Supports safe browser actions such as snapshot, click, input, select, keydown, submit, wait_for_selector, and wait_for_text. Requires the artifact panel/UI runtime to be connected.
+Interact with an open artifact UI iframe from the agent. Supports safe browser actions such as snapshot, click, input, select, keydown, submit, wait_for_selector, wait_for_text, wait_for_change, and wait_for_idle. Requires the artifact panel/UI runtime to be connected.

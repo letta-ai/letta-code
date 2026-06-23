@@ -121,7 +121,29 @@ Wait for UI changes:
 }
 ```
 
-Supported actions: `snapshot`, `click`, `input`, `select`, `keydown`, `submit`, `wait_for_selector`, `wait_for_text`.
+Wait for any DOM mutation, then return a fresh snapshot:
+
+```json
+{
+  "app_name": "todo-app",
+  "action": "wait_for_change",
+  "timeout_ms": 5000
+}
+```
+
+Wait until DOM mutations settle, then return a fresh snapshot:
+
+```json
+{
+  "app_name": "todo-app",
+  "action": "wait_for_idle",
+  "timeout_ms": 5000
+}
+```
+
+Supported actions: `snapshot`, `click`, `input`, `select`, `keydown`, `submit`, `wait_for_selector`, `wait_for_text`, `wait_for_change`, `wait_for_idle`.
+
+Recommended loop after an action: `click`/`input`/`submit` → `wait_for_change` or `wait_for_idle` → `snapshot` → inspect `artifact_debug_logs` if behavior is unexpected.
 
 If the tool reports that the iframe is not ready, retry once after the artifact panel opens or switches to the requested artifact.
 
