@@ -1451,10 +1451,14 @@ test("slack adapter streams native task progress and clears thread status", asyn
   expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
     channel: "C123",
     thread_ts: "1712790000.000050",
-    task_display_mode: "dense",
+    task_display_mode: "plan",
     recipient_user_id: "U123",
     recipient_team_id: "T123",
     chunks: [
+      {
+        type: "plan_update",
+        title: "Running 1 tool",
+      },
       {
         type: "task_update",
         id: "task_call-1",
@@ -1481,6 +1485,10 @@ test("slack adapter streams native task progress and clears thread status", asyn
     ts: "1712800000.000300",
   });
   expect(appendCall?.chunks?.[0]).toMatchObject({
+    type: "plan_update",
+    title: "Completed 1 tool",
+  });
+  expect(appendCall?.chunks?.[1]).toMatchObject({
     type: "task_update",
     id: "task_call-1",
     title: "shell_exec",
@@ -1490,28 +1498,6 @@ test("slack adapter streams native task progress and clears thread status", asyn
   expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
     channel: "C123",
     ts: "1712800000.000300",
-    chunks: [
-      {
-        type: "blocks",
-        blocks: [
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "Open conversation",
-                  emoji: false,
-                },
-                url: "https://app.letta.com/chat/agent-1?conversation=conv-1",
-                action_id: "open_conversation",
-              },
-            ],
-          },
-        ],
-      },
-    ],
   });
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
     channel_id: "C123",
@@ -1555,6 +1541,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
     toolCallId: "call-web",
     toolName: "web_search",
     toolTitle: "Searching articles for “letta blog”",
+    toolDetails: "Input: articles for “letta blog”",
   });
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -1595,10 +1582,16 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).toHaveBeenCalledWith(
     expect.objectContaining({
+      task_display_mode: "plan",
       chunks: [
+        expect.objectContaining({
+          type: "plan_update",
+          title: "Running 1 tool",
+        }),
         expect.objectContaining({
           id: "task_call-web",
           title: "Searching articles for “letta blog”",
+          details: "Input: articles for “letta blog”",
           status: "in_progress",
         }),
       ],
@@ -1609,6 +1602,14 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
   const appendChunks = appendCalls.flatMap(([call]) => call.chunks ?? []);
   expect(appendChunks).toEqual(
     expect.arrayContaining([
+      expect.objectContaining({
+        type: "plan_update",
+        title: "Running 2 tools",
+      }),
+      expect.objectContaining({
+        type: "plan_update",
+        title: "Running 3 tools",
+      }),
       expect.objectContaining({
         id: "task_call-bash",
         title: "exec_command",
@@ -1623,6 +1624,10 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
         id: "task_call-bash",
         title: "exec_command",
         status: "complete",
+      }),
+      expect.objectContaining({
+        type: "plan_update",
+        title: "Running 2 tools",
       }),
     ]),
   );
@@ -1641,10 +1646,8 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
         status: "complete",
       }),
       expect.objectContaining({
-        type: "blocks",
-        blocks: expect.arrayContaining([
-          expect.objectContaining({ type: "actions" }),
-        ]),
+        type: "plan_update",
+        title: "Completed 3 tools",
       }),
     ]),
   });
@@ -1719,6 +1722,10 @@ test("slack adapter closes an open stream before falling back after append failu
     ts: "1712800000.000300",
     chunks: [
       {
+        type: "plan_update",
+        title: "Running 1 tool",
+      },
+      {
         type: "task_update",
         id: "task_call-1",
         title: "read_file",
@@ -1729,6 +1736,10 @@ test("slack adapter closes an open stream before falling back after append failu
         id: "task_call-1",
         title: "read_file",
         status: "complete",
+      },
+      {
+        type: "plan_update",
+        title: "Completed 1 tool",
       },
     ],
   });
@@ -1858,10 +1869,8 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
         status: "complete",
       }),
       expect.objectContaining({
-        type: "blocks",
-        blocks: expect.arrayContaining([
-          expect.objectContaining({ type: "actions" }),
-        ]),
+        type: "plan_update",
+        title: "Completed 1 tool",
       }),
     ]),
   });
