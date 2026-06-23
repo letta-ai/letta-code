@@ -19,6 +19,7 @@ import type {
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
+import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
@@ -190,11 +191,6 @@ type SlackStreamResponse = {
   channel?: string;
   ts?: string;
   error?: string;
-};
-
-type SlackStreamTaskSnapshot = {
-  title: string;
-  status: SlackStreamTaskStatus;
 };
 
 type Constructor = abstract new (...args: never[]) => unknown;
@@ -381,7 +377,6 @@ type SlackProgressCardEntry = {
   source: ChannelTurnSource;
   mode?: "stream" | "fallback";
   streamTs?: string;
-  streamTasks?: Map<string, SlackStreamTaskSnapshot>;
   fallbackMessageTs?: string;
   status: SlackProgressCardState;
   latestText: string;
@@ -463,12 +458,12 @@ function formatSlackFallbackProgressBlocks(
   );
   const heading =
     status === "processing"
-      ? ":hourglass_flowing_sand: *Letta Code is working*"
+      ? "*Letta Code is working*"
       : status === "completed"
-        ? ":white_check_mark: *Letta Code finished*"
+        ? "*Letta Code finished*"
         : status === "cancelled"
-          ? ":no_entry_sign: *Letta Code stopped*"
-          : ":warning: *Letta Code hit an error*";
+          ? "*Letta Code stopped*"
+          : "*Letta Code hit an error*";
   return [
     {
       type: "section",
@@ -489,17 +484,36 @@ function formatSlackFallbackProgressBlocks(
   ];
 }
 
-function formatSlackStreamMarkdown(status: SlackProgressCardState): string {
+function buildSlackConversationReference(
+  source: ChannelTurnSource,
+): string | null {
+  if (isLocalAgentId(source.agentId)) {
+    return source.conversationId
+      ? `Conversation: ${source.conversationId}`
+      : null;
+  }
+  const url = buildChatUrl(source.agentId, {
+    conversationId: source.conversationId,
+  });
+  return `<${url}|Open conversation>`;
+}
+
+function formatSlackStreamMarkdown(entry: SlackProgressCardEntry): string {
+  const conversationReference = buildSlackConversationReference(entry.source);
+  const suffix = conversationReference ? ` ${conversationReference}.` : "";
+  const status = entry.status;
   if (status === "completed") {
-    return "✅ Done.";
+    return conversationReference
+      ? `${conversationReference} for details.`
+      : "Conversation complete.";
   }
   if (status === "cancelled") {
-    return "Stopped.";
+    return `Stopped.${suffix}`;
   }
   if (status === "error") {
-    return "⚠️ I hit an error.";
+    return `I hit an error.${suffix}`;
   }
-  return "Working on it…";
+  return "Continuing in the fallback progress card.";
 }
 
 function toSlackStreamTaskStatus(
@@ -517,20 +531,6 @@ function toSlackStreamTaskStatus(
   return "in_progress";
 }
 
-function getSlackStreamTaskId(update: ChannelTurnProgressEvent): string {
-  const raw =
-    update.toolCallId ??
-    update.command ??
-    update.toolName ??
-    update.kind ??
-    "progress";
-  const safe = sanitizeSlackProgressText(raw, 48)
-    .replace(/[^A-Za-z0-9_.:-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `${update.kind}:${safe || "progress"}`;
-}
-
 function buildSlackStreamProgressChunks(
   update: ChannelTurnProgressEvent,
 ): SlackStreamChunk[] {
@@ -545,7 +545,7 @@ function buildSlackStreamProgressChunks(
   return [
     {
       type: "task_update",
-      id: getSlackStreamTaskId(update),
+      id: "progress",
       title,
       status: toSlackStreamTaskStatus(update),
       ...(update.toolName
@@ -558,59 +558,6 @@ function buildSlackStreamProgressChunks(
         : {}),
     },
   ];
-}
-
-function getSlackStreamTaskUpdateChunks(
-  chunks: SlackStreamChunk[],
-): Array<Extract<SlackStreamChunk, { type: "task_update" }>> {
-  return chunks.filter(
-    (chunk): chunk is Extract<SlackStreamChunk, { type: "task_update" }> =>
-      chunk.type === "task_update",
-  );
-}
-
-function rememberSlackStreamTasks(
-  entry: SlackProgressCardEntry,
-  chunks: SlackStreamChunk[],
-): void {
-  const taskUpdates = getSlackStreamTaskUpdateChunks(chunks);
-  if (taskUpdates.length === 0) {
-    return;
-  }
-  entry.streamTasks ??= new Map();
-  for (const task of taskUpdates) {
-    if (task.status === "complete" || task.status === "error") {
-      entry.streamTasks.delete(task.id);
-      continue;
-    }
-    entry.streamTasks.set(task.id, {
-      title: task.title,
-      status: task.status,
-    });
-  }
-}
-
-function buildTerminalSlackStreamTaskChunks(
-  entry: SlackProgressCardEntry,
-  terminalStatus: SlackStreamTaskStatus,
-): SlackStreamChunk[] {
-  const chunks: SlackStreamChunk[] = [];
-  for (const [id, task] of entry.streamTasks ?? []) {
-    if (
-      id === "turn" ||
-      task.status === "complete" ||
-      task.status === "error"
-    ) {
-      continue;
-    }
-    chunks.push({
-      type: "task_update",
-      id,
-      title: task.title,
-      status: terminalStatus,
-    });
-  }
-  return chunks;
 }
 
 function formatSlackAssistantStatusText(
@@ -1385,13 +1332,9 @@ export function createSlackAdapter(
           text: "Working on it…",
         },
         {
-          type: "plan_update",
-          title: "Letta Code progress",
-        },
-        {
           type: "task_update",
-          id: "turn",
-          title: "Working on this thread",
+          id: "progress",
+          title: "Working",
           status: "in_progress",
         },
       ],
@@ -1433,7 +1376,6 @@ export function createSlackAdapter(
       }
       entry.mode = "stream";
       entry.streamTs = response.ts;
-      rememberSlackStreamTasks(entry, args.chunks ?? []);
       rememberMessageThread(response.ts, replyToMessageId);
       return true;
     } catch (error) {
@@ -1474,7 +1416,6 @@ export function createSlackAdapter(
         );
         return false;
       }
-      rememberSlackStreamTasks(entry, chunks);
       return true;
     } catch (error) {
       console.warn(
@@ -1504,10 +1445,9 @@ export function createSlackAdapter(
           ? "error"
           : "complete";
     const chunks: SlackStreamChunk[] = [
-      ...buildTerminalSlackStreamTaskChunks(entry, terminalTaskStatus),
       {
         type: "task_update",
-        id: "turn",
+        id: "progress",
         title: sanitizeSlackProgressText(
           entry.latestText,
           SLACK_STREAM_CHUNK_TEXT_MAX,
@@ -1516,7 +1456,7 @@ export function createSlackAdapter(
       },
       {
         type: "markdown_text",
-        text: formatSlackStreamMarkdown(entry.status),
+        text: formatSlackStreamMarkdown(entry),
       },
     ];
     try {
@@ -1532,7 +1472,6 @@ export function createSlackAdapter(
         );
         return false;
       }
-      entry.streamTasks?.clear();
       return true;
     } catch (error) {
       console.warn(
