@@ -186,7 +186,7 @@ USAGE
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
-  letta install ...     Install a skill or local mod package
+  letta install ...     Install a skill or mod package
   letta skills ...      List or delete installed agent skills
 
 OPTIONS
@@ -235,6 +235,7 @@ EXAMPLES
   letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
   letta install official/finance/stocks --agent agent-123
+  letta install npm:@letta-ai/mod-plan-mode
 
   # inside the interactive session
   /profile save MyAgent    # Save current agent as profile
