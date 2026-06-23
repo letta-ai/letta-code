@@ -946,7 +946,7 @@ export function handleMemoryProtocolCommand(
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
         const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
-        const { unlink } = await import("node:fs/promises");
+        const { rm } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { isAbsolute, join, normalize, relative, sep } = await import(
           "node:path"
@@ -994,10 +994,10 @@ export function handleMemoryProtocolCommand(
 
         const pathspec = rel.split(sep).join("/");
 
-        // ── Idempotent delete: missing file is a no-op success ─────────
+        // ── Idempotent delete: missing path is a no-op success ─────────
         const removeIfPresent = async (): Promise<boolean> => {
           if (!existsSync(absolutePath)) return false;
-          await unlink(absolutePath);
+          await rm(absolutePath, { recursive: true, force: true });
           return true;
         };
         const removed = await removeIfPresent();
