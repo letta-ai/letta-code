@@ -312,12 +312,12 @@ describe("managed mod package registry", () => {
     const root = createTempDir();
     const modsRoot = path.join(root, "mods");
     mkdirSync(modsRoot, { recursive: true });
-    const looseModPath = path.join(modsRoot, "loose.ts");
-    writeFileSync(looseModPath, "export {};\n");
+    const modFilePath = path.join(modsRoot, "mod-file.ts");
+    writeFileSync(modFilePath, "export {};\n");
     writeRegistry(modsRoot, [
       {
         enabled: true,
-        root: "loose.ts",
+        root: "mod-file.ts",
         source: "npm:@caren/my-mod",
         version: "0.1.0",
       },
@@ -329,7 +329,7 @@ describe("managed mod package registry", () => {
         specifier: "npm:@caren/my-mod",
       }),
     ).toThrow("Refusing to remove npm:@caren/my-mod@0.1.0");
-    expect(existsSync(looseModPath)).toBe(true);
+    expect(existsSync(modFilePath)).toBe(true);
     expect(readRegistry(modsRoot).packages).toHaveLength(1);
   });
 

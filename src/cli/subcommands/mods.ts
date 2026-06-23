@@ -16,15 +16,15 @@ import {
   resolveDefaultGlobalModsDirectory,
 } from "@/mods/paths";
 
-interface LooseModSection {
+interface ModFileSection {
   files: string[];
   root: string;
 }
 
 export interface ModsList {
-  agent?: LooseModSection;
-  harness: LooseModSection;
-  legacyHarness?: LooseModSection;
+  agent?: ModFileSection;
+  harness: ModFileSection;
+  legacyHarness?: ModFileSection;
   packageDiagnostics: ManagedModPackageDiagnostic[];
   packages: ManagedModPackageListItem[];
 }
@@ -66,7 +66,7 @@ Usage:
   letta mods remove <package-spec>
 
 Options:
-  --agent <id>       Include loose mods from this agent's MemFS directory
+  --agent <id>       Include agent mods from this agent's MemFS directory
   --agent-id <id>    Alias for --agent
   -h, --help         Show this help
 `.trim(),
@@ -108,7 +108,7 @@ function directFilesForSource(source: LocalModSource): string[] {
   return source.files.filter((file) => dirname(file) === source.root);
 }
 
-function toSection(source: LocalModSource): LooseModSection {
+function toSection(source: LocalModSource): ModFileSection {
   return {
     files: directFilesForSource(source),
     root: source.root,
@@ -147,10 +147,7 @@ export function listMods(options: ListModsOptions = {}): ModsList {
   };
 }
 
-function formatLooseModSection(
-  title: string,
-  section: LooseModSection,
-): string {
+function formatModFileSection(title: string, section: ModFileSection): string {
   const lines = [title];
   if (section.files.length === 0) {
     lines.push("  (none)");
@@ -194,14 +191,14 @@ function formatInstalledPackagesSection(
 export function formatModsList(mods: ModsList): string {
   const sections: string[] = [];
   if (mods.agent) {
-    sections.push(formatLooseModSection("Agent mods", mods.agent));
+    sections.push(formatModFileSection("Agent mods", mods.agent));
   }
   if (mods.legacyHarness) {
     sections.push(
-      formatLooseModSection("Legacy extensions", mods.legacyHarness),
+      formatModFileSection("Legacy extensions", mods.legacyHarness),
     );
   }
-  sections.push(formatLooseModSection("Harness mods", mods.harness));
+  sections.push(formatModFileSection("Harness mods", mods.harness));
   sections.push(formatInstalledPackagesSection(mods));
   return sections.join("\n\n");
 }
@@ -358,7 +355,7 @@ async function runPackageScaffold(argv: string[]): Promise<number> {
     console.log(`Created mod package ${result.outputDirectory}`);
     console.log(`Copied ${result.sourceFile} -> ${result.targetModPath}`);
     console.log(
-      "The original loose mod is still present and may still load until you remove it.",
+      "The original mod file is still present and may still load until you remove it.",
     );
     console.log(`Install with: ${result.installCommand}`);
     return 0;

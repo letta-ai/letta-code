@@ -106,7 +106,7 @@ afterEach(() => {
 });
 
 describe("mods subcommand", () => {
-  test("lists harness loose mods without an agent section", () => {
+  test("lists harness mods without an agent section", () => {
     const root = createTempDir();
     const harnessMods = join(root, "mods");
     mkdirSync(harnessMods, { recursive: true });
@@ -164,7 +164,7 @@ describe("mods subcommand", () => {
     );
   });
 
-  test("lists agent loose mods before harness loose mods", () => {
+  test("lists agent mods before harness mods", () => {
     const root = createTempDir();
     const harnessMods = join(root, "mods");
     const agentMods = join(root, "memory", "mods");
@@ -215,7 +215,7 @@ describe("mods subcommand", () => {
     );
   });
 
-  test("uses runtime loose mod discovery rules", () => {
+  test("uses runtime mod file discovery rules", () => {
     const root = createTempDir();
     const harnessMods = join(root, "mods");
     mkdirSync(join(harnessMods, "nested"), { recursive: true });
@@ -229,7 +229,7 @@ describe("mods subcommand", () => {
     expect(result.harness.files).toEqual([join(harnessMods, "visible.tsx")]);
   });
 
-  test("lists installed packages separately from harness loose mods", () => {
+  test("lists installed packages separately from harness mods", () => {
     const root = createTempDir();
     const harnessMods = join(root, "mods");
     mkdirSync(harnessMods, { recursive: true });
