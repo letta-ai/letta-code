@@ -1784,7 +1784,6 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
         expect.objectContaining({
           id: "task_call-web",
           title: "Searching articles for “letta blog”",
-          details: "Input: articles for “letta blog”",
           status: "in_progress",
         }),
       ],
@@ -1843,6 +1842,124 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
         title: "Completed 3 tools",
       }),
     ]),
+  });
+});
+
+test("slack adapter renders approval progress without thread status noise", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "approval",
+    state: "waiting",
+    message: "Waiting for approval: memory_apply_patch",
+    toolCallId: "approval-1",
+    toolName: "memory_apply_patch",
+    toolDetails: "Input: too much detail",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
+  expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
+    channel: "C123",
+    thread_ts: "1712790000.000050",
+    task_display_mode: "plan",
+    recipient_user_id: "U123",
+    recipient_team_id: "T123",
+    chunks: [
+      {
+        type: "plan_update",
+        title: "Approval needed",
+      },
+      {
+        type: "task_update",
+        id: "task_approval-1",
+        title: "Approval needed: memory_apply_patch",
+        status: "pending",
+      },
+    ],
+  });
+});
+
+test("slack adapter posts generic approval prompts as compact cards", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.handleControlRequestEvent?.({
+    requestId: "approval-1",
+    kind: "generic_tool_approval",
+    source: {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatType: "channel",
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    },
+    toolName: "memory_apply_patch",
+    input: { reason: "Update memory", input: "*** Begin Patch..." },
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    thread_ts: "1712790000.000050",
+    text: expect.stringContaining(
+      "The agent wants approval to run `memory_apply_patch`.",
+    ),
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "*Approval needed*\nRun `memory_apply_patch`?",
+        },
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: "Reply `approve` to allow it, or reply with feedback to deny.",
+          },
+        ],
+      },
+    ],
   });
 });
 

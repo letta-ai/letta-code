@@ -363,7 +363,6 @@ const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
 const SLACK_PROGRESS_CARD_TEXT_MAX = 300;
 const SLACK_PROGRESS_CARD_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
-const SLACK_ASSISTANT_STATUS_TEXT_MAX = 100;
 const SLACK_STREAM_CHUNK_TEXT_MAX = 256;
 const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
 
@@ -382,6 +381,7 @@ type SlackProgressCardState =
 
 type SlackProgressToolTask = {
   id: string;
+  kind: ChannelTurnProgressEvent["kind"];
   title: string;
   status: SlackStreamTaskStatus;
   details?: string;
@@ -504,6 +504,34 @@ function formatSlackFallbackProgressBlocks(
   ];
 }
 
+function formatSlackControlRequestBlocks(
+  event: ChannelControlRequestEvent,
+): SlackBlock[] | undefined {
+  if (event.kind !== "generic_tool_approval") {
+    return undefined;
+  }
+
+  const toolName = sanitizeSlackProgressText(event.toolName, 80) || "tool";
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*Approval needed*\nRun \`${toolName}\`?`,
+      },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: "Reply `approve` to allow it, or reply with feedback to deny.",
+        },
+      ],
+    },
+  ];
+}
+
 function buildTerminalSlackStreamChunks(
   entry: SlackProgressCardEntry,
   terminalTaskStatus: SlackStreamTaskStatus,
@@ -522,7 +550,7 @@ function buildTerminalSlackStreamChunks(
       ),
       status: terminalTaskStatus,
     };
-    chunks.push({ type: "task_update", ...terminalTask });
+    chunks.push(toSlackTaskUpdateChunk(terminalTask));
     entry.toolTasksById?.set(task.id, terminalTask);
     updatedTasks = true;
   }
@@ -530,6 +558,11 @@ function buildTerminalSlackStreamChunks(
     chunks.push(buildSlackPlanUpdateChunk(entry));
   }
   return chunks;
+}
+
+function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
+  const { kind: _kind, ...chunkTask } = task;
+  return { type: "task_update", ...chunkTask };
 }
 
 function isSlackToolActionProgress(update: ChannelTurnProgressEvent): boolean {
@@ -616,9 +649,10 @@ function resolveSlackToolActionName(
     ? entry.toolTitlesByCallId?.get(update.toolCallId)
     : undefined;
   const toolTitle = update.toolTitle ?? rememberedTitle;
+  const approvalPrefix = update.kind === "approval" ? "Approval needed: " : "";
   if (toolTitle) {
     return sanitizeSlackProgressText(
-      formatSlackToolTitleForState(toolTitle, update),
+      `${approvalPrefix}${formatSlackToolTitleForState(toolTitle, update)}`,
       SLACK_STREAM_CHUNK_TEXT_MAX,
     );
   }
@@ -627,7 +661,7 @@ function resolveSlackToolActionName(
       return null;
     }
     return sanitizeSlackProgressText(
-      update.toolName,
+      `${approvalPrefix}${update.toolName}`,
       SLACK_STREAM_CHUNK_TEXT_MAX,
     );
   }
@@ -636,7 +670,7 @@ function resolveSlackToolActionName(
     : undefined;
   if (rememberedName) {
     return sanitizeSlackProgressText(
-      rememberedName,
+      `${approvalPrefix}${rememberedName}`,
       SLACK_STREAM_CHUNK_TEXT_MAX,
     );
   }
@@ -655,6 +689,9 @@ function resolveSlackToolActionDetails(
   entry: SlackProgressCardEntry,
   update: ChannelTurnProgressEvent,
 ): string | undefined {
+  if (update.kind === "approval") {
+    return undefined;
+  }
   const rememberedDetails = update.toolCallId
     ? entry.toolDetailsByCallId?.get(update.toolCallId)
     : undefined;
@@ -677,6 +714,19 @@ function buildSlackPlanUpdateChunk(
   entry: SlackProgressCardEntry,
 ): SlackStreamChunk {
   const tasks = Array.from(entry.toolTasksById?.values() ?? []);
+  const approvalCount = tasks.filter(
+    (task) => task.kind === "approval" && task.status === "pending",
+  ).length;
+  if (approvalCount > 0) {
+    return {
+      type: "plan_update",
+      title:
+        approvalCount === 1
+          ? "Approval needed"
+          : `${approvalCount} approvals needed`,
+    };
+  }
+
   const runningCount = tasks.filter(
     (task) => task.status === "in_progress" || task.status === "pending",
   ).length;
@@ -754,35 +804,17 @@ function buildSlackStreamProgressChunks(
   }
   const status = toSlackStreamTaskStatus(update);
   const details = resolveSlackToolActionDetails(entry, update);
-  const task = { id, title, status, ...(details ? { details } : {}) };
+  const task = {
+    id,
+    kind: update.kind,
+    title,
+    status,
+    ...(details ? { details } : {}),
+  };
   entry.toolTasksById ??= new Map();
   entry.toolTasksById.set(id, task);
 
-  return [
-    buildSlackPlanUpdateChunk(entry),
-    {
-      type: "task_update",
-      ...task,
-    },
-  ];
-}
-
-function formatSlackAssistantStatusText(
-  status: SlackProgressCardState,
-  progressText: string,
-): string {
-  const fallback =
-    status === "processing"
-      ? "Working on it"
-      : status === "completed"
-        ? "Done"
-        : status === "cancelled"
-          ? "Stopped"
-          : "Error";
-  return sanitizeSlackProgressText(
-    progressText || fallback,
-    SLACK_ASSISTANT_STATUS_TEXT_MAX,
-  );
+  return [buildSlackPlanUpdateChunk(entry), toSlackTaskUpdateChunk(task)];
 }
 
 function resolveSlackLifecycleProgressText(outcome: ChannelTurnOutcome): {
@@ -1394,35 +1426,6 @@ export function createSlackAdapter(
     return unique;
   }
 
-  async function setSlackAssistantThreadStatus(
-    source: ChannelTurnSource,
-    status: SlackProgressCardState,
-    progressText: string,
-  ): Promise<void> {
-    const threadTs = getSlackProgressReplyTs(source);
-    if (!threadTs) {
-      return;
-    }
-    await ensureApp();
-    const slackClient = await ensureWriteClient();
-    const assistantThreads = slackClient.assistant?.threads;
-    if (!assistantThreads?.setStatus) {
-      return;
-    }
-    try {
-      await assistantThreads.setStatus({
-        channel_id: source.chatId,
-        thread_ts: threadTs,
-        status: formatSlackAssistantStatusText(status, progressText),
-      });
-    } catch (error) {
-      console.warn(
-        "[Slack] Failed to set assistant thread status:",
-        error instanceof Error ? error.message : error,
-      );
-    }
-  }
-
   async function clearSlackAssistantThreadStatus(
     source: ChannelTurnSource,
   ): Promise<void> {
@@ -1703,14 +1706,6 @@ export function createSlackAdapter(
       ) {
         entry.lastSentAt = Date.now();
         return;
-      }
-
-      if (entry.status === "processing") {
-        await setSlackAssistantThreadStatus(
-          entry.source,
-          entry.status,
-          entry.latestText,
-        );
       }
 
       if (!entry.mode) {
@@ -2602,9 +2597,12 @@ export function createSlackAdapter(
     ): Promise<void> {
       await ensureApp();
       const slackClient = await ensureWriteClient();
+      const text = formatChannelControlRequestPrompt(event);
+      const blocks = formatSlackControlRequestBlocks(event);
       const response = await slackClient.chat.postMessage({
         channel: event.source.chatId,
-        text: formatChannelControlRequestPrompt(event),
+        text,
+        ...(blocks ? { blocks } : {}),
         ...((event.source.threadId ?? event.source.messageId)
           ? { thread_ts: event.source.threadId ?? event.source.messageId }
           : {}),
