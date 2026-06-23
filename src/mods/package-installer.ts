@@ -22,6 +22,7 @@ import {
   readLettaPackageManifest,
 } from "@/mods/package-manifest";
 import {
+  getManagedModPackage,
   getManagedModPackageRootRelativePathForSource,
   MOD_PACKAGES_DIRECTORY_NAME,
   parseManagedNpmPackageSource,
@@ -39,6 +40,12 @@ export interface InstallLocalManagedModPackageResult {
   rootRelativePath: string;
   source: string;
   version: string;
+}
+
+export interface UpdateNpmManagedModPackageResult
+  extends InstallLocalManagedModPackageResult {
+  enabled: boolean;
+  previousVersion: string;
 }
 
 export interface NpmManagedModPackageInstallSpecifier {
@@ -649,6 +656,43 @@ export async function installNpmManagedModPackage(params: {
       modsRoot: params.modsRoot,
       packageDirectory,
     });
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+}
+
+export async function updateNpmManagedModPackage(params: {
+  modsRoot: string;
+  specifier: string;
+}): Promise<UpdateNpmManagedModPackageResult> {
+  const parsed = parseNpmManagedModPackageInstallSpecifier(params.specifier);
+  const existing = getManagedModPackage({
+    modsRoot: params.modsRoot,
+    specifier: parsed.source,
+  }).package;
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "letta-mod-npm-"));
+  try {
+    writeNpmInstallManifest(tempRoot);
+    await runNpmInstall({
+      installSpec: parsed.installSpec,
+      tempRoot,
+    });
+    const nodeModulesDirectory = path.join(tempRoot, "node_modules");
+    const packageDirectory = getInstalledPackageDirectory(
+      nodeModulesDirectory,
+      parsed.packageName,
+    );
+    const updated = installPreparedManagedModPackage({
+      dependencyNodeModulesDirectory: nodeModulesDirectory,
+      enabled: existing.enabled,
+      modsRoot: params.modsRoot,
+      packageDirectory,
+    });
+    return {
+      ...updated,
+      enabled: existing.enabled,
+      previousVersion: existing.version,
+    };
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }

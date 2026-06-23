@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { type LocalModSource, resolveLocalModSources } from "@/mods/mod-engine";
+import { updateNpmManagedModPackage } from "@/mods/package-installer";
 import {
   listManagedModPackages,
   type ManagedModPackageDiagnostic,
@@ -61,6 +62,7 @@ function printUsage(): void {
 Usage:
   letta mods list [--agent <id>]
   letta mods package <mod-file> --name <package-name> [--out <dir>]
+  letta mods update <npm-package-spec>
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
@@ -304,6 +306,61 @@ async function runPackageMutation(
   }
 }
 
+async function runPackageUpdate(
+  argv: string[],
+  options: RunModsOptions = {},
+): Promise<number> {
+  let parsed: ReturnType<typeof parseModsArgs>;
+  try {
+    parsed = parseModsArgs(argv);
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    printUsage();
+    return 1;
+  }
+
+  if (parsed.values.help) {
+    printUsage();
+    return 0;
+  }
+  if (getExplicitAgentId(parsed.values)) {
+    console.error(`--agent is not supported for 'letta mods update'.`);
+    printUsage();
+    return 1;
+  }
+
+  const [specifier, extra] = parsed.positionals;
+  if (!specifier) {
+    console.error(`Missing package specifier.`);
+    printUsage();
+    return 1;
+  }
+  if (extra) {
+    console.error(`Unexpected argument: ${extra}`);
+    printUsage();
+    return 1;
+  }
+
+  try {
+    const result = await updateNpmManagedModPackage({
+      modsRoot:
+        options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
+      specifier,
+    });
+    const disabledSuffix = result.enabled ? "" : " (disabled)";
+    console.log(
+      `Updated ${result.source} ${result.previousVersion} -> ${result.version}${disabledSuffix}`,
+    );
+    console.log(RELOAD_HINT);
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
 async function runPackageScaffold(argv: string[]): Promise<number> {
   let parsed: ReturnType<typeof parseModsPackageArgs>;
   try {
@@ -381,6 +438,8 @@ export async function runModsSubcommand(
       return runList(rest, options);
     case "package":
       return runPackageScaffold(rest);
+    case "update":
+      return runPackageUpdate(rest, options);
     case "enable":
     case "disable":
     case "remove":

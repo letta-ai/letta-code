@@ -19,6 +19,7 @@ import {
   installLocalManagedModPackage,
   installNpmManagedModPackage,
   parseNpmManagedModPackageInstallSpecifier,
+  updateNpmManagedModPackage,
 } from "@/mods/package-installer";
 
 const tempRoots: string[] = [];
@@ -606,6 +607,125 @@ describe("local managed mod package installer", () => {
       rootRelativePath: "packages/npm/my-mod",
       source: "npm:my-mod",
     });
+  });
+
+  test("updates an installed npm package and reports old and new versions", async () => {
+    const root = createTempDir();
+    const packageRoot = path.join(root, "source");
+    const modsRoot = path.join(root, "mods");
+    writeLocalPackage({ packageRoot });
+    const first = installLocalManagedModPackage({
+      modsRoot,
+      packageDirectory: packageRoot,
+    });
+    writeFileSync(path.join(first.root, "stale.ts"), "stale\n");
+    const spawnCalls: Array<{ args: string[]; cmd: string }> = [];
+    __testOverrideNpmManagedModPackageInstaller({
+      spawnImpl: (cmd, args, options) => {
+        spawnCalls.push({ args, cmd });
+        if (!options.cwd) throw new Error("expected cwd");
+        writeInstalledNpmPackage({
+          cwd: options.cwd.toString(),
+          entries: ["mods/next.ts"],
+          version: "0.2.0",
+        });
+        const child = createChildProcess();
+        queueMicrotask(() => child.emit("exit", 0));
+        return child;
+      },
+    });
+
+    const result = await updateNpmManagedModPackage({
+      modsRoot,
+      specifier: "npm:@caren/my-mod@0.2.0",
+    });
+
+    expect(spawnCalls).toEqual([
+      {
+        cmd: "npm",
+        args: [
+          "install",
+          "--ignore-scripts",
+          "--omit=dev",
+          "--no-audit",
+          "--no-fund",
+          "--package-lock=false",
+          "--no-save",
+          "@caren/my-mod@0.2.0",
+        ],
+      },
+    ]);
+    expect(result).toMatchObject({
+      enabled: true,
+      previousVersion: "0.1.0",
+      source: "npm:@caren/my-mod",
+      version: "0.2.0",
+    });
+    expect(existsSync(path.join(result.root, "mods", "next.ts"))).toBe(true);
+    expect(existsSync(path.join(result.root, "mods", "index.ts"))).toBe(false);
+    expect(existsSync(path.join(result.root, "stale.ts"))).toBe(false);
+    expect(readRegistry(modsRoot).packages).toEqual([
+      {
+        source: "npm:@caren/my-mod",
+        version: "0.2.0",
+        enabled: true,
+        root: "packages/npm/@caren/my-mod",
+        entries: ["mods/next.ts"],
+      },
+    ]);
+  });
+
+  test("update preserves disabled package state", async () => {
+    const root = createTempDir();
+    const packageRoot = path.join(root, "source");
+    const modsRoot = path.join(root, "mods");
+    writeLocalPackage({ packageRoot });
+    installLocalManagedModPackage({
+      modsRoot,
+      packageDirectory: packageRoot,
+    });
+    const registry = readRegistry(modsRoot);
+    registry.packages[0] = {
+      ...registry.packages[0],
+      enabled: false,
+    };
+    writeFileSync(
+      path.join(modsRoot, "packages.json"),
+      `${JSON.stringify(registry, null, 2)}\n`,
+    );
+    __testOverrideNpmManagedModPackageInstaller({
+      spawnImpl: (_cmd, _args, options) => {
+        if (!options.cwd) throw new Error("expected cwd");
+        writeInstalledNpmPackage({
+          cwd: options.cwd.toString(),
+          version: "0.2.0",
+        });
+        const child = createChildProcess();
+        queueMicrotask(() => child.emit("exit", 0));
+        return child;
+      },
+    });
+
+    const result = await updateNpmManagedModPackage({
+      modsRoot,
+      specifier: "npm:@caren/my-mod",
+    });
+
+    expect(result.enabled).toBe(false);
+    expect(readRegistry(modsRoot).packages[0]?.enabled).toBe(false);
+    expect(readRegistry(modsRoot).packages[0]?.version).toBe("0.2.0");
+  });
+
+  test("update requires an installed package", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+
+    await expect(
+      updateNpmManagedModPackage({
+        modsRoot,
+        specifier: "npm:@caren/my-mod",
+      }),
+    ).rejects.toThrow("No managed mod packages are installed.");
   });
 
   test("npm install failure does not write registry", async () => {
