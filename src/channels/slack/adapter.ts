@@ -19,6 +19,7 @@ import type {
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
+import { getDisplayToolName } from "@/cli/helpers/tool-name-mapping";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
@@ -511,7 +512,11 @@ function formatSlackControlRequestBlocks(
     return undefined;
   }
 
-  const toolName = sanitizeSlackProgressText(event.toolName, 80) || "tool";
+  const toolName =
+    sanitizeSlackProgressText(
+      formatSlackToolNameForDisplay(event.toolName),
+      80,
+    ) || "tool";
   return [
     {
       type: "section",
@@ -571,6 +576,10 @@ function isSlackToolActionProgress(update: ChannelTurnProgressEvent): boolean {
 
 function isSlackHiddenToolName(toolName: string): boolean {
   return toolName.toLowerCase() === "messagechannel";
+}
+
+function formatSlackToolNameForDisplay(toolName: string): string {
+  return getDisplayToolName(toolName);
 }
 
 function rememberSlackToolName(
@@ -661,7 +670,7 @@ function resolveSlackToolActionName(
       return null;
     }
     return sanitizeSlackProgressText(
-      `${approvalPrefix}${update.toolName}`,
+      `${approvalPrefix}${formatSlackToolNameForDisplay(update.toolName)}`,
       SLACK_STREAM_CHUNK_TEXT_MAX,
     );
   }
@@ -670,7 +679,7 @@ function resolveSlackToolActionName(
     : undefined;
   if (rememberedName) {
     return sanitizeSlackProgressText(
-      `${approvalPrefix}${rememberedName}`,
+      `${approvalPrefix}${formatSlackToolNameForDisplay(rememberedName)}`,
       SLACK_STREAM_CHUNK_TEXT_MAX,
     );
   }
