@@ -54,7 +54,6 @@ interface PinnedAgentData {
   agent: AgentState | null;
   error: string | null;
   backendMode: AgentBackendMode;
-  isLocalPin: boolean;
 }
 
 const ALL_TABS: { id: TabId; label: string }[] = [
@@ -259,13 +258,13 @@ export function AgentSelector({
   const loadPinnedAgents = useCallback(async () => {
     setPinnedLoading(true);
     try {
-      const mergedPinned = settingsManager.getMergedPinnedAgents();
+      const pinnedIds = settingsManager.getPinnedAgents();
 
       let pinnedData: PinnedAgentData[] = [];
 
-      if (mergedPinned.length > 0) {
+      if (pinnedIds.length > 0) {
         pinnedData = await Promise.all(
-          mergedPinned.map(async ({ agentId, isLocal: isLocalPin }) => {
+          pinnedIds.map(async (agentId) => {
             const backendMode = getPinnedAgentBackendMode(agentId);
             try {
               // Use the correct backend for this agent's mode
@@ -275,21 +274,19 @@ export function AgentSelector({
                   agent: null,
                   error: "Not signed in",
                   backendMode,
-                  isLocalPin,
                 };
               }
               const agentBackend = getBackendForMode(backendMode);
               const agent = await agentBackend.retrieveAgent(agentId, {
                 include: ["agent.blocks"],
               });
-              return { agentId, agent, error: null, backendMode, isLocalPin };
+              return { agentId, agent, error: null, backendMode };
             } catch {
               return {
                 agentId,
                 agent: null,
                 error: "Agent not found",
                 backendMode,
-                isLocalPin,
               };
             }
           }),
@@ -738,11 +735,7 @@ export function AgentSelector({
       // Unpin from current scope (pinned tab only)
       const selected = pinnedPageAgents[pinnedSelectedIndex];
       if (selected) {
-        if (selected.isLocalPin) {
-          settingsManager.unpinLocal(selected.agentId);
-        } else {
-          settingsManager.unpinGlobal(selected.agentId);
-        }
+        settingsManager.unpinAgent(selected.agentId);
         loadPinnedAgents();
       }
     } else if (allowDelete && input === "D") {
@@ -792,7 +785,7 @@ export function AgentSelector({
     agent: AgentState,
     _index: number,
     isSelected: boolean,
-    extra?: { isLocalPin?: boolean; backend?: "local" | "constellation" },
+    extra?: { backend?: "local" | "constellation" },
   ) => {
     const isCurrent = agent.id === currentAgentId;
     const isLocalAgent = isLocalAgentId(agent.id);
@@ -833,9 +826,7 @@ export function AgentSelector({
           </Text>
           <Text dimColor>
             {" · "}
-            {extra?.isLocalPin !== undefined
-              ? `${extra.isLocalPin ? "project" : "global"} · `
-              : backendLabel}
+            {extra?.backend ?? backendLabel}
             {displayId}
           </Text>
           {isCurrent && (
@@ -861,9 +852,7 @@ export function AgentSelector({
     isSelected: boolean,
   ) => {
     if (data.agent) {
-      return renderAgentItem(data.agent, index, isSelected, {
-        isLocalPin: data.isLocalPin,
-      });
+      return renderAgentItem(data.agent, index, isSelected, {});
     }
 
     // Error state for missing agent
@@ -882,7 +871,6 @@ export function AgentSelector({
           >
             {data.agentId.slice(0, 12)}
           </Text>
-          <Text dimColor> · {data.isLocalPin ? "project" : "global"}</Text>
         </Box>
         <Box flexDirection="row" marginLeft={2}>
           <Text color="red" italic>

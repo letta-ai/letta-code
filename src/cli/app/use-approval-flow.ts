@@ -20,7 +20,6 @@ import {
 } from "@/cli/helpers/accumulator";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
-import { parseMemoryPreference } from "@/cli/helpers/memory-reminder";
 import {
   buildQueuedContentParts,
   buildQueuedUserText,
@@ -804,6 +803,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             const permission = await checkToolPermission(
               approval.toolName,
               parsedArgs,
+              undefined,
+              undefined,
+              undefined,
+              approvalToolContextIdRef.current,
+              approval.toolCallId,
             );
             return { approval, permission };
           }),
@@ -813,7 +817,9 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           (r) => r.permission.decision === "allow",
         );
         const stillNeedAsking = recheckResults.filter(
-          (r) => r.permission.decision === "ask",
+          (r) =>
+            r.permission.decision === "ask" ||
+            r.permission.decision === "alwaysAsk",
         );
 
         // Only auto-handle if ALL remaining are now allowed
@@ -976,6 +982,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       setIsExecutingTool,
       setPendingApprovals,
       setThinkingMessage,
+      approvalToolContextIdRef,
     ],
   );
 
@@ -1088,9 +1095,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
       // Get questions from approval args
       const questions = getQuestionsFromApproval(approval);
-
-      // Check for memory preference question and update setting
-      parseMemoryPreference(questions, answers, agentId);
 
       // Format the answer string like Claude Code does
       // Filter out malformed questions (LLM might send invalid data)

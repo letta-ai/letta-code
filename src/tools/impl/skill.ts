@@ -9,6 +9,7 @@ import {
   getBundledSkills,
   getFrontmatterBoolean,
   getFrontmatterStringList,
+  isSkillAvailableForAgent,
   SKILLS_DIR,
 } from "@/agent/skills";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -129,7 +130,7 @@ export async function readSkillContent(
   // 5. Try bundled skills (lowest priority)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
-  if (bundledSkill?.path) {
+  if (bundledSkill?.path && isSkillAvailableForAgent(bundledSkill, agentId)) {
     try {
       const content = await readFile(bundledSkill.path, "utf-8");
       return { content, path: bundledSkill.path };

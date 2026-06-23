@@ -3,10 +3,15 @@
  */
 import { createReadStream } from "node:fs";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
+import { MAX_SKILL_NAME_LENGTH } from "@/skills/builtin/creating-skills/scripts/validate-skill";
+import {
+  buildCreatedAgentTags,
+  resolveCreatedAgentMemfsConfig,
+} from "./create";
 import { getModelUpdateArgs } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 
@@ -15,6 +20,7 @@ export interface ImportAgentOptions {
   modelOverride?: string;
   stripMessages?: boolean;
   stripSkills?: boolean;
+  enableMemfs?: boolean;
 }
 
 export interface ImportFromRegistryOptions {
@@ -22,11 +28,127 @@ export interface ImportFromRegistryOptions {
   modelOverride?: string;
   stripMessages?: boolean;
   stripSkills?: boolean;
+  enableMemfs?: boolean;
 }
 
 export interface ImportAgentResult {
   agent: AgentState;
   skills?: string[];
+}
+
+const IMPORTED_SKILL_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+// This function prevent slash and backslash since skill name is
+// used in `resolve` which potentially cause path traversal
+function validateImportedSkillName(name: string): string {
+  const trimmedName = name.trim();
+  if (
+    trimmedName !== name ||
+    trimmedName.length === 0 ||
+    trimmedName.length > MAX_SKILL_NAME_LENGTH ||
+    trimmedName === "." ||
+    trimmedName === ".." ||
+    !IMPORTED_SKILL_NAME_PATTERN.test(trimmedName)
+  ) {
+    throw new Error(
+      `Invalid imported skill name "${String(name)}". Skill names may only contain letters, numbers, dots, underscores, and hyphens.`,
+    );
+  }
+
+  return trimmedName;
+}
+
+function assertPathInside(parent: string, child: string): void {
+  const parentPath = resolve(parent);
+  const childPath = resolve(child);
+  const relativePath = relative(parentPath, childPath);
+
+  if (
+    relativePath === "" ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error(
+      `Imported skill file path escapes skill directory: ${child}`,
+    );
+  }
+}
+
+function validateImportedSkillFilePath(filePath: string): string {
+  if (
+    filePath.length === 0 ||
+    filePath === "." ||
+    filePath.includes("\0") ||
+    filePath.includes("\\") ||
+    isAbsolute(filePath) ||
+    win32.isAbsolute(filePath)
+  ) {
+    throw new Error(`Invalid imported skill file path "${filePath}".`);
+  }
+
+  const segments = filePath.split("/");
+  if (
+    segments.some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    throw new Error(`Invalid imported skill file path "${filePath}".`);
+  }
+
+  return filePath;
+}
+
+function resolveImportedSkillFilePath(
+  skillDir: string,
+  filePath: string,
+): string {
+  const safeFilePath = validateImportedSkillFilePath(filePath);
+  const fullPath = resolve(skillDir, safeFilePath);
+  assertPathInside(skillDir, fullPath);
+  return fullPath;
+}
+
+function tagsEqual(left: string[], right: string[]): boolean {
+  return (
+    left.length === right.length && left.every((tag, i) => tag === right[i])
+  );
+}
+
+async function resolveImportedAgentMemfsEnabled(
+  requestedEnableMemfs: boolean | undefined,
+): Promise<boolean> {
+  const backend = getBackend();
+  const isLettaCloud =
+    backend.capabilities.remoteMemfs && !backend.capabilities.localMemfs
+      ? await import("./memory-filesystem").then((module) =>
+          module.isLettaCloud(),
+        )
+      : false;
+  return resolveCreatedAgentMemfsConfig({
+    capabilities: backend.capabilities,
+    enableMemfs: requestedEnableMemfs,
+    requestedMemoryPromptMode:
+      requestedEnableMemfs === false ? "standard" : undefined,
+    isLettaCloud,
+  }).enableMemfs;
+}
+
+async function ensureImportedAgentCreationTags(
+  agent: AgentState,
+  enableMemfs: boolean,
+): Promise<AgentState> {
+  const tags = buildCreatedAgentTags({
+    tags: agent.tags,
+    enableMemfs,
+  });
+  if (tagsEqual(agent.tags ?? [], tags)) {
+    return agent;
+  }
+
+  const updatedAgent = await getBackend().updateAgent(agent.id, { tags });
+  return {
+    ...agent,
+    ...updatedAgent,
+    tags: updatedAgent.tags ?? tags,
+  } as AgentState;
 }
 
 export async function importAgentFromFile(
@@ -59,7 +181,9 @@ export async function importAgentFromFile(
   }
 
   const agentId = importResponse.agent_ids[0] as string;
-  let agent = await client.agents.retrieve(agentId);
+  let agent = await client.agents.retrieve(agentId, {
+    include: ["agent.tags"],
+  });
 
   // Override model if specified
   if (options.modelOverride) {
@@ -68,8 +192,13 @@ export async function importAgentFromFile(
     // Ensure the correct memory tool is attached for the new model
     const { ensureCorrectMemoryTool } = await import("@/tools/toolset");
     await ensureCorrectMemoryTool(agentId, options.modelOverride);
-    agent = await client.agents.retrieve(agentId);
+    agent = await client.agents.retrieve(agentId, { include: ["agent.tags"] });
   }
+
+  agent = await ensureImportedAgentCreationTags(
+    agent,
+    await resolveImportedAgentMemfsEnabled(options.enableMemfs),
+  );
 
   // Extract skills from .af file if present (unless stripSkills=true)
   let skills: string[] | undefined;
@@ -103,20 +232,21 @@ export async function extractSkillsFromAf(
   }
 
   for (const skill of afData.skills) {
-    const skillDir = resolve(destDir, skill.name);
+    const skillName = validateImportedSkillName(skill.name);
+    const skillDir = resolve(destDir, skillName);
     await mkdir(skillDir, { recursive: true });
 
     // Case 1: Files are embedded in .af
     if (skill.files) {
       await writeSkillFiles(skillDir, skill.files);
-      extracted.push(skill.name);
+      extracted.push(skillName);
     }
     // Case 2: Skill should be fetched from source_url
     else if (skill.source_url) {
       await fetchSkillFromUrl(skillDir, skill.source_url);
-      extracted.push(skill.name);
+      extracted.push(skillName);
     } else {
-      console.warn(`Skipping skill ${skill.name}: no files or source_url`);
+      console.warn(`Skipping skill ${skillName}: no files or source_url`);
     }
   }
 
@@ -143,7 +273,7 @@ async function writeSkillFile(
   filePath: string,
   content: string,
 ): Promise<void> {
-  const fullPath = resolve(skillDir, filePath);
+  const fullPath = resolveImportedSkillFilePath(skillDir, filePath);
   await mkdir(dirname(fullPath), { recursive: true });
   await writeFile(fullPath, content, "utf-8");
 
@@ -308,6 +438,7 @@ export async function importAgentFromRegistry(
       modelOverride: options.modelOverride,
       stripMessages: options.stripMessages ?? true,
       stripSkills: options.stripSkills ?? false,
+      enableMemfs: options.enableMemfs,
     });
 
     return result;

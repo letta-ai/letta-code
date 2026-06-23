@@ -114,11 +114,28 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
         } else if (key.tab) {
           cycleTab();
         } else if (key.upArrow) {
-          setSelectedIndex((prev) => Math.max(0, prev - 1));
+          setSelectedIndex((prev) => {
+            if (prev > 0) return prev - 1;
+            if (currentPage > 0) {
+              const previousPageStart = (currentPage - 1) * PAGE_SIZE;
+              const previousPageLength = Math.min(
+                PAGE_SIZE,
+                visibleItems.length - previousPageStart,
+              );
+              setCurrentPage((page) => page - 1);
+              return Math.max(0, previousPageLength - 1);
+            }
+            return prev;
+          });
         } else if (key.downArrow) {
-          setSelectedIndex((prev) =>
-            Math.min(visiblePageItems.length - 1, prev + 1),
-          );
+          setSelectedIndex((prev) => {
+            if (prev < visiblePageItems.length - 1) return prev + 1;
+            if (currentPage < totalPages - 1) {
+              setCurrentPage((page) => page + 1);
+              return 0;
+            }
+            return prev;
+          });
         } else if (input === "j" || input === "J") {
           // Previous page
           if (currentPage > 0) {
@@ -139,7 +156,14 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
           setSelectedIndex(0);
         }
       },
-      [currentPage, totalPages, visiblePageItems.length, onClose, cycleTab],
+      [
+        currentPage,
+        totalPages,
+        visibleItems.length,
+        visiblePageItems.length,
+        onClose,
+        cycleTab,
+      ],
     ),
     { isActive: true },
   );
@@ -155,7 +179,7 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
     <OverlayShell
       command="/help"
       title={`Letta Code v${version}`}
-      footer={`Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel`}
+      footer={`↑↓ scroll · ←→ page · Tab switch · Esc cancel`}
     >
       <Box flexDirection="column" paddingLeft={1}>
         <TabBar tabs={HELP_TABS} activeTab={activeTab} getLabel={getTabLabel} />
@@ -189,7 +213,9 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
                     >
                       {command.name}
                     </Text>
-                    <Text dimColor> {command.description}</Text>
+                    <Box marginLeft={1}>
+                      <Text dimColor>{command.description}</Text>
+                    </Box>
                   </Box>
                 </Box>
               </Box>
@@ -219,7 +245,9 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
                     >
                       {shortcut.keys}
                     </Text>
-                    <Text dimColor> {shortcut.description}</Text>
+                    <Box marginLeft={1}>
+                      <Text dimColor>{shortcut.description}</Text>
+                    </Box>
                   </Box>
                 </Box>
               </Box>

@@ -1,17 +1,18 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env -S npx tsx
 /**
  * Skill Initializer - Creates a new skill from template
  *
  * Usage:
- *   npx ts-node init-skill.ts <skill-name> --path <path>
+ *   npx tsx init-skill.ts <skill-name> --path <path>
  *
  * Examples:
- *   npx ts-node init-skill.ts my-new-skill --path .skills
- *   npx ts-node init-skill.ts my-api-helper --path ~/.letta/skills
+ *   npx tsx init-skill.ts my-new-skill --path .skills
+ *   npx tsx init-skill.ts my-api-helper --path ~/.letta/skills
  */
 
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const SKILL_TEMPLATE = `---
 name: {skill_name}
@@ -86,7 +87,7 @@ Files not intended to be loaded into context, but rather used within the output 
 **Any unneeded directories can be deleted.** Not every skill requires all three types of resources.
 `;
 
-const EXAMPLE_SCRIPT = `#!/usr/bin/env npx ts-node
+const EXAMPLE_SCRIPT = `#!/usr/bin/env -S npx tsx
 /**
  * Example helper script for {skill_name}
  *
@@ -247,22 +248,27 @@ function initSkill(skillName: string, path: string): string | null {
   return skillDir;
 }
 
+function isMainModule(): boolean {
+  const entrypoint = process.argv[1];
+  return entrypoint
+    ? resolve(entrypoint) === fileURLToPath(import.meta.url)
+    : false;
+}
+
 // CLI entry point
-if (require.main === module) {
+if (isMainModule()) {
   const args = process.argv.slice(2);
 
   if (args.length < 3 || args[1] !== "--path") {
-    console.log("Usage: npx ts-node init-skill.ts <skill-name> --path <path>");
+    console.log("Usage: npx tsx init-skill.ts <skill-name> --path <path>");
     console.log("\nSkill name requirements:");
     console.log("  - Hyphen-case identifier (e.g., 'data-analyzer')");
     console.log("  - Lowercase letters, digits, and hyphens only");
     console.log("  - Max 64 characters");
     console.log("  - Must match directory name exactly");
     console.log("\nExamples:");
-    console.log("  npx ts-node init-skill.ts my-new-skill --path .skills");
-    console.log(
-      "  npx ts-node init-skill.ts my-api-helper --path ~/.letta/skills",
-    );
+    console.log("  npx tsx init-skill.ts my-new-skill --path .skills");
+    console.log("  npx tsx init-skill.ts my-api-helper --path ~/.letta/skills");
     process.exit(1);
   }
 

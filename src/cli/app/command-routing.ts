@@ -20,7 +20,6 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/search",
   "/feedback",
   "/pin",
-  "/pin-local",
   "/conversations",
   "/profile",
 ]);
@@ -46,7 +45,7 @@ const NON_STATE_COMMANDS = new Set([
   "/exit", // session exit
   "/rename", // agent/convo rename
   "/btw",
-  "/reload", // soft TUI restart (has its own busy guard)
+  "/reload", // runtime surface reload (has its own busy guard)
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)
@@ -74,10 +73,10 @@ export function shouldSlashCommandBypassQueue(
   msg: string,
   options: {
     hasCustomCommand?: boolean;
-    extensionCommand?: { runWhenBusy: boolean };
+    modCommand?: { runWhenBusy: boolean };
   } = {},
 ): boolean {
   if (options.hasCustomCommand) return false;
-  if (options.extensionCommand) return options.extensionCommand.runWhenBusy;
+  if (options.modCommand) return options.modCommand.runWhenBusy;
   return isInteractiveCommand(msg) || isNonStateCommand(msg);
 }

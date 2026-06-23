@@ -1,6 +1,6 @@
 # Prompts
 
-All prompt files are imported as text via `promptAssets.ts` (or `create.ts` for sleeptime). Files use `.md`, `.mdx` (memory blocks with YAML frontmatter), or `.txt` (system reminders injected as XML tags).
+All prompt files are imported as text via `promptAssets.ts`. Files use `.md`, `.mdx` (memory blocks with YAML frontmatter), or `.txt` (system reminders injected as XML tags).
 
 ## System prompts
 
@@ -9,8 +9,7 @@ Selectable via the `/system` command. Each preset is a complete system prompt. P
 | File | Used | Description |
 |------|------|-------------|
 | `letta_no_memfs.md` | Default for non-memfs agents | Letta-tuned system prompt for standard memory blocks |
-| `letta.md` | Default for memfs agents | Letta-tuned system prompt for git-backed MemFS memory |
-| `letta_local_memfs.md` | Default for local backend memfs agents | Letta-tuned system prompt for local-only git-backed MemFS memory |
+| `letta.md` | Default for memfs agents, including local backend memfs agents | Letta-tuned system prompt for git-backed MemFS memory |
 | `source_claude.md` | `/system source-claude` | Near-verbatim Claude Code prompt for benchmarking |
 | `source_codex.md` | `/system source-codex` | Near-verbatim OpenAI Codex prompt for benchmarking |
 | `source_gemini.md` | `/system source-gemini` | Near-verbatim Gemini CLI prompt for benchmarking |
@@ -62,7 +61,6 @@ Injected when the user invokes a specific slash command.
 |------|------|-------------|
 | `remember.md` | `/remember` command | Instructs the agent to commit conversation context to memory |
 | `skill_creator_mode.md` | `/skill` command | Guides the agent through designing a new skill |
-| `sleeptime.md` | Sleep-time memory agent persona | Persona for the background agent that maintains memory blocks between sessions |
 
 ## System reminders (`.txt`)
 
@@ -70,6 +68,5 @@ Short XML-wrapped messages injected into the conversation as system events.
 
 | File | Used | Description |
 |------|------|-------------|
-| `memory_check_reminder.txt` | Periodic during conversation | Prompts the agent to review and update memory blocks |
 | `approval_recovery_alert.txt` | Keep-alive ping | Automated message to resume after approval timeout |
 | `interrupt_recovery_alert.txt` | User interrupts stream | Notifies the agent the stream was interrupted |

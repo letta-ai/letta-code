@@ -103,11 +103,13 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
 
   const handleInput = useCallback(
     (input: string, key: Key) => {
-      if (key.upArrow) {
+      // Up: arrow or vim-style "k"
+      if (key.upArrow || input === "k") {
         setCursor((c) => Math.max(0, c - 1));
         return;
       }
-      if (key.downArrow) {
+      // Down: arrow or vim-style "j"
+      if (key.downArrow || input === "j") {
         setCursor((c) => Math.min(orderedItems.length - 1, c + 1));
         return;
       }

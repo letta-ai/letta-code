@@ -1,17 +1,17 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env -S npx tsx
 /**
  * Skill Validator - Validates skill structure and frontmatter
  *
  * Usage:
- *   npx ts-node validate-skill.ts <skill-directory>
+ *   npx tsx validate-skill.ts <skill-directory>
  *
  * Example:
- *   npx ts-node validate-skill.ts .skills/my-skill
+ *   npx tsx validate-skill.ts .skills/my-skill
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { basename, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 interface ValidationResult {
   valid: boolean;
@@ -27,6 +27,131 @@ const ALLOWED_PROPERTIES = new Set([
   "metadata",
   "allowed-tools",
 ]);
+
+export const MAX_SKILL_NAME_LENGTH = 64;
+
+type BunYamlRuntime = {
+  Bun?: {
+    YAML?: {
+      parse?: (source: string) => unknown;
+    };
+  };
+};
+
+function parseQuotedScalar(value: string): string {
+  if (value.startsWith('"')) {
+    if (!value.endsWith('"') || value.length === 1) {
+      throw new Error("Unterminated double-quoted scalar");
+    }
+    return JSON.parse(value) as string;
+  }
+
+  if (value.startsWith("'")) {
+    if (!value.endsWith("'") || value.length === 1) {
+      throw new Error("Unterminated single-quoted scalar");
+    }
+    return value.slice(1, -1).replace(/''/g, "'");
+  }
+
+  return value;
+}
+
+function parseScalar(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed === "null" || trimmed === "~") return null;
+
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+    return parseQuotedScalar(trimmed);
+  }
+
+  // The fallback parser intentionally accepts only the frontmatter subset this
+  // validator needs. Unquoted ": " inside a scalar is the most common YAML
+  // authoring mistake; reject it instead of silently producing a bad value.
+  if (trimmed.includes(": ")) {
+    throw new Error(`Unexpected ':' in unquoted scalar: ${trimmed}`);
+  }
+
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+
+  return trimmed;
+}
+
+function parseFrontmatterFallback(source: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const lines = source.split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === undefined) continue;
+    const trimmed = line.trim();
+
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    if (/^\s/.test(line)) {
+      // Nested data belongs to the previous top-level key. The validator only
+      // checks top-level field names plus name/description scalar values.
+      continue;
+    }
+
+    const colonIndex = line.indexOf(":");
+    if (colonIndex <= 0) {
+      throw new Error(`Invalid frontmatter line: ${line}`);
+    }
+
+    const key = line.slice(0, colonIndex).trim();
+    const rawValue = line.slice(colonIndex + 1).trim();
+    if (!key) {
+      throw new Error(`Invalid frontmatter line: ${line}`);
+    }
+
+    if (!rawValue) {
+      result[key] = {};
+      continue;
+    }
+
+    if (rawValue === "|" || rawValue === ">") {
+      const blockLines: string[] = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const nextLine = lines[j];
+        if (nextLine === undefined) continue;
+        if (nextLine.trim() && !/^\s/.test(nextLine)) {
+          break;
+        }
+        blockLines.push(nextLine.replace(/^\s{2}/, ""));
+        i = j;
+      }
+      result[key] =
+        rawValue === ">" ? blockLines.join(" ").trim() : blockLines.join("\n");
+      continue;
+    }
+
+    result[key] = parseScalar(rawValue);
+  }
+
+  return result;
+}
+
+function parseFrontmatter(source: string): Record<string, unknown> {
+  const bunParse = (globalThis as typeof globalThis & BunYamlRuntime).Bun?.YAML
+    ?.parse;
+  if (bunParse) {
+    const parsed = bunParse(source);
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("Frontmatter must be a YAML dictionary");
+    }
+    return parsed as Record<string, unknown>;
+  }
+
+  return parseFrontmatterFallback(source);
+}
 
 export function validateSkill(skillPath: string): ValidationResult {
   // Check SKILL.md exists
@@ -54,7 +179,7 @@ export function validateSkill(skillPath: string): ValidationResult {
   // Parse YAML frontmatter
   let frontmatter: Record<string, unknown>;
   try {
-    frontmatter = parseYaml(frontmatterText);
+    frontmatter = parseFrontmatter(frontmatterText);
     if (typeof frontmatter !== "object" || frontmatter === null) {
       return { valid: false, message: "Frontmatter must be a YAML dictionary" };
     }
@@ -111,11 +236,11 @@ export function validateSkill(skillPath: string): ValidationResult {
         message: `Name '${trimmedName}' cannot start/end with hyphen or contain consecutive hyphens`,
       };
     }
-    // Check name length (max 64 characters)
-    if (trimmedName.length > 64) {
+    // Check name length
+    if (trimmedName.length > MAX_SKILL_NAME_LENGTH) {
       return {
         valid: false,
-        message: `Name is too long (${trimmedName.length} characters). Maximum is 64 characters.`,
+        message: `Name is too long (${trimmedName.length} characters). Maximum is ${MAX_SKILL_NAME_LENGTH} characters.`,
       };
     }
 
@@ -161,11 +286,18 @@ export function validateSkill(skillPath: string): ValidationResult {
   };
 }
 
+function isMainModule(): boolean {
+  const entrypoint = process.argv[1];
+  return entrypoint
+    ? resolve(entrypoint) === fileURLToPath(import.meta.url)
+    : false;
+}
+
 // CLI entry point
-if (require.main === module) {
+if (isMainModule()) {
   const args = process.argv.slice(2);
   if (args.length !== 1) {
-    console.log("Usage: npx ts-node validate-skill.ts <skill-directory>");
+    console.log("Usage: npx tsx validate-skill.ts <skill-directory>");
     process.exit(1);
   }
 

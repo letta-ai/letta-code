@@ -374,14 +374,14 @@ export function handleMemoryProtocolCommand(
   // ── Memory history (git log for a specific file) ─────────────────
   if (isMemoryHistoryCommand(parsed)) {
     runDetachedListenerTask("memory_history", async () => {
-      const { getMemoryFilesystemRoot } = await import(
+      const { getScopedMemoryFilesystemRoot } = await import(
         "@/agent/memory-filesystem"
       );
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFileAsync = promisify(execFileCb);
 
-      const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+      const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
       const limit = parsed.limit ?? 50;
 
       const gitArgs = ["log", `--max-count=${limit}`, "--format=%H|%s|%aI|%an"];
@@ -428,14 +428,14 @@ export function handleMemoryProtocolCommand(
   // ── Memory file at ref (git show for content at a commit) ────────
   if (isMemoryFileAtRefCommand(parsed)) {
     runDetachedListenerTask("memory_file_at_ref", async () => {
-      const { getMemoryFilesystemRoot } = await import(
+      const { getScopedMemoryFilesystemRoot } = await import(
         "@/agent/memory-filesystem"
       );
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFileAsync = promisify(execFileCb);
 
-      const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+      const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
 
       try {
         const { stdout } = await execFileAsync(
@@ -481,14 +481,14 @@ export function handleMemoryProtocolCommand(
   // ── Memory commit diff (git show for full commit patch) ────────────
   if (isMemoryCommitDiffCommand(parsed)) {
     runDetachedListenerTask("memory_commit_diff", async () => {
-      const { getMemoryFilesystemRoot } = await import(
+      const { getScopedMemoryFilesystemRoot } = await import(
         "@/agent/memory-filesystem"
       );
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFileAsync = promisify(execFileCb);
 
-      const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+      const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
 
       try {
         const { stdout } = await execFileAsync(
@@ -553,7 +553,7 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getMemoryFilesystemRoot,
+          getScopedMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
@@ -568,7 +568,7 @@ export function handleMemoryProtocolCommand(
           sendFailure("path must be a non-empty relative path");
           return;
         }
-        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
@@ -657,7 +657,7 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getMemoryFilesystemRoot,
+          getScopedMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
@@ -672,7 +672,7 @@ export function handleMemoryProtocolCommand(
           return;
         }
 
-        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
@@ -757,7 +757,7 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Write a file into MemFS (durable agent memory write + commit + push) ─
+  // ── Write a file into MemFS (durable agent memory write + commit) ───────
   if (isWriteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("write_memory_file", async () => {
       const encoding = parsed.encoding ?? "utf8";
@@ -779,11 +779,11 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getMemoryFilesystemRoot,
+          getScopedMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
-        const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+        const { commitMemoryWrite } = await import("@/agent/memory-git");
         const { writeFile, mkdir } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { dirname, isAbsolute, join, normalize, relative, sep } =
@@ -796,7 +796,7 @@ export function handleMemoryProtocolCommand(
           );
           return;
         }
-        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
@@ -855,13 +855,13 @@ export function handleMemoryProtocolCommand(
           // Best-effort — fall back to agent id as the author name.
         }
 
-        // ── Commit + push (with replay-on-conflict from helper) ────────
+        // ── Commit locally; post-turn harness sync handles remote push ─
         // Use posix separators in the pathspec — git expects forward slashes
         // even on Windows.
         const pathspec = rel.split(sep).join("/");
         const reason =
           parsed.commit_message?.trim() || `Update memory file ${pathspec}`;
-        const commitResult = await commitAndSyncMemoryWrite({
+        const commitResult = await commitMemoryWrite({
           memoryDir: memoryRoot,
           pathspecs: [pathspec],
           reason,
@@ -871,13 +871,22 @@ export function handleMemoryProtocolCommand(
             authorEmail: `${parsed.agent_id}@letta.com`,
           },
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
-          replay: async () => {
-            // Re-write the same bytes on top of the latest remote state.
-            await mkdir(dirname(absolutePath), { recursive: true });
-            await writeFile(absolutePath, buffer);
-            return [pathspec];
-          },
         });
+
+        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        if (commitResult.committed && !memorySyncMode) {
+          const { syncPendingMemoryCommitsAfterTurn } = await import(
+            "@/agent/memory-git"
+          );
+          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
+            memoryDir: memoryRoot,
+          }).catch((err) => {
+            console.warn(
+              `[write_memory_file] background push failed for ${parsed.agent_id}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
+        }
 
         // ── Notify UI so the memory view auto-refreshes ────────────────
         if (commitResult.committed) {
@@ -924,7 +933,7 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Delete a file from MemFS (durable agent memory delete + commit + push) ─
+  // ── Delete a file from MemFS (durable agent memory delete + commit) ──────
   if (isDeleteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("delete_memory_file", async () => {
       const sendFailure = (error: string): void => {
@@ -945,12 +954,12 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getMemoryFilesystemRoot,
+          getScopedMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
-        const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
-        const { rm } = await import("node:fs/promises");
+        const { commitMemoryWrite } = await import("@/agent/memory-git");
+        const { unlink } = await import("node:fs/promises");
         const { existsSync } = await import("node:fs");
         const { isAbsolute, join, normalize, relative, sep } = await import(
           "node:path"
@@ -963,7 +972,7 @@ export function handleMemoryProtocolCommand(
           );
           return;
         }
-        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
         const absolutePath = normalize(join(memoryRoot, parsed.path));
         const rel = relative(memoryRoot, absolutePath);
         if (
@@ -1001,7 +1010,7 @@ export function handleMemoryProtocolCommand(
         // ── Idempotent delete: missing path is a no-op success ─────────
         const removeIfPresent = async (): Promise<boolean> => {
           if (!existsSync(absolutePath)) return false;
-          await rm(absolutePath, { recursive: true, force: true });
+          await unlink(absolutePath);
           return true;
         };
         const removed = await removeIfPresent();
@@ -1040,10 +1049,10 @@ export function handleMemoryProtocolCommand(
           // Best-effort — fall back to agent id as the author name.
         }
 
-        // ── Commit + push (replay re-deletes after rebase) ─────────────
+        // ── Commit locally; post-turn harness sync handles remote push ─
         const reason =
           parsed.commit_message?.trim() || `Delete memory file ${pathspec}`;
-        const commitResult = await commitAndSyncMemoryWrite({
+        const commitResult = await commitMemoryWrite({
           memoryDir: memoryRoot,
           pathspecs: [pathspec],
           reason,
@@ -1053,13 +1062,22 @@ export function handleMemoryProtocolCommand(
             authorEmail: `${parsed.agent_id}@letta.com`,
           },
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
-          replay: async () => {
-            // Re-delete on top of the latest remote state in case the
-            // remote restored the file between our commit and push.
-            await removeIfPresent();
-            return [pathspec];
-          },
         });
+
+        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        if (commitResult.committed && !memorySyncMode) {
+          const { syncPendingMemoryCommitsAfterTurn } = await import(
+            "@/agent/memory-git"
+          );
+          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
+            memoryDir: memoryRoot,
+          }).catch((err) => {
+            console.warn(
+              `[delete_memory_file] background push failed for ${parsed.agent_id}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
+        }
 
         if (commitResult.committed) {
           safeSocketSend(

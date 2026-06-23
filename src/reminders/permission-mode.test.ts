@@ -19,10 +19,6 @@ function baseContext(
     },
     state: createSharedReminderState(),
     systemInfoReminderEnabled: true,
-    reflectionSettings: {
-      trigger: "off",
-      stepCount: 25,
-    },
     skillSources: [],
   };
 }

@@ -48,15 +48,14 @@ describe("buildSystemPrompt", () => {
     expect(result).not.toContain("**In-context memory blocks**");
   });
 
-  test("returns the local memfs full prompt for local backend memory mode", () => {
+  test("local backend memory mode reuses the memfs full prompt", () => {
     const result = buildSystemPrompt("letta", "local-memfs");
     const preset = SYSTEM_PROMPTS.find((p) => p.id === "letta");
     expect(preset).toBeDefined();
-    expect(preset?.localMemfsContent).toBeDefined();
 
-    expect(result).toBe(preset?.localMemfsContent?.trim() ?? "");
-    expect(result).toContain("~/.letta/lc-local-backend/memfs/");
-    expect(result).toContain("Local backend MemFS is a local git repository");
+    expect(result).toBe(preset?.memfsContent?.trim() ?? "");
+    expect(result).toBe(buildSystemPrompt("letta", "memfs"));
+    expect(result).toContain("$MEMORY_DIR");
     expect(result).toContain("git commit");
     expect(result).not.toContain("git push");
   });

@@ -25,6 +25,7 @@ function runGit(args: string[], cwd: string): string | null {
       cwd,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
     }).trim();
   } catch {
     return null;

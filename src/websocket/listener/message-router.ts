@@ -12,6 +12,7 @@ import type {
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
+import { getErrorMessage } from "@/utils/error";
 import {
   handleTerminalInput,
   handleTerminalKill,
@@ -19,17 +20,22 @@ import {
   handleTerminalSpawn,
 } from "@/websocket/terminal-handler";
 import { handleExecuteCommand } from "./commands";
+import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
 import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
 } from "./commands/channels";
+import { handleChatGPTUsageCommand } from "./commands/chatgpt-usage";
+import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
 import { handleMemoryProtocolCommand } from "./commands/memory";
 import { handleModelToolsetCommand } from "./commands/model-toolset";
+import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
+import { handleExternalToolCallResponseCommand } from "./external-tools";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -161,6 +167,192 @@ type MessageRouterParams = {
   wireChannelIngress: WireChannelIngress;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function formatLogValue(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (value === null) return "null";
+  if (typeof value === "string") {
+    return value.length > 80 ? `${value.slice(0, 77)}...` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.length}]`;
+  }
+  return null;
+}
+
+function pushField(
+  fields: string[],
+  key: string,
+  value: unknown,
+  label = key,
+): void {
+  const formatted = formatLogValue(value);
+  if (formatted !== null) {
+    fields.push(`${label}=${formatted}`);
+  }
+}
+
+function summarizeInputPayload(payload: unknown): string[] {
+  if (!isRecord(payload)) return [];
+  const fields: string[] = [];
+  pushField(fields, "kind", payload.kind);
+  if (payload.kind === "create_message") {
+    pushField(fields, "messages", payload.messages);
+    pushField(fields, "client_tool_allowlist", payload.client_tool_allowlist);
+    pushField(
+      fields,
+      "external_tool_scope_ids",
+      payload.external_tool_scope_ids,
+    );
+  } else if (payload.kind === "approval_response") {
+    pushField(fields, "request_id", payload.request_id);
+    pushField(fields, "response", payload.response);
+    pushField(
+      fields,
+      "selected_suggestion_ids",
+      payload.selected_suggestion_ids,
+    );
+  }
+  return fields;
+}
+
+function summarizeRuntimeStartCommand(
+  command: Record<string, unknown>,
+): string[] {
+  const fields: string[] = [];
+  pushField(fields, "agent_id", command.agent_id, "agent");
+  pushField(fields, "conversation_id", command.conversation_id, "conversation");
+  if (isRecord(command.create_agent)) fields.push("create_agent=true");
+  if (isRecord(command.create_conversation)) {
+    fields.push("create_conversation=true");
+  }
+  pushField(fields, "cwd", command.cwd);
+  pushField(fields, "mode", command.mode);
+  pushField(fields, "external_tools", command.external_tools);
+  return fields;
+}
+
+function summarizeV2Command(parsed: unknown): string {
+  if (!isRecord(parsed) || typeof parsed.type !== "string") return "unknown";
+  const fields: string[] = [];
+  const runtime = isRecord(parsed.runtime) ? parsed.runtime : null;
+  if (runtime) {
+    fields.push(
+      `runtime=${runtime.agent_id ?? "<unknown>"}/${runtime.conversation_id ?? "<unknown>"}`,
+    );
+  }
+  pushField(fields, "request_id", parsed.request_id);
+
+  if (parsed.type === "input") {
+    fields.push(...summarizeInputPayload(parsed.payload));
+  } else if (
+    parsed.type === "change_device_state" &&
+    isRecord(parsed.payload)
+  ) {
+    pushField(fields, "mode", parsed.payload.mode);
+    pushField(fields, "cwd", parsed.payload.cwd);
+    pushField(fields, "agent_id", parsed.payload.agent_id);
+    pushField(fields, "conversation_id", parsed.payload.conversation_id);
+  } else if (parsed.type === "runtime_start") {
+    fields.push(...summarizeRuntimeStartCommand(parsed));
+  } else {
+    for (const key of [
+      "agent_id",
+      "conversation_id",
+      "task_id",
+      "channel_id",
+      "account_id",
+      "route_id",
+      "target_id",
+      "pairing_id",
+      "path",
+      "file_path",
+      "ref",
+      "encoding",
+      "query",
+      "glob",
+      "is_regex",
+      "case_sensitive",
+      "whole_word",
+      "cwd",
+      "mode",
+      "run_id",
+      "item_id",
+      "terminal_id",
+      "cols",
+      "rows",
+      "depth",
+      "limit",
+      "offset",
+      "max_results",
+      "context_lines",
+      "include_files",
+      "model_id",
+      "model_handle",
+      "toolset",
+      "provider_name",
+      "auth_method",
+      "scope",
+      "command_id",
+      "args",
+      "name",
+      "cron",
+      "recurring",
+      "source",
+      "replace_all",
+      "expected_replacements",
+      "recover_approvals",
+      "force_device_status",
+    ]) {
+      pushField(fields, key, parsed[key]);
+    }
+  }
+
+  if (parsed.type === "write_file" && typeof parsed.content === "string") {
+    fields.push(`content_bytes=${Buffer.byteLength(parsed.content)}`);
+  }
+  if (
+    parsed.type === "write_memory_file" &&
+    typeof parsed.content === "string"
+  ) {
+    fields.push(`content_bytes=${Buffer.byteLength(parsed.content)}`);
+  }
+  if (parsed.type === "edit_file") {
+    if (typeof parsed.old_string === "string") {
+      fields.push(`old_bytes=${Buffer.byteLength(parsed.old_string)}`);
+    }
+    if (typeof parsed.new_string === "string") {
+      fields.push(`new_bytes=${Buffer.byteLength(parsed.new_string)}`);
+    }
+  }
+  if (parsed.type === "file_ops") {
+    pushField(fields, "cg_entries", parsed.cg_entries);
+    pushField(fields, "ops", parsed.ops);
+    if (typeof parsed.document_content === "string") {
+      fields.push(
+        `document_bytes=${Buffer.byteLength(parsed.document_content)}`,
+      );
+    }
+  }
+  if (parsed.type === "terminal_input" && typeof parsed.data === "string") {
+    fields.push(`data_bytes=${Buffer.byteLength(parsed.data)}`);
+  }
+  if (parsed.type === "execute_command") {
+    pushField(fields, "command_id", parsed.command_id);
+    pushField(fields, "args", parsed.args);
+  }
+
+  return fields.length > 0
+    ? `${parsed.type} command (${fields.join(", ")})`
+    : `${parsed.type} command`;
+}
+
 export function createListenerMessageHandler(
   params: MessageRouterParams,
 ): (data: WebSocket.RawData) => Promise<void> {
@@ -215,6 +407,8 @@ export function createListenerMessageHandler(
         return;
       }
 
+      console.log(`[Listen V2] Received ${summarizeV2Command(parsed)}`);
+
       if (parsed.type === "__invalid_input") {
         emitLoopErrorNotice(socket, runtime, {
           message: parsed.reason,
@@ -226,25 +420,83 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (
+        handleRuntimeStartProtocolCommand(parsed, {
+          socket,
+          runtime,
+          safeSocketSend,
+          runDetachedListenerTask,
+          getOrCreateScopedRuntime,
+          replaySyncStateForRuntime,
+        })
+      ) {
+        return;
+      }
+
+      if (parsed.type === "external_tool_call_response") {
+        handleExternalToolCallResponseCommand(runtime, parsed);
+        return;
+      }
+
       if (parsed.type === "sync") {
-        console.log(
-          `[Listen V2] Received sync command for runtime=${parsed.runtime.agent_id}/${parsed.runtime.conversation_id}`,
-        );
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
           console.log(`[Listen V2] Dropping sync: runtime mismatch or closed`);
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "sync_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                success: false,
+                error: "Runtime is no longer active",
+              },
+              "sync_response",
+              "sync",
+            );
+          }
           return;
         }
-        await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
-          recoverApprovals: parsed.recover_approvals !== false,
-          forceDeviceStatus: parsed.force_device_status === true,
-        });
+        try {
+          await replaySyncStateForRuntime(runtime, socket, parsed.runtime, {
+            recoverApprovals: parsed.recover_approvals !== false,
+            forceDeviceStatus: parsed.force_device_status === true,
+          });
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "sync_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                success: true,
+              },
+              "sync_response",
+              "sync",
+            );
+          }
+        } catch (error) {
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "sync_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                success: false,
+                error: getErrorMessage(error),
+              },
+              "sync_response",
+              "sync",
+            );
+            return;
+          }
+          throw error;
+        }
         return;
       }
 
       if (parsed.type === "input") {
-        console.log(
-          `[Listen V2] Received input command, kind=${parsed.payload?.kind}`,
-        );
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
           console.log(`[Listen V2] Dropping input: runtime mismatch or closed`);
           return;
@@ -285,6 +537,7 @@ export function createListenerMessageHandler(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
+          externalToolScopeIds: inputPayload.external_tool_scope_ids,
           messages: inputPayload.messages,
         };
         const hasApprovalPayload = incoming.messages.some(
@@ -427,15 +680,67 @@ export function createListenerMessageHandler(
       }
 
       if (parsed.type === "abort_message") {
-        await handleAbortMessageInput(runtime, {
-          command: parsed,
-          socket,
-          opts: {
-            onStatusChange: opts.onStatusChange,
-            connectionId: opts.connectionId,
-          },
-          processQueuedTurn,
-        });
+        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "abort_message_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                aborted: false,
+                success: false,
+                error: "Runtime is no longer active",
+              },
+              "abort_message_response",
+              "abort_message",
+            );
+          }
+          return;
+        }
+        try {
+          const aborted = await handleAbortMessageInput(runtime, {
+            command: parsed,
+            socket,
+            opts: {
+              onStatusChange: opts.onStatusChange,
+              connectionId: opts.connectionId,
+            },
+            processQueuedTurn,
+          });
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "abort_message_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                aborted,
+                success: true,
+              },
+              "abort_message_response",
+              "abort_message",
+            );
+          }
+        } catch (error) {
+          if (parsed.request_id) {
+            safeSocketSend(
+              socket,
+              {
+                type: "abort_message_response",
+                request_id: parsed.request_id,
+                runtime: parsed.runtime,
+                aborted: false,
+                success: false,
+                error: getErrorMessage(error),
+              },
+              "abort_message_response",
+              "abort_message",
+            );
+            return;
+          }
+          throw error;
+        }
         return;
       }
 
@@ -495,7 +800,37 @@ export function createListenerMessageHandler(
       }
 
       if (
+        handleConnectProvidersCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
+        return;
+      }
+
+      if (
+        handleChatGPTUsageCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
+        return;
+      }
+
+      if (
         handleCronProtocolCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
+        return;
+      }
+
+      if (
+        handleAgentConversationManagementProtocolCommand(parsed, {
           socket,
           safeSocketSend,
           runDetachedListenerTask,
@@ -565,10 +900,10 @@ export function createListenerMessageHandler(
           const agentId = parsed.runtime.agent_id;
           if (agentId && settingsManager.isMemfsEnabled(agentId)) {
             try {
-              const { getMemoryFilesystemRoot } = await import(
+              const { getScopedMemoryFilesystemRoot } = await import(
                 "@/agent/memory-filesystem"
               );
-              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               const tokens = estimateSystemPromptTokensFromMemoryDir(memoryDir);
               setSystemPromptDoctorState(agentId, tokens);
             } catch {
@@ -588,7 +923,9 @@ export function createListenerMessageHandler(
         runDetachedListenerTask("execute_command", async () => {
           await handleExecuteCommand(parsed, socket, scopedRuntime, {
             onStatusChange: opts.onStatusChange,
+            onLog: opts.onLog,
             connectionId: opts.connectionId,
+            connectionName: opts.connectionName,
           });
         });
         return;

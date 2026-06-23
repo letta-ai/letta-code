@@ -173,7 +173,7 @@ async function runCreateAction(
     }
 
     if (values.pinned) {
-      settingsManager.pinGlobal(agentId);
+      settingsManager.pinAgent(agentId);
     }
 
     // Re-fetch agent through the active backend to get updated output.

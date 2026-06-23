@@ -8,6 +8,7 @@ import type {
 import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
+import type { ModAdapter } from "@/mods/mod-adapter";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import type {
   DequeuedBatch,
@@ -20,6 +21,7 @@ import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
   ControlRequest,
+  ExternalToolCallResult,
   LoopStatus,
   RuntimeScope,
   WsProtocolCommand,
@@ -40,6 +42,7 @@ export interface StartListenerOptions {
     status: "idle" | "receiving" | "processing",
     connectionId: string,
   ) => void;
+  onLog?: (message: string) => void;
   onRetrying?: (
     attempt: number,
     maxAttempts: number,
@@ -59,6 +62,7 @@ export interface IncomingMessage {
   conversationId?: string;
   channelTurnSources?: ChannelTurnSource[];
   clientToolAllowlist?: string[];
+  externalToolScopeIds?: string[];
   messages: Array<
     (MessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
@@ -77,6 +81,12 @@ export type ProcessQueuedTurn = (
   queuedTurn: IncomingMessage,
   dequeuedBatch: DequeuedBatch,
 ) => Promise<void>;
+
+export interface PendingExternalToolCall {
+  resolve: (result: ExternalToolCallResult) => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
 
 export interface ModeChangePayload {
   mode: "standard" | "acceptEdits" | "memory" | "unrestricted";
@@ -180,6 +190,8 @@ export type ListenerRuntime = {
   hasSuccessfulConnection: boolean;
   /** True once the WS has connected at least once. Never reset to false. */
   everConnected: boolean;
+  /** Provider-only local mod adapter for desktop/listener surfaces. */
+  modAdapter?: ModAdapter | undefined;
   sessionId: string;
   eventSeqCounter: number;
   lastStopReason: string | null;
@@ -221,6 +233,7 @@ export type ListenerRuntime = {
   secretsHydrationFreshnessByAgent: Map<string, number>;
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
+  pendingExternalToolCalls?: Map<string, PendingExternalToolCall>;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
    * reused while the listener stays connected so first-turn reminders can join

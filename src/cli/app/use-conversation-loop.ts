@@ -40,7 +40,6 @@ import {
   hasActiveSubagents,
 } from "@/agent/subagent-state";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
-import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import {
   type Buffers,
   type Line,
@@ -94,6 +93,7 @@ import {
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { alwaysRequiresUserInput } from "@/cli/helpers/tool-name-mapping.js";
+import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { goalLoopMode } from "@/goal-loop-mode";
 import { runStopHooks } from "@/hooks";
@@ -201,7 +201,7 @@ type ConversationLoopContext = {
   generateConversationDescription: (options?: {
     force?: boolean;
   }) => Promise<void>;
-  extensionAdapter: LocalExtensionAdapter;
+  modAdapter: LocalModAdapter;
   generateConversationTitle: () => Promise<string | null>;
   hasConversationModelOverrideRef: MutableRefObject<boolean>;
   interruptQueuedRef: MutableRefObject<boolean>;
@@ -213,6 +213,7 @@ type ConversationLoopContext = {
   > | null>;
   llmApiErrorRetriesRef: MutableRefObject<number>;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
+  maybeRunPostTurnReflection: () => Promise<void>;
   needsEagerApprovalCheck: boolean;
   openTrajectorySegment: () => void;
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
@@ -299,7 +300,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
     generateConversationDescription,
-    extensionAdapter,
+    modAdapter,
     generateConversationTitle,
     hasConversationModelOverrideRef,
     interruptQueuedRef,
@@ -309,6 +310,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     lastSentInputRef,
     llmApiErrorRetriesRef,
     llmConfigRef,
+    maybeRunPostTurnReflection,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,
@@ -473,6 +475,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         allowReentry?: boolean;
         submissionGeneration?: number;
         transcriptStartLineIndex?: number | null;
+        allowResponseStateReuse?: boolean;
       },
     ): Promise<void> => {
       // Transient pre-stream retries can yield for seconds.
@@ -630,11 +633,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       }
       processingConversationRef.current += 1;
 
-      if (
-        hasUserMessageInput(currentInput) &&
-        extensionAdapter.hasExtensionSources &&
-        !extensionAdapter.isLoading
-      ) {
+      if (hasUserMessageInput(currentInput)) {
         const originalInput = currentInput;
         try {
           const turnStartEvent = {
@@ -642,12 +641,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             conversationId: conversationIdRef.current ?? null,
             input: currentInput,
           };
-          await extensionAdapter.emitEvent("turn_start", turnStartEvent);
+          await modAdapter.events.emit(
+            "turn_start",
+            turnStartEvent,
+            modAdapter.context,
+          );
           currentInput = isTurnInputArray(turnStartEvent.input)
             ? turnStartEvent.input
             : originalInput;
         } catch {
-          // Extension turn_start handlers should not block sending the turn.
+          // Mod turn_start handlers should not block sending the turn.
           currentInput = originalInput;
         }
       }
@@ -850,6 +853,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 agentId: agentIdRef.current,
                 overrideModel: tempModelOverrideRef.current ?? undefined,
                 preparedToolContext: preparedToolContext.preparedToolContext,
+                allowResponseStateReuse:
+                  options?.allowResponseStateReuse === true,
               },
             );
             stream = nextStream;
@@ -1580,6 +1585,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
             pendingTranscriptStartLineIndexRef.current = null;
 
+            // Evaluate reflection triggers now that the turn's transcript
+            // delta is on disk, so step counts include this turn.
+            await maybeRunPostTurnReflection();
+
             // Get last assistant message, user message, and reasoning for Stop hook
             const bufferedLines = Array.from(
               buffersRef.current.byId.values(),
@@ -1660,12 +1669,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               conversationIdRef.current !== "default"
             ) {
               isAutoConversationTitleInFlightRef.current = true;
+              const titleConversationId = conversationIdRef.current;
               const conversationTitle = await generateConversationTitle();
               if (!conversationTitle) {
                 isAutoConversationTitleInFlightRef.current = false;
+              } else if (
+                !shouldAutoGenerateConversationTitleRef.current ||
+                conversationIdRef.current !== titleConversationId
+              ) {
+                isAutoConversationTitleInFlightRef.current = false;
               } else {
                 void getBackend()
-                  .updateConversation(conversationIdRef.current, {
+                  .updateConversation(titleConversationId, {
                     summary: conversationTitle,
                   })
                   .then(() => {
@@ -1913,6 +1928,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 alwaysRequiresUserInput,
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
+                toolContextId: approvalToolContextIdRef.current,
               });
 
             // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
@@ -2204,7 +2220,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       otid: randomUUID(),
                     },
                   ],
-                  { allowReentry: true },
+                  {
+                    allowReentry: true,
+                    allowResponseStateReuse: true,
+                  },
                 );
                 toolResultsInFlightRef.current = false;
                 return;
@@ -2985,7 +3004,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       setUiPermissionMode,
       prepareScopedToolExecutionContext,
       maybeStreamSyntheticNoModelResponse,
-      extensionAdapter,
+      modAdapter,
     ],
   );
 

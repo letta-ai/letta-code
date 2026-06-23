@@ -64,6 +64,8 @@ type TaskRunResult = {
   success: boolean;
   error?: string;
   totalTokens?: number;
+  stepCount?: number;
+  durationMs?: number;
 };
 
 export interface SpawnBackgroundSubagentTaskArgs {
@@ -112,12 +114,17 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * Called after the subagent finishes (success or failure).
    * Runs regardless of `silentCompletion` and is awaited before
    * completion notifications/hooks continue.
+   * `report` is the raw final subagent report and may be large; callbacks
+   * should parse/summarize it rather than injecting it directly into context.
    */
   onComplete?: (result: {
     success: boolean;
     error?: string;
     agentId?: string;
     conversationId?: string;
+    stepCount?: number;
+    durationMs?: number;
+    report?: string;
   }) => void | Promise<void>;
   /**
    * Optional dependency overrides for tests.
@@ -354,6 +361,7 @@ export function spawnBackgroundSubagentTask(
     true,
     silentCompletion,
     resolvedParentScope,
+    prompt,
   );
 
   const taskId = getNextTaskId();
@@ -395,6 +403,7 @@ export function spawnBackgroundSubagentTask(
     forkedContext,
     parentAgentIdForSpawn,
     transcriptPath,
+    resolvedParentScope?.conversationId,
   )
     .then(async (result) => {
       bgTask.status = result.success ? "completed" : "failed";
@@ -426,6 +435,9 @@ export function spawnBackgroundSubagentTask(
           error: result.error,
           agentId: result.agentId,
           conversationId: result.conversationId,
+          stepCount: result.stepCount,
+          durationMs: result.durationMs,
+          report: result.report,
         });
       } catch (error) {
         const errorMessage =
@@ -723,6 +735,7 @@ export async function task(args: TaskArgs): Promise<string> {
     false,
     false,
     resolvedParentScope,
+    prompt,
   );
 
   // Foreground tasks now also write transcripts so users can inspect full output
@@ -746,6 +759,8 @@ export async function task(args: TaskArgs): Promise<string> {
       args.max_turns,
       config.fork,
       parentAgentIdForSpawn,
+      undefined,
+      resolvedParentScope?.conversationId,
     );
 
     // Mark subagent as completed in state store

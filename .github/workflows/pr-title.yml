@@ -67,7 +67,7 @@ jobs:
           console.error(`Allowed types: ${allowedTypes.join(", ")}`);
           console.error("");
           console.error("Examples:");
-          console.error("  feat(extensions): add provider registry");
+          console.error("  feat(mods): add provider registry");
           console.error("  fix(conversations): regenerate descriptions after compaction");
           console.error("  ci: enforce conventional PR titles");
           console.error("");

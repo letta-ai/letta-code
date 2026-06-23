@@ -1,14 +1,15 @@
+import { spawn } from "node:child_process";
 import type WebSocket from "ws";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
   applySetMaxContext,
   formatSetMaxContextResult,
 } from "@/agent/max-context";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
+import { refreshCustomCommands } from "@/cli/commands/custom";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildGoalContinuationPrompt,
@@ -24,6 +25,7 @@ import {
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
+import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
@@ -39,6 +41,10 @@ import type {
   SlashCommandStartMessage,
   StreamDelta,
 } from "@/types/protocol_v2";
+import { debugLog } from "@/utils/debug";
+import { markSecretsReminderRefreshPending } from "./commands/secrets";
+import { getConversationWorkingDirectory } from "./cwd";
+import { reloadListenerModAdapter } from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -48,7 +54,14 @@ import {
   emitCanonicalMessageDelta,
 } from "./protocol-outbound";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
-import { handleIncomingMessage } from "./turn";
+import {
+  ensureSecretsHydratedForAgent,
+  invalidateSecretsCacheForAgent,
+} from "./secrets-sync";
+import {
+  buildMaybeLaunchReflectionSubagent,
+  handleIncomingMessage,
+} from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -66,7 +79,9 @@ export async function handleExecuteCommand(
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
+    onLog?: StartListenerOptions["onLog"];
     connectionId?: string;
+    connectionName?: string;
   },
 ): Promise<void> {
   const scope = {
@@ -127,7 +142,15 @@ export async function handleExecuteCommand(
         break;
 
       case "compact":
-        output = await handleCompactCommand(conversationRuntime, trimmedArgs);
+        output = await handleCompactCommand(
+          socket,
+          conversationRuntime,
+          trimmedArgs,
+        );
+        break;
+
+      case "reload":
+        output = await handleReloadCommand(conversationRuntime);
         break;
 
       case "context-limit":
@@ -145,6 +168,10 @@ export async function handleExecuteCommand(
           trimmedArgs,
           opts,
         );
+        break;
+
+      case "upgrade-letta-code":
+        output = await handleUpgradeLettaCodeCommand(opts);
         break;
 
       default:
@@ -182,6 +209,107 @@ export async function handleExecuteCommand(
     // "interrupt_in_progress"). Reset it so subsequent user messages drain.
     conversationRuntime.cancelRequested = false;
   }
+}
+
+async function handleReloadCommand(
+  conversationRuntime: ConversationRuntime,
+): Promise<string> {
+  const { listener } = conversationRuntime;
+  settingsManager.clearCaches();
+  await settingsManager.loadProjectSettings();
+  await settingsManager.loadLocalProjectSettings();
+
+  try {
+    refreshCustomCommands();
+  } catch (error) {
+    debugLog(
+      "commands",
+      "refreshCustomCommands failed during /reload:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  await reloadListenerModAdapter(listener);
+
+  if (conversationRuntime.agentId) {
+    invalidateSecretsCacheForAgent(listener, conversationRuntime.agentId);
+    markSecretsReminderRefreshPending(listener, conversationRuntime.agentId);
+    await ensureSecretsHydratedForAgent(listener, conversationRuntime.agentId);
+  }
+
+  return "Reloaded settings, local mods, and agent secrets";
+}
+
+async function handleUpgradeLettaCodeCommand(opts: {
+  onLog?: StartListenerOptions["onLog"];
+  connectionName?: string;
+}): Promise<string> {
+  const log = (message: string) => {
+    const line = `[upgrade-letta-code] ${message}`;
+    if (opts.onLog) {
+      opts.onLog(line);
+    } else {
+      console.log(line);
+    }
+  };
+
+  log(
+    `command received (connectionName=${opts.connectionName ?? "unknown"}, execPath=${process.execPath}, entrypoint=${process.argv[1] ?? "unknown"})`,
+  );
+  const { manualUpdate } = await import("@/updater/auto-update");
+  log("starting manualUpdate()");
+  const result = await manualUpdate({ progressLog: log });
+  log(
+    `manualUpdate() completed: success=${result.success}; message=${result.message}`,
+  );
+
+  if (!result.success) {
+    log(`upgrade failed: ${result.message}`);
+    throw new Error(result.message);
+  }
+
+  if (!result.message.startsWith("Updated to ")) {
+    log("no restart scheduled because no update was installed");
+    return result.message;
+  }
+
+  scheduleRemoteRestart(opts.connectionName, log);
+  return `${result.message}\nRestarting remote listener...`;
+}
+
+function scheduleRemoteRestart(
+  connectionName: string | undefined,
+  log: (message: string) => void,
+): void {
+  const entrypoint = process.argv[1];
+  if (!entrypoint || !connectionName) {
+    log(
+      `restart skipped (entrypoint=${entrypoint ?? "missing"}, connectionName=${connectionName ?? "missing"})`,
+    );
+    return;
+  }
+
+  log(`scheduling remote listener restart for env ${connectionName}`);
+  setTimeout(() => {
+    log(
+      `spawning replacement listener: ${process.execPath} ${entrypoint} remote --env-name ${connectionName}`,
+    );
+    const child = spawn(
+      process.execPath,
+      [entrypoint, "remote", "--env-name", connectionName],
+      {
+        cwd: process.cwd(),
+        detached: true,
+        env: process.env,
+        stdio: "ignore",
+      },
+    );
+    log(
+      `spawned replacement listener pid=${child.pid ?? "unknown"}; exiting current listener`,
+    );
+    child.unref();
+    process.exit(0);
+  }, 1000).unref();
 }
 
 function emitSlashCommandEnd(
@@ -231,6 +359,7 @@ function compactHelpOutput(): string {
 
 /** /compact — Summarize conversation history through the active Backend. */
 async function handleCompactCommand(
+  socket: WebSocket,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
 ): Promise<string> {
@@ -290,7 +419,36 @@ async function handleCompactCommand(
       compactBody,
     );
 
-    conversationRuntime.contextTracker.pendingReflectionTrigger = true;
+    // Launching reflection is best-effort — never fail the /compact itself.
+    try {
+      const reflectionSettings = getReflectionSettings(
+        agentId,
+        getConversationWorkingDirectory(
+          conversationRuntime.listener,
+          agentId,
+          conversationRuntime.conversationId,
+        ),
+      );
+      if (
+        reflectionSettings.trigger === "compaction-event" &&
+        settingsManager.isMemfsEnabled(agentId)
+      ) {
+        void buildMaybeLaunchReflectionSubagent({
+          runtime: conversationRuntime,
+          socket,
+          agentId,
+          conversationId: conversationRuntime.conversationId,
+        })("compaction-event");
+      }
+    } catch (reflectionError) {
+      debugLog(
+        "memory",
+        "Skipping post-compaction reflection:",
+        reflectionError instanceof Error
+          ? reflectionError.message
+          : String(reflectionError),
+      );
+    }
     void regenerateConversationDescription(conversationRuntime.conversationId);
 
     return [
@@ -356,7 +514,6 @@ async function handleClearCommand(
   // Create a new conversation
   const conversation = await backend.createConversation({
     agent_id: agentId,
-    isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
   });
 
   // Clear runtime state for the current conversation
@@ -398,7 +555,7 @@ async function handleDoctorCommand(
 
   const { context: gitContext } = gatherInitGitContext();
   const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getMemoryFilesystemRoot(agentId)
+    ? getScopedMemoryFilesystemRoot(agentId)
     : undefined;
 
   const doctorMessage = buildDoctorMessage({ gitContext, memoryDir });
@@ -450,7 +607,7 @@ async function handleInitCommand(
 
   const { context: gitContext } = gatherInitGitContext();
   const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getMemoryFilesystemRoot(agentId)
+    ? getScopedMemoryFilesystemRoot(agentId)
     : undefined;
 
   const initMessage = buildInitMessage({ gitContext, memoryDir });

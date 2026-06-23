@@ -39,6 +39,7 @@ export type ClassifyApprovalsOptions<TContext = ApprovalContext | null> = {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   agentId?: string;
+  toolContextId?: string | null;
 };
 
 export async function getMissingRequiredArgs(
@@ -126,6 +127,8 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       opts.workingDirectory,
       opts.permissionModeState,
       opts.agentId,
+      opts.toolContextId,
+      approval.toolCallId,
     );
     const context = opts.getContext
       ? await opts.getContext(toolName, parsedArgs, opts.workingDirectory)
@@ -136,7 +139,9 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       decision = "ask";
     }
 
-    if (decision === "ask" && opts.treatAskAsDeny) {
+    const needsHumanApproval = decision === "ask" || decision === "alwaysAsk";
+
+    if (needsHumanApproval && opts.treatAskAsDeny) {
       autoDenied.push({
         approval,
         permission,
@@ -154,7 +159,7 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       parsedArgs,
     };
 
-    if (decision === "ask") {
+    if (needsHumanApproval) {
       needsUserInput.push(entry);
     } else if (decision === "deny") {
       autoDenied.push(entry);

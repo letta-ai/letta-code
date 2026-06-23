@@ -15,6 +15,7 @@ import {
 import { getShellEnv } from "./shell-env.js";
 import {
   buildShellLaunchers,
+  selectAvailableShellLauncher,
   withStrictShellPrelude,
 } from "./shell-launchers.js";
 import { spawnWithLauncher } from "./shell-runner.js";
@@ -50,6 +51,7 @@ function rebuildCachedLauncher(
  */
 function getBackgroundLauncher(
   command: string,
+  env: NodeJS.ProcessEnv,
   secretEnv?: Record<string, string>,
 ): string[] {
   const cachedLauncher = rebuildCachedLauncher(command, secretEnv);
@@ -58,7 +60,7 @@ function getBackgroundLauncher(
   const launchers = buildShellLaunchers(command, {
     powershellEnvAliases: secretEnv ? Object.keys(secretEnv) : undefined,
   });
-  return launchers[0] || [];
+  return selectAvailableShellLauncher(launchers, env) || [];
 }
 
 /**
@@ -232,7 +234,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     const bgCommand = withStrictShellPrelude(command, bgEnv);
     const bashId = getNextBashId();
     const outputFile = createBackgroundOutputFile(bashId);
-    const launcher = getBackgroundLauncher(bgCommand, secretEnv);
+    const launcher = getBackgroundLauncher(bgCommand, bgEnv, secretEnv);
     const [executable, ...launcherArgs] = launcher;
     if (!executable) {
       return {

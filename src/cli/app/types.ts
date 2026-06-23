@@ -49,9 +49,7 @@ export type AppProps = {
   releaseNotes?: string | null; // Markdown release notes to display above header
   updateNotification?: string | null; // Latest version when a significant auto-update was applied
   systemInfoReminderEnabled?: boolean;
-  extensionsDisabled?: boolean;
-  /** Callback to soft-restart the TUI (re-runs startup path, remounts App). */
-  onReload?: (agentId: string, conversationId: string) => Promise<void>;
+  modsDisabled?: boolean;
 };
 
 export type ActiveOverlay =

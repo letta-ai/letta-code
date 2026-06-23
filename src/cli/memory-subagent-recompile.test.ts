@@ -138,15 +138,9 @@ describe("memory subagent recompile handling", () => {
       second,
       third,
     ]);
-    expect(firstMessage).toBe(
-      "Reflected on /palace, the halls remember more now.",
-    );
-    expect(secondMessage).toBe(
-      "Reflected on /palace, the halls remember more now.",
-    );
-    expect(thirdMessage).toBe(
-      "Reflected on /palace, the halls remember more now.",
-    );
+    expect(firstMessage).toBe("Dreamed and made some memories.");
+    expect(secondMessage).toBe("Dreamed and made some memories.");
+    expect(thirdMessage).toBe("Dreamed and made some memories.");
     expect(recompileByConversation.size).toBe(0);
     expect(recompileQueuedByConversation.size).toBe(0);
   });
@@ -179,12 +173,8 @@ describe("memory subagent recompile handling", () => {
       ),
     ]);
 
-    expect(firstMessage).toBe(
-      "Reflected on /palace, the halls remember more now.",
-    );
-    expect(secondMessage).toBe(
-      "Reflected on /palace, the halls remember more now.",
-    );
+    expect(firstMessage).toBe("Dreamed and made some memories.");
+    expect(secondMessage).toBe("Dreamed and made some memories.");
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledTimes(2);
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
       "conv-a",
@@ -193,6 +183,27 @@ describe("memory subagent recompile handling", () => {
     expect(recompileAgentSystemPromptMock).toHaveBeenCalledWith(
       "conv-b",
       "agent-shared",
+    );
+  });
+
+  test("links the word memories to the reflection subagent", async () => {
+    const message = await handleMemorySubagentCompletion(
+      {
+        agentId: "agent-parent",
+        conversationId: "conv-parent",
+        subagentType: "reflection",
+        success: true,
+        subagentAgentId: "agent-reflection",
+      },
+      {
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
+        recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
+      },
+    );
+
+    expect(message).toBe(
+      "\x1b]8;;https://app.letta.com/chat/agent-reflection\x1b\\Dreamed\x1b]8;;\x1b\\ and made some memories.",
     );
   });
 });

@@ -4,6 +4,7 @@ import { useProgressIndicator } from "@/cli/hooks/use-progress-indicator";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { useTextInputCursor } from "@/cli/hooks/use-text-input-cursor";
 import { colors } from "./colors";
+import { MarkdownDisplay } from "./MarkdownDisplay";
 import { Text } from "./Text";
 
 interface QuestionOption {
@@ -28,6 +29,24 @@ type Props = {
 
 // Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
+
+const MARKDOWN_QUESTION_PATTERNS = [
+  /^#{1,6}\s+/m,
+  /^\s*[-*+]\s+/m,
+  /^\s*\d+\.\s+/m,
+  /^>\s+/m,
+  /^```/m,
+  /\|.+\|\n\|[\s:]*-+/m,
+  /\*\*[^*]+\*\*/,
+  /`[^`]+`/,
+];
+
+function shouldRenderQuestionAsMarkdown(question: string): boolean {
+  return (
+    question.includes("\n") ||
+    MARKDOWN_QUESTION_PATTERNS.some((pattern) => pattern.test(question))
+  );
+}
 
 export const InlineQuestionApproval = memo(
   ({ questions, onSubmit, onCancel, isFocused = true }: Props) => {
@@ -260,6 +279,9 @@ export const InlineQuestionApproval = memo(
 
     // Generate horizontal line
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
+    const questionText = currentQuestion?.question ?? "";
+    const renderQuestionAsMarkdown =
+      shouldRenderQuestionAsMarkdown(questionText);
 
     // Memoize the static header content so it doesn't re-render on keystroke
     // This prevents flicker when typing in the custom input field
@@ -275,7 +297,11 @@ export const InlineQuestionApproval = memo(
           <Box height={1} />
 
           {/* Question */}
-          <Text bold>{currentQuestion?.question}</Text>
+          {renderQuestionAsMarkdown ? (
+            <MarkdownDisplay text={questionText} />
+          ) : (
+            <Text bold>{questionText}</Text>
+          )}
 
           <Box height={1} />
 
@@ -291,9 +317,10 @@ export const InlineQuestionApproval = memo(
       ),
       [
         currentQuestion?.header,
-        currentQuestion?.question,
         currentQuestionIndex,
         questions.length,
+        questionText,
+        renderQuestionAsMarkdown,
         solidLine,
       ],
     );

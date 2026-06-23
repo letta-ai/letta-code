@@ -10,9 +10,11 @@ import {
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
-} from "@/backend/dev/pi-provider-extension-registry";
+} from "@/backend/dev/pi-provider-mod-registry";
 import {
   PI_PROVIDER_SPECS,
+  PI_TUI_DEFAULT_MODEL_IDS,
+  PI_TUI_DEFAULTLESS_PROVIDER_IDS,
   resolveProviderFromProviderType,
 } from "@/backend/dev/pi-provider-registry";
 import { listLocalModels } from "@/backend/local/local-model-config";
@@ -68,10 +70,52 @@ describe("local pi provider catalog", () => {
   test("local provider defaults point at current pi-ai catalog models", () => {
     for (const spec of PI_PROVIDER_SPECS) {
       if (!spec.piProvider) continue;
+      expect(spec.defaultModel).toBeDefined();
+      if (!spec.defaultModel) continue;
       const modelId = spec.defaultModel.split("/").slice(1).join("/");
       expect(
         getModels(spec.piProvider).some((model) => model.id === modelId),
       ).toBe(true);
+    }
+  });
+
+  test("built-in provider defaults mirror Pi TUI defaults", () => {
+    for (const [provider, modelId] of Object.entries(
+      PI_TUI_DEFAULT_MODEL_IDS,
+    )) {
+      const spec = PI_PROVIDER_SPECS.find((entry) => entry.id === provider);
+      expect(spec).toBeDefined();
+      expect(spec?.defaultModel).toBe(`${spec?.handlePrefixes[0]}${modelId}`);
+      expect(
+        getModels(provider as Parameters<typeof getModels>[0]).some(
+          (model) => model.id === modelId,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  test("pi-ai providers without Pi TUI defaults are explicit", () => {
+    const defaultedProviders = new Set(Object.keys(PI_TUI_DEFAULT_MODEL_IDS));
+
+    for (const provider of getProviders()) {
+      expect(
+        defaultedProviders.has(provider) ||
+          PI_TUI_DEFAULTLESS_PROVIDER_IDS.has(provider),
+      ).toBe(true);
+    }
+  });
+
+  test("discoverable local endpoint providers do not have guessed defaults", () => {
+    const endpointProviders = new Set([
+      "ollama",
+      "ollama-cloud",
+      "lmstudio",
+      "llama-cpp",
+    ]);
+
+    for (const spec of PI_PROVIDER_SPECS) {
+      if (!endpointProviders.has(spec.id)) continue;
+      expect(spec.defaultModel).toBeUndefined();
     }
   });
 
@@ -106,7 +150,7 @@ describe("local pi provider catalog", () => {
     expect(localApiKeyProviderIds.has("github-copilot")).toBe(false);
   });
 
-  test("local /connect configs include registered extension providers", () => {
+  test("local /connect configs include registered mod providers", () => {
     registerPiProvider("kilo", {
       name: "Kilo",
       description: "Connect Kilo",
@@ -150,7 +194,7 @@ describe("local pi provider catalog", () => {
     });
   });
 
-  test("local /connect configs include registered extension OAuth providers", () => {
+  test("local /connect configs include registered mod OAuth providers", () => {
     registerPiProvider("kilo", {
       name: "Kilo",
       description: "Connect Kilo account",
@@ -199,7 +243,7 @@ describe("local pi provider catalog", () => {
     expect(provider?.fields).toBeUndefined();
   });
 
-  test("local /connect configs respect connect false for registered extension OAuth providers", () => {
+  test("local /connect configs respect connect false for registered mod OAuth providers", () => {
     registerPiProvider("kilo", {
       name: "Kilo",
       baseUrl: "https://api.kilo.dev/v1",
@@ -234,7 +278,7 @@ describe("local pi provider catalog", () => {
     ).toBe(false);
   });
 
-  test("local model listing includes dynamic extension provider models when configured", async () => {
+  test("local model listing includes dynamic mod provider models when configured", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-kilo-provider-"));
     try {
       const connections: unknown[] = [];
@@ -287,7 +331,7 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("local model listing passes extension OAuth api keys to listModels", async () => {
+  test("local model listing passes mod OAuth api keys to listModels", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-kilo-oauth-"));
     try {
       const connections: unknown[] = [];

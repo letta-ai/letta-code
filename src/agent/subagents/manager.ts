@@ -9,7 +9,7 @@
 
 import { spawn } from "node:child_process";
 import { getAvailableModelHandles } from "@/agent/available-models";
-import { getCurrentAgentId } from "@/agent/context";
+import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getDefaultModelForTier, resolveModel } from "@/agent/model";
 import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
@@ -90,6 +90,8 @@ export interface SubagentResult {
   success: boolean;
   error?: string;
   totalTokens?: number;
+  stepCount?: number;
+  durationMs?: number;
 }
 
 /**
@@ -100,7 +102,11 @@ interface ExecutionState {
   conversationId: string | null;
   finalResult: string | null;
   finalError: string | null;
-  resultStats: { durationMs: number; totalTokens: number } | null;
+  resultStats: {
+    durationMs: number;
+    totalTokens: number;
+    stepCount?: number;
+  } | null;
   displayedToolCalls: Set<string>;
   pendingToolCalls: Map<string, { name: string; args: string }>;
 }
@@ -115,11 +121,16 @@ interface ExecutionState {
  */
 export function getModelHandleFromAgent(agent: {
   model?: string | null;
+  model_settings?: { provider_type?: unknown } | null;
   llm_config?: { model_endpoint_type?: string | null; model?: string | null };
 }): string | null {
   const directModel = agent.model;
   if (directModel?.includes("/")) {
     return directModel;
+  }
+  const settingsProvider = agent.model_settings?.provider_type;
+  if (typeof settingsProvider === "string" && directModel) {
+    return `${settingsProvider}/${directModel}`;
   }
   const endpoint = agent.llm_config?.model_endpoint_type;
   const model = agent.llm_config?.model;
@@ -129,17 +140,33 @@ export function getModelHandleFromAgent(agent: {
   return directModel || model || null;
 }
 
-async function getPrimaryAgentModelHandle(): Promise<{
+async function getPrimaryAgentModelHandle(
+  scope: { agentId?: string | null; conversationId?: string | null } = {},
+): Promise<{
   handle: string | null;
   agent: {
     model?: string | null;
     name?: string | null;
+    model_settings?: { provider_type?: unknown } | null;
     llm_config?: { model_endpoint_type?: string | null; model?: string | null };
   } | null;
 }> {
   try {
-    const agentId = getCurrentAgentId();
+    const agentId = scope.agentId ?? getCurrentAgentId();
     const agent = await getBackend().retrieveAgent(agentId);
+    const conversationId = scope.conversationId;
+    if (conversationId && conversationId !== "default") {
+      try {
+        const conversation =
+          await getBackend().retrieveConversation(conversationId);
+        const conversationHandle = getModelHandleFromAgent(conversation);
+        if (conversationHandle) {
+          return { handle: conversationHandle, agent };
+        }
+      } catch {
+        // Fall back to the agent default if the conversation is not available.
+      }
+    }
     return { handle: getModelHandleFromAgent(agent), agent };
   } catch {
     return { handle: null, agent: null };
@@ -195,6 +222,10 @@ function swapProviderPrefix(
   return `${parentProvider}/${modelPortion}`;
 }
 
+function isInheritModel(model: string | null | undefined): boolean {
+  return model?.trim().toLowerCase() === "inherit";
+}
+
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
@@ -207,8 +238,12 @@ export async function resolveSubagentModel(options: {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
   const isFreeTier = billingTier?.toLowerCase() === "free";
+  const userRequestedInheritance = isInheritModel(userModel);
+  const effectiveRecommendedModel = userRequestedInheritance
+    ? "inherit"
+    : recommendedModel;
 
-  if (userModel) return userModel;
+  if (userModel && !userRequestedInheritance) return userModel;
 
   // Local backend has no server-side auto router. If the parent agent is
   // already running successfully on a local model, spawned subagents should use
@@ -219,8 +254,11 @@ export async function resolveSubagentModel(options: {
   }
 
   if (options.subagentType === "reflection") {
-    if (recommendedModel && recommendedModel !== "inherit") {
-      const recommendedHandle = resolveModel(recommendedModel);
+    if (
+      effectiveRecommendedModel &&
+      !isInheritModel(effectiveRecommendedModel)
+    ) {
+      const recommendedHandle = resolveModel(effectiveRecommendedModel);
       if (recommendedHandle) {
         return recommendedHandle;
       }
@@ -230,8 +268,8 @@ export async function resolveSubagentModel(options: {
   }
 
   let recommendedHandle: string | null = null;
-  if (recommendedModel && recommendedModel !== "inherit") {
-    recommendedHandle = resolveModel(recommendedModel);
+  if (effectiveRecommendedModel && !isInheritModel(effectiveRecommendedModel)) {
+    recommendedHandle = resolveModel(effectiveRecommendedModel);
   }
 
   let availableHandles: Set<string> | null = options.availableHandles ?? null;
@@ -406,7 +444,8 @@ function handleResultEvent(
     result?: string;
     is_error?: boolean;
     duration_ms?: number;
-    usage?: { total_tokens?: number };
+    usage?: { total_tokens?: number; step_count?: number };
+    num_turns?: number;
   },
   state: ExecutionState,
   subagentId: string,
@@ -415,6 +454,10 @@ function handleResultEvent(
   state.resultStats = {
     durationMs: event.duration_ms || 0,
     totalTokens: event.usage?.total_tokens || 0,
+    stepCount:
+      typeof event.usage?.step_count === "number"
+        ? event.usage.step_count
+        : undefined,
   };
 
   if (event.is_error) {
@@ -514,6 +557,14 @@ function parseResultFromStdout(
         report: result.result || "",
         success: !result.is_error,
         error: result.is_error ? result.result || "Unknown error" : undefined,
+        stepCount:
+          typeof result.usage?.step_count === "number"
+            ? result.usage.step_count
+            : undefined,
+        durationMs:
+          typeof result.duration_ms === "number"
+            ? result.duration_ms
+            : undefined,
       };
     }
 
@@ -861,6 +912,7 @@ interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
   extraTools?: string[];
+  parentAgentId?: string | null;
 }
 
 /**
@@ -900,7 +952,11 @@ export function buildSubagentArgs(
   } else {
     // Create new agent (original behavior)
     args.push("--new-agent", "--system", type);
-    args.push("--tags", `type:${type}`);
+    const subagentTags = [`type:${type}`];
+    if (options.parentAgentId) {
+      subagentTags.push(`parent:${options.parentAgentId}`);
+    }
+    args.push("--tags", subagentTags.join(","));
     // Default all newly spawned subagents to non-memfs mode.
     // This avoids memfs startup overhead unless explicitly enabled elsewhere.
     args.push("--no-memfs");
@@ -955,18 +1011,6 @@ export function buildSubagentArgs(
   const parentDisallowedTools = cliPermissions.getDisallowedTools();
   if (parentDisallowedTools.length > 0) {
     args.push("--disallowedTools", parentDisallowedTools.join(","));
-  }
-
-  // Add memory block filtering if specified (only for new agents)
-  if (!isDeployingExisting) {
-    if (config.memoryBlocks === "none") {
-      args.push("--init-blocks", "none");
-    } else if (
-      Array.isArray(config.memoryBlocks) &&
-      config.memoryBlocks.length > 0
-    ) {
-      args.push("--init-blocks", config.memoryBlocks.join(","));
-    }
   }
 
   // Add tool filtering if specified (applies to both new and existing agents)
@@ -1036,6 +1080,16 @@ async function executeSubagent(
     const inheritedChannelContext =
       buildInheritedChannelContextPayload(runtimeContext);
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
+
+    let parentAgentId = parentAgentIdOverride;
+    if (!parentAgentId) {
+      try {
+        parentAgentId = getCurrentAgentId();
+      } catch {
+        // Context not available — subagent will have no parent scope.
+      }
+    }
+
     const cliArgs = buildSubagentArgs(
       type,
       config,
@@ -1047,6 +1101,7 @@ async function executeSubagent(
       {
         backendMode,
         promptTransport: "stdin",
+        parentAgentId,
         extraTools:
           config.fork && inheritedChannelContext
             ? ["MessageChannel"]
@@ -1055,18 +1110,6 @@ async function executeSubagent(
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
-    // Prefer an explicit parentAgentId captured at the synchronous
-    // spawn call site. Only fall back to the in-process context (which
-    // can drift across async yields in the listener) when no explicit
-    // ID was provided.
-    let parentAgentId = parentAgentIdOverride;
-    if (!parentAgentId) {
-      try {
-        parentAgentId = getCurrentAgentId();
-      } catch {
-        // Context not available — subagent will have no parent scope.
-      }
-    }
 
     // Resolve auth once in parent and forward to child to avoid per-subagent
     // keychain lookups under high parallel fan-out.
@@ -1199,7 +1242,9 @@ async function executeSubagent(
     if (exitCode !== 0) {
       // Check if this is a provider-not-supported error and we haven't retried yet
       if (!isRetry && isProviderNotSupportedError(stderr)) {
-        const { handle: primaryModel } = await getPrimaryAgentModelHandle();
+        const { handle: primaryModel } = await getPrimaryAgentModelHandle({
+          agentId: parentAgentIdOverride,
+        });
         if (primaryModel) {
           // Retry with the primary agent's model
           return executeSubagent(
@@ -1241,6 +1286,8 @@ async function executeSubagent(
         success: !state.finalError,
         error: state.finalError || undefined,
         totalTokens: state.resultStats?.totalTokens,
+        stepCount: state.resultStats?.stepCount,
+        durationMs: state.resultStats?.durationMs,
       };
     }
 
@@ -1258,6 +1305,8 @@ async function executeSubagent(
         success: false,
         error: state.finalError,
         totalTokens: state.resultStats?.totalTokens,
+        stepCount: state.resultStats?.stepCount,
+        durationMs: state.resultStats?.durationMs,
       };
     }
 
@@ -1399,6 +1448,7 @@ export async function spawnSubagent(
   forkedContext?: boolean,
   parentAgentId?: string,
   transcriptPath?: string,
+  parentConversationId?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -1420,8 +1470,29 @@ export async function spawnSubagent(
   const backendMode: BackendMode = activeBackend.capabilities.localMemfs
     ? "local"
     : "api";
+  // Resolve parent scope before model selection so local subagents inherit the
+  // active conversation's model override, not just the agent default.
+  let resolvedParentAgentId = parentAgentId;
+  if (!resolvedParentAgentId) {
+    try {
+      resolvedParentAgentId = getCurrentAgentId();
+    } catch {
+      // Context unavailable — carry forward undefined.
+    }
+  }
+  let resolvedParentConversationId = parentConversationId;
+  if (!resolvedParentConversationId) {
+    try {
+      resolvedParentConversationId = getConversationId() ?? undefined;
+    } catch {
+      // Context unavailable — carry forward undefined.
+    }
+  }
   const { handle: parentModelHandle, agent: parentAgent } =
-    await getPrimaryAgentModelHandle();
+    await getPrimaryAgentModelHandle({
+      agentId: resolvedParentAgentId,
+      conversationId: resolvedParentConversationId,
+    });
   const billingTier = await getCurrentBillingTier();
 
   // For existing agents, don't override model; for new agents, use provided or config default
@@ -1436,18 +1507,6 @@ export async function spawnSubagent(
         backendMode,
       });
   const baseURL = getBaseURL();
-
-  // Resolve parent agent ID: prefer the explicit value captured at the
-  // synchronous call site; fall back to the in-process context only when
-  // the caller didn't provide one.
-  let resolvedParentAgentId = parentAgentId;
-  if (!resolvedParentAgentId) {
-    try {
-      resolvedParentAgentId = getCurrentAgentId();
-    } catch {
-      // Context unavailable — carry forward undefined.
-    }
-  }
 
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;

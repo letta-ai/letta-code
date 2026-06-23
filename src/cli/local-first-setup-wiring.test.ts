@@ -13,14 +13,16 @@ describe("local-first setup wiring", () => {
     expect(source).toContain(
       'const AUTH_LOGIN_LABEL = "Login to Constellation"',
     );
-    expect(source).toContain('initialMode === "device-code" ? 0 : 1');
+    expect(source).toContain(
+      'initialMode === "device-code" || localModeDisabled ? 0 : 1',
+    );
     expect(source).toContain('configureBackendMode("local")');
     expect(source).toContain(
       'settingsManager.updateSettings({ preferredBackendMode: "local" })',
     );
     expect(source).toContain("letta setup");
     expect(source).toContain("letta backend api");
-    expect(source).toContain("Agents you create are local to this");
+    expect(source).toContain("Agents you create are local to");
     expect(source).toContain("chat.letta.com");
     expect(source).toContain("Welcome to Letta Code");
     expect(source).not.toContain("Welcome to Letta Code.");
@@ -55,7 +57,9 @@ describe("local-first setup wiring", () => {
       "LETTA_API_KEY is set in your environment, so OAuth login cannot replace the credential Letta Code is using.",
     );
 
-    expect(setupSource).toContain('initialMode === "device-code" ? 0 : 1');
+    expect(setupSource).toContain(
+      'initialMode === "device-code" || localModeDisabled ? 0 : 1',
+    );
     expect(setupSource).toContain('onCancel={() => setMode("menu")}');
     expect(setupRunnerSource).toContain("initialMode?: SetupInitialMode");
     expect(setupRunnerSource).toContain("Promise<SetupResult>");
@@ -80,10 +84,52 @@ describe("local-first setup wiring", () => {
     );
   });
 
+  test("explicit cloud agent setup disables local mode to avoid restart loops", () => {
+    const setupSource = readSource("../auth/setup-ui.tsx");
+    const setupRunnerSource = readSource("../auth/setup.ts");
+    const indexSource = readSource("../index.ts");
+
+    expect(setupSource).toContain("localModeDisabledReason?: string");
+    expect(setupSource).toContain(
+      "const localModeDisabled = Boolean(localModeDisabledReason)",
+    );
+    expect(setupSource).toContain("localModeDisabled ? [0, 2] : [0, 1, 2]");
+    expect(setupSource).toContain("Proceed locally");
+    expect(setupSource).toContain("(unavailable)");
+    expect(setupSource).toContain("selectedOption === 1 && !localModeDisabled");
+    expect(setupRunnerSource).toContain("localModeDisabledReason?: string");
+    expect(setupRunnerSource).toContain(
+      "localModeDisabledReason: options.localModeDisabledReason",
+    );
+
+    expect(indexSource).toContain("const setupLocalModeDisabledReason =");
+    expect(indexSource).toContain('inferredBackendModeFromAgentId === "api"');
+    expect(indexSource).toContain("is a Constellation agent");
+    expect(indexSource).toContain("rerun without --agent to start locally");
+    expect(indexSource).toContain(
+      "localModeDisabledReason: setupLocalModeDisabledReason",
+    );
+  });
+
+  test("startup completes terminal preflight before rendering setup UI", () => {
+    const source = readSource("../index.ts");
+    const setupCalls = [...source.matchAll(/runSetup\(/g)];
+
+    expect(source).toContain("const ensureTerminalPreflightComplete");
+    expect(setupCalls.length).toBeGreaterThanOrEqual(3);
+    for (const match of setupCalls) {
+      const prefix = source.slice(Math.max(0, match.index - 220), match.index);
+      expect(prefix).toContain("await ensureTerminalPreflightComplete();");
+    }
+  });
+
   test("startup auto-enters local mode for credentialless new users while honoring saved local preference", () => {
     const source = readSource("../index.ts");
     const start = source.indexOf('settings.preferredBackendMode === "local"');
-    const end = source.indexOf('configureBackendMode("local")', start);
+    const end = source.indexOf(
+      "await tryConfigureStartupLocalBackend()",
+      start,
+    );
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
@@ -99,7 +145,7 @@ describe("local-first setup wiring", () => {
       "Local-first new-user flow: if the user has no Letta Cloud credentials",
     );
     const setupEnd = source.indexOf(
-      "await settingsManager.flush();",
+      "const startupTargetLookupOrder",
       setupStart,
     );
     expect(setupStart).toBeGreaterThan(-1);
@@ -112,13 +158,23 @@ describe("local-first setup wiring", () => {
     expect(setupSegment).toContain("!isHeadless");
     expect(setupSegment).toContain("!settings.refreshToken");
     expect(setupSegment).toContain("!apiKey");
-    expect(setupSegment).toContain('configureBackendMode("local")');
+    expect(setupSegment).toContain("await tryConfigureStartupLocalBackend()");
     expect(setupSegment).toContain(
       'settingsManager.updateSettings({ preferredBackendMode: "local" })',
     );
     expect(setupSegment).toContain("await settingsManager.flush();");
-    expect(source).toContain("isCredentiallessLocalStartup");
-    expect(source).toContain(".filter((entry) => entry.isLocal)");
+  });
+
+  test("local transcript migration errors do not block setup login fallback", () => {
+    const source = readSource("../index.ts");
+
+    expect(source).toContain("isLocalBackendTranscriptStartupError");
+    expect(source).toContain("LocalTranscriptMigrationRequiredError");
+    expect(source).toContain("Unsupported local transcript format");
+    expect(source).toContain("const tryConfigureStartupLocalBackend");
+    expect(source).toContain("Continuing to setup/login");
+    expect(source).toContain('configureBackendMode("api")');
+    expect(source).toContain('preferredBackendMode: "api"');
   });
 
   test("backend and setup subcommands expose default backend controls", () => {

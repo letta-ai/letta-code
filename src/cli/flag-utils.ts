@@ -58,21 +58,3 @@ export function parsePositiveIntFlag(options: {
   }
   return parsed;
 }
-
-export function parseJsonArrayFlag(
-  rawValue: string,
-  flagName: string,
-): unknown[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawValue);
-  } catch (error) {
-    throw new Error(
-      `Invalid --${flagName} JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  if (!Array.isArray(parsed)) {
-    throw new Error(`${flagName} must be a JSON array`);
-  }
-  return parsed;
-}

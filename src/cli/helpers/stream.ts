@@ -34,6 +34,7 @@ import {
   markCurrentLineAsFinished,
   markIncompleteToolsAsCancelled,
   onChunk,
+  removeIncompleteTools,
 } from "./accumulator";
 import { chunkLog } from "./chunk-log";
 import type { ContextTracker } from "./context-tracker";
@@ -511,12 +512,19 @@ export async function drainStream(
     // commit truncated content to static (emittedIdsRef) before resume can append.
     // drainStreamWithResume calls markCurrentLineAsFinished if no resume happens.
     //
-    // skipCancelToolsOnError: when drainStreamWithResume will attempt a resume,
-    // don't cancel tool calls yet — the resume stream replays tool_return_message
-    // chunks that overwrite any cancelled state. drainStreamWithResume cancels
-    // tools itself in the failure/no-resume paths.
+    // skipCancelToolsOnError: when drainStreamWithResume may attempt a resume,
+    // don't cancel tool calls for resumable stream drops yet — the resume stream
+    // replays tool_return_message chunks that overwrite any cancelled state.
+    // If the server already emitted a terminal provider error, though, the run
+    // is not resumable; any incomplete tools from that failed run are artifacts
+    // and should not survive into the next retry run.
     if (skipCancelToolsOnError) {
-      buffers.interrupted = true;
+      if (stopReason === "error") {
+        buffers.interrupted = true;
+      } else if (stopReason === "llm_api_error") {
+        buffers.interrupted = false;
+        removeIncompleteTools(buffers, "terminal_stream_error");
+      }
     } else {
       markIncompleteToolsAsCancelled(buffers, true, "stream_error", true);
     }
@@ -559,20 +567,7 @@ export async function drainStream(
     stopReason = "error";
   }
 
-  // Mark incomplete tool calls as cancelled if stream was cancelled
-  if (stopReason === "cancelled") {
-    markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
-  }
-
-  // Mark the final line as finished now that stream has ended.
-  // Skip for error stop reason — drainStreamWithResume will finalize after
-  // resume succeeds (or in its catch/else path if no resume is attempted).
-  if (stopReason !== "error") {
-    markCurrentLineAsFinished(buffers);
-  }
-  queueMicrotask(refresh);
-
-  // Package the approval request(s) at the end.
+  // Package the approval request(s) before cleanup.
   // Always extract from streamProcessor regardless of stopReason so that
   // drainStreamWithResume can carry them across a resume boundary (the
   // resumed stream uses a fresh streamProcessor that won't have them).
@@ -600,6 +595,41 @@ export async function drainStream(
     );
     stopReason = "requires_approval";
   }
+
+  // Clean up incomplete tool calls:
+  // - cancelled: user interrupted, show "Interrupted by user"
+  // - end_turn: server ended without completing, remove entirely (don't show anything)
+  if (stopReason === "cancelled") {
+    const hadOrphanedTools = markIncompleteToolsAsCancelled(
+      buffers,
+      true,
+      "user_interrupt",
+    );
+    if (hadOrphanedTools) {
+      debugWarn(
+        "drainStream",
+        "cancelled had orphaned tool calls (see [ORPHANED_TOOL] logs for diagnosis)",
+      );
+    }
+  } else if (stopReason === "end_turn") {
+    const hadOrphanedTools = removeIncompleteTools(buffers);
+    if (hadOrphanedTools) {
+      debugWarn(
+        "drainStream",
+        "end_turn had orphaned tool calls (see [REMOVED_ORPHANED_TOOL] logs)",
+      );
+    }
+  } else if (stopReason === "llm_api_error") {
+    removeIncompleteTools(buffers, "terminal_stream_error");
+  }
+
+  // Mark the final line as finished now that stream has ended.
+  // Skip for error stop reason — drainStreamWithResume will finalize after
+  // resume succeeds (or in its catch/else path if no resume is attempted).
+  if (stopReason !== "error") {
+    markCurrentLineAsFinished(buffers);
+  }
+  queueMicrotask(refresh);
 
   if (
     stopReason === "requires_approval" &&

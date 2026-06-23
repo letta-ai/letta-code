@@ -28,13 +28,16 @@ import {
 } from "@/channels/routing";
 import type { ChannelAdapter } from "@/channels/types";
 import {
-  clearExtensionTools,
-  registerExtensionTool,
-} from "@/extensions/tool-registry";
+  clearModPermissions,
+  registerModPermission,
+} from "@/mods/permission-registry";
+import { clearModTools, registerModTool } from "@/mods/tool-registry";
+import type { ModDiagnostic, ModToolStartEvent } from "@/mods/types";
 import {
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { toolFilter } from "@/tools/filter";
 import {
   captureToolExecutionContext,
   clearCapturedToolExecutionContexts,
@@ -52,9 +55,14 @@ import {
   registerExternalTools,
 } from "@/tools/manager";
 import {
+  prepareToolExecutionContextForResolvedTarget,
   prepareToolExecutionContextForScope,
   resolveConversationChannelToolScope,
 } from "@/tools/toolset";
+import {
+  __testOverrideSecretsBackend,
+  clearSecretsCache,
+} from "@/utils/secrets-store";
 
 function asText(
   toolReturn: Awaited<ReturnType<typeof executeTool>>["toolReturn"],
@@ -84,10 +92,10 @@ describe("tool execution context snapshot", () => {
     };
   }
 
-  function registerEchoExtensionTool(signal: AbortSignal): void {
-    registerExtensionTool({
+  function registerEchoModTool(signal: AbortSignal): void {
+    registerModTool({
       name: "local_echo",
-      description: "Echo input from a local extension",
+      description: "Echo input from a local mod",
       parameters: {
         type: "object",
         properties: { message: { type: "string" } },
@@ -100,13 +108,10 @@ describe("tool execution context snapshot", () => {
         generation: 1,
       },
       path: "/tmp/local-echo.ts",
+      approvalPolicy: "auto",
       requiresApproval: false,
       parallelSafe: true,
       activationSignal: signal,
-      getContext: () => {
-        throw new Error("context should not be needed for this test");
-      },
-      isAvailable: () => true,
       run: (ctx) => `echo:${ctx.args.message}`,
     });
   }
@@ -123,7 +128,9 @@ describe("tool execution context snapshot", () => {
     clearDynamicMessageChannelToolCache();
     clearCapturedToolExecutionContexts();
     clearExternalTools();
-    clearExtensionTools();
+    clearModPermissions();
+    clearModTools();
+    toolFilter.reset();
     clearAllRoutes();
     __testOverrideLoadRoutes(null);
     __testOverrideSaveRoutes(null);
@@ -131,6 +138,9 @@ describe("tool execution context snapshot", () => {
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
     delete process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV];
+    __testOverrideSecretsBackend(null);
+    clearSecretsCache(null);
+    delete process.env.TAVILY_API_KEY;
     __testSetBackend(null);
   });
 
@@ -141,7 +151,8 @@ describe("tool execution context snapshot", () => {
 
   afterAll(async () => {
     clearExternalTools();
-    clearExtensionTools();
+    clearModPermissions();
+    clearModTools();
     if (initialTools.length > 0) {
       await loadSpecificTools(initialTools);
     } else {
@@ -189,6 +200,96 @@ describe("tool execution context snapshot", () => {
       { toolContextId: contextId },
     );
     expect(withContext.status).toBe("success");
+  });
+
+  test("rechecks mod permission overlays after tool_start arg transforms", async () => {
+    await loadSpecificTools(["Read"]);
+    registerModPermission({
+      id: "execution-gate",
+      description: "Deny mutated reads",
+      path: "/tmp/execution-gate.ts",
+      owner: {
+        id: "global:/tmp/execution-gate.ts",
+        path: "/tmp/execution-gate.ts",
+        scope: "global",
+        generation: 1,
+      },
+      activationSignal: new AbortController().signal,
+      check(event) {
+        if (
+          event.phase === "execution" &&
+          event.toolName === "Read" &&
+          event.args.file_path === "package.json"
+        ) {
+          return { decision: "deny", reason: "mutated path blocked" };
+        }
+        return undefined;
+      },
+    });
+
+    const prepared = await prepareCurrentToolExecutionContext({
+      modEvents: {
+        async emit(name, event) {
+          if (name === "tool_start") {
+            const toolStartEvent = event as ModToolStartEvent;
+            toolStartEvent.args = {
+              ...toolStartEvent.args,
+              file_path: "package.json",
+            };
+          }
+          return { diagnostics: [], handlerCount: 0, name, results: [] };
+        },
+      },
+    });
+
+    const result = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("error");
+    expect(asText(result.toolReturn)).toContain(
+      "mod permission:execution-gate",
+    );
+    expect(asText(result.toolReturn)).toContain("mutated path blocked");
+  });
+
+  test("reports execution-phase ask decisions as blocked approval requests", async () => {
+    await loadSpecificTools(["Read"]);
+    registerModPermission({
+      id: "execution-ask",
+      description: "Ask before execution",
+      path: "/tmp/execution-ask.ts",
+      owner: {
+        id: "global:/tmp/execution-ask.ts",
+        path: "/tmp/execution-ask.ts",
+        scope: "global",
+        generation: 1,
+      },
+      activationSignal: new AbortController().signal,
+      check(event) {
+        if (event.phase === "execution" && event.toolName === "Read") {
+          return { decision: "ask" };
+        }
+        return undefined;
+      },
+    });
+
+    const prepared = await prepareCurrentToolExecutionContext();
+    const result = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    const text = asText(result.toolReturn);
+    expect(result.status).toBe("error");
+    expect(text).toContain("blocked by mod permission:execution-ask");
+    expect(text).toContain(
+      "Approval requested but cannot reopen during execution.",
+    );
+    expect(text).not.toContain("denied by mod permission:execution-ask");
   });
 
   test("prepares explicit tool snapshots without reading the global registry", async () => {
@@ -258,7 +359,7 @@ describe("tool execution context snapshot", () => {
       { clientToolAllowlist: ["Agent"] },
     );
 
-    expect(prepared.loadedToolNames).toEqual(["Task"]);
+    expect(prepared.loadedToolNames).toEqual(["Agent"]);
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Agent"]);
   });
 
@@ -306,21 +407,156 @@ describe("tool execution context snapshot", () => {
     expect(prepared.clientTools).toEqual([]);
   });
 
-  test("prepares and executes extension tools from turn snapshots", async () => {
+  test("session tool filter excludes mod tools from current snapshots", async () => {
+    toolFilter.setEnabledTools("Bash");
+    await loadSpecificTools(["Bash"]);
+    registerEchoModTool(new AbortController().signal);
+
+    const prepared = await prepareCurrentToolExecutionContext();
+
+    expect(prepared.loadedToolNames).toEqual(["Bash"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Bash"]);
+
+    const denied = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+    expect(denied.status).toBe("error");
+    expect(asText(denied.toolReturn)).toContain("Tool not found: local_echo");
+  });
+
+  test("session tool filter excludes external tools from current snapshots", async () => {
+    toolFilter.setEnabledTools("Bash");
+    await loadSpecificTools(["Bash"]);
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "External tool filtered by session --tools",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    ]);
+
+    const prepared = await prepareCurrentToolExecutionContext();
+
+    expect(prepared.loadedToolNames).toEqual(["Bash"]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["Bash"]);
+
+    const denied = await executeTool(
+      "RemoteFoo",
+      {},
+      { toolContextId: prepared.contextId },
+    );
+    expect(denied.status).toBe("error");
+    expect(asText(denied.toolReturn)).toContain("Tool not found: RemoteFoo");
+  });
+
+  test("empty session tool filter excludes mod tools from current snapshots", async () => {
+    toolFilter.setEnabledTools("");
+    await loadSpecificTools(["Bash"]);
+    registerEchoModTool(new AbortController().signal);
+
+    const prepared = await prepareCurrentToolExecutionContext();
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools).toEqual([]);
+
+    const denied = await executeTool(
+      "local_echo",
+      { message: "hi" },
+      { toolContextId: prepared.contextId },
+    );
+    expect(denied.status).toBe("error");
+    expect(asText(denied.toolReturn)).toContain("Tool not found: local_echo");
+  });
+
+  test("runtime-owned external tools stay scoped to their runtime", async () => {
+    registerExternalTools([
+      {
+        name: "RemoteFoo",
+        description: "External tool for first runtime",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+      {
+        name: "RemoteBar",
+        description: "External tool for second runtime",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-2" },
+      },
+    ]);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["RemoteFoo", "RemoteBar"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+
+    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "RemoteFoo",
+    ]);
+  });
+
+  test("scoped runtime external tools stay hidden unless selected", async () => {
+    registerExternalTools([
+      {
+        name: "AlwaysOnRemote",
+        description: "Unscoped runtime tool",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+      {
+        name: "ScopedRemote",
+        description: "Scoped runtime tool",
+        parameters: { type: "object", properties: {}, required: [] },
+        runtime: { agentId: "agent-1", conversationId: "conv-1" },
+        scopeId: "scope-1",
+      },
+    ]);
+
+    const base = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["AlwaysOnRemote", "ScopedRemote"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+    expect(base.clientTools.map((tool) => tool.name)).toEqual([
+      "AlwaysOnRemote",
+    ]);
+
+    const selected = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["AlwaysOnRemote", "ScopedRemote"],
+        externalToolScopeIds: ["scope-1"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+    expect(selected.clientTools.map((tool) => tool.name)).toEqual([
+      "AlwaysOnRemote",
+      "ScopedRemote",
+    ]);
+  });
+
+  test("prepares and executes mod tools from turn snapshots", async () => {
     const controller = new AbortController();
-    registerEchoExtensionTool(controller.signal);
+    registerEchoModTool(controller.signal);
 
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
       { clientToolAllowlist: ["local_echo"] },
     );
 
-    expect(prepared.loadedToolNames).toEqual([]);
+    expect(prepared.loadedToolNames).toEqual(["local_echo"]);
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
       "local_echo",
     ]);
 
-    clearExtensionTools();
+    clearModTools();
 
     const result = await executeTool(
       "local_echo",
@@ -332,7 +568,238 @@ describe("tool execution context snapshot", () => {
     expect(asText(result.toolReturn)).toBe("echo:hi");
   });
 
-  test("exposes recent conversation history to extension tools", async () => {
+  test("passes scoped invocation context to mod tool availability and execution", async () => {
+    __testSetBackend(
+      new FakeHeadlessBackend(
+        "agent-1",
+        undefined,
+        {},
+        {
+          modelHandle: "anthropic/claude-sonnet-4-6",
+        },
+      ),
+    );
+    const controller = new AbortController();
+    registerModTool({
+      name: "scoped_echo",
+      description: "Only available for the resolved scope",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/scoped-echo.ts",
+        path: "/tmp/scoped-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/scoped-echo.ts",
+      approvalPolicy: "auto",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      isEnabled: (ctx) =>
+        ctx.agent.id === "agent-1" &&
+        ctx.cwd === "/tmp/listener-workspace" &&
+        ctx.model.provider === "xai-build" &&
+        ctx.permissionMode === "standard" &&
+        ctx.toolset === "default",
+      run: (ctx) =>
+        [ctx.agent.id, ctx.cwd, ctx.model.provider, ctx.permissionMode].join(
+          ":",
+        ),
+    });
+
+    const prepared = await prepareToolExecutionContextForScope({
+      agentId: "agent-1",
+      conversationId: "default",
+      overrideModel: "xai-build/grok-build",
+      clientToolAllowlist: ["scoped_echo"],
+      workingDirectory: "/tmp/listener-workspace",
+      permissionModeState: { mode: "standard" },
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toEqual([
+      "scoped_echo",
+    ]);
+
+    const result = await executeTool(
+      "scoped_echo",
+      {},
+      { toolContextId: prepared.preparedToolContext.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe(
+      "agent-1:/tmp/listener-workspace:xai-build:standard",
+    );
+  });
+
+  test("exposes agent-scoped secrets to mod tools", async () => {
+    process.env.TAVILY_API_KEY = "env-secret-value";
+    const retrieveCalls: string[] = [];
+    let seenSecret = "";
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      retrieveAgent: async (agentId) => {
+        retrieveCalls.push(agentId);
+        return {
+          secrets: [{ key: "TAVILY_API_KEY", value: "agent-secret-value" }],
+        };
+      },
+      updateAgent: async () => ({}),
+    });
+
+    const controller = new AbortController();
+    registerModTool({
+      name: "secret_echo",
+      description: "Echo a secret",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/secret-echo.ts",
+        path: "/tmp/secret-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/secret-echo.ts",
+      approvalPolicy: "auto",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      run: async (ctx) => {
+        seenSecret =
+          (await ctx.secret("tavily_api_key", { envFallback: true })) ?? "";
+        return `secret:${seenSecret}`;
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-secret-a", conversationId: "default" },
+      () => executeTool("secret_echo", {}),
+    );
+
+    expect(seenSecret).toBe("agent-secret-value");
+    expect(retrieveCalls).toEqual(["agent-secret-a"]);
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("secret:TAVILY_API_KEY=<REDACTED>");
+  });
+
+  test("mod tool env fallback secrets are invocation-redacted", async () => {
+    process.env.TAVILY_API_KEY = "env-secret-value";
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      retrieveAgent: async () => ({ secrets: [] }),
+      updateAgent: async () => ({}),
+    });
+    const chunks: Array<{ chunk: string; stream: string }> = [];
+
+    const controller = new AbortController();
+    registerModTool({
+      name: "secret_env_echo",
+      description: "Echo an env fallback secret",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/secret-env-echo.ts",
+        path: "/tmp/secret-env-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/secret-env-echo.ts",
+      approvalPolicy: "auto",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      run: async (ctx) => {
+        const secret = await ctx.secret("TAVILY_API_KEY", {
+          envFallback: true,
+        });
+        ctx.onOutput?.(`stream:${secret}`, "stdout");
+        return {
+          status: "error",
+          content: `content:${secret}`,
+          stdout: [`stdout:${secret}`],
+          stderr: [`stderr:${secret}`],
+        };
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-secret-env", conversationId: "default" },
+      () =>
+        executeTool(
+          "secret_env_echo",
+          {},
+          {
+            onOutput: (chunk, stream) => chunks.push({ chunk, stream }),
+          },
+        ),
+    );
+
+    expect(result.status).toBe("error");
+    expect(asText(result.toolReturn)).toBe("content:TAVILY_API_KEY=<REDACTED>");
+    expect(result.stdout).toEqual(["stdout:TAVILY_API_KEY=<REDACTED>"]);
+    expect(result.stderr).toEqual(["stderr:TAVILY_API_KEY=<REDACTED>"]);
+    expect(chunks).toEqual([
+      { chunk: "stream:TAVILY_API_KEY=<REDACTED>", stream: "stdout" },
+    ]);
+  });
+
+  test("mod tool thrown errors are redacted after ctx.secret", async () => {
+    process.env.TAVILY_API_KEY = "throw-secret-value";
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      retrieveAgent: async () => ({ secrets: [] }),
+      updateAgent: async () => ({}),
+    });
+    const diagnostics: ModDiagnostic[] = [];
+
+    const controller = new AbortController();
+    registerModTool({
+      name: "secret_throw",
+      description: "Throw a secret",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/secret-throw.ts",
+        path: "/tmp/secret-throw.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/secret-throw.ts",
+      approvalPolicy: "auto",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      recordDiagnostic: (diagnostic) => {
+        diagnostics.push({
+          ...diagnostic,
+          owner: {
+            id: "global:/tmp/secret-throw.ts",
+            path: "/tmp/secret-throw.ts",
+            scope: "global",
+            generation: 1,
+          },
+          timestamp: Date.now(),
+        });
+      },
+      run: async (ctx) => {
+        const secret = await ctx.secret("TAVILY_API_KEY", {
+          envFallback: true,
+        });
+        throw new Error(`failed:${secret}`);
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-secret-throw", conversationId: "default" },
+      () => executeTool("secret_throw", {}),
+    );
+
+    expect(result.status).toBe("error");
+    expect(asText(result.toolReturn)).toBe("failed:TAVILY_API_KEY=<REDACTED>");
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.error.message).toBe(
+      "failed:TAVILY_API_KEY=<REDACTED>",
+    );
+  });
+
+  test("exposes recent conversation history to mod tools", async () => {
     const newestFirstMessages = [
       {
         id: "msg-2",
@@ -361,7 +828,7 @@ describe("tool execution context snapshot", () => {
     } as unknown as Backend);
 
     const controller = new AbortController();
-    registerExtensionTool({
+    registerModTool({
       name: "history_echo",
       description: "Echo conversation history ids",
       parameters: { type: "object", properties: {}, required: [] },
@@ -372,13 +839,10 @@ describe("tool execution context snapshot", () => {
         generation: 1,
       },
       path: "/tmp/history-echo.ts",
+      approvalPolicy: "auto",
       requiresApproval: false,
       parallelSafe: true,
       activationSignal: controller.signal,
-      getContext: () => {
-        throw new Error("context should not be needed for this test");
-      },
-      isAvailable: () => true,
       run: async (ctx) => {
         const history = await ctx.conversation.getHistory({ limit: 2 });
         return history.map((message) => message.id).join(",");
@@ -405,7 +869,87 @@ describe("tool execution context snapshot", () => {
     ]);
   });
 
-  test("extension tools take precedence over external tools with the same name", async () => {
+  test("captures backend once for mod tool conversation handles", async () => {
+    const calls: string[] = [];
+    const backendA = {
+      forkConversation: async (
+        ...[conversationId, options]: Parameters<Backend["forkConversation"]>
+      ) => {
+        calls.push(
+          `a:fork:${conversationId}:${options?.agentId}:${options?.hidden}`,
+        );
+        return { id: "forked-conversation" };
+      },
+      listConversationMessages: async (
+        ...[conversationId, body]: Parameters<
+          Backend["listConversationMessages"]
+        >
+      ) => {
+        calls.push(`a:history:${conversationId}:${body?.limit}`);
+        return {
+          getPaginatedItems: () => [{ id: "forked-message" }],
+        };
+      },
+    } as unknown as Backend;
+    const backendB = {
+      listConversationMessages: async (
+        ...[conversationId, body]: Parameters<
+          Backend["listConversationMessages"]
+        >
+      ) => {
+        calls.push(`b:history:${conversationId}:${body?.limit}`);
+        return {
+          getPaginatedItems: () => [{ id: "wrong-backend-message" }],
+        };
+      },
+    } as unknown as Backend;
+    __testSetBackend(backendA);
+
+    const controller = new AbortController();
+    registerModTool({
+      name: "fork_history",
+      description: "Fork conversation and read fork history",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/fork-history.ts",
+        path: "/tmp/fork-history.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/fork-history.ts",
+      approvalPolicy: "auto",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      run: async (ctx) => {
+        const fork = await ctx.conversation.fork({ hidden: true });
+        __testSetBackend(backendB);
+        const history = await fork.getHistory({ limit: 1 });
+        return [
+          ctx.conversation.id,
+          fork.id,
+          typeof ctx.conversation.sendMessageStream,
+          history.map((message) => message.id).join(","),
+        ].join(":");
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-1", conversationId: "conversation-1" },
+      () => executeTool("fork_history", {}),
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe(
+      "conversation-1:forked-conversation:function:forked-message",
+    );
+    expect(calls).toEqual([
+      "a:fork:conversation-1:agent-1:true",
+      "a:history:forked-conversation:1",
+    ]);
+  });
+
+  test("mod tools take precedence over external tools with the same name", async () => {
     registerExternalTools([
       {
         name: "local_echo",
@@ -414,7 +958,7 @@ describe("tool execution context snapshot", () => {
       },
     ]);
     const controller = new AbortController();
-    registerEchoExtensionTool(controller.signal);
+    registerEchoModTool(controller.signal);
 
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
@@ -435,9 +979,9 @@ describe("tool execution context snapshot", () => {
     expect(asText(result.toolReturn)).toBe("echo:hi");
   });
 
-  test("aborted extension activations stop captured tool execution", async () => {
+  test("aborted mod activations stop captured tool execution", async () => {
     const controller = new AbortController();
-    registerEchoExtensionTool(controller.signal);
+    registerEchoModTool(controller.signal);
 
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
@@ -699,6 +1243,25 @@ describe("tool execution context snapshot", () => {
     );
 
     expect(prepared.loadedToolNames).toContain("MessageChannel");
+  });
+
+  test("keeps scoped MessageChannel available for pinned none toolsets", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "anthropic/claude-opus-4-1-20250805",
+      toolsetPreference: "none",
+      channelToolScope: {
+        channels: [{ channelId: "discord", accountId: "acct-discord" }],
+      },
+    });
+
+    expect(prepared.preparedToolContext.loadedToolNames).toEqual([
+      "MessageChannel",
+    ]);
+    expect(
+      prepared.preparedToolContext.clientTools.map((tool) => tool.name),
+    ).toEqual(["MessageChannel"]);
   });
 
   test("hydrates inherited channel scope from serialized child env", async () => {

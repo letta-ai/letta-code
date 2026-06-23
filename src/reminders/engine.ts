@@ -3,13 +3,6 @@ import type { SkillSource } from "@/agent/skills";
 import { buildAgentInfo } from "@/cli/helpers/agent-info";
 import { buildConversationBootstrapReminder } from "@/cli/helpers/conversation-bootstrap";
 import {
-  buildCompactionMemoryReminder,
-  buildMemoryReminder,
-  type ReflectionSettings,
-  shouldFireStepCountTrigger,
-} from "@/cli/helpers/memory-reminder";
-import { getReflectionTranscriptState } from "@/cli/helpers/reflection-transcript";
-import {
   buildSessionContext,
   type SessionContextSource,
 } from "@/cli/helpers/session-context";
@@ -18,14 +11,13 @@ import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
+import type { ShellContext } from "@/utils/shell-context";
 import {
   SHARED_REMINDER_CATALOG,
   type SharedReminderId,
   type SharedReminderMode,
 } from "./catalog";
 import type { SessionContextReason, SharedReminderState } from "./state";
-
-type ReflectionTriggerSource = "step-count" | "compaction-event";
 
 export interface AgentReminderContext {
   id: string;
@@ -40,11 +32,7 @@ export interface SharedReminderContext {
   agent: AgentReminderContext;
   state: SharedReminderState;
   systemInfoReminderEnabled: boolean;
-  reflectionSettings: ReflectionSettings;
   skillSources: SkillSource[];
-  maybeLaunchReflectionSubagent?: (
-    triggerSource: ReflectionTriggerSource,
-  ) => Promise<boolean>;
   conversationBootstrapContent?: MessageCreate["content"];
   /** Explicit working directory (overrides process.cwd() in session context). */
   workingDirectory?: string;
@@ -52,6 +40,8 @@ export interface SharedReminderContext {
   sessionContextSource?: SessionContextSource;
   /** Reason the session context is being (re)generated. */
   sessionContextReason?: SessionContextReason;
+  /** Shell context detected at startup, if available. */
+  shellContext?: ShellContext;
 }
 
 export type ReminderTextPart = { type: "text"; text: string };
@@ -89,21 +79,36 @@ async function buildAgentInfoReminder(
 async function buildSecretsInfoReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  if (context.state.hasSentSecretsInfo) {
-    return null;
-  }
-
-  context.state.hasSentSecretsInfo = true;
-
   try {
     const { listSecretNames } = await import("@/utils/secrets-store");
-    const names = listSecretNames();
+    const names = listSecretNames(context.agent.id);
+    const namesKey = names.join("\0");
+    const isRefresh = context.state.pendingSecretsInfoRefresh;
+    const namesChanged =
+      context.state.lastSentSecretNamesKey !== null &&
+      context.state.lastSentSecretNamesKey !== namesKey;
+
+    if (context.state.hasSentSecretsInfo && !isRefresh && !namesChanged) {
+      return null;
+    }
+
+    context.state.hasSentSecretsInfo = true;
+    context.state.pendingSecretsInfoRefresh = false;
+    context.state.lastSentSecretNamesKey = namesKey;
+
     if (names.length === 0) {
+      if (isRefresh || namesChanged) {
+        return `${SYSTEM_REMINDER_OPEN}\nThe agent secrets were updated. No secrets are currently set.\n${SYSTEM_REMINDER_CLOSE}`;
+      }
       return null;
     }
 
     const list = names.map((n) => `- \`$${n}\``).join("\n");
-    return `${SYSTEM_REMINDER_OPEN}\nThe following secrets are set on your agent and available for use.\nReference them with \`$SECRET_NAME\` in shell commands — substitution happens automatically at exec time:\n${list}\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.\n${SYSTEM_REMINDER_CLOSE}`;
+    const intro =
+      isRefresh || namesChanged
+        ? "The agent secrets were updated. The following secrets are now available for use."
+        : "The following secrets are set on your agent and available for use.";
+    return `${SYSTEM_REMINDER_OPEN}\n${intro}\nReference them with \`$SECRET_NAME\` in shell commands — substitution happens automatically at exec time:\n${list}\n\nYou cannot read the raw values. If a value would appear in tool output, you will see \`NAME=<REDACTED>\` instead. This means the secret IS set and working — the bytes are just hidden from your context. Keep using \`$NAME\`; it will resolve correctly.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",
@@ -136,6 +141,7 @@ async function buildSessionContextReminder(
     cwd: context.workingDirectory,
     source: context.sessionContextSource,
     reason,
+    shellContext: context.shellContext,
   });
 
   context.state.hasSentSessionContext = true;
@@ -212,72 +218,17 @@ async function buildPermissionModeReminder(
   return `${SYSTEM_REMINDER_OPEN}${prefix}: ${currentMode}. ${description}${SYSTEM_REMINDER_CLOSE}\n\n`;
 }
 
-async function buildReflectionStepReminder(
+async function buildMemoryGitSyncReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
-  const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
-  let reminder: string | null = null;
-
-  if (context.reflectionSettings.trigger === "step-count") {
-    if (memfsEnabled) {
-      const transcriptState = await getReflectionTranscriptState(
-        context.agent.id,
-        context.agent.conversationId ?? "default",
-      );
-      const shouldFireStepTrigger = shouldFireStepCountTrigger(
-        transcriptState.turns_since_last_successful_reflection,
-        context.reflectionSettings,
-      );
-      if (shouldFireStepTrigger) {
-        if (context.maybeLaunchReflectionSubagent) {
-          await context.maybeLaunchReflectionSubagent("step-count");
-        } else {
-          debugLog(
-            "memory",
-            `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-          );
-        }
-      }
-    } else {
-      reminder = await buildMemoryReminder(
-        context.state.turnCount,
-        context.agent.id,
-      );
-    }
-  }
-
-  // Keep turn-based cadence aligned across modes by incrementing once per user turn.
-  context.state.turnCount += 1;
-  return reminder;
-}
-
-async function buildReflectionCompactionReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (!context.state.pendingReflectionTrigger) {
+  if (context.state.pendingMemoryGitSyncReminders.length === 0) {
     return null;
   }
 
-  context.state.pendingReflectionTrigger = false;
-
-  if (context.reflectionSettings.trigger !== "compaction-event") {
-    return null;
-  }
-
-  const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
-  if (memfsEnabled) {
-    if (context.maybeLaunchReflectionSubagent) {
-      await context.maybeLaunchReflectionSubagent("compaction-event");
-    } else {
-      debugLog(
-        "memory",
-        `Compaction reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-      );
-    }
-    return null;
-  }
-
-  return buildCompactionMemoryReminder(context.agent.id);
+  return context.state.pendingMemoryGitSyncReminders
+    .splice(0)
+    .map((reminder) => reminder.text)
+    .join("\n\n");
 }
 
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
@@ -392,8 +343,7 @@ export const sharedReminderProviders: Record<
   "secrets-info": buildSecretsInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
-  "reflection-step-count": buildReflectionStepReminder,
-  "reflection-compaction": buildReflectionCompactionReminder,
+  "memory-git-sync": buildMemoryGitSyncReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
 };
@@ -422,6 +372,9 @@ export async function buildSharedReminderParts(
 ): Promise<SharedReminderBuildResult> {
   const parts: ReminderTextPart[] = [];
   const appliedReminderIds: SharedReminderId[] = [];
+
+  // Incremented once per user turn; surfaced in the statusline payload.
+  context.state.turnCount += 1;
 
   for (const reminder of SHARED_REMINDER_CATALOG) {
     if (!reminder.modes.includes(context.mode)) {

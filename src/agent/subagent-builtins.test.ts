@@ -65,15 +65,7 @@ describe("built-in subagents", () => {
     }
   });
 
-  test("parses subagent mode and defaults missing mode to stateful", async () => {
-    const configs = await getAllSubagentConfigs();
-
-    expect(configs.reflection?.mode).toBe("stateless");
-    expect(configs["general-purpose"]?.mode).toBe("stateful");
-    expect(configs.memory?.mode).toBe("stateful");
-  });
-
-  test("uses local MemFS built-in prompts when local backend is active", async () => {
+  test("reuses MemFS built-in prompts when local backend is active", async () => {
     __testSetBackend({
       capabilities: { localMemfs: true },
     } as unknown as Backend);
@@ -81,23 +73,22 @@ describe("built-in subagents", () => {
 
     const configs = await getAllSubagentConfigs();
 
-    expect(configs.init?.systemPrompt).toContain("Commit locally");
-    expect(configs.memory?.systemPrompt).toContain(
-      "local backend git-backed memory filesystem",
-    );
+    expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
+    expect(configs.init?.systemPrompt).not.toContain("git push");
     expect(configs.memory?.systemPrompt).toContain(
       'WORKTREE_DIR="$MEMORY_DIR-worktrees"',
     );
-    expect(configs.reflection?.systemPrompt).toContain(
-      "local backend memory filesystem",
-    );
+    expect(configs.memory?.systemPrompt).not.toContain("git push");
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
   });
 
   test("keeps API-backed built-in prompts free of local backend wording", async () => {
     const configs = await getAllSubagentConfigs();
 
-    expect(configs.init?.systemPrompt).toContain("Commit and push");
+    expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
+    expect(configs.init?.systemPrompt).not.toContain("git push");
+    expect(configs.memory?.systemPrompt).not.toContain("git push");
+    expect(configs.reflection?.systemPrompt).not.toContain("git push");
     expect(configs.memory?.systemPrompt).not.toContain(
       "local backend git-backed memory filesystem",
     );
@@ -117,7 +108,6 @@ describe("built-in subagents", () => {
         "description: Custom reflection override",
         "tools: Read",
         "model: zaisigno/glm-5",
-        "memoryBlocks: none",
         "---",
         "Custom prompt body",
       ].join("\r\n"),
@@ -139,7 +129,6 @@ name: reflection
 description: Custom reflection override
 tools: Read
 model:
-memoryBlocks: none
 ---
 Custom prompt body`,
     );
@@ -158,7 +147,6 @@ Custom prompt body`,
 name: reflection
 description: Custom reflection override from different filename
 tools: Read
-memoryBlocks: none
 ---
 Custom prompt body`,
     );

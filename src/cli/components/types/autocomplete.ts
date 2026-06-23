@@ -2,7 +2,7 @@
  * Shared types for autocomplete components
  */
 
-export interface ExtensionCommandAutocompleteItem {
+export interface ModCommandAutocompleteItem {
   id: string;
   description: string;
   args?: string;
@@ -27,8 +27,8 @@ export interface AutocompleteProps {
   agentId?: string;
   /** Working directory for local pin status checking */
   workingDirectory?: string;
-  /** Slash commands registered by trusted local extensions */
-  extensionCommands?: Record<string, ExtensionCommandAutocompleteItem>;
+  /** Slash commands registered by trusted local mods */
+  modCommands?: Record<string, ModCommandAutocompleteItem>;
 }
 
 /**

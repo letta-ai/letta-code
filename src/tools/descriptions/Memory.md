@@ -1,5 +1,5 @@
 # Memory
-A convinience tool for memories stored in the memory directory (`$MEMORY_DIR`) that automatically commits and pushes changes. 
+A convenience tool for memories stored in the memory directory (`$MEMORY_DIR`) that automatically commits changes. The harness pushes clean committed memory changes after the turn for remote MemFS agents.
 
 Files stored inside of `system/` eventually become part of the agent's system prompt, so are always in the context window and do not need to be re-read. Other files only have metadata in the system prompt, so may need to be explicitly read to be updated. 
 

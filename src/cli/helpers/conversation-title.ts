@@ -1,6 +1,7 @@
-import type Letta from "@letta-ai/letta-client";
-import { forkConversation } from "@/backend/api/conversations";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import type { Backend, ConversationMessageListBody } from "@/backend";
+import { summarizeConversation } from "@/backend/api/conversations";
+import { DEFAULT_TITLE_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { isDebugEnabled } from "@/utils/debug";
 
@@ -9,6 +10,11 @@ import { isDebugEnabled } from "@/utils/debug";
  */
 export const CONVERSATION_TITLE_MAX_LENGTH = 100;
 
+export type ConversationTitleMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+};
+
 export interface ConversationTitleSettingsSnapshot {
   enabled: boolean;
 }
@@ -16,10 +22,10 @@ export interface ConversationTitleSettingsSnapshot {
 export function getConversationTitleSettings(): ConversationTitleSettingsSnapshot {
   try {
     return {
-      enabled: settingsManager.getSettings().autoConversationTitles !== false,
+      enabled: settingsManager.getSettings().autoConversationTitles === true,
     };
   } catch {
-    return { enabled: true };
+    return { enabled: false };
   }
 }
 
@@ -31,15 +37,13 @@ export function setConversationTitleSettings(
 }
 
 /**
- * Hard timeout on the fork-and-generate flow. Title generation is best-effort
- * and we fall back to a heuristic on timeout.
+ * Hard timeout on title generation. Title generation is best-effort and we
+ * fall back to a heuristic on timeout.
  */
 const CONVERSATION_TITLE_TIMEOUT_MS = 30_000;
 
 /**
- * System prompt installed via `override_system` for the title-generation turn.
- * Bypasses the agent's persisted system prompt so the model focuses on producing
- * a single short title rather than its normal task behavior.
+ * System prompt for server-side title summarization.
  */
 const CONVERSATION_TITLE_SYSTEM_PROMPT = `You are a conversation title generator.
 
@@ -50,14 +54,6 @@ Rules:
 - no quotes, markdown, prefixes, or trailing punctuation
 - never call any tools — reply with plain text only
 - avoid generic titles like "New conversation" or "Help request"`;
-
-/**
- * Final user-turn prompt sent to the forked conversation. The agent already
- * has the original conversation's in-context messages (copied by fork), so
- * this just nudges it to emit the title.
- */
-const CONVERSATION_TITLE_USER_PROMPT =
-  "Based on the conversation above, output a short title (2-7 words) describing the topic. Reply with ONLY the title text — no quotes, no tools, no preamble.";
 
 /**
  * Strip whitespace, surrounding quotes, and clamp to {@link CONVERSATION_TITLE_MAX_LENGTH}.
@@ -81,10 +77,13 @@ export function normalizeConversationTitle(value: string): string | null {
   return normalized.slice(0, CONVERSATION_TITLE_MAX_LENGTH);
 }
 
-/**
- * Extract plain-text content from an assistant_message chunk's `content`
- * field, which may be a raw string or an array of structured content parts.
- */
+type PaginatedItems<T> = T[] | { getPaginatedItems?: () => T[] };
+
+function paginatedItems<T>(value: PaginatedItems<T>): T[] {
+  if (Array.isArray(value)) return value;
+  return value.getPaginatedItems?.() ?? [];
+}
+
 function extractAssistantText(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -106,24 +105,85 @@ function extractAssistantText(content: unknown): string {
   return "";
 }
 
-/**
- * Generate a conversation title by:
- * 1. Forking the conversation as a hidden side conversation.
- * 2. Sending a single one-step message to the fork with `override_model`
- *    (DEFAULT_SUMMARIZATION_MODEL) and `override_system` so the agent only
- *    emits a short title rather than running its full task loop.
- * 3. Reading the assistant message text out of the stream.
- * 4. Best-effort deleting the forked conversation so it doesn't pollute
- *    the user's conversation list.
- *
- * Returns null on any failure or when the model produced empty output —
- * the caller should fall back to a heuristic title.
- */
-export async function generateConversationTitleFromFork(
-  client: Letta,
+function stripSystemReminders(content: string): string {
+  return content
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .trim();
+}
+
+function extractUserText(content: unknown): string {
+  if (typeof content === "string") {
+    return stripSystemReminders(content);
+  }
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const record = part as { type?: unknown; text?: unknown };
+      if (typeof record.text === "string") {
+        parts.push(record.text);
+      } else if (record.type === "image") {
+        parts.push("[image]");
+      }
+    }
+    return stripSystemReminders(parts.join("\n"));
+  }
+  return "";
+}
+
+function messageToTitleMessage(
+  message: Message,
+): ConversationTitleMessage | null {
+  if (message.message_type === "user_message") {
+    const content = extractUserText(message.content).trim();
+    return content ? { role: "user", content } : null;
+  }
+  if (message.message_type === "assistant_message") {
+    const content = extractAssistantText(message.content).trim();
+    return content ? { role: "assistant", content } : null;
+  }
+  return null;
+}
+
+export function buildConversationTitleMessages(
+  messages: Message[],
+): ConversationTitleMessage[] {
+  const titleMessages: ConversationTitleMessage[] = [];
+  for (const message of messages) {
+    const titleMessage = messageToTitleMessage(message);
+    if (titleMessage) {
+      titleMessages.push(titleMessage);
+    }
+  }
+  return titleMessages;
+}
+
+const CONVERSATION_TITLE_MESSAGE_LIMIT = 10_000;
+
+export async function listConversationTitleMessages(
+  backend: Pick<Backend, "listConversationMessages">,
   conversationId: string,
+): Promise<ConversationTitleMessage[]> {
+  const page = await backend.listConversationMessages(conversationId, {
+    limit: CONVERSATION_TITLE_MESSAGE_LIMIT,
+    order: "desc",
+    include_return_message_types: ["user_message", "assistant_message"],
+  } as ConversationMessageListBody);
+
+  return buildConversationTitleMessages(
+    paginatedItems(page as PaginatedItems<Message>).reverse(),
+  );
+}
+
+export async function generateConversationTitleFromSummary(
+  conversationId: string,
+  messages: ConversationTitleMessage[],
+  model: string = DEFAULT_TITLE_SUMMARIZATION_MODEL,
 ): Promise<string | null> {
-  let forkId: string | null = null;
+  if (messages.length === 0) {
+    return null;
+  }
+
   const abortController = new AbortController();
   const timeoutId = setTimeout(
     () => abortController.abort(),
@@ -131,64 +191,27 @@ export async function generateConversationTitleFromFork(
   );
 
   try {
-    const fork = await forkConversation(conversationId, { hidden: true });
-    forkId = fork.id;
-
-    const stream = await client.conversations.messages.create(
-      forkId,
+    const response = await summarizeConversation(
+      conversationId,
       {
-        messages: [
-          {
-            role: "user",
-            content: CONVERSATION_TITLE_USER_PROMPT,
-          },
-        ],
-        override_model: DEFAULT_SUMMARIZATION_MODEL,
-        override_system: CONVERSATION_TITLE_SYSTEM_PROMPT,
-        max_steps: 1,
-        streaming: true,
-        stream_tokens: false,
-        include_pings: false,
+        prompt: CONVERSATION_TITLE_SYSTEM_PROMPT,
+        messages,
+        model,
       },
-      { signal: abortController.signal },
+      {
+        signal: abortController.signal,
+      },
     );
-
-    let titleText = "";
-    for await (const chunk of stream) {
-      // Only collect assistant_message text. Tool calls / reasoning are ignored
-      // so a model that misbehaves and tries a tool call still falls back cleanly.
-      if (
-        chunk &&
-        typeof chunk === "object" &&
-        "message_type" in chunk &&
-        (chunk as { message_type?: string }).message_type ===
-          "assistant_message"
-      ) {
-        titleText += extractAssistantText(
-          (chunk as { content?: unknown }).content,
-        );
-      }
-    }
-
-    return normalizeConversationTitle(titleText);
+    return normalizeConversationTitle(response.summary);
   } catch (err) {
     if (isDebugEnabled()) {
-      console.error("[DEBUG] generateConversationTitleFromFork failed:", err);
+      console.error(
+        "[DEBUG] generateConversationTitleFromSummary failed:",
+        err,
+      );
     }
     return null;
   } finally {
     clearTimeout(timeoutId);
-    // Best-effort cleanup of the hidden fork. We don't await this on the
-    // hot path; if it errors we just leave the hidden convo and move on.
-    if (forkId) {
-      void client.conversations.delete(forkId).catch((err) => {
-        if (isDebugEnabled()) {
-          console.error(
-            "[DEBUG] failed to delete title-fork conversation:",
-            err,
-          );
-        }
-      });
-    }
   }
 }

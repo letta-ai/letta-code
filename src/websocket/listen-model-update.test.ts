@@ -133,8 +133,8 @@ describe("listen-client model update status message", () => {
     expect(result.message).toBe("Model updated to Opus 4.6 (Max).");
   });
 
-  test("shows Extra-High for reasoning_effort xhigh on Opus 4.7+", () => {
-    for (const modelLabel of ["Opus 4.7", "Opus 4.8"]) {
+  test("shows Extra-High for reasoning_effort xhigh on Fable and Opus 4.7+", () => {
+    for (const modelLabel of ["Fable 5", "Opus 4.7", "Opus 4.8"]) {
       const result = __listenClientTestUtils.buildModelUpdateStatusMessage({
         modelLabel,
         toolsetChanged: false,
@@ -233,9 +233,90 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     // Conversation-scoped update for non-default
     expect(source).toContain("updateConversationLLMConfig(");
     expect(source).toContain(
-      "preserveContextWindow: shouldPreserveContextWindow",
+      "avoidOverwritingExistingContextWindow: shouldPreserveContextWindow",
     );
     expect(source).toContain('appliedTo = "conversation"');
+  });
+
+  test("preserves registry provider type for BYOK model id updates", () => {
+    const resolved = __listenClientTestUtils.resolveModelForUpdate({
+      model_id: "opus-4.8-medium",
+      model_handle: "lc-anthropic/claude-opus-4-8",
+    });
+
+    expect(resolved).not.toBeNull();
+    expect(resolved?.handle).toBe("lc-anthropic/claude-opus-4-8");
+    expect(resolved?.updateArgs?.provider_type).toBe("anthropic");
+    expect(resolved?.updateArgs?.reasoning_effort).toBe("medium");
+  });
+
+  test("returns Anthropic effort settings for BYOK Opus 4.8 max update", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-byok-opus-max-"));
+    const previousHome = process.env.HOME;
+    try {
+      process.env.HOME = storageDir;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "BYOK Opus Agent",
+        model: "lc-anthropic/claude-opus-4-8",
+        model_settings: {
+          provider_type: "anthropic",
+          effort: "high",
+          parallel_tool_calls: true,
+        },
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const scopedRuntime =
+        __listenClientTestUtils.getOrCreateConversationRuntime(
+          listener,
+          agent.id,
+          conversation.id,
+        );
+      const model = __listenClientTestUtils.resolveModelForUpdate({
+        model_id: "opus-4.8-max",
+        model_handle: "lc-anthropic/claude-opus-4-8",
+      });
+      if (!model) throw new Error("Expected opus-4.8-max model fixture");
+
+      const response = await __listenClientTestUtils.applyModelUpdateForRuntime(
+        {
+          socket: new MockSocket() as unknown as WebSocket,
+          listener,
+          scopedRuntime,
+          requestId: "byok-opus-max",
+          model,
+        },
+      );
+
+      expect(response.success).toBe(true);
+      expect(response.model_id).toBe("opus-4.8-max");
+      expect(response.model_handle).toBe("lc-anthropic/claude-opus-4-8");
+      expect(response.model_settings).toMatchObject({
+        provider_type: "anthropic",
+        effort: "max",
+      });
+      expect(
+        (response.model_settings as Record<string, unknown> | null)?.reasoning,
+      ).toBeUndefined();
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("preserves conversation context limit for same-handle desktop model updates", async () => {

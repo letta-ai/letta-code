@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   getUserSettingsPaths,
+  loadPermissionMode,
   loadPermissions,
   resetPermissionLoaderCacheForTests,
   savePermissionRule,
@@ -35,6 +36,7 @@ test("Load permissions from empty directory returns rules from user settings", a
   expect(Array.isArray(permissions.allow)).toBe(true);
   expect(Array.isArray(permissions.deny)).toBe(true);
   expect(Array.isArray(permissions.ask)).toBe(true);
+  expect(Array.isArray(permissions.alwaysAsk)).toBe(true);
   expect(Array.isArray(permissions.additionalDirectories)).toBe(true);
 });
 
@@ -74,6 +76,68 @@ test("Load permissions from local settings", async () => {
 
   // Should include local rule (may also include user settings from real home dir)
   expect(permissions.allow).toContain("Bash(git push:*)");
+});
+
+test("Load permissions from alwaysAsk settings", async () => {
+  const projectDir = join(testDir, "project-always-ask");
+  await Bun.write(
+    join(projectDir, ".letta", "settings.json"),
+    JSON.stringify({
+      permissions: {
+        alwaysAsk: ["Bash(git push:*)"],
+      },
+    }),
+  );
+
+  const permissions = await loadPermissions(projectDir);
+
+  expect(permissions.alwaysAsk).toContain("Bash(git push:*)");
+});
+
+test("Load permissions migrates legacy permission mode", async () => {
+  const projectDir = join(testDir, "project-mode-legacy");
+  await Bun.write(
+    join(projectDir, ".letta", "settings.json"),
+    JSON.stringify({
+      permissions: {
+        mode: "bypassPermissions",
+        allow: ["Bash"],
+      },
+    }),
+  );
+
+  const permissions = await loadPermissions(projectDir);
+  const mode = await loadPermissionMode(projectDir);
+
+  expect(permissions.mode).toBe("unrestricted");
+  expect(mode).toBe("unrestricted");
+  expect(permissions.allow).toContain("Bash");
+});
+
+test("Load permissions uses highest-precedence permission mode", async () => {
+  const projectDir = join(testDir, "project-mode-precedence");
+  await Bun.write(
+    join(projectDir, ".letta", "settings.json"),
+    JSON.stringify({
+      permissions: {
+        mode: "standard",
+      },
+    }),
+  );
+  await Bun.write(
+    join(projectDir, ".letta", "settings.local.json"),
+    JSON.stringify({
+      permissions: {
+        mode: "acceptEdits",
+      },
+    }),
+  );
+
+  const permissions = await loadPermissions(projectDir);
+  const mode = await loadPermissionMode(projectDir);
+
+  expect(permissions.mode).toBe("acceptEdits");
+  expect(mode).toBe("acceptEdits");
 });
 
 test("Load permissions picks up external project settings edits without restart", async () => {
@@ -286,6 +350,22 @@ test("Save permission to deny list", async () => {
   const settings = await file.json();
 
   expect(settings.permissions.deny).toContain("Read(.env)");
+});
+
+test("Save permission to alwaysAsk list", async () => {
+  const projectDir = join(testDir, "project");
+  await savePermissionRule(
+    "Bash(git push:*)",
+    "alwaysAsk",
+    "project",
+    projectDir,
+  );
+
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  const file = Bun.file(settingsPath);
+  const settings = await file.json();
+
+  expect(settings.permissions.alwaysAsk).toContain("Bash(git push:*)");
 });
 
 test("Save permission doesn't create duplicates", async () => {

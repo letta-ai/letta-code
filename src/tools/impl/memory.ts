@@ -12,8 +12,8 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
 import {
-  assertMemoryRepoReadyForWrite,
-  commitAndSyncMemoryWrite,
+  assertMemoryRepoCleanForWrite,
+  commitMemoryWrite,
   type MemoryWriteSyncMode,
 } from "@/agent/memory-git";
 import { validateRequiredParams } from "./validation";
@@ -95,10 +95,6 @@ interface ParsedMemoryFile {
   body: string;
 }
 
-function normalizeComparableContent(content: string): string {
-  return content.replace(/\r\n/g, "\n").trim();
-}
-
 export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   validateRequiredParams(args, ["command", "reason"], "memory");
 
@@ -112,7 +108,7 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
 
   const { agentId, agentName } = await getAgentIdentity();
   const syncMode = await getMemoryWriteSyncMode();
-  await assertMemoryRepoReadyForWrite(memoryDir, agentId, { syncMode });
+  await assertMemoryRepoCleanForWrite(memoryDir);
 
   const affectedPaths = await applyMemoryCommand(memoryDir, args);
   if (affectedPaths.length === 0) {
@@ -122,7 +118,7 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
     );
   }
 
-  const commitResult = await commitAndSyncMemoryWrite({
+  const commitResult = await commitMemoryWrite({
     memoryDir,
     pathspecs: affectedPaths,
     reason,
@@ -132,15 +128,13 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
       authorEmail: `${agentId}@letta.com`,
     },
     syncMode,
-    replay: async () =>
-      applyMemoryCommand(memoryDir, args, { replaying: true }),
   });
   if (!commitResult.committed) {
     throw new Error(
       syncMode === "local"
         ? `Memory ${args.command} made no effective changes; nothing was committed. ` +
             "The resulting content matched what was already on disk."
-        : `Memory ${args.command} made no effective changes; nothing was committed or pushed. ` +
+        : `Memory ${args.command} made no effective changes; nothing was committed. ` +
             "The resulting content matched what was already on disk.",
     );
   }
@@ -148,30 +142,17 @@ export async function memory(args: MemoryArgs): Promise<MemoryResult> {
   // Emit memory_updated push event so web UI auto-refreshes
   emitMemoryUpdated(affectedPaths);
 
-  if (commitResult.replayed && commitResult.replayNoop) {
-    return {
-      message: `Memory ${args.command} matched newer remote memory; skipped an extra commit.`,
-    };
-  }
-
-  if (commitResult.replayed) {
-    return {
-      message: `Memory ${args.command} reapplied on top of newer remote memory and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
-    };
-  }
-
   return {
     message:
       syncMode === "local"
         ? `Memory ${args.command} committed locally (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`
-        : `Memory ${args.command} applied and pushed (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`,
+        : `Memory ${args.command} committed (${commitResult.sha?.slice(0, 7) ?? "unknown"}); harness will sync after the turn.`,
   };
 }
 
 async function applyMemoryCommand(
   memoryDir: string,
   args: MemoryArgs,
-  options?: { replaying?: boolean },
 ): Promise<string[]> {
   const command = args.command;
 
@@ -194,18 +175,6 @@ async function applyMemoryCommand(
     );
 
     if (existsSync(filePath)) {
-      if (!options?.replaying) {
-        throw new Error(`memory create: block already exists at ${pathArg}`);
-      }
-
-      const existingContent = await readFile(filePath, "utf8");
-      if (
-        normalizeComparableContent(existingContent) ===
-        normalizeComparableContent(rendered)
-      ) {
-        return [relPath];
-      }
-
       throw new Error(`memory create: block already exists at ${pathArg}`);
     }
 
@@ -278,12 +247,6 @@ async function applyMemoryCommand(
   }
 
   if (command === "delete") {
-    if (options?.replaying) {
-      throw new Error(
-        "memory delete could not be replayed safely after remote changes",
-      );
-    }
-
     const pathArg = requireString(args.file_path, "file_path", "delete");
     const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
     const targetPath = resolveMemoryPath(memoryDir, label);

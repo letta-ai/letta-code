@@ -22,7 +22,6 @@ import { WelcomeScreen } from "./components/WelcomeScreen";
 interface ProfileOption {
   name: string | null;
   agentId: string;
-  isLocal: boolean;
   isLru: boolean;
   agent: AgentState | null;
 }
@@ -66,43 +65,39 @@ function formatModel(agent: AgentState): string {
   return agent.llm_config?.model || "unknown";
 }
 
-function getLabel(option: ProfileOption, freshRepoMode?: boolean): string {
+function getLabel(option: ProfileOption, _freshRepoMode?: boolean): string {
   const parts: string[] = [];
   if (option.isLru) parts.push("last used");
-  if (option.isLocal) parts.push("pinned");
-  else if (!option.isLru && !freshRepoMode) parts.push("global"); // Pinned globally but not locally
+  if (!option.isLru) parts.push("pinned");
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 
 function buildInitialProfileOptions(
   lruAgentId: string | null,
 ): ProfileOption[] {
-  const mergedPinned = settingsManager.getMergedPinnedAgents();
+  const pinned = settingsManager.getPinnedAgents();
   const options: ProfileOption[] = [];
   const seenAgentIds = new Set<string>();
 
   if (lruAgentId) {
-    const matchingPinned = mergedPinned.find((p) => p.agentId === lruAgentId);
     options.push({
       name: null,
       agentId: lruAgentId,
-      isLocal: matchingPinned?.isLocal || false,
       isLru: true,
       agent: null,
     });
     seenAgentIds.add(lruAgentId);
   }
 
-  for (const pinned of mergedPinned) {
-    if (seenAgentIds.has(pinned.agentId)) continue;
+  for (const agentId of pinned) {
+    if (seenAgentIds.has(agentId)) continue;
     options.push({
       name: null,
-      agentId: pinned.agentId,
-      isLocal: pinned.isLocal,
+      agentId,
       isLru: false,
       agent: null,
     });
-    seenAgentIds.add(pinned.agentId);
+    seenAgentIds.add(agentId);
   }
 
   return options;
@@ -149,19 +144,15 @@ function ProfileSelectionUI({
 
   const loadOptions = useCallback(async () => {
     try {
-      const mergedPinned = settingsManager.getMergedPinnedAgents();
+      const pinned = settingsManager.getPinnedAgents();
       const optionsToFetch: ProfileOption[] = [];
       const seenAgentIds = new Set<string>();
 
       // First: LRU agent
       if (lruAgentId) {
-        const matchingPinned = mergedPinned.find(
-          (p) => p.agentId === lruAgentId,
-        );
         optionsToFetch.push({
           name: null, // Will be fetched from server
           agentId: lruAgentId,
-          isLocal: matchingPinned?.isLocal || false,
           isLru: true,
           agent: null,
         });
@@ -169,16 +160,15 @@ function ProfileSelectionUI({
       }
 
       // Then: Other pinned agents
-      for (const pinned of mergedPinned) {
-        if (!seenAgentIds.has(pinned.agentId)) {
+      for (const agentId of pinned) {
+        if (!seenAgentIds.has(agentId)) {
           optionsToFetch.push({
             name: null, // Will be fetched from server
-            agentId: pinned.agentId,
-            isLocal: pinned.isLocal,
+            agentId,
             isLru: false,
             agent: null,
           });
-          seenAgentIds.add(pinned.agentId);
+          seenAgentIds.add(agentId);
         }
       }
 
@@ -215,7 +205,6 @@ function ProfileSelectionUI({
         fetchedOptions = recentAgents.map((recent) => ({
           name: recent.agent.name,
           agentId: recent.agent.id,
-          isLocal: recent.isLocal,
           isLru: false,
           agent: recent.agent,
         }));

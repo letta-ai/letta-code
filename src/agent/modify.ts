@@ -22,6 +22,7 @@ type ModelSettings =
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return (
+    modelHandle.includes("claude-fable-5") ||
     modelHandle.includes("claude-opus-4-7") ||
     modelHandle.includes("claude-opus-4-8")
   );
@@ -35,22 +36,39 @@ function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
-  // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
-  const isOpenAICodex = modelHandle.startsWith("openai-codex/");
+  const explicitProviderType =
+    typeof updateArgs?.provider_type === "string"
+      ? updateArgs.provider_type
+      : undefined;
+  // Include ChatGPT OAuth/Codex providers, including user-defined aliases whose
+  // provider_type is supplied by the server model catalog.
+  const isOpenAICodex =
+    explicitProviderType === "chatgpt_oauth" ||
+    modelHandle.startsWith("openai-codex/");
   const isOpenAI =
+    explicitProviderType === "openai" ||
     modelHandle.startsWith("openai/") ||
     isOpenAICodex ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
   // Include legacy custom Anthropic OAuth provider (claude-pro-max) and minimax
   const isAnthropic =
+    explicitProviderType === "anthropic" ||
     modelHandle.startsWith("anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
-  const isZai = modelHandle.startsWith("zai/");
-  const isGoogleAI = modelHandle.startsWith("google_ai/");
-  const isGoogleVertex = modelHandle.startsWith("google_vertex/");
-  const isOpenRouter = modelHandle.startsWith("openrouter/");
-  const isBedrock = modelHandle.startsWith("bedrock/");
+  const isZai =
+    explicitProviderType === "zai" || modelHandle.startsWith("zai/");
+  const isGoogleAI =
+    explicitProviderType === "google_ai" ||
+    modelHandle.startsWith("google_ai/");
+  const isGoogleVertex =
+    explicitProviderType === "google_vertex" ||
+    modelHandle.startsWith("google_vertex/");
+  const isOpenRouter =
+    explicitProviderType === "openrouter" ||
+    modelHandle.startsWith("openrouter/");
+  const isBedrock =
+    explicitProviderType === "bedrock" || modelHandle.startsWith("bedrock/");
 
   let settings: ModelSettings;
 
@@ -99,7 +117,7 @@ function buildModelSettings(
     if (effort === "low" || effort === "medium" || effort === "high") {
       anthropicSettings.effort = effort;
     } else if (effort === "xhigh") {
-      // "xhigh" is distinct on Opus 4.7+; older Anthropic models map it to backend "max".
+      // "xhigh" is distinct on Fable and Opus 4.7+; older Anthropic models map it to backend "max".
       (anthropicSettings as Record<string, unknown>).effort = hasDistinctXHigh
         ? "xhigh"
         : "max";
@@ -241,6 +259,27 @@ function buildModelSettings(
   return settings;
 }
 
+function updateArgsForModelSettings(
+  updateArgs: Record<string, unknown> | undefined,
+  options: { useBackendModelCatalog: boolean },
+): Record<string, unknown> | undefined {
+  if (!options.useBackendModelCatalog || !updateArgs) return updateArgs;
+  return Object.fromEntries(
+    Object.entries(updateArgs).filter(([key]) => key !== "max_output_tokens"),
+  );
+}
+
+function maxTokensForUpdatePayload(
+  updateArgs: Record<string, unknown> | undefined,
+  options: { useBackendModelCatalog: boolean },
+): number | null | undefined {
+  if (options.useBackendModelCatalog) return undefined;
+  const maxTokens = updateArgs?.max_output_tokens;
+  return typeof maxTokens === "number" || maxTokens === null
+    ? maxTokens
+    : undefined;
+}
+
 /**
  * Updates an agent's model and model settings.
  *
@@ -253,7 +292,13 @@ function buildModelSettings(
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
 export interface UpdateAgentLLMConfigOptions {
-  preserveContextWindow?: boolean;
+  /**
+   * When true, do not derive and send a default context_window_limit unless the
+   * caller explicitly supplied updateArgs.context_window. This is for updates to
+   * existing agent/conversation model settings where omitting the field lets the
+   * backend keep its current value.
+   */
+  avoidOverwritingExistingContextWindow?: boolean;
 }
 
 export async function updateAgentLLMConfig(
@@ -263,28 +308,33 @@ export async function updateAgentLLMConfig(
   options?: UpdateAgentLLMConfigOptions,
 ): Promise<AgentState> {
   const backend = getBackend();
+  const useBackendModelCatalog = backend.capabilities.localModelCatalog;
 
-  const modelSettings = buildModelSettings(modelHandle, updateArgs);
-  const explicitContextWindow = updateArgs?.context_window as
-    | number
-    | undefined;
-  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  const modelSettings = buildModelSettings(
+    modelHandle,
+    updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+  );
+  const explicitContextWindow = useBackendModelCatalog
+    ? undefined
+    : (updateArgs?.context_window as number | undefined);
+  const shouldAvoidOverwritingExistingContextWindow =
+    options?.avoidOverwritingExistingContextWindow === true;
   // Resume refresh updates should not implicitly reset context window.
   const contextWindow =
     explicitContextWindow ??
-    (!shouldPreserveContextWindow
+    (!shouldAvoidOverwritingExistingContextWindow
       ? await getModelContextWindow(modelHandle)
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
+  const maxTokens = maxTokensForUpdatePayload(updateArgs, {
+    useBackendModelCatalog,
+  });
 
   await backend.updateAgent(agentId, {
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
-    ...((typeof updateArgs?.max_output_tokens === "number" ||
-      updateArgs?.max_output_tokens === null) && {
-      max_tokens: updateArgs.max_output_tokens,
-    }),
+    ...(maxTokens !== undefined && { max_tokens: maxTokens }),
   });
 
   const finalAgent = await backend.retrieveAgent(agentId, {
@@ -311,22 +361,31 @@ export async function updateConversationLLMConfig(
   options?: UpdateAgentLLMConfigOptions,
 ): Promise<Conversation> {
   const backend = getBackend();
+  const useBackendModelCatalog = backend.capabilities.localModelCatalog;
 
-  const modelSettings = buildModelSettings(modelHandle, updateArgs);
-  const explicitContextWindow = updateArgs?.context_window as
-    | number
-    | undefined;
-  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  const modelSettings = buildModelSettings(
+    modelHandle,
+    updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+  );
+  const explicitContextWindow = useBackendModelCatalog
+    ? undefined
+    : (updateArgs?.context_window as number | undefined);
+  const shouldAvoidOverwritingExistingContextWindow =
+    options?.avoidOverwritingExistingContextWindow === true;
   const contextWindow =
     explicitContextWindow ??
-    (!shouldPreserveContextWindow
+    (!shouldAvoidOverwritingExistingContextWindow
       ? await getModelContextWindow(modelHandle)
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
+  const maxTokens = maxTokensForUpdatePayload(updateArgs, {
+    useBackendModelCatalog,
+  });
   const payload = {
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
+    ...(maxTokens !== undefined && { max_tokens: maxTokens }),
   } as Parameters<typeof backend.updateConversation>[1];
 
   return backend.updateConversation(conversationId, payload);
@@ -439,6 +498,9 @@ export async function updateAgentSystemPrompt(
     const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
       "@/agent/prompt-assets"
     );
+    const { recordManagedSystemPrompt } = await import(
+      "@/agent/system-prompt-versioning"
+    );
     const { settingsManager } = await import("@/settings-manager");
 
     const backend = getBackend();
@@ -470,7 +532,12 @@ export async function updateAgentSystemPrompt(
     // Persist preset for known presets; clear stale preset for subagent/unknown
     if (settingsManager.isReady) {
       if (isKnownPreset(systemPromptId)) {
-        settingsManager.setSystemPromptPreset(agentId, systemPromptId);
+        recordManagedSystemPrompt(
+          agentId,
+          systemPromptId,
+          memoryMode,
+          systemPromptContent,
+        );
       } else {
         settingsManager.clearSystemPromptPreset(agentId);
       }
@@ -498,7 +565,7 @@ export async function updateAgentSystemPrompt(
 
 /**
  * Updates an agent's system prompt to swap between full prompt variants when
- * the stored prompt recipe is known. Custom prompts are already complete and
+ * the stored managed prompt hash is known. Custom prompts are already complete and
  * are left unchanged.
  *
  * @param agentId - The agent ID to update
@@ -514,6 +581,9 @@ export async function updateAgentSystemPromptMemfs(
     const { isKnownPreset, buildSystemPrompt } = await import(
       "@/agent/prompt-assets"
     );
+    const { hashSystemPrompt, recordManagedSystemPrompt } = await import(
+      "@/agent/system-prompt-versioning"
+    );
 
     const newMode = enableMemfs
       ? getBackend().capabilities.localMemfs
@@ -523,9 +593,41 @@ export async function updateAgentSystemPromptMemfs(
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
+    const storedHash = settingsManager.isReady
+      ? settingsManager.getSystemPromptHash(agentId)
+      : undefined;
 
     let nextSystemPrompt: string;
     if (storedPreset && isKnownPreset(storedPreset)) {
+      const agent = await getBackend().retrieveAgent(agentId);
+      const currentSystemPrompt = agent.system || "";
+      if (storedHash && hashSystemPrompt(currentSystemPrompt) !== storedHash) {
+        if (settingsManager.isReady) {
+          settingsManager.setSystemPromptCustom(agentId);
+        }
+        return {
+          success: true,
+          message: "Custom system prompt left unchanged for memory mode",
+        };
+      }
+
+      if (!storedHash && settingsManager.isReady) {
+        const currentMode = settingsManager.isMemfsEnabled(agentId)
+          ? getBackend().capabilities.localMemfs
+            ? "local-memfs"
+            : "memfs"
+          : "standard";
+        if (
+          currentSystemPrompt !== buildSystemPrompt(storedPreset, currentMode)
+        ) {
+          settingsManager.setSystemPromptCustom(agentId);
+          return {
+            success: true,
+            message: "Custom system prompt left unchanged for memory mode",
+          };
+        }
+      }
+
       nextSystemPrompt = buildSystemPrompt(storedPreset, newMode);
     } else {
       const agent = await getBackend().retrieveAgent(agentId);
@@ -535,6 +637,15 @@ export async function updateAgentSystemPromptMemfs(
     await getBackend().updateAgent(agentId, {
       system: nextSystemPrompt,
     });
+
+    if (storedPreset && isKnownPreset(storedPreset)) {
+      recordManagedSystemPrompt(
+        agentId,
+        storedPreset,
+        newMode,
+        nextSystemPrompt,
+      );
+    }
 
     return {
       success: true,

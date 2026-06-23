@@ -19,6 +19,10 @@ export interface ToolsetChangeReminder {
   newTools: string[];
 }
 
+export interface MemoryGitSyncReminder {
+  text: string;
+}
+
 export type SessionContextReason = "initial_attach" | "cwd_changed";
 
 export interface SharedReminderState {
@@ -27,9 +31,12 @@ export interface SharedReminderState {
   hasSentConversationBootstrap: boolean;
   pendingConversationBootstrap: boolean;
   hasSentSecretsInfo: boolean;
+  pendingSecretsInfoRefresh: boolean;
+  lastSentSecretNamesKey: string | null;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
+  pendingMemoryGitSyncReminders: MemoryGitSyncReminder[];
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
   /** When set, the next session-context reminder uses this reason for its intro text. */
@@ -43,9 +50,12 @@ export function createSharedReminderState(): SharedReminderState {
     hasSentConversationBootstrap: false,
     pendingConversationBootstrap: false,
     hasSentSecretsInfo: false,
+    pendingSecretsInfoRefresh: false,
+    lastSentSecretNamesKey: null,
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,
+    pendingMemoryGitSyncReminders: [],
     pendingCommandIoReminders: [],
     pendingToolsetChangeReminders: [],
   };
@@ -80,9 +90,23 @@ export function enqueueCommandIoReminder(
   pushBounded(state.pendingCommandIoReminders, reminder);
 }
 
+export function enqueueMemoryGitSyncReminder(
+  state: SharedReminderState,
+  reminder: MemoryGitSyncReminder,
+): void {
+  pushBounded(state.pendingMemoryGitSyncReminders, reminder);
+}
+
 export function enqueueToolsetChangeReminder(
   state: SharedReminderState,
   reminder: ToolsetChangeReminder,
 ): void {
   pushBounded(state.pendingToolsetChangeReminders, reminder);
+}
+
+export function markSecretsInfoReminderPending(
+  state: SharedReminderState,
+): void {
+  state.hasSentSecretsInfo = false;
+  state.pendingSecretsInfoRefresh = true;
 }

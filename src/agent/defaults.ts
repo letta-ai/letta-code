@@ -48,8 +48,9 @@ export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
   incognito: {
     name: "Incognito",
     description: INCOGNITO_DESCRIPTION,
-    initBlocks: [], // No personal memory blocks
+    memoryBlocks: [], // No personal memory blocks
     baseTools: ["web_search", "fetch_webpage"], // No memory tool
+    enableMemfs: false,
   },
 };
 
@@ -188,7 +189,7 @@ export async function ensureDefaultAgents(
       memoryPromptMode,
     });
     await addTagToAgent(backend, agent.id, MEMO_TAG);
-    settingsManager.pinGlobal(agent.id);
+    settingsManager.pinAgent(agent.id);
 
     // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
     // without blocking startup on the initial clone.

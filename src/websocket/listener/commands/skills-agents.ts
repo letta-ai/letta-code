@@ -262,7 +262,7 @@ export async function handleCreateAgentCommand(
 
     // Pin the agent globally (favorites it) unless explicitly disabled
     if (parsed.pin_global !== false) {
-      settingsManager.pinGlobal(result.agent.id);
+      settingsManager.pinAgent(result.agent.id);
     }
 
     safeSocketSend(

@@ -68,4 +68,8 @@ describe("default agent configs", () => {
       getPersonalityHumanContent("memo").trim(),
     );
   });
+
+  test("incognito explicitly opts out of MemFS", () => {
+    expect(DEFAULT_AGENT_CONFIGS.incognito?.enableMemfs).toBe(false);
+  });
 });

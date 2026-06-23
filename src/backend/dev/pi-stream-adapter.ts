@@ -8,7 +8,6 @@ import {
   type SimpleStreamOptions,
   stream,
   streamSimple,
-  type ThinkingLevel,
   type Tool,
   type TSchema,
   Type,
@@ -21,7 +20,9 @@ import {
   type LocalMessage,
 } from "@/backend/local/local-message";
 import { removeOrphanLocalToolResults } from "@/backend/local/local-message-projection";
+import { resolveAvailableLocalModelForTurn } from "@/backend/local/local-model-config";
 import type { ClientTool } from "@/tools/manager";
+import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
@@ -31,6 +32,7 @@ import {
 } from "./local-provider-errors";
 import {
   applyPiEnvOverrides,
+  reasoningForSettings,
   resolvePiModelForAgent,
 } from "./pi-model-factory";
 import type {
@@ -39,13 +41,47 @@ import type {
   ProviderTurnInput,
 } from "./provider-turn-executor";
 import {
+  estimateProviderRequestBytes,
   providerLettaChunk,
   providerLocalMessage,
   providerStreamPart,
 } from "./provider-turn-executor";
 
 const LOCAL_PROVIDER_MAX_RETRIES = 3;
+const LOCAL_PROVIDER_ADAPTIVE_IMAGE_ELISION_AFTER_RETRIES =
+  LOCAL_PROVIDER_MAX_RETRIES - 1;
 const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
+// Classifier threshold for oversized request payloads. This is a transport
+// limit, not a token limit: providers accept image-heavy requests whose
+// semantic token cost is small, but large raw bodies cause generic transport
+// failures (connection errors, SSE header timeouts) instead of clean,
+// classifiable overflow errors. When a retryable transport error occurs and
+// the serialized payload exceeds this threshold, we treat it as context
+// overflow (compact + retry) instead of retrying the same oversized payload.
+// It never blocks a request preemptively. Empirically (local-conv-48): ~7MB
+// of in-context images still succeeded against Anthropic at ~400k context
+// tokens, while ~11.8MB failed with "Connection error." on every provider.
+// 8MB keeps headroom under Anthropic's documented 32MB cap while staying
+// above known-good payloads. Local networks can fail below that threshold, so
+// LETTA_LOCAL_REQUEST_BYTE_LIMIT can lower the reactive classifier in dev.
+const DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT = 8_000_000;
+const LOCAL_PROVIDER_REQUEST_BYTE_LIMIT_ENV = "LETTA_LOCAL_REQUEST_BYTE_LIMIT";
+
+function localProviderRequestByteLimit(): number {
+  const raw = process.env[LOCAL_PROVIDER_REQUEST_BYTE_LIMIT_ENV];
+  if (!raw) return DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT;
+  }
+  return Math.floor(parsed);
+}
+
+function localProviderRequestByteTarget(
+  limit = localProviderRequestByteLimit(),
+) {
+  return Math.floor(limit * 0.75);
+}
 
 export type PiStreamFunction = (
   model: Model<string>,
@@ -92,29 +128,6 @@ class PiProviderError extends Error {
       )
       .find((value): value is number => typeof value === "number");
     this.statusCode = status;
-  }
-}
-
-class EmptyPiResponseError extends Error {
-  readonly isRetryable = true;
-
-  constructor() {
-    super("Received empty content in local provider response.");
-    this.name = "EmptyPiResponseError";
-  }
-}
-
-function hasAssistantOutputContent(message: AssistantMessage): boolean {
-  return message.content.some((block) => {
-    if (block.type === "toolCall") return true;
-    if (block.type === "text") return block.text.trim().length > 0;
-    return false;
-  });
-}
-
-function assertAssistantHasOutputContent(message: AssistantMessage): void {
-  if (!hasAssistantOutputContent(message)) {
-    throw new EmptyPiResponseError();
   }
 }
 
@@ -251,7 +264,7 @@ function toPiMessage(message: LocalMessage): Message | undefined {
   } satisfies Message;
 }
 
-function toPiMessages(messages: LocalMessage[]): Message[] {
+function toPiMessages(messages: readonly LocalMessage[]): Message[] {
   const providerSafeMessages = removeOrphanLocalToolResults(messages).messages;
   let normalized = providerSafeMessages.flatMap((message) => {
     const piMessage = toPiMessage(message);
@@ -338,6 +351,31 @@ function withMidConversationSystemPrompt(
   };
 }
 
+function withAnthropicOutputEffort(
+  existing: SimpleStreamOptions["onPayload"] | undefined,
+  effort: string | undefined,
+): SimpleStreamOptions["onPayload"] | undefined {
+  if (!effort) return existing;
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+    if (!isRecord(next)) return upstreamChanged ? next : undefined;
+    const outputConfig = isRecord(next.output_config) ? next.output_config : {};
+    return {
+      ...next,
+      output_config: {
+        ...outputConfig,
+        effort,
+      },
+    };
+  };
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -346,31 +384,16 @@ function boolValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
-function thinkingLevel(value: unknown): ThinkingLevel | undefined {
-  const effort = stringValue(value);
-  return effort === "minimal" ||
-    effort === "low" ||
-    effort === "medium" ||
-    effort === "high" ||
-    effort === "xhigh"
-    ? effort
-    : undefined;
-}
-
-function reasoningForSettings(
+function anthropicEffortForSettings(
   modelSettings: Record<string, unknown>,
-): ThinkingLevel | undefined {
-  const thinking = isRecord(modelSettings.thinking)
-    ? modelSettings.thinking
-    : undefined;
-  if (thinking?.type === "disabled") return undefined;
+): string | undefined {
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
   return (
-    thinkingLevel(nestedReasoning?.reasoning_effort) ??
-    thinkingLevel(modelSettings.effort) ??
-    thinkingLevel(modelSettings.reasoning_effort)
+    stringValue(modelSettings.effort) ??
+    stringValue(nestedReasoning?.reasoning_effort) ??
+    stringValue(modelSettings.reasoning_effort)
   );
 }
 
@@ -442,6 +465,151 @@ function isOverflowError(error: unknown, contextWindow?: number): boolean {
   return isContextWindowOverflowError(error);
 }
 
+// Letta Code addition with no Pi analog. Pi compacts reactively on clean,
+// classifiable provider overflow errors (`isContextOverflow`, including
+// Anthropic 413 `request_too_large`). But oversized payloads frequently kill
+// the transport from a local device before any classifiable response arrives
+// ("Connection error.", SSE header timeouts), which the retry classifier
+// treats as transient — retrying the same oversized payload forever. Pi has
+// the same gap (earendil-works/pi #2810, #4642, #5369: "permanently bricking
+// sessions"). When a retryable transport failure occurs and the payload is
+// measurably oversized, classify it as context overflow so it enters the same
+// compaction path instead of the retry loop. This only ever runs after a real
+// provider failure; it never preemptively blocks a request.
+function isOversizedPayloadTransportFailure(input: ProviderTurnInput): boolean {
+  const requestBytes = estimateProviderRequestBytes(input);
+  const requestByteLimit = localProviderRequestByteLimit();
+  return requestBytes !== undefined && requestBytes > requestByteLimit;
+}
+
+interface ImageElisionCandidate {
+  messageIndex: number;
+  blockIndex: number;
+  mimeType?: string;
+  bytes: number;
+}
+
+interface ImagePayloadElision {
+  input: ProviderTurnInput;
+  beforeBytes: number;
+  afterBytes: number;
+  requestByteLimit: number;
+  requestByteTarget: number;
+  elidedImages: number;
+  elidedBytes: number;
+}
+
+function imagePayloadBytes(data: unknown): number {
+  return typeof data === "string" ? data.length : 0;
+}
+
+function imageElisionPlaceholder(mimeType: string | undefined, bytes: number) {
+  const mb = (bytes / 1_000_000).toFixed(1);
+  return `[Image omitted from this provider retry to reduce local request size: ${
+    mimeType ?? "image"
+  }, ~${mb}MB. The original image remains stored in conversation history.]`;
+}
+
+function imageElisionCandidates(
+  messages: readonly LocalMessage[],
+): ImageElisionCandidate[] {
+  const candidates: ImageElisionCandidate[] = [];
+  messages.forEach((message, messageIndex) => {
+    if (message.role !== "user" && message.role !== "toolResult") return;
+    if (!Array.isArray(message.content)) return;
+    message.content.forEach((block, blockIndex) => {
+      if (block.type !== "image") return;
+      const bytes = imagePayloadBytes(block.data);
+      if (bytes <= 0) return;
+      candidates.push({
+        messageIndex,
+        blockIndex,
+        mimeType: block.mimeType,
+        bytes,
+      });
+    });
+  });
+  // Prefer removing older images first; within a single message, remove larger
+  // blobs first. If the request is still too large, this naturally proceeds to
+  // newer images as needed.
+  return candidates.sort(
+    (a, b) =>
+      a.messageIndex - b.messageIndex ||
+      b.bytes - a.bytes ||
+      a.blockIndex - b.blockIndex,
+  );
+}
+
+function elideImagePayload(
+  messages: readonly LocalMessage[],
+  candidate: ImageElisionCandidate,
+): LocalMessage[] {
+  const message = messages[candidate.messageIndex];
+  if (!message) return [...messages];
+  if (message.role !== "user" && message.role !== "toolResult") {
+    return [...messages];
+  }
+  if (!Array.isArray(message.content)) return [...messages];
+  const block = message.content[candidate.blockIndex];
+  if (block?.type !== "image") return [...messages];
+
+  const content = [...message.content];
+  content[candidate.blockIndex] = {
+    type: "text",
+    text: imageElisionPlaceholder(candidate.mimeType, candidate.bytes),
+  };
+  const next = [...messages];
+  next[candidate.messageIndex] = { ...message, content } as LocalMessage;
+  return next;
+}
+
+function elideImagePayloadsForProviderRetry(
+  input: ProviderTurnInput,
+  options: { allowUnderLimit?: boolean } = {},
+): ImagePayloadElision | null {
+  const beforeBytes = estimateProviderRequestBytes(input);
+  const requestByteLimit = localProviderRequestByteLimit();
+  if (
+    beforeBytes === undefined ||
+    (!options.allowUnderLimit && beforeBytes <= requestByteLimit)
+  ) {
+    return null;
+  }
+  const requestByteTarget = options.allowUnderLimit
+    ? Math.min(
+        localProviderRequestByteTarget(requestByteLimit),
+        Math.floor(beforeBytes * 0.75),
+      )
+    : localProviderRequestByteTarget(requestByteLimit);
+
+  const candidates = imageElisionCandidates(input.uiMessages);
+  if (candidates.length === 0) return null;
+
+  let uiMessages = input.uiMessages;
+  let afterBytes = beforeBytes;
+  let elidedImages = 0;
+  let elidedBytes = 0;
+  for (const candidate of candidates) {
+    if (afterBytes <= requestByteTarget) break;
+    uiMessages = elideImagePayload(uiMessages, candidate);
+    elidedImages += 1;
+    elidedBytes += candidate.bytes;
+    afterBytes =
+      estimateProviderRequestBytes({ ...input, uiMessages }) ?? afterBytes;
+  }
+
+  if (elidedImages === 0 || afterBytes >= beforeBytes) return null;
+  return {
+    input: { ...input, uiMessages },
+    beforeBytes,
+    afterBytes,
+    requestByteLimit,
+    requestByteTarget,
+    elidedImages,
+    elidedBytes,
+  };
+}
+
 function defaultStream(
   model: Model<string>,
   context: Context,
@@ -489,9 +657,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     input: ProviderTurnInput,
   ): AsyncIterable<ProviderStreamEvent> {
     const tools = toPiTools(input.clientTools);
+    const localModel = await resolveAvailableLocalModelForTurn({
+      model: input.agent.model,
+      modelSettings: input.agent.model_settings,
+      storageDir: this.localProviderAuthStorageDir,
+    });
     const resolved = await resolvePiModelForAgent(
-      input.agent.model,
-      input.agent.model_settings,
+      localModel.model,
+      localModel.modelSettings,
       { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
     );
     const context: Context = {
@@ -543,6 +716,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         options.onPayload,
         input.midConversationSystemPrompt,
       );
+      if (
+        resolved.model.id.includes("claude-fable-5") &&
+        anthropicEffortForSettings(input.agent.model_settings) === "max"
+      ) {
+        // pi-ai's public ThinkingLevel type currently tops out at xhigh, but
+        // Anthropic accepts Fable's max effort through output_config.effort.
+        options.onPayload = withAnthropicOutputEffort(options.onPayload, "max");
+      }
     }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
@@ -567,7 +748,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         }
         if (part.type === "done") {
-          assertAssistantHasOutputContent(part.message);
           finalMessage = part.message;
           yield providerLocalMessage(
             toLocalAssistantMessage(part.message, input),
@@ -578,7 +758,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       if (streamError) throw streamError;
       finalMessage ??= await result.result();
-      assertAssistantHasOutputContent(finalMessage);
       if (
         finalMessage.stopReason === "error" ||
         finalMessage.stopReason === "aborted"
@@ -632,10 +811,92 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           continue;
         }
 
+        const retryableTransportError = isRetryableLocalProviderError(error);
+
+        // Oversized-payload classification: a retryable transport failure on a
+        // payload we can measure as oversized will keep failing — compact
+        // instead of retrying the same bytes. See comment on
+        // isOversizedPayloadTransportFailure.
+        if (
+          retryableTransportError &&
+          !emittedModelOutput &&
+          this.onContextWindowOverflow &&
+          contextOverflowCompactions < LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS &&
+          isOversizedPayloadTransportFailure(activeInput)
+        ) {
+          const imageElision = elideImagePayloadsForProviderRetry(activeInput);
+          if (imageElision) {
+            debugLog(
+              "pi-stream",
+              "oversized payload transport failure: elided %d image(s) (%d -> %d bytes, limit %d, target %d) from provider retry context",
+              imageElision.elidedImages,
+              imageElision.beforeBytes,
+              imageElision.afterBytes,
+              imageElision.requestByteLimit,
+              imageElision.requestByteTarget,
+            );
+            activeInput = imageElision.input;
+            transientRetries = 0;
+            continue;
+          }
+
+          // Unlike the provider-reported overflow branch above, the original
+          // error here is retryable. If compaction itself fails (for example
+          // the summarizer model call errors), fall back to the normal
+          // transient retry path instead of replacing a retryable transport
+          // error with a non-retryable compaction error.
+          let compaction: Awaited<
+            ReturnType<NonNullable<typeof this.onContextWindowOverflow>>
+          > = null;
+          try {
+            compaction = await this.onContextWindowOverflow(activeInput, error);
+          } catch {
+            compaction = null;
+          }
+          if (compaction) {
+            contextOverflowCompactions += 1;
+            activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+            yield* this.emitCompactionChunks(
+              compaction,
+              "context_window_overflow",
+            );
+            continue;
+          }
+        }
+
+        // Adaptive image elision: a fixed byte limit cannot capture a user's
+        // current uplink. If a retryable transport error repeats before any
+        // model output, shed provider-context-only image bytes even when the
+        // request is below the configured classifier threshold.
+        if (
+          retryableTransportError &&
+          !emittedModelOutput &&
+          transientRetries >=
+            LOCAL_PROVIDER_ADAPTIVE_IMAGE_ELISION_AFTER_RETRIES
+        ) {
+          const imageElision = elideImagePayloadsForProviderRetry(activeInput, {
+            allowUnderLimit: true,
+          });
+          if (imageElision) {
+            debugLog(
+              "pi-stream",
+              "retryable transport failures persisted: adaptively elided %d image(s) (%d -> %d bytes, limit %d, target %d) from provider retry context",
+              imageElision.elidedImages,
+              imageElision.beforeBytes,
+              imageElision.afterBytes,
+              imageElision.requestByteLimit,
+              imageElision.requestByteTarget,
+            );
+            activeInput = imageElision.input;
+            transientRetries = 0;
+            continue;
+          }
+        }
+
         if (
           emittedModelOutput ||
           transientRetries >= LOCAL_PROVIDER_MAX_RETRIES ||
-          !isRetryableLocalProviderError(error)
+          !retryableTransportError
         ) {
           throw error;
         }

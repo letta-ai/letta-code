@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  assertMemoryRepoReadyForWrite,
+  assertMemoryRepoCleanForWrite,
   buildGitAuthArgs,
   buildMemfsGitProxyArgs,
   buildNonInteractiveGitEnv,
@@ -25,7 +25,9 @@ import {
   pullMemory,
   redactGitAuthInText,
   shouldConfigurePersistentMemfsCredentialHelper,
+  syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
+import { __testSetBackend, type Backend } from "@/backend";
 import {
   __testOverrideGetClient,
   getMemfsServerUrl,
@@ -33,8 +35,7 @@ import {
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;
-const ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL =
-  process.env.LETTA_DESKTOP_DEBUG_PANEL;
+const ORIGINAL_LETTA_DESKTOP_MODE = process.env.LETTA_DESKTOP_MODE;
 const ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL =
   process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
 const ORIGINAL_LETTA_API_KEY = process.env.LETTA_API_KEY;
@@ -42,6 +43,7 @@ const ORIGINAL_LETTA_API_KEY = process.env.LETTA_API_KEY;
 let tempDirs: string[] = [];
 
 afterEach(() => {
+  __testSetBackend(null);
   __testOverrideGetClient(null);
 
   for (const dir of tempDirs) {
@@ -61,10 +63,10 @@ afterEach(() => {
     process.env.LETTA_MEMFS_BASE_URL = ORIGINAL_LETTA_MEMFS_BASE_URL;
   }
 
-  if (ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL === undefined) {
-    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  if (ORIGINAL_LETTA_DESKTOP_MODE === undefined) {
+    delete process.env.LETTA_DESKTOP_MODE;
   } else {
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL;
+    process.env.LETTA_DESKTOP_MODE = ORIGINAL_LETTA_DESKTOP_MODE;
   }
 
   if (ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL === undefined) {
@@ -100,6 +102,13 @@ function commitFile(repo: string, fileName: string, content: string): string {
   git(repo, `add ${fileName}`);
   git(repo, `commit -m ${fileName}`);
   return git(repo, "rev-parse HEAD").trim();
+}
+
+function utf16leWithBom(content: string): Buffer {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(content, "utf16le"),
+  ]);
 }
 
 function makeSyncedRepo(): { repo: string; remote: string } {
@@ -163,7 +172,7 @@ describe("normalizeCredentialBaseUrl", () => {
     test("defaults to api.letta.com when LETTA_MEMFS_BASE_URL is unset, even if LETTA_BASE_URL is localhost", () => {
       process.env.LETTA_BASE_URL = "http://localhost:51338";
       delete process.env.LETTA_MEMFS_BASE_URL;
-      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      delete process.env.LETTA_DESKTOP_MODE;
       expect(getGitRemoteUrl("agent-123")).toBe(
         "https://api.letta.com/v1/git/agent-123/state.git",
       );
@@ -172,7 +181,7 @@ describe("normalizeCredentialBaseUrl", () => {
     test("keeps canonical memfs URL stable in desktop proxy transport sessions", () => {
       process.env.LETTA_BASE_URL = "http://localhost:51338";
       delete process.env.LETTA_MEMFS_BASE_URL;
-      process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+      process.env.LETTA_DESKTOP_MODE = "1";
       process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:51338";
 
       expect(getMemfsServerUrl()).toBe("https://api.letta.com");
@@ -568,8 +577,8 @@ describe("pullMemory recovery", () => {
   });
 });
 
-describe("assertMemoryRepoReadyForWrite", () => {
-  test("pushes clean local commits before blocking memory writes", async () => {
+describe("assertMemoryRepoCleanForWrite", () => {
+  test("allows clean local commits to wait for post-turn sync", async () => {
     const { repo, remote } = makeSyncedRepo();
     const localSha = commitFile(repo, "local.md", "local");
     process.env.LETTA_API_KEY = "test-token";
@@ -577,17 +586,17 @@ describe("assertMemoryRepoReadyForWrite", () => {
       _options: { apiKey: "test-token" },
     }));
 
-    await assertMemoryRepoReadyForWrite(repo, "agent-123");
+    await assertMemoryRepoCleanForWrite(repo);
 
-    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("0");
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
     expect(
       execSync(`git --git-dir ${remote} rev-parse main`, {
         encoding: "utf-8",
       }).trim(),
-    ).toBe(localSha);
+    ).not.toBe(localSha);
   });
 
-  test("leaves clean behind repos for write-time conflict replay", async () => {
+  test("allows clean behind repos for post-turn rebase", async () => {
     const { repo, remote } = makeSyncedRepo();
     const originalSha = git(repo, "rev-parse HEAD").trim();
     const other = cloneRepo(remote);
@@ -598,8 +607,103 @@ describe("assertMemoryRepoReadyForWrite", () => {
       _options: { apiKey: "test-token" },
     }));
 
-    await assertMemoryRepoReadyForWrite(repo, "agent-123");
+    await assertMemoryRepoCleanForWrite(repo);
 
     expect(git(repo, "rev-parse HEAD").trim()).toBe(originalSha);
+  });
+
+  test("reports UTF-16 dirty markdown files", async () => {
+    const { repo } = makeSyncedRepo();
+    writeFileSync(
+      join(repo, "human.md"),
+      utf16leWithBom("---\ndescription: human\n---\nnotes"),
+    );
+
+    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
+      /Dirty markdown encoding issue\(s\): human\.md has UTF-16LE BOM/,
+    );
+  });
+
+  test("reports NUL bytes in dirty markdown files", async () => {
+    const { repo } = makeSyncedRepo();
+    writeFileSync(
+      join(repo, "human.md"),
+      Buffer.from("---\ndescription: human\n---\nnotes", "utf16le"),
+    );
+
+    await expect(assertMemoryRepoCleanForWrite(repo)).rejects.toThrow(
+      /Dirty markdown encoding issue\(s\): human\.md contains NUL bytes, possibly UTF-16/,
+    );
+  });
+});
+
+describe("syncPendingMemoryCommitsAfterTurn", () => {
+  test("pushes clean pending memory commits after a turn", async () => {
+    const { repo, remote } = makeSyncedRepo();
+    const localSha = commitFile(repo, "local.md", "local");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("pushed");
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("0");
+    expect(
+      execSync(`git --git-dir ${remote} rev-parse main`, {
+        encoding: "utf-8",
+      }).trim(),
+    ).toBe(localSha);
+  });
+
+  test("returns a dirty reminder state without pushing", async () => {
+    const { repo } = makeSyncedRepo();
+    writeFileSync(join(repo, "dirty.md"), "dirty", "utf-8");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("dirty");
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("0");
+  });
+
+  test("returns a conflict reminder state without pushing", async () => {
+    const { repo } = makeSyncedRepo();
+    const head = git(repo, "rev-parse HEAD").trim();
+    writeFileSync(join(repo, ".git", "MERGE_HEAD"), `${head}\n`, "utf-8");
+    process.env.LETTA_API_KEY = "test-token";
+    __testOverrideGetClient(async () => ({
+      _options: { apiKey: "test-token" },
+    }));
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-123", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("conflict");
+    expect(result.summary).toContain("merge in progress");
+  });
+
+  test("skips remote push for local backend memory repos", async () => {
+    const { repo } = makeSyncedRepo();
+    commitFile(repo, "local-only.md", "local");
+    __testSetBackend({
+      capabilities: { localMemfs: true, remoteMemfs: false },
+    } as unknown as Backend);
+
+    const result = await syncPendingMemoryCommitsAfterTurn("agent-local", {
+      memoryDir: repo,
+    });
+
+    expect(result.status).toBe("skipped");
+    expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
   });
 });

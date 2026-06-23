@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getServerUrl } from "@/backend/api/client";
 import { getServerHealth } from "@/backend/api/health";
@@ -5,6 +6,7 @@ import { submitTelemetryMetadata } from "@/backend/api/metadata";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
+import { isLoopbackHostname, parseUrl } from "@/utils/url";
 import { getVersion } from "@/version";
 
 export type TelemetrySurface =
@@ -86,8 +88,13 @@ export interface UserInputData {
   model_id: string;
 }
 
+export type ReflectionTriggerSource =
+  | "manual"
+  | "step-count"
+  | "compaction-event";
+
 export interface ReflectionStartData {
-  trigger_source: "manual" | "step-count" | "compaction-event";
+  trigger_source: ReflectionTriggerSource;
   subagent_id?: string;
   conversation_id?: string;
   start_message_id?: string;
@@ -95,17 +102,19 @@ export interface ReflectionStartData {
 }
 
 export interface ReflectionEndData {
-  trigger_source: "manual" | "step-count" | "compaction-event";
+  trigger_source: ReflectionTriggerSource;
   success: boolean;
   subagent_id?: string;
   conversation_id?: string;
   error?: string;
+  step_count?: number;
+  duration_ms?: number;
 }
 
 export function isLettaCodeDesktopRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return env.LETTA_DESKTOP_DEBUG_PANEL === "1";
+  return env.LETTA_DESKTOP_MODE === "1";
 }
 
 export function getTerminalTelemetrySurface(
@@ -122,38 +131,16 @@ export function getListenerTelemetrySurface(
     : "letta_code_cli_server";
 }
 
-function parseTelemetryUrl(value: string): URL | null {
-  try {
-    return new URL(value);
-  } catch {
-    try {
-      return new URL(`http://${value}`);
-    } catch {
-      return null;
-    }
-  }
-}
-
 function isTelemetryCloudServerUrl(serverUrl: string): boolean {
-  const parsed = parseTelemetryUrl(serverUrl);
-  const cloud = parseTelemetryUrl(LETTA_CLOUD_API_URL);
+  const parsed = parseUrl(serverUrl, { allowMissingProtocol: true });
+  const cloud = parseUrl(LETTA_CLOUD_API_URL, { allowMissingProtocol: true });
   return Boolean(parsed && cloud && parsed.hostname === cloud.hostname);
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  return (
-    normalized === "localhost" ||
-    normalized === "0.0.0.0" ||
-    normalized === "::1" ||
-    normalized.startsWith("127.")
-  );
-}
-
 function isLikelyDeprecatedDockerBackendUrl(serverUrl: string): boolean {
-  const parsed = parseTelemetryUrl(serverUrl);
+  const parsed = parseUrl(serverUrl, { allowMissingProtocol: true });
   return Boolean(
-    parsed && isLoopbackHost(parsed.hostname) && parsed.port === "8283",
+    parsed && isLoopbackHostname(parsed.hostname) && parsed.port === "8283",
   );
 }
 
@@ -246,6 +233,30 @@ class TelemetryManager {
       return undefined;
     }
   }
+
+  private getTelemetryDeviceId(): string {
+    const existing = this.deviceId?.trim();
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      const generated = settingsManager.getOrCreateDeviceId().trim();
+      if (generated) {
+        this.deviceId = generated;
+        return generated;
+      }
+    } catch {
+      // Settings may not be initialized in some early/exit flush paths. Fall
+      // back to a process-local UUID so cloud pass-through telemetry never
+      // sends an empty organization/device id.
+    }
+
+    const fallback = randomUUID();
+    this.deviceId = fallback;
+    return fallback;
+  }
+
   private readonly FLUSH_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
   private readonly MAX_BATCH_SIZE = 50;
   /** Max time to drain queued events on exit (bounded so we never hang the shell). */
@@ -682,7 +693,7 @@ class TelemetryManager {
    * Track reflection start events (manual and auto-triggered).
    */
   trackReflectionStart(
-    triggerSource: "manual" | "step-count" | "compaction-event",
+    triggerSource: ReflectionTriggerSource,
     options?: {
       subagentId?: string;
       conversationId?: string;
@@ -704,12 +715,14 @@ class TelemetryManager {
    * Track reflection completion events.
    */
   trackReflectionEnd(
-    triggerSource: "manual" | "step-count" | "compaction-event",
+    triggerSource: ReflectionTriggerSource,
     success: boolean,
     options?: {
       subagentId?: string;
       conversationId?: string;
       error?: string;
+      stepCount?: number;
+      durationMs?: number;
     },
   ) {
     const data: ReflectionEndData = {
@@ -718,6 +731,8 @@ class TelemetryManager {
       subagent_id: options?.subagentId,
       conversation_id: options?.conversationId,
       error: options?.error,
+      step_count: options?.stepCount,
+      duration_ms: options?.durationMs,
     };
     this.track("reflection_end", data);
   }
@@ -743,10 +758,12 @@ class TelemetryManager {
 
     const apiKey = await this.resolveTelemetryApiKey();
 
+    const deviceId = this.getTelemetryDeviceId();
+
     try {
       await submitTelemetryMetadata(
         apiKey,
-        this.deviceId || "",
+        deviceId,
         {
           service: "letta-code",
           server_version: this.serverVersion || undefined,
@@ -754,7 +771,7 @@ class TelemetryManager {
         },
         { signal: AbortSignal.timeout(5000) },
       );
-    } catch {
+    } catch (_error) {
       // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);
     }

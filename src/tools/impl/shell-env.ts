@@ -11,29 +11,14 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import {
-  getMemoryFilesystemRoot,
+  getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
 import { getServerUrl } from "@/backend/api/client";
 import { isLocalBackendNoMemfsEnvEnabled } from "@/backend/local/paths";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-
-/**
- * Get the directory containing the bundled ripgrep binary.
- * Returns undefined if @vscode/ripgrep is not installed.
- */
-function getRipgrepBinDir(): string | undefined {
-  try {
-    const __filename = fileURLToPath(import.meta.url);
-    const require = createRequire(__filename);
-    const rgPackage = require("@vscode/ripgrep");
-    // rgPath is the full path to the binary, we want the directory
-    return path.dirname(rgPackage.rgPath);
-  } catch (_error) {
-    return undefined;
-  }
-}
+import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
 /**
  * Get the node_modules directory containing this package's dependencies.
@@ -51,6 +36,10 @@ function getPackageNodeModulesDir(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function shellPathDelimiter(): string {
+  return process.platform === "win32" ? ";" : path.delimiter;
 }
 
 interface LettaInvocation {
@@ -319,8 +308,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (pathPrefixes.length > 0) {
     const existingPath = env[pathKey] || "";
     env[pathKey] = existingPath
-      ? `${pathPrefixes.join(path.delimiter)}${path.delimiter}${existingPath}`
-      : pathPrefixes.join(path.delimiter);
+      ? `${pathPrefixes.join(shellPathDelimiter())}${shellPathDelimiter()}${existingPath}`
+      : pathPrefixes.join(shellPathDelimiter());
   }
 
   env.USER_CWD = getCurrentWorkingDirectory();
@@ -368,7 +357,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         const inheritedLettaMemoryDir = process.env.LETTA_MEMORY_DIR?.trim();
         const parentAgentId = process.env.LETTA_PARENT_AGENT_ID?.trim();
         const inheritedParentMemoryDir = parentAgentId
-          ? getMemoryFilesystemRoot(parentAgentId)
+          ? getScopedMemoryFilesystemRoot(parentAgentId)
           : null;
 
         if (
@@ -429,7 +418,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (nodeModulesDir) {
     const currentNodePath = env.NODE_PATH || "";
     env.NODE_PATH = currentNodePath
-      ? `${nodeModulesDir}${path.delimiter}${currentNodePath}`
+      ? `${nodeModulesDir}${shellPathDelimiter()}${currentNodePath}`
       : nodeModulesDir;
   }
 

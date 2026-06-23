@@ -158,6 +158,21 @@ const WINDOWS_UNIFIED_EXEC_GUIDANCE = `Windows safety rules:
 - Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.
 - When using \`Start-Process\` to launch a background helper or service, pass \`-WindowStyle Hidden\` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.`;
 
+const WINDOWS_BASH_EXECUTION_GUIDANCE = `Windows execution:
+- Despite the tool name, on Windows this tool does not run commands through bash by default. It uses the native Windows shell launcher: PowerShell Core (\`pwsh\`) when available, then Windows PowerShell, then \`cmd.exe\` as fallback.
+- Write commands using PowerShell-compatible syntax by default. POSIX/bash constructs such as heredocs, \`export VAR=...\`, and Unix-style shell quoting may not work unless you explicitly invoke a POSIX shell.
+
+${WINDOWS_UNIFIED_EXEC_GUIDANCE}`;
+
+export function buildBashDescriptionForPlatform(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const baseDescription = BashDescription.trim();
+  return platform === "win32"
+    ? `${baseDescription}\n\n${WINDOWS_BASH_EXECUTION_GUIDANCE}`
+    : baseDescription;
+}
+
 function execCommandDescription(): string {
   const baseDescription = ExecCommandDescription.trim();
   return process.platform === "win32"
@@ -188,7 +203,7 @@ const toolDefinitions = {
   }),
   Bash: defineTool({
     schema: BashSchema,
-    description: BashDescription.trim(),
+    description: buildBashDescriptionForPlatform(),
     impl: bash,
   }),
   BashOutput: defineTool({

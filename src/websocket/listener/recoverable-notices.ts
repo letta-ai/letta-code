@@ -60,7 +60,7 @@ export function getRecoverableRetryNoticeVisibility(
 }
 
 function isDesktopDebugPanelMirrorEnabled(): boolean {
-  return process.env.LETTA_DESKTOP_DEBUG_PANEL === "1";
+  return process.env.LETTA_DESKTOP_MODE === "1";
 }
 
 function mirrorRecoverableNoticeToDesktopDebugPanel(message: string): void {

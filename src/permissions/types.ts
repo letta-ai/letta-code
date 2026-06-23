@@ -1,20 +1,26 @@
 // src/permissions/types.ts
 // Types for Claude Code-compatible permission system
 
+import type { PermissionMode } from "./mode";
+
 /**
  * Permission rules following Claude Code's format
  */
 export interface PermissionRules {
+  mode?: PermissionMode;
   allow?: string[];
   deny?: string[];
   ask?: string[];
+  alwaysAsk?: string[];
   additionalDirectories?: string[];
 }
 
 /**
  * Permission decision for a tool execution
  */
-export type PermissionDecision = "allow" | "deny" | "ask";
+export type PermissionDecision = "allow" | "deny" | "ask" | "alwaysAsk";
+
+export type PermissionRuleType = PermissionDecision;
 
 /**
  * Scope for saving permission rules

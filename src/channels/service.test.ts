@@ -283,6 +283,49 @@ describe("channel service", () => {
     expect(listEnabledChannelIds()).toEqual(["telegram"]);
   });
 
+  test("listEnabledChannelIds can filter restored accounts by agent scope", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Local Telegram Bot",
+        enabled: true,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-local" },
+    );
+    bindChannelAccountLive(
+      "telegram",
+      "telegram-local",
+      "agent-local-123",
+      "conv-local",
+    );
+
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Cloud Slack App",
+        enabled: true,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-cloud",
+        dmPolicy: "pairing",
+      },
+      { accountId: "slack-cloud" },
+    );
+
+    expect(listEnabledChannelIds({ restoreAgentScope: "local" })).toEqual([
+      "telegram",
+    ]);
+    expect(listEnabledChannelIds({ restoreAgentScope: "cloud" })).toEqual([
+      "slack",
+    ]);
+    expect(listEnabledChannelIds({ restoreAgentScope: "all" })).toEqual([
+      "telegram",
+      "slack",
+    ]);
+  });
+
   test("updateChannelRouteLive updates the Slack route without changing the app's default agent", () => {
     createChannelAccountLive(
       "slack",
@@ -334,6 +377,203 @@ describe("channel service", () => {
         agentId: "agent-old",
       }),
     );
+  });
+
+  test("updateChannelRouteLive preserves listen-only outbound state", () => {
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "DocsBot Slack",
+        enabled: true,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "docsbot" },
+    );
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-listen-only",
+      chatType: "channel",
+      threadId: null,
+      agentId: "agent-old",
+      conversationId: "conv-old",
+      enabled: true,
+      outboundEnabled: false,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const updated = updateChannelRouteLive(
+      "slack",
+      "C-listen-only",
+      "agent-new",
+      "conv-new",
+      "docsbot",
+    );
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        channelId: "slack",
+        accountId: "docsbot",
+        chatId: "C-listen-only",
+        agentId: "agent-new",
+        conversationId: "conv-new",
+        outboundEnabled: false,
+      }),
+    );
+    expect(getRoute("slack", "C-listen-only", "docsbot")).toEqual(
+      expect.objectContaining({
+        agentId: "agent-new",
+        conversationId: "conv-new",
+        outboundEnabled: false,
+      }),
+    );
+  });
+
+  test("updateChannelRouteLive creates a Telegram route and binds the account", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-token",
+        dmPolicy: "open",
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    const created = updateChannelRouteLive(
+      "telegram",
+      "8450770457",
+      "agent-telegram",
+      "default",
+      "telegram-bot",
+    );
+
+    expect(created).toEqual(
+      expect.objectContaining({
+        channelId: "telegram",
+        accountId: "telegram-bot",
+        chatId: "8450770457",
+        agentId: "agent-telegram",
+        conversationId: "default",
+        enabled: true,
+      }),
+    );
+    expect(getRoute("telegram", "8450770457", "telegram-bot")).toEqual(
+      expect.objectContaining({
+        accountId: "telegram-bot",
+        agentId: "agent-telegram",
+        conversationId: "default",
+      }),
+    );
+    expect(getChannelAccountSnapshot("telegram", "telegram-bot")).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          binding: {
+            agent_id: "agent-telegram",
+            conversation_id: "default",
+          },
+        }),
+      }),
+    );
+  });
+
+  test("updateChannelAccountLive updates Telegram allowlist users", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    const updated = updateChannelAccountLive("telegram", "telegram-bot", {
+      displayName: "tele test2",
+      dmPolicy: "allowlist",
+      allowedUsers: ["8450770457"],
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        channelId: "telegram",
+        accountId: "telegram-bot",
+        displayName: "tele test2",
+        dmPolicy: "allowlist",
+        allowedUsers: ["8450770457"],
+      }),
+    );
+  });
+
+  test("updateChannelAccountLive updates a Telegram token without secret hydration", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "old-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    const updated = updateChannelAccountLive("telegram", "telegram-bot", {
+      config: { token: "new-token" },
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        channelId: "telegram",
+        accountId: "telegram-bot",
+        config: expect.objectContaining({ has_token: true }),
+      }),
+    );
+  });
+
+  test("createChannelAccountLive creates a Telegram allowlist account without secret hydration", () => {
+    const created = createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-token",
+        dmPolicy: "allowlist",
+        allowedUsers: ["8450770457"],
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    expect(created).toEqual(
+      expect.objectContaining({
+        channelId: "telegram",
+        accountId: "telegram-bot",
+        displayName: "Telegram Bot",
+        dmPolicy: "allowlist",
+        allowedUsers: ["8450770457"],
+      }),
+    );
+  });
+
+  test("removeChannelAccountLive deletes a Telegram account without secret hydration", async () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-bot" },
+    );
+
+    expect(await removeChannelAccountLive("telegram", "telegram-bot")).toBe(
+      true,
+    );
+    expect(getChannelAccountSnapshot("telegram", "telegram-bot")).toBeNull();
   });
 
   test("updateChannelRouteLive leaves the Slack app's default agent unchanged when route save fails", () => {
@@ -539,7 +779,7 @@ describe("channel service", () => {
     );
   });
 
-  test("telegram live account helpers preserve the transcribeVoice opt-in", () => {
+  test("telegram live account helpers preserve Telegram boolean settings", () => {
     const created = createChannelAccountLive(
       "telegram",
       {
@@ -548,6 +788,7 @@ describe("channel service", () => {
         token: "telegram-token",
         dmPolicy: "pairing",
         transcribeVoice: true,
+        richPrivateChatDefault: false,
       },
       { accountId: "voice-bot" },
     );
@@ -556,17 +797,26 @@ describe("channel service", () => {
       expect.objectContaining({
         accountId: "voice-bot",
         transcribeVoice: true,
+        richPrivateChatDefault: false,
+        config: expect.objectContaining({
+          rich_private_chat_default: false,
+        }),
       }),
     );
 
     const updated = updateChannelAccountLive("telegram", "voice-bot", {
       transcribeVoice: false,
+      richPrivateChatDefault: true,
     });
 
     expect(updated).toEqual(
       expect.objectContaining({
         accountId: "voice-bot",
         transcribeVoice: false,
+        richPrivateChatDefault: true,
+        config: expect.objectContaining({
+          rich_private_chat_default: true,
+        }),
       }),
     );
 
@@ -574,6 +824,75 @@ describe("channel service", () => {
       expect.objectContaining({
         accountId: "voice-bot",
         transcribeVoice: false,
+        richPrivateChatDefault: true,
+        config: expect.objectContaining({
+          rich_private_chat_default: true,
+        }),
+      }),
+    );
+  });
+
+  test("slack live account helpers preserve the transcribeVoice opt-in in snapshots", () => {
+    const created = createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Slack Voice",
+        enabled: true,
+        dmPolicy: "pairing",
+        config: {
+          bot_token: "xoxb-test-token",
+          app_token: "xapp-test-token",
+          mode: "socket",
+          agent_id: null,
+          transcribe_voice: true,
+          show_completed_reaction: false,
+          listen_mode: true,
+        },
+      },
+      { accountId: "slack-voice" },
+    );
+
+    expect(created).toEqual(
+      expect.objectContaining({
+        accountId: "slack-voice",
+        transcribeVoice: true,
+        config: expect.objectContaining({
+          transcribe_voice: true,
+          show_completed_reaction: false,
+          listen_mode: true,
+        }),
+      }),
+    );
+
+    const updated = updateChannelAccountLive("slack", "slack-voice", {
+      config: {
+        transcribe_voice: false,
+        show_completed_reaction: true,
+        listen_mode: false,
+      },
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        accountId: "slack-voice",
+        transcribeVoice: false,
+        config: expect.objectContaining({
+          transcribe_voice: false,
+          show_completed_reaction: true,
+          listen_mode: false,
+        }),
+      }),
+    );
+
+    expect(getChannelConfigSnapshot("slack", "slack-voice")).toEqual(
+      expect.objectContaining({
+        accountId: "slack-voice",
+        transcribeVoice: false,
+        config: expect.objectContaining({
+          transcribe_voice: false,
+          show_completed_reaction: true,
+          listen_mode: false,
+        }),
       }),
     );
   });

@@ -9,7 +9,6 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "@/agent/memory";
 import { getBackend } from "@/backend";
 import { getErrorMessage } from "@/utils/error";
 import {
@@ -22,12 +21,9 @@ import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
 import initAgentMd from "./builtin/init.md";
-import initLocalMemfsAgentMd from "./builtin/init_local_memfs.md";
 import memoryAgentMd from "./builtin/memory.md";
-import memoryLocalMemfsAgentMd from "./builtin/memory_local_memfs.md";
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
-import reflectionLocalMemfsAgentMd from "./builtin/reflection_local_memfs.md";
 
 const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
@@ -43,14 +39,11 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
   historyAnalyzerAgentMd,
-  initLocalMemfsAgentMd,
-  memoryLocalMemfsAgentMd,
+  initAgentMd,
+  memoryAgentMd,
   recallAgentMd,
-  reflectionLocalMemfsAgentMd,
+  reflectionAgentMd,
 ];
-
-// Re-export for convenience
-export type { MemoryBlockLabel };
 
 // ============================================================================
 // Types
@@ -59,8 +52,6 @@ export type { MemoryBlockLabel };
 /**
  * Subagent configuration
  */
-export type SubagentMode = "stateful" | "stateless";
-
 export interface SubagentConfig {
   /** Unique identifier for the subagent */
   name: string;
@@ -74,10 +65,6 @@ export interface SubagentConfig {
   recommendedModel: string;
   /** Skills to auto-load */
   skills: string[];
-  /** Memory blocks the subagent has access to - list of labels or "all" or "none" */
-  memoryBlocks: MemoryBlockLabel[] | "all" | "none";
-  /** Stateless agents should not persist private working memory. */
-  mode: SubagentMode;
   /** Whether this subagent should fork the parent conversation before launch. */
   fork: boolean;
   /** Whether this subagent should run in the background by default. */
@@ -110,11 +97,6 @@ export const GLOBAL_AGENTS_DIR = join(
   process.env.HOME || process.env.USERPROFILE || "~",
   ".letta/agents",
 );
-
-/**
- * Valid memory block labels (derived from memory.ts)
- */
-const VALID_MEMORY_BLOCKS: Set<string> = new Set(MEMORY_BLOCK_LABELS);
 
 // ============================================================================
 // Cache
@@ -167,38 +149,6 @@ function parseTools(toolsStr: string | undefined): string[] | "all" {
  */
 function parseSkills(skillsStr: string | undefined): string[] {
   return parseCommaSeparatedList(skillsStr);
-}
-
-/**
- * Parse comma-separated memory blocks string into validated block labels
- */
-function parseMemoryBlocks(
-  blocksStr: string | undefined,
-): MemoryBlockLabel[] | "all" | "none" {
-  if (
-    !blocksStr ||
-    blocksStr.trim() === "" ||
-    blocksStr.trim().toLowerCase() === "all"
-  ) {
-    return "all";
-  }
-
-  if (blocksStr.trim().toLowerCase() === "none") {
-    return "none";
-  }
-
-  const parts = parseCommaSeparatedList(blocksStr).map((b) => b.toLowerCase());
-  const blocks = parts.filter((p) =>
-    VALID_MEMORY_BLOCKS.has(p),
-  ) as MemoryBlockLabel[];
-
-  return blocks.length > 0 ? blocks : "all";
-}
-
-function parseSubagentMode(modeStr: string | undefined): SubagentMode {
-  return modeStr?.trim().toLowerCase() === "stateless"
-    ? "stateless"
-    : "stateful";
 }
 
 /**
@@ -255,10 +205,6 @@ function parseSubagentContent(content: string): SubagentConfig {
     allowedTools: parseTools(getStringField(frontmatter, "tools")),
     recommendedModel: getStringField(frontmatter, "model") || "inherit",
     skills: parseSkills(getStringField(frontmatter, "skills")),
-    memoryBlocks: parseMemoryBlocks(
-      getStringField(frontmatter, "memoryBlocks"),
-    ),
-    mode: parseSubagentMode(getStringField(frontmatter, "mode")),
     fork: getStringField(frontmatter, "fork")?.toLowerCase() === "true",
     background:
       getStringField(frontmatter, "background")?.toLowerCase() === "true",

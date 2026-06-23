@@ -1,8 +1,7 @@
-import type Letta from "@letta-ai/letta-client";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getBackend } from "@/backend";
-import { getClient } from "@/backend/api/client";
 import {
-  forkConversation,
+  summarizeConversation,
   updateConversationDescription,
 } from "@/backend/api/conversations";
 import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
@@ -10,9 +9,10 @@ import { experimentManager } from "@/experiments/manager";
 import { isDebugEnabled } from "@/utils/debug";
 
 const CONVERSATION_DESCRIPTION_MAX_WORDS = 40;
+const CONVERSATION_DESCRIPTION_MESSAGE_LIMIT = 40;
 
 /**
- * Hard timeout on the fork-and-generate flow. Description generation is
+ * Hard timeout on the summarize endpoint flow. Description generation is
  * best-effort and should never block the main conversation path indefinitely.
  */
 const CONVERSATION_DESCRIPTION_TIMEOUT_MS = 30_000;
@@ -27,8 +27,10 @@ Rules:
 - never call any tools — reply with plain text only
 - ignore setup noise like tool chatter, system reminders, approvals, and boilerplate unless the conversation is explicitly about them`;
 
-const CONVERSATION_DESCRIPTION_USER_PROMPT =
-  "Based on the conversation above, output a concise internal description for search and bootstrap context. Reply with ONLY the description text — no quotes, no tools, no preamble.";
+export type ConversationDescriptionMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+};
 
 function trimToWordLimit(value: string, maxWords: number): string {
   const words = value.split(/\s+/).filter(Boolean);
@@ -36,6 +38,13 @@ function trimToWordLimit(value: string, maxWords: number): string {
     return value;
   }
   return words.slice(0, maxWords).join(" ");
+}
+
+type PaginatedItems<T> = T[] | { getPaginatedItems?: () => T[] };
+
+function paginatedItems<T>(value: PaginatedItems<T>): T[] {
+  if (Array.isArray(value)) return value;
+  return value.getPaginatedItems?.() ?? [];
 }
 
 export function normalizeConversationDescription(value: string): string | null {
@@ -80,11 +89,62 @@ function extractAssistantText(content: unknown): string {
   return "";
 }
 
-export async function generateConversationDescriptionFromFork(
-  client: Letta,
+function extractUserText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const record = part as { type?: unknown; text?: unknown };
+      if (typeof record.text === "string") {
+        parts.push(record.text);
+      } else if (record.type === "image") {
+        parts.push("[image]");
+      }
+    }
+    return parts.join("\n");
+  }
+  return "";
+}
+
+function messageToDescriptionMessage(
+  message: Message,
+): ConversationDescriptionMessage | null {
+  if (message.message_type === "user_message") {
+    const content = extractUserText(message.content).trim();
+    return content ? { role: "user", content } : null;
+  }
+  if (message.message_type === "assistant_message") {
+    const content = extractAssistantText(message.content).trim();
+    return content ? { role: "assistant", content } : null;
+  }
+  return null;
+}
+
+export function buildConversationDescriptionMessages(
+  messages: Message[],
+): ConversationDescriptionMessage[] {
+  const descriptionMessages: ConversationDescriptionMessage[] = [];
+  for (const message of messages) {
+    const descriptionMessage = messageToDescriptionMessage(message);
+    if (descriptionMessage) {
+      descriptionMessages.push(descriptionMessage);
+    }
+  }
+  return descriptionMessages;
+}
+
+export async function generateConversationDescriptionFromSummary(
   conversationId: string,
+  messages: ConversationDescriptionMessage[],
+  model: string = DEFAULT_SUMMARIZATION_MODEL,
 ): Promise<string | null> {
-  let forkId: string | null = null;
+  if (messages.length === 0) {
+    return null;
+  }
+
   const abortController = new AbortController();
   const timeoutId = setTimeout(
     () => abortController.abort(),
@@ -92,64 +152,28 @@ export async function generateConversationDescriptionFromFork(
   );
 
   try {
-    const fork = await forkConversation(conversationId, { hidden: true });
-    forkId = fork.id;
-
-    const stream = await client.conversations.messages.create(
-      forkId,
+    const response = await summarizeConversation(
+      conversationId,
       {
-        messages: [
-          {
-            role: "user",
-            content: CONVERSATION_DESCRIPTION_USER_PROMPT,
-          },
-        ],
-        override_model: DEFAULT_SUMMARIZATION_MODEL,
-        override_system: CONVERSATION_DESCRIPTION_SYSTEM_PROMPT,
-        max_steps: 1,
-        streaming: true,
-        stream_tokens: false,
-        include_pings: false,
+        prompt: CONVERSATION_DESCRIPTION_SYSTEM_PROMPT,
+        messages,
+        model,
       },
-      { signal: abortController.signal },
+      {
+        signal: abortController.signal,
+      },
     );
-
-    let descriptionText = "";
-    for await (const chunk of stream) {
-      if (
-        chunk &&
-        typeof chunk === "object" &&
-        "message_type" in chunk &&
-        (chunk as { message_type?: string }).message_type ===
-          "assistant_message"
-      ) {
-        descriptionText += extractAssistantText(
-          (chunk as { content?: unknown }).content,
-        );
-      }
-    }
-
-    return normalizeConversationDescription(descriptionText);
+    return normalizeConversationDescription(response.summary);
   } catch (err) {
     if (isDebugEnabled()) {
       console.error(
-        "[DEBUG] generateConversationDescriptionFromFork failed:",
+        "[DEBUG] generateConversationDescriptionFromSummary failed:",
         err,
       );
     }
     return null;
   } finally {
     clearTimeout(timeoutId);
-    if (forkId) {
-      void client.conversations.delete(forkId).catch((err) => {
-        if (isDebugEnabled()) {
-          console.error(
-            "[DEBUG] failed to delete description-fork conversation:",
-            err,
-          );
-        }
-      });
-    }
   }
 }
 
@@ -167,10 +191,18 @@ export async function regenerateConversationDescription(
   }
 
   try {
-    const client = await getClient();
-    const description = await generateConversationDescriptionFromFork(
-      client,
+    const page = await getBackend().listConversationMessages(conversationId, {
+      limit: CONVERSATION_DESCRIPTION_MESSAGE_LIMIT,
+      order: "desc",
+      include_return_message_types: ["user_message", "assistant_message"],
+    });
+    const messages = buildConversationDescriptionMessages(
+      paginatedItems(page as PaginatedItems<Message>).reverse(),
+    );
+    const description = await generateConversationDescriptionFromSummary(
       conversationId,
+      messages,
+      DEFAULT_SUMMARIZATION_MODEL,
     );
     if (!description) {
       return false;

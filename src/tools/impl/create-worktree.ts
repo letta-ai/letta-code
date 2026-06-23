@@ -16,6 +16,7 @@ interface CreateWorktreeArgs {
   name: string;
   branch_name?: string;
   base_ref?: string;
+  repo_path?: string;
   refresh_base?: boolean;
   switch_cwd?: boolean;
   _executionContextId?: string;
@@ -79,9 +80,32 @@ function slugifyName(name: string): string {
 function formatGitFailure(error: unknown): string {
   if (error instanceof GitCommandError) {
     const detail = error.result?.stderr.trim() || error.result?.stdout.trim();
-    return detail ? `${error.message}\n${detail}` : error.message;
+    const formatted = detail ? `${error.message}\n${detail}` : error.message;
+    return addWindowsPathLengthHint(formatted);
   }
-  return error instanceof Error ? error.message : String(error);
+  return addWindowsPathLengthHint(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+export function addWindowsPathLengthHint(
+  message: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== "win32") {
+    return message;
+  }
+
+  const normalized = message.toLowerCase();
+  const looksLikePathLengthFailure =
+    normalized.includes("filename too long") ||
+    normalized.includes("could not reset index file to revision");
+
+  if (!looksLikePathLengthFailure) {
+    return message;
+  }
+
+  return `${message}\n\nThis looks like a Windows path-length issue. Try:\n- git config --global core.longpaths true\n- move the repo to a shorter path, like C:\\src\\<repo>, and retry.`;
 }
 
 async function runGit(
@@ -198,6 +222,30 @@ async function assertValidBranchName(
 
 async function resolveRepoRoot(cwd: string): Promise<string> {
   return await gitStdout(["rev-parse", "--show-toplevel"], cwd);
+}
+
+async function resolveWorktreeSourceRoot(params: {
+  currentCwd: string;
+  requestedRepoPath?: string;
+}): Promise<string> {
+  const sourcePath = params.requestedRepoPath
+    ? path.resolve(params.currentCwd, params.requestedRepoPath)
+    : params.currentCwd;
+
+  try {
+    return await resolveRepoRoot(sourcePath);
+  } catch (error) {
+    if (params.requestedRepoPath) {
+      throw error;
+    }
+    throw new Error(
+      [
+        `Current working directory is not inside a git repository: ${params.currentCwd}`,
+        "Pass `repo_path` to CreateWorktree or start the session from inside the target repo.",
+        formatGitFailure(error),
+      ].join("\n"),
+    );
+  }
 }
 
 async function resolvePrimaryWorktreeRoot(repoRoot: string): Promise<string> {
@@ -332,6 +380,7 @@ function buildSuccessMessage(params: {
     "- Confirm you are in the new worktree with `git status` before editing.",
     "- Read README, AGENTS.md, or other project setup docs before running commands.",
     "- If this repo needs per-worktree dependency setup, install dependencies with the project's package manager. Check the repo first: if it uses Bun, run `bun install` instead of `npm install`; if it uses pnpm, yarn, or npm, use that package manager instead.",
+    "- If the repo uses git hooks, verify they are installed and active in this worktree before committing; run the project's documented hook setup if needed.",
     "- Then make changes, test, commit, and push from this worktree.",
   ];
   return lines.join("\n");
@@ -361,7 +410,10 @@ export async function create_worktree(
     const runtimeContext = getRuntimeContext();
     const currentCwd =
       runtimeContext?.workingDirectory || process.env.USER_CWD || process.cwd();
-    const repoRoot = await resolveRepoRoot(currentCwd);
+    const repoRoot = await resolveWorktreeSourceRoot({
+      currentCwd,
+      requestedRepoPath: getStringArg(args, "repo_path"),
+    });
     const primaryRoot = await resolvePrimaryWorktreeRoot(repoRoot);
     const worktreesDir = path.join(primaryRoot, ".letta", "worktrees");
     const slug = slugifyName(name);

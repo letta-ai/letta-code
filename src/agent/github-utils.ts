@@ -25,8 +25,8 @@ export async function fetchGitHubContents(
 
   // Try gh CLI (authenticated, 5000 req/hr)
   try {
-    const { execSync } = await import("node:child_process");
-    const result = execSync(`gh api ${apiPath}`, {
+    const { execFileSync } = await import("node:child_process");
+    const result = execFileSync("gh", ["api", apiPath], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"],
     });

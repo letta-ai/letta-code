@@ -1,8 +1,5 @@
 import WebSocket from "ws";
-import {
-  channelPluginConfigShouldRefreshDisplayName,
-  getChannelPluginConfig,
-} from "@/channels/account-config";
+import { getChannelPluginConfig } from "@/channels/account-config";
 import { removeUserPlugin } from "@/channels/custom/scaffolding";
 import { getChannelPluginMetadata } from "@/channels/plugin-registry";
 import type { ChannelRegistryEvent } from "@/channels/registry";
@@ -32,6 +29,7 @@ import type {
   ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
   ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
 } from "@/types/protocol_v2";
+import { seedConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -58,6 +56,8 @@ import {
   isChannelTargetBindCommand,
   isChannelTargetsListCommand,
 } from "@/websocket/listener/protocol-inbound";
+import { emitDeviceStatusUpdate } from "@/websocket/listener/protocol-outbound";
+import { getOrCreateConversationRuntime } from "@/websocket/listener/runtime";
 import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
@@ -254,7 +254,7 @@ export async function handleChannelsProtocolCommand(
     bindChannelPairing,
     bindChannelAccountLive,
     bindChannelTarget,
-    createChannelAccountLiveWithSecrets,
+    createChannelAccountLive,
     refreshChannelAccountDisplayNameLive,
     getChannelConfigSnapshot,
     listChannelAccountSnapshots,
@@ -270,7 +270,7 @@ export async function handleChannelsProtocolCommand(
     stopChannelAccountLive,
     stopChannelLive,
     unbindChannelAccountLive,
-    updateChannelAccountLiveWithSecrets,
+    updateChannelAccountLive,
     updateChannelRouteLive,
   } = await loadChannelsService();
 
@@ -399,6 +399,7 @@ export async function handleChannelsProtocolCommand(
     agent_id: route.agentId,
     conversation_id: route.conversationId,
     enabled: route.enabled,
+    outbound_enabled: route.outboundEnabled,
     created_at: route.createdAt,
     updated_at: route.updatedAt,
   });
@@ -522,7 +523,7 @@ export async function handleChannelsProtocolCommand(
 
       const pluginConfig =
         getChannelPluginConfig(parsed.account as Record<string, unknown>) ?? {};
-      const created = await createChannelAccountLiveWithSecrets(
+      const created = createChannelAccountLive(
         effectiveChannelId,
         {
           displayName:
@@ -542,14 +543,7 @@ export async function handleChannelsProtocolCommand(
               : undefined,
         },
       );
-      const account =
-        "display_name" in parsed.account
-          ? created
-          : await refreshChannelAccountDisplayNameLive(
-              effectiveChannelId,
-              created.accountId,
-              { force: true },
-            );
+      const account = created;
 
       safeSocketSend(
         socket,
@@ -593,32 +587,21 @@ export async function handleChannelsProtocolCommand(
     try {
       const pluginConfig =
         getChannelPluginConfig(parsed.patch as Record<string, unknown>) ?? {};
-      const updated = await updateChannelAccountLiveWithSecrets(
+      const accountPatch = {
+        displayName:
+          "display_name" in parsed.patch
+            ? parsed.patch.display_name
+            : undefined,
+        enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
+        dmPolicy: parsed.patch.dm_policy,
+        allowedUsers: parsed.patch.allowed_users,
+        config: pluginConfig,
+      };
+      const account = updateChannelAccountLive(
         parsed.channel_id,
         parsed.account_id,
-        {
-          displayName:
-            "display_name" in parsed.patch
-              ? parsed.patch.display_name
-              : undefined,
-          enabled: "enabled" in parsed.patch ? parsed.patch.enabled : undefined,
-          dmPolicy: parsed.patch.dm_policy,
-          allowedUsers: parsed.patch.allowed_users,
-          config: pluginConfig,
-        },
+        accountPatch,
       );
-      const shouldRefreshDisplayName =
-        !("display_name" in parsed.patch) &&
-        channelPluginConfigShouldRefreshDisplayName(parsed.channel_id, {
-          config: pluginConfig,
-        });
-      const account = shouldRefreshDisplayName
-        ? await refreshChannelAccountDisplayNameLive(
-            parsed.channel_id,
-            parsed.account_id,
-            { force: true },
-          )
-        : updated;
 
       safeSocketSend(
         socket,
@@ -1440,4 +1423,21 @@ export function handleChannelRegistryEvent(
   );
   permissionModeState.mode = event.defaultPermissionMode;
   persistPermissionModeMapForRuntime(runtime);
+
+  const seededWorkingDirectory = seedConversationWorkingDirectory(
+    runtime,
+    event.agentId,
+    event.conversationId,
+    runtime.bootWorkingDirectory,
+  );
+  if (seededWorkingDirectory) {
+    emitDeviceStatusUpdate(
+      socket,
+      getOrCreateConversationRuntime(
+        runtime,
+        event.agentId,
+        event.conversationId,
+      ),
+    );
+  }
 }

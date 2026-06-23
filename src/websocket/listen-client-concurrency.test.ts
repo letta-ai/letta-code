@@ -7,19 +7,32 @@ import {
   mock,
   test,
 } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
 import type { ResumeData } from "@/agent/check-approval";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter } from "@/channels/types";
+import {
+  getReflectionTranscriptPaths,
+  getReflectionTranscriptState,
+} from "@/cli/helpers/reflection-transcript";
 import { permissionMode } from "@/permissions/mode";
 import type {
   MessageQueueItem,
   TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
 import { sharedReminderProviders } from "@/reminders/engine";
+import { settingsManager } from "@/settings-manager";
 import { queueSkillContent } from "@/tools/impl/skill-content-registry";
 import { clearTools, loadSpecificTools } from "@/tools/manager";
+import {
+  __testOverrideSecretsBackend,
+  clearSecretsCache,
+} from "@/utils/secrets-store";
+import { handleSecretsCommand } from "@/websocket/listener/commands/secrets";
 import { shouldProcessInboundMessageDirectly } from "@/websocket/listener/queue";
 import { resolveRecoveredApprovalResponse } from "@/websocket/listener/recovery";
 import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
@@ -182,6 +195,11 @@ const classifyApprovalsMock = mock(async () => ({
 const executeApprovalBatchMock = mock(async () => []);
 const fetchRunErrorDetailMock = mock(async () => null);
 const realStreamModule = await import("@/cli/helpers/stream");
+const realDrainStreamWithResume = realStreamModule.drainStreamWithResume;
+const realAgentMessageModule = await import("@/agent/message");
+const realSendMessageStream = realAgentMessageModule.sendMessageStream;
+const realGetStreamToolContextId =
+  realAgentMessageModule.getStreamToolContextId;
 // Capture real implementations BEFORE applying `mock.module(...)` so they
 // can be restored in afterAll. Bun's `mock.restore()` only resets mock
 // function state — it does NOT undo `mock.module()` swaps, so mocked modules
@@ -323,12 +341,29 @@ function makeIncomingMessage(
 // to avoid mock.module (which leaks into other test files in Bun).
 const origSessionContext = sharedReminderProviders["session-context"];
 const origAgentInfo = sharedReminderProviders["agent-info"];
+const originalGetLocalProjectSettings = settingsManager.getLocalProjectSettings;
+const originalGetSettings = settingsManager.getSettings;
+const originalTranscriptRoot = process.env.LETTA_TRANSCRIPT_ROOT;
+let testTranscriptRoot: string | null = null;
 
 describe("listen-client multi-worker concurrency", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    testTranscriptRoot = await mkdtemp(
+      join(tmpdir(), "letta-listen-transcript-"),
+    );
+    process.env.LETTA_TRANSCRIPT_ROOT = testTranscriptRoot;
+
     // No-op stubs for providers that need settingsManager / process.cwd
     sharedReminderProviders["session-context"] = async () => null;
     sharedReminderProviders["agent-info"] = async () => null;
+    (settingsManager as typeof settingsManager).getSettings = (() =>
+      ({
+        memoryReminderInterval: null,
+      }) as ReturnType<
+        typeof settingsManager.getSettings
+      >) as typeof settingsManager.getSettings;
+    (settingsManager as typeof settingsManager).getLocalProjectSettings = () =>
+      ({}) as ReturnType<typeof settingsManager.getLocalProjectSettings>;
 
     queueSkillContent("__test-cleanup__", "__test-cleanup__");
     injectQueuedSkillContent([]);
@@ -360,7 +395,25 @@ describe("listen-client multi-worker concurrency", () => {
   afterEach(() => {
     sharedReminderProviders["session-context"] = origSessionContext;
     sharedReminderProviders["agent-info"] = origAgentInfo;
+    (settingsManager as typeof settingsManager).getSettings =
+      originalGetSettings;
+    (settingsManager as typeof settingsManager).getLocalProjectSettings =
+      originalGetLocalProjectSettings;
+    __testOverrideSecretsBackend(null);
+    clearSecretsCache("agent-secret-payload");
     clearTools();
+  });
+
+  afterEach(async () => {
+    if (originalTranscriptRoot === undefined) {
+      delete process.env.LETTA_TRANSCRIPT_ROOT;
+    } else {
+      process.env.LETTA_TRANSCRIPT_ROOT = originalTranscriptRoot;
+    }
+    if (testTranscriptRoot) {
+      await rm(testTranscriptRoot, { recursive: true, force: true });
+      testTranscriptRoot = null;
+    }
   });
 
   afterEach(() => {
@@ -398,6 +451,19 @@ describe("listen-client multi-worker concurrency", () => {
     // biome-ignore lint/suspicious/noExplicitAny: see above
     (fetchRunErrorDetailMock as any).mockImplementation(
       realFetchRunErrorDetail,
+    );
+    sendMessageStreamMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (sendMessageStreamMock as any).mockImplementation(realSendMessageStream);
+    getStreamToolContextIdMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (getStreamToolContextIdMock as any).mockImplementation(
+      realGetStreamToolContextId,
+    );
+    drainStreamWithResumeMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (drainStreamWithResumeMock as any).mockImplementation(
+      realDrainStreamWithResume,
     );
     mock.restore();
   });
@@ -2373,6 +2439,123 @@ describe("listen-client multi-worker concurrency", () => {
         otid: "cm-user-otid",
       }),
     ]);
+  });
+
+  test("secret_apply refreshes the next user payload for the same conversation", async () => {
+    const agentId = "agent-secret-payload";
+    const conversationId = "conv-secret-payload";
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      agentId,
+      conversationId,
+    );
+    const socket = new MockSocket();
+    let serverSecrets: Record<string, string> = {};
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      retrieveAgent: async () => ({
+        secrets: Object.entries(serverSecrets).map(([key, value]) => ({
+          key,
+          value,
+        })),
+      }),
+      updateAgent: async (_agentId, body) => {
+        serverSecrets = { ...body.secrets };
+      },
+    });
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage(agentId, conversationId, "before secret"),
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const firstPayload = sendMessageStreamCalls[0]?.messages;
+    expect(JSON.stringify(firstPayload)).not.toContain("PLAYGROUND_AGENT_ID");
+
+    const tasks: Promise<void>[] = [];
+    handleSecretsCommand(
+      {
+        type: "secret_apply",
+        request_id: "secret-payload-apply",
+        agent_id: agentId,
+        set: { PLAYGROUND_AGENT_ID: "agent-playground" },
+        unset: [],
+      },
+      {
+        socket: socket as unknown as WebSocket,
+        runtime: listener,
+        safeSocketSend: () => true,
+        runDetachedListenerTask: (_name, task) => {
+          tasks.push(task());
+        },
+      },
+    );
+    await Promise.all(tasks);
+    expect(runtime.reminderState.pendingSecretsInfoRefresh).toBe(true);
+    expect(runtime.reminderState.hasSentSecretsInfo).toBe(false);
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage(agentId, conversationId, "after secret"),
+      socket as unknown as WebSocket,
+      runtime,
+    );
+    expect(runtime.reminderState.lastSentSecretNamesKey).toBe(
+      "PLAYGROUND_AGENT_ID",
+    );
+
+    const secondPayload = sendMessageStreamCalls[1]?.messages;
+    const payloadText = JSON.stringify(secondPayload);
+    expect(payloadText).toContain("The agent secrets were updated");
+    expect(payloadText).toContain("$PLAYGROUND_AGENT_ID");
+    expect(payloadText).toContain("after secret");
+  });
+
+  test("handleIncomingMessage records direct websocket user turns in the reflection transcript", async () => {
+    const agentId = "agent-websocket-transcript";
+    const conversationId = "conv-websocket-transcript";
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      agentId,
+      conversationId,
+    );
+    const socket = new MockSocket();
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      {
+        type: "message",
+        agentId,
+        conversationId,
+        messages: [
+          {
+            role: "user",
+            content: "hello from websocket",
+            client_message_id: "cm-transcript-user",
+          } as IncomingMessage["messages"][number],
+        ],
+      },
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_steps).toBe(0);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
+
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    const transcriptRows = (await readFile(paths.transcriptPath, "utf-8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(transcriptRows).toContainEqual(
+      expect.objectContaining({
+        kind: "user",
+        text: "hello from websocket",
+        source_line_id: "user-cm-transcript-user",
+      }),
+    );
   });
 
   test("pre-stream 409 resume on default conversation includes agent_id", async () => {

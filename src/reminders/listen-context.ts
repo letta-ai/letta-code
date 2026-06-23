@@ -1,4 +1,4 @@
-import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
+import type { ShellContext } from "@/utils/shell-context";
 import type { SharedReminderContext } from "./engine";
 import type { SessionContextReason, SharedReminderState } from "./state";
 
@@ -9,12 +9,12 @@ interface BuildListenReminderContextParams {
   agentDescription?: string | null;
   agentLastRunAt?: string | null;
   state: SharedReminderState;
-  reflectionSettings: ReflectionSettings;
-  maybeLaunchReflectionSubagent?: SharedReminderContext["maybeLaunchReflectionSubagent"];
   /** Explicit working directory for session context (overrides process.cwd()). */
   workingDirectory?: string;
   /** Reason for injecting session context (controls intro text). */
   sessionContextReason?: SessionContextReason;
+  /** Shell context detected at startup, if available. */
+  shellContext?: ShellContext;
 }
 
 export function buildListenReminderContext(
@@ -31,11 +31,10 @@ export function buildListenReminderContext(
     },
     state: params.state,
     systemInfoReminderEnabled: true,
-    reflectionSettings: params.reflectionSettings,
     skillSources: [],
-    maybeLaunchReflectionSubagent: params.maybeLaunchReflectionSubagent,
     workingDirectory: params.workingDirectory,
     sessionContextSource: "listen",
     sessionContextReason: params.sessionContextReason,
+    shellContext: params.shellContext,
   };
 }

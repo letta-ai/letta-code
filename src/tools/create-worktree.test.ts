@@ -8,7 +8,10 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { create_worktree } from "@/tools/impl/create-worktree";
+import {
+  addWindowsPathLengthHint,
+  create_worktree,
+} from "@/tools/impl/create-worktree";
 import {
   clearToolsWithLock,
   executeTool,
@@ -137,6 +140,9 @@ describe("CreateWorktree tool", () => {
     expect(result.branch_name).toStartWith("letta/fix-login-flow-");
     expect(result.base_ref).toBe("main");
     expect(result.switched_cwd).toBe(false);
+    expect(result.content[0]?.text).toContain(
+      "If the repo uses git hooks, verify they are installed and active in this worktree before committing",
+    );
     expect(
       path.normalize(
         git(["rev-parse", "--show-toplevel"], result.worktree_path),
@@ -320,6 +326,36 @@ describe("CreateWorktree tool", () => {
     expect(remoteFile.replace(/\r\n/g, "\n")).toBe("latest remote\n");
   });
 
+  test("creates a worktree from repo_path when current cwd is outside a git repository", async () => {
+    const repo = await trackRepo();
+    const dir = await mkdtemp(
+      path.join(tmpdir(), "letta-create-worktree-empty-"),
+    );
+    tempDirs.push(dir);
+
+    const result = await runWithRuntimeContext({ workingDirectory: dir }, () =>
+      create_worktree({
+        name: "Repo Path Feature",
+        repo_path: repo,
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    expect(result.worktree_path).toBe(
+      path.join(repo, ".letta", "worktrees", "repo-path-feature"),
+    );
+    if (!result.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+    expect(
+      path.normalize(
+        git(["rev-parse", "--show-toplevel"], result.worktree_path),
+      ),
+    ).toBe(result.worktree_path);
+  });
+
   test("returns an error outside a git repository", async () => {
     const dir = await mkdtemp(
       path.join(tmpdir(), "letta-create-worktree-empty-"),
@@ -331,6 +367,29 @@ describe("CreateWorktree tool", () => {
     );
 
     expect(result.status).toBe("error");
-    expect(result.content[0]?.text).toContain("rev-parse");
+    expect(result.content[0]?.text).toContain(
+      "Current working directory is not inside a git repository",
+    );
+    expect(result.content[0]?.text).toContain("repo_path");
+  });
+
+  test("adds a windows path-length hint to git checkout failures", () => {
+    const message = addWindowsPathLengthHint(
+      "Failed to run git worktree add\nerror: unable to create file: filename too long\nfatal: could not reset index file to revision 'HEAD'",
+      "win32",
+    );
+
+    expect(message).toContain("Windows path-length issue");
+    expect(message).toContain("core.longpaths");
+    expect(message).toContain("C:\\src\\<repo>");
+  });
+
+  test("does not add the hint off windows", () => {
+    const message = addWindowsPathLengthHint(
+      "Failed to run git worktree add\nerror: unable to create file: filename too long",
+      "linux",
+    );
+
+    expect(message).not.toContain("Windows path-length issue");
   });
 });

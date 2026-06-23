@@ -206,29 +206,30 @@ async function commitArtifactDataWrites(
 ): Promise<string[]> {
   if (input.writes.length === 0) return [];
 
-  const writesByPathspec = new Map<string, ArtifactDataWrite>();
-  for (const write of input.writes) {
-    writesByPathspec.set(write.pathspec, write);
-  }
-
-  const pathspecs = [...writesByPathspec.keys()];
-  const { commitAndSyncMemoryWrite } = await import("@/agent/memory-git");
+  const pathspecs = [...new Set(input.writes.map((write) => write.pathspec))];
+  const { commitMemoryWrite, syncPendingMemoryCommitsAfterTurn } = await import(
+    "@/agent/memory-git"
+  );
   const author = await getArtifactCommitAuthor(input.agentId);
   const memorySyncMode = await getArtifactMemorySyncMode();
-  const commitResult = await commitAndSyncMemoryWrite({
+  const commitResult = await commitMemoryWrite({
     memoryDir: input.memoryRoot,
     pathspecs,
     reason: `Update artifact data for ${input.appName}`,
     author,
     ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
-    replay: async () => {
-      for (const write of writesByPathspec.values()) {
-        await mkdir(dirname(write.absolutePath), { recursive: true });
-        await writeFile(write.absolutePath, write.content);
-      }
-      return pathspecs;
-    },
   });
+
+  if (commitResult.committed && !memorySyncMode) {
+    syncPendingMemoryCommitsAfterTurn(input.agentId, {
+      memoryDir: input.memoryRoot,
+    }).catch((err) => {
+      console.warn(
+        `[artifact_call] background memory sync failed for ${input.agentId}:`,
+        err instanceof Error ? err.message : err,
+      );
+    });
+  }
 
   return commitResult.committed ? pathspecs : [];
 }
