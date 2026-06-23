@@ -378,6 +378,7 @@ type SlackProgressCardEntry = {
   status: SlackProgressCardState;
   latestText: string;
   latestUpdate?: ChannelTurnProgressEvent;
+  toolNamesByCallId?: Map<string, string>;
   lastSentText?: string;
   lastSentAt: number;
   pendingTimer?: ReturnType<typeof setTimeout>;
@@ -523,6 +524,35 @@ function buildTerminalSlackStreamChunks(
   return chunks;
 }
 
+function isSlackToolActionProgress(update: ChannelTurnProgressEvent): boolean {
+  return update.kind === "tool" || update.kind === "approval";
+}
+
+function rememberSlackToolName(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent | undefined,
+): void {
+  if (!update?.toolCallId || !update.toolName) {
+    return;
+  }
+  entry.toolNamesByCallId ??= new Map();
+  entry.toolNamesByCallId.set(update.toolCallId, update.toolName);
+}
+
+function resolveSlackToolActionName(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent,
+): string {
+  const raw =
+    update.toolName ??
+    (update.toolCallId
+      ? entry.toolNamesByCallId?.get(update.toolCallId)
+      : undefined) ??
+    update.command ??
+    (update.kind === "approval" ? "Tool approval" : "Tool call");
+  return sanitizeSlackProgressText(raw, SLACK_STREAM_CHUNK_TEXT_MAX);
+}
+
 function toSlackStreamTaskStatus(
   update: ChannelTurnProgressEvent,
 ): SlackStreamTaskStatus {
@@ -539,15 +569,17 @@ function toSlackStreamTaskStatus(
 }
 
 function buildSlackStreamProgressChunks(
+  entry: SlackProgressCardEntry,
   update: ChannelTurnProgressEvent,
 ): SlackStreamChunk[] {
-  const title = sanitizeSlackProgressText(
-    update.message,
-    SLACK_STREAM_CHUNK_TEXT_MAX,
-  );
+  const title = resolveSlackToolActionName(entry, update);
   if (!title) {
     return [];
   }
+  const details = sanitizeSlackProgressText(
+    update.message,
+    SLACK_STREAM_CHUNK_TEXT_MAX,
+  );
 
   return [
     {
@@ -555,12 +587,9 @@ function buildSlackStreamProgressChunks(
       id: "progress",
       title,
       status: toSlackStreamTaskStatus(update),
-      ...(update.toolName
+      ...(details && details !== title
         ? {
-            details: sanitizeSlackProgressText(
-              `Tool: ${update.toolName}`,
-              SLACK_STREAM_CHUNK_TEXT_MAX,
-            ),
+            details,
           }
         : {}),
     },
@@ -1261,29 +1290,35 @@ export function createSlackAdapter(
   }
 
   function buildSlackStartStreamArgs(
-    source: ChannelTurnSource,
+    entry: SlackProgressCardEntry,
     replyToMessageId: string,
   ): SlackStartStreamArgs {
+    const initialChunks = entry.latestUpdate
+      ? buildSlackStreamProgressChunks(entry, entry.latestUpdate)
+      : [];
     const args: SlackStartStreamArgs = {
-      channel: source.chatId,
+      channel: entry.source.chatId,
       thread_ts: replyToMessageId,
       task_display_mode: "dense",
-      chunks: [
-        {
-          type: "task_update",
-          id: "progress",
-          title: "Working",
-          status: "in_progress",
-        },
-      ],
+      chunks:
+        initialChunks.length > 0
+          ? initialChunks
+          : [
+              {
+                type: "task_update",
+                id: "progress",
+                title: "Using tools",
+                status: "in_progress",
+              },
+            ],
     };
-    const recipientTeamId = source.senderTeamId ?? botTeamId;
+    const recipientTeamId = entry.source.senderTeamId ?? botTeamId;
     if (
-      source.chatType === "channel" &&
-      isNonEmptyString(source.senderId) &&
+      entry.source.chatType === "channel" &&
+      isNonEmptyString(entry.source.senderId) &&
       isNonEmptyString(recipientTeamId)
     ) {
-      args.recipient_user_id = source.senderId;
+      args.recipient_user_id = entry.source.senderId;
       args.recipient_team_id = recipientTeamId;
     }
     return args;
@@ -1303,7 +1338,7 @@ export function createSlackAdapter(
       return false;
     }
     try {
-      const args = buildSlackStartStreamArgs(entry.source, replyToMessageId);
+      const args = buildSlackStartStreamArgs(entry, replyToMessageId);
       const response = await startStream.call(slackClient.chat, args);
       if (response.ok === false || !isNonEmptyString(response.ts)) {
         console.warn(
@@ -1331,7 +1366,7 @@ export function createSlackAdapter(
     if (!entry.streamTs || !entry.latestUpdate) {
       return true;
     }
-    const chunks = buildSlackStreamProgressChunks(entry.latestUpdate);
+    const chunks = buildSlackStreamProgressChunks(entry, entry.latestUpdate);
     if (chunks.length === 0) {
       return true;
     }
@@ -1597,6 +1632,7 @@ export function createSlackAdapter(
     entry.status = status;
     entry.latestText = progressText;
     entry.latestUpdate = options.update;
+    rememberSlackToolName(entry, options.update);
     entry.updatedAt = now;
     progressCardByReplyKey.set(key, entry);
 
@@ -2177,13 +2213,9 @@ export function createSlackAdapter(
       }
 
       if (event.type === "processing") {
-        await Promise.all(
-          getUniqueSlackProgressSources(event.sources).map((source) =>
-            upsertSlackProgressCard(source, "processing", "Working on it", {
-              force: true,
-            }),
-          ),
-        );
+        // Do not show a task card for every turn. The Slack task surface is
+        // reserved for actual tool activity; no-tool replies should render as
+        // the assistant response only.
         return;
       }
 
@@ -2221,6 +2253,9 @@ export function createSlackAdapter(
       event: ChannelTurnProgressEvent,
     ): Promise<void> {
       if (!running) {
+        return;
+      }
+      if (!isSlackToolActionProgress(event)) {
         return;
       }
       await Promise.all(
