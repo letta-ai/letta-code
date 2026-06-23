@@ -13,13 +13,13 @@ Capabilities vary by surface. TUI/headless may load tools, commands, events, UI,
 
 | Form | Path / shape | Use when |
 | --- | --- | --- |
-| Loose harness mod | `~/.letta/mods/foo.ts` | The customization should apply to local sessions on this machine |
-| Loose agent mod | `$MEMORY_DIR/mods/foo.ts` | The behavior should travel with one agent's MemFS/memory |
+| Harness mod file | `~/.letta/mods/foo.ts` | The customization should apply to local sessions on this machine |
+| Agent mod file | `$MEMORY_DIR/mods/foo.ts` | The behavior should travel with one agent's MemFS/memory |
 | Packaged mod | npm package with `package.json#letta` | The mod should be reusable/distributable or needs package dependencies |
 
-Harness mods load first. Agent mods load after harness mods. When command/tool/provider/permission/status IDs collide, the agent mod shadows the harness mod. Avoid collisions unless intentionally overriding behavior.
+Harness mod files load first. Agent mod files load after harness mod files. When command/tool/provider/permission/status IDs collide, the agent mod file shadows the harness mod file. Avoid collisions unless intentionally overriding behavior.
 
-Use a single-file loose mod by default. Use a package when the user asks for distribution, installability, or dependencies.
+Use a mod file by default. Use a package when the user asks for distribution, installability, or dependencies.
 
 ## Choose the right capability
 
@@ -41,8 +41,8 @@ Default to a **tool** when the model should decide when to use the capability. D
 ## Workflow
 
 1. Pick the target form and inspect the relevant location before editing:
-   - loose harness mod: `~/.letta/mods/`
-   - loose agent mod: `$MEMORY_DIR/mods/`
+   - harness mod file: `~/.letta/mods/`
+   - agent mod file: `$MEMORY_DIR/mods/`
    - packaged mod: the package source directory
 2. Preserve unrelated mod code. Prefer a focused new file if merging would be messy.
 3. Choose the mod shape and load only the needed recipe:
@@ -54,7 +54,7 @@ Default to a **tool** when the model should decide when to use the capability. D
    - panels/status/capabilities: `references/ui.md`
    - complex plan-mode composition: `references/plan-mode.md`
 4. For multi-capability or stateful mods, also read `references/architecture.md`.
-5. Write a single-file loose mod unless the user asks for a package or something larger.
+5. Write a single-file mod unless the user asks for a package or something larger.
 6. Return disposers for registered providers/commands/tools/events, timers, subscriptions, and panels that should close on reload.
 7. Do a basic review: valid names, descriptions present, schemas are object schemas, optional capabilities guarded, scoped APIs used, cleanup returned.
 8. Tell the user the absolute file path changed and to run `/reload`. If a mod breaks startup or command handling, recover with `letta --no-mods` or `LETTA_DISABLE_MODS=1 letta`.
@@ -176,7 +176,7 @@ Catalog requirements:
 - Do not create project mods.
 - Custom provider mods are local-backend/local-agent only. They do not add providers for Constellation/cloud agents.
 - Provider mods may run in a provider-only listener context; keep provider registration independent from commands/tools/UI and guard everything else.
-- Loose mods should not assume extra npm packages are available. Packaged mods may declare dependencies, but should avoid unnecessary dependencies.
+- Mod files should not assume extra npm packages are available. Packaged mods may declare dependencies, but should avoid unnecessary dependencies.
 - Do not do surprising side effects on startup; mods activate on app start and `/reload`.
 - Keep user-facing output short and intentional.
 - Prefer Node/Bun standard APIs (`node:child_process`, `node:fs`, etc.) for local work.
