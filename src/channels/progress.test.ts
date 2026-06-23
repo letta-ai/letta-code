@@ -58,6 +58,7 @@ test("channel progress adds semantic web_search titles from safe args", () => {
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "web_search",
+      toolDetails: "Input: articles for “letta blog”",
       toolTitle: "Searching articles for “letta blog”",
     },
   ]);
