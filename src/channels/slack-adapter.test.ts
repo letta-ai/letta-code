@@ -136,9 +136,24 @@ class FakeSlackWriteClient {
   readonly chat = {
     postMessage: mock(async () => ({ ts: "1712800000.000100" })),
     update: mock(async () => ({ ts: "1712800000.000100" })),
-    startStream: mock(async () => ({ ok: true, ts: "1712800000.000300" })),
-    appendStream: mock(async () => ({ ok: true, ts: "1712800000.000300" })),
-    stopStream: mock(async () => ({ ok: true, ts: "1712800000.000300" })),
+    startStream: mock(
+      async (): Promise<{ ok: boolean; ts?: string; error?: string }> => ({
+        ok: true,
+        ts: "1712800000.000300",
+      }),
+    ),
+    appendStream: mock(
+      async (): Promise<{ ok: boolean; ts?: string; error?: string }> => ({
+        ok: true,
+        ts: "1712800000.000300",
+      }),
+    ),
+    stopStream: mock(
+      async (): Promise<{ ok: boolean; ts?: string; error?: string }> => ({
+        ok: true,
+        ts: "1712800000.000300",
+      }),
+    ),
   };
   readonly assistant = {
     threads: {
@@ -1704,6 +1719,96 @@ test("slack adapter streams native task progress and clears thread status", asyn
     channel_id: "C123",
     thread_ts: "1712790000.000050",
     status: "",
+  });
+});
+
+test("slack adapter closes an open stream before falling back after append failure", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  writeClient?.chat.appendStream.mockResolvedValueOnce({
+    ok: false,
+    error: "stream_closed",
+  });
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Searching files",
+    toolCallId: "call-1",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: [
+      {
+        type: "task_update",
+        id: "turn",
+        title: "Searching files",
+        status: "complete",
+      },
+      {
+        type: "markdown_text",
+        text: "Working on it…",
+      },
+    ],
+  });
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    thread_ts: "1712790000.000050",
+    text: "Letta Code is working on this thread.\nStatus: Searching files",
+    blocks: expect.arrayContaining([
+      expect.objectContaining({ type: "section" }),
+      expect.objectContaining({ type: "context" }),
+    ]),
+  });
+  expect(writeClient?.chat.update).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000100",
+    text: "Letta Code finished this turn.\nStatus: Completed",
+    blocks: expect.arrayContaining([
+      expect.objectContaining({ type: "section" }),
+      expect.objectContaining({ type: "context" }),
+    ]),
   });
 });
 

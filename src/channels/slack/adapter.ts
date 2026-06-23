@@ -1645,6 +1645,10 @@ export function createSlackAdapter(
       } else if (entry.mode === "stream") {
         const didAppend = await appendSlackProgressStream(entry);
         if (!didAppend) {
+          // If appending fails after Slack accepted the stream, close that
+          // native stream before switching surfaces. Otherwise Slack can keep
+          // showing an active task card while the fallback card continues.
+          await stopSlackProgressStream(entry);
           entry.mode = "fallback";
           await flushSlackFallbackProgressCard(entry, replyToMessageId, text);
         }
