@@ -132,6 +132,38 @@ describe("mods subcommand", () => {
     );
   });
 
+  test("lists legacy extensions alongside harness mods", () => {
+    const root = createTempDir();
+    const harnessMods = join(root, "mods");
+    const legacyExtensions = join(root, "extensions");
+    mkdirSync(harnessMods, { recursive: true });
+    mkdirSync(legacyExtensions, { recursive: true });
+    writeFileSync(join(harnessMods, "web-search.ts"), "export {};\n");
+    writeFileSync(join(legacyExtensions, "review.ts"), "export {};\n");
+
+    const result = listMods({
+      globalModsDirectory: harnessMods,
+      legacyGlobalExtensionsDirectory: legacyExtensions,
+    });
+
+    expect(result.legacyHarness?.files).toEqual([
+      join(legacyExtensions, "review.ts"),
+    ]);
+    expect(result.harness.files).toEqual([join(harnessMods, "web-search.ts")]);
+    expect(formatModsList(result)).toBe(
+      [
+        "Legacy extensions",
+        `  enabled  ${join(legacyExtensions, "review.ts")}`,
+        "",
+        "Harness mods",
+        `  enabled  ${join(harnessMods, "web-search.ts")}`,
+        "",
+        "Installed packages",
+        "  (none)",
+      ].join("\n"),
+    );
+  });
+
   test("lists agent loose mods before harness loose mods", () => {
     const root = createTempDir();
     const harnessMods = join(root, "mods");
