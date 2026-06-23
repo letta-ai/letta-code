@@ -1531,7 +1531,7 @@ test("slack adapter can add reactions to messages", async () => {
   });
 });
 
-test("slack adapter adds eyes while a queued turn is processing, then swaps to checkmark on completion", async () => {
+test("slack adapter does not add lifecycle reactions for rich progress turns", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -1578,21 +1578,8 @@ test("slack adapter adds eyes while a queued turn is processing, then swaps to c
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(1, {
-    channel: "C123",
-    timestamp: "1712800000.000100",
-    name: "eyes",
-  });
-  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
-    channel: "C123",
-    timestamp: "1712800000.000100",
-    name: "eyes",
-  });
-  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(2, {
-    channel: "C123",
-    timestamp: "1712800000.000100",
-    name: "white_check_mark",
-  });
+  expect(writeClient?.reactions.add).not.toHaveBeenCalled();
+  expect(writeClient?.reactions.remove).not.toHaveBeenCalled();
 });
 
 test("slack adapter streams native task progress and clears thread status", async () => {
@@ -1700,8 +1687,24 @@ test("slack adapter streams native task progress and clears thread status", asyn
         status: "complete",
       },
       {
-        type: "markdown_text",
-        text: "<https://app.letta.com/chat/agent-1?conversation=conv-1|Open conversation> for details.",
+        type: "blocks",
+        blocks: [
+          {
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Open conversation",
+                  emoji: false,
+                },
+                url: "https://app.letta.com/chat/agent-1?conversation=conv-1",
+                action_id: "open_conversation",
+              },
+            ],
+          },
+        ],
       },
     ],
   });
@@ -1864,127 +1867,6 @@ test("slack adapter falls back to a Block Kit progress card when streaming is un
   });
 });
 
-test("slack adapter can suppress the completed checkmark while preserving queued eyes", async () => {
-  const adapter = createSlackAdapter({
-    ...slackAccountDefaults,
-    channel: "slack",
-    enabled: true,
-    mode: "socket",
-    botToken: "xoxb-test-token-1234567890",
-    appToken: "xapp-test-token-1234567890",
-    dmPolicy: "pairing",
-    allowedUsers: [],
-    showCompletedReaction: false,
-  });
-
-  await adapter.start();
-
-  await adapter.handleTurnLifecycleEvent?.({
-    type: "queued",
-    source: {
-      channel: "slack",
-      accountId: "slack-test-account",
-      chatId: "C123",
-      chatType: "channel",
-      messageId: "1712800000.000150",
-      threadId: "1712790000.000050",
-      agentId: "agent-1",
-      conversationId: "conv-1",
-    },
-  });
-
-  await adapter.handleTurnLifecycleEvent?.({
-    type: "finished",
-    batchId: "batch-1",
-    outcome: "completed",
-    sources: [
-      {
-        channel: "slack",
-        accountId: "slack-test-account",
-        chatId: "C123",
-        chatType: "channel",
-        messageId: "1712800000.000150",
-        threadId: "1712790000.000050",
-        agentId: "agent-1",
-        conversationId: "conv-1",
-      },
-    ],
-  });
-
-  const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.reactions.add).toHaveBeenCalledTimes(1);
-  expect(writeClient?.reactions.add).toHaveBeenCalledWith({
-    channel: "C123",
-    timestamp: "1712800000.000150",
-    name: "eyes",
-  });
-  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
-    channel: "C123",
-    timestamp: "1712800000.000150",
-    name: "eyes",
-  });
-});
-
-test("slack adapter swaps queued turns to x when the turn fails", async () => {
-  const adapter = createSlackAdapter({
-    ...slackAccountDefaults,
-    channel: "slack",
-    enabled: true,
-    mode: "socket",
-    botToken: "xoxb-test-token-1234567890",
-    appToken: "xapp-test-token-1234567890",
-    dmPolicy: "pairing",
-    allowedUsers: [],
-  });
-
-  await adapter.start();
-
-  await adapter.handleTurnLifecycleEvent?.({
-    type: "queued",
-    source: {
-      channel: "slack",
-      accountId: "slack-test-account",
-      chatId: "D123",
-      chatType: "direct",
-      messageId: "1712800000.000200",
-      threadId: null,
-      agentId: "agent-1",
-      conversationId: "conv-1",
-    },
-  });
-
-  await adapter.handleTurnLifecycleEvent?.({
-    type: "finished",
-    batchId: "batch-2",
-    outcome: "error",
-    sources: [
-      {
-        channel: "slack",
-        accountId: "slack-test-account",
-        chatId: "D123",
-        chatType: "direct",
-        messageId: "1712800000.000200",
-        threadId: null,
-        agentId: "agent-1",
-        conversationId: "conv-1",
-      },
-    ],
-  });
-
-  const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
-    channel: "D123",
-    timestamp: "1712800000.000200",
-    name: "eyes",
-  });
-  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(2, {
-    channel: "D123",
-    timestamp: "1712800000.000200",
-    name: "x",
-  });
-  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
-});
-
 test("slack adapter posts the lifecycle error back into the same thread as a code block", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -2034,11 +1916,8 @@ test("slack adapter posts the lifecycle error back into the same thread as a cod
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.reactions.add).toHaveBeenNthCalledWith(2, {
-    channel: "C123",
-    timestamp: "1712800000.000300",
-    name: "x",
-  });
+  expect(writeClient?.reactions.add).not.toHaveBeenCalled();
+  expect(writeClient?.reactions.remove).not.toHaveBeenCalled();
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
     text: "Turn failed:\n```\nBoom: something went wrong\nsecond line\n```\n\nRun ID: run-123",

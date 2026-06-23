@@ -124,6 +124,13 @@ type SlackTextObject = {
   emoji?: boolean;
 };
 
+type SlackBlockElement = {
+  type: "button";
+  text: SlackTextObject;
+  url: string;
+  action_id: string;
+};
+
 type SlackBlock =
   | {
       type: "section";
@@ -135,6 +142,10 @@ type SlackBlock =
     }
   | {
       type: "divider";
+    }
+  | {
+      type: "actions";
+      elements: SlackBlockElement[];
     };
 
 type SlackStreamTaskStatus = "pending" | "in_progress" | "complete" | "error";
@@ -349,11 +360,9 @@ function normalizeSlackReactionName(value: string): string {
 
 const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
 const SLACK_INGRESS_DEDUPE_MAX = 2_000;
-const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
-const SLACK_LIFECYCLE_STATE_MAX = 2_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
 const SLACK_PROGRESS_CARD_TEXT_MAX = 300;
-const SLACK_PROGRESS_CARD_STATE_TTL_MS = SLACK_LIFECYCLE_STATE_TTL_MS;
+const SLACK_PROGRESS_CARD_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
 const SLACK_ASSISTANT_STATUS_TEXT_MAX = 100;
 const SLACK_STREAM_CHUNK_TEXT_MAX = 256;
@@ -366,7 +375,6 @@ const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
 const SLACK_AGENT_THREAD_TTL_MS = 24 * 60 * 60 * 1000;
 const SLACK_AGENT_THREAD_MAX = 2_000;
 
-type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
 type SlackProgressCardState =
   | "processing"
   | "completed"
@@ -487,15 +495,47 @@ function formatSlackFallbackProgressBlocks(
 function buildSlackConversationReference(
   source: ChannelTurnSource,
 ): string | null {
+  const url = buildSlackConversationUrl(source);
+  return url ? `<${url}|Open conversation>` : null;
+}
+
+function buildSlackConversationUrl(source: ChannelTurnSource): string | null {
   if (isLocalAgentId(source.agentId)) {
-    return source.conversationId
-      ? `Conversation: ${source.conversationId}`
-      : null;
+    return null;
   }
   const url = buildChatUrl(source.agentId, {
     conversationId: source.conversationId,
   });
-  return `<${url}|Open conversation>`;
+  return url;
+}
+
+function buildSlackConversationActionChunk(
+  source: ChannelTurnSource,
+): SlackStreamChunk | null {
+  const url = buildSlackConversationUrl(source);
+  if (!url) {
+    return null;
+  }
+  return {
+    type: "blocks",
+    blocks: [
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            text: {
+              type: "plain_text",
+              text: "Open conversation",
+              emoji: false,
+            },
+            url,
+            action_id: "open_conversation",
+          },
+        ],
+      },
+    ],
+  };
 }
 
 function formatSlackStreamMarkdown(entry: SlackProgressCardEntry): string {
@@ -514,6 +554,36 @@ function formatSlackStreamMarkdown(entry: SlackProgressCardEntry): string {
     return `I hit an error.${suffix}`;
   }
   return "Continuing in the fallback progress card.";
+}
+
+function buildTerminalSlackStreamChunks(
+  entry: SlackProgressCardEntry,
+  terminalTaskStatus: SlackStreamTaskStatus,
+): SlackStreamChunk[] {
+  const chunks: SlackStreamChunk[] = [
+    {
+      type: "task_update",
+      id: "progress",
+      title: sanitizeSlackProgressText(
+        entry.latestText,
+        SLACK_STREAM_CHUNK_TEXT_MAX,
+      ),
+      status: terminalTaskStatus,
+    },
+  ];
+  const actionChunk =
+    entry.status === "completed"
+      ? buildSlackConversationActionChunk(entry.source)
+      : null;
+  if (actionChunk) {
+    chunks.push(actionChunk);
+  } else {
+    chunks.push({
+      type: "markdown_text",
+      text: formatSlackStreamMarkdown(entry),
+    });
+  }
+  return chunks;
 }
 
 function toSlackStreamTaskStatus(
@@ -925,11 +995,6 @@ export function createSlackAdapter(
   // Tracks threads the agent has sent messages to so that inbound replies in
   // those threads are auto-routed without requiring an explicit @mention.
   const agentThreadTracker = createAgentThreadTracker();
-  const lifecycleStateByMessageKey = new Map<
-    string,
-    { state: SlackLifecycleState; updatedAt: number }
-  >();
-  const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
   const progressCardByReplyKey = new Map<string, SlackProgressCardEntry>();
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
 
@@ -1125,17 +1190,6 @@ export function createSlackAdapter(
     }
   }
 
-  function getLifecycleMessageKey(source: ChannelTurnSource): string | null {
-    if (
-      source.channel !== "slack" ||
-      !isNonEmptyString(source.chatId) ||
-      !isNonEmptyString(source.messageId)
-    ) {
-      return null;
-    }
-    return `${source.chatId}:${source.messageId}`;
-  }
-
   function getLifecycleReplyKey(source: ChannelTurnSource): string | null {
     if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
       return null;
@@ -1155,55 +1209,6 @@ export function createSlackAdapter(
       codeBlock: true,
       maxLength: SLACK_LIFECYCLE_ERROR_TEXT_MAX,
       runId,
-    });
-  }
-
-  function pruneLifecycleState(now: number = Date.now()): void {
-    for (const [key, entry] of lifecycleStateByMessageKey) {
-      if (entry.updatedAt + SLACK_LIFECYCLE_STATE_TTL_MS <= now) {
-        lifecycleStateByMessageKey.delete(key);
-      }
-    }
-
-    if (lifecycleStateByMessageKey.size <= SLACK_LIFECYCLE_STATE_MAX) {
-      return;
-    }
-
-    const oldestEntries = Array.from(lifecycleStateByMessageKey.entries()).sort(
-      (a, b) => a[1].updatedAt - b[1].updatedAt,
-    );
-    const overflowCount =
-      lifecycleStateByMessageKey.size - SLACK_LIFECYCLE_STATE_MAX;
-    for (let index = 0; index < overflowCount; index += 1) {
-      const entry = oldestEntries[index];
-      if (entry) {
-        lifecycleStateByMessageKey.delete(entry[0]);
-      }
-    }
-  }
-
-  async function sendLifecycleReaction(
-    source: ChannelTurnSource,
-    emoji: string,
-    removeReaction = false,
-  ): Promise<void> {
-    if (!isNonEmptyString(source.messageId)) {
-      return;
-    }
-    await ensureApp();
-    const slackClient = await ensureWriteClient();
-    if (removeReaction) {
-      await slackClient.reactions.remove({
-        channel: source.chatId,
-        timestamp: source.messageId,
-        name: emoji,
-      });
-      return;
-    }
-    await slackClient.reactions.add({
-      channel: source.chatId,
-      timestamp: source.messageId,
-      name: emoji,
     });
   }
 
@@ -1444,21 +1449,7 @@ export function createSlackAdapter(
         : entry.status === "cancelled"
           ? "error"
           : "complete";
-    const chunks: SlackStreamChunk[] = [
-      {
-        type: "task_update",
-        id: "progress",
-        title: sanitizeSlackProgressText(
-          entry.latestText,
-          SLACK_STREAM_CHUNK_TEXT_MAX,
-        ),
-        status: terminalTaskStatus,
-      },
-      {
-        type: "markdown_text",
-        text: formatSlackStreamMarkdown(entry),
-      },
-    ];
+    const chunks = buildTerminalSlackStreamChunks(entry, terminalTaskStatus);
     try {
       const response = await stopStream.call(slackClient.chat, {
         channel: entry.source.chatId,
@@ -1752,77 +1743,6 @@ export function createSlackAdapter(
         await clearSlackAssistantThreadStatus(source);
       }),
     );
-  }
-
-  function scheduleLifecycleTransition(
-    source: ChannelTurnSource,
-    nextState: SlackLifecycleState,
-  ): Promise<void> | null {
-    const key = getLifecycleMessageKey(source);
-    if (!key) {
-      return null;
-    }
-
-    const previous =
-      lifecycleOperationByMessageKey.get(key) ?? Promise.resolve();
-    const operation = previous
-      .catch(() => {})
-      .then(async () => {
-        pruneLifecycleState();
-        const currentState = lifecycleStateByMessageKey.get(key)?.state;
-        if (currentState === nextState) {
-          lifecycleStateByMessageKey.set(key, {
-            state: nextState,
-            updatedAt: Date.now(),
-          });
-          return;
-        }
-
-        if (nextState === "queued") {
-          if (!currentState) {
-            await sendLifecycleReaction(source, "eyes");
-            lifecycleStateByMessageKey.set(key, {
-              state: nextState,
-              updatedAt: Date.now(),
-            });
-          }
-          return;
-        }
-
-        if (currentState === "queued") {
-          try {
-            await sendLifecycleReaction(source, "eyes", true);
-          } catch {}
-        }
-
-        if (
-          nextState !== "completed" ||
-          config.showCompletedReaction !== false
-        ) {
-          await sendLifecycleReaction(
-            source,
-            nextState === "completed" ? "white_check_mark" : "x",
-          );
-        }
-        lifecycleStateByMessageKey.set(key, {
-          state: nextState,
-          updatedAt: Date.now(),
-        });
-      })
-      .catch((error) => {
-        console.warn(
-          `[Slack] Failed to update lifecycle reaction for ${key}:`,
-          error instanceof Error ? error.message : error,
-        );
-      })
-      .finally(() => {
-        if (lifecycleOperationByMessageKey.get(key) === operation) {
-          lifecycleOperationByMessageKey.delete(key);
-        }
-      });
-
-    lifecycleOperationByMessageKey.set(key, operation);
-    return operation;
   }
 
   function markIngressMessageSeen(
@@ -2295,8 +2215,6 @@ export function createSlackAdapter(
       botUserId = null;
       botTeamId = null;
       seenIngressMessageKeys.clear();
-      lifecycleStateByMessageKey.clear();
-      lifecycleOperationByMessageKey.clear();
       for (const entry of progressCardByReplyKey.values()) {
         if (entry.pendingTimer) {
           clearTimeout(entry.pendingTimer);
@@ -2322,7 +2240,6 @@ export function createSlackAdapter(
       }
 
       if (event.type === "queued") {
-        await scheduleLifecycleTransition(event.source, "queued");
         return;
       }
 
@@ -2337,18 +2254,6 @@ export function createSlackAdapter(
         return;
       }
 
-      const nextState: SlackLifecycleState =
-        event.outcome === "completed"
-          ? "completed"
-          : event.outcome === "cancelled"
-            ? "cancelled"
-            : "error";
-
-      await Promise.all(
-        event.sources.map((source) =>
-          scheduleLifecycleTransition(source, nextState),
-        ),
-      );
       await finishSlackProgressCards(event.sources, event.outcome);
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
