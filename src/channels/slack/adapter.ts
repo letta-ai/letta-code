@@ -139,6 +139,12 @@ type SlackBlock =
 
 type SlackStreamTaskStatus = "pending" | "in_progress" | "complete" | "error";
 
+type SlackStreamTaskSource = {
+  type: "url";
+  url: string;
+  text: string;
+};
+
 type SlackStreamChunk =
   | {
       type: "markdown_text";
@@ -151,6 +157,7 @@ type SlackStreamChunk =
       status: SlackStreamTaskStatus;
       details?: string;
       output?: string;
+      sources?: SlackStreamTaskSource[];
     }
   | {
       type: "plan_update";
@@ -379,6 +386,7 @@ type SlackProgressCardEntry = {
   latestText: string;
   latestUpdate?: ChannelTurnProgressEvent;
   toolNamesByCallId?: Map<string, string>;
+  hiddenToolCallIds?: Set<string>;
   lastSentText?: string;
   lastSentAt: number;
   pendingTimer?: ReturnType<typeof setTimeout>;
@@ -492,11 +500,11 @@ function buildSlackConversationUrl(source: ChannelTurnSource): string | null {
   return url;
 }
 
-function buildSlackConversationTaskOutput(
+function buildSlackConversationTaskSources(
   source: ChannelTurnSource,
-): string | null {
+): SlackStreamTaskSource[] | null {
   const url = buildSlackConversationUrl(source);
-  return url ? `<${url}|Open conversation>` : null;
+  return url ? [{ type: "url", url, text: "Open conversation" }] : null;
 }
 
 function buildTerminalSlackStreamChunks(
@@ -514,9 +522,7 @@ function buildTerminalSlackStreamChunks(
       status: terminalTaskStatus,
       ...(entry.status === "completed"
         ? {
-            output:
-              buildSlackConversationTaskOutput(entry.source) ??
-              "Conversation complete.",
+            sources: buildSlackConversationTaskSources(entry.source) ?? [],
           }
         : {}),
     },
@@ -528,11 +534,21 @@ function isSlackToolActionProgress(update: ChannelTurnProgressEvent): boolean {
   return update.kind === "tool" || update.kind === "approval";
 }
 
+function isSlackHiddenToolName(toolName: string): boolean {
+  return toolName.toLowerCase() === "messagechannel";
+}
+
 function rememberSlackToolName(
   entry: SlackProgressCardEntry,
   update: ChannelTurnProgressEvent | undefined,
 ): void {
   if (!update?.toolCallId || !update.toolName) {
+    return;
+  }
+  if (isSlackHiddenToolName(update.toolName)) {
+    entry.hiddenToolCallIds ??= new Set();
+    entry.hiddenToolCallIds.add(update.toolCallId);
+    entry.toolNamesByCallId?.delete(update.toolCallId);
     return;
   }
   entry.toolNamesByCallId ??= new Map();
@@ -542,14 +558,36 @@ function rememberSlackToolName(
 function resolveSlackToolActionName(
   entry: SlackProgressCardEntry,
   update: ChannelTurnProgressEvent,
-): string {
+): string | null {
+  if (update.toolCallId && entry.hiddenToolCallIds?.has(update.toolCallId)) {
+    return null;
+  }
+  if (update.toolName) {
+    if (isSlackHiddenToolName(update.toolName)) {
+      return null;
+    }
+    return sanitizeSlackProgressText(
+      update.toolName,
+      SLACK_STREAM_CHUNK_TEXT_MAX,
+    );
+  }
+  const rememberedName = update.toolCallId
+    ? entry.toolNamesByCallId?.get(update.toolCallId)
+    : undefined;
+  if (rememberedName) {
+    return sanitizeSlackProgressText(
+      rememberedName,
+      SLACK_STREAM_CHUNK_TEXT_MAX,
+    );
+  }
+  if (update.kind === "tool") {
+    return null;
+  }
   const raw =
-    update.toolName ??
-    (update.toolCallId
-      ? entry.toolNamesByCallId?.get(update.toolCallId)
-      : undefined) ??
-    update.command ??
-    (update.kind === "approval" ? "Tool approval" : "Tool call");
+    update.command ?? (update.kind === "approval" ? "Tool approval" : null);
+  if (!raw) {
+    return null;
+  }
   return sanitizeSlackProgressText(raw, SLACK_STREAM_CHUNK_TEXT_MAX);
 }
 
@@ -576,10 +614,6 @@ function buildSlackStreamProgressChunks(
   if (!title) {
     return [];
   }
-  const details = sanitizeSlackProgressText(
-    update.message,
-    SLACK_STREAM_CHUNK_TEXT_MAX,
-  );
 
   return [
     {
@@ -587,11 +621,6 @@ function buildSlackStreamProgressChunks(
       id: "progress",
       title,
       status: toSlackStreamTaskStatus(update),
-      ...(details && details !== title
-        ? {
-            details,
-          }
-        : {}),
     },
   ];
 }
@@ -1619,8 +1648,20 @@ export function createSlackAdapter(
     }
     const now = Date.now();
     pruneSlackProgressCardState(now);
+    const existingEntry = progressCardByReplyKey.get(key);
+    if (options.update?.kind === "tool") {
+      if (
+        options.update.toolName &&
+        isSlackHiddenToolName(options.update.toolName)
+      ) {
+        return;
+      }
+      if (!existingEntry && !options.update.toolName) {
+        return;
+      }
+    }
     const entry =
-      progressCardByReplyKey.get(key) ??
+      existingEntry ??
       ({
         source,
         status,
