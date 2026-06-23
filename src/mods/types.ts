@@ -422,10 +422,16 @@ export type ModToolRunResult =
       success?: boolean;
     };
 
+export type ModSecretResolver = (
+  name: string,
+  options?: { envFallback?: boolean },
+) => Promise<string | null>;
+
 export interface ModToolRunContext extends ModInvocationContext {
   args: Record<string, unknown>;
   toolCallId: string | null;
   signal: AbortSignal;
+  secret: ModSecretResolver;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   conversation: ModConversationHandle;
 }
