@@ -621,6 +621,7 @@ describe("local managed mod package installer", () => {
     writeFileSync(path.join(first.root, "stale.ts"), "stale\n");
     const spawnCalls: Array<{ args: string[]; cmd: string }> = [];
     __testOverrideNpmManagedModPackageInstaller({
+      platform: "linux",
       spawnImpl: (cmd, args, options) => {
         spawnCalls.push({ args, cmd });
         if (!options.cwd) throw new Error("expected cwd");
