@@ -116,6 +116,36 @@ describe("local managed mod package installer", () => {
     ]);
   });
 
+  test("first install removes copied package root when registry write fails", () => {
+    if (process.platform === "win32") return;
+    const root = createTempDir();
+    const packageRoot = path.join(root, "source");
+    const modsRoot = path.join(root, "mods");
+    mkdirSync(modsRoot, { recursive: true });
+    writeFileSync(
+      path.join(modsRoot, "packages.json"),
+      '{\n  "packages": []\n}\n',
+    );
+    writeLocalPackage({ packageRoot });
+    const registryPath = path.join(modsRoot, "packages.json");
+    chmodSync(registryPath, 0o444);
+
+    try {
+      expect(() =>
+        installLocalManagedModPackage({
+          modsRoot,
+          packageDirectory: packageRoot,
+        }),
+      ).toThrow();
+    } finally {
+      chmodSync(registryPath, 0o644);
+    }
+    expect(
+      existsSync(path.join(modsRoot, "packages", "npm", "@caren", "my-mod")),
+    ).toBe(false);
+    expect(readFileSync(registryPath, "utf8")).toBe('{\n  "packages": []\n}\n');
+  });
+
   test("reinstall replaces the package root and updates the same registry entry", () => {
     const root = createTempDir();
     const packageRoot = path.join(root, "source");

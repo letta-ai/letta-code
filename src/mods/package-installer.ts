@@ -246,7 +246,10 @@ function restoreDestinationIfNeeded(params: {
   backupRoot: string | null;
   destinationRoot: string;
 }): void {
-  if (!params.backupRoot || !existsSync(params.backupRoot)) return;
+  if (!params.backupRoot || !existsSync(params.backupRoot)) {
+    rmSync(params.destinationRoot, { force: true, recursive: true });
+    return;
+  }
   restoreDestination(params);
 }
 
@@ -294,6 +297,7 @@ export function installLocalManagedModPackage(params: {
     "tmp",
   );
   let backupRoot: string | null = null;
+  let destinationNeedsRollback = false;
 
   try {
     copyPackageDirectory(packageInfo.packageDirectory, stagingRoot);
@@ -301,8 +305,10 @@ export function installLocalManagedModPackage(params: {
       backupRoot = makeSiblingTempDirectory(destinationRoot, "backup");
       rmSync(backupRoot, { force: true, recursive: true });
       renameSync(destinationRoot, backupRoot);
+      destinationNeedsRollback = true;
     }
     renameSync(stagingRoot, destinationRoot);
+    destinationNeedsRollback = true;
     stagingRoot = null;
 
     try {
@@ -314,6 +320,7 @@ export function installLocalManagedModPackage(params: {
       });
       removeIfExists(backupRoot);
       backupRoot = null;
+      destinationNeedsRollback = false;
       return {
         capabilities: packageInfo.capabilities,
         entries: packageInfo.entries,
@@ -325,15 +332,20 @@ export function installLocalManagedModPackage(params: {
         version: packageInfo.version,
       };
     } catch (error) {
-      restoreDestinationIfNeeded({ backupRoot, destinationRoot });
-      backupRoot = null;
+      if (destinationNeedsRollback) {
+        restoreDestinationIfNeeded({ backupRoot, destinationRoot });
+        backupRoot = null;
+        destinationNeedsRollback = false;
+      }
       restoreRegistry(registrySnapshot.registryPath, registrySnapshot.contents);
       throw error;
     }
   } catch (error) {
     removeIfExists(stagingRoot);
-    restoreDestinationIfNeeded({ backupRoot, destinationRoot });
-    backupRoot = null;
+    if (destinationNeedsRollback) {
+      restoreDestinationIfNeeded({ backupRoot, destinationRoot });
+      backupRoot = null;
+    }
     throw error;
   }
 }
