@@ -415,7 +415,7 @@ export async function callArtifactServerFunction(input: {
   validateFunctionName(input.command.function_name);
 
   const appRoot = normalize(
-    join(input.memoryRoot, "external", input.command.app_name),
+    join(input.memoryRoot, "external", "artifacts", input.command.app_name),
   );
   ensureInsideRoot(input.memoryRoot, appRoot);
 
@@ -423,7 +423,7 @@ export async function callArtifactServerFunction(input: {
   const serverPath = resolveServerPath(serverRoot);
   if (!serverPath) {
     throw new Error(
-      `artifact_call: missing server/server.js for ${input.command.app_name}`,
+      `artifact_call: missing server/server.js for artifact ${input.command.app_name}`,
     );
   }
 

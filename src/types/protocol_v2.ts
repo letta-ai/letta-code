@@ -924,7 +924,7 @@ export interface DeleteMemoryFileCommand {
   commit_message?: string;
 }
 
-/** Call a function exported by external/<app_name>/server/server.js. */
+/** Call a function exported by external/artifacts/<app_name>/server/server.js. */
 export interface ArtifactCallCommand {
   type: "artifact_call";
   /** Echoed back in the response for request correlation. */

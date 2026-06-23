@@ -1,18 +1,19 @@
 # Letta Code artifact apps
 
-Artifact apps live in an agent's MemFS `external/` directory. They split browser UI from server-side state and logic so the same app can run in Desktop or in a browser connected to a remote Letta Code runtime.
+Artifact apps live in an agent's MemFS `external/artifacts/` directory. They split browser UI from server-side state and logic so the same app can run in Desktop or in a browser connected to a remote Letta Code runtime.
 
 ## Directory structure
 
 ```text
 external/
-  my-app/
-    ui/
-      index.html
-      # other browser assets
-    server/
-      data.json
-      server.js
+  artifacts/
+    my-app/
+      ui/
+        index.html
+        # other browser assets
+      server/
+        data.json
+        server.js
 ```
 
 ## Browser UI
