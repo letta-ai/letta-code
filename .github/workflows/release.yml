@@ -9,18 +9,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish:
+  detect-release:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    environment: npm-publish
     permissions:
-      contents: write
-      id-token: write
+      contents: read
+    outputs:
+      should_publish: ${{ steps.detect.outputs.should_publish }}
+      subject: ${{ steps.detect.outputs.subject }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: Detect release bump commit
@@ -43,27 +43,104 @@ jobs:
           echo "should_publish=true" >> $GITHUB_OUTPUT
           echo "subject=$SUBJECT" >> $GITHUB_OUTPUT
 
+  build-windows-sandbox-helper:
+    needs: detect-release
+    runs-on: windows-latest
+    if: needs.detect-release.outputs.should_publish == 'true'
+    environment: azure-artifact-signing
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build Windows sandbox helper
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/build-windows-sandbox-helper.ps1 -Arch ${{ matrix.arch }}
+
+      - name: Azure login for Trusted Signing
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TRUSTED_SIGNING_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_TRUSTED_SIGNING_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows sandbox helper with Azure Trusted Signing
+        uses: azure/trusted-signing-action@v0.5.11
+        with:
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+          cache-dependencies: false
+          files: ${{ github.workspace }}\vendor\windows-sandbox\win32-${{ matrix.arch }}\letta-windows-sandbox.exe
+
+      - name: Verify helper signature
+        shell: pwsh
+        run: |
+          $helper = "${{ github.workspace }}\vendor\windows-sandbox\win32-${{ matrix.arch }}\letta-windows-sandbox.exe"
+          $signature = Get-AuthenticodeSignature $helper
+          if ($signature.Status -ne "Valid") {
+            $signature | Format-List *
+            throw "Windows sandbox helper signature is not valid: $($signature.Status)"
+          }
+          Write-Host "Signed helper verified: $helper"
+
+      - name: Upload signed Windows sandbox helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-sandbox-helper-${{ matrix.arch }}
+          path: vendor/windows-sandbox/win32-${{ matrix.arch }}/letta-windows-sandbox.exe
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - detect-release
+      - build-windows-sandbox-helper
+    runs-on: ubuntu-latest
+    if: needs.detect-release.outputs.should_publish == 'true'
+    environment: npm-publish
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
       - name: Configure Git
-        if: steps.detect.outputs.should_publish == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Setup Bun
-        if: steps.detect.outputs.should_publish == 'true'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.0
 
       - name: Setup Node (bundled npm 11 for OIDC publishing)
-        if: steps.detect.outputs.should_publish == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: "24.13.0"
           registry-url: "https://registry.npmjs.org"
 
       - name: Derive release metadata
-        if: steps.detect.outputs.should_publish == 'true'
         id: version
         run: |
           set -euo pipefail
@@ -124,45 +201,54 @@ jobs:
           fi
 
       - name: Install dependencies
-        if: steps.detect.outputs.should_publish == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun install --frozen-lockfile
 
+      - name: Download signed Windows sandbox helper (x64)
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-sandbox-helper-x64
+          path: vendor/windows-sandbox/win32-x64
+
+      - name: Download signed Windows sandbox helper (arm64)
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-sandbox-helper-arm64
+          path: vendor/windows-sandbox/win32-arm64
+
       - name: Lint & Type Check
-        if: steps.detect.outputs.should_publish == 'true'
         run: bun run check
 
       - name: Build bundle
-        if: steps.detect.outputs.should_publish == 'true'
         run: bun run build
 
+      - name: Verify Windows sandbox helper packaging
+        run: bun run check:windows-sandbox-helper
+
       - name: Smoke test - help
-        if: steps.detect.outputs.should_publish == 'true'
         run: ./letta.js --help
 
       - name: Smoke test - version
-        if: steps.detect.outputs.should_publish == 'true'
         run: ./letta.js --version || echo "Version flag not implemented yet"
 
       - name: Integration smoke test (real API)
-        if: steps.detect.outputs.should_publish == 'true'
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
         run: ./letta.js --prompt "ping" --tools "" --permission-mode standard
 
       - name: Create release tag on merged main commit
-        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.tag_exists != 'true'
+        if: steps.version.outputs.tag_exists != 'true'
         run: |
           git tag "${{ steps.version.outputs.tag }}" "${{ github.sha }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
       - name: Publish to npm
-        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.npm_published != 'true'
+        if: steps.version.outputs.npm_published != 'true'
         run: npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
 
       - name: Create GitHub Release
-        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false' && steps.version.outputs.previous_tag != ''
+        if: steps.version.outputs.is_prerelease == 'false' && steps.version.outputs.previous_tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -174,7 +260,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Create GitHub Release (no previous tag)
-        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false' && steps.version.outputs.previous_tag == ''
+        if: steps.version.outputs.is_prerelease == 'false' && steps.version.outputs.previous_tag == ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}

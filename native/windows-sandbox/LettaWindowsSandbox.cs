@@ -1,10 +1,3 @@
-/**
- * Embedded source for the Windows filesystem sandbox helper.
- *
- * Kept as a string so the bundled npm package can compile the helper on demand
- * without needing to ship `src/` as loose files.
- */
-export const WINDOWS_SANDBOX_HELPER_SOURCE = String.raw`
 // Copyright 2026 Letta AI
 // SPDX-License-Identifier: Apache-2.0
 
@@ -686,4 +679,3 @@ public static class LettaWindowsSandbox
         return 1;
     }
 }
-`;

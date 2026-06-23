@@ -8,18 +8,28 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, delimiter, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FsSandboxPolicy } from "./policy.js";
-import { WINDOWS_SANDBOX_HELPER_SOURCE } from "./windows-helper-source.js";
 
 export const WINDOWS_SANDBOX_HELPER_NAME = "letta-windows-sandbox";
+export const WINDOWS_SANDBOX_HELPER_EXE = `${WINDOWS_SANDBOX_HELPER_NAME}.exe`;
+export const WINDOWS_SANDBOX_HELPER_ENV = "LETTA_WINDOWS_SANDBOX_HELPER";
+export const WINDOWS_SANDBOX_BUILD_FROM_SOURCE_ENV =
+  "LETTA_WINDOWS_SANDBOX_BUILD_FROM_SOURCE";
 
-const SOURCE_HASH = createHash("sha256")
-  .update(WINDOWS_SANDBOX_HELPER_SOURCE)
-  .digest("hex")
-  .slice(0, 16);
+const WINDOWS_HELPER_SOURCE_RELATIVE_PATH = join(
+  "native",
+  "windows-sandbox",
+  "LettaWindowsSandbox.cs",
+);
+const WINDOWS_HELPER_MANIFEST_RELATIVE_PATH = join(
+  "native",
+  "windows-sandbox",
+  "LettaWindowsSandbox.manifest",
+);
 
-export interface WindowsSandboxHelperPaths {
+export interface WindowsSandboxDevBuildPaths {
   dir: string;
   sourcePath: string;
   exePath: string;
@@ -32,16 +42,69 @@ export type WindowsSandboxHelperResult =
 export interface WindowsSandboxHelperOptions {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
+  packageRoot?: string;
+  platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
+  validateHelper?: (
+    helperPath: string,
+    env: NodeJS.ProcessEnv,
+  ) => WindowsSandboxHelperResult;
 }
 
-export function getWindowsSandboxHelperPaths(
+export function getWindowsSandboxPlatformTag(
+  platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch,
+): string | null {
+  if (platform !== "win32") return null;
+  if (arch === "x64" || arch === "arm64") return `win32-${arch}`;
+  return null;
+}
+
+export function getPackagedWindowsSandboxHelperPath(
+  options: {
+    packageRoot?: string;
+    platform?: NodeJS.Platform;
+    arch?: NodeJS.Architecture;
+  } = {},
+): string | null {
+  const tag = getWindowsSandboxPlatformTag(options.platform, options.arch);
+  if (!tag) return null;
+  return join(
+    options.packageRoot ?? resolvePackageRoot(),
+    "vendor",
+    "windows-sandbox",
+    tag,
+    WINDOWS_SANDBOX_HELPER_EXE,
+  );
+}
+
+export function getWindowsSandboxHelperSourcePath(
+  packageRoot: string = resolvePackageRoot(),
+): string {
+  return join(packageRoot, WINDOWS_HELPER_SOURCE_RELATIVE_PATH);
+}
+
+export function getWindowsSandboxHelperManifestPath(
+  packageRoot: string = resolvePackageRoot(),
+): string {
+  return join(packageRoot, WINDOWS_HELPER_MANIFEST_RELATIVE_PATH);
+}
+
+export function getWindowsSandboxDevBuildPaths(
   homeDir: string = homedir(),
-): WindowsSandboxHelperPaths {
+  sourcePath: string = getWindowsSandboxHelperSourcePath(),
+  sourceContent?: string,
+): WindowsSandboxDevBuildPaths {
+  const content = sourceContent ?? readFileSync(sourcePath, "utf8");
+  const sourceHash = createHash("sha256")
+    .update(content)
+    .digest("hex")
+    .slice(0, 16);
   const dir = join(homeDir, ".letta", "sandbox", "windows");
-  const stem = `${WINDOWS_SANDBOX_HELPER_NAME}-${SOURCE_HASH}`;
+  const stem = `${WINDOWS_SANDBOX_HELPER_NAME}-dev-${sourceHash}`;
   return {
     dir,
-    sourcePath: join(dir, `${stem}.cs`),
+    sourcePath,
     exePath: join(dir, `${stem}.exe`),
   };
 }
@@ -59,14 +122,85 @@ export function ensureWindowsSandboxHelper(
   options: WindowsSandboxHelperOptions = {},
 ): WindowsSandboxHelperResult {
   const env = options.env ?? process.env;
-  const paths = getWindowsSandboxHelperPaths(options.homeDir);
+  const validate = options.validateHelper ?? validateWindowsSandboxHelper;
+
+  const explicitHelper = env[WINDOWS_SANDBOX_HELPER_ENV]?.trim();
+  if (explicitHelper) {
+    return validateResolvedHelper(
+      explicitHelper,
+      env,
+      validate,
+      `explicit ${WINDOWS_SANDBOX_HELPER_ENV}`,
+    );
+  }
+
+  const packagedHelper = getPackagedWindowsSandboxHelperPath({
+    packageRoot: options.packageRoot,
+    platform: options.platform,
+    arch: options.arch,
+  });
+  if (packagedHelper && existsSync(packagedHelper)) {
+    return validateResolvedHelper(
+      packagedHelper,
+      env,
+      validate,
+      "packaged Windows sandbox helper",
+    );
+  }
+
+  if (isTruthyEnv(env[WINDOWS_SANDBOX_BUILD_FROM_SOURCE_ENV])) {
+    return ensureDevCompiledWindowsSandboxHelper(options, validate);
+  }
+
+  const expected = packagedHelper ?? "unsupported Windows architecture";
+  return {
+    ok: false,
+    reason:
+      `packaged Windows sandbox helper not found at ${expected}; ` +
+      `install a release with the signed helper or set ${WINDOWS_SANDBOX_BUILD_FROM_SOURCE_ENV}=1 for a dev build`,
+  };
+}
+
+function ensureDevCompiledWindowsSandboxHelper(
+  options: WindowsSandboxHelperOptions,
+  validate: (
+    helperPath: string,
+    env: NodeJS.ProcessEnv,
+  ) => WindowsSandboxHelperResult,
+): WindowsSandboxHelperResult {
+  const env = options.env ?? process.env;
+  const sourcePath = getWindowsSandboxHelperSourcePath(options.packageRoot);
+  const manifestPath = getWindowsSandboxHelperManifestPath(options.packageRoot);
 
   try {
+    if (!existsSync(sourcePath)) {
+      return {
+        ok: false,
+        reason: `Windows sandbox helper source not found for dev build at ${sourcePath}`,
+      };
+    }
+    if (!existsSync(manifestPath)) {
+      return {
+        ok: false,
+        reason: `Windows sandbox helper manifest not found for dev build at ${manifestPath}`,
+      };
+    }
+
+    const sourceContent = readFileSync(sourcePath, "utf8");
+    const paths = getWindowsSandboxDevBuildPaths(
+      options.homeDir,
+      sourcePath,
+      sourceContent,
+    );
     mkdirSync(paths.dir, { recursive: true });
-    writeSourceIfChanged(paths.sourcePath);
 
     if (existsSync(paths.exePath)) {
-      return validateWindowsSandboxHelper(paths.exePath, env);
+      return validateResolvedHelper(
+        paths.exePath,
+        env,
+        validate,
+        "dev-compiled Windows sandbox helper",
+      );
     }
 
     const compiler = findCSharpCompiler(env);
@@ -74,13 +208,21 @@ export function ensureWindowsSandboxHelper(
       return {
         ok: false,
         reason:
-          "no C# compiler found (looked for csc.exe on PATH and in .NET Framework directories)",
+          "no C# compiler found for Windows sandbox helper dev build (looked for csc.exe on PATH and in .NET Framework directories)",
       };
     }
 
+    const platformArg = csharpPlatformArg(options.arch ?? process.arch);
     const result = spawnSync(
       compiler,
-      ["/nologo", "/target:exe", `/out:${paths.exePath}`, paths.sourcePath],
+      [
+        "/nologo",
+        "/target:exe",
+        `/platform:${platformArg}`,
+        `/win32manifest:${manifestPath}`,
+        `/out:${paths.exePath}`,
+        paths.sourcePath,
+      ],
       { encoding: "utf8", env },
     );
     if (result.error || result.status !== 0) {
@@ -90,18 +232,23 @@ export function ensureWindowsSandboxHelper(
         .trim();
       return {
         ok: false,
-        reason: `failed to compile Windows sandbox helper with ${basename(compiler)}${
+        reason: `failed to compile Windows sandbox helper dev build with ${basename(compiler)}${
           detail ? `: ${detail}` : ""
         }`,
       };
     }
 
-    const validated = validateWindowsSandboxHelper(paths.exePath, env);
+    const validated = validateResolvedHelper(
+      paths.exePath,
+      env,
+      validate,
+      "dev-compiled Windows sandbox helper",
+    );
     if (!validated.ok) return validated;
     return {
       ok: true,
       helperPath: paths.exePath,
-      reason: `Windows sandbox helper compiled with ${basename(compiler)} and passed self-test`,
+      reason: `Windows sandbox helper dev build compiled with ${basename(compiler)} and passed self-test`,
     };
   } catch (error) {
     return {
@@ -109,6 +256,28 @@ export function ensureWindowsSandboxHelper(
       reason: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function validateResolvedHelper(
+  helperPath: string,
+  env: NodeJS.ProcessEnv,
+  validate: (
+    helperPath: string,
+    env: NodeJS.ProcessEnv,
+  ) => WindowsSandboxHelperResult,
+  label: string,
+): WindowsSandboxHelperResult {
+  if (!existsSync(helperPath)) {
+    return { ok: false, reason: `${label} not found at ${helperPath}` };
+  }
+
+  const result = validate(helperPath, env);
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    helperPath,
+    reason: `${label} passed self-test`,
+  };
 }
 
 export function validateWindowsSandboxHelper(
@@ -325,10 +494,30 @@ function pathEntries(env: NodeJS.ProcessEnv): string[] {
   return raw.split(pathDelimiter).filter(Boolean);
 }
 
-function writeSourceIfChanged(sourcePath: string): void {
-  if (existsSync(sourcePath)) {
-    const current = readFileSync(sourcePath, "utf8");
-    if (current === WINDOWS_SANDBOX_HELPER_SOURCE) return;
+function isTruthyEnv(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function csharpPlatformArg(arch: NodeJS.Architecture): string {
+  if (arch === "x64") return "x64";
+  // Not every inbox csc.exe supports /platform:arm64, and this helper is pure
+  // managed C# plus P/Invoke declarations, so AnyCPU is the safest dev fallback.
+  return "anycpu";
+}
+
+function resolvePackageRoot(): string {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    moduleDir,
+    dirname(moduleDir),
+    dirname(dirname(moduleDir)),
+    process.cwd(),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "package.json"))) return candidate;
   }
-  writeFileSync(sourcePath, WINDOWS_SANDBOX_HELPER_SOURCE, "utf8");
+
+  return process.cwd();
 }
