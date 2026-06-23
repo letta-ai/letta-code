@@ -1181,9 +1181,37 @@ export function handleMemoryProtocolCommand(
           command: parsed,
           agentId: parsed.agent_id,
           memoryRoot,
+          commitMode: "defer",
+          onDeferredCommitComplete: (result) => {
+            if (result.error) {
+              console.error(
+                `[Listen] artifact_call deferred data commit failed: app=${parsed.app_name} function=${parsed.function_name} request=${parsed.request_id} error=${
+                  result.error instanceof Error
+                    ? result.error.message
+                    : String(result.error)
+                }`,
+              );
+              return;
+            }
+            console.log(
+              `[Listen] artifact_call deferred data commit completed: app=${parsed.app_name} function=${parsed.function_name} request=${parsed.request_id} paths=${result.updatedPaths.length} commit_ms=${result.commitMs}`,
+            );
+            if (result.updatedPaths.length > 0) {
+              safeSocketSend(
+                socket,
+                {
+                  type: "memory_updated",
+                  affected_paths: result.updatedPaths,
+                  timestamp: Date.now(),
+                },
+                "listener_artifact_call_deferred_memory_updated_failed",
+                "listener_artifact_call",
+              );
+            }
+          },
         });
         console.log(
-          `[Listen] artifact_call succeeded: app=${parsed.app_name} function=${parsed.function_name} request=${parsed.request_id}`,
+          `[Listen] artifact_call succeeded: app=${parsed.app_name} function=${parsed.function_name} request=${parsed.request_id} total_ms=${artifactCall.timings.total_ms} load_ms=${artifactCall.timings.load_server_ms} run_ms=${artifactCall.timings.run_function_ms} commit_deferred=${artifactCall.timings.commit_deferred}`,
         );
         if (artifactCall.updatedPaths.length > 0) {
           safeSocketSend(
@@ -1207,6 +1235,9 @@ export function handleMemoryProtocolCommand(
             function_name: parsed.function_name,
             result: artifactCall.result,
             logs: artifactCall.logs,
+            timings: artifactCall.timings,
+            updated_paths: artifactCall.updatedPaths,
+            pending_updated_paths: artifactCall.pendingUpdatedPaths,
             success: true,
           },
           "listener_artifact_call_send_failed",

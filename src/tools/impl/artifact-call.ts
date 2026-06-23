@@ -98,6 +98,7 @@ export async function artifact_call(args: ArtifactCallArgs): Promise<{
       {
         result: result.result,
         updated_paths: result.updatedPaths,
+        timings: result.timings,
         logs: logLimit === 0 ? [] : result.logs.slice(-logLimit),
         logs_truncated: result.logs.length > logLimit,
         total_logs: result.logs.length,

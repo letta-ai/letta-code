@@ -17,6 +17,8 @@ interface ArtifactCallResult {
   result: unknown;
   logs: ArtifactServerLog[];
   updatedPaths: string[];
+  pendingUpdatedPaths: string[];
+  timings: ArtifactCallTimings;
 }
 
 interface ArtifactDataWrite {
@@ -61,7 +63,30 @@ interface CommitArtifactDataWritesInput {
   writes: ArtifactDataWrite[];
 }
 
+interface ArtifactCallTimings {
+  total_ms: number;
+  load_server_ms: number;
+  run_function_ms: number;
+  commit_ms: number;
+  commit_deferred: boolean;
+}
+
+type ArtifactDataCommitMode = "await" | "defer";
+
+interface DeferredArtifactDataCommitResult {
+  updatedPaths: string[];
+  error?: unknown;
+  commitMs: number;
+}
+
+interface ServerModuleUrlCacheEntry {
+  mtimeMs: number;
+  size: number;
+  href: string;
+}
+
 const ARTIFACT_SERVER_CALL_TIMEOUT_MS = 8_000;
+const serverModuleUrlCache = new Map<string, ServerModuleUrlCacheEntry>();
 
 const VALID_APP_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const VALID_FUNCTION_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -208,6 +233,14 @@ async function commitArtifactDataWrites(
   return commitResult.committed ? pathspecs : [];
 }
 
+function nowMs(): number {
+  return performance.now();
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.round(performance.now() - startedAt);
+}
+
 function stripMemoryMarkdownFrontmatter(content: string): string {
   if (!content.startsWith("---\n")) return content;
   const end = content.indexOf("\n---\n", 4);
@@ -250,9 +283,19 @@ function normalizeServerSource(source: string): string {
 
 async function getServerModuleUrl(serverPath: string): Promise<string> {
   const stats = await stat(serverPath);
+  const cached = serverModuleUrlCache.get(serverPath);
+  if (cached?.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+    return cached.href;
+  }
+
   if (!serverPath.endsWith(".md")) {
     const serverUrl = pathToFileURL(serverPath);
     serverUrl.searchParams.set("mtime", String(stats.mtimeMs));
+    serverModuleUrlCache.set(serverPath, {
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      href: serverUrl.href,
+    });
     return serverUrl.href;
   }
 
@@ -274,6 +317,11 @@ async function getServerModuleUrl(serverPath: string): Promise<string> {
   );
   const moduleUrl = pathToFileURL(modulePath);
   moduleUrl.searchParams.set("mtime", String(stats.mtimeMs));
+  serverModuleUrlCache.set(serverPath, {
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    href: moduleUrl.href,
+  });
   return moduleUrl.href;
 }
 
@@ -296,20 +344,11 @@ async function getServerApi(input: {
   serverPath: string;
   context: ArtifactServerContext;
 }): Promise<unknown> {
-  console.debug(`artifact_call: resolving module URL for ${input.serverPath}`);
   const moduleUrl = await getServerModuleUrl(input.serverPath);
-  console.debug(`artifact_call: importing module for ${input.serverPath}`);
   const moduleValue = await import(moduleUrl);
-  console.debug(`artifact_call: imported module for ${input.serverPath}`);
   const exportedValue = getExportedValue(moduleValue);
   if (typeof exportedValue === "function") {
-    console.debug(
-      `artifact_call: calling server factory for ${input.serverPath}`,
-    );
     const api = await exportedValue(input.context);
-    console.debug(
-      `artifact_call: server factory returned for ${input.serverPath}`,
-    );
     return api;
   }
   return exportedValue;
@@ -410,7 +449,14 @@ export async function callArtifactServerFunction(input: {
   command: ArtifactCallCommand;
   agentId: string;
   memoryRoot: string;
+  commitMode?: ArtifactDataCommitMode;
+  onDeferredCommitComplete?: (result: DeferredArtifactDataCommitResult) => void;
 }): Promise<ArtifactCallResult> {
+  const totalStartedAt = nowMs();
+  let loadServerMs = 0;
+  let runFunctionMs = 0;
+  let commitMs = 0;
+  const commitMode = input.commitMode ?? "await";
   validateAppName(input.command.app_name);
   validateFunctionName(input.command.function_name);
 
@@ -443,13 +489,12 @@ export async function callArtifactServerFunction(input: {
   let updatedPaths: string[] = [];
 
   const { value, logs } = await captureArtifactServerLogs(async () => {
-    console.debug(
-      `artifact_call: loading server.js for ${input.command.app_name}`,
-    );
+    const loadStartedAt = nowMs();
     const api = await withArtifactServerTimeout({
       label: `loading server.js for ${input.command.app_name}`,
       callback: async () => await getServerApi({ serverPath, context }),
     });
+    loadServerMs = elapsedMs(loadStartedAt);
     if (!api || typeof api !== "object") {
       throw new Error(
         "artifact_call: server.js must export or return an object",
@@ -463,25 +508,66 @@ export async function callArtifactServerFunction(input: {
       );
     }
 
-    console.debug(
-      `artifact_call: invoking ${input.command.function_name} for ${input.command.app_name}`,
-    );
+    const runStartedAt = nowMs();
     const result = await withArtifactServerTimeout({
       label: `running ${input.command.function_name}`,
       callback: async () => await fn(input.command.args),
     });
-    console.debug(
-      `artifact_call: completed ${input.command.function_name} for ${input.command.app_name}`,
-    );
+    runFunctionMs = elapsedMs(runStartedAt);
     const safeResult = toJsonSafeValue(result);
+    return safeResult;
+  });
+
+  const commitInput = {
+    agentId: input.agentId,
+    appName: input.command.app_name,
+    memoryRoot: input.memoryRoot,
+    writes: dataWrites,
+  };
+  const pendingUpdatedPaths = [
+    ...new Set(dataWrites.map((write) => write.pathspec)),
+  ];
+
+  if (commitMode === "defer" && dataWrites.length > 0) {
+    void (async () => {
+      const commitStartedAt = nowMs();
+      try {
+        const deferredUpdatedPaths =
+          await commitArtifactDataWrites(commitInput);
+        input.onDeferredCommitComplete?.({
+          updatedPaths: deferredUpdatedPaths,
+          commitMs: elapsedMs(commitStartedAt),
+        });
+      } catch (err) {
+        input.onDeferredCommitComplete?.({
+          updatedPaths: [],
+          error: err,
+          commitMs: elapsedMs(commitStartedAt),
+        });
+      }
+    })();
+  } else {
+    const commitStartedAt = nowMs();
     updatedPaths = await commitArtifactDataWrites({
       agentId: input.agentId,
       appName: input.command.app_name,
       memoryRoot: input.memoryRoot,
       writes: dataWrites,
     });
-    return safeResult;
-  });
+    commitMs = elapsedMs(commitStartedAt);
+  }
 
-  return { result: value, logs, updatedPaths };
+  return {
+    result: value,
+    logs,
+    updatedPaths,
+    pendingUpdatedPaths,
+    timings: {
+      total_ms: elapsedMs(totalStartedAt),
+      load_server_ms: loadServerMs,
+      run_function_ms: runFunctionMs,
+      commit_ms: commitMs,
+      commit_deferred: commitMode === "defer" && dataWrites.length > 0,
+    },
+  };
 }
