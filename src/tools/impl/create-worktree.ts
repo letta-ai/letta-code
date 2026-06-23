@@ -10,7 +10,10 @@ import {
   rmdir,
   stat,
   symlink,
+  unlink,
+  writeFile,
 } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { getRuntimeContext } from "@/runtime-context";
 import type { WorktreeProjectConfig } from "@/settings-manager";
@@ -30,6 +33,7 @@ interface CreateWorktreeArgs {
   repo_path?: string;
   refresh_base?: boolean;
   switch_cwd?: boolean;
+  force?: boolean;
   _executionContextId?: string;
 }
 
@@ -736,6 +740,246 @@ async function switchSessionToWorktree(params: {
   return true;
 }
 
+/**
+ * Cross-agent advisory lock so two conversations do not both switch into the
+ * same worktree and clobber each other's uncommitted work. The lock is a small
+ * JSON file written into the worktree's per-worktree git admin directory
+ * (`<common>/worktrees/<name>/`), which keeps it out of the working tree and
+ * lets `git worktree remove` clean it up automatically.
+ */
+const LOCK_FILENAME = "letta-enter.lock";
+
+export interface WorktreeLockOwner {
+  conversationId: string | null;
+  agentId: string | null;
+}
+
+export interface WorktreeLock {
+  conversationId: string | null;
+  agentId: string | null;
+  pid: number;
+  hostname: string;
+  acquiredAt: string;
+}
+
+export type WorktreeLockOutcome =
+  | {
+      outcome: "acquired" | "reentrant" | "reclaimed" | "forced";
+      lock: WorktreeLock;
+      previous?: WorktreeLock;
+    }
+  | { outcome: "conflict"; heldBy: WorktreeLock };
+
+/** Resolves the per-worktree git admin directory, or null if it cannot. */
+async function resolveWorktreeGitDir(
+  worktreePath: string,
+): Promise<string | null> {
+  try {
+    const gitDir = await gitStdout(
+      ["rev-parse", "--absolute-git-dir"],
+      worktreePath,
+    );
+    return gitDir || null;
+  } catch {
+    return null;
+  }
+}
+
+function lockOwner(
+  runtimeContext: ReturnType<typeof getRuntimeContext>,
+): WorktreeLockOwner {
+  return {
+    conversationId: runtimeContext?.conversationId ?? null,
+    agentId: runtimeContext?.agentId ?? null,
+  };
+}
+
+async function readWorktreeLock(gitDir: string): Promise<WorktreeLock | null> {
+  try {
+    const raw = await readFile(path.join(gitDir, LOCK_FILENAME), "utf8");
+    const parsed = JSON.parse(raw) as Partial<WorktreeLock>;
+    if (typeof parsed.pid !== "number") {
+      return null;
+    }
+    return {
+      conversationId:
+        typeof parsed.conversationId === "string"
+          ? parsed.conversationId
+          : null,
+      agentId: typeof parsed.agentId === "string" ? parsed.agentId : null,
+      pid: parsed.pid,
+      hostname: typeof parsed.hostname === "string" ? parsed.hostname : "",
+      acquiredAt:
+        typeof parsed.acquiredAt === "string" ? parsed.acquiredAt : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeWorktreeLock(
+  gitDir: string,
+  lock: WorktreeLock,
+): Promise<void> {
+  await writeFile(
+    path.join(gitDir, LOCK_FILENAME),
+    `${JSON.stringify(lock, null, 2)}\n`,
+  );
+}
+
+function processIsAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    // Signal 0 performs error checking without actually sending a signal.
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // ESRCH => no such process. EPERM => the process exists but we may not
+    // signal it, which still means it is alive.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function isHeldByUs(lock: WorktreeLock, owner: WorktreeLockOwner): boolean {
+  if (owner.conversationId) {
+    return lock.conversationId === owner.conversationId;
+  }
+  // Anonymous owner (no conversation id): the lock is ours only if this exact
+  // process wrote it without a conversation id either.
+  return (
+    lock.conversationId === null &&
+    lock.hostname === os.hostname() &&
+    lock.pid === process.pid
+  );
+}
+
+/**
+ * A lock is stale (safe to reclaim) when the process that wrote it is gone. We
+ * can only judge liveness on the same host; locks from another machine are
+ * treated as live and require `force` to override.
+ */
+function isStaleLock(lock: WorktreeLock): boolean {
+  const sameHost = !lock.hostname || lock.hostname === os.hostname();
+  return sameHost && !processIsAlive(lock.pid);
+}
+
+function describeHolder(lock: WorktreeLock): string {
+  if (lock.conversationId) {
+    return `conversation ${lock.conversationId}`;
+  }
+  return `process ${lock.pid}${lock.hostname ? ` on ${lock.hostname}` : ""}`;
+}
+
+function formatLockConflict(lock: WorktreeLock, worktreePath: string): string {
+  const since = lock.acquiredAt ? ` since ${lock.acquiredAt}` : "";
+  return [
+    `Worktree is already in use by another agent (${describeHolder(lock)}${since}).`,
+    `Refusing to switch into ${worktreePath} to avoid two agents editing it concurrently.`,
+    "If that agent is no longer active, retry with `force: true` to take over the lock.",
+  ].join("\n");
+}
+
+/**
+ * Acquires (or refreshes) the advisory lock for a worktree on behalf of
+ * `owner`. Returns a `conflict` outcome when the worktree is actively held by a
+ * different, live owner and `force` is not set; otherwise writes the lock and
+ * reports how it was obtained.
+ */
+export async function acquireWorktreeLock(params: {
+  worktreeGitDir: string;
+  owner: WorktreeLockOwner;
+  force?: boolean;
+}): Promise<WorktreeLockOutcome> {
+  const { worktreeGitDir, owner } = params;
+  const force = params.force === true;
+  const existing = await readWorktreeLock(worktreeGitDir);
+
+  let outcome: "acquired" | "reentrant" | "reclaimed" | "forced";
+  if (!existing) {
+    outcome = "acquired";
+  } else if (isHeldByUs(existing, owner)) {
+    outcome = "reentrant";
+  } else if (isStaleLock(existing)) {
+    outcome = "reclaimed";
+  } else if (force) {
+    outcome = "forced";
+  } else {
+    return { outcome: "conflict", heldBy: existing };
+  }
+
+  const lock: WorktreeLock = {
+    conversationId: owner.conversationId,
+    agentId: owner.agentId,
+    pid: process.pid,
+    hostname: os.hostname(),
+    acquiredAt: new Date().toISOString(),
+  };
+  await writeWorktreeLock(worktreeGitDir, lock);
+  return { outcome, lock, previous: existing ?? undefined };
+}
+
+/** Releases `owner`'s lock on a worktree. No-op if it is held by someone else. */
+export async function releaseWorktreeLock(params: {
+  worktreeGitDir: string;
+  owner: WorktreeLockOwner;
+}): Promise<boolean> {
+  const existing = await readWorktreeLock(params.worktreeGitDir);
+  if (!existing || !isHeldByUs(existing, params.owner)) {
+    return false;
+  }
+  await unlink(path.join(params.worktreeGitDir, LOCK_FILENAME)).catch(() => {});
+  return true;
+}
+
+/**
+ * Orchestrates the cross-agent lock for a session that is switching into
+ * `worktreePath`: acquires the target lock (throwing on an unforced conflict),
+ * then releases this owner's lock on the worktree it is leaving so moving
+ * between worktrees does not strand a self-held lock that blocks other agents.
+ * Returns a short note for the result message.
+ */
+async function claimWorktreeLock(params: {
+  worktreePath: string;
+  previousCwd: string;
+  runtimeContext: ReturnType<typeof getRuntimeContext>;
+  force: boolean;
+}): Promise<string> {
+  const owner = lockOwner(params.runtimeContext);
+  const targetGitDir = await resolveWorktreeGitDir(params.worktreePath);
+  if (!targetGitDir) {
+    return "⚠ skipped cross-agent lock (could not resolve the worktree's git dir)";
+  }
+
+  const result = await acquireWorktreeLock({
+    worktreeGitDir: targetGitDir,
+    owner,
+    force: params.force,
+  });
+  if (result.outcome === "conflict") {
+    throw new Error(formatLockConflict(result.heldBy, params.worktreePath));
+  }
+
+  const previousGitDir = await resolveWorktreeGitDir(params.previousCwd);
+  if (previousGitDir && previousGitDir !== targetGitDir) {
+    await releaseWorktreeLock({ worktreeGitDir: previousGitDir, owner });
+  }
+
+  switch (result.outcome) {
+    case "acquired":
+      return "locked worktree for this conversation (cross-agent)";
+    case "reclaimed":
+      return "reclaimed a stale cross-agent lock (previous holder is gone)";
+    case "forced":
+      return `⚠ force-claimed the worktree lock (was held by ${
+        result.previous ? describeHolder(result.previous) : "another agent"
+      })`;
+    default:
+      return ""; // reentrant: this conversation already held it
+  }
+}
+
 interface RegisteredWorktree {
   worktreePath: string;
   branch?: string;
@@ -796,12 +1040,18 @@ function buildEnteredMessage(params: {
   worktreePath: string;
   branchName?: string;
   switchedCwd: boolean;
+  lockNote?: string;
 }): string {
   const lines = [
     "Switched to existing worktree.",
     "",
     `Path: ${params.worktreePath}`,
     `Branch: ${params.branchName ?? "(detached)"}`,
+  ];
+  if (params.lockNote) {
+    lines.push(`Lock: ${params.lockNote}`);
+  }
+  lines.push(
     "",
     params.switchedCwd
       ? "This conversation's working directory is now this worktree."
@@ -810,7 +1060,7 @@ function buildEnteredMessage(params: {
     "Next steps:",
     "- Confirm you are in the worktree with `git status` before editing.",
     "- This worktree already existed, so it was not re-provisioned; its dependencies, hooks, and ignored files are whatever it already had.",
-  ];
+  );
   return lines.join("\n");
 }
 
@@ -880,9 +1130,22 @@ async function enterExistingWorktree(params: {
     );
   }
 
+  const shouldSwitchCwd = args.switch_cwd !== false;
+  // Acquire the cross-agent lock before switching. A conflict throws and aborts
+  // the enter (caught by create_worktree's handler). When we are not switching
+  // the session in, we do not take ownership, so we skip the lock.
+  const lockNote = shouldSwitchCwd
+    ? await claimWorktreeLock({
+        worktreePath: resolvedTarget,
+        previousCwd: currentCwd,
+        runtimeContext,
+        force: args.force === true,
+      })
+    : "";
+
   const switchedCwd = await switchSessionToWorktree({
     worktreePath: resolvedTarget,
-    shouldSwitchCwd: args.switch_cwd !== false,
+    shouldSwitchCwd,
     runtimeContext,
     executionContextId: getStringArg(args, "_executionContextId"),
   });
@@ -891,6 +1154,7 @@ async function enterExistingWorktree(params: {
     worktreePath: resolvedTarget,
     branchName: match.branch,
     switchedCwd,
+    lockNote,
   });
 
   return {
@@ -1009,9 +1273,32 @@ export async function create_worktree(
       ];
     }
 
+    const shouldSwitchCwd = args.switch_cwd !== false;
+    if (shouldSwitchCwd) {
+      try {
+        const lockNote = await claimWorktreeLock({
+          worktreePath: normalizedWorktreePath,
+          previousCwd: currentCwd,
+          runtimeContext,
+          force: false,
+        });
+        if (lockNote) {
+          provisionNotes.push(lockNote);
+        }
+      } catch (error) {
+        // A brand-new worktree should never conflict, but never let locking
+        // abort an otherwise successful creation.
+        provisionNotes.push(
+          `⚠ cross-agent lock: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
     const switchedCwd = await switchSessionToWorktree({
       worktreePath: normalizedWorktreePath,
-      shouldSwitchCwd: args.switch_cwd !== false,
+      shouldSwitchCwd,
       runtimeContext,
       executionContextId: getStringArg(args, "_executionContextId"),
     });

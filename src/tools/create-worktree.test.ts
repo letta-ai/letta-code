@@ -9,7 +9,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import {
   getCurrentWorkingDirectory,
@@ -17,8 +17,10 @@ import {
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
+  acquireWorktreeLock,
   addWindowsPathLengthHint,
   create_worktree,
+  releaseWorktreeLock,
 } from "@/tools/impl/create-worktree";
 import {
   clearToolsWithLock,
@@ -578,6 +580,174 @@ describe("CreateWorktree tool", () => {
 
     expect(result.status).toBe("error");
     expect(result.content[0]?.text).toContain("cannot be combined");
+  });
+
+  test("blocks a second agent from entering a worktree another agent holds", async () => {
+    const repo = await trackRepo();
+    setActiveRuntime(null);
+
+    const created = await runWithRuntimeContext(
+      { workingDirectory: repo },
+      () =>
+        create_worktree({
+          name: "Shared Worktree",
+          refresh_base: false,
+          switch_cwd: false,
+        }),
+    );
+    expect(created.status).toBe("success");
+    const worktree = created.worktree_path;
+    if (!worktree) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+
+    const first = await runWithRuntimeContext(
+      { agentId: "agent-1", conversationId: "conv-a", workingDirectory: repo },
+      () => create_worktree({ path: worktree }),
+    );
+    expect(first.status).toBe("success");
+    expect(first.content[0]?.text).toContain("Lock:");
+
+    const blocked = await runWithRuntimeContext(
+      { agentId: "agent-2", conversationId: "conv-b", workingDirectory: repo },
+      () => create_worktree({ path: worktree }),
+    );
+    expect(blocked.status).toBe("error");
+    expect(blocked.content[0]?.text).toContain("in use by another agent");
+    expect(blocked.content[0]?.text).toContain("force: true");
+
+    const forced = await runWithRuntimeContext(
+      { agentId: "agent-2", conversationId: "conv-b", workingDirectory: repo },
+      () => create_worktree({ path: worktree, force: true }),
+    );
+    expect(forced.status).toBe("success");
+    expect(forced.content[0]?.text).toContain("force-claimed");
+  });
+
+  test("lets the same conversation re-enter a worktree it already holds", async () => {
+    const repo = await trackRepo();
+    setActiveRuntime(null);
+
+    const created = await runWithRuntimeContext(
+      { workingDirectory: repo },
+      () =>
+        create_worktree({
+          name: "Reenter Worktree",
+          refresh_base: false,
+          switch_cwd: false,
+        }),
+    );
+    const worktree = created.worktree_path;
+    if (!worktree) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+
+    const first = await runWithRuntimeContext(
+      { conversationId: "conv-a", workingDirectory: repo },
+      () => create_worktree({ path: worktree }),
+    );
+    expect(first.status).toBe("success");
+
+    const again = await runWithRuntimeContext(
+      { conversationId: "conv-a", workingDirectory: worktree },
+      () => create_worktree({ path: worktree }),
+    );
+    expect(again.status).toBe("success");
+  });
+
+  test("releases the lock when a conversation switches to another worktree", async () => {
+    const repo = await trackRepo();
+    setActiveRuntime(null);
+
+    const one = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({
+        name: "Worktree One",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+    const two = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({
+        name: "Worktree Two",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+    const pathOne = one.worktree_path;
+    const pathTwo = two.worktree_path;
+    if (!pathOne || !pathTwo) {
+      throw new Error("Expected CreateWorktree to return worktree paths");
+    }
+
+    // conv-a takes worktree one, then moves to worktree two (releasing one).
+    await runWithRuntimeContext(
+      { conversationId: "conv-a", workingDirectory: repo },
+      () => create_worktree({ path: pathOne }),
+    );
+    await runWithRuntimeContext(
+      { conversationId: "conv-a", workingDirectory: pathOne },
+      () => create_worktree({ path: pathTwo }),
+    );
+
+    // conv-b can now take worktree one because conv-a's lock there was freed.
+    const reused = await runWithRuntimeContext(
+      { conversationId: "conv-b", workingDirectory: repo },
+      () => create_worktree({ path: pathOne }),
+    );
+    expect(reused.status).toBe("success");
+  });
+
+  test("reclaims a stale lock left by a dead process and supports release", async () => {
+    const repo = await trackRepo();
+    setActiveRuntime(null);
+
+    const created = await runWithRuntimeContext(
+      { workingDirectory: repo },
+      () =>
+        create_worktree({
+          name: "Stale Worktree",
+          refresh_base: false,
+          switch_cwd: false,
+        }),
+    );
+    const worktree = created.worktree_path;
+    if (!worktree) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+    const gitDir = git(["rev-parse", "--absolute-git-dir"], worktree);
+
+    // A lock left by a process that no longer exists. 999999 is above the
+    // default max pid on the platforms this runs on, so it is never live.
+    await writeFile(
+      path.join(gitDir, "letta-enter.lock"),
+      JSON.stringify({
+        conversationId: "ghost-conv",
+        agentId: null,
+        pid: 999999,
+        hostname: hostname(),
+        acquiredAt: "2020-01-01T00:00:00.000Z",
+      }),
+    );
+
+    const owner = { conversationId: "live-conv", agentId: "agent-1" };
+    const reclaimed = await acquireWorktreeLock({
+      worktreeGitDir: gitDir,
+      owner,
+    });
+    expect(reclaimed.outcome).toBe("reclaimed");
+
+    const reentrant = await acquireWorktreeLock({
+      worktreeGitDir: gitDir,
+      owner,
+    });
+    expect(reentrant.outcome).toBe("reentrant");
+
+    expect(await releaseWorktreeLock({ worktreeGitDir: gitDir, owner })).toBe(
+      true,
+    );
+    expect(await releaseWorktreeLock({ worktreeGitDir: gitDir, owner })).toBe(
+      false,
+    );
   });
 
   test("adds a windows path-length hint to git checkout failures", () => {

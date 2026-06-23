@@ -29,6 +29,11 @@ Entering an existing worktree (`path`):
 - `path` must be a registered, non-prunable linked worktree of this repository, living under `.letta/worktrees/`. The main working tree and unmanaged worktrees are rejected.
 - Mutually exclusive with `name`, `branch_name`, and `base_ref`.
 
+Cross-agent lock:
+- Switching into a worktree (whether by creating it or entering one) takes an advisory lock recording this conversation as its current owner, so two agents do not edit the same worktree concurrently.
+- Entering a worktree another active agent already holds fails with an error. If that agent is no longer active, retry with `force: true` to take over the lock. Locks left by a crashed/exited process are detected and reclaimed automatically.
+- The lock is released when this conversation switches into a different worktree, and never blocks re-entering a worktree you already hold.
+
 After success:
 - Continue using the returned worktree path as the current workspace.
 - Confirm you are in the new worktree with `git status` before editing.
