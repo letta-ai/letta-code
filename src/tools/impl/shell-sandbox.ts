@@ -1,15 +1,9 @@
-import { getLocalBackendStorageDir } from "@/backend/local/paths";
-import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
-import { willSandboxShell } from "@/permissions/sandbox-gate";
+import { resolveShellSandboxContext } from "@/permissions/sandbox-gate";
 import {
   buildCrossAgentSandboxPolicy,
   deriveSelfAgentRootsForTrees,
-  getCrossBackendAgentsTreeRoots,
 } from "@/permissions/sandbox-policy";
-import {
-  detectSandboxBackend,
-  type SandboxAvailability,
-} from "@/sandbox/availability";
+import type { SandboxAvailability } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR, type SandboxBackend } from "@/sandbox/policy";
 import { wrapLauncher } from "@/sandbox/wrap";
 
@@ -44,9 +38,9 @@ export interface ShellSandboxResult {
  * Apply the cross-agent sandbox to an agent shell launcher. Returns the
  * launcher (possibly wrapped) and the env to spawn it with (carrying the
  * sandbox sentinel when wrapped). Returns the inputs unchanged when the shared
- * gate ({@link willSandboxShell}) says this process's shells are not to be
- * wrapped (flag off, already sandboxed, no backend, cwd inside the agents tree,
- * or no resolvable self roots).
+ * gate ({@link resolveShellSandboxContext}) says this process's shells are not
+ * to be wrapped (flag off, already sandboxed, no backend, cwd inside the agents
+ * tree, or no resolvable self roots).
  */
 export function applyShellSandbox(
   launcher: string[],
@@ -58,35 +52,30 @@ export function applyShellSandbox(
   const unchanged: ShellSandboxResult = { launcher, env, backend: null };
 
   // The gate short-circuits on the flag before any host probe, so the
-  // sandbox-off hot path stays a no-op.
-  if (!willSandboxShell(cwd, env, availability)) return unchanged;
-  const avail = availability ?? detectSandboxBackend();
-  if (!avail.backend) return unchanged;
+  // sandbox-off hot path stays a no-op. When it returns a context it has already
+  // resolved the backend, both agents trees, and the agent's memory roots — so
+  // we wall off both backend forests (a cloud/API agent must not traverse
+  // local-backend memfs, and vice versa) without re-probing or re-resolving.
+  const ctx = resolveShellSandboxContext(cwd, env, availability);
+  if (!ctx) return unchanged;
 
-  // Wall off both backend forests, not only the active backend. A cloud/API
-  // agent can run shell commands on the user's machine, so it must not be able
-  // to traverse local-backend memfs; likewise a local agent must not traverse
-  // API/cloud memory projected under ~/.letta/agents. Resolved after the gate so
-  // the sandbox-off hot path does no filesystem work. Most agent shell cwd
-  // values are repo/workspace paths (outside both trees); when cwd is inside
-  // either tree, the gate bails to avoid Seatbelt's empty-env hazard.
-  const localBackendStorageDir = getLocalBackendStorageDir(undefined, env);
-  const agentsTreeRoots = getCrossBackendAgentsTreeRoots({
-    localBackendStorageDir,
+  const selfRoots = deriveSelfAgentRootsForTrees(
+    ctx.memoryRoots,
+    ctx.agentsTreeRoots,
+  );
+  const policy = buildCrossAgentSandboxPolicy({
+    selfRoots,
+    agentsTreeRoots: ctx.agentsTreeRoots,
   });
-  const memoryRoots = resolveAllowedMemoryRoots({ env }).roots;
-  const selfRoots = deriveSelfAgentRootsForTrees(memoryRoots, agentsTreeRoots);
-
-  const policy = buildCrossAgentSandboxPolicy({ selfRoots, agentsTreeRoots });
   const wrapped = wrapLauncher(launcher, policy, {
-    backend: avail.backend,
-    bwrapPath: avail.bwrapPath,
+    backend: ctx.backend,
+    bwrapPath: ctx.bwrapPath,
   });
   if (!wrapped || wrapped.length === 0) return unchanged;
 
   return {
     launcher: wrapped,
-    env: { ...env, [SANDBOX_ENV_VAR]: avail.backend },
-    backend: avail.backend,
+    env: { ...env, [SANDBOX_ENV_VAR]: ctx.backend },
+    backend: ctx.backend,
   };
 }

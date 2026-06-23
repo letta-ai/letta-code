@@ -7,7 +7,6 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { MEMORY_SYSTEM_DIR } from "@/agent/memory-filesystem";
 import { REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT } from "@/agent/subagents/context-budget";
@@ -19,11 +18,10 @@ import {
 import { getDirectoryLimits } from "@/utils/directory-limits";
 import { withFileLock } from "@/utils/file-lock";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import { getTranscriptRoot } from "@/utils/transcript-paths";
 import type { Line } from "./accumulator";
 import { safeJsonParseOr } from "./safe-json-parse";
 
-const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
-const DEFAULT_TRANSCRIPT_DIR = "transcripts";
 const LEGACY_MESSAGE_ID_STATE_SCHEMA_VERSION = "v2_message_id";
 export const REFLECTION_STATE_SCHEMA_VERSION = "v3_assistant_steps" as const;
 
@@ -605,14 +603,6 @@ export async function buildParentMemorySnapshot(
 function sanitizePathSegment(segment: string): string {
   const sanitized = segment.replace(/[^a-zA-Z0-9._-]/g, "_").trim();
   return sanitized.length > 0 ? sanitized : "unknown";
-}
-
-function getTranscriptRoot(): string {
-  const envRoot = process.env[TRANSCRIPT_ROOT_ENV]?.trim();
-  if (envRoot) {
-    return envRoot;
-  }
-  return join(homedir(), ".letta", DEFAULT_TRANSCRIPT_DIR);
 }
 
 const stateMutexes = new Map<string, Promise<unknown>>();
