@@ -1464,13 +1464,9 @@ test("slack adapter streams native task progress and clears thread status", asyn
         text: "Working on it…",
       },
       {
-        type: "plan_update",
-        title: "Letta Code progress",
-      },
-      {
         type: "task_update",
-        id: "turn",
-        title: "Working on this thread",
+        id: "progress",
+        title: "Working",
         status: "in_progress",
       },
     ],
@@ -1494,7 +1490,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
   });
   expect(appendCall?.chunks?.[0]).toMatchObject({
     type: "task_update",
-    id: "tool:call-1",
+    id: "progress",
     title: "Preparing tool @​channel and token=[redacted]",
     status: "in_progress",
     details: "Tool: shell_exec",
@@ -1506,19 +1502,13 @@ test("slack adapter streams native task progress and clears thread status", asyn
     chunks: [
       {
         type: "task_update",
-        id: "tool:call-1",
-        title: "Preparing tool @​channel and token=[redacted]",
-        status: "complete",
-      },
-      {
-        type: "task_update",
-        id: "turn",
+        id: "progress",
         title: "Completed",
         status: "complete",
       },
       {
         type: "markdown_text",
-        text: "✅ Done.",
+        text: "<https://app.letta.com/chat/agent-1?conversation=conv-1|Open conversation> for details.",
       },
     ],
   });
@@ -1589,13 +1579,13 @@ test("slack adapter closes an open stream before falling back after append failu
     chunks: [
       {
         type: "task_update",
-        id: "turn",
+        id: "progress",
         title: "Searching files",
         status: "complete",
       },
       {
         type: "markdown_text",
-        text: "Working on it…",
+        text: "Continuing in the fallback progress card.",
       },
     ],
   });
