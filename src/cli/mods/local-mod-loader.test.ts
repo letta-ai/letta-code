@@ -179,6 +179,7 @@ describe("local mod loader", () => {
       ).toEqual([
         {
           files: [looseMod, packageMod],
+          managedPackageRoots: [packageRoot],
           root: globalMods,
           scope: "global",
           trusted: true,
@@ -565,6 +566,83 @@ describe("local mod loader", () => {
         createStatuslineContext(),
       );
       expect(output).toMatchObject({ props: { children: "Letta Code" } });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads managed package mods with package node_modules imports", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const globalMods = options.globalModsDirectory;
+      const packageRoot = path.join(
+        globalMods,
+        "packages",
+        "npm",
+        "@caren",
+        "dep-mod",
+      );
+      const modDir = path.join(packageRoot, "mods");
+      const dependencyRoot = path.join(packageRoot, "node_modules", "fake-dep");
+      mkdirSync(modDir, { recursive: true });
+      mkdirSync(dependencyRoot, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "index.js"),
+        `import { label } from "fake-dep";
+export default function(letta) {
+  letta.ui.setStatus("dep", label);
+}
+`,
+      );
+      writeFileSync(
+        path.join(dependencyRoot, "package.json"),
+        JSON.stringify({
+          name: "fake-dep",
+          version: "1.0.0",
+          type: "module",
+          exports: "./index.js",
+        }),
+      );
+      writeFileSync(
+        path.join(dependencyRoot, "index.js"),
+        `export const label = "dependency";\n`,
+      );
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          name: "@caren/dep-mod",
+          version: "0.1.0",
+          letta: {
+            manifestVersion: 1,
+            mods: ["mods/index.js"],
+          },
+        }),
+      );
+      mkdirSync(globalMods, { recursive: true });
+      writeFileSync(
+        path.join(globalMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/dep-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/dep-mod",
+              entries: ["mods/index.js"],
+            },
+          ],
+        }),
+      );
+
+      const registry = await loadLocalMods(options);
+
+      expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
+      expect(registry.ui.statusValues.dep).toBe("dependency");
+      const generatedFiles = readdirSync(modDir).filter((entry) =>
+        entry.startsWith(".letta-mod-index-"),
+      );
+      expect(generatedFiles).toHaveLength(1);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

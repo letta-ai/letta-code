@@ -242,6 +242,7 @@ describe("mods subcommand", () => {
       expect(exitCode).toBe(0);
       expect(consoleCapture.logs.join("\n")).toContain("Usage:");
       expect(consoleCapture.logs.join("\n")).toContain("letta mods list");
+      expect(consoleCapture.logs.join("\n")).toContain("letta mods package");
       expect(consoleCapture.errors).toEqual([]);
     } finally {
       consoleCapture.restore();
@@ -258,6 +259,86 @@ describe("mods subcommand", () => {
         "Unknown mods action: publish",
       );
       expect(consoleCapture.logs.join("\n")).toContain("Usage:");
+    } finally {
+      consoleCapture.restore();
+    }
+  });
+
+  test("package command creates a local package scaffold", async () => {
+    const root = createTempDir();
+    const sourceFile = join(root, "hello.ts");
+    const outputDirectory = join(root, "hello-package");
+    writeFileSync(sourceFile, "export default () => {};\n");
+    const consoleCapture = captureConsole();
+
+    try {
+      const exitCode = await runModsSubcommand([
+        "package",
+        sourceFile,
+        "--name",
+        "@caren/hello-mod",
+        "--out",
+        outputDirectory,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(consoleCapture.logs.join("\n")).toContain(
+        `Created mod package ${outputDirectory}`,
+      );
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Install with: letta install",
+      );
+      expect(
+        JSON.parse(readFileSync(join(outputDirectory, "package.json"), "utf8")),
+      ).toMatchObject({
+        name: "@caren/hello-mod",
+        letta: { manifestVersion: 1, mods: ["mods/hello.ts"] },
+      });
+      expect(existsSync(join(outputDirectory, "mods", "hello.ts"))).toBe(true);
+    } finally {
+      consoleCapture.restore();
+    }
+  });
+
+  test("package command requires a package name", async () => {
+    const root = createTempDir();
+    const sourceFile = join(root, "hello.ts");
+    writeFileSync(sourceFile, "export default () => {};\n");
+    const consoleCapture = captureConsole();
+
+    try {
+      const exitCode = await runModsSubcommand(["package", sourceFile]);
+
+      expect(exitCode).toBe(1);
+      expect(consoleCapture.errors.join("\n")).toContain(
+        "Missing required --name",
+      );
+      expect(consoleCapture.logs.join("\n")).toContain("Usage:");
+    } finally {
+      consoleCapture.restore();
+    }
+  });
+
+  test("package command rejects agent option", async () => {
+    const root = createTempDir();
+    const sourceFile = join(root, "hello.ts");
+    writeFileSync(sourceFile, "export default () => {};\n");
+    const consoleCapture = captureConsole();
+
+    try {
+      const exitCode = await runModsSubcommand([
+        "package",
+        sourceFile,
+        "--name",
+        "hello-mod",
+        "--agent",
+        "agent-123",
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(consoleCapture.errors.join("\n")).toContain(
+        "--agent is not supported for 'letta mods package'",
+      );
     } finally {
       consoleCapture.restore();
     }
