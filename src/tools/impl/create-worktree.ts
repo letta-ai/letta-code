@@ -37,6 +37,7 @@ interface CreateWorktreeArgs {
   repo_path?: string;
   refresh_base?: boolean;
   switch_cwd?: boolean;
+  symlink_dependencies?: boolean;
   force?: boolean;
   _executionContextId?: string;
 }
@@ -411,6 +412,7 @@ function buildSuccessMessage(params: {
   baseRef: string;
   switchedCwd: boolean;
   provisionNotes: string[];
+  linkedDependencies: boolean;
 }): string {
   const provisioning =
     params.provisionNotes.length > 0
@@ -420,6 +422,13 @@ function buildSuccessMessage(params: {
           ...params.provisionNotes.map((note) => `- ${note}`),
         ]
       : ["", "Provisioning: nothing to copy, symlink, or link."];
+
+  // The dependency directories are SYMLINKED to the primary checkout, so a
+  // package install in this worktree writes through to the primary checkout's
+  // node_modules. Tell the agent how to opt out when it needs its own deps.
+  const dependencyStep = params.linkedDependencies
+    ? "- Dependencies (e.g. node_modules) are symlinked from the primary checkout and ready to use. Do NOT run a package install here — it would modify the primary checkout's dependencies. If this worktree needs different or isolated packages, recreate it with `symlink_dependencies: false` and install fresh."
+    : "- Dependencies were not symlinked. If the project has dependencies, install them with the repo's package manager (check whether it uses bun, pnpm, yarn, or npm) before building or testing.";
 
   const lines = [
     "Created worktree.",
@@ -436,7 +445,8 @@ function buildSuccessMessage(params: {
     "Next steps:",
     "- Confirm you are in the new worktree with `git status` before editing.",
     "- Read README, AGENTS.md, or other project setup docs before running commands.",
-    "- Dependencies (node_modules), git hooks, and ignored files listed in .worktreeinclude are provisioned automatically. Only run a dependency install if the Provisioning section above reported a skip/warning, or if the lockfile differs from the primary checkout.",
+    dependencyStep,
+    "- Git hooks and ignored files listed in .worktreeinclude are provisioned automatically.",
     "- Then make changes, test, commit, and push from this worktree.",
   ];
   return lines.join("\n");
@@ -705,14 +715,21 @@ async function copyIncludedFiles(
  * wires git hooks, copies local settings, and copies `.worktreeinclude` paths.
  * Every step is best-effort — failures are reported as notes and never abort
  * worktree creation.
+ *
+ * `symlinkDependencies` (default true) gates only the dependency-directory
+ * symlinks: pass false when the worktree needs its own isolated dependencies,
+ * so a package install here won't write through to the primary checkout.
+ * Returns `linkedDependencies` so the caller can tailor its guidance.
  */
 export async function provisionWorktree(params: {
   primaryRoot: string;
   worktreePath: string;
-}): Promise<string[]> {
-  const { primaryRoot, worktreePath } = params;
+  symlinkDependencies: boolean;
+}): Promise<{ notes: string[]; linkedDependencies: boolean }> {
+  const { primaryRoot, worktreePath, symlinkDependencies } = params;
   const config = await readProvisionConfig(primaryRoot);
   const notes: string[] = [];
+  let linkedDependencies = false;
 
   const record = async (task: () => Promise<string>): Promise<void> => {
     try {
@@ -725,12 +742,26 @@ export async function provisionWorktree(params: {
     }
   };
 
-  for (const dir of config.symlinkDirectories) {
-    await record(
-      async () =>
-        (await symlinkDirIntoWorktree(primaryRoot, worktreePath, dir)).note,
+  if (symlinkDependencies) {
+    for (const dir of config.symlinkDirectories) {
+      await record(async () => {
+        const { linked, note } = await symlinkDirIntoWorktree(
+          primaryRoot,
+          worktreePath,
+          dir,
+        );
+        if (linked) {
+          linkedDependencies = true;
+        }
+        return note;
+      });
+    }
+  } else if (config.symlinkDirectories.length > 0) {
+    notes.push(
+      `did not symlink ${config.symlinkDirectories.join(", ")} (symlink_dependencies=false) — install this worktree's own dependencies`,
     );
   }
+
   if (config.linkHooks) {
     await record(() => linkGitHooks(primaryRoot, worktreePath));
   }
@@ -741,7 +772,7 @@ export async function provisionWorktree(params: {
     copyIncludedFiles(primaryRoot, worktreePath, config.include),
   );
 
-  return notes;
+  return { notes, linkedDependencies };
 }
 
 /**
@@ -1153,11 +1184,15 @@ export async function create_worktree(
     const normalizedWorktreePath = path.normalize(await realpath(worktreePath));
 
     let provisionNotes: string[] = [];
+    let linkedDependencies = false;
     try {
-      provisionNotes = await provisionWorktree({
+      const provisioned = await provisionWorktree({
         primaryRoot,
         worktreePath: normalizedWorktreePath,
+        symlinkDependencies: args.symlink_dependencies !== false,
       });
+      provisionNotes = provisioned.notes;
+      linkedDependencies = provisioned.linkedDependencies;
     } catch (error) {
       provisionNotes = [
         `⚠ provisioning failed: ${
@@ -1203,6 +1238,7 @@ export async function create_worktree(
       baseRef,
       switchedCwd,
       provisionNotes,
+      linkedDependencies,
     });
 
     return {

@@ -415,6 +415,37 @@ describe("CreateWorktree tool", () => {
     expect(result.content[0]?.text).toContain("symlinked node_modules");
   });
 
+  test("does not symlink dependencies when symlink_dependencies is false", async () => {
+    const repo = await trackRepo();
+    await mkdir(path.join(repo, "node_modules", "left-pad"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(repo, "node_modules", "left-pad", "index.js"),
+      "module.exports = 1;\n",
+    );
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({
+        name: "isolated-deps",
+        refresh_base: false,
+        switch_cwd: false,
+        symlink_dependencies: false,
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    if (!result.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+    // node_modules must not be present (neither symlinked nor copied).
+    const linked = await lstat(
+      path.join(result.worktree_path, "node_modules"),
+    ).catch(() => null);
+    expect(linked).toBeNull();
+    expect(result.content[0]?.text).toContain("symlink_dependencies=false");
+  });
+
   test("copies gitignored files listed in .worktreeinclude (e.g. .env)", async () => {
     const repo = await trackRepo();
     await writeFile(path.join(repo, ".env"), "SECRET=abc123\n");
