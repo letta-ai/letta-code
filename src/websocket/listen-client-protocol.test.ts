@@ -1430,6 +1430,68 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("disconnect_provider");
   });
 
+  test("parses chatgpt_usage_read command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-1",
+          target: "local",
+          provider_name: "chatgpt-work",
+          force_refresh: true,
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("parses chatgpt_usage_read command for api target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-2",
+          target: "api",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("rejects chatgpt_usage_read command for unknown target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-3",
+          target: "project",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
+  test("rejects chatgpt_usage_read command with bad force_refresh", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-4",
+          target: "local",
+          force_refresh: "true",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
   test("parses update_model command with model_id", () => {
     const parsed = parseServerMessage(
       Buffer.from(
