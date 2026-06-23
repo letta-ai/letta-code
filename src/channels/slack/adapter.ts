@@ -19,7 +19,6 @@ import type {
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
-import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
@@ -385,6 +384,7 @@ type SlackProgressToolTask = {
   id: string;
   title: string;
   status: SlackStreamTaskStatus;
+  details?: string;
 };
 
 type SlackProgressCardEntry = {
@@ -397,6 +397,7 @@ type SlackProgressCardEntry = {
   latestUpdate?: ChannelTurnProgressEvent;
   toolNamesByCallId?: Map<string, string>;
   toolTitlesByCallId?: Map<string, string>;
+  toolDetailsByCallId?: Map<string, string>;
   toolTasksById?: Map<string, SlackProgressToolTask>;
   pendingStreamChunks?: SlackStreamChunk[];
   hiddenToolCallIds?: Set<string>;
@@ -503,47 +504,12 @@ function formatSlackFallbackProgressBlocks(
   ];
 }
 
-function buildSlackConversationUrl(source: ChannelTurnSource): string | null {
-  if (isLocalAgentId(source.agentId)) {
-    return null;
-  }
-  const url = buildChatUrl(source.agentId, {
-    conversationId: source.conversationId,
-  });
-  return url;
-}
-
-function buildSlackConversationButtonBlocks(
-  source: ChannelTurnSource,
-): SlackBlock[] {
-  const url = buildSlackConversationUrl(source);
-  if (!url) {
-    return [];
-  }
-  return [
-    {
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          text: {
-            type: "plain_text",
-            text: "Open conversation",
-            emoji: false,
-          },
-          url,
-          action_id: "open_conversation",
-        },
-      ],
-    },
-  ];
-}
-
 function buildTerminalSlackStreamChunks(
   entry: SlackProgressCardEntry,
   terminalTaskStatus: SlackStreamTaskStatus,
 ): SlackStreamChunk[] {
   const chunks: SlackStreamChunk[] = [...(entry.pendingStreamChunks ?? [])];
+  let updatedTasks = false;
   for (const task of entry.toolTasksById?.values() ?? []) {
     if (task.status === "complete" || task.status === "error") {
       continue;
@@ -558,13 +524,10 @@ function buildTerminalSlackStreamChunks(
     };
     chunks.push({ type: "task_update", ...terminalTask });
     entry.toolTasksById?.set(task.id, terminalTask);
+    updatedTasks = true;
   }
-  const buttonBlocks =
-    entry.status === "completed"
-      ? buildSlackConversationButtonBlocks(entry.source)
-      : [];
-  if (buttonBlocks.length > 0) {
-    chunks.push({ type: "blocks", blocks: buttonBlocks });
+  if (updatedTasks || chunks.some((chunk) => chunk.type === "task_update")) {
+    chunks.push(buildSlackPlanUpdateChunk(entry));
   }
   return chunks;
 }
@@ -589,6 +552,7 @@ function rememberSlackToolName(
     entry.hiddenToolCallIds.add(update.toolCallId);
     entry.toolNamesByCallId?.delete(update.toolCallId);
     entry.toolTitlesByCallId?.delete(update.toolCallId);
+    entry.toolDetailsByCallId?.delete(update.toolCallId);
     return;
   }
   if (update.toolName) {
@@ -598,6 +562,10 @@ function rememberSlackToolName(
   if (update.toolTitle) {
     entry.toolTitlesByCallId ??= new Map();
     entry.toolTitlesByCallId.set(update.toolCallId, update.toolTitle);
+  }
+  if (update.toolDetails) {
+    entry.toolDetailsByCallId ??= new Map();
+    entry.toolDetailsByCallId.set(update.toolCallId, update.toolDetails);
   }
 }
 
@@ -683,6 +651,62 @@ function resolveSlackToolActionName(
   return sanitizeSlackProgressText(raw, SLACK_STREAM_CHUNK_TEXT_MAX);
 }
 
+function resolveSlackToolActionDetails(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent,
+): string | undefined {
+  const rememberedDetails = update.toolCallId
+    ? entry.toolDetailsByCallId?.get(update.toolCallId)
+    : undefined;
+  const details = update.toolDetails ?? rememberedDetails;
+  if (!details) {
+    return undefined;
+  }
+  const sanitized = sanitizeSlackProgressText(
+    details,
+    SLACK_STREAM_CHUNK_TEXT_MAX,
+  );
+  return sanitized || undefined;
+}
+
+function pluralizeTool(count: number): string {
+  return `${count} tool${count === 1 ? "" : "s"}`;
+}
+
+function buildSlackPlanUpdateChunk(
+  entry: SlackProgressCardEntry,
+): SlackStreamChunk {
+  const tasks = Array.from(entry.toolTasksById?.values() ?? []);
+  const runningCount = tasks.filter(
+    (task) => task.status === "in_progress" || task.status === "pending",
+  ).length;
+  if (runningCount > 0) {
+    return {
+      type: "plan_update",
+      title: `Running ${pluralizeTool(runningCount)}`,
+    };
+  }
+
+  const errorCount = tasks.filter((task) => task.status === "error").length;
+  if (errorCount > 0) {
+    return {
+      type: "plan_update",
+      title: `${pluralizeTool(errorCount)} failed`,
+    };
+  }
+
+  const completeCount = tasks.filter(
+    (task) => task.status === "complete",
+  ).length;
+  return {
+    type: "plan_update",
+    title:
+      completeCount > 0
+        ? `Completed ${pluralizeTool(completeCount)}`
+        : "Running tools",
+  };
+}
+
 function resolveSlackToolActionTaskId(
   update: ChannelTurnProgressEvent,
 ): string | null {
@@ -729,11 +753,13 @@ function buildSlackStreamProgressChunks(
     return [];
   }
   const status = toSlackStreamTaskStatus(update);
-  const task = { id, title, status };
+  const details = resolveSlackToolActionDetails(entry, update);
+  const task = { id, title, status, ...(details ? { details } : {}) };
   entry.toolTasksById ??= new Map();
   entry.toolTasksById.set(id, task);
 
   return [
+    buildSlackPlanUpdateChunk(entry),
     {
       type: "task_update",
       ...task,
@@ -1442,7 +1468,7 @@ export function createSlackAdapter(
     const args: SlackStartStreamArgs = {
       channel: entry.source.chatId,
       thread_ts: replyToMessageId,
-      task_display_mode: "dense",
+      task_display_mode: "plan",
       chunks: initialChunks,
     };
     const recipientTeamId = entry.source.senderTeamId ?? botTeamId;
