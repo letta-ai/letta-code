@@ -1,3 +1,4 @@
+import { formatArgsDisplay } from "@/cli/helpers/format-args-display";
 import {
   formatWebSearchProgressTitle,
   isWebSearchToolName,
@@ -6,6 +7,7 @@ import type { StreamDelta } from "@/types/protocol_v2";
 import type { ChannelTurnProgressUpdate } from "./types";
 
 const MAX_PROGRESS_TEXT_LENGTH = 140;
+const MAX_PROGRESS_DETAILS_LENGTH = 180;
 const ESCAPE_CODE = String.fromCharCode(27);
 const ANSI_ESCAPE_RE = new RegExp(`${ESCAPE_CODE}\\[[0-9;?]*[ -/]*[@-~]`, "g");
 const SECRET_ASSIGNMENT_RE =
@@ -114,6 +116,27 @@ function formatToolProgressTitle(
   );
   const sanitized = sanitizeChannelProgressText(title);
   return sanitized || undefined;
+}
+
+function formatToolProgressDetails(
+  summary: ToolCallSummary,
+): string | undefined {
+  if (!summary.argumentsText || !summary.name) {
+    return undefined;
+  }
+  if (!parseToolArguments(summary.argumentsText)) {
+    return undefined;
+  }
+
+  const { display } = formatArgsDisplay(summary.argumentsText, summary.name);
+  const sanitized = sanitizeChannelProgressText(
+    display,
+    MAX_PROGRESS_DETAILS_LENGTH,
+  );
+  if (!sanitized || sanitized === "…") {
+    return undefined;
+  }
+  return `Input: ${sanitized}`;
 }
 
 function extractToolCallSummary(value: unknown): ToolCallSummary | null {
@@ -282,6 +305,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
       }
       for (const tool of tools) {
         const toolTitle = formatToolProgressTitle(tool, "waiting");
+        const toolDetails = formatToolProgressDetails(tool);
         updates.push(
           withRunId(
             {
@@ -291,6 +315,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
               ...(tool.id ? { toolCallId: tool.id } : {}),
               ...(tool.name ? { toolName: tool.name } : {}),
               ...(toolTitle ? { toolTitle } : {}),
+              ...(toolDetails ? { toolDetails } : {}),
             },
             runId,
           ),
@@ -315,6 +340,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
       }
       for (const tool of tools) {
         const toolTitle = formatToolProgressTitle(tool, "started");
+        const toolDetails = formatToolProgressDetails(tool);
         updates.push(
           withRunId(
             {
@@ -324,6 +350,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
               ...(tool.id ? { toolCallId: tool.id } : {}),
               ...(tool.name ? { toolName: tool.name } : {}),
               ...(toolTitle ? { toolTitle } : {}),
+              ...(toolDetails ? { toolDetails } : {}),
             },
             runId,
           ),
