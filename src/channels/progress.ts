@@ -1,5 +1,8 @@
 import { formatArgsDisplay } from "@/cli/helpers/format-args-display";
-import { isShellTool } from "@/cli/helpers/tool-name-mapping";
+import {
+  getDisplayToolName,
+  isShellTool,
+} from "@/cli/helpers/tool-name-mapping";
 import {
   formatWebSearchProgressTitle,
   isWebSearchToolName,
@@ -124,6 +127,14 @@ function formatToolProgressTitle(
     const sanitized = sanitizeChannelProgressText(description);
     if (sanitized) {
       return `Bash: ${sanitized}`;
+    }
+  }
+
+  if (summary.name) {
+    const displayName = getDisplayToolName(summary.name);
+    if (displayName !== summary.name) {
+      const sanitized = sanitizeChannelProgressText(displayName);
+      return sanitized || undefined;
     }
   }
 

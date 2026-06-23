@@ -1804,17 +1804,17 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       }),
       expect.objectContaining({
         id: "task_call-bash",
-        title: "exec_command",
+        title: "Bash",
         status: "in_progress",
       }),
       expect.objectContaining({
         id: "task_call-read",
-        title: "read_file",
+        title: "Read",
         status: "in_progress",
       }),
       expect.objectContaining({
         id: "task_call-bash",
-        title: "exec_command",
+        title: "Bash",
         status: "complete",
       }),
       expect.objectContaining({
@@ -1834,7 +1834,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       }),
       expect.objectContaining({
         id: "task_call-read",
-        title: "read_file",
+        title: "Read",
         status: "complete",
       }),
       expect.objectContaining({
@@ -1898,7 +1898,7 @@ test("slack adapter renders approval progress without thread status noise", asyn
       {
         type: "task_update",
         id: "task_approval-1",
-        title: "Approval needed: memory_apply_patch",
+        title: "Approval needed: Memory Patch",
         status: "pending",
       },
     ],
@@ -1947,7 +1947,7 @@ test("slack adapter posts generic approval prompts as compact cards", async () =
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "*Approval needed*\nRun `memory_apply_patch`?",
+          text: "*Approval needed*\nRun `Memory Patch`?",
         },
       },
       {
@@ -2038,13 +2038,13 @@ test("slack adapter closes an open stream before falling back after append failu
       {
         type: "task_update",
         id: "task_call-1",
-        title: "read_file",
+        title: "Read",
         status: "in_progress",
       },
       {
         type: "task_update",
         id: "task_call-1",
-        title: "read_file",
+        title: "Read",
         status: "complete",
       },
       {
