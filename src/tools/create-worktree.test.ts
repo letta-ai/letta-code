@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -141,7 +149,7 @@ describe("CreateWorktree tool", () => {
     expect(result.base_ref).toBe("main");
     expect(result.switched_cwd).toBe(false);
     expect(result.content[0]?.text).toContain(
-      "If the repo uses git hooks, verify they are installed and active in this worktree before committing",
+      "Provisioning: nothing to copy, symlink, or link.",
     );
     expect(
       path.normalize(
@@ -371,6 +379,122 @@ describe("CreateWorktree tool", () => {
       "Current working directory is not inside a git repository",
     );
     expect(result.content[0]?.text).toContain("repo_path");
+  });
+
+  test("symlinks node_modules from the primary checkout into the worktree", async () => {
+    const repo = await trackRepo();
+    await mkdir(path.join(repo, "node_modules", "left-pad"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(repo, "node_modules", "left-pad", "index.js"),
+      "module.exports = 1;\n",
+    );
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({
+        name: "symlink-deps",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    if (!result.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+    const linkPath = path.join(result.worktree_path, "node_modules");
+    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+    expect(
+      await readFile(path.join(linkPath, "left-pad", "index.js"), "utf8"),
+    ).toContain("module.exports");
+    expect(result.content[0]?.text).toContain("symlinked node_modules");
+  });
+
+  test("copies gitignored files listed in .worktreeinclude (e.g. .env)", async () => {
+    const repo = await trackRepo();
+    await writeFile(path.join(repo, ".env"), "SECRET=abc123\n");
+    await writeFile(
+      path.join(repo, ".worktreeinclude"),
+      "# secrets the worktree needs\n.env\n",
+    );
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({
+        name: "include-env",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    if (!result.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+    expect(
+      await readFile(path.join(result.worktree_path, ".env"), "utf8"),
+    ).toBe("SECRET=abc123\n");
+    expect(result.content[0]?.text).toContain("via .worktreeinclude");
+  });
+
+  test("copies .letta/settings.local.json into the worktree", async () => {
+    const repo = await trackRepo();
+    await mkdir(path.join(repo, ".letta"), { recursive: true });
+    await writeFile(
+      path.join(repo, ".letta", "settings.local.json"),
+      JSON.stringify({ lastAgent: null }),
+    );
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({
+        name: "copy-local-settings",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    if (!result.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+    expect(
+      await readFile(
+        path.join(result.worktree_path, ".letta", "settings.local.json"),
+        "utf8",
+      ),
+    ).toContain("lastAgent");
+    expect(result.content[0]?.text).toContain(
+      "copied .letta/settings.local.json",
+    );
+  });
+
+  test("wires git hooks by symlinking a relative core.hooksPath directory", async () => {
+    const repo = await trackRepo();
+    git(["config", "core.hooksPath", ".husky/_"], repo);
+    await mkdir(path.join(repo, ".husky", "_"), { recursive: true });
+    await writeFile(
+      path.join(repo, ".husky", "_", "pre-commit"),
+      "#!/bin/sh\nexit 0\n",
+    );
+
+    const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
+      create_worktree({
+        name: "wire-hooks",
+        refresh_base: false,
+        switch_cwd: false,
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    if (!result.worktree_path) {
+      throw new Error("Expected CreateWorktree to return a worktree path");
+    }
+    const hooksDir = path.join(result.worktree_path, ".husky", "_");
+    expect((await lstat(hooksDir)).isSymbolicLink()).toBe(true);
+    expect(await readFile(path.join(hooksDir, "pre-commit"), "utf8")).toContain(
+      "exit 0",
+    );
+    expect(result.content[0]?.text).toContain("wired git hooks");
   });
 
   test("adds a windows path-length hint to git checkout failures", () => {

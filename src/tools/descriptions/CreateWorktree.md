@@ -12,13 +12,18 @@ Behavior:
 - Uses the current cwd as the target git repository by default, or `repo_path` when provided.
 - If the current cwd is not inside a git repository, pass `repo_path` instead of falling back to manual `git worktree` commands.
 - Creates the worktree under `.letta/worktrees/` for the target repository.
-- Creates a new branch from the default base ref unless `branch_name` or `base_ref` is provided.
+- Creates a new branch from the default base ref (with `--no-track`, so it does not adopt the base as an upstream) unless `branch_name` or `base_ref` is provided.
 - By default, switches the active conversation/session cwd to the new worktree.
 - Does not copy uncommitted changes from the current checkout.
-- Does not install dependencies or run project setup commands.
+- Automatically provisions the new worktree so it is usable without a manual setup pass:
+  - Symlinks heavy gitignored directories from the primary checkout (default: `node_modules`) so dependencies do not need reinstalling.
+  - Wires git hooks: if `core.hooksPath` is relative (e.g. husky's `.husky/_`, whose contents are gitignored and absent in a fresh worktree), it symlinks the populated hooks directory from the primary checkout so pre-commit hooks run.
+  - Copies `.letta/settings.local.json` into the worktree when present.
+  - Copies gitignored files/directories listed in a repo-root `.worktreeinclude` file (and in the `worktree.include` project setting) — use this for config like `.env`.
+- Provisioning is configurable via the `worktree` block in `.letta/settings.json` (`symlinkDirectories`, `copyLocalSettings`, `linkHooks`, `include`) and is best-effort: it reports what was done/skipped in the result and never aborts worktree creation.
 
 After success:
 - Continue using the returned worktree path as the current workspace.
 - Confirm you are in the new worktree with `git status` before editing.
 - Read README, AGENTS.md, or other project setup docs before running commands.
-- If this repo needs per-worktree dependency setup, install dependencies with the project's package manager. Check the repo first: if it uses Bun, run `bun install` instead of `npm install`; if it uses pnpm, yarn, or npm, use that package manager instead.
+- Review the "Provisioning" section of the result. Only run a dependency install if it reported a skip/warning for dependencies, or if the worktree's lockfile differs from the primary checkout. Check the repo first: if it uses Bun, run `bun install` instead of `npm install`; if it uses pnpm, yarn, or npm, use that package manager instead.

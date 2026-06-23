@@ -129,9 +129,26 @@ export interface StartupBackendSettings {
   envBaseUrl?: string;
 }
 
+export interface WorktreeProjectConfig {
+  // Directories symlinked from the primary checkout into new worktrees to avoid
+  // duplicating large gitignored trees. Defaults to ["node_modules"] when unset;
+  // set to [] to disable.
+  symlinkDirectories?: string[];
+  // Copy .letta/settings.local.json into new worktrees. Defaults to true.
+  copyLocalSettings?: boolean;
+  // Point new worktrees at the primary checkout's git hooks (e.g. husky's
+  // .husky/_), whose contents are otherwise gitignored and absent. Defaults to true.
+  linkHooks?: boolean;
+  // Extra repo-root-relative paths (files or directories) to copy into new
+  // worktrees, merged with entries from a .worktreeinclude file. Use this for
+  // gitignored config like .env that the worktree needs.
+  include?: string[];
+}
+
 export interface ProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
   windowTitle?: WindowTitleConfig; // Project-specific terminal window title
+  worktree?: WorktreeProjectConfig; // Per-worktree provisioning settings
 }
 
 export interface LocalProjectSettings {

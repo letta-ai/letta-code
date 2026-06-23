@@ -1,8 +1,19 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, stat } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rmdir,
+  stat,
+  symlink,
+} from "node:fs/promises";
 import path from "node:path";
 import { getRuntimeContext } from "@/runtime-context";
+import type { WorktreeProjectConfig } from "@/settings-manager";
 import {
   switchConversationWorkingDirectory,
   switchCurrentRuntimeWorkingDirectory,
@@ -364,13 +375,24 @@ function buildSuccessMessage(params: {
   branchName: string;
   baseRef: string;
   switchedCwd: boolean;
+  provisionNotes: string[];
 }): string {
+  const provisioning =
+    params.provisionNotes.length > 0
+      ? [
+          "",
+          "Provisioning:",
+          ...params.provisionNotes.map((note) => `- ${note}`),
+        ]
+      : ["", "Provisioning: nothing to copy, symlink, or link."];
+
   const lines = [
     "Created worktree.",
     "",
     `Path: ${params.worktreePath}`,
     `Branch: ${params.branchName}`,
     `Base: ${params.baseRef}`,
+    ...provisioning,
     "",
     params.switchedCwd
       ? "This conversation's working directory is now the new worktree."
@@ -379,11 +401,293 @@ function buildSuccessMessage(params: {
     "Next steps:",
     "- Confirm you are in the new worktree with `git status` before editing.",
     "- Read README, AGENTS.md, or other project setup docs before running commands.",
-    "- If this repo needs per-worktree dependency setup, install dependencies with the project's package manager. Check the repo first: if it uses Bun, run `bun install` instead of `npm install`; if it uses pnpm, yarn, or npm, use that package manager instead.",
-    "- If the repo uses git hooks, verify they are installed and active in this worktree before committing; run the project's documented hook setup if needed.",
+    "- Dependencies (node_modules), git hooks, and ignored files listed in .worktreeinclude are provisioned automatically. Only run a dependency install if the Provisioning section above reported a skip/warning, or if the lockfile differs from the primary checkout.",
     "- Then make changes, test, commit, and push from this worktree.",
   ];
   return lines.join("\n");
+}
+
+const DEFAULT_SYMLINK_DIRECTORIES = ["node_modules"];
+
+interface ResolvedProvisionConfig {
+  symlinkDirectories: string[];
+  copyLocalSettings: boolean;
+  linkHooks: boolean;
+  include: string[];
+}
+
+/**
+ * Reads `.letta/settings.json` directly (rather than going through the settings
+ * manager's loaded cache, which may not hold the primary root) and resolves the
+ * worktree provisioning config, applying defaults for any missing keys.
+ */
+async function readProvisionConfig(
+  primaryRoot: string,
+): Promise<ResolvedProvisionConfig> {
+  const fallback: ResolvedProvisionConfig = {
+    symlinkDirectories: DEFAULT_SYMLINK_DIRECTORIES,
+    copyLocalSettings: true,
+    linkHooks: true,
+    include: [],
+  };
+
+  try {
+    const raw = await readFile(
+      path.join(primaryRoot, ".letta", "settings.json"),
+      "utf8",
+    );
+    const parsed = JSON.parse(raw) as { worktree?: WorktreeProjectConfig };
+    const worktree = parsed.worktree;
+    if (!worktree) {
+      return fallback;
+    }
+    return {
+      symlinkDirectories: Array.isArray(worktree.symlinkDirectories)
+        ? worktree.symlinkDirectories.filter(
+            (entry): entry is string => typeof entry === "string",
+          )
+        : DEFAULT_SYMLINK_DIRECTORIES,
+      copyLocalSettings: worktree.copyLocalSettings !== false,
+      linkHooks: worktree.linkHooks !== false,
+      include: Array.isArray(worktree.include)
+        ? worktree.include.filter(
+            (entry): entry is string => typeof entry === "string",
+          )
+        : [],
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function isUnsafeRelativePath(relPath: string): boolean {
+  if (path.isAbsolute(relPath)) {
+    return true;
+  }
+  const normalized = path.normalize(relPath);
+  return normalized === ".." || normalized.startsWith(`..${path.sep}`);
+}
+
+/**
+ * Symlinks `relDir` from the primary checkout into the worktree so large,
+ * gitignored directories (node_modules, populated hook dirs) are shared instead
+ * of duplicated. Best-effort: skips silently when the source is absent and
+ * refuses to clobber a populated destination.
+ */
+async function symlinkDirIntoWorktree(
+  primaryRoot: string,
+  worktreePath: string,
+  relDir: string,
+): Promise<string> {
+  if (isUnsafeRelativePath(relDir)) {
+    return `⚠ skipped symlink for "${relDir}" (absolute path or escapes the repo)`;
+  }
+  const normalized = path.normalize(relDir);
+  const source = path.join(primaryRoot, normalized);
+  const sourceStats = await lstat(source).catch(() => null);
+  if (!sourceStats) {
+    return ""; // nothing to link (e.g. dependencies not installed in the primary checkout)
+  }
+
+  const dest = path.join(worktreePath, normalized);
+  const existing = await lstat(dest).catch(() => null);
+  if (existing) {
+    if (existing.isSymbolicLink()) {
+      return "";
+    }
+    if (existing.isDirectory()) {
+      const entries = await readdir(dest);
+      if (entries.length > 0) {
+        return `⚠ left "${normalized}" as-is (already populated in the worktree)`;
+      }
+      await rmdir(dest);
+    } else {
+      return `⚠ left "${normalized}" as-is (unexpected non-directory)`;
+    }
+  }
+
+  await mkdir(path.dirname(dest), { recursive: true });
+  await symlink(source, dest, "dir");
+  return `symlinked ${normalized} from the primary checkout`;
+}
+
+/**
+ * Points the worktree at the primary checkout's git hooks. Worktrees inherit a
+ * relative `core.hooksPath` (e.g. husky's `.husky/_`), but that directory's
+ * contents are usually gitignored and therefore absent in a fresh worktree, so
+ * hooks silently never run. Symlinking the populated hooks dir fixes that
+ * without mutating the shared/main git config.
+ */
+async function linkGitHooks(
+  primaryRoot: string,
+  worktreePath: string,
+): Promise<string> {
+  const result = await runGit(
+    ["config", "--get", "core.hooksPath"],
+    primaryRoot,
+    { allowFailure: true },
+  );
+  const hooksPath = result.stdout.trim();
+  if (result.exitCode !== 0 || !hooksPath || path.isAbsolute(hooksPath)) {
+    // No custom hooks, or an absolute path that every worktree already shares.
+    return "";
+  }
+  if (isUnsafeRelativePath(hooksPath)) {
+    return "";
+  }
+  const source = path.join(primaryRoot, hooksPath);
+  const sourceStats = await lstat(source).catch(() => null);
+  if (!sourceStats?.isDirectory()) {
+    return "";
+  }
+  const entries = await readdir(source).catch(() => [] as string[]);
+  if (entries.length === 0) {
+    return ""; // hooks dir not populated in the primary checkout (e.g. husky not installed)
+  }
+  const note = await symlinkDirIntoWorktree(
+    primaryRoot,
+    worktreePath,
+    hooksPath,
+  );
+  return note.startsWith("symlinked")
+    ? `wired git hooks (${hooksPath} → primary checkout)`
+    : note;
+}
+
+async function copyLocalSettingsFile(
+  primaryRoot: string,
+  worktreePath: string,
+): Promise<string> {
+  const rel = path.join(".letta", "settings.local.json");
+  const source = path.join(primaryRoot, rel);
+  const stats = await lstat(source).catch(() => null);
+  if (!stats || stats.isSymbolicLink() || !stats.isFile()) {
+    return "";
+  }
+  const dest = path.join(worktreePath, rel);
+  await mkdir(path.dirname(dest), { recursive: true });
+  await copyFile(source, dest);
+  return "copied .letta/settings.local.json";
+}
+
+async function readWorktreeIncludeEntries(
+  primaryRoot: string,
+): Promise<string[]> {
+  try {
+    const raw = await readFile(
+      path.join(primaryRoot, ".worktreeinclude"),
+      "utf8",
+    );
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Copies a gitignored file or directory (relative to the repo root) from the
+ * primary checkout into the worktree. Symlinks are skipped and `.git` is never
+ * descended into.
+ */
+async function copyPathIntoWorktree(
+  primaryRoot: string,
+  worktreePath: string,
+  relPath: string,
+): Promise<number> {
+  if (isUnsafeRelativePath(relPath)) {
+    return 0;
+  }
+  const normalized = path.normalize(relPath);
+  const source = path.join(primaryRoot, normalized);
+  const stats = await lstat(source).catch(() => null);
+  if (!stats || stats.isSymbolicLink()) {
+    return 0;
+  }
+  if (stats.isFile()) {
+    const dest = path.join(worktreePath, normalized);
+    await mkdir(path.dirname(dest), { recursive: true });
+    await copyFile(source, dest);
+    return 1;
+  }
+  if (stats.isDirectory()) {
+    let count = 0;
+    const entries = await readdir(source, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".git") {
+        continue;
+      }
+      count += await copyPathIntoWorktree(
+        primaryRoot,
+        worktreePath,
+        path.join(normalized, entry.name),
+      );
+    }
+    return count;
+  }
+  return 0;
+}
+
+async function copyIncludedFiles(
+  primaryRoot: string,
+  worktreePath: string,
+  extraIncludes: string[],
+): Promise<string> {
+  const entries = [
+    ...(await readWorktreeIncludeEntries(primaryRoot)),
+    ...extraIncludes,
+  ];
+  const unique = [...new Set(entries)];
+  let copied = 0;
+  for (const entry of unique) {
+    copied += await copyPathIntoWorktree(primaryRoot, worktreePath, entry);
+  }
+  return copied > 0
+    ? `copied ${copied} file${copied === 1 ? "" : "s"} via .worktreeinclude`
+    : "";
+}
+
+/**
+ * Provisions a freshly created worktree: symlinks heavy gitignored directories,
+ * wires git hooks, copies local settings, and copies `.worktreeinclude` paths.
+ * Every step is best-effort — failures are reported as notes and never abort
+ * worktree creation.
+ */
+export async function provisionWorktree(params: {
+  primaryRoot: string;
+  worktreePath: string;
+}): Promise<string[]> {
+  const { primaryRoot, worktreePath } = params;
+  const config = await readProvisionConfig(primaryRoot);
+  const notes: string[] = [];
+
+  const record = async (task: () => Promise<string>): Promise<void> => {
+    try {
+      const note = await task();
+      if (note) {
+        notes.push(note);
+      }
+    } catch (error) {
+      notes.push(`⚠ ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  for (const dir of config.symlinkDirectories) {
+    await record(() => symlinkDirIntoWorktree(primaryRoot, worktreePath, dir));
+  }
+  if (config.linkHooks) {
+    await record(() => linkGitHooks(primaryRoot, worktreePath));
+  }
+  if (config.copyLocalSettings) {
+    await record(() => copyLocalSettingsFile(primaryRoot, worktreePath));
+  }
+  await record(() =>
+    copyIncludedFiles(primaryRoot, worktreePath, config.include),
+  );
+
+  return notes;
 }
 
 export async function create_worktree(
@@ -435,12 +739,38 @@ export async function create_worktree(
     }
 
     await mkdir(worktreesDir, { recursive: true });
+    // `--no-track` keeps the new branch from adopting the base ref (e.g.
+    // origin/main) as its upstream, which would otherwise produce misleading
+    // ahead/behind status and risk an accidental push to the base branch.
     await runGit(
-      ["worktree", "add", "-b", branchName, worktreePath, baseRef],
+      [
+        "worktree",
+        "add",
+        "--no-track",
+        "-b",
+        branchName,
+        worktreePath,
+        baseRef,
+      ],
       repoRoot,
     );
 
     const normalizedWorktreePath = path.normalize(await realpath(worktreePath));
+
+    let provisionNotes: string[] = [];
+    try {
+      provisionNotes = await provisionWorktree({
+        primaryRoot,
+        worktreePath: normalizedWorktreePath,
+      });
+    } catch (error) {
+      provisionNotes = [
+        `⚠ provisioning failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ];
+    }
+
     const shouldSwitchCwd = args.switch_cwd !== false;
     let switchedCwd = false;
 
@@ -481,6 +811,7 @@ export async function create_worktree(
       branchName,
       baseRef,
       switchedCwd,
+      provisionNotes,
     });
 
     return {
