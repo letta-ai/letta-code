@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setCurrentAgentId } from "@/agent/context";
 import { handleSecretCommand } from "@/cli/commands/secret";
 import {
@@ -16,6 +19,9 @@ import {
 } from "@/utils/secrets-store";
 
 const AGENT_ID = "agent-secret-command";
+const ORIGINAL_SKIP_KEYCHAIN_CHECK = process.env.LETTA_SKIP_KEYCHAIN_CHECK;
+const ORIGINAL_LOCAL_BACKEND_DIR = process.env.LETTA_LOCAL_BACKEND_DIR;
+const tempDirs: string[] = [];
 
 const retrieveAgentMock = mock((_agentId: string, _options?: unknown) =>
   Promise.resolve({
@@ -27,6 +33,14 @@ const updateAgentMock = mock(
   (_agentId: string, _body: unknown, _options?: unknown) =>
     Promise.resolve({ id: AGENT_ID }),
 );
+
+function resetEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
+}
 
 function installLocalSecretStorage(values = new Map<string, string>()) {
   __testOverrideLocalSecretStorage({
@@ -70,6 +84,11 @@ describe("/secret command", () => {
     __testOverrideLocalSecretStorage(null);
     setCurrentAgentId(null);
     clearSecretsCache(null);
+    resetEnv("LETTA_SKIP_KEYCHAIN_CHECK", ORIGINAL_SKIP_KEYCHAIN_CHECK);
+    resetEnv("LETTA_LOCAL_BACKEND_DIR", ORIGINAL_LOCAL_BACKEND_DIR);
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 
   test("list refreshes server secrets instead of trusting an empty local cache", async () => {
@@ -199,6 +218,55 @@ describe("/secret command", () => {
     expect(scrubSecretsFromString("value=first-secret", firstAgentId)).toBe(
       "value=API_TOKEN=<REDACTED>",
     );
+  });
+
+  test("local agent secrets fall back to file storage when secure storage is unavailable", async () => {
+    const localAgentId = "agent-local-file-secret-command";
+    const storageRoot = mkdtempSync(join(tmpdir(), "letta-local-secrets-"));
+    tempDirs.push(storageRoot);
+    process.env.LETTA_SKIP_KEYCHAIN_CHECK = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageRoot;
+    setCurrentAgentId(localAgentId);
+    clearSecretsCache(localAgentId);
+
+    const setResult = await handleSecretCommand([
+      "set",
+      "node_test_secret",
+      "node-secret-value",
+    ]);
+
+    expect(setResult.output).toBe("Secret '$NODE_TEST_SECRET' set.");
+    expect(loadSecrets(localAgentId)).toEqual({
+      NODE_TEST_SECRET: "node-secret-value",
+    });
+
+    const fallbackFile = join(
+      storageRoot,
+      "secrets",
+      "local-agent-secrets.json",
+    );
+    const persisted = JSON.parse(readFileSync(fallbackFile, "utf8")) as {
+      secrets: Record<string, string>;
+    };
+    expect(persisted.secrets[`agent:${localAgentId}:secrets:index`]).toBe(
+      '["NODE_TEST_SECRET"]',
+    );
+    expect(
+      persisted.secrets[`agent:${localAgentId}:secrets:NODE_TEST_SECRET`],
+    ).toBe("node-secret-value");
+
+    clearSecretsCache(localAgentId);
+    expect(await refreshAndListSecrets(localAgentId)).toEqual([
+      { key: "NODE_TEST_SECRET", value: "node-secret-value" },
+    ]);
+
+    const unsetResult = await handleSecretCommand([
+      "unset",
+      "NODE_TEST_SECRET",
+    ]);
+
+    expect(unsetResult.output).toBe("Secret '$NODE_TEST_SECRET' unset.");
+    expect(await refreshAndListSecrets(localAgentId)).toEqual([]);
   });
 
   test("local agent mutations validate keys before writing secure storage", async () => {

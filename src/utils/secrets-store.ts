@@ -1,16 +1,21 @@
 /**
  * Agent-scoped secret storage for Letta Code.
  * Cloud agent secrets are stored on the Letta server. Local agent secrets are
- * stored in the operating system credential manager through Bun.secrets. Both
- * paths hydrate the same in-memory cache for fast $SECRET_NAME substitution.
+ * stored in the operating system credential manager when available, with a
+ * local-backend file fallback for Node production. Both paths hydrate the same
+ * in-memory cache for fast $SECRET_NAME substitution.
  */
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { isLocalAgentId } from "@/agent/agent-id";
 import { getCurrentAgentId } from "@/agent/context";
 import { getBackend } from "@/backend";
+import { getLocalBackendStorageDir } from "@/backend/local/paths";
 import {
   deleteSecretValue,
   getSecretValue,
+  isKeychainAvailable,
   setSecretValue,
 } from "@/utils/secrets";
 
@@ -51,12 +56,109 @@ function getSecretsBackend(): SecretsBackend {
   return testBackendOverride ?? (getBackend() as SecretsBackend);
 }
 
+const FILE_BACKED_LOCAL_SECRETS_PATH = join(
+  "secrets",
+  "local-agent-secrets.json",
+);
+
+type FileBackedLocalSecrets = {
+  secrets?: Record<string, string>;
+};
+
+function getFileBackedLocalSecretsPath(): string {
+  return join(getLocalBackendStorageDir(), FILE_BACKED_LOCAL_SECRETS_PATH);
+}
+
+function readFileBackedLocalSecrets(): Record<string, string> {
+  const filePath = getFileBackedLocalSecretsPath();
+  if (!existsSync(filePath)) return {};
+
+  try {
+    const parsed = JSON.parse(
+      readFileSync(filePath, "utf8"),
+    ) as FileBackedLocalSecrets;
+    if (!parsed.secrets || typeof parsed.secrets !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed.secrets).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[0] === "string" && typeof entry[1] === "string",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeFileBackedLocalSecrets(secrets: Record<string, string>): void {
+  const filePath = getFileBackedLocalSecretsPath();
+  mkdirSync(dirname(filePath), { mode: 0o700, recursive: true });
+  writeFileSync(filePath, `${JSON.stringify({ secrets }, null, 2)}\n`, {
+    encoding: "utf8",
+    flush: true,
+    mode: 0o600,
+  });
+}
+
+function getFileBackedLocalSecret(name: string): string | null {
+  return readFileBackedLocalSecrets()[name] ?? null;
+}
+
+function setFileBackedLocalSecret(name: string, value: string): void {
+  const secrets = readFileBackedLocalSecrets();
+  secrets[name] = value;
+  writeFileBackedLocalSecrets(secrets);
+}
+
+function deleteFileBackedLocalSecret(name: string): boolean {
+  const secrets = readFileBackedLocalSecrets();
+  if (!(name in secrets)) return false;
+  delete secrets[name];
+  writeFileBackedLocalSecrets(secrets);
+  return true;
+}
+
+async function getAutoLocalSecretValue(
+  name: string,
+  label: string,
+): Promise<string | null> {
+  if (await isKeychainAvailable()) {
+    const value = await getSecretValue(name, label);
+    if (value !== null) return value;
+  }
+  return getFileBackedLocalSecret(name);
+}
+
+async function setAutoLocalSecretValue(
+  name: string,
+  value: string,
+): Promise<void> {
+  if (await isKeychainAvailable()) {
+    try {
+      await setSecretValue(name, value);
+      return;
+    } catch {
+      // Fall through to file storage if keychain writes fail after probing.
+    }
+  }
+
+  setFileBackedLocalSecret(name, value);
+}
+
+async function deleteAutoLocalSecretValue(name: string): Promise<boolean> {
+  let deleted = false;
+  if (await isKeychainAvailable()) {
+    deleted = await deleteSecretValue(name);
+  }
+
+  return deleteFileBackedLocalSecret(name) || deleted;
+}
+
 function getLocalSecretStorage(): LocalSecretStorage {
   return (
     testLocalSecretStorageOverride ?? {
-      delete: deleteSecretValue,
-      get: getSecretValue,
-      set: setSecretValue,
+      delete: deleteAutoLocalSecretValue,
+      get: getAutoLocalSecretValue,
+      set: setAutoLocalSecretValue,
     }
   );
 }
