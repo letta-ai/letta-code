@@ -1653,7 +1653,6 @@ test("slack adapter streams native task progress and clears thread status", asyn
         id: "progress",
         title: "shell_exec",
         status: "in_progress",
-        details: "Preparing tool @​channel and token=[redacted]",
       },
     ],
   });
@@ -1679,7 +1678,6 @@ test("slack adapter streams native task progress and clears thread status", asyn
     id: "progress",
     title: "shell_exec",
     status: "complete",
-    details: "Tool finished",
   });
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
@@ -1691,8 +1689,13 @@ test("slack adapter streams native task progress and clears thread status", asyn
         id: "progress",
         title: "Completed",
         status: "complete",
-        output:
-          "<https://app.letta.com/chat/agent-1?conversation=conv-1|Open conversation>",
+        sources: [
+          {
+            type: "url",
+            url: "https://app.letta.com/chat/agent-1?conversation=conv-1",
+            text: "Open conversation",
+          },
+        ],
       },
     ],
   });
@@ -1843,6 +1846,61 @@ test("slack adapter does not show a tool card for turns without tool progress", 
     thread_ts: "1712790000.000050",
     status: "",
   });
+});
+
+test("slack adapter suppresses internal channel delivery tools from progress cards", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolCallId: "call-message-channel",
+    toolName: "MessageChannel",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Tool finished",
+    toolCallId: "call-message-channel",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
 });
 
 test("slack adapter posts the lifecycle error back into the same thread as a code block", async () => {
