@@ -22,7 +22,7 @@ import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
 import initAgentMd from "./builtin/init.md";
 import memoryAgentMd from "./builtin/memory.md";
-import memoryAuditorAgentMd from "./builtin/memory_auditor.md";
+import memoryRecapAgentMd from "./builtin/memory_recap.md";
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 
@@ -32,7 +32,7 @@ const STANDARD_BUILTIN_SOURCES = [
   historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
-  memoryAuditorAgentMd,
+  memoryRecapAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];
@@ -43,7 +43,7 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
   historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
-  memoryAuditorAgentMd,
+  memoryRecapAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];

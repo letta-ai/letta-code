@@ -51,6 +51,7 @@ describe("built-in subagents", () => {
 
     expect(configs.reflection?.permissionMode).toBe("memory");
     expect(configs["history-analyzer"]?.permissionMode).toBe("memory");
+    expect(configs["memory-recap"]?.permissionMode).toBe("memory");
     expect(configs.memory?.permissionMode).toBe("memory");
     expect(configs.init?.permissionMode).toBe("memory");
   });
@@ -61,6 +62,7 @@ describe("built-in subagents", () => {
 
     for (const tool of removedFileTools) {
       expect(configs.reflection?.allowedTools).not.toContain(tool);
+      expect(configs["memory-recap"]?.allowedTools).not.toContain(tool);
       expect(configs.memory?.allowedTools).not.toContain(tool);
     }
   });
@@ -69,6 +71,7 @@ describe("built-in subagents", () => {
     const configs = await getAllSubagentConfigs();
 
     expect(configs.reflection?.mode).toBe("stateless");
+    expect(configs["memory-recap"]?.mode).toBe("stateless");
     expect(configs["general-purpose"]?.mode).toBe("stateful");
     expect(configs.memory?.mode).toBe("stateful");
   });

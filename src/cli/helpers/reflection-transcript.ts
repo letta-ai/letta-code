@@ -152,6 +152,8 @@ export interface ReflectionAutoSearchScore {
 
 export interface ReflectionAutoCandidate {
   conversation_id: string;
+  transcript_path?: string;
+  state_path?: string;
   summary?: string;
   description?: string;
   last_updated_at?: string;
@@ -1383,6 +1385,8 @@ export async function buildReflectionAutoPayload(options: {
     if (!transcriptCandidate) return null;
     const candidate: ReflectionAutoCandidate = {
       conversation_id: conversationId,
+      transcript_path: transcriptCandidate.transcriptPath,
+      state_path: transcriptCandidate.statePath,
       last_updated_at: transcriptCandidate.lastUpdatedAt,
       total_completed_turns: transcriptCandidate.totalCompletedTurns,
       reflected_completed_turns: transcriptCandidate.reflectedCompletedTurns,
