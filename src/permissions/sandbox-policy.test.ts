@@ -40,7 +40,7 @@ test("canonicalizeRoot resolves a symlinked directory to its real path", () => {
   const link = join(base, "link");
   symlinkSync(target, link);
 
-  expect(canonicalizeRoot(link)).toBe(target);
+  expect(canonicalizeRoot(link)).toBe(canonicalizeRoot(target));
 });
 
 test("canonicalizeRoot resolves through a symlink for a not-yet-existing leaf", () => {
@@ -52,14 +52,16 @@ test("canonicalizeRoot resolves through a symlink for a not-yet-existing leaf", 
 
   // The file doesn't exist yet (create case) but the symlinked parent does.
   expect(canonicalizeRoot(join(link, "child.txt"))).toBe(
-    join(target, "child.txt"),
+    canonicalizeRoot(join(target, "child.txt")),
   );
 });
 
 test("getDefaultAgentsTreeRoot ends with the agents tree path", () => {
   const home = makeTempDir();
   mkdirSync(join(home, ".letta", "agents"), { recursive: true });
-  expect(getDefaultAgentsTreeRoot(home)).toBe(join(home, ".letta", "agents"));
+  expect(getDefaultAgentsTreeRoot(home)).toBe(
+    canonicalizeRoot(join(home, ".letta", "agents")),
+  );
 });
 
 test("memory-mode policy: writes scoped to ~/.letta, agents tree read-denied with agent dir carved readonly", () => {
@@ -157,8 +159,8 @@ test("cross-agent policy denies the agents tree and carves out self", () => {
   // Default-allow writes (the repo/home stay writable); only the agents tree
   // is walled off, with self carved back out.
   expect(policy.restrictWrites).toBe(false);
-  expect(policy.deniedRoots).toEqual([agentsTree]);
-  expect(policy.writableRoots).toEqual([selfDir]);
+  expect(policy.deniedRoots).toEqual([canonicalizeRoot(agentsTree)]);
+  expect(policy.writableRoots).toEqual([canonicalizeRoot(selfDir)]);
 });
 
 test("cross-agent policy defaults to both backend agents trees", () => {

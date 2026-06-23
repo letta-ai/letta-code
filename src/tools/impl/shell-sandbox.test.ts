@@ -197,5 +197,5 @@ test("carves the whole self agent dir for an in-tree memory root", () => {
   // Both the /memory root and its /memory-worktrees sibling collapse to the
   // single agent directory — so there is exactly one writable carve-out.
   const writables = result.launcher.filter((a) => a.startsWith("-DWRITABLE_"));
-  expect(writables).toEqual([`-DWRITABLE_0=${agentDir}`]);
+  expect(writables).toEqual([`-DWRITABLE_0=${canonicalizeRoot(agentDir)}`]);
 });

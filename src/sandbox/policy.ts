@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { posix, win32 } from "node:path";
 
 /**
  * A filesystem sandbox policy, expressed entirely in concrete absolute paths.
@@ -94,7 +94,10 @@ export function buildFsSandboxPolicy(
  */
 export function normalizeSandboxPath(path: string): string {
   const trimmed = path.trim();
-  const absolute = isAbsolute(trimmed) ? trimmed : resolve("/", trimmed);
+  const absolute =
+    posix.isAbsolute(trimmed) || win32.isAbsolute(trimmed)
+      ? trimmed
+      : posix.resolve("/", trimmed);
   const forward = absolute.replace(/\\/g, "/");
   return forward.replace(/\/+$/, "") || "/";
 }
