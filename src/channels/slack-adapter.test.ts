@@ -1622,6 +1622,15 @@ test("slack adapter streams native task progress and clears thread status", asyn
     toolCallId: "call-1",
     toolName: "shell_exec",
   });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Tool finished",
+    toolCallId: "call-1",
+  });
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
     batchId: "batch-1",
@@ -1642,8 +1651,9 @@ test("slack adapter streams native task progress and clears thread status", asyn
       {
         type: "task_update",
         id: "progress",
-        title: "Working",
+        title: "shell_exec",
         status: "in_progress",
+        details: "Preparing tool @​channel and token=[redacted]",
       },
     ],
   });
@@ -1667,9 +1677,9 @@ test("slack adapter streams native task progress and clears thread status", asyn
   expect(appendCall?.chunks?.[0]).toMatchObject({
     type: "task_update",
     id: "progress",
-    title: "Preparing tool @​channel and token=[redacted]",
-    status: "in_progress",
-    details: "Tool: shell_exec",
+    title: "shell_exec",
+    status: "complete",
+    details: "Tool finished",
   });
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
@@ -1722,6 +1732,16 @@ test("slack adapter closes an open stream before falling back after append failu
     type: "processing",
     batchId: "batch-1",
     sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
@@ -1779,7 +1799,7 @@ test("slack adapter closes an open stream before falling back after append failu
   });
 });
 
-test("slack adapter falls back to a Block Kit progress card when streaming is unavailable", async () => {
+test("slack adapter does not show a tool card for turns without tool progress", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -1816,24 +1836,8 @@ test("slack adapter falls back to a Block Kit progress card when streaming is un
 
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
-    channel: "C123",
-    thread_ts: "1712790000.000050",
-    text: "Letta Code is working on this thread.\nStatus: Working on it",
-    blocks: expect.arrayContaining([
-      expect.objectContaining({ type: "section" }),
-      expect.objectContaining({ type: "context" }),
-    ]),
-  });
-  expect(writeClient?.chat.update).toHaveBeenCalledWith({
-    channel: "C123",
-    ts: "1712800000.000100",
-    text: "Letta Code finished this turn.\nStatus: Completed",
-    blocks: expect.arrayContaining([
-      expect.objectContaining({ type: "section" }),
-      expect.objectContaining({ type: "context" }),
-    ]),
-  });
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
     channel_id: "C123",
     thread_ts: "1712790000.000050",
