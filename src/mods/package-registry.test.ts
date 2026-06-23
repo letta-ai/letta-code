@@ -97,6 +97,11 @@ describe("managed mod package registry", () => {
     expect(
       getManagedModPackageRootRelativePathForSource("npm:@caren/my-mod"),
     ).toBe("packages/npm/@caren/my-mod");
+    expect(
+      getManagedModPackageRootRelativePathForSource(
+        "git:https://github.com/caren/my-mod",
+      ),
+    ).toBe("packages/git/github.com/caren/my-mod");
 
     for (const source of [
       "npm:@caren",
@@ -104,6 +109,8 @@ describe("managed mod package registry", () => {
       "npm:../my-mod",
       "npm:.",
       "npm:",
+      "git:https://github.com/caren",
+      "git:https://gitlab.com/caren/my-mod",
       "path:my-mod",
     ]) {
       expect(getManagedModPackageRootRelativePathForSource(source)).toBeNull();

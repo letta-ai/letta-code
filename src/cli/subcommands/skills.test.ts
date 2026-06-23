@@ -115,6 +115,22 @@ function writeInstalledNpmModPackage(params: {
   );
 }
 
+function writeGitModPackage(packageRoot: string): void {
+  mkdirSync(join(packageRoot, "src"), { recursive: true });
+  writeFileSync(join(packageRoot, "src", "mod.ts"), "export {};\n");
+  writeFileSync(
+    join(packageRoot, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "git-mod",
+        version: "0.1.0",
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
 describe("skills subcommand", () => {
   afterEach(() => {
     __testOverrideNpmManagedModPackageInstaller({});
@@ -405,6 +421,82 @@ describe("skills subcommand", () => {
     } finally {
       consoleCapture.restore();
       await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("top-level install installs GitHub mod packages", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-install-test-"));
+    const consoleCapture = captureConsole();
+    try {
+      const modsRoot = join(tempRoot, "mods");
+      __testOverrideNpmManagedModPackageInstaller({
+        gitSpawnImpl: (_cmd, args) => {
+          if (args[0] === "clone") {
+            writeGitModPackage(String(args.at(-1)));
+          }
+          const child = createChildProcess();
+          queueMicrotask(() => {
+            if (args[0] === "rev-parse") child.stdout?.emit("data", "abc123\n");
+            child.emit("exit", 0);
+          });
+          return child;
+        },
+      });
+
+      const exitCode = await runInstallSubcommand(
+        ["https://github.com/caren/git-mod"],
+        { globalModsDirectory: modsRoot },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Warning: mods are trusted local code and can execute on startup.",
+      );
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Source: git:https://github.com/caren/git-mod",
+      );
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Repository: https://github.com/caren/git-mod",
+      );
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Installed git:https://github.com/caren/git-mod@0.1.0",
+      );
+      expect(consoleCapture.logs.join("\n")).toContain("Run /reload");
+      expect(
+        existsSync(
+          join(
+            modsRoot,
+            "packages",
+            "git",
+            "github.com",
+            "caren",
+            "git-mod",
+            "src",
+            "mod.ts",
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      consoleCapture.restore();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("top-level GitHub mod install rejects agent scope", async () => {
+    const consoleCapture = captureConsole();
+    try {
+      const exitCode = await runInstallSubcommand([
+        "--agent",
+        "agent-123",
+        "git:github.com/caren/git-mod",
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(consoleCapture.errors.join("\n")).toContain(
+        "Agent-scoped mod package install is not supported yet.",
+      );
+    } finally {
+      consoleCapture.restore();
     }
   });
 
