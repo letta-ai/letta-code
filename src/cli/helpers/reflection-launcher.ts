@@ -5,15 +5,24 @@ import type { ReflectionTrigger } from "@/cli/helpers/memory-reminder";
 import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   buildAutoReflectionPayload,
+  buildMultiReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
+  finalizeMultiReflectionPayload,
+  recordMetaReflectionResult,
+  recordSuccessfulReflectionForMetaTrigger,
 } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
 import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
 
 export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
+export const AUTO_META_REFLECTION_INTERVAL = 10;
+export const AUTO_META_REFLECTION_RECENT_LIMIT = 10;
+
+const AUTO_META_REFLECTION_INSTRUCTION =
+  "This is an automatic meta-reflection triggered after 10 successful reflection passes. Synthesize across the included recent reflected conversations: look for repeated durable user preferences, recurring agent mistakes, contradictions or stale memory, and cross-session patterns. Avoid storing one-off task state.";
 
 /** Max background wait for the reflection subagent's agent ID before emitting `reflection_start` (previously 1s inline, timed out ~100% of the time). */
 export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
@@ -22,6 +31,7 @@ const reservedReflectionAgentIds = new Set<string>();
 
 export type ReflectionLaunchTriggerSource =
   | "manual"
+  | "meta-reflection"
   | Exclude<ReflectionTrigger, "off">;
 
 export type ReflectionLaunchSkippedReason =
@@ -138,6 +148,169 @@ function resolveCompletionConversationId(
   return completionConversationId ?? fallback;
 }
 
+async function launchMetaReflectionSubagent(
+  options: ReflectionLaunchOptions & { systemPrompt?: string },
+): Promise<ReflectionLaunchResult> {
+  const {
+    agentId,
+    conversationId,
+    memfsEnabled,
+    recompileByConversation,
+    recompileQueuedByConversation,
+    onCompletionMessage,
+  } = options;
+  const triggerSource: ReflectionLaunchTriggerSource = "meta-reflection";
+
+  if (!memfsEnabled) {
+    return { launched: false, reason: "memfs_disabled" };
+  }
+
+  if (!tryReserveReflectionLaunch(agentId)) {
+    debugLog(
+      "memory",
+      "Skipping meta-reflection launch because a reflection is already active",
+    );
+    return { launched: false, reason: "already_active" };
+  }
+
+  let releaseOnComplete = false;
+  try {
+    const reflectionPayload = await buildMultiReflectionPayload({
+      agentId,
+      selectionPolicy: {
+        mode: "recent",
+        limit: AUTO_META_REFLECTION_RECENT_LIMIT,
+      },
+      instruction: AUTO_META_REFLECTION_INSTRUCTION,
+      systemPrompt: options.systemPrompt,
+    });
+    if (!reflectionPayload) {
+      releaseReflectionLaunch(agentId);
+      return { launched: false, reason: "no_payload" };
+    }
+
+    const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+    const parentMemory = await buildParentMemorySnapshot(memoryDir);
+    const reflectionPrompt = buildReflectionSubagentPrompt({
+      instruction: AUTO_META_REFLECTION_INSTRUCTION,
+      memoryDir,
+      parentMemory,
+    });
+
+    const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
+      await import("@/tools/impl/task");
+
+    const emitReflectionStart = (resolvedAgentId: string | null) => {
+      telemetry.trackReflectionStart(triggerSource, {
+        subagentId: resolvedAgentId ?? undefined,
+        conversationId,
+        startMessageId: reflectionPayload.startMessageId,
+        endMessageId: reflectionPayload.endMessageId,
+      });
+      drainReflectionTelemetry();
+    };
+
+    const { subagentId } = spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: reflectionPrompt,
+      description: "Meta-reflect on recent reflections",
+      silentCompletion: true,
+      transcriptPath: reflectionPayload.payloadPath,
+      parentScope: { agentId, conversationId },
+      onComplete: async ({
+        success,
+        error,
+        agentId: reflectionAgentId,
+        stepCount,
+        durationMs,
+      }) => {
+        try {
+          telemetry.trackReflectionEnd(triggerSource, success, {
+            subagentId: reflectionAgentId ?? undefined,
+            conversationId,
+            error,
+            stepCount,
+            durationMs,
+          });
+          drainReflectionTelemetry();
+          await finalizeMultiReflectionPayload(
+            agentId,
+            reflectionPayload.manifest,
+            success,
+          );
+          await recordMetaReflectionResult(agentId, success);
+
+          const completionMessage = await handleMemorySubagentCompletion(
+            {
+              agentId,
+              conversationId: resolveCompletionConversationId(
+                options.completionConversationId,
+                conversationId,
+              ),
+              subagentType: "reflection",
+              success,
+              error,
+              subagentAgentId: reflectionAgentId ?? undefined,
+            },
+            {
+              recompileByConversation,
+              recompileQueuedByConversation,
+              logRecompileFailure: (message) => debugWarn("memory", message),
+            },
+          );
+          await onCompletionMessage?.(completionMessage, {
+            success,
+            error,
+            reflectionAgentId: reflectionAgentId ?? undefined,
+          });
+        } finally {
+          releaseReflectionLaunch(agentId);
+        }
+      },
+    });
+    releaseOnComplete = true;
+
+    void waitForBackgroundSubagentAgentId(
+      subagentId,
+      REFLECTION_AGENT_ID_WAIT_MS,
+    )
+      .then((resolvedAgentId) => emitReflectionStart(resolvedAgentId))
+      .catch((err) => {
+        debugWarn(
+          "memory",
+          `Failed waiting for meta-reflection agent ID: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        emitReflectionStart(null);
+      });
+
+    debugLog("memory", "Launched meta-reflection subagent");
+    await onCompletionMessage?.(
+      `Automatic meta-reflection triggered after ${AUTO_META_REFLECTION_INTERVAL} successful reflection passes. Payload: ${reflectionPayload.payloadPath}`,
+      { success: true },
+    );
+    return {
+      launched: true,
+      payloadPath: reflectionPayload.payloadPath,
+      subagentId,
+      startMessageId: reflectionPayload.startMessageId,
+      endMessageId: reflectionPayload.endMessageId,
+    };
+  } catch (error) {
+    if (!releaseOnComplete) {
+      releaseReflectionLaunch(agentId);
+    }
+    debugWarn(
+      "memory",
+      `Failed to launch meta-reflection subagent: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return { launched: false, reason: "error", error };
+  }
+}
+
 export async function launchReflectionSubagent(
   options: ReflectionLaunchOptions,
 ): Promise<ReflectionLaunchResult> {
@@ -220,6 +393,7 @@ export async function launchReflectionSubagent(
         stepCount,
         durationMs,
       }) => {
+        let shouldLaunchMetaReflection = false;
         try {
           telemetry.trackReflectionEnd(triggerSource, success, {
             subagentId: reflectionAgentId ?? undefined,
@@ -251,6 +425,12 @@ export async function launchReflectionSubagent(
             autoPayload.endSnapshotLine,
             success,
           );
+          if (success && triggerSource !== "meta-reflection") {
+            ({ shouldLaunchMetaReflection } =
+              await recordSuccessfulReflectionForMetaTrigger(agentId, {
+                interval: AUTO_META_REFLECTION_INTERVAL,
+              }));
+          }
 
           const completionMessage = await handleMemorySubagentCompletion(
             {
@@ -277,6 +457,14 @@ export async function launchReflectionSubagent(
           });
         } finally {
           releaseReflectionLaunch(agentId);
+          if (shouldLaunchMetaReflection) {
+            void launchMetaReflectionSubagent({
+              ...options,
+              systemPrompt,
+              triggerSource: "meta-reflection",
+              description: "Meta-reflect on recent reflections",
+            });
+          }
         }
       },
     });

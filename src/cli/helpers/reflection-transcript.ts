@@ -26,6 +26,8 @@ const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 const DEFAULT_TRANSCRIPT_DIR = "transcripts";
 const LEGACY_MESSAGE_ID_STATE_SCHEMA_VERSION = "v2_message_id";
 export const REFLECTION_STATE_SCHEMA_VERSION = "v3_assistant_steps" as const;
+const META_REFLECTION_COUNTER_SCHEMA_VERSION =
+  "v1_meta_reflection_counter" as const;
 
 export interface ReflectionTranscriptState {
   schema_version: typeof REFLECTION_STATE_SCHEMA_VERSION;
@@ -35,6 +37,16 @@ export interface ReflectionTranscriptState {
   steps_since_last_successful_reflection: number;
   last_reflection_started_at?: string;
   last_reflection_succeeded_at?: string;
+}
+
+export interface MetaReflectionCounterState {
+  schema_version: "v1_meta_reflection_counter";
+  successful_reflections_since_last_meta_reflection: number;
+  total_successful_reflections: number;
+  total_successful_meta_reflections: number;
+  last_successful_reflection_at?: string;
+  last_meta_reflection_started_at?: string;
+  last_meta_reflection_succeeded_at?: string;
 }
 
 interface LegacyMessageIdReflectionTranscriptState {
@@ -1018,6 +1030,117 @@ function buildPayloadPath(
 
 function getAgentTranscriptRoot(agentId: string): string {
   return join(getTranscriptRoot(), sanitizePathSegment(agentId));
+}
+
+function getMetaReflectionCounterStatePath(agentId: string): string {
+  return join(getAgentTranscriptRoot(agentId), "meta-reflection-state.json");
+}
+
+function getMetaReflectionCounterLockPath(agentId: string): string {
+  return join(getAgentTranscriptRoot(agentId), "meta-reflection-state.lock");
+}
+
+function normalizeMetaReflectionCounterState(
+  parsed: Partial<MetaReflectionCounterState> | null,
+): MetaReflectionCounterState {
+  return {
+    schema_version: META_REFLECTION_COUNTER_SCHEMA_VERSION,
+    successful_reflections_since_last_meta_reflection:
+      normalizeNonNegativeInteger(
+        parsed?.successful_reflections_since_last_meta_reflection,
+      ),
+    total_successful_reflections: normalizeNonNegativeInteger(
+      parsed?.total_successful_reflections,
+    ),
+    total_successful_meta_reflections: normalizeNonNegativeInteger(
+      parsed?.total_successful_meta_reflections,
+    ),
+    last_successful_reflection_at: normalizeString(
+      parsed?.last_successful_reflection_at,
+    ),
+    last_meta_reflection_started_at: normalizeString(
+      parsed?.last_meta_reflection_started_at,
+    ),
+    last_meta_reflection_succeeded_at: normalizeString(
+      parsed?.last_meta_reflection_succeeded_at,
+    ),
+  };
+}
+
+async function withMetaReflectionCounterLock<T>(
+  agentId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  await mkdir(getAgentTranscriptRoot(agentId), { recursive: true });
+  return withFileLock(getMetaReflectionCounterLockPath(agentId), fn);
+}
+
+async function readMetaReflectionCounterStateUnlocked(
+  agentId: string,
+): Promise<MetaReflectionCounterState> {
+  let raw: string | null = null;
+  try {
+    raw = await readFile(getMetaReflectionCounterStatePath(agentId), "utf-8");
+  } catch {
+    raw = null;
+  }
+  const parsed = raw
+    ? safeJsonParseOr<Partial<MetaReflectionCounterState> | null>(raw, null)
+    : null;
+  return normalizeMetaReflectionCounterState(parsed);
+}
+
+async function writeMetaReflectionCounterStateUnlocked(
+  agentId: string,
+  state: MetaReflectionCounterState,
+): Promise<void> {
+  await writeFile(
+    getMetaReflectionCounterStatePath(agentId),
+    `${JSON.stringify(state, null, 2)}\n`,
+    "utf-8",
+  );
+}
+
+export async function recordSuccessfulReflectionForMetaTrigger(
+  agentId: string,
+  options: { interval?: number } = {},
+): Promise<{
+  shouldLaunchMetaReflection: boolean;
+  state: MetaReflectionCounterState;
+}> {
+  const interval = Math.max(1, options.interval ?? 10);
+  return withMetaReflectionCounterLock(agentId, async () => {
+    const state = await readMetaReflectionCounterStateUnlocked(agentId);
+    const nowIso = new Date().toISOString();
+    state.total_successful_reflections += 1;
+    state.successful_reflections_since_last_meta_reflection += 1;
+    state.last_successful_reflection_at = nowIso;
+
+    const shouldLaunchMetaReflection =
+      state.successful_reflections_since_last_meta_reflection >= interval;
+    if (shouldLaunchMetaReflection) {
+      state.successful_reflections_since_last_meta_reflection = 0;
+      state.last_meta_reflection_started_at = nowIso;
+    }
+
+    await writeMetaReflectionCounterStateUnlocked(agentId, state);
+    return { shouldLaunchMetaReflection, state };
+  });
+}
+
+export async function recordMetaReflectionResult(
+  agentId: string,
+  success: boolean,
+): Promise<MetaReflectionCounterState> {
+  return withMetaReflectionCounterLock(agentId, async () => {
+    const state = await readMetaReflectionCounterStateUnlocked(agentId);
+    if (success) {
+      state.total_successful_meta_reflections += 1;
+      state.last_meta_reflection_succeeded_at = new Date().toISOString();
+    }
+    await writeMetaReflectionCounterStateUnlocked(agentId, state);
+    return state;
+  });
 }
 
 export function getReflectionTranscriptPaths(
