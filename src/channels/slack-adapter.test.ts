@@ -1447,10 +1447,6 @@ test("slack adapter streams native task progress and clears thread status", asyn
     recipient_team_id: "T123",
     chunks: [
       {
-        type: "markdown_text",
-        text: "Working on it…",
-      },
-      {
         type: "task_update",
         id: "progress",
         title: "Working",
@@ -1492,26 +1488,8 @@ test("slack adapter streams native task progress and clears thread status", asyn
         id: "progress",
         title: "Completed",
         status: "complete",
-      },
-      {
-        type: "blocks",
-        blocks: [
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "Open conversation",
-                  emoji: false,
-                },
-                url: "https://app.letta.com/chat/agent-1?conversation=conv-1",
-                action_id: "open_conversation",
-              },
-            ],
-          },
-        ],
+        output:
+          "<https://app.letta.com/chat/agent-1?conversation=conv-1|Open conversation>",
       },
     ],
   });
@@ -1585,10 +1563,6 @@ test("slack adapter closes an open stream before falling back after append failu
         id: "progress",
         title: "Searching files",
         status: "complete",
-      },
-      {
-        type: "markdown_text",
-        text: "Continuing in the fallback progress card.",
       },
     ],
   });
