@@ -64,6 +64,74 @@ test("channel progress adds semantic web_search titles from safe args", () => {
   ]);
 });
 
+test("channel progress uses Bash descriptions as tool titles", () => {
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        id: "call-1",
+        function: {
+          name: "Bash",
+          arguments: JSON.stringify({
+            command: "uname -a",
+            description: "Check system details",
+          }),
+        },
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Bash",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Bash",
+      toolDetails: "Command: uname -a",
+      toolTitle: "Bash: Check system details",
+    },
+  ]);
+});
+
+test("channel progress maps canonical parallel tool return arrays", () => {
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "tool_return_message",
+    run_id: "run-1",
+    tool_returns: [
+      {
+        tool_call_id: "call-1",
+        status: "success",
+        tool_return: "ok",
+      },
+      {
+        tool_call_id: "call-2",
+        status: "error",
+        tool_return: "failed",
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "completed",
+      message: "Tool finished",
+      runId: "run-1",
+      toolCallId: "call-1",
+    },
+    {
+      kind: "tool",
+      state: "error",
+      message: "Tool failed",
+      runId: "run-1",
+      toolCallId: "call-2",
+    },
+  ]);
+});
+
 test("channel progress sanitizes status text before adapters see it", () => {
   expect(
     sanitizeChannelProgressText(
