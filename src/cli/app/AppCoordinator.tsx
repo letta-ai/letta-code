@@ -869,6 +869,10 @@ export function App({
   const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
   );
+  const currentModelHandleRef = useRef(currentModelHandle);
+  useEffect(() => {
+    currentModelHandleRef.current = currentModelHandle;
+  }, [currentModelHandle]);
   // Derive agentName from agentState (single source of truth)
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
@@ -4037,6 +4041,8 @@ export function App({
     modelHandle: string;
     effort: string;
     modelId: string;
+    providerType?: string | null;
+    serviceTier?: string | null;
   } | null>(null);
   const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
   const reasoningCycleLastConfirmedAgentStateRef = useRef<AgentState | null>(
@@ -4626,6 +4632,7 @@ export function App({
       commandRunner,
       conversationOverrideModelSettingsRef,
       conversationIdRef,
+      currentModelHandleRef,
       hasConversationModelOverrideRef,
       isAgentBusy,
       llmConfigRef,

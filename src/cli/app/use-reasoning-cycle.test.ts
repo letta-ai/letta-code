@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import {
   resolveReasoningCycleModelHandle,
+  resolveReasoningCycleTierLookupHandle,
   serviceTierForReasoningCycle,
 } from "@/cli/app/use-reasoning-cycle";
 
@@ -55,6 +56,59 @@ describe("resolveReasoningCycleModelHandle", () => {
         },
         null,
       ),
+    ).toBe("chatgpt-plus-pro/gpt-5.5");
+  });
+
+  test("preserves active BYOK alias handles over compatibility llm_config", () => {
+    expect(
+      resolveReasoningCycleModelHandle(
+        {
+          model: "claude-opus-4-8",
+          model_endpoint_type: "anthropic",
+          context_window: 200000,
+        },
+        null,
+        "lc-anthropic/claude-opus-4-8",
+      ),
+    ).toBe("lc-anthropic/claude-opus-4-8");
+  });
+
+  test("preserves agent BYOK alias handles over compatibility llm_config", () => {
+    expect(
+      resolveReasoningCycleModelHandle(
+        {
+          model: "claude-opus-4-8",
+          model_endpoint_type: "anthropic",
+          context_window: 200000,
+        },
+        "lc-anthropic/claude-opus-4-8",
+      ),
+    ).toBe("lc-anthropic/claude-opus-4-8");
+  });
+});
+
+describe("resolveReasoningCycleTierLookupHandle", () => {
+  test("uses canonical Anthropic registry handles for lc-anthropic aliases", () => {
+    expect(
+      resolveReasoningCycleTierLookupHandle("lc-anthropic/claude-opus-4-8", {
+        provider_type: "anthropic",
+      } as unknown as AgentState["model_settings"]),
+    ).toBe("anthropic/claude-opus-4-8");
+  });
+
+  test("keeps canonical handles unchanged", () => {
+    expect(
+      resolveReasoningCycleTierLookupHandle("anthropic/claude-opus-4-8", {
+        provider_type: "anthropic",
+      } as unknown as AgentState["model_settings"]),
+    ).toBe("anthropic/claude-opus-4-8");
+  });
+
+  test("uses ChatGPT OAuth registry handles for local ChatGPT aliases", () => {
+    expect(
+      resolveReasoningCycleTierLookupHandle("openai-codex/gpt-5.5", {
+        provider_type: "chatgpt_oauth",
+      } as unknown as AgentState["model_settings"]),
     ).toBe("chatgpt-plus-pro/gpt-5.5");
   });
 });
