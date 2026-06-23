@@ -207,6 +207,7 @@ SUBCOMMANDS
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
   letta mods list [--agent <id>]
+  letta mods package <mod-file> --name <package-name> [--out <dir>]
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
