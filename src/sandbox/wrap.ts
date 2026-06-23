@@ -1,12 +1,18 @@
 import { BWRAP_BIN, buildBwrapArgs } from "./bwrap.js";
 import type { FsSandboxPolicy, SandboxBackend } from "./policy.js";
 import { buildSeatbeltArgs, SANDBOX_EXEC_PATH } from "./seatbelt.js";
+import {
+  buildWindowsSandboxArgs,
+  WINDOWS_SANDBOX_HELPER_NAME,
+} from "./windows.js";
 
 export interface WrapOptions {
   /** Which backend to render for. `null` disables wrapping (returns null). */
   backend: SandboxBackend | null;
   /** Resolved bwrap binary path (system or bundled). Defaults to `bwrap`. */
   bwrapPath?: string;
+  /** Resolved Windows helper path. Defaults to the helper binary name. */
+  windowsHelperPath?: string;
 }
 
 /**
@@ -38,6 +44,13 @@ export function wrapLauncher(
       return [
         options.bwrapPath ?? BWRAP_BIN,
         ...buildBwrapArgs(policy),
+        "--",
+        ...launcher,
+      ];
+    case "windows":
+      return [
+        options.windowsHelperPath ?? WINDOWS_SANDBOX_HELPER_NAME,
+        ...buildWindowsSandboxArgs(policy),
         "--",
         ...launcher,
       ];

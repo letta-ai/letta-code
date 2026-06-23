@@ -45,7 +45,7 @@ export interface FsSandboxPolicy {
 }
 
 /** Backend tag, also the value of the `LETTA_SANDBOX` env sentinel. */
-export type SandboxBackend = "seatbelt" | "bwrap";
+export type SandboxBackend = "seatbelt" | "bwrap" | "windows";
 
 /**
  * Env var set inside a sandboxed process. Mirrors Codex's `CODEX_SANDBOX`.

@@ -18,6 +18,9 @@ letta.js.map
 /skills/
 .DS_Store
 
+# Locally built unsigned Windows sandbox helpers (release CI stages signed copies)
+/vendor/windows-sandbox/**/*.exe
+
 # Logs
 logs
 *.log

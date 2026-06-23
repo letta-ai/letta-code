@@ -8,6 +8,11 @@ import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import { getLocalBackendCrossAgentTreeRoot } from "@/utils/local-backend-paths";
 
 const SEATBELT: SandboxAvailability = { backend: "seatbelt", reason: "test" };
+const WINDOWS: SandboxAvailability = {
+  backend: "windows",
+  windowsHelperPath: "C:/helper.exe",
+  reason: "test",
+};
 const NO_BACKEND: SandboxAvailability = { backend: null, reason: "test" };
 const REPO_CWD = process.cwd();
 const MEM = "/tmp/willsandbox/memory";
@@ -84,6 +89,18 @@ test("false when api backend cwd is inside the local memfs tree", () => {
     MEMORY_DIR: join(homedir(), ".letta", "agents", "self", "memory"),
   };
   expect(willSandboxShell(cwdInTree, env, SEATBELT)).toBe(false);
+});
+
+test("Windows still wraps when cwd is inside a protected agent dir", () => {
+  const cwdInTree = join(homedir(), ".letta", "agents", "self", "memory");
+  const env = { LETTA_FS_SANDBOX: "1", MEMORY_DIR: cwdInTree };
+  expect(willSandboxShell(cwdInTree, env, WINDOWS)).toBe(true);
+});
+
+test("Windows does not wrap from the protected tree root itself", () => {
+  const cwdAtRoot = join(homedir(), ".letta", "agents");
+  const env = { LETTA_FS_SANDBOX: "1", MEMORY_DIR: MEM };
+  expect(willSandboxShell(cwdAtRoot, env, WINDOWS)).toBe(false);
 });
 
 test("true for a parent with the flag on, a backend, cwd outside the tree, and self roots", () => {

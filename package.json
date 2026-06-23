@@ -13,6 +13,7 @@
     "letta.js",
     "scripts",
     "skills",
+    "native",
     "vendor",
     "dist/app-server-client.js",
     "dist/app-server-client.js.map",
@@ -97,7 +98,9 @@
     "test:update-chain:manual": "bun run src/test-utils/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/test-utils/update-chain-smoke.ts --mode startup",
     "prepublishOnly": "bun run build",
-    "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true"
+    "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true",
+    "build:windows-sandbox-helper": "pwsh -NoProfile -File scripts/build-windows-sandbox-helper.ps1",
+    "check:windows-sandbox-helper": "node scripts/check-windows-sandbox-helper.js"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json}": [

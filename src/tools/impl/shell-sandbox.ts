@@ -70,6 +70,7 @@ export function applyShellSandbox(
   const wrapped = wrapLauncher(launcher, policy, {
     backend: ctx.backend,
     bwrapPath: ctx.bwrapPath,
+    windowsHelperPath: ctx.windowsHelperPath,
   });
   if (!wrapped || wrapped.length === 0) return unchanged;
 

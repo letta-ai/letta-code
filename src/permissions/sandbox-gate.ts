@@ -22,6 +22,8 @@ export interface ShellSandboxContext {
   backend: SandboxBackend;
   /** Resolved bwrap binary path, when `backend === "bwrap"`. */
   bwrapPath?: string;
+  /** Resolved Windows helper path, when `backend === "windows"`. */
+  windowsHelperPath?: string;
   /** Both backend agents trees to wall off (canonical). */
   agentsTreeRoots: string[];
   /** The agent's resolvable memory roots, to carve self back out of the trees. */
@@ -58,14 +60,25 @@ export function resolveShellSandboxContext(
 
   const cwdRoot = canonicalizeRoot(cwd);
   const agentsTreeRoots = getCrossBackendAgentsTreeRoots({ env });
-  // A read-deny on a cwd ancestor empties the child env under Seatbelt; the
-  // wrapper bails when cwd is inside the tree, so the guard must not defer then.
+  // Avoid launching from a protected tree root itself on every backend: there is
+  // no self/parent carveout for the tree root, so this should not become an
+  // unconfined shell just because the cwd is awkward.
   for (const agentsTreeRoot of agentsTreeRoots) {
-    if (
-      cwdRoot === agentsTreeRoot ||
-      cwdRoot.startsWith(`${agentsTreeRoot}/`)
-    ) {
+    if (cwdRoot === agentsTreeRoot) {
       return null;
+    }
+  }
+
+  // A read-deny on a cwd ancestor empties the child env under Seatbelt; bwrap has
+  // similar cwd-inside-masked-tree hazards. The wrapper bails on macOS/Linux
+  // when cwd is inside the tree, so the guard must not defer then. The Windows
+  // helper can safely try to launch from protected cwd values: self cwd is carved
+  // back, while other-agent cwd fails closed.
+  if (avail.backend !== "windows") {
+    for (const agentsTreeRoot of agentsTreeRoots) {
+      if (cwdRoot.startsWith(`${agentsTreeRoot}/`)) {
+        return null;
+      }
     }
   }
 
@@ -76,6 +89,7 @@ export function resolveShellSandboxContext(
   return {
     backend: avail.backend,
     bwrapPath: avail.bwrapPath,
+    windowsHelperPath: avail.windowsHelperPath,
     agentsTreeRoots,
     memoryRoots,
   };
