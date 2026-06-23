@@ -251,11 +251,11 @@ describe("mods subcommand", () => {
   test("rejects unknown actions", async () => {
     const consoleCapture = captureConsole();
     try {
-      const exitCode = await runModsSubcommand(["install"]);
+      const exitCode = await runModsSubcommand(["publish"]);
 
       expect(exitCode).toBe(1);
       expect(consoleCapture.errors.join("\n")).toContain(
-        "Unknown mods action: install",
+        "Unknown mods action: publish",
       );
       expect(consoleCapture.logs.join("\n")).toContain("Usage:");
     } finally {

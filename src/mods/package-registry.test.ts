@@ -10,9 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  getManagedModPackageRootRelativePathForSource,
   listManagedModPackages,
   removeManagedModPackage,
   setManagedModPackageEnabled,
+  upsertManagedModPackage,
 } from "@/mods/package-registry";
 
 const tempRoots: string[] = [];
@@ -76,7 +78,7 @@ function writeRegistry(
 }
 
 function readRegistry(modsRoot: string): {
-  packages: Array<{ enabled: boolean }>;
+  packages: Array<Record<string, unknown>>;
 } {
   return JSON.parse(readFileSync(path.join(modsRoot, "packages.json"), "utf8"));
 }
@@ -88,6 +90,102 @@ afterEach(() => {
 });
 
 describe("managed mod package registry", () => {
+  test("derives npm package roots from valid package sources", () => {
+    expect(getManagedModPackageRootRelativePathForSource("npm:my-mod")).toBe(
+      "packages/npm/my-mod",
+    );
+    expect(
+      getManagedModPackageRootRelativePathForSource("npm:@caren/my-mod"),
+    ).toBe("packages/npm/@caren/my-mod");
+
+    for (const source of [
+      "npm:@caren",
+      "npm:my/mod",
+      "npm:../my-mod",
+      "npm:.",
+      "npm:",
+      "path:my-mod",
+    ]) {
+      expect(getManagedModPackageRootRelativePathForSource(source)).toBeNull();
+    }
+  });
+
+  test("upsert derives root and creates registry", () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+
+    const result = upsertManagedModPackage({
+      entries: ["mods/index.ts"],
+      modsRoot,
+      source: "npm:@caren/my-mod",
+      version: "0.1.0",
+    });
+
+    expect(result).toMatchObject({ replaced: false, removedDuplicates: 0 });
+    expect(readRegistry(modsRoot).packages).toEqual([
+      {
+        source: "npm:@caren/my-mod",
+        version: "0.1.0",
+        enabled: true,
+        root: "packages/npm/@caren/my-mod",
+        entries: ["mods/index.ts"],
+      },
+    ]);
+  });
+
+  test("upsert replaces same source in place and removes duplicates", () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    mkdirSync(modsRoot, { recursive: true });
+    writeRegistry(modsRoot, [
+      {
+        enabled: true,
+        root: "packages/npm/first",
+        source: "npm:first",
+        version: "0.1.0",
+      },
+      {
+        enabled: false,
+        root: "packages/npm/@caren/my-mod",
+        source: "npm:@caren/my-mod",
+        version: "0.1.0",
+      },
+      {
+        enabled: true,
+        root: "packages/npm/last",
+        source: "npm:last",
+        version: "0.1.0",
+      },
+      {
+        enabled: true,
+        root: "packages/npm/@caren/my-mod",
+        source: "npm:@caren/my-mod",
+        version: "0.0.1",
+      },
+    ]);
+
+    const result = upsertManagedModPackage({
+      enabled: true,
+      entries: ["mods/next.ts"],
+      modsRoot,
+      source: "npm:@caren/my-mod",
+      version: "0.2.0",
+    });
+
+    expect(result).toMatchObject({ replaced: true, removedDuplicates: 1 });
+    expect(readRegistry(modsRoot).packages).toEqual([
+      expect.objectContaining({ source: "npm:first" }),
+      {
+        source: "npm:@caren/my-mod",
+        version: "0.2.0",
+        enabled: true,
+        root: "packages/npm/@caren/my-mod",
+        entries: ["mods/next.ts"],
+      },
+      expect.objectContaining({ source: "npm:last" }),
+    ]);
+  });
+
   test("lists enabled and disabled packages with manifest capabilities", () => {
     const root = createTempDir();
     const modsRoot = path.join(root, "mods");

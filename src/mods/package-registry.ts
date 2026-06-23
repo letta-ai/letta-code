@@ -1,4 +1,10 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import {
   isSafeLettaPackageModEntryPath,
@@ -51,6 +57,17 @@ export interface ManagedModPackageMutationResult {
   package: ManagedModPackageListItem;
   registryPath: string;
   removedRoot?: string;
+}
+
+export interface ManagedModPackageRegistrySnapshot {
+  contents: string | null;
+  registryPath: string;
+}
+
+export interface UpsertManagedModPackageResult
+  extends ManagedModPackageMutationResult {
+  removedDuplicates: number;
+  replaced: boolean;
 }
 
 const PACKAGE_ENTRY_KEYS = new Set([
@@ -654,7 +671,11 @@ function formatManagedPackageSpecifier(pkg: {
   return `${pkg.source}@${pkg.version}`;
 }
 
-function expectedRootRelativePathForSource(source: string): string | null {
+function isValidNpmPackageNamePart(value: string): boolean {
+  return /^[a-z0-9][a-z0-9._~-]*$/.test(value);
+}
+
+export function parseManagedNpmPackageSource(source: string): string | null {
   if (!source.startsWith("npm:")) return null;
   const packageName = source.slice("npm:".length);
   const normalizedPackageName = normalizeRelativePath(packageName);
@@ -663,19 +684,31 @@ function expectedRootRelativePathForSource(source: string): string | null {
   const isScopedPackage =
     packageNameParts.length === 2 &&
     Boolean(packageNameParts[0]?.startsWith("@")) &&
-    Boolean(packageNameParts[0]?.slice(1)) &&
-    Boolean(packageNameParts[1]);
+    isValidNpmPackageNamePart(packageNameParts[0]?.slice(1) ?? "") &&
+    isValidNpmPackageNamePart(packageNameParts[1] ?? "");
   const isUnscopedPackage =
-    packageNameParts.length === 1 && !packageNameParts[0]?.startsWith("@");
+    packageNameParts.length === 1 &&
+    !packageNameParts[0]?.startsWith("@") &&
+    isValidNpmPackageNamePart(packageNameParts[0] ?? "");
   if (!isScopedPackage && !isUnscopedPackage) return null;
-  return `${MOD_PACKAGES_DIRECTORY_NAME}/npm/${normalizedPackageName}`;
+  return normalizedPackageName;
+}
+
+export function getManagedModPackageRootRelativePathForSource(
+  source: string,
+): string | null {
+  const packageName = parseManagedNpmPackageSource(source);
+  if (!packageName) return null;
+  return `${MOD_PACKAGES_DIRECTORY_NAME}/npm/${packageName}`;
 }
 
 function assertSafePackageRemovalRoot(
   metadata: Extract<ReturnType<typeof validatePackageMetadata>, { ok: true }>,
 ): void {
   const normalizedRoot = normalizeRelativePath(metadata.rootRelativePath);
-  const expectedRoot = expectedRootRelativePathForSource(metadata.source);
+  const expectedRoot = getManagedModPackageRootRelativePathForSource(
+    metadata.source,
+  );
   if (!normalizedRoot || !expectedRoot || normalizedRoot !== expectedRoot) {
     throw new Error(
       `Refusing to remove ${formatManagedPackageSpecifier(metadata)} because registry root '${metadata.rootRelativePath}' does not match expected package root '${expectedRoot ?? "(unknown)"}'.`,
@@ -683,7 +716,10 @@ function assertSafePackageRemovalRoot(
   }
 }
 
-function readMutablePackageRegistry(modsRoot: string): {
+function readMutablePackageRegistry(
+  modsRoot: string,
+  options: { createIfMissing?: boolean } = {},
+): {
   packagesValue: unknown[];
   registry: Record<string, unknown>;
   registryPath: string;
@@ -691,6 +727,14 @@ function readMutablePackageRegistry(modsRoot: string): {
   const result = readRegistryObject(modsRoot);
   if (!result.ok) {
     if (!result.registryExists) {
+      if (options.createIfMissing) {
+        const packagesValue: unknown[] = [];
+        return {
+          packagesValue,
+          registry: { packages: packagesValue },
+          registryPath: result.registryPath,
+        };
+      }
       throw new Error("No managed mod packages are installed.");
     }
     throw new Error(
@@ -721,6 +765,15 @@ function getPackageMetadataForMutation(
     );
   }
   return metadata;
+}
+
+function validatePackageRegistryEntriesForMutation(
+  modsRoot: string,
+  packagesValue: unknown[],
+): void {
+  packagesValue.forEach((entry, index) => {
+    getPackageMetadataForMutation(modsRoot, entry, index);
+  });
 }
 
 function findPackageIndex(
@@ -764,7 +817,22 @@ function writePackageRegistry(
   registryPath: string,
   registry: Record<string, unknown>,
 ): void {
+  mkdirSync(path.dirname(registryPath), { recursive: true });
   writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`);
+}
+
+export function validateManagedModPackageRegistryForMutation(
+  modsRoot: string,
+): ManagedModPackageRegistrySnapshot {
+  const registryPath = getRegistryPath(modsRoot);
+  const contents = existsSync(registryPath)
+    ? readFileSync(registryPath, "utf8")
+    : null;
+  const registry = readMutablePackageRegistry(modsRoot, {
+    createIfMissing: true,
+  });
+  validatePackageRegistryEntriesForMutation(modsRoot, registry.packagesValue);
+  return { contents, registryPath };
 }
 
 function mutationItem(
@@ -806,6 +874,86 @@ export function setManagedModPackageEnabled(params: {
   return {
     package: mutationItem(match.metadata, match.index, params.enabled),
     registryPath: registry.registryPath,
+  };
+}
+
+export function upsertManagedModPackage(params: {
+  enabled?: boolean;
+  entries: string[];
+  modsRoot: string;
+  source: string;
+  version: string;
+}): UpsertManagedModPackageResult {
+  const rootRelativePath = getManagedModPackageRootRelativePathForSource(
+    params.source,
+  );
+  if (!rootRelativePath) {
+    throw new Error(`Invalid managed mod package source: ${params.source}`);
+  }
+  if (!params.version.trim()) {
+    throw new Error("Package version must not be empty");
+  }
+  const entriesResult = validatePackageEntries(
+    params.entries,
+    "package.entries",
+  );
+  if (!entriesResult.ok) {
+    throw new Error(
+      entriesResult.diagnostics[0]?.error.message ?? "Invalid package entries",
+    );
+  }
+
+  const registry = readMutablePackageRegistry(params.modsRoot, {
+    createIfMissing: true,
+  });
+  validatePackageRegistryEntriesForMutation(
+    params.modsRoot,
+    registry.packagesValue,
+  );
+
+  const entry = {
+    source: params.source,
+    version: params.version,
+    enabled: params.enabled ?? true,
+    root: rootRelativePath,
+    entries: entriesResult.entries,
+  };
+  const nextPackages: unknown[] = [];
+  let insertionIndex = -1;
+  let removedDuplicates = 0;
+  let replaced = false;
+
+  registry.packagesValue.forEach((rawEntry) => {
+    if (isRecord(rawEntry) && rawEntry.source === params.source) {
+      if (!replaced) {
+        insertionIndex = nextPackages.length;
+        nextPackages.push(entry);
+        replaced = true;
+      } else {
+        removedDuplicates += 1;
+      }
+      return;
+    }
+    nextPackages.push(rawEntry);
+  });
+
+  if (!replaced) {
+    insertionIndex = nextPackages.length;
+    nextPackages.push(entry);
+  }
+  registry.registry.packages = nextPackages;
+  writePackageRegistry(registry.registryPath, registry.registry);
+
+  const metadata = getPackageMetadataForMutation(
+    params.modsRoot,
+    entry,
+    insertionIndex,
+  );
+  return {
+    package: mutationItem(metadata, insertionIndex, metadata.enabled),
+    registryPath: registry.registryPath,
+    removedDuplicates,
+    replaced,
   };
 }
 

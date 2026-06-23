@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +18,57 @@ import {
   parseClawHubSpecifier,
   parseDirectSkillFileUrlSpecifier,
   parseGitHubSpecifier,
+  runInstallSubcommand,
 } from "./skills";
+
+function captureConsole(): {
+  errors: string[];
+  logs: string[];
+  restore: () => void;
+} {
+  const logs: string[] = [];
+  const errors: string[] = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (message?: unknown) => {
+    logs.push(String(message));
+  };
+  console.error = (message?: unknown) => {
+    errors.push(String(message));
+  };
+  return {
+    errors,
+    logs,
+    restore() {
+      console.log = originalLog;
+      console.error = originalError;
+    },
+  };
+}
+
+function writeLocalModPackage(params: {
+  capabilities?: string[];
+  packageRoot: string;
+}): void {
+  mkdirSync(join(params.packageRoot, "mods"), { recursive: true });
+  writeFileSync(join(params.packageRoot, "mods", "index.ts"), "export {};\n");
+  writeFileSync(
+    join(params.packageRoot, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@caren/my-mod",
+        version: "0.1.0",
+        letta: {
+          manifestVersion: 1,
+          mods: ["mods/index.ts"],
+          ...(params.capabilities ? { capabilities: params.capabilities } : {}),
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
 
 describe("skills subcommand", () => {
   test("parses GitHub tree URLs", () => {
@@ -169,6 +225,95 @@ describe("skills subcommand", () => {
     ).rejects.toThrow(
       `Direct skill file exceeds ${MAX_DIRECT_SKILL_FILE_BYTES} byte limit.`,
     );
+  });
+
+  test("top-level install installs local mod packages", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-install-test-"));
+    const consoleCapture = captureConsole();
+    try {
+      const packageRoot = join(tempRoot, "package");
+      const modsRoot = join(tempRoot, "mods");
+      writeLocalModPackage({ capabilities: ["commands"], packageRoot });
+
+      const exitCode = await runInstallSubcommand([packageRoot], {
+        globalModsDirectory: modsRoot,
+      });
+
+      expect(exitCode).toBe(0);
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Warning: mods are trusted local code and can execute on startup.",
+      );
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Installed npm:@caren/my-mod@0.1.0",
+      );
+      expect(consoleCapture.logs.join("\n")).toContain("Run /reload");
+      expect(
+        existsSync(
+          join(
+            modsRoot,
+            "packages",
+            "npm",
+            "@caren",
+            "my-mod",
+            "mods",
+            "index.ts",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        JSON.parse(readFileSync(join(modsRoot, "packages.json"), "utf8")),
+      ).toEqual({
+        packages: [
+          {
+            source: "npm:@caren/my-mod",
+            version: "0.1.0",
+            enabled: true,
+            root: "packages/npm/@caren/my-mod",
+            entries: ["mods/index.ts"],
+          },
+        ],
+      });
+    } finally {
+      consoleCapture.restore();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("top-level install rejects agent-scoped local mod package install", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-install-test-"));
+    const consoleCapture = captureConsole();
+    try {
+      const packageRoot = join(tempRoot, "package");
+      writeLocalModPackage({ packageRoot });
+
+      const exitCode = await runInstallSubcommand([
+        "--agent",
+        "agent-123",
+        packageRoot,
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(consoleCapture.errors.join("\n")).toContain(
+        "Agent-scoped mod package install is not supported yet.",
+      );
+    } finally {
+      consoleCapture.restore();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("top-level install reserves npm package specs for mod packages", async () => {
+    const consoleCapture = captureConsole();
+    try {
+      const exitCode = await runInstallSubcommand(["npm:@caren/my-mod"]);
+
+      expect(exitCode).toBe(1);
+      expect(consoleCapture.errors.join("\n")).toContain(
+        "Network mod package install is not supported yet. Pass a local package path.",
+      );
+    } finally {
+      consoleCapture.restore();
+    }
   });
 
   test("lists installed skill directories with frontmatter metadata", async () => {
