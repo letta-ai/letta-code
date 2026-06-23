@@ -1650,7 +1650,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
     chunks: [
       {
         type: "task_update",
-        id: "progress",
+        id: "task_call-1",
         title: "shell_exec",
         status: "in_progress",
       },
@@ -1675,7 +1675,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
   });
   expect(appendCall?.chunks?.[0]).toMatchObject({
     type: "task_update",
-    id: "progress",
+    id: "task_call-1",
     title: "shell_exec",
     status: "complete",
   });
@@ -1685,15 +1685,22 @@ test("slack adapter streams native task progress and clears thread status", asyn
     ts: "1712800000.000300",
     chunks: [
       {
-        type: "task_update",
-        id: "progress",
-        title: "Completed",
-        status: "complete",
-        sources: [
+        type: "blocks",
+        blocks: [
           {
-            type: "url",
-            url: "https://app.letta.com/chat/agent-1?conversation=conv-1",
-            text: "Open conversation",
+            type: "actions",
+            elements: [
+              {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Open conversation",
+                  emoji: false,
+                },
+                url: "https://app.letta.com/chat/agent-1?conversation=conv-1",
+                action_id: "open_conversation",
+              },
+            ],
           },
         ],
       },
@@ -1703,6 +1710,135 @@ test("slack adapter streams native task progress and clears thread status", asyn
     channel_id: "C123",
     thread_ts: "1712790000.000050",
     status: "",
+  });
+});
+
+test("slack adapter keeps separate task rows for parallel tool progress", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Searching web",
+    toolCallId: "call-web",
+    toolName: "web_search",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running command",
+    toolCallId: "call-bash",
+    toolName: "exec_command",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading file",
+    toolCallId: "call-read",
+    toolName: "read_file",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Tool finished",
+    toolCallId: "call-bash",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chunks: [
+        expect.objectContaining({
+          id: "task_call-web",
+          title: "web_search",
+          status: "in_progress",
+        }),
+      ],
+    }),
+  );
+  const appendCalls = writeClient?.chat.appendStream.mock
+    .calls as unknown as Array<[{ chunks?: Array<Record<string, unknown>> }]>;
+  const appendChunks = appendCalls.flatMap(([call]) => call.chunks ?? []);
+  expect(appendChunks).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_call-bash",
+        title: "exec_command",
+        status: "in_progress",
+      }),
+      expect.objectContaining({
+        id: "task_call-read",
+        title: "read_file",
+        status: "in_progress",
+      }),
+      expect.objectContaining({
+        id: "task_call-bash",
+        title: "exec_command",
+        status: "complete",
+      }),
+    ]),
+  );
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_call-web",
+        title: "web_search",
+        status: "complete",
+      }),
+      expect.objectContaining({
+        id: "task_call-read",
+        title: "read_file",
+        status: "complete",
+      }),
+      expect.objectContaining({
+        type: "blocks",
+        blocks: expect.arrayContaining([
+          expect.objectContaining({ type: "actions" }),
+        ]),
+      }),
+    ]),
   });
 });
 
@@ -1776,8 +1912,14 @@ test("slack adapter closes an open stream before falling back after append failu
     chunks: [
       {
         type: "task_update",
-        id: "progress",
-        title: "Searching files",
+        id: "task_call-1",
+        title: "read_file",
+        status: "in_progress",
+      },
+      {
+        type: "task_update",
+        id: "task_call-1",
+        title: "read_file",
         status: "complete",
       },
     ],
