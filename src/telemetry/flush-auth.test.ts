@@ -88,6 +88,8 @@ describe("telemetry flush auth", () => {
   const originalLettaDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
   const originalLocalBackendExperimental =
     process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
+  const originalTelemetryDeploymentId =
+    process.env.LETTA_CODE_TELEMETRY_DEPLOYMENT_ID;
 
   function deleteEnvVarCaseInsensitive(name: string): void {
     const normalized = name.toLowerCase();
@@ -124,6 +126,7 @@ describe("telemetry flush auth", () => {
     deleteEnvVarCaseInsensitive("LETTA_BASE_URL");
     deleteEnvVarCaseInsensitive("LETTA_DESKTOP_MODE");
     deleteEnvVarCaseInsensitive("LETTA_LOCAL_BACKEND_EXPERIMENTAL");
+    deleteEnvVarCaseInsensitive("LETTA_CODE_TELEMETRY_DEPLOYMENT_ID");
     settingsManager.getSettings = mock(() => ({
       env: {},
     })) as unknown as typeof settingsManager.getSettings;
@@ -142,6 +145,10 @@ describe("telemetry flush auth", () => {
     restoreEnvVar(
       "LETTA_LOCAL_BACKEND_EXPERIMENTAL",
       originalLocalBackendExperimental,
+    );
+    restoreEnvVar(
+      "LETTA_CODE_TELEMETRY_DEPLOYMENT_ID",
+      originalTelemetryDeploymentId,
     );
   });
 
@@ -163,6 +170,20 @@ describe("telemetry flush auth", () => {
     expect(telemetryBackends).toContain(
       event.data?.backend as TelemetryBackend,
     );
+  });
+
+  test("usage events include deployment id when configured", () => {
+    setEnvVar("LETTA_CODE_TELEMETRY_DEPLOYMENT_ID", " nightly-evals ");
+
+    telemetry.trackUserInput("hello", "user", "model-1");
+
+    expect(telemetryState.events).toHaveLength(1);
+    const event = telemetryState.events[0] as {
+      data?: {
+        deployment_id?: string;
+      };
+    };
+    expect(event.data?.deployment_id).toBe("nightly-evals");
   });
 
   test("flush falls back to secure settings token when env var is absent", async () => {
