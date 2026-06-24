@@ -360,22 +360,6 @@ function getModelForToolLoading(
   return specifiedModel;
 }
 
-function getCurrentBackendMode(): BackendMode {
-  return isExperimentalLocalBackendEnabled() ? "local" : "api";
-}
-
-function getPinnedAgentIdsForBackendMode(backendMode: BackendMode): string[] {
-  const previousBackendMode = getCurrentBackendMode();
-  configureBackendMode(backendMode);
-  try {
-    return settingsManager
-      .getPinnedAgents()
-      .filter((id) => isAgentIdCompatibleWithBackend(id, backendMode));
-  } finally {
-    configureBackendMode(previousBackendMode);
-  }
-}
-
 async function findLocalAgentsByName(name: string): Promise<AgentState[]> {
   const backend = getBackendForMode("local");
   const normalizedName = name.toLowerCase();
@@ -429,7 +413,8 @@ async function resolveAgentByName(
 
   for (const backendMode of backendLookupOrder) {
     const backend = getBackendForMode(backendMode);
-    const pinnedAgents = getPinnedAgentIdsForBackendMode(backendMode);
+    const pinnedAgents =
+      settingsManager.getPinnedAgentsForBackendMode(backendMode);
 
     const matches: Array<{
       id: string;
@@ -496,7 +481,8 @@ async function getPinnedAgentNames(
   const agents: { id: string; name: string }[] = [];
   for (const backendMode of backendLookupOrder) {
     const backend = getBackendForMode(backendMode);
-    const pinnedAgents = getPinnedAgentIdsForBackendMode(backendMode);
+    const pinnedAgents =
+      settingsManager.getPinnedAgentsForBackendMode(backendMode);
 
     await Promise.all(
       pinnedAgents.map(async (id) => {
@@ -1924,11 +1910,8 @@ async function main(): Promise<void> {
           process.cwd(),
         );
         const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
-        const pinnedAgentIds = settingsManager
-          .getPinnedAgents()
-          .filter((agentId) =>
-            isAgentIdCompatibleWithBackend(agentId, startupBackendMode),
-          );
+        const pinnedAgentIds =
+          settingsManager.getPinnedAgentsForBackendMode(startupBackendMode);
         const pinnedAgentId =
           pinnedAgentIds.length === 1 ? (pinnedAgentIds[0] ?? null) : null;
         const localAgentId =
