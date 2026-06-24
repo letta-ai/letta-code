@@ -4,7 +4,7 @@ import {
   isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
 import {
-  formatWebSearchProgressTitle,
+  formatWebSearchTarget,
   isWebSearchToolName,
 } from "@/cli/helpers/web-search-display";
 import type { StreamDelta } from "@/types/protocol_v2";
@@ -117,7 +117,14 @@ function formatToolProgressTitle(
 ): string | undefined {
   const parsedArguments = parseToolArguments(summary.argumentsText);
   if (isWebSearchToolName(summary.name)) {
-    const title = formatWebSearchProgressTitle(parsedArguments ?? {}, state);
+    const target = formatWebSearchTarget(parsedArguments ?? {});
+    const prefix =
+      state === "completed"
+        ? "Searched"
+        : state === "error"
+          ? "Attempted to search"
+          : "Searching";
+    const title = `${prefix} ${target}`;
     const sanitized = sanitizeChannelProgressText(title);
     return sanitized || undefined;
   }
@@ -141,19 +148,46 @@ function formatToolProgressTitle(
   return undefined;
 }
 
+function isFetchWebpageToolName(name: string | undefined): boolean {
+  return (
+    name === "fetch_webpage" ||
+    name === "FetchWebpage" ||
+    name === "fetchWebpage"
+  );
+}
+
 function formatToolProgressDetails(
   summary: ToolCallSummary,
 ): string | undefined {
   if (!summary.argumentsText || !summary.name) {
     return undefined;
   }
-  if (!parseToolArguments(summary.argumentsText)) {
+  const parsedArguments = parseToolArguments(summary.argumentsText);
+  if (!parsedArguments) {
     return undefined;
   }
 
-  // Keep Slack task rows compact. Non-shell inputs are often duplicated by the
-  // title or too verbose for the native card; shell commands are the one detail
-  // worth keeping because descriptions can hide the exact command being run.
+  if (isWebSearchToolName(summary.name)) {
+    const query = firstNonEmptyString(parsedArguments.query);
+    const sanitized = sanitizeChannelProgressText(
+      query,
+      MAX_PROGRESS_DETAILS_LENGTH,
+    );
+    return sanitized || undefined;
+  }
+
+  if (isFetchWebpageToolName(summary.name)) {
+    const url = firstNonEmptyString(parsedArguments.url);
+    const sanitized = sanitizeChannelProgressText(
+      url,
+      MAX_PROGRESS_DETAILS_LENGTH,
+    );
+    return sanitized || undefined;
+  }
+
+  // Keep Slack task rows compact. Most non-shell inputs are duplicated by the
+  // title or too verbose for the native card; shell commands are the one extra
+  // detail worth keeping because descriptions can hide the exact command.
   if (!isShellTool(summary.name)) {
     return undefined;
   }

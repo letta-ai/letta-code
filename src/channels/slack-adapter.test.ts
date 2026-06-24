@@ -1385,8 +1385,8 @@ test("slack adapter does not add lifecycle reactions for rich progress turns", a
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.reactions.add).not.toHaveBeenCalled();
-  expect(writeClient?.reactions.remove).not.toHaveBeenCalled();
+  expect(writeClient?.reactions.add.mock.calls ?? []).toHaveLength(0);
+  expect(writeClient?.reactions.remove.mock.calls ?? []).toHaveLength(0);
 });
 
 test("slack adapter streams native task progress and clears thread status", async () => {
@@ -1540,8 +1540,8 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
     message: "Searching web",
     toolCallId: "call-web",
     toolName: "web_search",
-    toolTitle: "Searching articles for “letta blog”",
-    toolDetails: "Input: articles for “letta blog”",
+    toolTitle: "Searching articles",
+    toolDetails: "letta blog",
   });
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -1590,7 +1590,8 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
         }),
         expect.objectContaining({
           id: "task_call-web",
-          title: "Searching articles for “letta blog”",
+          title: "Searching articles",
+          details: "letta blog",
           status: "in_progress",
         }),
       ],
@@ -1599,6 +1600,24 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
   const appendCalls = writeClient?.chat.appendStream.mock
     .calls as unknown as Array<[{ chunks?: Array<Record<string, unknown>> }]>;
   const appendChunks = appendCalls.flatMap(([call]) => call.chunks ?? []);
+  const runningTwoAppend = appendCalls.find(([call]) =>
+    call.chunks?.some(
+      (chunk) =>
+        chunk.type === "plan_update" && chunk.title === "Running 2 tools",
+    ),
+  )?.[0];
+  expect(runningTwoAppend?.chunks).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_call-web",
+        title: "Searching articles",
+      }),
+      expect.objectContaining({
+        id: "task_call-bash",
+        title: "Bash",
+      }),
+    ]),
+  );
   expect(appendChunks).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -1636,7 +1655,8 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-web",
-        title: "Searched articles for “letta blog”",
+        title: "Searched articles",
+        details: "letta blog",
         status: "complete",
       }),
       expect.objectContaining({
@@ -1919,6 +1939,11 @@ test("slack adapter does not show a tool card for turns without tool progress", 
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledWith({
+    channel_id: "C123",
+    thread_ts: "1712790000.000050",
+    status: "Working",
+  });
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
     channel_id: "C123",
     thread_ts: "1712790000.000050",
@@ -1960,7 +1985,8 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
     message: "Searching web",
     toolCallId: "call-web",
     toolName: "web_search",
-    toolTitle: "Searching articles for “letta blog”",
+    toolTitle: "Searching articles",
+    toolDetails: "letta blog",
   });
   await adapter.sendMessage({
     channel: "slack",
@@ -1982,7 +2008,8 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-web",
-        title: "Searched articles for “letta blog”",
+        title: "Searched articles",
+        details: "letta blog",
         status: "complete",
       }),
       expect.objectContaining({
@@ -2043,9 +2070,9 @@ test("slack adapter suppresses internal channel delivery tools from progress car
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
-  expect(writeClient?.chat.update).not.toHaveBeenCalled();
+  expect(writeClient?.chat.startStream.mock.calls ?? []).toHaveLength(0);
+  expect(writeClient?.chat.postMessage.mock.calls ?? []).toHaveLength(0);
+  expect(writeClient?.chat.update.mock.calls ?? []).toHaveLength(0);
 });
 
 test("slack adapter posts the lifecycle error back into the same thread as a code block", async () => {
@@ -2260,7 +2287,7 @@ test("slack adapter does not post an extra lifecycle message for cancelled turns
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  expect(writeClient?.chat.postMessage.mock.calls ?? []).toHaveLength(0);
 });
 
 test("slack adapter uploads local files through Slack's external upload flow", async () => {
