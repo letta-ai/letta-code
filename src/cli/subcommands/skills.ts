@@ -15,9 +15,11 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { isLocalAgentId } from "@/agent/agent-id";
 import {
   type InstallLocalManagedModPackageResult,
+  installGitManagedModPackage,
   installLocalManagedModPackage,
   installNpmManagedModPackage,
   isLocalLettaModPackageDirectory,
+  parseGitManagedModPackageInstallSpecifier,
 } from "@/mods/package-installer";
 import { resolveDefaultGlobalModsDirectory } from "@/mods/paths";
 import { parseFrontmatter } from "@/utils/frontmatter";
@@ -92,6 +94,8 @@ Usage:
 
 Sources:
   npm:<package>         npm mod package, e.g. npm:@letta-ai/mod-plan-mode
+  git:github.com/o/r    GitHub mod package
+  https://github.com/o/r GitHub mod package
   ./path/to/package     Local mod package with package.json#letta
   official/<path>         Hermes official optional skill, e.g. official/finance/stocks
   clawhub/<slug>          ClawHub registry skill, e.g. clawhub/nano-banana-pro
@@ -999,6 +1003,38 @@ async function runInstall(
     }
     try {
       const result = await installNpmManagedModPackage({
+        modsRoot:
+          options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
+        specifier,
+      });
+      printManagedModPackageInstallResult(result, { includeDetails: true });
+      return 0;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+  }
+
+  let gitPackageSpecifier: ReturnType<
+    typeof parseGitManagedModPackageInstallSpecifier
+  >;
+  try {
+    gitPackageSpecifier = parseGitManagedModPackageInstallSpecifier(specifier);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+  if (gitPackageSpecifier) {
+    if (hasInstallAgentScope(parsed.values)) {
+      console.error("Agent-scoped mod package install is not supported yet.");
+      return 1;
+    }
+    if (parsed.values.force) {
+      console.error("--force is only supported for skill installs.");
+      return 1;
+    }
+    try {
+      const result = await installGitManagedModPackage({
         modsRoot:
           options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
         specifier,

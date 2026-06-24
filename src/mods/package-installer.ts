@@ -17,7 +17,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { isModFileExtension } from "@/mods/file-extensions";
 import {
+  LETTA_PACKAGE_MANIFEST_VERSION,
   type LettaPackageCapability,
   readLettaPackageManifest,
 } from "@/mods/package-manifest";
@@ -55,6 +57,15 @@ export interface NpmManagedModPackageInstallSpecifier {
   version?: string;
 }
 
+export interface GitManagedModPackageInstallSpecifier {
+  cloneUrl: string;
+  owner: string;
+  ref?: string;
+  repo: string;
+  repository: string;
+  source: string;
+}
+
 interface PackageSourceInfo {
   capabilities: LettaPackageCapability[];
   entries: string[];
@@ -69,11 +80,13 @@ interface PackageSourceInfo {
 interface InstallPreparedManagedModPackageParams {
   dependencyNodeModulesDirectory?: string;
   enabled?: boolean;
+  includePackageNodeModules?: boolean;
   modsRoot: string;
   packageDirectory: string;
+  packageInfo?: PackageSourceInfo;
 }
 
-type NpmInstallProcessFactory = (
+type ManagedPackageProcessFactory = (
   command: string,
   args: string[],
   options: SpawnOptions,
@@ -81,7 +94,8 @@ type NpmInstallProcessFactory = (
 
 const SKIPPED_PACKAGE_COPY_NAMES = new Set([".git", "node_modules"]);
 
-let spawnNpmInstallProcess: NpmInstallProcessFactory = spawn;
+let spawnNpmInstallProcess: ManagedPackageProcessFactory = spawn;
+let spawnGitInstallProcess: ManagedPackageProcessFactory = spawn;
 let platformOverride: NodeJS.Platform | null = null;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -183,7 +197,7 @@ function validateManifestEntriesExist(
   }
 }
 
-function validatePackageSource(packageDirectory: string): PackageSourceInfo {
+function resolvePackageDirectory(packageDirectory: string): string {
   const resolvedPackageDirectory = path.resolve(packageDirectory);
   let packageStats: ReturnType<typeof lstatSync>;
   try {
@@ -199,6 +213,11 @@ function validatePackageSource(packageDirectory: string): PackageSourceInfo {
   if (!packageStats.isDirectory()) {
     throw new Error(`Package path must be a directory: ${packageDirectory}`);
   }
+  return resolvedPackageDirectory;
+}
+
+function validatePackageSource(packageDirectory: string): PackageSourceInfo {
+  const resolvedPackageDirectory = resolvePackageDirectory(packageDirectory);
 
   const packageJsonPath = path.join(resolvedPackageDirectory, "package.json");
   const packageJson = readPackageJson(packageJsonPath);
@@ -414,7 +433,8 @@ function makeSiblingTempDirectory(
 function installPreparedManagedModPackage(
   params: InstallPreparedManagedModPackageParams,
 ): InstallLocalManagedModPackageResult {
-  const packageInfo = validatePackageSource(params.packageDirectory);
+  const packageInfo =
+    params.packageInfo ?? validatePackageSource(params.packageDirectory);
   const packagesRoot = path.resolve(
     params.modsRoot,
     MOD_PACKAGES_DIRECTORY_NAME,
@@ -452,6 +472,8 @@ function installPreparedManagedModPackage(
         sourceNodeModulesDirectory: params.dependencyNodeModulesDirectory,
         targetPackageRoot: stagingRoot,
       });
+    }
+    if (params.includePackageNodeModules) {
       copyPackageInternalNodeModules({
         packageDirectory: packageInfo.packageDirectory,
         targetPackageRoot: stagingRoot,
@@ -514,7 +536,7 @@ function getNpmExecutable(): string {
   return (platformOverride ?? process.platform) === "win32" ? "npm.cmd" : "npm";
 }
 
-function getNpmInstallArgs(installSpec: string): string[] {
+function getNpmInstallArgs(installSpec?: string): string[] {
   return [
     "install",
     "--ignore-scripts",
@@ -526,7 +548,7 @@ function getNpmInstallArgs(installSpec: string): string[] {
     ...((platformOverride ?? process.platform) === "win32"
       ? ["--no-bin-links"]
       : []),
-    installSpec,
+    ...(installSpec ? [installSpec] : []),
   ];
 }
 
@@ -544,15 +566,15 @@ function writeNpmInstallManifest(tempRoot: string): void {
   );
 }
 
-function runNpmInstall(params: {
-  installSpec: string;
-  tempRoot: string;
-}): Promise<void> {
-  const command = getNpmExecutable();
-  const args = getNpmInstallArgs(params.installSpec);
+function runProcess(params: {
+  args: string[];
+  command: string;
+  cwd: string;
+  spawnImpl: ManagedPackageProcessFactory;
+}): Promise<{ stderr: string; stdout: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawnNpmInstallProcess(command, args, {
-      cwd: params.tempRoot,
+    const child = params.spawnImpl(params.command, params.args, {
+      cwd: params.cwd,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: string[] = [];
@@ -566,17 +588,36 @@ function runNpmInstall(params: {
     child.on("error", reject);
     child.on("exit", (code) => {
       if (code === 0) {
-        resolve();
+        resolve({ stderr: stderr.join(""), stdout: stdout.join("") });
         return;
       }
       const details = stderr.join("").trim() || stdout.join("").trim();
       reject(
         new Error(
-          `npm install failed with code ${code ?? "unknown"}${details ? `: ${details}` : ""}`,
+          `${params.command} failed with code ${code ?? "unknown"}${details ? `: ${details}` : ""}`,
         ),
       );
     });
   });
+}
+
+async function runNpmInstall(params: {
+  installSpec?: string;
+  tempRoot: string;
+}): Promise<void> {
+  try {
+    await runProcess({
+      args: getNpmInstallArgs(params.installSpec),
+      command: getNpmExecutable(),
+      cwd: params.tempRoot,
+      spawnImpl: spawnNpmInstallProcess,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      message.replace(/^npm(?:\.cmd)? failed/, "npm install failed"),
+    );
+  }
 }
 
 function getInstalledPackageDirectory(
@@ -627,6 +668,367 @@ export function parseNpmManagedModPackageInstallSpecifier(
   };
 }
 
+function stripGitSuffix(value: string): string {
+  return value.replace(/\.git$/i, "");
+}
+
+function splitGitRef(value: string): { ref?: string; source: string } {
+  const slashIndex = value.lastIndexOf("/");
+  const atIndex = value.lastIndexOf("@");
+  if (atIndex > slashIndex) {
+    const source = value.slice(0, atIndex);
+    const ref = value.slice(atIndex + 1);
+    if (!source || !ref) {
+      throw new Error(`Invalid git mod package specifier: ${value}`);
+    }
+    if (!/^[a-z0-9][a-z0-9._/-]*$/i.test(ref)) {
+      throw new Error(`Invalid git ref: ${ref}`);
+    }
+    return { ref, source };
+  }
+  return { source: value };
+}
+
+function normalizeGitHubInstallSource(params: {
+  owner: string;
+  ref?: string;
+  repo: string;
+}): GitManagedModPackageInstallSpecifier {
+  const owner = params.owner.toLowerCase();
+  const repo = stripGitSuffix(params.repo).toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(owner)) {
+    throw new Error(`Invalid GitHub owner: ${params.owner}`);
+  }
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(repo)) {
+    throw new Error(`Invalid GitHub repository: ${params.repo}`);
+  }
+  const repository = `https://github.com/${owner}/${repo}`;
+  return {
+    cloneUrl: `${repository}.git`,
+    owner,
+    ...(params.ref ? { ref: params.ref } : {}),
+    repo,
+    repository,
+    source: `git:${repository}`,
+  };
+}
+
+function parseGitHubHttpsInstallSource(
+  specifier: string,
+): GitManagedModPackageInstallSpecifier | null {
+  const { ref, source } = splitGitRef(specifier);
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.hostname !== "github.com") {
+    return null;
+  }
+  if (url.username || url.password || url.search || url.hash) return null;
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+  return normalizeGitHubInstallSource({
+    owner: parts[0] ?? "",
+    ...(ref ? { ref } : {}),
+    repo: parts[1] ?? "",
+  });
+}
+
+function parseGitHubShorthandInstallSource(
+  specifier: string,
+): GitManagedModPackageInstallSpecifier | null {
+  const { ref, source } = splitGitRef(specifier);
+  const parts = source.split("/").filter(Boolean);
+  if (parts.length !== 3 || parts[0] !== "github.com") return null;
+  return normalizeGitHubInstallSource({
+    owner: parts[1] ?? "",
+    ...(ref ? { ref } : {}),
+    repo: parts[2] ?? "",
+  });
+}
+
+function parseGitHubSshInstallSource(
+  specifier: string,
+): GitManagedModPackageInstallSpecifier | null {
+  const { ref, source } = splitGitRef(specifier);
+  const scpMatch = source.match(/^git@github\.com:([^/]+)\/(.+)$/);
+  if (scpMatch) {
+    return normalizeGitHubInstallSource({
+      owner: scpMatch[1] ?? "",
+      ...(ref ? { ref } : {}),
+      repo: scpMatch[2] ?? "",
+    });
+  }
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "ssh:" || url.hostname !== "github.com") return null;
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+  return normalizeGitHubInstallSource({
+    owner: parts[0] ?? "",
+    ...(ref ? { ref } : {}),
+    repo: parts[1] ?? "",
+  });
+}
+
+export function parseGitManagedModPackageInstallSpecifier(
+  specifier: string,
+): GitManagedModPackageInstallSpecifier | null {
+  const trimmed = specifier.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("https://github.com/")) {
+    return parseGitHubHttpsInstallSource(trimmed);
+  }
+  if (trimmed.startsWith("ssh://git@github.com/")) {
+    return parseGitHubSshInstallSource(trimmed);
+  }
+  if (trimmed.startsWith("git@github.com:")) {
+    return parseGitHubSshInstallSource(trimmed);
+  }
+  if (!trimmed.startsWith("git:")) return null;
+  const gitSource = trimmed.slice("git:".length);
+  if (gitSource.startsWith("https://github.com/")) {
+    return parseGitHubHttpsInstallSource(gitSource);
+  }
+  if (gitSource.startsWith("ssh://git@github.com/")) {
+    return parseGitHubSshInstallSource(gitSource);
+  }
+  if (gitSource.startsWith("git@github.com:")) {
+    return parseGitHubSshInstallSource(gitSource);
+  }
+  return parseGitHubShorthandInstallSource(gitSource);
+}
+
+function hasRuntimeDependencies(
+  packageJson: Record<string, unknown> | null,
+): boolean {
+  if (!packageJson) return false;
+  const dependencies = packageJson.dependencies;
+  return isRecord(dependencies) && Object.keys(dependencies).length > 0;
+}
+
+function readPackageJsonIfExists(
+  packageDirectory: string,
+): Record<string, unknown> | null {
+  const packageJsonPath = path.join(packageDirectory, "package.json");
+  if (!existsSync(packageJsonPath)) return null;
+  return readPackageJson(packageJsonPath);
+}
+
+function isRegularModFile(filePath: string): boolean {
+  try {
+    const stats = lstatSync(filePath);
+    return !stats.isSymbolicLink() && stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+function inferCompatibilityModEntries(packageDirectory: string): string[] {
+  const modsDirectory = path.join(packageDirectory, "mods");
+  if (existsSync(modsDirectory)) {
+    const stats = lstatSync(modsDirectory);
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Package mods directory must not be a symlink: mods`);
+    }
+    if (stats.isDirectory()) {
+      const entries = readdirSync(modsDirectory, { withFileTypes: true })
+        .filter(
+          (entry) =>
+            entry.isFile() && isModFileExtension(path.extname(entry.name)),
+        )
+        .map((entry) => `mods/${entry.name}`)
+        .sort();
+      if (entries.length > 0) return entries;
+    }
+  }
+
+  for (const entry of [
+    "src/mod.ts",
+    "src/mod.tsx",
+    "src/mod.js",
+    "src/mod.mjs",
+    "mod.ts",
+    "mod.tsx",
+    "mod.js",
+    "mod.mjs",
+  ]) {
+    if (isRegularModFile(path.join(packageDirectory, ...entry.split("/")))) {
+      return [entry];
+    }
+  }
+  return [];
+}
+
+function getPackageNameForGitPackage(params: {
+  packageJson: Record<string, unknown> | null;
+  repo: string;
+}): string {
+  const name = params.packageJson?.name;
+  if (typeof name === "string" && name.trim()) return name.trim();
+  return params.repo;
+}
+
+function getPackageVersionForGitPackage(params: {
+  packageJson: Record<string, unknown> | null;
+  revision: string;
+}): string {
+  const version = params.packageJson?.version;
+  if (typeof version === "string" && version.trim()) return version.trim();
+  return params.revision;
+}
+
+function writeCompatibilityPackageManifest(params: {
+  entries: string[];
+  packageDirectory: string;
+  packageJson: Record<string, unknown> | null;
+  packageName: string;
+  version: string;
+}): void {
+  const packageJsonPath = path.join(params.packageDirectory, "package.json");
+  writeFileSync(
+    packageJsonPath,
+    `${JSON.stringify(
+      {
+        ...(params.packageJson ?? {}),
+        name: params.packageName,
+        version: params.version,
+        letta: {
+          manifestVersion: LETTA_PACKAGE_MANIFEST_VERSION,
+          mods: params.entries,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+function createGitPackageSourceInfo(params: {
+  packageDirectory: string;
+  parsed: GitManagedModPackageInstallSpecifier;
+  revision: string;
+}): PackageSourceInfo {
+  const packageDirectory = resolvePackageDirectory(params.packageDirectory);
+  let packageJson = readPackageJsonIfExists(packageDirectory);
+  const packageJsonPath = path.join(packageDirectory, "package.json");
+  const packageName = getPackageNameForGitPackage({
+    packageJson,
+    repo: params.parsed.repo,
+  });
+  const version = getPackageVersionForGitPackage({
+    packageJson,
+    revision: params.revision,
+  });
+  let capabilities: LettaPackageCapability[] = [];
+  let entries: string[];
+
+  if (packageJson && Object.hasOwn(packageJson, "letta")) {
+    const manifestResult = readLettaPackageManifest(packageJsonPath);
+    if (!manifestResult.ok) {
+      throw new Error(
+        manifestResult.errors
+          .map((error) => `${error.path}: ${error.message}`)
+          .join("\n"),
+      );
+    }
+    if (!manifestResult.manifest) {
+      throw new Error("Package does not include a package.json#letta manifest");
+    }
+    entries = manifestResult.manifest.mods;
+    capabilities = manifestResult.manifest.capabilities ?? [];
+  } else {
+    entries = inferCompatibilityModEntries(packageDirectory);
+    if (entries.length === 0) {
+      throw new Error(
+        "GitHub repo is not an installable Letta mod package. Add package.json#letta or a conventional mod entry.",
+      );
+    }
+    writeCompatibilityPackageManifest({
+      entries,
+      packageDirectory,
+      packageJson,
+      packageName,
+      version,
+    });
+    packageJson = readPackageJson(packageJsonPath);
+  }
+
+  validateManifestEntriesExist(packageDirectory, entries);
+  const rootRelativePath = getManagedModPackageRootRelativePathForSource(
+    params.parsed.source,
+  );
+  if (!rootRelativePath) {
+    throw new Error(
+      `Invalid managed mod package source: ${params.parsed.source}`,
+    );
+  }
+  return {
+    capabilities,
+    entries,
+    packageDirectory,
+    packageName,
+    repository:
+      formatRepository(packageJson?.repository) ?? params.parsed.repository,
+    rootRelativePath,
+    source: params.parsed.source,
+    version,
+  };
+}
+
+function getGitExecutable(): string {
+  return "git";
+}
+
+async function runGit(
+  args: string[],
+  cwd: string,
+): Promise<{
+  stderr: string;
+  stdout: string;
+}> {
+  return runProcess({
+    args,
+    command: getGitExecutable(),
+    cwd,
+    spawnImpl: spawnGitInstallProcess,
+  });
+}
+
+async function checkoutGitPackage(params: {
+  packageDirectory: string;
+  parsed: GitManagedModPackageInstallSpecifier;
+  tempRoot: string;
+}): Promise<string> {
+  const cloneArgs = params.parsed.ref
+    ? ["clone", params.parsed.cloneUrl, params.packageDirectory]
+    : [
+        "clone",
+        "--depth",
+        "1",
+        params.parsed.cloneUrl,
+        params.packageDirectory,
+      ];
+  await runGit(cloneArgs, params.tempRoot);
+  if (params.parsed.ref) {
+    await runGit(
+      ["checkout", "--", params.parsed.ref],
+      params.packageDirectory,
+    );
+  }
+  const revision = await runGit(
+    ["rev-parse", "--short", "HEAD"],
+    params.packageDirectory,
+  );
+  return revision.stdout.trim() || "unknown";
+}
+
 export function installLocalManagedModPackage(params: {
   modsRoot: string;
   packageDirectory: string;
@@ -653,8 +1055,45 @@ export async function installNpmManagedModPackage(params: {
     );
     return installPreparedManagedModPackage({
       dependencyNodeModulesDirectory: nodeModulesDirectory,
+      includePackageNodeModules: true,
       modsRoot: params.modsRoot,
       packageDirectory,
+    });
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+}
+
+export async function installGitManagedModPackage(params: {
+  modsRoot: string;
+  specifier: string;
+}): Promise<InstallLocalManagedModPackageResult> {
+  const parsed = parseGitManagedModPackageInstallSpecifier(params.specifier);
+  if (!parsed) {
+    throw new Error(`Invalid git mod package specifier: ${params.specifier}`);
+  }
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "letta-mod-git-"));
+  try {
+    const packageDirectory = path.join(tempRoot, "repo");
+    const revision = await checkoutGitPackage({
+      packageDirectory,
+      parsed,
+      tempRoot,
+    });
+    const packageJson = readPackageJsonIfExists(packageDirectory);
+    if (hasRuntimeDependencies(packageJson)) {
+      await runNpmInstall({ tempRoot: packageDirectory });
+    }
+    const packageInfo = createGitPackageSourceInfo({
+      packageDirectory,
+      parsed,
+      revision,
+    });
+    return installPreparedManagedModPackage({
+      includePackageNodeModules: true,
+      modsRoot: params.modsRoot,
+      packageDirectory,
+      packageInfo,
     });
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
@@ -685,6 +1124,7 @@ export async function updateNpmManagedModPackage(params: {
     const updated = installPreparedManagedModPackage({
       dependencyNodeModulesDirectory: nodeModulesDirectory,
       enabled: existing.enabled,
+      includePackageNodeModules: true,
       modsRoot: params.modsRoot,
       packageDirectory,
     });
@@ -699,9 +1139,11 @@ export async function updateNpmManagedModPackage(params: {
 }
 
 export function __testOverrideNpmManagedModPackageInstaller(params: {
+  gitSpawnImpl?: ManagedPackageProcessFactory | null;
   platform?: NodeJS.Platform | null;
-  spawnImpl?: NpmInstallProcessFactory | null;
+  spawnImpl?: ManagedPackageProcessFactory | null;
 }): void {
+  spawnGitInstallProcess = params.gitSpawnImpl ?? spawn;
   spawnNpmInstallProcess = params.spawnImpl ?? spawn;
   platformOverride = params.platform ?? null;
 }

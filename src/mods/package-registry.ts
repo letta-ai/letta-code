@@ -694,12 +694,48 @@ export function parseManagedNpmPackageSource(source: string): string | null {
   return normalizedPackageName;
 }
 
+export interface ManagedGitPackageSource {
+  host: "github.com";
+  owner: string;
+  repo: string;
+}
+
+function isValidGitHubPathPart(value: string): boolean {
+  return /^[a-z0-9][a-z0-9._-]*$/i.test(value);
+}
+
+export function parseManagedGitPackageSource(
+  source: string,
+): ManagedGitPackageSource | null {
+  const prefix = "git:https://github.com/";
+  if (!source.startsWith(prefix)) return null;
+  const repoPath = source.slice(prefix.length).replace(/\.git$/i, "");
+  const normalizedRepoPath = normalizeRelativePath(repoPath);
+  if (!normalizedRepoPath) return null;
+  const parts = normalizedRepoPath.split("/");
+  if (parts.length !== 2) return null;
+  const [owner, repo] = parts;
+  if (!owner || !repo) return null;
+  if (!isValidGitHubPathPart(owner) || !isValidGitHubPathPart(repo)) {
+    return null;
+  }
+  return {
+    host: "github.com",
+    owner: owner.toLowerCase(),
+    repo: repo.toLowerCase(),
+  };
+}
+
 export function getManagedModPackageRootRelativePathForSource(
   source: string,
 ): string | null {
   const packageName = parseManagedNpmPackageSource(source);
-  if (!packageName) return null;
-  return `${MOD_PACKAGES_DIRECTORY_NAME}/npm/${packageName}`;
+  if (packageName) return `${MOD_PACKAGES_DIRECTORY_NAME}/npm/${packageName}`;
+  const gitSource = parseManagedGitPackageSource(source);
+  if (gitSource) {
+    return `${MOD_PACKAGES_DIRECTORY_NAME}/git/${gitSource.host}/${gitSource.owner}/${gitSource.repo}`;
+  }
+  return null;
 }
 
 function assertSafePackageRemovalRoot(
