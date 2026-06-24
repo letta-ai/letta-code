@@ -32,6 +32,7 @@ import { getBackend } from "@/backend";
 import {
   type Buffers,
   createBuffers,
+  findLastAssistantText,
   type Line,
   toLines,
 } from "@/cli/helpers/accumulator";
@@ -250,6 +251,36 @@ async function emitListenerTurnStart(options: {
   } catch {
     // Mod turn_start handlers should not block sending the turn.
     return options.input;
+  }
+}
+
+async function emitListenerTurnEnd(options: {
+  agentId: string;
+  conversationId: string;
+  stopReason: string;
+  assistantMessage?: string;
+  runtime: ListenerRuntime;
+  workingDirectory: string;
+  permissionMode?: string | null;
+  cachedAgent?: AgentState | null;
+}): Promise<void> {
+  try {
+    const modAdapter = ensureListenerModAdapter(options.runtime);
+    const context = createListenerModContext({
+      sessionId: options.conversationId,
+      workingDirectory: options.workingDirectory,
+      permissionMode: options.permissionMode ?? null,
+      agent: options.cachedAgent ?? null,
+    });
+    const event = {
+      agentId: options.agentId,
+      conversationId: options.conversationId,
+      stopReason: options.stopReason,
+      assistantMessage: options.assistantMessage,
+    };
+    await modAdapter.events.emit("turn_end", event, context);
+  } catch {
+    // Mod turn_end handlers should not block turn completion.
   }
 }
 
@@ -808,6 +839,16 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
+        await emitListenerTurnEnd({
+          agentId,
+          conversationId,
+          stopReason,
+          assistantMessage: findLastAssistantText(toLines(buffers)),
+          runtime: runtime.listener,
+          workingDirectory: turnWorkingDirectory,
+          permissionMode: turnPermissionModeState.mode,
+          cachedAgent,
+        });
         try {
           const transcriptLines = toLines(buffers);
           if (transcriptLines.length > 0) {

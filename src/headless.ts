@@ -71,6 +71,7 @@ import {
 } from "./cli/flag-utils";
 import {
   createBuffers,
+  findLastAssistantText,
   type Line,
   markIncompleteToolsAsCancelled,
   toLines,
@@ -459,21 +460,6 @@ async function emitHeadlessTurnStart(options: {
     // Mod turn_start handlers should not block sending the turn.
     return options.input;
   }
-}
-
-function findLastAssistantText(lines: Line[]): string | undefined {
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = lines[i];
-    if (
-      line?.kind === "assistant" &&
-      "text" in line &&
-      typeof line.text === "string" &&
-      line.text.trim().length > 0
-    ) {
-      return line.text;
-    }
-  }
-  return undefined;
 }
 
 async function emitHeadlessTurnEnd(options: {
