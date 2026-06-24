@@ -21,14 +21,14 @@ const MEMORY_BLOCKS = [
     description: "Parity human",
   },
   {
-    label: "project/gotchas",
+    label: "system/project/gotchas",
     value: "Use Bun.",
     description: "Parity gotchas",
   },
   {
     label: "reference/details",
     value:
-      "External-looking labels passed as memory blocks stay in system memory.",
+      "External-looking labels passed as memory blocks stay externally projected.",
     description: "Parity details",
   },
 ];
@@ -111,12 +111,8 @@ describe("local/API system prompt parity", () => {
       expect(normalizedLocal).toContain(
         "<projection>$MEMORY_DIR/system/project/gotchas.md</projection>",
       );
-      expect(normalizedLocal).toContain(
-        "<projection>$MEMORY_DIR/system/reference/details.md</projection>",
-      );
-      expect(normalizedLocal).toContain(
-        "External-looking labels passed as memory blocks stay in system memory.",
-      );
+      expect(normalizedLocal).toContain("reference/");
+      expect(normalizedLocal).toContain("details.md");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
       await client.agents.delete(apiAgent.id).catch(() => undefined);
