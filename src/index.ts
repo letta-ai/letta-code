@@ -5,7 +5,6 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import {
   getResumeDataFromBackend,
   type ResumeData,
@@ -1841,16 +1840,12 @@ async function main(): Promise<void> {
           const globalSession = settingsManager.getGlobalLastSession();
           const globalAgentId = globalSession?.agentId;
 
+          // Both LRU getters already filter by the active server key (which
+          // encodes the backend mode), so no extra compatibility check is
+          // needed here.
           const preferredResumeAgentId =
-            startupBackendMode === "local"
-              ? localAgentId &&
-                isAgentIdCompatibleWithBackend(localAgentId, "local")
-                ? localAgentId
-                : null
-              : globalAgentId &&
-                  isAgentIdCompatibleWithBackend(globalAgentId, "api")
-                ? globalAgentId
-                : null;
+            (startupBackendMode === "local" ? localAgentId : globalAgentId) ??
+            null;
 
           if (preferredResumeAgentId) {
             try {
@@ -1915,17 +1910,9 @@ async function main(): Promise<void> {
         const pinnedAgentId =
           pinnedAgentIds.length === 1 ? (pinnedAgentIds[0] ?? null) : null;
         const localAgentId =
-          startupBackendMode === "local" &&
-          rawLocalAgentId &&
-          isAgentIdCompatibleWithBackend(rawLocalAgentId, "local")
-            ? rawLocalAgentId
-            : null;
+          startupBackendMode === "local" ? rawLocalAgentId : null;
         const globalAgentId =
-          startupBackendMode === "api" &&
-          rawGlobalAgentId &&
-          isAgentIdCompatibleWithBackend(rawGlobalAgentId, "api")
-            ? rawGlobalAgentId
-            : null;
+          startupBackendMode === "api" ? rawGlobalAgentId : null;
 
         // Fetch pin + LRU agents in parallel, de-duping shared IDs.
         const agentIdsToValidate = [
@@ -2144,10 +2131,7 @@ async function main(): Promise<void> {
             startupBackendMode === "local"
               ? settingsManager.getLocalLastAgentId()
               : settingsManager.getGlobalLastAgentId();
-          if (
-            recentAgentId &&
-            isAgentIdCompatibleWithBackend(recentAgentId, startupBackendMode)
-          ) {
+          if (recentAgentId) {
             try {
               await backend.retrieveAgent(recentAgentId);
               resumingAgentId = recentAgentId;

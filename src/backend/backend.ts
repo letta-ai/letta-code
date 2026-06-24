@@ -5,11 +5,19 @@ import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
+import {
+  type BackendMode,
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "./backend-mode";
 import { LocalBackend } from "./local/local-backend";
 import {
   getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
   LOCAL_BACKEND_EXPERIMENTAL_ENV,
 } from "./local/paths";
+
+export type { BackendMode };
+export { isExperimentalLocalBackendEnabled } from "./backend-mode";
 
 export type APIClient = Awaited<ReturnType<typeof getClient>>;
 type GetAPIClient = typeof getClient;
@@ -263,8 +271,6 @@ interface APIBackendDeps {
   forkConversation?: ForkConversation;
 }
 
-export type BackendMode = "api" | "local";
-
 export class APIBackend implements Backend {
   readonly capabilities: BackendCapabilities = {
     remoteMemfs: true,
@@ -476,14 +482,6 @@ export class APIBackend implements Backend {
   }
 }
 
-function isTruthyEnv(value: string | undefined): boolean {
-  return value === "1" || value?.toLowerCase() === "true";
-}
-
-export function isExperimentalLocalBackendEnabled(): boolean {
-  return resolveBackendMode() === "local";
-}
-
 export function getLocalBackendStorageDir(homeDir = homedir()): string {
   return getLocalBackendStorageDirFromPaths(homeDir);
 }
@@ -496,15 +494,6 @@ function createExperimentalLocalBackend(): Backend {
         ? "deterministic"
         : "pi",
   });
-}
-
-let configuredBackendMode: BackendMode | null = null;
-
-function resolveBackendMode(): BackendMode {
-  if (configuredBackendMode) return configuredBackendMode;
-  return isTruthyEnv(process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL)
-    ? "local"
-    : "api";
 }
 
 function createBackendForMode(mode: BackendMode): Backend {
@@ -531,7 +520,7 @@ export function getBackendForMode(mode: BackendMode): Backend {
 }
 
 export function configureBackendMode(mode: BackendMode): void {
-  configuredBackendMode = mode;
+  setConfiguredBackendMode(mode);
   process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV] = mode === "local" ? "1" : "0";
   backend = createBackendForMode(mode);
 }
