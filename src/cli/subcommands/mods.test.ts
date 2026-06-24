@@ -451,6 +451,64 @@ describe("mods subcommand", () => {
     }
   });
 
+  test("update command updates git package and prints old to new version", async () => {
+    const root = createTempDir();
+    const modsRoot = join(root, "mods");
+    mkdirSync(modsRoot, { recursive: true });
+    writeManagedPackage({
+      modsRoot,
+      root: "packages/git/github.com/caren/git-mod",
+      source: "git:https://github.com/caren/git-mod",
+      version: "0.1.0",
+    });
+    __testOverrideNpmManagedModPackageInstaller({
+      gitSpawnImpl: (_cmd, args) => {
+        if (args[0] === "clone") {
+          const packageRoot = String(args.at(-1));
+          mkdirSync(join(packageRoot, "mods"), { recursive: true });
+          writeFileSync(join(packageRoot, "mods", "index.ts"), "export {};\n");
+          writeFileSync(
+            join(packageRoot, "package.json"),
+            `${JSON.stringify({
+              name: "git-mod",
+              version: "0.2.0",
+              letta: {
+                manifestVersion: 1,
+                mods: ["mods/index.ts"],
+              },
+            })}\n`,
+          );
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") child.stdout?.emit("data", "def456\n");
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+    });
+    const consoleCapture = captureConsole();
+
+    try {
+      const exitCode = await runModsSubcommand(
+        ["update", "https://github.com/caren/git-mod"],
+        { globalModsDirectory: modsRoot },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Updated git:https://github.com/caren/git-mod 0.1.0 -> 0.2.0",
+      );
+      expect(consoleCapture.logs.join("\n")).toContain("Run /reload");
+      expect(
+        JSON.parse(readFileSync(join(modsRoot, "packages.json"), "utf8"))
+          .packages[0].version,
+      ).toBe("0.2.0");
+    } finally {
+      consoleCapture.restore();
+    }
+  });
+
   test("update command rejects agent option", async () => {
     const consoleCapture = captureConsole();
 
