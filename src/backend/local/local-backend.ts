@@ -116,7 +116,7 @@ function sanitizeFrontmatterValue(value: string): string {
 
 function memoryBlockPath(label: string): string {
   const normalized = label.trim().replace(/\\/g, "/").replace(/\.md$/, "");
-  if (normalized === "system" || normalized.startsWith("system/")) {
+  if (normalized === "system" || normalized.includes("/")) {
     return `${normalized}.md`;
   }
   return `system/${normalized}.md`;
