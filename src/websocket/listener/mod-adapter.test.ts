@@ -425,6 +425,55 @@ describe("listener mod adapter", () => {
     adapter.dispose();
   });
 
+  test("turn_end handlers receive stop reason and assistant message", async () => {
+    const root = createTempDir();
+    const modsDir = join(root, "mods");
+    const cacheDir = join(root, "cache");
+    mkdirSync(modsDir, { recursive: true });
+    writeFileSync(
+      join(modsDir, "turn-end-mod.ts"),
+      `export default function activate(letta) {
+        letta.events.on("turn_end", (event) => {
+          globalThis.__lettaTurnEndSeen = {
+            stopReason: event.stopReason,
+            assistantMessage: event.assistantMessage,
+          };
+        });
+      }`,
+    );
+
+    const adapter = createListenerModAdapter({
+      cacheDirectory: cacheDir,
+      globalModsDirectory: modsDir,
+      sessionId: "turn-end-test",
+      workingDirectory: root,
+    });
+    await adapter.reload();
+
+    const context = createListenerModContext({
+      sessionId: "conv-turn-end-test",
+      workingDirectory: root,
+    });
+    const event = {
+      agentId: "agent-turn-end",
+      conversationId: "conv-turn-end-test",
+      stopReason: "end_turn",
+      assistantMessage: "all done",
+    };
+
+    const result = await adapter.events.emit("turn_end", event, context);
+    expect(result.diagnostics).toHaveLength(0);
+    expect(
+      (globalThis as { __lettaTurnEndSeen?: unknown }).__lettaTurnEndSeen,
+    ).toEqual({
+      stopReason: "end_turn",
+      assistantMessage: "all done",
+    });
+
+    delete (globalThis as { __lettaTurnEndSeen?: unknown }).__lettaTurnEndSeen;
+    adapter.dispose();
+  });
+
   test("mod tools with isEnabled are isolated across listener scopes", async () => {
     __testSetBackend(
       new FakeHeadlessBackend(

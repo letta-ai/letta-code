@@ -1504,6 +1504,22 @@ export function toLines(b: Buffers): Line[] {
   return out;
 }
 
+/** Returns the text of the most recent non-empty assistant line, if any. */
+export function findLastAssistantText(lines: Line[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (
+      line?.kind === "assistant" &&
+      "text" in line &&
+      typeof line.text === "string" &&
+      line.text.trim().length > 0
+    ) {
+      return line.text;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Set tool calls to "running" phase before execution.
  * This updates the UI to show the formatted args instead of ellipsis.
