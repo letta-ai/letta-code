@@ -527,6 +527,7 @@ test("slack adapter forwards DM messages as direct channel input", async () => {
       senderId: "U123",
       text: "hello from slack",
       messageId: "1712800000.000100",
+      threadId: "1712800000.000100",
       chatType: "direct",
     }),
   );

@@ -2018,6 +2018,8 @@ export function createSlackAdapter(
       const senderName = await resolveUserName(instance, rawMessage.user);
 
       if (chatType === "direct") {
+        const directThreadId =
+          firstNonEmptyString(rawMessage.thread_ts, rawMessage.ts) ?? null;
         const seenKey = `${channelId}:${rawMessage.ts}`;
         const wasSeen = markIngressMessageSeen(channelId, rawMessage.ts);
         if (!wasSeen) {
@@ -2041,7 +2043,7 @@ export function createSlackAdapter(
           text,
           timestamp: slackTimestampToMillis(rawMessage.ts),
           messageId: rawMessage.ts,
-          threadId: null,
+          threadId: directThreadId,
           chatType: "direct",
           isMention: wasMentioned,
           attachments,
