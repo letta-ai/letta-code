@@ -229,7 +229,7 @@ export function buildReflectionSelectorPrompt(options?: {
   instruction?: string;
 }): string {
   const lines = [
-    "You are selecting conversation transcripts for memory reflection. The transcript candidates path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `wc -c \"$TRANSCRIPT_PATH\"`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit file_path is literal and does NOT expand env vars.",
+    'You are selecting conversation transcripts for memory reflection. The transcript candidates path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `wc -c "$TRANSCRIPT_PATH"`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit file_path is literal and does NOT expand env vars.',
     "",
     "The payload is `auto_transcript_reflection_candidates` with compact metadata about candidate conversations. Your job is only to choose which conversations should be opened for a full reflection pass. Do not edit memory files. Do not commit anything.",
     "",
