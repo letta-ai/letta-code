@@ -19,6 +19,7 @@ import type {
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
+import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import { getDisplayToolName } from "@/cli/helpers/tool-name-mapping";
 import {
   resolveSlackChannelHistory,
@@ -2475,7 +2476,7 @@ export function createSlackAdapter(
         // feedback while we wait to see whether tool progress appears.
         await Promise.all(
           getUniqueSlackProgressSources(event.sources).map((source) =>
-            setSlackAssistantThreadStatus(source, "Working"),
+            setSlackAssistantThreadStatus(source, getRandomThinkingVerb()),
           ),
         );
         return;
