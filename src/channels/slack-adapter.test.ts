@@ -1608,6 +1608,10 @@ test("slack adapter streams native task progress and clears thread status", asyn
 
   await adapter.start();
   await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source,
+  });
+  await adapter.handleTurnLifecycleEvent?.({
     type: "processing",
     batchId: "batch-1",
     sources: [source],
@@ -2117,6 +2121,10 @@ test("slack adapter does not show a tool card for turns without tool progress", 
 
   await adapter.start();
   await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source,
+  });
+  await adapter.handleTurnLifecycleEvent?.({
     type: "processing",
     batchId: "batch-1",
     sources: [source],
@@ -2136,10 +2144,13 @@ test("slack adapter does not show a tool card for turns without tool progress", 
     (writeClient?.assistant.threads.setStatus.mock.calls as Array<
       Array<{ status: string }>
     >) ?? [];
-  expect(statusCalls.length).toBeGreaterThanOrEqual(2);
+  expect(statusCalls.length).toBeGreaterThanOrEqual(3);
   const firstStatus = statusCalls[0]?.[0]?.status;
-  expect(typeof firstStatus).toBe("string");
-  expect((firstStatus ?? "").length).toBeGreaterThan(0);
+  const secondStatus = statusCalls[1]?.[0]?.status;
+  expect(["is cogitating", "is thinking", "is processing"]).toContain(
+    firstStatus ?? "",
+  );
+  expect(secondStatus).toBe(firstStatus);
   expect(statusCalls[statusCalls.length - 1]?.[0]?.status).toBe("");
 });
 
