@@ -104,6 +104,13 @@ function buildModelHandleFromConfig(
   return config.model ?? null;
 }
 
+function providerTypeFromModelSettings(
+  modelSettings: Record<string, unknown> | null,
+): string | null {
+  const providerType = modelSettings?.provider_type;
+  return typeof providerType === "string" ? providerType : null;
+}
+
 function withContextWindow(
   baseConfig: ModelScopeSnapshot["llmConfig"],
   contextWindow?: number,
@@ -401,6 +408,10 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       conversationId,
       overrideModel: model.handle,
+      overrideProviderType:
+        providerTypeFromModelSettings(modelSettings) ??
+        inferProviderTypeFromRegistryHandle(model.handle) ??
+        null,
       modEvents: ensureListenerModAdapter(listener).events,
     });
     nextToolset = preparedToolContext.toolset;

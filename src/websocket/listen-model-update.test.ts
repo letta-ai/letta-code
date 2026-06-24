@@ -250,7 +250,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     expect(resolved?.updateArgs?.reasoning_effort).toBe("medium");
   });
 
-  test("returns Anthropic effort settings for BYOK Opus 4.8 max update", async () => {
+  test("switches BYOK Opus 4.8 max update from stale ChatGPT provider state to default toolset", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "ws-byok-opus-max-"));
     const previousHome = process.env.HOME;
     try {
@@ -265,10 +265,10 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
       __testSetBackend(backend);
       const agent = await backend.createAgent({
         name: "BYOK Opus Agent",
-        model: "lc-anthropic/claude-opus-4-8",
+        model: "chatgpt-jin/gpt-5.5",
         model_settings: {
-          provider_type: "anthropic",
-          effort: "high",
+          provider_type: "chatgpt_oauth",
+          reasoning: { reasoning_effort: "high" },
           parallel_tool_calls: true,
         },
       } as AgentCreateBody);
@@ -306,6 +306,9 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
         provider_type: "anthropic",
         effort: "max",
       });
+      expect(scopedRuntime.currentToolset).toBe("default");
+      expect(scopedRuntime.currentLoadedTools).toContain("Edit");
+      expect(scopedRuntime.currentLoadedTools).not.toContain("exec_command");
       expect(
         (response.model_settings as Record<string, unknown> | null)?.reasoning,
       ).toBeUndefined();
