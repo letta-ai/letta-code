@@ -1458,7 +1458,6 @@ export function createSlackAdapter(
       entry.mode = "stream";
       entry.streamTs = response.ts;
       rememberMessageThread(response.ts, replyToMessageId);
-      await clearSlackAssistantThreadStatus(entry.source);
       return true;
     } catch (error) {
       console.warn(
@@ -1576,7 +1575,6 @@ export function createSlackAdapter(
     replyToMessageId: string,
     text: string,
   ): Promise<void> {
-    await clearSlackAssistantThreadStatus(entry.source);
     const blocks = formatSlackFallbackProgressBlocks(
       entry.status,
       entry.latestText,
