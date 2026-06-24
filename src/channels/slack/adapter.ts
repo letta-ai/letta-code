@@ -241,6 +241,14 @@ const SLACK_INGRESS_DEDUPE_MAX = 2_000;
 const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_LIFECYCLE_STATE_MAX = 2_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
+const SLACK_MEMORY_TOOL_REACTION = "brain";
+const SLACK_MEMORY_TOOL_NAMES = new Set([
+  "memory",
+  "memory_apply_patch",
+  "memory_insert",
+  "memory_replace",
+  "memory_rethink",
+]);
 
 type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
 
@@ -506,6 +514,11 @@ export function createSlackAdapter(
     { state: SlackLifecycleState; updatedAt: number }
   >();
   const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
+  const memoryToolReactionDepthByMessageKey = new Map<string, number>();
+  const memoryToolReactionOperationByMessageKey = new Map<
+    string,
+    Promise<void>
+  >();
 
   // ── Inbound debounce (optional) ───────────────────────────────
   // When `inboundDebounceMs > 0`, short back-to-back messages from the same
@@ -794,6 +807,67 @@ export function createSlackAdapter(
       thread_ts: replyToMessageId,
     });
     rememberMessageThread(response.ts, replyToMessageId);
+  }
+
+  function scheduleMemoryToolReactionUpdate(
+    source: ChannelTurnSource,
+    action: "add" | "remove",
+    options?: { force?: boolean },
+  ): Promise<void> | null {
+    const key = getLifecycleMessageKey(source);
+    if (!key) {
+      return null;
+    }
+
+    const previous =
+      memoryToolReactionOperationByMessageKey.get(key) ?? Promise.resolve();
+    const operation = previous
+      .catch(() => {})
+      .then(async () => {
+        const currentDepth = memoryToolReactionDepthByMessageKey.get(key) ?? 0;
+        if (action === "add") {
+          if (currentDepth > 0) {
+            memoryToolReactionDepthByMessageKey.set(key, currentDepth + 1);
+            return;
+          }
+          try {
+            await sendLifecycleReaction(source, SLACK_MEMORY_TOOL_REACTION);
+            memoryToolReactionDepthByMessageKey.set(key, 1);
+          } catch (error) {
+            console.warn(
+              `[Slack] Failed to add memory tool reaction for ${key}:`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+          return;
+        }
+
+        if (currentDepth <= 0) {
+          return;
+        }
+        if (!options?.force && currentDepth > 1) {
+          memoryToolReactionDepthByMessageKey.set(key, currentDepth - 1);
+          return;
+        }
+
+        memoryToolReactionDepthByMessageKey.delete(key);
+        try {
+          await sendLifecycleReaction(source, SLACK_MEMORY_TOOL_REACTION, true);
+        } catch (error) {
+          console.warn(
+            `[Slack] Failed to remove memory tool reaction for ${key}:`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      })
+      .finally(() => {
+        if (memoryToolReactionOperationByMessageKey.get(key) === operation) {
+          memoryToolReactionOperationByMessageKey.delete(key);
+        }
+      });
+
+    memoryToolReactionOperationByMessageKey.set(key, operation);
+    return operation;
   }
 
   function scheduleLifecycleTransition(
@@ -1324,6 +1398,8 @@ export function createSlackAdapter(
       seenIngressMessageKeys.clear();
       lifecycleStateByMessageKey.clear();
       lifecycleOperationByMessageKey.clear();
+      memoryToolReactionDepthByMessageKey.clear();
+      memoryToolReactionOperationByMessageKey.clear();
       pendingTopLevelDebounceKeys.clear();
       appMentionRetryKeys.clear();
       appMentionDispatchedKeys.clear();
@@ -1349,6 +1425,25 @@ export function createSlackAdapter(
       if (event.type === "processing") {
         return;
       }
+
+      if (event.type === "tool_started" || event.type === "tool_finished") {
+        if (!SLACK_MEMORY_TOOL_NAMES.has(event.toolName)) {
+          return;
+        }
+        const action = event.type === "tool_started" ? "add" : "remove";
+        await Promise.all(
+          event.sources.map((source) =>
+            scheduleMemoryToolReactionUpdate(source, action),
+          ),
+        );
+        return;
+      }
+
+      await Promise.all(
+        event.sources.map((source) =>
+          scheduleMemoryToolReactionUpdate(source, "remove", { force: true }),
+        ),
+      );
 
       const nextState: SlackLifecycleState =
         event.outcome === "completed"

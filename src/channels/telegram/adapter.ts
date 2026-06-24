@@ -1484,6 +1484,10 @@ export function createTelegramAdapter(
         return;
       }
 
+      if (event.type === "tool_started" || event.type === "tool_finished") {
+        return;
+      }
+
       for (const source of event.sources) {
         stopTypingForSource(source);
       }

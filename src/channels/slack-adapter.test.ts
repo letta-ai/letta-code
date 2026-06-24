@@ -2,7 +2,10 @@ import { afterAll, afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChannelMessageAttachment } from "@/channels/types";
+import type {
+  ChannelMessageAttachment,
+  ChannelTurnSource,
+} from "@/channels/types";
 
 type SlackMessageHandler = (args: {
   message: {
@@ -127,12 +130,26 @@ class FakeSlackWriteClient {
 
   readonly token: string;
   readonly options: Record<string, unknown> | undefined;
+  readonly reactionCalls: Array<{
+    action: "add" | "remove";
+    args: { channel: string; timestamp: string; name: string };
+  }> = [];
   readonly chat = {
     postMessage: mock(async () => ({ ts: "1712800000.000100" })),
   };
   readonly reactions = {
-    add: mock(async () => ({ ok: true })),
-    remove: mock(async () => ({ ok: true })),
+    add: mock(
+      async (args: { channel: string; timestamp: string; name: string }) => {
+        this.reactionCalls.push({ action: "add", args });
+        return { ok: true };
+      },
+    ),
+    remove: mock(
+      async (args: { channel: string; timestamp: string; name: string }) => {
+        this.reactionCalls.push({ action: "remove", args });
+        return { ok: true };
+      },
+    ),
   };
   readonly files = {
     getUploadURLExternal: mock(async () => ({
@@ -1354,6 +1371,128 @@ test("slack adapter adds eyes while a queued turn is processing, then swaps to c
     timestamp: "1712800000.000100",
     name: "white_check_mark",
   });
+});
+
+test("slack adapter adds and removes brain reactions around memory tools", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  const source: ChannelTurnSource = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel",
+    messageId: "1712800000.000110",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "tool_started",
+    toolName: "memory",
+    sources: [source],
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "tool_finished",
+    toolName: "memory",
+    sources: [source],
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "tool_started",
+    toolName: "Bash",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactions.add).toHaveBeenCalledTimes(1);
+  expect(writeClient?.reactions.add).toHaveBeenCalledWith({
+    channel: "C123",
+    timestamp: "1712800000.000110",
+    name: "brain",
+  });
+  expect(writeClient?.reactions.remove).toHaveBeenCalledTimes(1);
+  expect(writeClient?.reactions.remove).toHaveBeenCalledWith({
+    channel: "C123",
+    timestamp: "1712800000.000110",
+    name: "brain",
+  });
+});
+
+test("slack adapter clears stranded brain before terminal lifecycle reactions", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  const source: ChannelTurnSource = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel",
+    messageId: "1712800000.000120",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "tool_started",
+    toolName: "memory_apply_patch",
+    sources: [source],
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-stranded-brain",
+    outcome: "completed",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.reactionCalls).toEqual([
+    {
+      action: "add",
+      args: {
+        channel: "C123",
+        timestamp: "1712800000.000120",
+        name: "brain",
+      },
+    },
+    {
+      action: "remove",
+      args: {
+        channel: "C123",
+        timestamp: "1712800000.000120",
+        name: "brain",
+      },
+    },
+    {
+      action: "add",
+      args: {
+        channel: "C123",
+        timestamp: "1712800000.000120",
+        name: "white_check_mark",
+      },
+    },
+  ]);
 });
 
 test("slack adapter can suppress the completed checkmark while preserving queued eyes", async () => {
