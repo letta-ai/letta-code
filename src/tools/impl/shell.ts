@@ -1,9 +1,11 @@
 import { existsSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import { getShellEnv } from "./shell-env.js";
 import { buildShellLaunchers } from "./shell-launchers.js";
 import { ShellExecutionError, spawnWithLauncher } from "./shell-runner.js";
+import { applyShellSandbox } from "./shell-sandbox.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ShellArgs {
@@ -100,15 +102,26 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
 
   const timeout = timeout_ms ?? DEFAULT_TIMEOUT;
   const cwd = resolveShellWorkdir(workdir);
+  const env = {
+    ...getShellEnv(),
+    ...(env_overrides ?? {}),
+    ...(secretEnv ?? {}),
+  };
+
+  // Confine the command under the cross-agent shell sandbox. The wrapper hides
+  // the inner shell from spawnWithLauncher's worktree-ownership note, so note
+  // the unwrapped command here first. Under the sandbox the ENOENT shell
+  // fallback below stops triggering (sandbox-exec always spawns) — acceptable:
+  // it's a rare missing-shell nicety and this path is flag-gated.
+  const sandboxed = applyShellSandbox(command, cwd, env);
+  if (sandboxed.backend) {
+    noteExpectedWorktreeForLauncher(command, cwd);
+  }
 
   const context: SpawnContext = {
-    command,
+    command: sandboxed.launcher,
     cwd,
-    env: {
-      ...getShellEnv(),
-      ...(env_overrides ?? {}),
-      ...(secretEnv ?? {}),
-    },
+    env: sandboxed.env,
     timeout,
     signal,
     onOutput,

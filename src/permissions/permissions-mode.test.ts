@@ -5,6 +5,7 @@ import { checkPermission } from "@/permissions/checker";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { permissionMode } from "@/permissions/mode";
 import type { PermissionRules } from "@/permissions/types";
+import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 
 // Clean up after each test
 afterEach(() => {
@@ -584,6 +585,67 @@ test("memory mode - denies Bash redirection outside MEMORY_DIR", () => {
   } finally {
     if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
     else process.env.MEMORY_DIR = originalMemoryDir;
+  }
+});
+
+test("memory mode - defers to the kernel sandbox when the sentinel is set (full replacement)", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  const originalSentinel = process.env[SANDBOX_ENV_VAR];
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+  process.env[SANDBOX_ENV_VAR] = "bwrap";
+
+  try {
+    // A network shell command (non-read-only) is statically denied, but with the
+    // kernel confining the whole process the mode defers and auto-allows it.
+    const curl = checkPermission(
+      "Bash",
+      { command: "curl https://example.com" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(curl.decision).toBe("allow");
+
+    // A write outside the memory dir but under the harness state dir is also
+    // deferred (the kernel caps writes at ~/.letta).
+    const harnessWrite = checkPermission(
+      "Write",
+      { file_path: "/Users/test/.letta/.lettasettings" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/project",
+    );
+    expect(harnessWrite.decision).toBe("allow");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+    if (originalSentinel === undefined) delete process.env[SANDBOX_ENV_VAR];
+    else process.env[SANDBOX_ENV_VAR] = originalSentinel;
+  }
+});
+
+test("memory mode - still enforces statically when no sandbox backend (sentinel unset)", () => {
+  permissionMode.setMode("memory");
+  const originalMemoryDir = process.env.MEMORY_DIR;
+  const originalSentinel = process.env[SANDBOX_ENV_VAR];
+  process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+  delete process.env[SANDBOX_ENV_VAR];
+
+  try {
+    // Without the kernel confining the process, the static memory-mode contract
+    // is still the enforcement: a network shell command is denied.
+    const curl = checkPermission(
+      "Bash",
+      { command: "curl https://example.com" },
+      { allow: [], deny: [], ask: [] },
+      "/Users/test/.letta/agents/agent-1/memory",
+    );
+    expect(curl.decision).toBe("deny");
+    expect(curl.matchedRule).toBe("memory mode");
+  } finally {
+    if (originalMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = originalMemoryDir;
+    if (originalSentinel === undefined) delete process.env[SANDBOX_ENV_VAR];
+    else process.env[SANDBOX_ENV_VAR] = originalSentinel;
   }
 });
 
