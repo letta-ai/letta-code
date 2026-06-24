@@ -476,6 +476,7 @@ export async function prepareToolExecutionContextForScope(params: {
   agentId: string;
   conversationId?: string | null;
   overrideModel?: string | null;
+  overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
@@ -491,6 +492,7 @@ export async function prepareToolExecutionContextForScope(params: {
     agentId,
     conversationId,
     overrideModel,
+    overrideProviderType,
     cachedEffectiveModel,
     exclude,
     clientToolAllowlist,
@@ -510,9 +512,12 @@ export async function prepareToolExecutionContextForScope(params: {
     overrideModel && overrideModel.length > 0
       ? (resolveModel(overrideModel) ?? overrideModel)
       : null;
-  let effectiveProviderType = providerTypeFromModelSettings(
-    (agent as { model_settings?: unknown }).model_settings,
-  );
+  let effectiveProviderType =
+    overrideProviderType !== undefined
+      ? overrideProviderType
+      : providerTypeFromModelSettings(
+          (agent as { model_settings?: unknown }).model_settings,
+        );
 
   if (
     !effectiveModel &&

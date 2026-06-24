@@ -71,6 +71,7 @@ import {
 } from "./cli/flag-utils";
 import {
   createBuffers,
+  findLastAssistantText,
   type Line,
   markIncompleteToolsAsCancelled,
   toLines,
@@ -458,6 +459,35 @@ async function emitHeadlessTurnStart(options: {
   } catch {
     // Mod turn_start handlers should not block sending the turn.
     return options.input;
+  }
+}
+
+async function emitHeadlessTurnEnd(options: {
+  agent: AgentState;
+  conversationId: string;
+  stopReason: string;
+  assistantMessage?: string;
+  adapter: ModAdapter;
+  context: ModContext;
+}): Promise<string | undefined> {
+  try {
+    const event: {
+      agentId: string | null;
+      conversationId: string | null;
+      stopReason: string;
+      assistantMessage?: string;
+      continue?: string;
+    } = {
+      agentId: options.agent.id,
+      conversationId: options.conversationId,
+      stopReason: options.stopReason,
+      assistantMessage: options.assistantMessage,
+    };
+    await options.adapter.events.emit("turn_end", event, options.context);
+    return typeof event.continue === "string" ? event.continue : undefined;
+  } catch {
+    // Mod turn_end handlers should not block turn completion.
+    return undefined;
   }
 }
 
@@ -2379,6 +2409,37 @@ ${SYSTEM_REMINDER_CLOSE}
         llmApiErrorRetries = 0;
         emptyResponseRetries = 0;
         conversationBusyRetries = 0;
+
+        // Emit turn_end. A mod may return { continue: "..." } to append a
+        // follow-up user message and run another turn. Auto-continues re-enter
+        // the loop and count against --max-turns via checkMaxTurns at the top.
+        const continueMessage = await emitHeadlessTurnEnd({
+          agent,
+          conversationId,
+          stopReason,
+          assistantMessage: findLastAssistantText(toLines(buffers)),
+          adapter: headlessModAdapter,
+          context: turnStartModContext,
+        });
+
+        if (continueMessage) {
+          currentInput = [
+            {
+              role: "user",
+              content: continueMessage,
+              otid: randomUUID(),
+            },
+          ];
+          currentInput = await emitHeadlessTurnStart({
+            agent,
+            conversationId,
+            input: currentInput,
+            adapter: headlessModAdapter,
+            context: turnStartModContext,
+          });
+          continue;
+        }
+
         break;
       }
 

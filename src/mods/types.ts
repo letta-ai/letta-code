@@ -144,7 +144,8 @@ export type ModEventName =
   | "conversation_open"
   | "conversation_close"
   | "tool_start"
-  | "turn_start";
+  | "turn_start"
+  | "turn_end";
 
 export type ModConversationOpenReason =
   | "startup"
@@ -197,6 +198,18 @@ export interface ModToolStartEvent {
 
 export interface ModToolStartResult {
   args?: Record<string, unknown>;
+  result?: { status: "success" | "error"; output: string };
+}
+
+export interface ModTurnEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  stopReason: string;
+  assistantMessage?: string;
+}
+
+export interface ModTurnEndResult {
+  continue?: string;
 }
 
 export interface ModEventMap {
@@ -204,6 +217,7 @@ export interface ModEventMap {
   conversation_close: ModConversationCloseEvent;
   tool_start: ModToolStartEvent;
   turn_start: ModTurnStartEvent;
+  turn_end: ModTurnEndEvent;
 }
 
 export interface ModEventResultMap {
@@ -211,6 +225,7 @@ export interface ModEventResultMap {
   conversation_close: undefined;
   tool_start: ModToolStartResult | undefined;
   turn_start: ModTurnStartResult | undefined;
+  turn_end: ModTurnEndResult | undefined;
 }
 
 export interface ModInvocationContext extends ModContext {}

@@ -46,6 +46,7 @@ import type {
   ModContext,
   ModSecretResolver,
   ModToolRunContext,
+  ModToolStartEvent,
   ToolApprovalPolicy,
 } from "@/mods/types";
 import {
@@ -2320,8 +2321,13 @@ async function emitToolStartEvent(options: {
   modContext: ModContext;
   toolCallId?: string;
   toolName: string;
-}): Promise<{ args: ToolArgs }> {
-  const event = {
+}): Promise<{
+  args: ToolArgs;
+  result?: { status: "success" | "error"; output: string };
+}> {
+  const event: ModToolStartEvent & {
+    result?: { status: "success" | "error"; output: string };
+  } = {
     agentId: options.executionScope.agentId ?? null,
     conversationId: options.executionScope.conversationId ?? null,
     toolCallId: options.toolCallId ?? null,
@@ -2336,7 +2342,10 @@ async function emitToolStartEvent(options: {
     return { args: options.args };
   }
 
-  return { args: isToolStartArgs(event.args) ? event.args : options.args };
+  return {
+    args: isToolStartArgs(event.args) ? event.args : options.args,
+    result: event.result,
+  };
 }
 
 async function executeModTool(
@@ -2644,7 +2653,7 @@ export async function executeTool(
         status: "error",
       };
     }
-    const { args: eventArgs } = await emitToolStartEvent({
+    const { args: eventArgs, result } = await emitToolStartEvent({
       args,
       events: modEvents,
       executionScope,
@@ -2652,6 +2661,12 @@ export async function executeTool(
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    if (result) {
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
+    }
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
@@ -2678,7 +2693,7 @@ export async function executeTool(
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
     const externalTool = activeExternalTools.get(name);
-    const { args: eventArgs } = await emitToolStartEvent({
+    const { args: eventArgs, result } = await emitToolStartEvent({
       args,
       events: modEvents,
       executionScope,
@@ -2686,6 +2701,12 @@ export async function executeTool(
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    if (result) {
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
+    }
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
@@ -2734,7 +2755,7 @@ export async function executeTool(
     };
   }
 
-  const { args: eventArgs } = await emitToolStartEvent({
+  const { args: eventArgs, result } = await emitToolStartEvent({
     args,
     events: modEvents,
     executionScope,
@@ -2742,6 +2763,12 @@ export async function executeTool(
     toolCallId: options?.toolCallId,
     toolName: internalName,
   });
+  if (result) {
+    return {
+      toolReturn: result.output,
+      status: result.status,
+    };
+  }
   args = eventArgs;
   const permissionDecision = await checkModPermissionForContext({
     args,
