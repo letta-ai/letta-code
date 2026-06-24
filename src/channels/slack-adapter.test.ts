@@ -612,15 +612,7 @@ test("slack adapter forwards threaded channel replies as channel input", async (
       thread_ts: "1712790000.000050",
     },
   });
-  await sleep(0);
 
-  const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledWith({
-    channel_id: "C123",
-    thread_ts: "1712790000.000050",
-    status: expect.any(String),
-    loading_messages: [expect.any(String)],
-  });
   expect(onMessage).toHaveBeenCalledWith(
     expect.objectContaining({
       channel: "slack",

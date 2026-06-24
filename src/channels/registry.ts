@@ -1554,12 +1554,20 @@ export class ChannelRegistry {
             isFirstRouteTurn: slackResult.isFirstRouteTurn,
           })
         : msg;
+      const turnSource = buildChannelTurnSource(
+        slackResult.route,
+        preparedMessage,
+      );
+      if (slackResult.route.outboundEnabled !== false) {
+        await this.dispatchTurnLifecycleEvent({
+          type: "queued",
+          source: turnSource,
+        });
+      }
       this.deliverOrBuffer({
         route: slackResult.route,
         content: formatChannelNotification(preparedMessage),
-        turnSources: [
-          buildChannelTurnSource(slackResult.route, preparedMessage),
-        ],
+        turnSources: [turnSource],
         defaultPermissionMode: config.defaultPermissionMode,
       });
       return;
