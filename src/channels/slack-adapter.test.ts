@@ -619,6 +619,7 @@ test("slack adapter forwards threaded channel replies as channel input", async (
     channel_id: "C123",
     thread_ts: "1712790000.000050",
     status: expect.any(String),
+    loading_messages: [expect.any(String)],
   });
   expect(onMessage).toHaveBeenCalledWith(
     expect.objectContaining({
