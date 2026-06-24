@@ -28,7 +28,7 @@ const MEMORY_BLOCKS = [
   {
     label: "reference/details",
     value:
-      "External-looking labels passed as memory blocks stay in system memory.",
+      "External-looking labels passed as memory blocks stay in external memory.",
     description: "Parity details",
   },
 ];
@@ -111,11 +111,11 @@ describe("local/API system prompt parity", () => {
       expect(normalizedLocal).toContain(
         "<projection>$MEMORY_DIR/system/project/gotchas.md</projection>",
       );
-      expect(normalizedLocal).toContain(
+      expect(normalizedLocal).toContain("<external_projection>");
+      expect(normalizedLocal).toContain("reference/");
+      expect(normalizedLocal).toContain("details.md");
+      expect(normalizedLocal).not.toContain(
         "<projection>$MEMORY_DIR/system/reference/details.md</projection>",
-      );
-      expect(normalizedLocal).toContain(
-        "External-looking labels passed as memory blocks stay in system memory.",
       );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
