@@ -1907,17 +1907,18 @@ async function main(): Promise<void> {
         const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
         const pinnedAgentIds =
           settingsManager.getPinnedAgentsForBackendMode(startupBackendMode);
-        const pinnedAgentId =
-          pinnedAgentIds.length === 1 ? (pinnedAgentIds[0] ?? null) : null;
         const localAgentId =
           startupBackendMode === "local" ? rawLocalAgentId : null;
         const globalAgentId =
           startupBackendMode === "api" ? rawGlobalAgentId : null;
 
-        // Fetch pin + LRU agents in parallel, de-duping shared IDs.
+        // Validate every pinned agent (not just a lone one) alongside the LRU
+        // agents, de-duping shared IDs. Validating all pins lets the decision
+        // below count only pins that exist in the active org, so stale or
+        // cross-org pins don't inflate the count and force the selector.
         const agentIdsToValidate = [
           ...new Set(
-            [pinnedAgentId, localAgentId, globalAgentId].filter(
+            [...pinnedAgentIds, localAgentId, globalAgentId].filter(
               (agentId): agentId is string => Boolean(agentId),
             ),
           ),
@@ -1937,9 +1938,17 @@ async function main(): Promise<void> {
           }
         }
 
-        const pinnedAgentExists = pinnedAgentId
-          ? cachedAgents.has(pinnedAgentId)
-          : false;
+        // Base the pinned-agent decision on pins that actually exist in the
+        // active org: a single existing pin resumes directly, while stale or
+        // cross-org pins are ignored instead of forcing the selector.
+        const existingPinnedIds = pinnedAgentIds.filter((id) =>
+          cachedAgents.has(id),
+        );
+        const pinnedAgentId =
+          existingPinnedIds.length === 1
+            ? (existingPinnedIds[0] ?? null)
+            : null;
+        const pinnedAgentExists = pinnedAgentId !== null;
         let localAgentExists = false;
         let globalAgentExists = false;
         if (localAgentId) {
@@ -1955,8 +1964,12 @@ async function main(): Promise<void> {
         }
         markMilestone("STARTUP_LRU_FETCH_DONE");
 
-        // Step 3: Resolve startup target using pure decision logic
+        // Step 3: Resolve startup target using pure decision logic.
+        // pinnedCount is the raw configured count (drives the "any pins → show
+        // the selector" fallback); existingPinnedCount counts pins that resolve
+        // in the active org (drives single-resume / multi-pin select).
         const pinnedCount = pinnedAgentIds.length;
+        const existingPinnedCount = existingPinnedIds.length;
         const fallbackSession =
           startupBackendMode === "local" &&
           !localAgentExists &&
@@ -1971,6 +1984,7 @@ async function main(): Promise<void> {
           pinnedAgentId,
           pinnedAgentExists,
           pinnedCount,
+          existingPinnedCount,
           localAgentId,
           localConversationId: localSession?.conversationId ?? null,
           localAgentExists,

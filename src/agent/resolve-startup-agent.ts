@@ -14,12 +14,16 @@ export type StartupTarget =
   | { action: "create" };
 
 export interface StartupResolutionInput {
-  /** Agent ID from pinned agents (global, per-backend namespace) */
+  /** The pinned agent to resume when exactly one pin exists for the active org */
   pinnedAgentId: string | null;
   /** Whether the pinned agent still exists on the server */
   pinnedAgentExists: boolean;
-  /** Number of pinned agents for the active backend */
+  /** Number of pinned agents configured for the active backend, including stale
+   * or cross-org pins that no longer resolve (drives the selector fallback) */
   pinnedCount: number;
+  /** Number of pinned agents that actually exist in the active org (drives the
+   * single-resume and multi-pin select decisions) */
+  existingPinnedCount: number;
 
   /** Agent ID from local project LRU (via getLocalLastAgentId) */
   localAgentId: string | null;
@@ -49,13 +53,13 @@ export interface StartupResolutionInput {
  *
  * Decision tree:
  * 1. forceNew → create
- * 2. pinned valid → resume (with local conversation only if it matches LRU)
- * 3. multiple pins → select
+ * 2. single existing pin → resume (with local conversation only if it matches LRU)
+ * 3. multiple existing pins → select
  * 4. local LRU valid → resume (with local conversation)
  * 5. global LRU valid → resume (no conversation — project-scoped)
  * 6. backend-store fallback → resume
  * 7. needsModelPicker → select
- * 8. pinned agents exist → select
+ * 8. pins configured (even if stale) → select
  * 9. nothing → create
  */
 export function resolveStartupTarget(
@@ -79,8 +83,9 @@ export function resolveStartupTarget(
     };
   }
 
-  // Step 2: Multiple pins should ask instead of picking implicitly.
-  if (input.pinnedCount > 1) {
+  // Step 2: Multiple existing pins should ask instead of picking implicitly.
+  // (Stale/cross-org pins are excluded — see existingPinnedCount.)
+  if (input.existingPinnedCount > 1) {
     return { action: "select" };
   }
 
