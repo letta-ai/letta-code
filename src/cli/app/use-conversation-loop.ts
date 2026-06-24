@@ -1656,6 +1656,54 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
+            // Emit turn_end mod event. A mod may return { continue: "..." } to
+            // append a follow-up user message and start another turn.
+            const turnEndEvent: {
+              agentId: string | null;
+              conversationId: string | null;
+              stopReason: string;
+              assistantMessage?: string;
+              continue?: string;
+            } = {
+              agentId: agentIdRef.current ?? null,
+              conversationId: conversationIdRef.current ?? null,
+              stopReason: stopReasonToHandle,
+              assistantMessage,
+            };
+            let turnEndContinue: string | undefined;
+            try {
+              await modAdapter.events.emit(
+                "turn_end",
+                turnEndEvent,
+                modAdapter.context,
+              );
+              turnEndContinue =
+                typeof turnEndEvent.continue === "string"
+                  ? turnEndEvent.continue
+                  : undefined;
+            } catch {
+              // turn_end handlers are best-effort; never block turn completion.
+              turnEndContinue = undefined;
+            }
+
+            if (turnEndContinue) {
+              const continueOtid = randomUUID();
+              setTimeout(() => {
+                processConversation(
+                  [
+                    {
+                      type: "message",
+                      role: "user",
+                      content: turnEndContinue,
+                      otid: continueOtid,
+                    },
+                  ],
+                  { allowReentry: true },
+                );
+              }, 0);
+              return;
+            }
+
             // Disable eager approval check after first successful message (LET-7101)
             // Any new approvals from here on are from our own turn, not orphaned
             if (needsEagerApprovalCheck) {
