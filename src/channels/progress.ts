@@ -203,16 +203,24 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     tool?.name,
     nestedToolFunction?.name,
   );
-  const argumentsText = firstNonEmptyString(
-    record.arguments,
-    record.args,
-    record.input,
-    nestedFunction?.arguments,
-    nestedFunction?.args,
-    tool?.arguments,
-    nestedToolFunction?.arguments,
-    nestedToolFunction?.args,
-  );
+  const argumentsText =
+    firstNonEmptyString(
+      record.arguments,
+      record.args,
+      record.input,
+      nestedFunction?.arguments,
+      nestedFunction?.args,
+      tool?.arguments,
+      nestedToolFunction?.arguments,
+      nestedToolFunction?.args,
+    ) ??
+    (typeof record.arguments === "object" && record.arguments !== null
+      ? JSON.stringify(record.arguments)
+      : undefined) ??
+    (typeof nestedFunction?.arguments === "object" &&
+    nestedFunction?.arguments !== null
+      ? JSON.stringify(nestedFunction.arguments)
+      : undefined);
   if (!id && !name) {
     return null;
   }
