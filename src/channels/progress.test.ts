@@ -58,7 +58,8 @@ test("channel progress adds semantic web_search titles from safe args", () => {
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "web_search",
-      toolTitle: "Searching articles for “letta blog”",
+      toolDetails: "letta blog",
+      toolTitle: "Searching articles",
     },
   ]);
 });
@@ -86,6 +87,7 @@ test("channel progress uses Letta Code display names for tool titles", () => {
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "fetch_webpage",
+      toolDetails: "https://cameron.stream/blog",
       toolTitle: "Fetch Webpage",
     },
   ]);
