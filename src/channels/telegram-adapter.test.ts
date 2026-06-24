@@ -415,7 +415,9 @@ test("telegram channel account start fails before grammY sees an empty token", a
   ).rejects.toThrow("missing its bot token");
 
   expect(FakeBot.instances).toHaveLength(0);
-  expect(getChannelAccountSnapshot("telegram", "telegram-missing-token")).toEqual(
+  expect(
+    getChannelAccountSnapshot("telegram", "telegram-missing-token"),
+  ).toEqual(
     expect.objectContaining({
       channelId: "telegram",
       accountId: "telegram-missing-token",

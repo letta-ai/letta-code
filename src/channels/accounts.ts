@@ -177,16 +177,6 @@ function markSecretRef(account: ChannelAccount, fieldPath: string): void {
   };
 }
 
-function unmarkSecretRef(account: ChannelAccount, fieldPath: string): void {
-  const refs = getSecretRefs(account);
-  delete refs[fieldPath];
-  if (Object.keys(refs).length === 0) {
-    delete (account as ChannelAccountWithSecretRefs)[CHANNEL_SECRET_REFS_KEY];
-    return;
-  }
-  (account as ChannelAccountWithSecretRefs)[CHANNEL_SECRET_REFS_KEY] = refs;
-}
-
 function applySecretPlaceholders(account: ChannelAccount): void {
   const refs = getSecretRefs(account);
   for (const fieldPath of Object.keys(refs)) {

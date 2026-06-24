@@ -159,15 +159,18 @@ describe("channel credential storage", () => {
       join(channelsRoot, "slack", "accounts.json"),
       `${JSON.stringify({ accounts: [persistedAccount] }, null, 2)}\n`,
     );
-    const before = readFileSync(join(channelsRoot, "slack", "accounts.json"), "utf-8");
+    const before = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
 
     await expect(hydrateChannelAccountSecrets("slack")).rejects.toThrow(
       "The saved secret reference was preserved",
     );
 
-    expect(readFileSync(join(channelsRoot, "slack", "accounts.json"), "utf-8")).toBe(
-      before,
-    );
+    expect(
+      readFileSync(join(channelsRoot, "slack", "accounts.json"), "utf-8"),
+    ).toBe(before);
     expect(readAccountsFile(channelsRoot, "slack")).toMatchObject({
       accounts: [
         {
