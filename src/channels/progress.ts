@@ -369,40 +369,12 @@ export function buildChannelTurnProgressUpdatesFromDelta(
         ),
       ];
 
-    case "approval_request_message": {
-      const tools = extractToolCalls(record);
-      if (tools.length === 0) {
-        return [
-          withRunId(
-            {
-              kind: "approval",
-              state: "waiting",
-              message: "Waiting for tool approval",
-            },
-            runId,
-          ),
-        ];
-      }
-      for (const tool of tools) {
-        const toolTitle = formatToolProgressTitle(tool, "waiting");
-        const toolDetails = formatToolProgressDetails(tool);
-        updates.push(
-          withRunId(
-            {
-              kind: "approval",
-              state: "waiting",
-              message: `Waiting for approval${toolNameForMessage(tool)}`,
-              ...(tool.id ? { toolCallId: tool.id } : {}),
-              ...(tool.name ? { toolName: tool.name } : {}),
-              ...(toolTitle ? { toolTitle } : {}),
-              ...(toolDetails ? { toolDetails } : {}),
-            },
-            runId,
-          ),
-        );
-      }
-      return updates;
-    }
+    case "approval_request_message":
+      // Approval request deltas can be transient: auto-approved or resumed tools
+      // may continue immediately, and the actual user-facing approval prompt is
+      // delivered through ChannelControlRequestEvent once the turn truly waits.
+      // Do not show a pending approval task from the stream delta alone.
+      return [];
 
     case "tool_call_message": {
       const tools = extractToolCalls(record);

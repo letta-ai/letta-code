@@ -255,6 +255,24 @@ function firstNonEmptyString(...values: unknown[]): string | undefined {
   return values.find(isNonEmptyString);
 }
 
+function getSlackErrorCode(error: unknown): string | undefined {
+  if (isNonEmptyString(error)) {
+    return error;
+  }
+  const record = asRecord(error);
+  return firstNonEmptyString(record?.error, record?.code);
+}
+
+function isSlackMessageNotStreamingStateError(error: unknown): boolean {
+  const code = getSlackErrorCode(error);
+  if (code === "message_not_in_streaming_state") {
+    return true;
+  }
+  return error instanceof Error
+    ? error.message.includes("message_not_in_streaming_state")
+    : false;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
     ? (value as Record<string, unknown>)
@@ -1645,6 +1663,9 @@ export function createSlackAdapter(
       }
       const response = await stopStream.call(slackClient.chat, args);
       if (response.ok === false) {
+        if (isSlackMessageNotStreamingStateError(response.error)) {
+          return true;
+        }
         console.warn(
           "[Slack] Failed to stop progress stream:",
           response.error ?? "unknown error",
@@ -1653,6 +1674,9 @@ export function createSlackAdapter(
       }
       return true;
     } catch (error) {
+      if (isSlackMessageNotStreamingStateError(error)) {
+        return true;
+      }
       console.warn(
         "[Slack] Failed to stop progress stream:",
         error instanceof Error ? error.message : error,
