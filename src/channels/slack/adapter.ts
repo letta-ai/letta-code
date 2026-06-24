@@ -19,7 +19,7 @@ import type {
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
-import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
+import { getRandomSlackAssistantStatusVerb } from "@/cli/helpers/thinking-messages";
 import { getDisplayToolName } from "@/cli/helpers/tool-name-mapping";
 import {
   resolveSlackChannelHistory,
@@ -1096,6 +1096,7 @@ export function createSlackAdapter(
   const seenIngressMessageKeys = new Map<string, number>();
   const progressCardByReplyKey = new Map<string, SlackProgressCardEntry>();
   const assistantStatusReplyKeys = new Set<string>();
+  const assistantStatusTextByReplyKey = new Map<string, string>();
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
 
   // ── Inbound debounce (optional) ───────────────────────────────
@@ -1352,6 +1353,22 @@ export function createSlackAdapter(
     return unique;
   }
 
+  function getSlackAssistantThreadStatusForTurn(
+    source: ChannelTurnSource,
+  ): string | null {
+    const key = getSlackProgressReplyKey(source);
+    if (!key) {
+      return null;
+    }
+    const existing = assistantStatusTextByReplyKey.get(key);
+    if (existing) {
+      return existing;
+    }
+    const status = getRandomSlackAssistantStatusVerb();
+    assistantStatusTextByReplyKey.set(key, status);
+    return status;
+  }
+
   async function setSlackAssistantThreadStatus(
     source: ChannelTurnSource,
     status: string,
@@ -1375,8 +1392,10 @@ export function createSlackAdapter(
       });
       if (status) {
         assistantStatusReplyKeys.add(key);
+        assistantStatusTextByReplyKey.set(key, status);
       } else {
         assistantStatusReplyKeys.delete(key);
+        assistantStatusTextByReplyKey.delete(key);
       }
     } catch (error) {
       console.warn(
@@ -2349,6 +2368,7 @@ export function createSlackAdapter(
       }
       progressCardByReplyKey.clear();
       assistantStatusReplyKeys.clear();
+      assistantStatusTextByReplyKey.clear();
       pendingTopLevelDebounceKeys.clear();
       appMentionRetryKeys.clear();
       appMentionDispatchedKeys.clear();
@@ -2367,6 +2387,10 @@ export function createSlackAdapter(
       }
 
       if (event.type === "queued") {
+        const status = getSlackAssistantThreadStatusForTurn(event.source);
+        if (status) {
+          await setSlackAssistantThreadStatus(event.source, status);
+        }
         return;
       }
 
@@ -2376,9 +2400,12 @@ export function createSlackAdapter(
         // the assistant response only. Thread status gives immediate native
         // feedback while we wait to see whether tool progress appears.
         await Promise.all(
-          getUniqueSlackProgressSources(event.sources).map((source) =>
-            setSlackAssistantThreadStatus(source, getRandomThinkingVerb()),
-          ),
+          getUniqueSlackProgressSources(event.sources).map((source) => {
+            const status = getSlackAssistantThreadStatusForTurn(source);
+            return status
+              ? setSlackAssistantThreadStatus(source, status)
+              : Promise.resolve();
+          }),
         );
         return;
       }

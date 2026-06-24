@@ -43,6 +43,12 @@ const THINKING_VERBS = Object.freeze([
   "internalizing",
 ] as const);
 
+const SLACK_ASSISTANT_STATUS_VERBS = Object.freeze([
+  "cogitating",
+  "thinking",
+  "processing",
+] as const);
+
 export const SYSTEM_PROMPT_UPGRADE_TIP =
   "Use /system to upgrade to the latest default prompt.";
 
@@ -114,6 +120,11 @@ function getRandomVerb(): string {
 // Get a random thinking verb phrase (e.g., "is thinking", "is processing")
 export function getRandomThinkingVerb(): string {
   return `is ${getRandomVerb()}`;
+}
+
+export function getRandomSlackAssistantStatusVerb(): string {
+  const index = Math.floor(Math.random() * SLACK_ASSISTANT_STATUS_VERBS.length);
+  return `is ${SLACK_ASSISTANT_STATUS_VERBS[index] ?? "thinking"}`;
 }
 
 // Get a random past tense verb (e.g., "thought", "processed")
