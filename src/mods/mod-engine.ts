@@ -95,6 +95,7 @@ import type {
   ModTool,
   ModToolRegistration,
   ModToolStartEvent,
+
   ModTurnStartEvent,
 } from "@/mods/types";
 
@@ -756,6 +757,30 @@ function isToolStartResultWithArgs(
 
 function isToolStartArgs(value: unknown): value is ModToolStartEvent["args"] {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isToolStartResult(
+  value: unknown,
+): value is { status: "success" | "error"; output: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    ((value as { status?: unknown }).status === "success" ||
+      (value as { status?: unknown }).status === "error") &&
+    typeof (value as { output?: unknown }).output === "string"
+  );
+}
+
+function isToolStartResultWithResult(
+  name: ModEventName,
+  result: unknown,
+): result is { result: { status: "success" | "error"; output: string } } {
+  return (
+    name === "tool_start" &&
+    typeof result === "object" &&
+    result !== null &&
+    isToolStartResult((result as { result?: unknown }).result)
+  );
 }
 
 function cloneToolStartArgs(
@@ -1664,6 +1689,13 @@ export async function emitLocalModEvent<TName extends ModEventName>(
       }
       if (isToolStartResultWithArgs(name, result)) {
         (event as ModToolStartEvent).args = result.args;
+      }
+      if (
+        isToolStartResultWithResult(name, result) &&
+        !(event as ModToolStartEvent & { result?: unknown }).result
+      ) {
+        (event as ModToolStartEvent & { result?: { status: "success" | "error"; output: string } }).result =
+          result.result;
       }
       if (result != null) {
         results.push(result as NonNullable<ModEventResultMap[TName]>);

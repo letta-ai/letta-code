@@ -197,6 +197,7 @@ export interface ModToolStartEvent {
 
 export interface ModToolStartResult {
   args?: Record<string, unknown>;
+  result?: { status: "success" | "error"; output: string };
 }
 
 export interface ModEventMap {

@@ -1012,6 +1012,96 @@ describe("mod engine", () => {
     }
   });
 
+  test("tool_start result: first handler wins, tool is short-circuited", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "result.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName === "Bash" && event.args.command === "cached") {
+              return { result: { status: "success", output: "cached result" } };
+            }
+          });
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName === "Bash" && event.args.command === "cached") {
+              return { result: { status: "error", output: "should not win" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        args: { command: "cached" },
+      };
+
+      const result = await engine.emitEvent(
+        "tool_start",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(2);
+      expect((event as { result?: { status: string; output: string } }).result).toEqual({
+        status: "success",
+        output: "cached result",
+      });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("tool_start result: no result when condition not met", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "result.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName === "Bash" && event.args.command === "cached") {
+              return { result: { status: "success", output: "cached result" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        args: { command: "echo hello" },
+      };
+
+      const result = await engine.emitEvent(
+        "tool_start",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect((event as { result?: unknown }).result).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("reload aborts old activations and ignores stale handles", async () => {
     const root = createTempDir();
     const testGlobal = globalThis as ModTestGlobal;
