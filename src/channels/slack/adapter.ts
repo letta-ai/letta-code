@@ -410,9 +410,8 @@ type SlackProgressToolTask = {
 
 type SlackProgressCardEntry = {
   source: ChannelTurnSource;
-  mode?: "stream" | "fallback";
+  mode?: "stream";
   streamTs?: string;
-  fallbackMessageTs?: string;
   status: SlackProgressCardState;
   latestText: string;
   latestUpdate?: ChannelTurnProgressEvent;
@@ -489,42 +488,6 @@ export function formatSlackProgressCardText(
     : statusLine;
 }
 
-function formatSlackFallbackProgressBlocks(
-  status: SlackProgressCardState,
-  progressText: string,
-): SlackBlock[] {
-  const safeProgressText = sanitizeSlackProgressText(
-    progressText,
-    SLACK_PROGRESS_CARD_TEXT_MAX,
-  );
-  const heading =
-    status === "processing"
-      ? "*Letta Code is working*"
-      : status === "completed"
-        ? "*Letta Code finished*"
-        : status === "cancelled"
-          ? "*Letta Code stopped*"
-          : "*Letta Code hit an error*";
-  return [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: safeProgressText ? `${heading}\n${safeProgressText}` : heading,
-      },
-    },
-    {
-      type: "context",
-      elements: [
-        {
-          type: "mrkdwn",
-          text: "Live progress from Letta Code",
-        },
-      ],
-    },
-  ];
-}
-
 function formatSlackControlRequestBlocks(
   event: ChannelControlRequestEvent,
 ): SlackBlock[] | undefined {
@@ -587,10 +550,11 @@ function buildTerminalSlackStreamChunks(
 
 function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
   const { kind: _kind, details, ...chunkTask } = task;
+  const title = details ? `${chunkTask.title} — ${details}` : chunkTask.title;
   return {
     type: "task_update",
     ...chunkTask,
-    ...(details ? { output: details } : {}),
+    title: sanitizeSlackProgressText(title, SLACK_STREAM_CHUNK_TEXT_MAX),
   };
 }
 
@@ -1740,44 +1704,6 @@ export function createSlackAdapter(
     timer.unref?.();
   }
 
-  async function flushSlackFallbackProgressCard(
-    entry: SlackProgressCardEntry,
-    replyToMessageId: string,
-    text: string,
-  ): Promise<void> {
-    const blocks = formatSlackFallbackProgressBlocks(
-      entry.status,
-      entry.latestText,
-    );
-    await ensureApp();
-    const slackClient = await ensureWriteClient();
-    if (!entry.fallbackMessageTs) {
-      const response = await slackClient.chat.postMessage({
-        channel: entry.source.chatId,
-        text,
-        blocks,
-        thread_ts: replyToMessageId,
-      });
-      if (response.ts) {
-        entry.fallbackMessageTs = response.ts;
-        rememberMessageThread(response.ts, replyToMessageId);
-      }
-      entry.mode = "fallback";
-      return;
-    }
-
-    const response = await slackClient.chat.update({
-      channel: entry.source.chatId,
-      ts: entry.fallbackMessageTs,
-      text,
-      blocks,
-    });
-    if (response.ts) {
-      entry.fallbackMessageTs = response.ts;
-    }
-    entry.mode = "fallback";
-  }
-
   async function flushSlackProgressCard(
     key: string,
     entry: SlackProgressCardEntry,
@@ -1822,25 +1748,12 @@ export function createSlackAdapter(
       }
 
       if (!entry.mode) {
-        const didStartStream = await startSlackProgressStream(
-          entry,
-          replyToMessageId,
-        );
-        if (!didStartStream) {
-          await flushSlackFallbackProgressCard(entry, replyToMessageId, text);
-        }
+        await startSlackProgressStream(entry, replyToMessageId);
       } else if (entry.mode === "stream") {
         const didAppend = await appendSlackProgressStream(entry);
         if (!didAppend) {
-          // If appending fails after Slack accepted the stream, close that
-          // native stream before switching surfaces. Otherwise Slack can keep
-          // showing an active task card while the fallback card continues.
           await stopSlackProgressStream(entry);
-          entry.mode = "fallback";
-          await flushSlackFallbackProgressCard(entry, replyToMessageId, text);
         }
-      } else {
-        await flushSlackFallbackProgressCard(entry, replyToMessageId, text);
       }
 
       delete entry.latestUpdate;
@@ -2015,16 +1928,6 @@ export function createSlackAdapter(
               entry.latestText,
             );
             entry.lastSentAt = Date.now();
-          } else {
-            entry.mode = "fallback";
-            await upsertSlackProgressCard(
-              source,
-              progress.status,
-              progress.text,
-              {
-                force: true,
-              },
-            );
           }
         } else {
           await upsertSlackProgressCard(
