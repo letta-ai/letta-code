@@ -823,7 +823,10 @@ function buildSlackStreamProgressChunks(
   entry.toolTasksById ??= new Map();
   entry.toolTasksById.set(id, task);
 
-  return [buildSlackPlanUpdateChunk(entry), toSlackTaskUpdateChunk(task)];
+  return [
+    buildSlackPlanUpdateChunk(entry),
+    ...Array.from(entry.toolTasksById.values(), toSlackTaskUpdateChunk),
+  ];
 }
 
 function resolveSlackLifecycleProgressText(outcome: ChannelTurnOutcome): {
@@ -1174,6 +1177,7 @@ export function createSlackAdapter(
   // those threads are auto-routed without requiring an explicit @mention.
   const agentThreadTracker = createAgentThreadTracker();
   const progressCardByReplyKey = new Map<string, SlackProgressCardEntry>();
+  const assistantStatusReplyKeys = new Set<string>();
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
 
   // ── Inbound debounce (optional) ───────────────────────────────
@@ -1435,11 +1439,13 @@ export function createSlackAdapter(
     return unique;
   }
 
-  async function clearSlackAssistantThreadStatus(
+  async function setSlackAssistantThreadStatus(
     source: ChannelTurnSource,
+    status: string,
   ): Promise<void> {
+    const key = getSlackProgressReplyKey(source);
     const threadTs = getSlackProgressReplyTs(source);
-    if (!threadTs) {
+    if (!key || !threadTs) {
       return;
     }
     await ensureApp();
@@ -1452,14 +1458,29 @@ export function createSlackAdapter(
       await assistantThreads.setStatus({
         channel_id: source.chatId,
         thread_ts: threadTs,
-        status: "",
+        status,
       });
+      if (status) {
+        assistantStatusReplyKeys.add(key);
+      } else {
+        assistantStatusReplyKeys.delete(key);
+      }
     } catch (error) {
       console.warn(
-        "[Slack] Failed to clear assistant thread status:",
+        "[Slack] Failed to update assistant thread status:",
         error instanceof Error ? error.message : error,
       );
     }
+  }
+
+  async function clearSlackAssistantThreadStatus(
+    source: ChannelTurnSource,
+  ): Promise<void> {
+    const key = getSlackProgressReplyKey(source);
+    if (!key || !assistantStatusReplyKeys.has(key)) {
+      return;
+    }
+    await setSlackAssistantThreadStatus(source, "");
   }
 
   function canStartSlackStream(source: ChannelTurnSource): boolean {
@@ -1524,6 +1545,7 @@ export function createSlackAdapter(
       entry.mode = "stream";
       entry.streamTs = response.ts;
       rememberMessageThread(response.ts, replyToMessageId);
+      await clearSlackAssistantThreadStatus(entry.source);
       return true;
     } catch (error) {
       console.warn(
@@ -1641,6 +1663,7 @@ export function createSlackAdapter(
     replyToMessageId: string,
     text: string,
   ): Promise<void> {
+    await clearSlackAssistantThreadStatus(entry.source);
     const blocks = formatSlackFallbackProgressBlocks(
       entry.status,
       entry.latestText,
@@ -2422,6 +2445,7 @@ export function createSlackAdapter(
         }
       }
       progressCardByReplyKey.clear();
+      assistantStatusReplyKeys.clear();
       pendingTopLevelDebounceKeys.clear();
       appMentionRetryKeys.clear();
       appMentionDispatchedKeys.clear();
@@ -2447,7 +2471,13 @@ export function createSlackAdapter(
       if (event.type === "processing") {
         // Do not show a task card for every turn. The Slack task surface is
         // reserved for actual tool activity; no-tool replies should render as
-        // the assistant response only.
+        // the assistant response only. Thread status gives immediate native
+        // feedback while we wait to see whether tool progress appears.
+        await Promise.all(
+          getUniqueSlackProgressSources(event.sources).map((source) =>
+            setSlackAssistantThreadStatus(source, "Working"),
+          ),
+        );
         return;
       }
 
