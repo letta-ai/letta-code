@@ -1308,6 +1308,13 @@ export function createSlackAdapter(
     entry: SlackDebounceEntry,
   ): Promise<void> {
     const { raw, inbound } = entry;
+    const statusSource = toSlackAssistantStatusSource(inbound);
+    const status = statusSource
+      ? getSlackAssistantThreadStatusForTurn(statusSource)
+      : null;
+    if (statusSource && status) {
+      void setSlackAssistantThreadStatus(statusSource, status);
+    }
     const debounceKey = buildSlackDebounceKey(raw, config.accountId);
     const conversationKey = buildTopLevelSlackConversationKey(
       raw,
@@ -1439,6 +1446,27 @@ export function createSlackAdapter(
       unique.push(source);
     }
     return unique;
+  }
+
+  function toSlackAssistantStatusSource(
+    inbound: InboundChannelMessage,
+  ): ChannelTurnSource | null {
+    const threadId = inbound.threadId ?? inbound.messageId ?? null;
+    if (!threadId) {
+      return null;
+    }
+    return {
+      channel: "slack",
+      accountId: inbound.accountId,
+      chatId: inbound.chatId,
+      chatType: inbound.chatType,
+      senderId: inbound.senderId,
+      senderTeamId: inbound.senderTeamId,
+      messageId: inbound.messageId,
+      threadId,
+      agentId: "",
+      conversationId: "",
+    };
   }
 
   function getSlackAssistantThreadStatusForTurn(
