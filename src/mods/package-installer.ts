@@ -742,19 +742,6 @@ function parseGitHubShorthandInstallSource(
   });
 }
 
-function parseGitHubPackageInstallSource(
-  specifier: string,
-): GitManagedModPackageInstallSpecifier | null {
-  const { ref, source } = splitGitRef(specifier);
-  const parts = source.split("/").filter(Boolean);
-  if (parts.length !== 2) return null;
-  return normalizeGitHubInstallSource({
-    owner: parts[0] ?? "",
-    ...(ref ? { ref } : {}),
-    repo: parts[1] ?? "",
-  });
-}
-
 function parseGitHubSshInstallSource(
   specifier: string,
 ): GitManagedModPackageInstallSpecifier | null {
@@ -796,9 +783,6 @@ export function parseGitManagedModPackageInstallSpecifier(
   }
   if (trimmed.startsWith("git@github.com:")) {
     return parseGitHubSshInstallSource(trimmed);
-  }
-  if (trimmed.startsWith("github:")) {
-    return parseGitHubPackageInstallSource(trimmed.slice("github:".length));
   }
   if (!trimmed.startsWith("git:")) return null;
   const gitSource = trimmed.slice("git:".length);

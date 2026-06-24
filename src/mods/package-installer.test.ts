@@ -256,13 +256,6 @@ describe("local managed mod package installer", () => {
       source: "git:https://github.com/caren/my-mod",
     });
     expect(
-      parseGitManagedModPackageInstallSpecifier("github:caren/my-mod@v2"),
-    ).toMatchObject({
-      cloneUrl: "https://github.com/caren/my-mod.git",
-      ref: "v2",
-      source: "git:https://github.com/caren/my-mod",
-    });
-    expect(
       parseGitManagedModPackageInstallSpecifier(
         "ssh://git@github.com/caren/my-mod.git@abc123",
       ),

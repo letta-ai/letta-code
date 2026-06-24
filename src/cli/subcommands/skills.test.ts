@@ -443,9 +443,10 @@ describe("skills subcommand", () => {
         },
       });
 
-      const exitCode = await runInstallSubcommand(["github:caren/git-mod"], {
-        globalModsDirectory: modsRoot,
-      });
+      const exitCode = await runInstallSubcommand(
+        ["git:github.com/caren/git-mod"],
+        { globalModsDirectory: modsRoot },
+      );
 
       expect(exitCode).toBe(0);
       expect(consoleCapture.logs.join("\n")).toContain(
