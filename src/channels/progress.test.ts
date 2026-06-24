@@ -125,7 +125,7 @@ test("channel progress uses Bash descriptions as task details", () => {
   ]);
 });
 
-test("channel progress ignores approval request deltas until control request", () => {
+test("channel progress renders approval request deltas as tool rows", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "approval_request_message",
     run_id: "run-1",
@@ -133,14 +133,28 @@ test("channel progress ignores approval request deltas until control request", (
       {
         id: "approval-1",
         function: {
-          name: "Write",
-          arguments: JSON.stringify({ file_path: "/tmp/demo.txt" }),
+          name: "Bash",
+          arguments: JSON.stringify({
+            command: "ls src/channels",
+            description: "List channel source files",
+          }),
         },
       },
     ],
   } as unknown as StreamDelta);
 
-  expect(updates).toEqual([]);
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Bash",
+      runId: "run-1",
+      toolCallId: "approval-1",
+      toolName: "Bash",
+      toolTitle: "Bash",
+      toolDetails: "List channel source files",
+    },
+  ]);
 });
 
 test("channel progress maps canonical parallel tool return arrays", () => {
