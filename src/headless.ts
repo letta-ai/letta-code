@@ -111,6 +111,10 @@ import {
   emitHeadlessConversationClose,
   emitHeadlessConversationOpen,
 } from "./headless-mod-adapter";
+import {
+  emitLocalToolCalls,
+  emitLocalToolReturns,
+} from "./headless-tool-events";
 import { computeDiffPreviews } from "./helpers/diff-preview";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
@@ -2979,6 +2983,14 @@ ${SYSTEM_REMINDER_CLOSE}
         const { executeApprovalBatch } = await import(
           "@/agent/approval-execution"
         );
+
+        // Local tools execute client-side, so their calls + returns never reach
+        // the server stream. Surface them on the wire so stream-json consumers get
+        // the same tool_call_message → tool_return_message pairing as server tools.
+        if (outputFormat === "stream-json") {
+          emitLocalToolCalls(decisions, sessionId);
+        }
+
         const executedResults = await executeApprovalBatch(
           decisions,
           undefined,
@@ -2986,6 +2998,10 @@ ${SYSTEM_REMINDER_CLOSE}
             toolContextId: turnToolContextId ?? undefined,
           },
         );
+
+        if (outputFormat === "stream-json") {
+          emitLocalToolReturns(executedResults, sessionId);
+        }
 
         // Send all results in one batch
         const approvalInputWithOtid = {
@@ -4839,11 +4855,18 @@ async function runBidirectionalMode(
             const { executeApprovalBatch } = await import(
               "@/agent/approval-execution"
             );
+
+            // Bidirectional mode always emits stream-json. Surface locally
+            // executed tool calls + returns (see one-shot path above).
+            emitLocalToolCalls(decisions, sessionId);
+
             const executedResults = await executeApprovalBatch(
               decisions,
               undefined,
               { toolContextId: turnToolContextId ?? undefined },
             );
+
+            emitLocalToolReturns(executedResults, sessionId);
 
             // Send approval results back to continue
             const approvalInputWithOtid = {
