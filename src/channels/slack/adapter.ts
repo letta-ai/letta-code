@@ -60,6 +60,7 @@ type SlackWriteClient = {
         channel_id: string;
         thread_ts: string;
         status: string;
+        loading_messages?: string[];
       }) => Promise<unknown>;
     };
   };
@@ -1417,6 +1418,7 @@ export function createSlackAdapter(
         channel_id: source.chatId,
         thread_ts: threadTs,
         status,
+        ...(status ? { loading_messages: [status] } : {}),
       });
       if (status) {
         assistantStatusReplyKeys.add(key);
