@@ -1788,8 +1788,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
         }),
         expect.objectContaining({
           id: "task_call-web",
-          title: "Searching articles",
-          output: "letta blog",
+          title: "Searching articles — letta blog",
           status: "in_progress",
         }),
       ],
@@ -1853,8 +1852,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-web",
-        title: "Searched articles",
-        output: "letta blog",
+        title: "Searched articles — letta blog",
         status: "complete",
       }),
       expect.objectContaining({
@@ -1988,7 +1986,7 @@ test("slack adapter posts generic approval prompts as compact cards", async () =
   });
 });
 
-test("slack adapter closes an open stream before falling back after append failure", async () => {
+test("slack adapter does not create fallback cards after stream append failure", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -2078,24 +2076,8 @@ test("slack adapter closes an open stream before falling back after append failu
       },
     ],
   });
-  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
-    channel: "C123",
-    thread_ts: "1712790000.000050",
-    text: "Letta Code is working on this thread.\nStatus: Searching files",
-    blocks: expect.arrayContaining([
-      expect.objectContaining({ type: "section" }),
-      expect.objectContaining({ type: "context" }),
-    ]),
-  });
-  expect(writeClient?.chat.update).toHaveBeenCalledWith({
-    channel: "C123",
-    ts: "1712800000.000100",
-    text: "Letta Code finished this turn.\nStatus: Completed",
-    blocks: expect.arrayContaining([
-      expect.objectContaining({ type: "section" }),
-      expect.objectContaining({ type: "context" }),
-    ]),
-  });
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
 });
 
 test("slack adapter keeps one active progress card slot until finalized", async () => {
@@ -2156,8 +2138,7 @@ test("slack adapter keeps one active progress card slot until finalized", async 
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-2",
-        title: "Search the web",
-        output: "letta slack progress cards",
+        title: "Search the web — letta slack progress cards",
         status: "in_progress",
       }),
     ]),
@@ -2346,8 +2327,7 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-web",
-        title: "Searched articles",
-        output: "letta blog",
+        title: "Searched articles — letta blog",
         status: "complete",
       }),
       expect.objectContaining({
