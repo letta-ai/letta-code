@@ -1050,7 +1050,9 @@ describe("mod engine", () => {
       );
 
       expect(result.handlerCount).toBe(2);
-      expect((event as { result?: { status: string; output: string } }).result).toEqual({
+      expect(
+        (event as { result?: { status: string; output: string } }).result,
+      ).toEqual({
         status: "success",
         output: "cached result",
       });

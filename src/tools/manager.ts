@@ -2300,7 +2300,10 @@ async function emitToolStartEvent(options: {
   modContext: ModContext;
   toolCallId?: string;
   toolName: string;
-}): Promise<{ args: ToolArgs; result?: { status: "success" | "error"; output: string } }> {
+}): Promise<{
+  args: ToolArgs;
+  result?: { status: "success" | "error"; output: string };
+}> {
   const event: ModToolStartEvent & {
     result?: { status: "success" | "error"; output: string };
   } = {

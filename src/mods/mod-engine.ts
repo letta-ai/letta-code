@@ -95,7 +95,6 @@ import type {
   ModTool,
   ModToolRegistration,
   ModToolStartEvent,
-
   ModTurnStartEvent,
 } from "@/mods/types";
 
@@ -1694,8 +1693,11 @@ export async function emitLocalModEvent<TName extends ModEventName>(
         isToolStartResultWithResult(name, result) &&
         !(event as ModToolStartEvent & { result?: unknown }).result
       ) {
-        (event as ModToolStartEvent & { result?: { status: "success" | "error"; output: string } }).result =
-          result.result;
+        (
+          event as ModToolStartEvent & {
+            result?: { status: "success" | "error"; output: string };
+          }
+        ).result = result.result;
       }
       if (result != null) {
         results.push(result as NonNullable<ModEventResultMap[TName]>);
