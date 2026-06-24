@@ -374,7 +374,10 @@ function buildExplicitShellLauncher(
   return [shell, shellCommandFlag(shell, login), cmd];
 }
 
-function buildExecLaunchers(args: ExecCommandArgs): string[][] {
+function buildExecLaunchers(
+  args: ExecCommandArgs,
+  env: NodeJS.ProcessEnv,
+): string[][] {
   const login = args.login ?? true;
   const envAliases = args.secretEnv ? Object.keys(args.secretEnv) : undefined;
   if (args.shell?.trim()) {
@@ -388,6 +391,7 @@ function buildExecLaunchers(args: ExecCommandArgs): string[][] {
     ];
   }
   return buildShellLaunchers(args.cmd, {
+    env,
     login,
     powershellEnvAliases: envAliases,
   });
@@ -645,7 +649,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
-  const launchers = buildExecLaunchers(args);
+  const launchers = buildExecLaunchers(args, env);
   const launcher = selectAvailableShellLauncher(launchers, env);
   if (!launcher) {
     throw new Error("Command must be a non-empty string");

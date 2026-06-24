@@ -5,6 +5,19 @@ import {
   POWERSHELL_UTF8_OUTPUT_PREFIX,
 } from "@/tools/impl/shell-launchers";
 
+function withPlatform<T>(platform: NodeJS.Platform, callback: () => T): T {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: platform });
+
+  try {
+    return callback();
+  } finally {
+    if (originalPlatform) {
+      Object.defineProperty(process, "platform", originalPlatform);
+    }
+  }
+}
+
 describe("Shell Launchers", () => {
   test("builds launchers for a command", () => {
     const launchers = buildShellLaunchers("echo hello");
@@ -59,15 +72,9 @@ describe("Shell Launchers", () => {
     ).toBe(true);
   });
 
-  test("Windows launchers match Codex PowerShell order", () => {
-    const originalPlatform = Object.getOwnPropertyDescriptor(
-      process,
-      "platform",
-    );
-    Object.defineProperty(process, "platform", { value: "win32" });
-
-    try {
-      const launchers = buildShellLaunchers("echo test");
+  test("Windows keeps PowerShell fallback order when SHELL is unset", () => {
+    withPlatform("win32", () => {
+      const launchers = buildShellLaunchers("echo test", { env: {} });
 
       expect(launchers[0]?.[0]).toBe("pwsh");
       expect(launchers[1]?.[0]).toBe(
@@ -82,11 +89,42 @@ describe("Shell Launchers", () => {
       expect(launchers[1]?.at(-1)).toContain(POWERSHELL_UTF8_OUTPUT_PREFIX);
       expect(launchers[2]?.at(-1)).toContain(POWERSHELL_UTF8_OUTPUT_PREFIX);
       expect(launchers[3]?.at(-1)).toContain(POWERSHELL_UTF8_OUTPUT_PREFIX);
-    } finally {
-      if (originalPlatform) {
-        Object.defineProperty(process, "platform", originalPlatform);
-      }
-    }
+    });
+  });
+
+  test("Windows prefers SHELL when it accepts -c", () => {
+    withPlatform("win32", () => {
+      const launchers = buildShellLaunchers("echo test", {
+        env: { SHELL: "C:\\Program Files\\Git\\bin\\bash.exe" },
+      });
+
+      expect(launchers[0]?.[0]).toBe("C:\\Program Files\\Git\\bin\\bash.exe");
+      expect(launchers[0]?.[1]).toBe("-c");
+      const psIndex = launchers.findIndex((l) => l[0] === "pwsh");
+      expect(psIndex).toBeGreaterThan(0);
+    });
+  });
+
+  test("Windows ignores SHELL when it does not accept -c", () => {
+    withPlatform("win32", () => {
+      const launchers = buildShellLaunchers("echo test", {
+        env: { SHELL: "nu.exe" },
+      });
+
+      expect(launchers[0]?.[0]).toBe("pwsh");
+    });
+  });
+
+  test("Windows preferred SHELL respects login flag", () => {
+    withPlatform("win32", () => {
+      const launchers = buildShellLaunchers("echo test", {
+        env: { SHELL: "bash" },
+        login: true,
+      });
+
+      expect(launchers[0]?.[0]).toBe("bash");
+      expect(launchers[0]?.[1]).toBe("-lc");
+    });
   });
 
   if (process.platform === "win32") {
@@ -166,17 +204,11 @@ describe("Shell Launchers", () => {
       });
 
       test("prefers user SHELL environment", () => {
-        const originalShell = process.env.SHELL;
-        process.env.SHELL = "/bin/zsh";
-
-        try {
-          const launchers = buildShellLaunchers("echo test");
-          // User's shell should be first
-          expect(launchers[0]?.[0]).toBe("/bin/zsh");
-        } finally {
-          if (originalShell === undefined) delete process.env.SHELL;
-          else process.env.SHELL = originalShell;
-        }
+        const launchers = buildShellLaunchers("echo test", {
+          env: { SHELL: "/bin/zsh" },
+        });
+        // User's shell should be first
+        expect(launchers[0]?.[0]).toBe("/bin/zsh");
       });
     });
   }
