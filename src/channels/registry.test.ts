@@ -1251,6 +1251,101 @@ describe("pending channel control requests", () => {
     };
   }
 
+  test("accepted Slack route dispatches immediate queued lifecycle before delivery", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "acct-slack",
+        enabled: true,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-06-17T00:00:00.000Z",
+        updatedAt: "2026-06-17T00:00:00.000Z",
+      },
+    ]);
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    const lifecycleEvents: unknown[] = [];
+    const adapter = createAdapter([]);
+    adapter.handleTurnLifecycleEvent = async (event) => {
+      lifecycleEvents.push(event);
+    };
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    await adapter.onMessage?.(createInboundMessage("hello"));
+
+    expect(lifecycleEvents).toEqual([
+      {
+        type: "queued",
+        source: expect.objectContaining({
+          channel: "slack",
+          accountId: "acct-slack",
+          chatId: "C123",
+          threadId: "1712790000.000050",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        }),
+      },
+    ]);
+    expect(delivered).toHaveLength(1);
+  });
+
+  test("unrouted Slack thread replies do not dispatch assistant status", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "acct-slack",
+        enabled: true,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-06-17T00:00:00.000Z",
+        updatedAt: "2026-06-17T00:00:00.000Z",
+      },
+    ]);
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    const lifecycleEvents: unknown[] = [];
+    const adapter = createAdapter([]);
+    adapter.handleTurnLifecycleEvent = async (event) => {
+      lifecycleEvents.push(event);
+    };
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage("unrelated thread", {
+        messageId: "1712800000.999999",
+        threadId: "1712790000.999999",
+      }),
+    );
+
+    expect(lifecycleEvents).toEqual([]);
+    expect(delivered).toEqual([]);
+  });
+
   function createPendingControlRequestEvent(
     overrides: Partial<ChannelControlRequestEvent> = {},
   ): ChannelControlRequestEvent {
