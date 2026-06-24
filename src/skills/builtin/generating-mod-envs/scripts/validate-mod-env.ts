@@ -99,6 +99,11 @@ function requiredMarkerCount(record: JsonRecord): number {
   );
 }
 
+function assertionCount(record: JsonRecord): number {
+  const value = record.assertions;
+  return Array.isArray(value) ? value.length : 0;
+}
+
 function validateScenario(params: {
   evaluation: JsonRecord;
   index: number;
@@ -113,8 +118,10 @@ function validateScenario(params: {
   optionalString(scenario, "prompt", `${path}.prompt`);
   assertValid(
     typeof scenario.prompt === "string" ||
-      typeof params.evaluation.prompt === "string",
-    `${path}.prompt is required when evaluation.prompt is absent`,
+      typeof params.evaluation.prompt === "string" ||
+      assertionCount(scenario) > 0 ||
+      assertionCount(params.evaluation) > 0,
+    `${path}.prompt or ${path}.assertions is required when evaluation.prompt is absent`,
   );
   assertValid(
     scenario.outputFormat === undefined ||

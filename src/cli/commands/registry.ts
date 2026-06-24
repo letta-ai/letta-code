@@ -300,7 +300,7 @@ export const commands: Record<string, Command> = {
   "/mods": {
     desc: "Run mod learning targets",
     order: 27.3,
-    args: "learn [memory-citations] [options]",
+    args: "learn [memory-citations] [options] | generate-env [request]",
     handler: () => {
       // Handled specially in use-submit-handler.ts to stream mod learning progress
       return "Starting mod learning...";

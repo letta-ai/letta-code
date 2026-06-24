@@ -6,6 +6,7 @@ import {
   formatModLearningSummary,
   handleModsCommand,
   parseModsCommand,
+  parseModsGenerateEnvCommand,
 } from "./mods";
 
 function createFakeCommandRunner() {
@@ -40,6 +41,22 @@ function createFakeCommandRunner() {
 }
 
 describe("/mods command", () => {
+  test("parses /mods generate-env skill launcher", () => {
+    const parsed = parseModsGenerateEnvCommand(
+      "/mods generate-env create an env for a statusline mod",
+    );
+
+    expect(parsed).toEqual({
+      args: "create an env for a statusline mod",
+    });
+  });
+
+  test("does not treat /mod as a command", () => {
+    expect(
+      parseModsGenerateEnvCommand("/mod generate-env anything"),
+    ).toBeNull();
+  });
+
   test("parses built-in learn target with model options", () => {
     const parsed = parseModsCommand(
       "/mods learn memory-citations --model current --backend api --candidate-file-name learned.ts",
@@ -109,7 +126,7 @@ describe("/mods command", () => {
             score: 11,
           },
         ],
-        candidateCount: 10,
+        candidateCount: 5,
         candidateIndex: 1,
         candidatePath: path.join(cwd, "candidates", "001", "mods", "uv.ts"),
         evalMemoryDir: path.join(cwd, "candidates", "001", "eval"),
@@ -171,7 +188,7 @@ describe("/mods command", () => {
     );
 
     expect(summary).toContain(
-      "Selected iteration: 1/10 (perfect score; stopped early)",
+      "Selected iteration: 1/5 (perfect score; stopped early)",
     );
     expect(summary).toContain("Stopped early: perfect score at iteration 1");
     expect(summary).toContain("Eval: assertions only");
@@ -206,10 +223,10 @@ describe("/mods command", () => {
           expect(options.generationModel).toBe("openai/gpt-5.5");
           expect(options.evalModel).toBe("openai/gpt-5.5");
           expect(options.runDir).toBe(path.join(cwd, ".letta", "test-run"));
-          expect(options.candidateCount).toBe(10);
+          expect(options.candidateCount).toBe(5);
           expect(options.scenarioLimit).toBeUndefined();
           options.onProgress?.({
-            candidateCount: 10,
+            candidateCount: 5,
             candidateIndex: 1,
             candidatePath: path.join(
               cwd,
@@ -220,7 +237,7 @@ describe("/mods command", () => {
               "mods",
               "memory-citations.ts",
             ),
-            message: "Generating optimization iteration 1/10",
+            message: "Generating optimization iteration 1/5",
             phase: "generating",
             runDir: path.join(cwd, ".letta", "test-run"),
           });
@@ -248,7 +265,7 @@ describe("/mods command", () => {
                 score: 2,
               },
             ],
-            candidateCount: 10,
+            candidateCount: 5,
             candidateIndex: 2,
             candidatePath: path.join(
               cwd,
@@ -261,7 +278,7 @@ describe("/mods command", () => {
             ),
             maxScore: 6,
             message:
-              "Evaluating optimization iteration 2/10: scenario 1/7 mod-loads",
+              "Evaluating optimization iteration 2/5: scenario 1/7 mod-loads",
             phase: "evaluating",
             runDir: path.join(cwd, ".letta", "test-run"),
             score: 4,
@@ -351,7 +368,7 @@ describe("/mods command", () => {
                 score: 4,
               },
             ],
-            candidateCount: 10,
+            candidateCount: 5,
             candidateIndex: 2,
             evalMemoryDir: path.join(cwd, ".letta", "test-run", "eval-memory"),
             evalResult: null,
@@ -384,14 +401,12 @@ describe("/mods command", () => {
     }
     expect(learningStarted).toBe(true);
     expect(updates[0]?.output).toContain(
-      "Starting background mod optimization: memory-citations (10 iterations)",
+      "Starting background mod optimization: memory-citations (5 iterations)",
     );
     expect(updates[1]?.output).toContain(
-      "Generating optimization iteration 1/10",
+      "Generating optimization iteration 1/5",
     );
-    expect(updates[1]?.output).toContain(
-      "Optimization progress: ●○○○○○○○○○ 1/10",
-    );
+    expect(updates[1]?.output).toContain("Optimization progress: ●○○○○ 1/5");
     expect(updates[1]?.output).toContain(
       "Score graph: waiting for first evaluation…",
     );
@@ -404,7 +419,7 @@ describe("/mods command", () => {
     expect(updates.at(-1)?.output).toMatch(
       /[⠀⠶⠰⣿⠆⢾⣉⡷⣏⣹⡁⢈]+ Background mod optimization/,
     );
-    expect(updates.at(-1)?.output).toContain("Optimization iteration: 2/10");
+    expect(updates.at(-1)?.output).toContain("Optimization iteration: 2/5");
     expect(updates.at(-1)?.output).toContain(
       "Current running score: 4/6 (67%)",
     );
@@ -415,7 +430,7 @@ describe("/mods command", () => {
       "Score history: iter 1 done 2/6 (33%) → iter 2 running 4/6 (67%)",
     );
     expect(updates.at(-1)?.output).toContain(
-      "Optimization progress: ●●○○○○○○○○ 2/10",
+      "Optimization progress: ●●○○○ 2/5",
     );
     expect(updates.at(-1)?.output).toContain("Score graph: ▁█");
     expect(updates.at(-1)?.output).toContain("iter 1 done       2/6 (33%) │");

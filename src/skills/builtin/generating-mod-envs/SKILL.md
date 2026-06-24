@@ -1,6 +1,8 @@
 ---
 name: generating-mod-envs
 description: Generates and reviews mod learning env JSON files for Letta Code local mods. Use when asked to teach, learn, or optimize a mod behavior; create, draft, validate, improve, or explain envs for `/mods learn --env`; or design evaluation scenarios, memory fixtures, requiredResultMarkers, requiredTraceMarkers, negative controls, and candidate diversity hints.
+disable-model-invocation: true
+user-invocable: true
 ---
 
 # Generating mod learning envs
@@ -62,6 +64,7 @@ Evaluation fields:
 - `evaluation.timeoutMs`, `evaluation.maxTurns`: per-scenario defaults.
 - `evaluation.memoryFiles`: files seeded under eval `$MEMORY_DIR`.
 - `evaluation.scenarios[]`: scenario-specific overrides and fixtures.
+- In scenario-suite envs, do not add a top-level `evaluation.prompt` unless that prompt must run for every scenario. Assertion-only scenarios should have `assertions` and no `prompt`; only scenarios that require model behavior should define `scenario.prompt`.
 - `requiredResultMarkers`: literal strings required in the final answer.
 - `requiredTraceMarkers`: literal strings required in raw stdout/stderr.
 - `forbiddenResultMarkers`: final-answer strings that fail the run.
@@ -121,8 +124,7 @@ Evaluation fields:
         "requiredResultMarkers": ["4"],
         "forbiddenTraceMarkers": ["hello_mod_ping"]
       }
-    ],
-    "prompt": "Run all configured evaluation.scenarios."
+    ]
   }
 }
 ```

@@ -19,7 +19,7 @@ import {
 
 const DEFAULT_TARGET = "memory-citations";
 const DEFAULT_MODEL = "auto";
-const DEFAULT_OPTIMIZATION_ITERATIONS = 10;
+const DEFAULT_OPTIMIZATION_ITERATIONS = 5;
 const MOD_OPTIMIZATION_PULSE = BRAILLE_ANIMATIONS.pulse;
 const MOD_OPTIMIZATION_RUNNING_LABELS = [
   "running",
@@ -61,6 +61,8 @@ export type ModsCommandParseResult =
   | { command: "learn"; learn: LearnCommand }
   | { command: "usage"; output: string; success: boolean };
 
+export type ModsGenerateEnvCommand = { args: string };
+
 export type HandleModsCommandContext = {
   commandRunner: Pick<AppCommandRunner, "start">;
   cwd: string;
@@ -93,6 +95,7 @@ function formatModsUsage(error?: string): string {
     "Usage:",
     "  /mods learn [memory-citations] [options]",
     "  /mods learn --env <path> [options]",
+    "  /mods generate-env [request]",
     "",
     "Options:",
     "  --model <handle>              Model for generation and eval (default: auto)",
@@ -100,7 +103,7 @@ function formatModsUsage(error?: string): string {
     "  --eval-model <handle>         Model for headless eval",
     "  --backend <api|local>          Backend flag forwarded to headless runs",
     "  --candidate <path>            Evaluate an existing candidate instead of generating",
-    "  --candidates <n>              Run N optimization iterations for one learned mod (default: 10)",
+    "  --candidates <n>              Run N optimization iterations for one learned mod (default: 5)",
     "  --scenario-limit <n>          Evaluate only the first N scenarios (fast smoke testing)",
     "  --candidate-file-name <name>  Candidate filename in the eval mod dir",
     "  --out <dir>                   Artifact directory (default: .letta/mod-learning-runs/<target>-<timestamp>)",
@@ -267,6 +270,21 @@ export function parseModsCommand(
           : "custom env"
         : options.target,
     },
+  };
+}
+
+export function parseModsGenerateEnvCommand(
+  trimmed: string,
+): ModsGenerateEnvCommand | null {
+  if (
+    trimmed !== "/mods generate-env" &&
+    !trimmed.startsWith("/mods generate-env ")
+  ) {
+    return null;
+  }
+
+  return {
+    args: trimmed.slice("/mods generate-env".length).trim(),
   };
 }
 
