@@ -32,7 +32,7 @@ test("channel progress converts tool call deltas without leaking args", () => {
   ]);
 });
 
-test("channel progress adds semantic web_search titles from safe args", () => {
+test("channel progress uses web_search query as task details", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -59,7 +59,7 @@ test("channel progress adds semantic web_search titles from safe args", () => {
       toolCallId: "call-1",
       toolName: "web_search",
       toolDetails: "letta blog",
-      toolTitle: "Searching articles",
+      toolTitle: "Search the web",
     },
   ]);
 });
@@ -93,7 +93,7 @@ test("channel progress uses Letta Code display names for tool titles", () => {
   ]);
 });
 
-test("channel progress uses Bash descriptions as tool titles", () => {
+test("channel progress uses Bash descriptions as task details", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -119,8 +119,8 @@ test("channel progress uses Bash descriptions as tool titles", () => {
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "Bash",
-      toolDetails: "Command: uname -a",
-      toolTitle: "Bash: Check system details",
+      toolDetails: "Check system details",
+      toolTitle: "Bash",
     },
   ]);
 });

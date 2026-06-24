@@ -1,12 +1,8 @@
-import { formatArgsDisplay } from "@/cli/helpers/format-args-display";
 import {
   getDisplayToolName,
   isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
-import {
-  formatWebSearchTarget,
-  isWebSearchToolName,
-} from "@/cli/helpers/web-search-display";
+import { isWebSearchToolName } from "@/cli/helpers/web-search-display";
 import type { StreamDelta } from "@/types/protocol_v2";
 import type { ChannelTurnProgressUpdate } from "./types";
 
@@ -113,28 +109,14 @@ function parseToolArguments(
 
 function formatToolProgressTitle(
   summary: ToolCallSummary,
-  state: ChannelTurnProgressUpdate["state"],
+  _state: ChannelTurnProgressUpdate["state"],
 ): string | undefined {
-  const parsedArguments = parseToolArguments(summary.argumentsText);
   if (isWebSearchToolName(summary.name)) {
-    const target = formatWebSearchTarget(parsedArguments ?? {});
-    const prefix =
-      state === "completed"
-        ? "Searched"
-        : state === "error"
-          ? "Attempted to search"
-          : "Searching";
-    const title = `${prefix} ${target}`;
-    const sanitized = sanitizeChannelProgressText(title);
-    return sanitized || undefined;
+    return "Search the web";
   }
 
-  if (summary.name && isShellTool(summary.name) && parsedArguments) {
-    const description = firstNonEmptyString(parsedArguments.description);
-    const sanitized = sanitizeChannelProgressText(description);
-    if (sanitized) {
-      return `Bash: ${sanitized}`;
-    }
+  if (summary.name && isShellTool(summary.name)) {
+    return "Bash";
   }
 
   if (summary.name) {
@@ -185,22 +167,18 @@ function formatToolProgressDetails(
     return sanitized || undefined;
   }
 
-  // Keep Slack task rows compact. Most non-shell inputs are duplicated by the
-  // title or too verbose for the native card; shell commands are the one extra
-  // detail worth keeping because descriptions can hide the exact command.
+  // Keep Slack task rows compact. For Bash, the tool-call description is the
+  // user-facing intent; avoid exposing the raw command in the native card.
   if (!isShellTool(summary.name)) {
     return undefined;
   }
 
-  const { display } = formatArgsDisplay(summary.argumentsText, summary.name);
+  const description = firstNonEmptyString(parsedArguments.description);
   const sanitized = sanitizeChannelProgressText(
-    display,
+    description,
     MAX_PROGRESS_DETAILS_LENGTH,
   );
-  if (!sanitized || sanitized === "…") {
-    return undefined;
-  }
-  return `Command: ${sanitized}`;
+  return sanitized || undefined;
 }
 
 function extractToolCallSummary(value: unknown): ToolCallSummary | null {
