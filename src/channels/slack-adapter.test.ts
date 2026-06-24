@@ -1655,27 +1655,17 @@ test("slack adapter streams native task progress and clears thread status", asyn
     chunks: [
       {
         type: "plan_update",
-        title: "Working",
-      },
-    ],
-  });
-  expect(writeClient?.chat.appendStream).toHaveBeenCalledWith({
-    channel: "C123",
-    ts: "1712800000.000300",
-    chunks: expect.arrayContaining([
-      expect.objectContaining({
-        type: "plan_update",
         title: "shell_exec",
-      }),
-      expect.objectContaining({
+      },
+      {
         type: "task_update",
         id: "task_call-1",
         title: "shell_exec",
         status: "in_progress",
-      }),
-    ]),
+      },
+    ],
   });
-  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(2);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
   const appendCalls = writeClient?.chat.appendStream.mock
     .calls as unknown as Array<
     [
@@ -1687,7 +1677,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
       },
     ]
   >;
-  const appendCall = appendCalls[1]?.[0];
+  const appendCall = appendCalls[0]?.[0];
   expect(appendCall).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
@@ -2265,26 +2255,21 @@ test("slack adapter shows a progress card while a no-tool turn is running", asyn
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
-    channel: "C123",
-    thread_ts: "1712790000.000050",
-    task_display_mode: "plan",
-    recipient_user_id: "U123",
-    recipient_team_id: "T123",
-    chunks: [
-      {
-        type: "plan_update",
-        title: "Working",
-      },
-    ],
-  });
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
-  expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
-    channel_id: "C123",
-    thread_ts: "1712790000.000050",
-    status: "",
-  });
+  const statusCalls =
+    (writeClient?.assistant.threads.setStatus.mock.calls as Array<
+      Array<{ status: string }>
+    >) ?? [];
+  expect(statusCalls.length).toBeGreaterThanOrEqual(3);
+  const firstStatus = statusCalls[0]?.[0]?.status;
+  const secondStatus = statusCalls[1]?.[0]?.status;
+  expect(["is cogitating", "is thinking", "is processing"]).toContain(
+    firstStatus ?? "",
+  );
+  expect(secondStatus).toBe(firstStatus);
+  expect(statusCalls[statusCalls.length - 1]?.[0]?.status).toBe("");
 });
 
 test("slack adapter finishes an active progress card when MessageChannel sends", async () => {

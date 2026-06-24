@@ -1879,9 +1879,6 @@ export function createSlackAdapter(
     if (streamChunks.length > 0) {
       entry.pendingStreamChunks ??= [];
       entry.pendingStreamChunks.push(...streamChunks);
-    } else if (!options.update && !entry.mode) {
-      entry.pendingStreamChunks ??= [];
-      entry.pendingStreamChunks.push(buildSlackPlanUpdateChunk(entry));
     }
     entry.updatedAt = now;
     progressCardByReplyKey.set(key, entry);
@@ -2498,12 +2495,15 @@ export function createSlackAdapter(
       }
 
       if (event.type === "processing") {
+        // Only show assistant thread status; do not create a task stream card
+        // until we see an actual non-MessageChannel tool call.
         await Promise.all(
-          getUniqueSlackProgressSources(event.sources).map((source) =>
-            upsertSlackProgressCard(source, "processing", "Working", {
-              force: true,
-            }),
-          ),
+          getUniqueSlackProgressSources(event.sources).map((source) => {
+            const status = getSlackAssistantThreadStatusForTurn(source);
+            return status
+              ? setSlackAssistantThreadStatus(source, status)
+              : Promise.resolve();
+          }),
         );
         return;
       }
