@@ -42,7 +42,7 @@
     {
       "id": "glm",
       "handle": "letta/glm",
-      "label": "GLM",
+      "label": "Letta GLM",
       "description": "Route directly to Letta-hosted GLM 5.2",
       "free": true,
       "updateArgs": {
