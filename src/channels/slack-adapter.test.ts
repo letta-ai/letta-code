@@ -1462,17 +1462,27 @@ test("slack adapter streams native task progress and clears thread status", asyn
     chunks: [
       {
         type: "plan_update",
-        title: "Running 1 tool",
+        title: "Working",
       },
-      {
+    ],
+  });
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        type: "plan_update",
+        title: "shell_exec",
+      }),
+      expect.objectContaining({
         type: "task_update",
         id: "task_call-1",
         title: "shell_exec",
         status: "in_progress",
-      },
-    ],
+      }),
+    ]),
   });
-  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(2);
   const appendCalls = writeClient?.chat.appendStream.mock
     .calls as unknown as Array<
     [
@@ -1484,14 +1494,14 @@ test("slack adapter streams native task progress and clears thread status", asyn
       },
     ]
   >;
-  const appendCall = appendCalls[0]?.[0];
+  const appendCall = appendCalls[1]?.[0];
   expect(appendCall).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
   });
   expect(appendCall?.chunks?.[0]).toMatchObject({
     type: "plan_update",
-    title: "Completed 1 tool",
+    title: "Completed",
   });
   expect(appendCall?.chunks?.[1]).toMatchObject({
     type: "task_update",
@@ -1591,7 +1601,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       chunks: [
         expect.objectContaining({
           type: "plan_update",
-          title: "Running 1 tool",
+          title: "Searching articles",
         }),
         expect.objectContaining({
           id: "task_call-web",
@@ -1614,7 +1624,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
     expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-web",
-        title: "Searching articles",
+        title: "Searching articles — letta blog",
       }),
       expect.objectContaining({
         id: "task_call-bash",
@@ -1669,7 +1679,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       }),
       expect.objectContaining({
         type: "plan_update",
-        title: "Completed 3 tools",
+        title: "Completed",
       }),
     ]),
   });
@@ -1863,7 +1873,7 @@ test("slack adapter does not create fallback cards after stream append failure",
     chunks: [
       {
         type: "plan_update",
-        title: "Running 1 tool",
+        title: "Read",
       },
       {
         type: "task_update",
@@ -1879,7 +1889,7 @@ test("slack adapter does not create fallback cards after stream append failure",
       },
       {
         type: "plan_update",
-        title: "Completed 1 tool",
+        title: "Completed",
       },
     ],
   });
@@ -2012,7 +2022,7 @@ test("slack adapter treats already-closed stream stop errors as benign", async (
       }),
       expect.objectContaining({
         type: "plan_update",
-        title: "Completed 1 tool",
+        title: "Completed",
       }),
     ]),
   });
@@ -2020,7 +2030,7 @@ test("slack adapter treats already-closed stream stop errors as benign", async (
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
 });
 
-test("slack adapter does not show a tool card for turns without tool progress", async () => {
+test("slack adapter shows a progress card while a no-tool turn is running", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -2036,6 +2046,8 @@ test("slack adapter does not show a tool card for turns without tool progress", 
     accountId: "slack-test-account",
     chatId: "C123",
     chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
     messageId: "1712800000.000100",
     threadId: "1712790000.000050",
     agentId: "agent-1",
@@ -2060,21 +2072,26 @@ test("slack adapter does not show a tool card for turns without tool progress", 
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
+    channel: "C123",
+    thread_ts: "1712790000.000050",
+    task_display_mode: "plan",
+    recipient_user_id: "U123",
+    recipient_team_id: "T123",
+    chunks: [
+      {
+        type: "plan_update",
+        title: "Working",
+      },
+    ],
+  });
   expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
-  const statusCalls =
-    (writeClient?.assistant.threads.setStatus.mock.calls as Array<
-      Array<{ status: string }>
-    >) ?? [];
-  expect(statusCalls.length).toBeGreaterThanOrEqual(3);
-  const firstStatus = statusCalls[0]?.[0]?.status;
-  const secondStatus = statusCalls[1]?.[0]?.status;
-  expect(["is cogitating", "is thinking", "is processing"]).toContain(
-    firstStatus ?? "",
-  );
-  expect(secondStatus).toBe(firstStatus);
-  expect(statusCalls[statusCalls.length - 1]?.[0]?.status).toBe("");
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
+    channel_id: "C123",
+    thread_ts: "1712790000.000050",
+    status: "",
+  });
 });
 
 test("slack adapter finishes an active progress card when MessageChannel sends", async () => {
@@ -2139,7 +2156,7 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
       }),
       expect.objectContaining({
         type: "plan_update",
-        title: "Completed 1 tool",
+        title: "Completed",
       }),
     ]),
   });
