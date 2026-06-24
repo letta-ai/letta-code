@@ -567,7 +567,13 @@ async function symlinkDirIntoWorktree(
   }
 
   await mkdir(path.dirname(dest), { recursive: true });
-  await symlink(source, dest, "dir");
+  // On Windows, directory symlinks require admin privileges or Developer Mode.
+  // Junctions achieve the same result without elevated permissions.
+  await symlink(
+    source,
+    dest,
+    process.platform === "win32" ? "junction" : "dir",
+  );
   return {
     linked: true,
     note: `symlinked ${normalized} from the primary checkout`,
