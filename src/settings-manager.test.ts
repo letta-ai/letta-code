@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CommandHookConfig, HookCommand } from "@/hooks/types";
 import { runWithRuntimeContext } from "@/runtime-context";
-import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
 
 // Type-safe helper to extract command from a hook (tests only use command hooks)
@@ -129,7 +128,7 @@ describe("Settings Manager - Initialization", () => {
     );
   });
 
-  test("Initialize tolerates legacy reflectionBehavior key and strips it on persist", async () => {
+  test("Initialize tolerates obsolete keys and strips them on persist", async () => {
     const { writeFile, readFile, mkdir } = await import("@/utils/fs.js");
     const settingsDir = join(testHomeDir, ".letta");
     await mkdir(settingsDir, { recursive: true });
@@ -139,6 +138,10 @@ describe("Settings Manager - Initialization", () => {
       settingsPath,
       JSON.stringify({
         reflectionBehavior: "reminder",
+        enableSleeptime: true,
+        pinnedConversationsByServer: {
+          "api.letta.com": { "agent-1": ["conv-1"] },
+        },
         reflectionTrigger: "step-count",
         reflectionStepCount: 12,
       }),
@@ -152,6 +155,8 @@ describe("Settings Manager - Initialization", () => {
     expect(settings.reflectionTrigger).toBe("step-count");
     expect(settings.reflectionStepCount).toBe(12);
     expect(settings).not.toHaveProperty("reflectionBehavior");
+    expect(settings).not.toHaveProperty("enableSleeptime");
+    expect(settings).not.toHaveProperty("pinnedConversationsByServer");
 
     settingsManager.updateSettings({ tokenStreaming: true });
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -161,6 +166,8 @@ describe("Settings Manager - Initialization", () => {
       unknown
     >;
     expect(persisted).not.toHaveProperty("reflectionBehavior");
+    expect(persisted).not.toHaveProperty("enableSleeptime");
+    expect(persisted).not.toHaveProperty("pinnedConversationsByServer");
   });
 });
 
@@ -233,13 +240,13 @@ describe("Settings Manager - Global Settings", () => {
     settingsManager.updateSettings({
       tokenStreaming: true,
       lastAgent: "agent-456",
-      enableSleeptime: true,
+      reasoningTabCycleEnabled: true,
     });
 
     const settings = settingsManager.getSettings();
     expect(settings.tokenStreaming).toBe(true);
     expect(settings.lastAgent).toBe("agent-456");
-    expect(settings.enableSleeptime).toBe(true);
+    expect(settings.reasoningTabCycleEnabled).toBe(true);
   });
 
   test("Update env variables", () => {
@@ -496,6 +503,9 @@ describe("Settings Manager - Local Project Settings", () => {
       JSON.stringify({
         lastAgent: "agent-local-legacy",
         reflectionBehavior: "reminder",
+        pinnedConversationsByServer: {
+          "api.letta.com": { "agent-1": ["conv-1"] },
+        },
         reflectionTrigger: "step-count",
         reflectionStepCount: 9,
       }),
@@ -505,12 +515,14 @@ describe("Settings Manager - Local Project Settings", () => {
       await settingsManager.loadLocalProjectSettings(testProjectDir);
     expect(localSettings.lastAgent).toBe("agent-local-legacy");
     expect(localSettings).not.toHaveProperty("reflectionBehavior");
+    expect(localSettings).not.toHaveProperty("pinnedConversationsByServer");
 
     const persisted = JSON.parse(await readFile(settingsPath)) as Record<
       string,
       unknown
     >;
     expect(persisted).not.toHaveProperty("reflectionBehavior");
+    expect(persisted).not.toHaveProperty("pinnedConversationsByServer");
   });
 
   test("Get local project settings returns cached value", async () => {
@@ -734,7 +746,7 @@ describe("Settings Manager - Reset", () => {
     // After re-init, managedKeys should only contain keys from the new file.
     // Persisting should write tokenStreaming but NOT ghost-write lastAgent from
     // the previous session's managedKeys.
-    settingsManager.updateSettings({ enableSleeptime: false });
+    settingsManager.updateSettings({ reasoningTabCycleEnabled: false });
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     await settingsManager.reset();
@@ -988,7 +1000,7 @@ describe("Settings Manager - Edge Cases", () => {
     settingsManager.updateSettings({
       tokenStreaming: true,
       lastAgent: "agent-1",
-      enableSleeptime: true,
+      reasoningTabCycleEnabled: true,
     });
 
     // Partial update
@@ -998,7 +1010,7 @@ describe("Settings Manager - Edge Cases", () => {
 
     const settings = settingsManager.getSettings();
     expect(settings.tokenStreaming).toBe(true); // Preserved
-    expect(settings.enableSleeptime).toBe(true); // Preserved
+    expect(settings.reasoningTabCycleEnabled).toBe(true); // Preserved
     expect(settings.lastAgent).toBe("agent-2"); // Updated
   });
 });
@@ -1043,121 +1055,6 @@ describe("Settings Manager - Agents Array Migration", () => {
       expect(settings.env?.LETTA_API_KEY).toBe("sk-subagent-should-stay");
     },
   );
-
-  test("Migrates from pinnedAgents (oldest legacy format)", async () => {
-    // Setup: Write old format to disk
-    const { writeFile, mkdir } = await import("@/utils/fs.js");
-    const settingsDir = join(testHomeDir, ".letta");
-    await mkdir(settingsDir, { recursive: true });
-    await writeFile(
-      join(settingsDir, "settings.json"),
-      JSON.stringify({
-        pinnedAgents: ["agent-old-1", "agent-old-2"],
-        tokenStreaming: true,
-      }),
-    );
-
-    await settingsManager.initialize();
-    const settings = settingsManager.getSettings();
-
-    // Should have migrated to agents array
-    expect(settings.agents).toBeDefined();
-    expect(settings.agents).toHaveLength(2);
-    expect(settings.agents?.[0]).toEqual({
-      agentId: "agent-old-1",
-      pinned: true,
-    });
-    expect(settings.agents?.[1]).toEqual({
-      agentId: "agent-old-2",
-      pinned: true,
-    });
-    // Legacy field should still exist for downgrade compat
-    expect(settings.pinnedAgents).toEqual(["agent-old-1", "agent-old-2"]);
-  });
-
-  test("Migrates from pinnedAgentsByServer (newer legacy format)", async () => {
-    const { writeFile, mkdir } = await import("@/utils/fs.js");
-    const settingsDir = join(testHomeDir, ".letta");
-    await mkdir(settingsDir, { recursive: true });
-    await writeFile(
-      join(settingsDir, "settings.json"),
-      JSON.stringify({
-        pinnedAgentsByServer: {
-          "api.letta.com": ["agent-cloud-1"],
-          "localhost:8283": ["agent-local-1", "agent-local-2"],
-        },
-      }),
-    );
-
-    await settingsManager.initialize();
-    const settings = settingsManager.getSettings();
-
-    expect(settings.agents).toHaveLength(3);
-    // Cloud agents have no baseUrl (or undefined)
-    expect(settings.agents).toContainEqual({
-      agentId: "agent-cloud-1",
-      pinned: true,
-    });
-    // Local agents have baseUrl
-    expect(settings.agents).toContainEqual({
-      agentId: "agent-local-1",
-      baseUrl: "localhost:8283",
-      pinned: true,
-    });
-    expect(settings.agents).toContainEqual({
-      agentId: "agent-local-2",
-      baseUrl: "localhost:8283",
-      pinned: true,
-    });
-  });
-
-  test("Migrates from both legacy formats (deduplicated)", async () => {
-    const { writeFile, mkdir } = await import("@/utils/fs.js");
-    const settingsDir = join(testHomeDir, ".letta");
-    await mkdir(settingsDir, { recursive: true });
-    await writeFile(
-      join(settingsDir, "settings.json"),
-      JSON.stringify({
-        pinnedAgents: ["agent-1", "agent-2"], // Old old format
-        pinnedAgentsByServer: {
-          "api.letta.com": ["agent-1", "agent-3"], // agent-1 is duplicate
-        },
-      }),
-    );
-
-    await settingsManager.initialize();
-    const settings = settingsManager.getSettings();
-
-    // Should have 3 agents (agent-1 deduped)
-    expect(settings.agents).toHaveLength(3);
-    const agentIds = settings.agents?.map((a) => a.agentId);
-    expect(agentIds).toContain("agent-1");
-    expect(agentIds).toContain("agent-2");
-    expect(agentIds).toContain("agent-3");
-  });
-
-  test("Already migrated settings are not re-migrated", async () => {
-    const { writeFile, mkdir } = await import("@/utils/fs.js");
-    const settingsDir = join(testHomeDir, ".letta");
-    await mkdir(settingsDir, { recursive: true });
-    await writeFile(
-      join(settingsDir, "settings.json"),
-      JSON.stringify({
-        agents: [{ agentId: "agent-new", pinned: true, memfs: true }],
-        pinnedAgentsByServer: {
-          "api.letta.com": ["agent-old"], // Should be ignored since agents exists
-        },
-      }),
-    );
-
-    await settingsManager.initialize();
-    const settings = settingsManager.getSettings();
-
-    // Should only have the new format agent
-    expect(settings.agents).toHaveLength(1);
-    expect(settings.agents?.[0]?.agentId).toBe("agent-new");
-    expect(settings.agents?.[0]?.memfs).toBe(true);
-  });
 
   test("isMemfsEnabled returns false for agents without memfs flag", async () => {
     await settingsManager.initialize();
@@ -1447,33 +1344,23 @@ describe("Settings Manager - Managed Keys Preservation", () => {
       settingsPath,
       JSON.stringify({
         tokenStreaming: true,
-        pinnedAgents: ["agent-a"],
-        pinnedAgentsByServer: {
-          "api.letta.com": ["agent-a"],
-        },
+        agents: [{ agentId: "agent-a", pinned: true }],
       }),
     );
 
     await settingsManager.initialize();
 
-    // Simulate another process appending a new global pin while this process
+    // Simulate another process appending a new pin while this process
     // is still running with stale in-memory settings.
     const externallyUpdated = JSON.parse(
       await readFile(settingsPath),
     ) as Record<string, unknown>;
-
-    const pinnedByServer = (externallyUpdated.pinnedAgentsByServer as Record<
-      string,
-      string[]
-    >) || { "api.letta.com": [] };
-    pinnedByServer["api.letta.com"] = [
-      ...(pinnedByServer["api.letta.com"] || []),
-      "agent-b",
+    const agents =
+      (externallyUpdated.agents as Array<Record<string, unknown>>) || [];
+    externallyUpdated.agents = [
+      ...agents,
+      { agentId: "agent-b", pinned: true },
     ];
-    externallyUpdated.pinnedAgentsByServer = pinnedByServer;
-
-    const pinned = (externallyUpdated.pinnedAgents as string[]) || [];
-    externallyUpdated.pinnedAgents = [...pinned, "agent-b"];
 
     await writeFile(settingsPath, JSON.stringify(externallyUpdated));
 
@@ -1486,12 +1373,7 @@ describe("Settings Manager - Managed Keys Preservation", () => {
       unknown
     >;
     expect(raw.lastAgent).toBe("agent-current");
-    expect((raw.pinnedAgents as string[]) || []).toContain("agent-b");
-    expect(
-      (raw.pinnedAgentsByServer as Record<string, string[]>)?.[
-        "api.letta.com"
-      ] || [],
-    ).toContain("agent-b");
+    expect(raw.agents).toContainEqual({ agentId: "agent-b", pinned: true });
   });
 
   test("External deletion of managed keys is preserved when this process didn't change them", async () => {
@@ -1850,184 +1732,6 @@ describe("Settings Manager - Conversation Goals", () => {
     expect(
       settingsManager.areConversationGoalToolsEnabled("conv-1", testProjectDir),
     ).toBe(false);
-  });
-});
-
-describe("Settings Manager - Conversation Pins", () => {
-  async function initPinTest() {
-    await settingsManager.initialize();
-    await settingsManager.loadLocalProjectSettings(testProjectDir);
-  }
-
-  test("pins conversations globally and locally per agent", async () => {
-    await initPinTest();
-
-    settingsManager.pinConversationGlobal("agent-1", "conv-1");
-    settingsManager.pinConversationLocal("agent-1", "conv-2", testProjectDir);
-
-    expect(settingsManager.getGlobalPinnedConversations("agent-1")).toEqual([
-      "conv-1",
-    ]);
-    expect(
-      settingsManager.getLocalPinnedConversations("agent-1", testProjectDir),
-    ).toEqual(["conv-2"]);
-    expect(
-      settingsManager.getMergedPinnedConversations("agent-1", testProjectDir),
-    ).toEqual([
-      { conversationId: "conv-2", isLocal: true },
-      { conversationId: "conv-1", isLocal: false },
-    ]);
-  });
-
-  test("global conversation pin writes merge with latest settings on disk", async () => {
-    const { readFile, writeFile } = await import("@/utils/fs.js");
-    await initPinTest();
-
-    settingsManager.pinConversationGlobal("agent-1", "stale-conv");
-
-    const settingsPath = join(testHomeDir, ".letta", "settings.json");
-    await writeFile(
-      settingsPath,
-      JSON.stringify({
-        pinnedConversationsByServer: {
-          "api.letta.com": {
-            "agent-1": ["fresh-conv"],
-          },
-        },
-      }),
-    );
-
-    settingsManager.pinConversationGlobal("agent-1", "new-conv");
-
-    const persisted = JSON.parse(await readFile(settingsPath)) as Settings;
-    expect(
-      persisted.pinnedConversationsByServer?.["api.letta.com"]?.["agent-1"],
-    ).toEqual(["fresh-conv", "new-conv"]);
-    expect(settingsManager.getGlobalPinnedConversations("agent-1")).toEqual([
-      "fresh-conv",
-      "new-conv",
-    ]);
-  });
-
-  test("global conversation unpin writes do not restore stale cached pins", async () => {
-    const { readFile, writeFile } = await import("@/utils/fs.js");
-    await initPinTest();
-
-    settingsManager.pinConversationGlobal("agent-1", "stale-conv");
-    settingsManager.pinConversationGlobal("agent-1", "remove-conv");
-
-    const settingsPath = join(testHomeDir, ".letta", "settings.json");
-    await writeFile(
-      settingsPath,
-      JSON.stringify({
-        pinnedConversationsByServer: {
-          "api.letta.com": {
-            "agent-1": ["fresh-conv", "remove-conv"],
-          },
-        },
-      }),
-    );
-
-    settingsManager.unpinConversationGlobal("agent-1", "remove-conv");
-
-    const persisted = JSON.parse(await readFile(settingsPath)) as Settings;
-    expect(
-      persisted.pinnedConversationsByServer?.["api.letta.com"]?.["agent-1"],
-    ).toEqual(["fresh-conv"]);
-  });
-
-  test("local conversation pin writes merge with latest project settings on disk", async () => {
-    const { readFile, writeFile } = await import("@/utils/fs.js");
-    await initPinTest();
-
-    settingsManager.pinConversationLocal(
-      "agent-1",
-      "stale-local-conv",
-      testProjectDir,
-    );
-
-    const localSettingsPath = join(
-      testProjectDir,
-      ".letta",
-      "settings.local.json",
-    );
-    await writeFile(
-      localSettingsPath,
-      JSON.stringify({
-        pinnedConversationsByServer: {
-          "api.letta.com": {
-            "agent-1": ["fresh-local-conv"],
-          },
-        },
-      }),
-    );
-
-    settingsManager.pinConversationLocal(
-      "agent-1",
-      "new-local-conv",
-      testProjectDir,
-    );
-
-    const persisted = JSON.parse(
-      await readFile(localSettingsPath),
-    ) as LocalProjectSettings;
-    expect(
-      persisted.pinnedConversationsByServer?.["api.letta.com"]?.["agent-1"],
-    ).toEqual(["fresh-local-conv", "new-local-conv"]);
-  });
-
-  test("LETTA_SETTINGS_BASE_URL scopes conversation pins independently from LETTA_BASE_URL", async () => {
-    const originalBaseUrl = process.env.LETTA_BASE_URL;
-    const originalSettingsBaseUrl = process.env.LETTA_SETTINGS_BASE_URL;
-
-    try {
-      process.env.LETTA_BASE_URL = "http://localhost:49692";
-      process.env.LETTA_SETTINGS_BASE_URL = "https://api.letta.com";
-      await initPinTest();
-
-      settingsManager.pinConversationGlobal("agent-1", "cloud-conv");
-
-      expect(settingsManager.getGlobalPinnedConversations("agent-1")).toEqual([
-        "cloud-conv",
-      ]);
-      const { readFile } = await import("@/utils/fs.js");
-      const persisted = JSON.parse(
-        await readFile(join(testHomeDir, ".letta", "settings.json")),
-      ) as Settings;
-      expect(
-        persisted.pinnedConversationsByServer?.["api.letta.com"]?.["agent-1"],
-      ).toEqual(["cloud-conv"]);
-      expect(
-        persisted.pinnedConversationsByServer?.["localhost:49692"]?.["agent-1"],
-      ).toBeUndefined();
-    } finally {
-      if (originalBaseUrl === undefined) {
-        delete process.env.LETTA_BASE_URL;
-      } else {
-        process.env.LETTA_BASE_URL = originalBaseUrl;
-      }
-      if (originalSettingsBaseUrl === undefined) {
-        delete process.env.LETTA_SETTINGS_BASE_URL;
-      } else {
-        process.env.LETTA_SETTINGS_BASE_URL = originalSettingsBaseUrl;
-      }
-    }
-  });
-
-  test("conversation pins are scoped by local backend storage dir", async () => {
-    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
-    process.env.LETTA_LOCAL_BACKEND_DIR = join(testHomeDir, "local-store-a");
-    await initPinTest();
-
-    settingsManager.pinConversationGlobal("local-agent-1", "conv-a");
-    expect(
-      settingsManager.getGlobalPinnedConversations("local-agent-1"),
-    ).toEqual(["conv-a"]);
-
-    process.env.LETTA_LOCAL_BACKEND_DIR = join(testHomeDir, "local-store-b");
-    expect(
-      settingsManager.getGlobalPinnedConversations("local-agent-1"),
-    ).toEqual([]);
   });
 });
 

@@ -35,22 +35,17 @@ import {
   type Line,
   toLines,
 } from "@/cli/helpers/accumulator";
-import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
   getReflectionSettings,
-  type ReflectionSettings,
   type ReflectionTrigger,
-  shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
+import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
 } from "@/cli/helpers/reflection-launcher";
-import {
-  appendTranscriptDeltaJsonl,
-  getReflectionTranscriptState,
-} from "@/cli/helpers/reflection-transcript";
+import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import {
   buildSharedReminderParts,
@@ -58,11 +53,7 @@ import {
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
-import {
-  enqueueMemoryGitSyncReminder,
-  type SharedReminderState,
-  syncReminderStateFromContextTracker,
-} from "@/reminders/state";
+import { enqueueMemoryGitSyncReminder } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -70,6 +61,8 @@ import { extractTelemetryInputText } from "@/telemetry/input";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import { detectShellContext } from "@/utils/shell-context";
+import { createTelegramRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -84,6 +77,10 @@ import {
   normalizeToolReturnWireMessage,
   populateInterruptQueue,
 } from "./interrupts";
+import {
+  createListenerModContext,
+  ensureListenerModAdapter,
+} from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -131,6 +128,7 @@ import type {
   ConversationRuntime,
   InboundMessagePayload,
   IncomingMessage,
+  ListenerRuntime,
 } from "./types";
 import { ensureListenerWarmStateForTurn } from "./warmup";
 
@@ -207,7 +205,6 @@ export const __listenerTurnTestUtils = {
   trackListenerUserInput,
   buildInboundUserTranscriptLines,
   seedInboundUserTranscriptLines,
-  maybeLaunchPostTurnChannelReflection,
 };
 
 function escapeTaskNotificationSummary(summary: string): string {
@@ -217,7 +214,46 @@ function escapeTaskNotificationSummary(summary: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function buildMaybeLaunchReflectionSubagent(params: {
+function isTurnInputArray(
+  value: unknown,
+): value is Array<MessageCreate | ApprovalCreate> {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
+async function emitListenerTurnStart(options: {
+  agentId: string;
+  conversationId: string;
+  input: Array<MessageCreate | ApprovalCreate>;
+  runtime: ListenerRuntime;
+  workingDirectory: string;
+  permissionMode?: string | null;
+  cachedAgent?: AgentState | null;
+}): Promise<Array<MessageCreate | ApprovalCreate>> {
+  try {
+    const modAdapter = ensureListenerModAdapter(options.runtime);
+    const context = createListenerModContext({
+      sessionId: options.conversationId,
+      workingDirectory: options.workingDirectory,
+      permissionMode: options.permissionMode ?? null,
+      agent: options.cachedAgent ?? null,
+    });
+    const event = {
+      agentId: options.agentId,
+      conversationId: options.conversationId,
+      input: options.input,
+    };
+    await modAdapter.events.emit("turn_start", event, context);
+    return isTurnInputArray(event.input) ? event.input : options.input;
+  } catch {
+    // Mod turn_start handlers should not block sending the turn.
+    return options.input;
+  }
+}
+
+export function buildMaybeLaunchReflectionSubagent(params: {
   runtime: ConversationRuntime;
   socket: ListenerTransport;
   agentId: string;
@@ -245,10 +281,15 @@ function buildMaybeLaunchReflectionSubagent(params: {
       feedbackContext: {
         surface: getListenerTelemetrySurface(),
       },
-      onCompletionMessage: async (completionMessage) => {
+      onCompletionMessage: async (completionMessage, result) => {
+        const reflectionAgentIdTag = result.reflectionAgentId
+          ? `<reflection-agent-id>${escapeTaskNotificationSummary(
+              result.reflectionAgentId,
+            )}</reflection-agent-id>`
+          : "";
         const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
           completionMessage,
-        )}</summary></task-notification>`;
+        )}</summary>${reflectionAgentIdTag}</task-notification>`;
         emitCanonicalMessageDelta(
           socket,
           runtime,
@@ -268,63 +309,6 @@ function buildMaybeLaunchReflectionSubagent(params: {
     });
     return result.launched;
   };
-}
-
-type PostTurnReflectionLauncher = (
-  triggerSource: Exclude<ReflectionTrigger, "off">,
-) => Promise<boolean>;
-
-async function maybeLaunchPostTurnChannelReflection(params: {
-  hasChannelTurnSources: boolean;
-  agentId?: string | null;
-  conversationId: string;
-  memfsEnabled: boolean;
-  reflectionSettings: ReflectionSettings;
-  reminderState: SharedReminderState;
-  contextTracker: ContextTracker;
-  launch: PostTurnReflectionLauncher;
-  getTranscriptState?: typeof getReflectionTranscriptState;
-}): Promise<boolean> {
-  if (
-    !params.hasChannelTurnSources ||
-    !params.agentId ||
-    !params.memfsEnabled
-  ) {
-    return false;
-  }
-
-  switch (params.reflectionSettings.trigger) {
-    case "off":
-      return false;
-    case "compaction-event": {
-      syncReminderStateFromContextTracker(
-        params.reminderState,
-        params.contextTracker,
-      );
-      if (!params.reminderState.pendingReflectionTrigger) {
-        return false;
-      }
-      params.reminderState.pendingReflectionTrigger = false;
-      return params.launch("compaction-event");
-    }
-    case "step-count": {
-      const readTranscriptState =
-        params.getTranscriptState ?? getReflectionTranscriptState;
-      const transcriptState = await readTranscriptState(
-        params.agentId,
-        params.conversationId,
-      );
-      if (
-        !shouldFireStepCountTrigger(
-          transcriptState.turns_since_last_successful_reflection,
-          params.reflectionSettings,
-        )
-      ) {
-        return false;
-      }
-      return params.launch("step-count");
-    }
-  }
 }
 
 function finalizeInterruptedTurn(
@@ -400,6 +384,10 @@ export async function handleIncomingMessage(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
+  const richDraftStreamer = createTelegramRichDraftStreamer({
+    batchId: dequeuedBatchId,
+    sources: msg.channelTurnSources,
+  });
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
@@ -506,7 +494,9 @@ export async function handleIncomingMessage(
           : m,
       ),
     );
-    const inboundUserTranscriptLines =
+    // Build transcript lines after turn_start so transformed input is shown.
+    // This is reassigned below after emitListenerTurnStart.
+    let inboundUserTranscriptLines =
       buildInboundUserTranscriptLines(messagesToSend);
 
     const firstMessage = normalizedMessages[0];
@@ -520,10 +510,6 @@ export async function handleIncomingMessage(
 
     if (!isApprovalMessage) {
       try {
-        syncReminderStateFromContextTracker(
-          runtime.reminderState,
-          runtime.contextTracker,
-        );
         if (agentId) {
           try {
             cachedAgent = (await getBackend().retrieveAgent(agentId, {
@@ -564,10 +550,6 @@ export async function handleIncomingMessage(
                 .last_run_completion ?? null,
           };
         }
-        const reflectionSettings = getReflectionSettings(
-          agentId || undefined,
-          turnWorkingDirectory,
-        );
         const { parts: reminderParts } = await buildSharedReminderParts(
           buildListenReminderContext({
             agentId: agentId || "",
@@ -576,17 +558,8 @@ export async function handleIncomingMessage(
             agentDescription: listenAgentMetadata?.description ?? null,
             agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
             state: runtime.reminderState,
-            reflectionSettings,
-            maybeLaunchReflectionSubagent: agentId
-              ? buildMaybeLaunchReflectionSubagent({
-                  runtime,
-                  socket,
-                  agentId,
-                  conversationId,
-                  cachedAgent,
-                })
-              : undefined,
             workingDirectory: turnWorkingDirectory,
+            shellContext: detectShellContext(),
           }),
         );
 
@@ -615,7 +588,29 @@ export async function handleIncomingMessage(
       }
     }
 
-    let currentInput = messagesToSend;
+    // Only emit turn_start for user messages, not approval-only continuations.
+    // A mod could otherwise rewrite approval payloads and break routing.
+    const hasUserMessage = messagesToSend.some(
+      (m) => "role" in m && m.role === "user",
+    );
+    let currentInput = hasUserMessage
+      ? await emitListenerTurnStart({
+          agentId,
+          conversationId,
+          input: messagesToSend,
+          runtime: runtime.listener,
+          workingDirectory: turnWorkingDirectory,
+          permissionMode: turnPermissionModeState.mode,
+          cachedAgent,
+        })
+      : messagesToSend;
+
+    // Rebuild transcript lines from the potentially transformed input so
+    // Desktop shows post-transform text, not the original user message.
+    if (currentInput !== messagesToSend) {
+      inboundUserTranscriptLines =
+        buildInboundUserTranscriptLines(currentInput);
+    }
     const providerFallback = createProviderFallbackState(cachedAgent);
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
@@ -624,10 +619,12 @@ export async function handleIncomingMessage(
       agentId,
       conversationId,
       clientToolAllowlist: msg.clientToolAllowlist,
+      externalToolScopeIds: msg.externalToolScopeIds,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       cachedAgent,
       channelTurnSources: msg.channelTurnSources,
+      modEvents: ensureListenerModAdapter(runtime.listener).events,
     });
     runtime.currentToolset = preparedToolContext.toolset;
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
@@ -761,6 +758,10 @@ export async function handleIncomingMessage(
             }
           }
 
+          richDraftStreamer?.handleChunk(
+            chunk as unknown as LettaStreamingResponse,
+          );
+
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
@@ -789,6 +790,12 @@ export async function handleIncomingMessage(
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
+      if (
+        stopReason === "requires_approval" ||
+        (stopReason === "end_turn" && !runtime.cancelRequested)
+      ) {
+        await richDraftStreamer?.flushPending();
+      }
       lastApprovalContinuationAccepted = false;
 
       if (stopReason === "end_turn" && runtime.cancelRequested) {
@@ -825,8 +832,7 @@ export async function handleIncomingMessage(
             agentId || undefined,
             turnWorkingDirectory,
           );
-          await maybeLaunchPostTurnChannelReflection({
-            hasChannelTurnSources: (msg.channelTurnSources?.length ?? 0) > 0,
+          await maybeLaunchPostTurnReflection({
             agentId,
             conversationId,
             memfsEnabled: Boolean(
@@ -1298,6 +1304,8 @@ export async function handleIncomingMessage(
   } finally {
     // Prune lean defaults only at turn-finalization boundaries (never during
     // mid-turn mode changes), then persist the canonical map.
+    richDraftStreamer?.dispose();
+
     pruneConversationPermissionModeStateIfDefault(
       runtime.listener,
       normalizedAgentId,

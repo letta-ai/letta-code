@@ -245,8 +245,6 @@ describe("buildSubagentArgs", () => {
     allowedTools: "all",
     recommendedModel: "inherit",
     skills: [],
-    memoryBlocks: "none",
-    mode: "stateful",
     fork: false,
     background: false,
   };
@@ -254,9 +252,47 @@ describe("buildSubagentArgs", () => {
   test("adds --no-memfs for newly spawned subagents by default", () => {
     const args = buildSubagentArgs("test-subagent", baseConfig, null, "hello");
 
-    expect(args).toContain("--init-blocks");
-    expect(args).toContain("none");
     expect(args).toContain("--no-memfs");
+  });
+
+  test("tags new subagents with type and combines parent into one --tags value", () => {
+    const args = buildSubagentArgs(
+      "explore",
+      baseConfig,
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { parentAgentId: "agent-parent-123" },
+    );
+
+    const tagFlagCount = args.filter((a) => a === "--tags").length;
+    expect(tagFlagCount).toBe(1);
+    const tagsValue = args[args.indexOf("--tags") + 1];
+    expect(tagsValue).toBe("type:explore,parent:agent-parent-123");
+  });
+
+  test("omits parent tag when no parentAgentId is provided", () => {
+    const args = buildSubagentArgs("explore", baseConfig, null, "hello");
+
+    const tagsValue = args[args.indexOf("--tags") + 1];
+    expect(tagsValue).toBe("type:explore");
+  });
+
+  test("does not tag when deploying an existing agent (fork/recall)", () => {
+    const args = buildSubagentArgs(
+      "fork",
+      baseConfig,
+      null,
+      "hello",
+      "agent-existing",
+      undefined,
+      undefined,
+      { parentAgentId: "agent-parent-123" },
+    );
+
+    expect(args).not.toContain("--tags");
   });
 
   test("passes --backend local and --no-memfs for local backend subagents", () => {
@@ -494,6 +530,15 @@ describe("getModelHandleFromAgent", () => {
     ).toBe("ollama/llama3.1:8b");
   });
 
+  test("reconstructs provider-qualified handles from model settings", () => {
+    expect(
+      getModelHandleFromAgent({
+        model: "llama3.1:8b",
+        model_settings: { provider_type: "ollama" },
+      }),
+    ).toBe("ollama/llama3.1:8b");
+  });
+
   test("falls back to llm_config endpoint and model for server agents", () => {
     expect(
       getModelHandleFromAgent({
@@ -699,12 +744,12 @@ describe("resolveSubagentModel", () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
       recommendedModel: "inherit",
-      parentModelHandle: "chatgpt-plus-pro/gpt-5.3-codex",
+      parentModelHandle: "chatgpt-plus-pro/gpt-5.5",
       backendMode: "local",
       availableHandles: new Set(),
     });
 
-    expect(result).toBe("chatgpt-plus-pro/gpt-5.3-codex");
+    expect(result).toBe("chatgpt-plus-pro/gpt-5.5");
   });
 
   test("local backend inherits parent model for non-reflection subagents", async () => {

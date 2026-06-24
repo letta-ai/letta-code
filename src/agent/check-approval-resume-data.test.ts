@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   Message,
@@ -120,6 +123,38 @@ function datedMessage(
     message_type: messageType,
     ...extras,
   } as unknown as Message;
+}
+
+async function captureDebugOutput<T>(
+  run: () => Promise<T>,
+): Promise<{ output: string; result: T }> {
+  const previousDebug = process.env.LETTA_DEBUG;
+  const previousDebugFile = process.env.LETTA_DEBUG_FILE;
+  const debugDir = mkdtempSync(join(tmpdir(), "letta-debug-"));
+  const debugFile = join(debugDir, "debug.log");
+
+  process.env.LETTA_DEBUG = "1";
+  process.env.LETTA_DEBUG_FILE = debugFile;
+
+  try {
+    const result = await run();
+    const output = existsSync(debugFile) ? readFileSync(debugFile, "utf8") : "";
+    return { output, result };
+  } finally {
+    if (previousDebug === undefined) {
+      delete process.env.LETTA_DEBUG;
+    } else {
+      process.env.LETTA_DEBUG = previousDebug;
+    }
+
+    if (previousDebugFile === undefined) {
+      delete process.env.LETTA_DEBUG_FILE;
+    } else {
+      process.env.LETTA_DEBUG_FILE = previousDebugFile;
+    }
+
+    rmSync(debugDir, { recursive: true, force: true });
+  }
 }
 
 describe("getResumeData", () => {
@@ -308,6 +343,84 @@ describe("getResumeData", () => {
     });
     expect(resume.pendingApprovals).toHaveLength(0);
     expect(resume.messageHistory.length).toBeGreaterThan(0);
+  });
+
+  test("does not warn about missing assistant messages for an empty new conversation", async () => {
+    const conversationsRetrieve = mock(async () => ({
+      in_context_message_ids: [],
+    }));
+    const conversationsList = mock(async () => ({
+      getPaginatedItems: () => [],
+    }));
+
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listConversationMessages: conversationsList,
+    });
+
+    const { output, result } = await captureDebugOutput(() =>
+      getResumeDataFromBackend(makeAgent(), "conv-new"),
+    );
+
+    expect(result.pendingApprovals).toEqual([]);
+    expect(result.messageHistory).toEqual([]);
+    expect(output).not.toContain("Backfill scan found 0 assistant messages");
+  });
+
+  test("does not fail resume when stale in-context message is missing", async () => {
+    const conversationsRetrieve = mock(async () => ({
+      in_context_message_ids: ["ui-msg-missing"],
+    }));
+    const conversationsList = mock(async () => ({
+      getPaginatedItems: () => [makeUserMessage("ui-msg-earlier")],
+    }));
+    const messagesRetrieve = mock(async () => {
+      const error = new Error("Message ui-msg-missing not found") as Error & {
+        status: number;
+      };
+      error.status = 404;
+      throw error;
+    });
+
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listConversationMessages: conversationsList,
+      retrieveMessage: messagesRetrieve,
+    });
+
+    const resume = await getResumeDataFromBackend(makeAgent(), "conv-stale");
+
+    expect(messagesRetrieve).toHaveBeenCalledWith("ui-msg-missing");
+    expect(resume.pendingApprovals).toEqual([]);
+    expect(resume.pendingApproval).toBeNull();
+    expect(resume.messageHistory.map((message) => message.id)).toEqual([
+      "ui-msg-earlier",
+    ]);
+  });
+
+  test("warns about missing assistant messages after a full backfill scan", async () => {
+    const conversationsRetrieve = mock(async () => ({
+      in_context_message_ids: ["msg-49"],
+    }));
+    const conversationsList = mock(async () => ({
+      getPaginatedItems: () =>
+        Array.from({ length: 50 }, (_, index) =>
+          makeUserMessage(`msg-${index}`),
+        ),
+    }));
+
+    installBackend({
+      retrieveConversation: conversationsRetrieve,
+      listConversationMessages: conversationsList,
+    });
+
+    const { output } = await captureDebugOutput(() =>
+      getResumeDataFromBackend(makeAgent(), "conv-full"),
+    );
+
+    expect(output).toContain(
+      "Backfill scan found 0 assistant messages in last 50 messages",
+    );
   });
 
   test("uses resume tail for pending approval without retrieving last message when source variants are complete", async () => {

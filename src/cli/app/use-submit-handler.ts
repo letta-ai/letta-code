@@ -22,7 +22,6 @@ import {
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import {
   ensureMemoryFilesystemDirs,
   getScopedMemoryFilesystemRoot,
@@ -44,17 +43,6 @@ import { getClient } from "@/backend/api/client";
 import type { CustomCommand } from "@/cli/commands/custom";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
-import {
-  buildExtensionCommandPrompt,
-  parseExtensionCommandArgv,
-  parseExtensionSlashCommand,
-  runExtensionCommandWithTimeout,
-} from "@/cli/extensions/command-runtime";
-import type {
-  ExtensionCommandContext,
-  ExtensionConversationCloseReason,
-} from "@/cli/extensions/types";
-import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import {
@@ -82,6 +70,7 @@ import {
 } from "@/cli/helpers/init-command";
 import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
@@ -90,7 +79,18 @@ import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-to
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  releaseReflectionLaunch,
+  tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
+import {
+  buildMultiReflectionPayload,
+  buildParentMemorySnapshot,
+  buildReflectionAutoPayload,
+  buildReflectionSelectorPrompt,
+  buildReflectionSubagentPrompt,
+  finalizeMultiReflectionPayload,
+  readReflectionAutoSelection,
+} from "@/cli/helpers/reflection-transcript";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -98,18 +98,29 @@ import {
 } from "@/cli/helpers/system-prompt-warning.ts";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import {
+  buildModCommandPrompt,
+  parseModCommandArgv,
+  parseModSlashCommand,
+  runModCommandWithTimeout,
+} from "@/cli/mods/command-runtime";
+import type {
+  ModCommandContext,
+  ModConversationCloseReason,
+} from "@/cli/mods/types";
+import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
+import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
 import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
   runSessionStartHooks,
   runUserPromptSubmitHooks,
 } from "@/hooks";
+import { createModConversationHandle } from "@/mods/conversation-handle";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
@@ -120,13 +131,14 @@ import {
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
+  markSecretsInfoReminderPending,
   type SharedReminderState,
-  syncReminderStateFromContextTracker,
 } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { detectShellContext } from "@/utils/shell-context";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
@@ -209,7 +221,7 @@ type SubmitHandlerContext = {
   currentModelProvider: string | null;
   effectiveContextWindowSize: number | undefined;
   emittedIdsRef: MutableRefObject<Set<string>>;
-  extensionAdapter: LocalExtensionAdapter;
+  modAdapter: LocalModAdapter;
   firstUserQueryRef: MutableRefObject<string | null>;
   flushPendingReasoningEffort: () => Promise<void>;
   generateConversationDescription: (options?: {
@@ -255,7 +267,7 @@ type SubmitHandlerContext = {
   resetDeferredToolCallCommits: () => void;
   resetPendingReasoningCycle: () => void;
   resetTrajectoryBases: () => void;
-  runEndHooks: (reason?: ExtensionConversationCloseReason) => Promise<void>;
+  runEndHooks: (reason?: ModConversationCloseReason) => Promise<void>;
   sessionHooksRanRef: MutableRefObject<boolean>;
   sessionStartFeedbackRef: MutableRefObject<string[]>;
   sessionStatsRef: MutableRefObject<SessionStats>;
@@ -286,7 +298,6 @@ type SubmitHandlerContext = {
   markLocalModelsAvailable: () => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
-  setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
@@ -327,6 +338,128 @@ type SubmitHandlerContext = {
   onReload?: () => Promise<void>;
 };
 
+type ReflectCommandArgs =
+  | { instruction?: string; kind: "single" }
+  | { instruction?: string; kind: "recent"; limit: number }
+  | { conversationIds: string[]; instruction?: string; kind: "conversations" }
+  | { instruction?: string; kind: "auto" };
+
+function isReflectCommandFlag(value: string): boolean {
+  return (
+    value === "--" ||
+    value === "--auto" ||
+    value === "--conversation" ||
+    value === "--instruction" ||
+    value === "--instructions" ||
+    value === "--recent" ||
+    value === "-i" ||
+    value.startsWith("--instruction=")
+  );
+}
+
+function parseReflectCommandArgs(input: string): ReflectCommandArgs {
+  const trimmed = input.trim();
+  const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect";
+  const parts = parseModCommandArgv(trimmed.slice(command.length).trim());
+  if (parts.length === 0) {
+    return { kind: "single" };
+  }
+
+  let recentLimit: number | null = null;
+  const conversationIds: string[] = [];
+  const instructions: string[] = [];
+  let auto = false;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (!part) continue;
+    if (
+      part === "--instruction" ||
+      part === "--instructions" ||
+      part === "-i"
+    ) {
+      let instructionEnd = index + 1;
+      while (instructionEnd < parts.length) {
+        const instructionPart = parts[instructionEnd];
+        if (!instructionPart || isReflectCommandFlag(instructionPart)) break;
+        instructionEnd += 1;
+      }
+      const instruction = parts
+        .slice(index + 1, instructionEnd)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      index = instructionEnd - 1;
+      continue;
+    }
+    if (part.startsWith("--instruction=")) {
+      const instruction = part.slice("--instruction=".length).trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      continue;
+    }
+    if (part === "--") {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect -- <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
+    if (part === "--auto") {
+      auto = true;
+      continue;
+    }
+    if (part === "--recent") {
+      const raw = parts[index + 1];
+      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error("Usage: /reflect --recent <positive integer>");
+      }
+      recentLimit = parsed;
+      index += 1;
+      continue;
+    }
+    if (part === "--conversation") {
+      const conversationId = parts[index + 1];
+      if (!conversationId) {
+        throw new Error("Usage: /reflect --conversation <conversation-id>");
+      }
+      conversationIds.push(conversationId);
+      index += 1;
+      continue;
+    }
+    throw new Error(
+      "Usage: /reflect [--recent N | --conversation <id> ... | --auto] [--instruction <instruction>]",
+    );
+  }
+
+  const instruction = instructions.join("\n").trim() || undefined;
+  const modes = [recentLimit !== null, conversationIds.length > 0, auto].filter(
+    Boolean,
+  ).length;
+  if (modes > 1) {
+    throw new Error("Use only one of --recent, --conversation, or --auto.");
+  }
+  if (auto) {
+    return { instruction, kind: "auto" };
+  }
+  if (recentLimit !== null) {
+    return { instruction, kind: "recent", limit: recentLimit };
+  }
+  if (conversationIds.length > 0) {
+    return { conversationIds, instruction, kind: "conversations" };
+  }
+  return { instruction, kind: "single" };
+}
+
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
   const {
     abortControllerRef,
@@ -354,7 +487,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     currentModelProvider,
     effectiveContextWindowSize,
     emittedIdsRef,
-    extensionAdapter,
+    modAdapter,
     firstUserQueryRef,
     flushPendingReasoningEffort,
     generateConversationDescription,
@@ -408,7 +541,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPinDialogLocal,
     setProfileConfirmPending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
@@ -580,15 +712,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       const isSlashCommand = userTextForInput.startsWith("/");
-      const parsedExtensionCommand = isSlashCommand
-        ? parseExtensionSlashCommand(userTextForInput.trim())
+      const parsedModCommand = isSlashCommand
+        ? parseModSlashCommand(userTextForInput.trim())
         : null;
-      const parsedSlashCommandName = parsedExtensionCommand?.command ?? null;
+      const parsedSlashCommandName = parsedModCommand?.command ?? null;
       const matchedCustomCommand = parsedSlashCommandName
         ? await findCustomCommandByName(parsedSlashCommandName)
         : undefined;
-      const matchedExtensionCommand = parsedSlashCommandName
-        ? extensionAdapter.registry?.commands[parsedSlashCommandName]
+      const matchedModCommand = parsedSlashCommandName
+        ? modAdapter.registry?.commands[parsedSlashCommandName]
         : undefined;
       // Interactive/non-state slash commands bypass queueing so menus stay responsive
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
@@ -596,9 +728,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         isSlashCommand &&
         shouldSlashCommandBypassQueue(userTextForInput, {
           hasCustomCommand: Boolean(matchedCustomCommand),
-          ...(matchedExtensionCommand
-            ? { extensionCommand: matchedExtensionCommand }
-            : {}),
+          ...(matchedModCommand ? { modCommand: matchedModCommand } : {}),
         });
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
@@ -632,7 +762,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       if (aliasedMsg.startsWith("/")) {
         const trimmed = aliasedMsg.trim();
 
-        // Custom commands and extension commands override built-ins.
+        // Custom commands and mod commands override built-ins.
         if (matchedCustomCommand) {
           const { substituteArguments, expandBashCommands } = await import(
             "@/cli/commands/custom.js"
@@ -692,69 +822,65 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        if (parsedExtensionCommand && matchedExtensionCommand) {
-          const showInTranscript = matchedExtensionCommand.showInTranscript;
-          const shouldLockCommand = !matchedExtensionCommand.runWhenBusy;
+        if (parsedModCommand && matchedModCommand) {
+          const showInTranscript = matchedModCommand.showInTranscript;
+          const shouldLockCommand = !matchedModCommand.runWhenBusy;
           const cmd = showInTranscript
             ? commandRunner.start(
                 trimmed,
-                `Running /${matchedExtensionCommand.id}...`,
+                `Running /${matchedModCommand.id}...`,
               )
             : null;
           const getFeedbackCommand = () =>
             cmd ??
-            commandRunner.start(
-              trimmed,
-              `Running /${matchedExtensionCommand.id}...`,
-            );
+            commandRunner.start(trimmed, `Running /${matchedModCommand.id}...`);
           if (shouldLockCommand) {
             setCommandRunning(true);
           }
 
           try {
-            const extensionContext = extensionAdapter.getContext();
+            const modContext = modAdapter.context;
             const cwd = getCurrentWorkingDirectory();
-            const conversation = createExtensionConversationHandle({
+            const conversation = createModConversationHandle({
               agentId,
-              backend: extensionAdapter.getBackend(),
+              backend: modAdapter.getBackend(),
               conversationId: conversationIdRef.current,
               sendMessageStream: sendMessageStreamWithBackend,
               workingDirectory: cwd,
             });
-            const commandContext: ExtensionCommandContext = {
-              agent: { id: agentId, name: agentName },
-              args: parsedExtensionCommand.args,
-              argv: parseExtensionCommandArgv(parsedExtensionCommand.args),
-              command: parsedExtensionCommand.command,
+            const commandContext: ModCommandContext = {
+              ...modContext,
+              args: parsedModCommand.args,
+              argv: parseModCommandArgv(parsedModCommand.args),
+              command: parsedModCommand.command,
               conversation: { ...conversation, id: conversationIdRef.current },
               cwd,
-              getContext: extensionAdapter.getContext,
               model: {
+                ...modContext.model,
                 id:
                   currentModelId ??
                   llmConfigRef.current?.model ??
-                  extensionContext.model.id,
-                displayName: extensionContext.model.displayName,
+                  modContext.model.id,
               },
-              permissionMode: extensionContext.permissionMode,
+              permissionMode: modContext.permissionMode,
               rawInput: trimmed,
             };
-            const result = await runExtensionCommandWithTimeout(
-              matchedExtensionCommand,
+            const result = await runModCommandWithTimeout(
+              matchedModCommand,
               commandContext,
             );
 
             if (result.type === "prompt") {
               if (!showInTranscript) {
                 getFeedbackCommand().fail(
-                  `/${matchedExtensionCommand.id} returned a prompt with showInTranscript: false. Hidden extension commands must return output or handled and own their UI.`,
+                  `/${matchedModCommand.id} returned a prompt with showInTranscript: false. Hidden mod commands must return output or handled and own their UI.`,
                 );
                 return { submitted: true };
               }
 
-              if (matchedExtensionCommand.runWhenBusy && isAgentBusy()) {
+              if (matchedModCommand.runWhenBusy && isAgentBusy()) {
                 getFeedbackCommand().fail(
-                  `/${matchedExtensionCommand.id} returned a prompt while the agent is running. Busy-safe extension commands must handle their own SDK calls or return output.`,
+                  `/${matchedModCommand.id} returned a prompt while the agent is running. Busy-safe mod commands must handle their own SDK calls or return output.`,
                 );
                 return { submitted: true };
               }
@@ -763,17 +889,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 await checkPendingApprovalsForSlashCommand();
               if (approvalCheck.blocked) {
                 getFeedbackCommand().fail(
-                  `Pending approval(s). Resolve approvals before running /${matchedExtensionCommand.id}.`,
+                  `Pending approval(s). Resolve approvals before running /${matchedModCommand.id}.`,
                 );
                 return { submitted: false };
               }
 
-              cmd?.finish(`Running /${matchedExtensionCommand.id}...`, true);
+              cmd?.finish(`Running /${matchedModCommand.id}...`, true);
               await processConversationWithQueuedApprovals([
                 {
                   type: "message",
                   role: "user",
-                  content: buildTextParts(buildExtensionCommandPrompt(result)),
+                  content: buildTextParts(buildModCommandPrompt(result)),
                   otid: randomUUID(),
                 },
               ]);
@@ -788,7 +914,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
             getFeedbackCommand().fail(
-              `Failed to run /${matchedExtensionCommand.id}: ${errorDetails}`,
+              `Failed to run /${matchedModCommand.id}: ${errorDetails}`,
             );
           } finally {
             if (shouldLockCommand) {
@@ -980,7 +1106,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           if (onReload) {
             const cmd = commandRunner.start(
               "/reload",
-              "Reloading settings and local extensions...",
+              "Reloading settings and local mods...",
             );
             setCommandRunning(true);
             // Defer the reload to let the command UI render first
@@ -988,7 +1114,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               void (async () => {
                 try {
                   await onReload();
-                  cmd.finish("Reloaded settings and local extensions", true);
+                  cmd.finish("Reloaded settings and local mods", true);
                 } catch (error) {
                   const errorDetails = formatErrorDetails(error, agentId);
                   cmd.fail(`Failed: ${errorDetails}`);
@@ -1257,7 +1383,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               },
             );
             const request = args
-              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline extension.`
+              ? `The user ran \`/statusline ${args}\`. Use the loaded skill to help them create, edit, or migrate their Letta Code statusline mod.`
               : "The user ran `/statusline` without arguments. Use the loaded skill's bare `/statusline` behavior.";
 
             cmd.finish("Running statusline setup...", true);
@@ -1591,7 +1717,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Create a new conversation for the current agent
             const conversation = await backend.createConversation({
               agent_id: agentId,
-              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
               ...(conversationName && { summary: conversationName }),
             });
 
@@ -1632,13 +1757,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.events.emit("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: conversation.id,
-              previousConversationId: prevConversationId ?? null,
-              reason: "new",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: conversation.id,
+                previousConversationId: prevConversationId ?? null,
+                reason: "new",
+              },
+              modAdapter.context,
+            );
 
             // Update command with success
             cmd.finish(
@@ -1730,13 +1859,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.events.emit("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: forked.id,
-              previousConversationId: forkPrevConversationId ?? null,
-              reason: "fork",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: forked.id,
+                previousConversationId: forkPrevConversationId ?? null,
+                reason: "fork",
+              },
+              modAdapter.context,
+            );
 
             cmd.finish(
               "Forked conversation (use /resume to switch back)",
@@ -1810,7 +1943,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Create a new conversation
             const conversation = await backend.createConversation({
               agent_id: agentId,
-              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
 
             setConversationAutoTitleEligibility(true);
@@ -1846,13 +1978,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               })
               .catch(() => {});
             sessionHooksRanRef.current = true;
-            void extensionAdapter.events.emit("conversation_open", {
-              agentId,
-              agentName: agentName ?? null,
-              conversationId: conversation.id,
-              previousConversationId: clearPrevConversationId ?? null,
-              reason: "new",
-            });
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: conversation.id,
+                previousConversationId: clearPrevConversationId ?? null,
+                reason: "new",
+              },
+              modAdapter.context,
+            );
 
             // Update command with success
             cmd.finish(
@@ -2147,9 +2283,46 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             // Update command with success
             cmd.finish(outputLines.join("\n"), true);
 
-            // Manual /compact bypasses stream compaction events, so trigger
-            // post-compaction reflection reminder/auto-launch on the next user turn.
-            contextTrackerRef.current.pendingReflectionTrigger = true;
+            // Manual /compact bypasses stream compaction events, so launch
+            // post-compaction reflection directly instead of waiting for the
+            // next turn's post-turn trigger evaluation. Best-effort — never
+            // fail the /compact itself.
+            try {
+              if (
+                getReflectionSettings(agentId).trigger === "compaction-event" &&
+                isActiveMemfsEnabled(agentId)
+              ) {
+                void launchReflectionSubagent({
+                  agentId,
+                  conversationId: compactConversationId,
+                  memfsEnabled: isActiveMemfsEnabled(agentId),
+                  triggerSource: "compaction-event",
+                  description: AUTO_REFLECTION_DESCRIPTION,
+                  completionConversationId: () => conversationIdRef.current,
+                  recompileByConversation:
+                    systemPromptRecompileByConversationRef.current,
+                  recompileQueuedByConversation:
+                    queuedSystemPromptRecompileByConversationRef.current,
+                  onCompletionMessage: (completionMessage) => {
+                    appendTaskNotificationEvents([completionMessage]);
+                  },
+                  feedbackContext: {
+                    parentAgentName: agentName,
+                    parentAgentDescription: agentDescription,
+                    surface: "letta_code_tui",
+                    model: currentModelId,
+                  },
+                });
+              }
+            } catch (reflectionError) {
+              debugLog(
+                "memory",
+                "Skipping post-compaction reflection:",
+                reflectionError instanceof Error
+                  ? reflectionError.message
+                  : String(reflectionError),
+              );
+            }
             void generateConversationDescription({ force: true });
           } catch (error) {
             const apiError = error as {
@@ -2373,14 +2546,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         const profileCommandResult = await handleProfileCommand(msg, trimmed, {
           agentId,
           agentName,
-          conversationId,
           buffersRef,
           commandRunner,
           handleAgentSelect,
           refreshDerived,
           openOverlay,
           setCommandRunning,
-          setPinDialogLocal,
           setProfileConfirmPending,
           updateAgentName,
         });
@@ -2907,7 +3078,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
 
         // Special handling for /reflect command - manually launch reflection subagent
-        if (trimmed === "/reflect") {
+        if (trimmed === "/reflect" || trimmed.startsWith("/reflect ")) {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
 
           if (!isActiveMemfsEnabled(agentId)) {
@@ -2917,57 +3088,366 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: true };
           }
 
+          let reflectionReserved = false;
+          let reflectionReservationDelegated = false;
+          const releaseReflectionReservation = () => {
+            if (!reflectionReserved) return;
+            releaseReflectionLaunch(agentId);
+            reflectionReserved = false;
+          };
+
           try {
+            const reflectArgs = parseReflectCommandArgs(trimmed);
             const reflectionConversationId =
               conversationIdRef.current ?? "default";
-            const result = await launchReflectionSubagent({
-              agentId,
-              conversationId: reflectionConversationId,
-              memfsEnabled: isActiveMemfsEnabled(agentId),
-              triggerSource: "manual",
-              description: "Reflecting on conversation",
-              completionConversationId: () => conversationIdRef.current,
-              recompileByConversation:
-                systemPromptRecompileByConversationRef.current,
-              recompileQueuedByConversation:
-                queuedSystemPromptRecompileByConversationRef.current,
-              onCompletionMessage: (completionMessage) => {
-                appendTaskNotificationEvents([completionMessage]);
-              },
-              feedbackContext: {
-                parentAgentName: agentName,
-                parentAgentDescription: agentDescription,
-                surface: "letta_code_tui",
-                model: currentModelId,
-              },
-            });
 
-            if (!result.launched) {
-              if (result.reason === "already_active") {
-                cmd.fail(
-                  "A reflection agent is already running in the background.",
-                );
-              } else if (result.reason === "no_payload") {
-                cmd.fail("No new transcript content to reflect on.");
-              } else if (result.reason === "memfs_disabled") {
-                cmd.fail(
-                  "Memory filesystem is not enabled. Use /remember instead.",
-                );
-              } else {
-                const errorDetails = formatErrorDetails(
-                  result.error ?? "Unknown error",
-                  agentId,
-                );
-                cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+            if (reflectArgs.kind === "single") {
+              const result = await launchReflectionSubagent({
+                agentId,
+                conversationId: reflectionConversationId,
+                memfsEnabled: isActiveMemfsEnabled(agentId),
+                triggerSource: "manual",
+                description: AUTO_REFLECTION_DESCRIPTION,
+                instruction: reflectArgs.instruction,
+                completionConversationId: () => conversationIdRef.current,
+                recompileByConversation:
+                  systemPromptRecompileByConversationRef.current,
+                recompileQueuedByConversation:
+                  queuedSystemPromptRecompileByConversationRef.current,
+                onCompletionMessage: (completionMessage) => {
+                  appendTaskNotificationEvents([completionMessage]);
+                },
+                feedbackContext: {
+                  parentAgentName: agentName,
+                  parentAgentDescription: agentDescription,
+                  surface: "letta_code_tui",
+                  model: currentModelId,
+                },
+              });
+
+              if (!result.launched) {
+                if (result.reason === "already_active") {
+                  cmd.fail(
+                    "A reflection agent is already running in the background.",
+                  );
+                } else if (result.reason === "no_payload") {
+                  cmd.fail("No new transcript content to reflect on.");
+                } else if (result.reason === "memfs_disabled") {
+                  cmd.fail(
+                    "Memory filesystem is not enabled. Use /remember instead.",
+                  );
+                } else {
+                  const errorDetails = formatErrorDetails(
+                    result.error ?? "Unknown error",
+                    agentId,
+                  );
+                  cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+                }
+                return { submitted: true };
               }
+
+              cmd.finish(
+                `Reflecting on the recent conversation. View the transcript here: ${result.payloadPath}`,
+                true,
+              );
               return { submitted: true };
             }
 
+            if (!tryReserveReflectionLaunch(agentId)) {
+              cmd.fail(
+                "A reflection agent is already running in the background.",
+              );
+              return { submitted: true };
+            }
+            reflectionReserved = true;
+
+            // Fetch the agent's system prompt so multi-transcript reflection
+            // payloads include the core behavioural instructions (filtered to
+            // strip dynamic content).
+            let systemPrompt: string | undefined;
+            try {
+              const agent = await getBackend().retrieveAgent(agentId);
+              systemPrompt = agent.system ?? undefined;
+            } catch {
+              // Non-fatal — the reflection payload will just omit the system prompt.
+            }
+
+            if (reflectArgs.kind === "auto") {
+              const autoPayload = await buildReflectionAutoPayload({
+                agentId,
+                currentConversationId: reflectionConversationId,
+                instruction: reflectArgs.instruction,
+              });
+              if (!autoPayload) {
+                releaseReflectionReservation();
+                cmd.fail("No transcript candidates found for auto selection.");
+                return { submitted: true };
+              }
+
+              const { spawnBackgroundSubagentTask } = await import(
+                "@/tools/impl/task"
+              );
+              const { subagentId: selectorSubagentId } =
+                spawnBackgroundSubagentTask({
+                  subagentType: "reflection",
+                  prompt: buildReflectionSelectorPrompt({
+                    instruction: reflectArgs.instruction,
+                  }),
+                  description: "Selecting reflection transcripts",
+                  silentCompletion: true,
+                  transcriptPath: autoPayload.candidatesPath,
+                  parentScope: {
+                    agentId,
+                    conversationId: reflectionConversationId,
+                  },
+                  onComplete: async ({ success, error, report }) => {
+                    if (!success) {
+                      releaseReflectionReservation();
+                      appendTaskNotificationEvents([
+                        `Automatic reflection selection failed: ${error ?? "selector failed"}`,
+                      ]);
+                      return;
+                    }
+
+                    let finalReflectionSpawned = false;
+                    try {
+                      const selectedConversations =
+                        await readReflectionAutoSelection({
+                          selectionReport: report,
+                          candidates: autoPayload.candidates,
+                        });
+                      if (selectedConversations.length === 0) {
+                        releaseReflectionReservation();
+                        appendTaskNotificationEvents([
+                          "Automatic reflection selected no transcript candidates.",
+                        ]);
+                        return;
+                      }
+
+                      const autoReflectionPayload =
+                        await buildMultiReflectionPayload({
+                          agentId,
+                          selectionPolicy: {
+                            mode: "auto-selected",
+                            selectedConversations,
+                            candidatesPath: autoPayload.candidatesPath,
+                          },
+                          instruction: reflectArgs.instruction,
+                          systemPrompt,
+                        });
+                      if (!autoReflectionPayload) {
+                        releaseReflectionReservation();
+                        appendTaskNotificationEvents([
+                          "Automatic reflection selected transcript candidates, but no transcript content was available.",
+                        ]);
+                        return;
+                      }
+
+                      const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+                      const parentMemory =
+                        await buildParentMemorySnapshot(memoryDir);
+                      const reflectionPrompt = buildReflectionSubagentPrompt({
+                        instruction: reflectArgs.instruction,
+                        memoryDir,
+                        parentMemory,
+                      });
+
+                      spawnBackgroundSubagentTask({
+                        subagentType: "reflection",
+                        prompt: reflectionPrompt,
+                        description: "Reflecting on auto-selected transcripts",
+                        silentCompletion: true,
+                        transcriptPath: autoReflectionPayload.payloadPath,
+                        parentScope: {
+                          agentId,
+                          conversationId: reflectionConversationId,
+                        },
+                        onComplete: async ({
+                          success: reflectionSuccess,
+                          error: reflectionError,
+                          agentId: reflectionAgentId,
+                        }) => {
+                          try {
+                            telemetry.trackReflectionEnd(
+                              "manual",
+                              reflectionSuccess,
+                              {
+                                subagentId: reflectionAgentId ?? undefined,
+                                conversationId: reflectionConversationId,
+                                error: reflectionError,
+                              },
+                            );
+                            await finalizeMultiReflectionPayload(
+                              agentId,
+                              autoReflectionPayload.manifest,
+                              reflectionSuccess,
+                            );
+                            const msg = await handleMemorySubagentCompletion(
+                              {
+                                agentId,
+                                conversationId: conversationIdRef.current,
+                                subagentType: "reflection",
+                                success: reflectionSuccess,
+                                error: reflectionError,
+                                subagentAgentId: reflectionAgentId ?? undefined,
+                              },
+                              {
+                                recompileByConversation:
+                                  systemPromptRecompileByConversationRef.current,
+                                recompileQueuedByConversation:
+                                  queuedSystemPromptRecompileByConversationRef.current,
+                                logRecompileFailure: (message) =>
+                                  debugWarn("memory", message),
+                              },
+                            );
+                            appendTaskNotificationEvents([msg]);
+                          } finally {
+                            releaseReflectionReservation();
+                          }
+                        },
+                      });
+                      reflectionReservationDelegated = true;
+                      finalReflectionSpawned = true;
+
+                      telemetry.trackReflectionStart("manual", {
+                        conversationId: reflectionConversationId,
+                        startMessageId: autoReflectionPayload.startMessageId,
+                        endMessageId: autoReflectionPayload.endMessageId,
+                      });
+                      appendTaskNotificationEvents([
+                        `Automatic reflection selected ${selectedConversations.length} transcript(s); launched reflection. Payload: ${autoReflectionPayload.payloadPath}`,
+                      ]);
+                    } catch (selectionError) {
+                      if (!finalReflectionSpawned) {
+                        releaseReflectionReservation();
+                      }
+                      const errorDetails = formatErrorDetails(
+                        selectionError,
+                        agentId,
+                      );
+                      appendTaskNotificationEvents([
+                        `Automatic reflection failed after selection: ${errorDetails}`,
+                      ]);
+                    }
+                  },
+                });
+              reflectionReservationDelegated = true;
+
+              telemetry.trackReflectionStart("manual", {
+                subagentId: selectorSubagentId,
+                conversationId: reflectionConversationId,
+              });
+              cmd.finish(
+                `Reviewing ${autoPayload.candidates.candidates.length} candidate transcript(s) for reflection. View the transcript candidates here: ${autoPayload.candidatesPath}`,
+                true,
+              );
+              return { submitted: true };
+            }
+
+            const reflectionPayload = await buildMultiReflectionPayload({
+              agentId,
+              selectionPolicy:
+                reflectArgs.kind === "recent"
+                  ? { mode: "recent", limit: reflectArgs.limit }
+                  : {
+                      mode: "explicit-conversations",
+                      conversationIds: reflectArgs.conversationIds,
+                    },
+              instruction: reflectArgs.instruction,
+              systemPrompt,
+            });
+
+            if (!reflectionPayload) {
+              releaseReflectionReservation();
+              cmd.fail(
+                "No transcript content found for the selected conversations.",
+              );
+              return { submitted: true };
+            }
+
+            const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+            const parentMemory = await buildParentMemorySnapshot(memoryDir);
+            const reflectionPrompt = buildReflectionSubagentPrompt({
+              instruction: reflectArgs.instruction,
+              memoryDir,
+              parentMemory,
+            });
+
+            const {
+              spawnBackgroundSubagentTask,
+              waitForBackgroundSubagentAgentId,
+            } = await import("@/tools/impl/task");
+            const { subagentId } = spawnBackgroundSubagentTask({
+              subagentType: "reflection",
+              prompt: reflectionPrompt,
+              description: "Reflecting on conversation",
+              silentCompletion: true,
+              transcriptPath: reflectionPayload.payloadPath,
+              parentScope: {
+                agentId,
+                conversationId: reflectionConversationId,
+              },
+              onComplete: async ({
+                success,
+                error,
+                agentId: reflectionAgentId,
+              }) => {
+                try {
+                  telemetry.trackReflectionEnd("manual", success, {
+                    subagentId: reflectionAgentId ?? undefined,
+                    conversationId: reflectionConversationId,
+                    error,
+                  });
+                  await finalizeMultiReflectionPayload(
+                    agentId,
+                    reflectionPayload.manifest,
+                    success,
+                  );
+
+                  const msg = await handleMemorySubagentCompletion(
+                    {
+                      agentId,
+                      conversationId: conversationIdRef.current,
+                      subagentType: "reflection",
+                      success,
+                      error,
+                      subagentAgentId: reflectionAgentId ?? undefined,
+                    },
+                    {
+                      recompileByConversation:
+                        systemPromptRecompileByConversationRef.current,
+                      recompileQueuedByConversation:
+                        queuedSystemPromptRecompileByConversationRef.current,
+                      logRecompileFailure: (message) =>
+                        debugWarn("memory", message),
+                    },
+                  );
+                  appendTaskNotificationEvents([msg]);
+                } finally {
+                  releaseReflectionReservation();
+                }
+              },
+            });
+            reflectionReservationDelegated = true;
+            const reflectionAgentId = await waitForBackgroundSubagentAgentId(
+              subagentId,
+              1000,
+            );
+            telemetry.trackReflectionStart("manual", {
+              subagentId: reflectionAgentId ?? undefined,
+              conversationId: reflectionConversationId,
+              startMessageId: reflectionPayload.startMessageId,
+              endMessageId: reflectionPayload.endMessageId,
+            });
+
             cmd.finish(
-              `Reflecting on the recent conversation. View the transcript here: ${result.payloadPath}`,
+              `Reflecting on ${reflectionPayload.manifest.transcripts.length} transcript(s). View the payload here: ${reflectionPayload.payloadPath}`,
               true,
             );
           } catch (error) {
+            if (!reflectionReservationDelegated) {
+              releaseReflectionReservation();
+            }
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
           }
@@ -3245,6 +3725,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           // Don't treat as command - continue to regular message handling below
         } else {
           // Known command - show in transcript and handle result
+          if (result.success && result.refreshSecretsInfo) {
+            markSecretsInfoReminderPending(sharedReminderStateRef.current);
+          }
           if (registryCmd) {
             registryCmd.finish(result.output, result.success);
           }
@@ -3313,9 +3796,6 @@ ${SYSTEM_REMINDER_CLOSE}
         bashCommandCacheRef.current = [];
       }
 
-      const reflectionSettings = getReflectionSettings(agentId);
-      const memfsEnabledForAgent = isActiveMemfsEnabled(agentId);
-
       // Build git memory sync reminder if uncommitted changes or unpushed commits
       let memoryGitReminder = "";
       const gitStatus = pendingGitReminderRef.current;
@@ -3347,37 +3827,6 @@ ${SYSTEM_REMINDER_CLOSE}
         if (!text) return;
         reminderParts.push({ type: "text", text });
       };
-      const maybeLaunchReflectionSubagent = async (
-        triggerSource: "step-count" | "compaction-event",
-      ) => {
-        const reflectionConversationId = conversationIdRef.current ?? "default";
-        const result = await launchReflectionSubagent({
-          agentId,
-          conversationId: reflectionConversationId,
-          memfsEnabled: memfsEnabledForAgent,
-          triggerSource,
-          description: AUTO_REFLECTION_DESCRIPTION,
-          completionConversationId: () => conversationIdRef.current,
-          recompileByConversation:
-            systemPromptRecompileByConversationRef.current,
-          recompileQueuedByConversation:
-            queuedSystemPromptRecompileByConversationRef.current,
-          onCompletionMessage: (completionMessage) => {
-            appendTaskNotificationEvents([completionMessage]);
-          },
-          feedbackContext: {
-            parentAgentName: agentName,
-            parentAgentDescription: agentDescription,
-            surface: "letta_code_tui",
-            model: currentModelId,
-          },
-        });
-        return result.launched;
-      };
-      syncReminderStateFromContextTracker(
-        sharedReminderStateRef.current,
-        contextTrackerRef.current,
-      );
       const { getSkillSources } = await import("@/agent/context");
       const { parts: sharedReminderParts } = await buildSharedReminderParts({
         mode: "interactive",
@@ -3392,9 +3841,8 @@ ${SYSTEM_REMINDER_CLOSE}
         conversationBootstrapContent:
           contentParts as unknown as MessageCreate["content"],
         systemInfoReminderEnabled,
-        reflectionSettings,
         skillSources: getSkillSources(),
-        maybeLaunchReflectionSubagent,
+        shellContext: detectShellContext(),
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
@@ -3538,7 +3986,7 @@ ${SYSTEM_REMINDER_CLOSE}
       conversationId,
       currentModelHandle,
       currentModelId,
-      extensionAdapter,
+      modAdapter,
       effectiveContextWindowSize,
       commandRunner,
       handleExit,

@@ -73,3 +73,19 @@ export function setConversationWorkingDirectory(
 
   persistCwdMap(runtime.workingDirectoryByConversation);
 }
+
+export function seedConversationWorkingDirectory(
+  runtime: ListenerRuntime,
+  agentId: string | null,
+  conversationId: string,
+  workingDirectory: string,
+): boolean {
+  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
+  if (runtime.workingDirectoryByConversation.has(scopeKey)) {
+    return false;
+  }
+
+  runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
+  persistCwdMap(runtime.workingDirectoryByConversation);
+  return true;
+}

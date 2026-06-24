@@ -17,7 +17,7 @@ import {
   updateProvider as updateProviderRequest,
 } from "@/backend/api/providers";
 import { getBackend } from "@/backend/backend";
-import { listRegisteredPiProviders } from "@/backend/dev/pi-provider-extension-registry";
+import { listRegisteredPiProviders } from "@/backend/dev/pi-provider-mod-registry";
 import {
   getPiProviderSpec,
   LMSTUDIO_OPENAI_PROVIDER_TYPE,
@@ -363,16 +363,14 @@ function localApiKeyProviderIds(): string[] {
   );
 }
 
-function defaultExtensionProviderFields(providerName: string): ProviderField[] {
+function defaultModProviderFields(providerName: string): ProviderField[] {
   return [
     { key: "apiKey", label: `${providerName} API Key`, secret: true },
     { key: "baseUrl", label: "Base URL" },
   ];
 }
 
-function extensionProviderEnvApiKey(
-  apiKey: string | undefined,
-): string | undefined {
+function modProviderEnvApiKey(apiKey: string | undefined): string | undefined {
   if (!apiKey) return undefined;
   const value = process.env[apiKey];
   return value && value.length > 0 ? value : undefined;
@@ -386,7 +384,7 @@ function byokProviderFromRegisteredProvider(
     provider.config.connect && typeof provider.config.connect === "object"
       ? provider.config.connect
       : undefined;
-  const defaultApiKey = extensionProviderEnvApiKey(provider.config.apiKey);
+  const defaultApiKey = modProviderEnvApiKey(provider.config.apiKey);
   const displayName =
     provider.config.name ?? displayNameForLocalProvider(provider.providerName);
   const baseConfig: ByokProvider = {
@@ -409,7 +407,7 @@ function byokProviderFromRegisteredProvider(
     ...baseConfig,
     requiresApiKey: defaultApiKey === undefined,
     ...(defaultApiKey ? { defaultApiKey } : {}),
-    fields: connect?.fields ?? defaultExtensionProviderFields(displayName),
+    fields: connect?.fields ?? defaultModProviderFields(displayName),
   };
 }
 

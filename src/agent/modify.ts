@@ -22,6 +22,7 @@ type ModelSettings =
 
 function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   return (
+    modelHandle.includes("claude-fable-5") ||
     modelHandle.includes("claude-opus-4-7") ||
     modelHandle.includes("claude-opus-4-8")
   );
@@ -35,22 +36,39 @@ function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
-  // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
-  const isOpenAICodex = modelHandle.startsWith("openai-codex/");
+  const explicitProviderType =
+    typeof updateArgs?.provider_type === "string"
+      ? updateArgs.provider_type
+      : undefined;
+  // Include ChatGPT OAuth/Codex providers, including user-defined aliases whose
+  // provider_type is supplied by the server model catalog.
+  const isOpenAICodex =
+    explicitProviderType === "chatgpt_oauth" ||
+    modelHandle.startsWith("openai-codex/");
   const isOpenAI =
+    explicitProviderType === "openai" ||
     modelHandle.startsWith("openai/") ||
     isOpenAICodex ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
   // Include legacy custom Anthropic OAuth provider (claude-pro-max) and minimax
   const isAnthropic =
+    explicitProviderType === "anthropic" ||
     modelHandle.startsWith("anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
-  const isZai = modelHandle.startsWith("zai/");
-  const isGoogleAI = modelHandle.startsWith("google_ai/");
-  const isGoogleVertex = modelHandle.startsWith("google_vertex/");
-  const isOpenRouter = modelHandle.startsWith("openrouter/");
-  const isBedrock = modelHandle.startsWith("bedrock/");
+  const isZai =
+    explicitProviderType === "zai" || modelHandle.startsWith("zai/");
+  const isGoogleAI =
+    explicitProviderType === "google_ai" ||
+    modelHandle.startsWith("google_ai/");
+  const isGoogleVertex =
+    explicitProviderType === "google_vertex" ||
+    modelHandle.startsWith("google_vertex/");
+  const isOpenRouter =
+    explicitProviderType === "openrouter" ||
+    modelHandle.startsWith("openrouter/");
+  const isBedrock =
+    explicitProviderType === "bedrock" || modelHandle.startsWith("bedrock/");
 
   let settings: ModelSettings;
 
@@ -99,7 +117,7 @@ function buildModelSettings(
     if (effort === "low" || effort === "medium" || effort === "high") {
       anthropicSettings.effort = effort;
     } else if (effort === "xhigh") {
-      // "xhigh" is distinct on Opus 4.7+; older Anthropic models map it to backend "max".
+      // "xhigh" is distinct on Fable and Opus 4.7+; older Anthropic models map it to backend "max".
       (anthropicSettings as Record<string, unknown>).effort = hasDistinctXHigh
         ? "xhigh"
         : "max";
@@ -274,7 +292,13 @@ function maxTokensForUpdatePayload(
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
 export interface UpdateAgentLLMConfigOptions {
-  preserveContextWindow?: boolean;
+  /**
+   * When true, do not derive and send a default context_window_limit unless the
+   * caller explicitly supplied updateArgs.context_window. This is for updates to
+   * existing agent/conversation model settings where omitting the field lets the
+   * backend keep its current value.
+   */
+  avoidOverwritingExistingContextWindow?: boolean;
 }
 
 export async function updateAgentLLMConfig(
@@ -293,11 +317,12 @@ export async function updateAgentLLMConfig(
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
     : (updateArgs?.context_window as number | undefined);
-  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  const shouldAvoidOverwritingExistingContextWindow =
+    options?.avoidOverwritingExistingContextWindow === true;
   // Resume refresh updates should not implicitly reset context window.
   const contextWindow =
     explicitContextWindow ??
-    (!shouldPreserveContextWindow
+    (!shouldAvoidOverwritingExistingContextWindow
       ? await getModelContextWindow(modelHandle)
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;
@@ -345,10 +370,11 @@ export async function updateConversationLLMConfig(
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
     : (updateArgs?.context_window as number | undefined);
-  const shouldPreserveContextWindow = options?.preserveContextWindow === true;
+  const shouldAvoidOverwritingExistingContextWindow =
+    options?.avoidOverwritingExistingContextWindow === true;
   const contextWindow =
     explicitContextWindow ??
-    (!shouldPreserveContextWindow
+    (!shouldAvoidOverwritingExistingContextWindow
       ? await getModelContextWindow(modelHandle)
       : undefined);
   const hasModelSettings = Object.keys(modelSettings).length > 0;

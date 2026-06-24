@@ -4,16 +4,11 @@ import {
   persistReflectionSettingsForAgent,
 } from "@/cli/helpers/memory-reminder";
 import { experimentManager } from "@/experiments/manager";
-import { settingsManager } from "@/settings-manager";
 import type {
   GetExperimentsCommand,
   GetExperimentsResponseMessage,
   GetReflectionSettingsCommand,
-  ListConversationPinsCommand,
-  ListConversationPinsResponseMessage,
   ReflectionSettingsScope,
-  SetConversationPinCommand,
-  SetConversationPinResponseMessage,
   SetExperimentCommand,
   SetExperimentResponseMessage,
   SetReflectionSettingsCommand,
@@ -22,8 +17,6 @@ import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import {
   isGetExperimentsCommand,
   isGetReflectionSettingsCommand,
-  isListConversationPinsCommand,
-  isSetConversationPinCommand,
   isSetExperimentCommand,
   isSetReflectionSettingsCommand,
 } from "@/websocket/listener/protocol-inbound";
@@ -36,10 +29,6 @@ export type ReflectionSettingsCommand =
   | SetReflectionSettingsCommand;
 
 export type ExperimentCommand = GetExperimentsCommand | SetExperimentCommand;
-
-export type ConversationPinCommand =
-  | ListConversationPinsCommand
-  | SetConversationPinCommand;
 
 type SettingsCommandContext = {
   socket: WebSocket;
@@ -146,116 +135,6 @@ export async function handleExperimentCommand(
     );
   }
 
-  return true;
-}
-
-function toConversationPinResponseItems(
-  agentId: string,
-  workingDirectory: string,
-): Array<{ conversation_id: string; is_local: boolean }> {
-  return settingsManager
-    .getMergedPinnedConversations(agentId, workingDirectory)
-    .map((pin) => ({
-      conversation_id: pin.conversationId,
-      is_local: pin.isLocal,
-    }));
-}
-
-export async function handleConversationPinCommand(
-  parsed: ConversationPinCommand,
-  socket: WebSocket,
-  listener: ListenerRuntime,
-  safeSocketSend: SafeSocketSend,
-): Promise<boolean> {
-  const agentId = parsed.runtime.agent_id;
-  const workingDirectory = getConversationWorkingDirectory(
-    listener,
-    parsed.runtime.agent_id,
-    parsed.runtime.conversation_id,
-  );
-
-  if (parsed.type === "list_conversation_pins") {
-    const response: ListConversationPinsResponseMessage = {
-      type: "list_conversation_pins_response",
-      request_id: parsed.request_id,
-      success: true,
-      pins: toConversationPinResponseItems(agentId, workingDirectory),
-    };
-    safeSocketSend(
-      socket,
-      response,
-      "listener_conversation_pins_send_failed",
-      "listener_conversation_pins",
-    );
-    return true;
-  }
-
-  const scope = parsed.scope ?? "global";
-  const localPinned = settingsManager
-    .getLocalPinnedConversations(agentId, workingDirectory)
-    .includes(parsed.conversation_id);
-  const globalPinned = settingsManager
-    .getGlobalPinnedConversations(agentId)
-    .includes(parsed.conversation_id);
-  const currentlyPinned =
-    scope === "local_project"
-      ? localPinned
-      : scope === "global"
-        ? globalPinned
-        : localPinned || globalPinned;
-  const shouldPin =
-    parsed.action === "toggle" ? !currentlyPinned : parsed.action === "pin";
-
-  if (scope === "local_project") {
-    if (shouldPin) {
-      settingsManager.pinConversationLocal(
-        agentId,
-        parsed.conversation_id,
-        workingDirectory,
-      );
-    } else {
-      settingsManager.unpinConversationLocal(
-        agentId,
-        parsed.conversation_id,
-        workingDirectory,
-      );
-    }
-  } else if (scope === "both") {
-    if (shouldPin) {
-      settingsManager.pinConversationLocal(
-        agentId,
-        parsed.conversation_id,
-        workingDirectory,
-      );
-      settingsManager.pinConversationGlobal(agentId, parsed.conversation_id);
-    } else {
-      settingsManager.unpinConversationBoth(
-        agentId,
-        parsed.conversation_id,
-        workingDirectory,
-      );
-    }
-  } else if (shouldPin) {
-    settingsManager.pinConversationGlobal(agentId, parsed.conversation_id);
-  } else {
-    settingsManager.unpinConversationGlobal(agentId, parsed.conversation_id);
-  }
-
-  const pins = toConversationPinResponseItems(agentId, workingDirectory);
-  const response: SetConversationPinResponseMessage = {
-    type: "set_conversation_pin_response",
-    request_id: parsed.request_id,
-    success: true,
-    conversation_id: parsed.conversation_id,
-    pinned: pins.some((pin) => pin.conversation_id === parsed.conversation_id),
-    pins,
-  };
-  safeSocketSend(
-    socket,
-    response,
-    "listener_conversation_pins_send_failed",
-    "listener_conversation_pins",
-  );
   return true;
 }
 
@@ -370,21 +249,6 @@ export function handleSettingsProtocolCommand(
   if (isGetExperimentsCommand(parsed) || isSetExperimentCommand(parsed)) {
     runDetachedListenerTask("experiment_command", async () => {
       await handleExperimentCommand(parsed, socket, runtime, safeSocketSend);
-    });
-    return true;
-  }
-
-  if (
-    isListConversationPinsCommand(parsed) ||
-    isSetConversationPinCommand(parsed)
-  ) {
-    runDetachedListenerTask("conversation_pin_command", async () => {
-      await handleConversationPinCommand(
-        parsed,
-        socket,
-        runtime,
-        safeSocketSend,
-      );
     });
     return true;
   }

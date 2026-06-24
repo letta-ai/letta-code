@@ -39,7 +39,7 @@ Look for either shape:
 When migrating:
 
 - Preserve old config and referenced files unless the user explicitly asks to delete them.
-- If `command` references a `.sh` file, read it before writing the new extension.
+- If `command` references a `.sh` file, read it before writing the new mod.
 - Translate polling (`refreshIntervalMs`) to `setInterval`.
 - Translate direct command output into cached status plus synchronous rendering.
 - If the command output used `\x1e` to split left/right output, convert it to internal full-row layout with `Box`; do not create a new left/right API.
@@ -60,9 +60,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const update = async () => {
-  const context = letta.getContext();
   const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
-    cwd: context.workspace.currentDir,
+    cwd: process.cwd(),
   });
   letta.ui.setStatus("branch", stdout.trim());
 };

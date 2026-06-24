@@ -11,12 +11,12 @@ import {
 import {
   resolveRegisteredPiProviderApiKey,
   resolveRegisteredPiProviderHeaders,
-} from "./pi-provider-extension-registry";
+} from "./pi-provider-mod-registry";
 import type {
   PiProviderConnection,
   PiProviderModelRegistration,
   RegisteredPiProvider,
-} from "./pi-provider-extension-types";
+} from "./pi-provider-mod-types";
 import { getPiProviderSpec, isPiProvider } from "./pi-provider-registry";
 
 export interface RegisteredPiProviderRuntimeConnection {

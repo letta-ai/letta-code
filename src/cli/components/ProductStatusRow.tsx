@@ -80,7 +80,6 @@ function renderDreamingStatus(agent: SubagentState): ReactNode {
   const elapsedS = Math.round((Date.now() - agent.startTime) / 1000);
   const typeLabel = typeLabelForBackgroundAgent(agent);
   const chatUrl = chatUrlForBackgroundAgent(agent);
-  const isTmux = Boolean(process.env.TMUX);
 
   return (
     <Text>
@@ -90,12 +89,7 @@ function renderDreamingStatus(agent: SubagentState): ReactNode {
         marginRight={0}
         pulseIntervalMs={400}
       />
-      {chatUrl && isTmux ? (
-        <>
-          <Text color={colors.bgSubagent.label}>{typeLabel}</Text>
-          <Text dimColor>: {chatUrl}</Text>
-        </>
-      ) : chatUrl ? (
+      {chatUrl ? (
         <Link url={chatUrl} fallback={false}>
           <Text color={colors.bgSubagent.label}>{typeLabel}</Text>
         </Link>

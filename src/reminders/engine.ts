@@ -3,13 +3,6 @@ import type { SkillSource } from "@/agent/skills";
 import { buildAgentInfo } from "@/cli/helpers/agent-info";
 import { buildConversationBootstrapReminder } from "@/cli/helpers/conversation-bootstrap";
 import {
-  buildCompactionMemoryReminder,
-  buildMemoryReminder,
-  type ReflectionSettings,
-  shouldFireStepCountTrigger,
-} from "@/cli/helpers/memory-reminder";
-import { getReflectionTranscriptState } from "@/cli/helpers/reflection-transcript";
-import {
   buildSessionContext,
   type SessionContextSource,
 } from "@/cli/helpers/session-context";
@@ -18,14 +11,13 @@ import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
+import type { ShellContext } from "@/utils/shell-context";
 import {
   SHARED_REMINDER_CATALOG,
   type SharedReminderId,
   type SharedReminderMode,
 } from "./catalog";
 import type { SessionContextReason, SharedReminderState } from "./state";
-
-type ReflectionTriggerSource = "step-count" | "compaction-event";
 
 export interface AgentReminderContext {
   id: string;
@@ -40,11 +32,7 @@ export interface SharedReminderContext {
   agent: AgentReminderContext;
   state: SharedReminderState;
   systemInfoReminderEnabled: boolean;
-  reflectionSettings: ReflectionSettings;
   skillSources: SkillSource[];
-  maybeLaunchReflectionSubagent?: (
-    triggerSource: ReflectionTriggerSource,
-  ) => Promise<boolean>;
   conversationBootstrapContent?: MessageCreate["content"];
   /** Explicit working directory (overrides process.cwd() in session context). */
   workingDirectory?: string;
@@ -52,6 +40,8 @@ export interface SharedReminderContext {
   sessionContextSource?: SessionContextSource;
   /** Reason the session context is being (re)generated. */
   sessionContextReason?: SessionContextReason;
+  /** Shell context detected at startup, if available. */
+  shellContext?: ShellContext;
 }
 
 export type ReminderTextPart = { type: "text"; text: string };
@@ -151,6 +141,7 @@ async function buildSessionContextReminder(
     cwd: context.workingDirectory,
     source: context.sessionContextSource,
     reason,
+    shellContext: context.shellContext,
   });
 
   context.state.hasSentSessionContext = true;
@@ -238,74 +229,6 @@ async function buildMemoryGitSyncReminder(
     .splice(0)
     .map((reminder) => reminder.text)
     .join("\n\n");
-}
-
-async function buildReflectionStepReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
-  let reminder: string | null = null;
-
-  if (context.reflectionSettings.trigger === "step-count") {
-    if (memfsEnabled) {
-      const transcriptState = await getReflectionTranscriptState(
-        context.agent.id,
-        context.agent.conversationId ?? "default",
-      );
-      const shouldFireStepTrigger = shouldFireStepCountTrigger(
-        transcriptState.turns_since_last_successful_reflection,
-        context.reflectionSettings,
-      );
-      if (shouldFireStepTrigger) {
-        if (context.maybeLaunchReflectionSubagent) {
-          await context.maybeLaunchReflectionSubagent("step-count");
-        } else {
-          debugLog(
-            "memory",
-            `Step-count reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-          );
-        }
-      }
-    } else {
-      reminder = await buildMemoryReminder(
-        context.state.turnCount,
-        context.agent.id,
-      );
-    }
-  }
-
-  // Keep turn-based cadence aligned across modes by incrementing once per user turn.
-  context.state.turnCount += 1;
-  return reminder;
-}
-
-async function buildReflectionCompactionReminder(
-  context: SharedReminderContext,
-): Promise<string | null> {
-  if (!context.state.pendingReflectionTrigger) {
-    return null;
-  }
-
-  context.state.pendingReflectionTrigger = false;
-
-  if (context.reflectionSettings.trigger !== "compaction-event") {
-    return null;
-  }
-
-  const memfsEnabled = settingsManager.isMemfsEnabled(context.agent.id);
-  if (memfsEnabled) {
-    if (context.maybeLaunchReflectionSubagent) {
-      await context.maybeLaunchReflectionSubagent("compaction-event");
-    } else {
-      debugLog(
-        "memory",
-        `Compaction reflection trigger fired with no launcher callback (agent ${context.agent.id})`,
-      );
-    }
-    return null;
-  }
-
-  return buildCompactionMemoryReminder(context.agent.id);
 }
 
 const MAX_COMMAND_REMINDERS_PER_TURN = 10;
@@ -421,8 +344,6 @@ export const sharedReminderProviders: Record<
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
   "memory-git-sync": buildMemoryGitSyncReminder,
-  "reflection-step-count": buildReflectionStepReminder,
-  "reflection-compaction": buildReflectionCompactionReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
 };
@@ -451,6 +372,9 @@ export async function buildSharedReminderParts(
 ): Promise<SharedReminderBuildResult> {
   const parts: ReminderTextPart[] = [];
   const appliedReminderIds: SharedReminderId[] = [];
+
+  // Incremented once per user turn; surfaced in the statusline payload.
+  context.state.turnCount += 1;
 
   for (const reminder of SHARED_REMINDER_CATALOG) {
     if (!reminder.modes.includes(context.mode)) {

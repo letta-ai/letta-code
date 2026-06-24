@@ -4,8 +4,6 @@ description: Analyze Claude Code or Codex conversation history and directly upda
 tools: Read, Write, Bash
 skills:
 model: auto
-memoryBlocks: none
-mode: stateless
 permissionMode: memory
 ---
 

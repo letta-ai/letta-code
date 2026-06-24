@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -475,9 +475,9 @@ export function buildDeviceStatus(
       : getPendingControlRequests(listener, scope),
     experiments: experimentManager.list(),
     memory_directory: scopedAgentId
-      ? getMemoryFilesystemRoot(scopedAgentId)
+      ? getScopedMemoryFilesystemRoot(scopedAgentId)
       : null,
-    ...(!scope
+    ...(params === undefined
       ? {
           cwd_map: Object.fromEntries(listener.workingDirectoryByConversation),
           boot_working_directory: listener.bootWorkingDirectory,
@@ -1018,6 +1018,7 @@ export function buildSubagentSnapshot(
       subagent_id: a.id,
       subagent_type: a.type,
       description: a.description,
+      prompt: a.prompt,
       status: a.status,
       agent_url: a.agentURL,
       model: a.model,

@@ -11,13 +11,18 @@ import {
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
+  buildMultiReflectionPayload,
   buildParentMemorySnapshot,
+  buildReflectionSelectorPrompt,
   buildReflectionSubagentPrompt,
   filterSystemPromptForReflection,
   finalizeAutoReflectionPayload,
+  finalizeMultiReflectionPayload,
   getReflectionTranscriptPaths,
   getReflectionTranscriptState,
+  listReflectionTranscriptCandidates,
   REFLECTION_STATE_SCHEMA_VERSION,
+  readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
@@ -96,15 +101,15 @@ describe("reflectionTranscript helper", () => {
     const state = JSON.parse(stateRaw) as {
       schema_version: string;
       reflected_through_message_id?: string;
-      total_completed_turns: number;
-      reflected_completed_turns: number;
-      turns_since_last_successful_reflection: number;
+      total_completed_steps: number;
+      reflected_completed_steps: number;
+      steps_since_last_successful_reflection: number;
     };
     expect(state.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
     expect(state.reflected_through_message_id).toBe("a1");
-    expect(state.total_completed_turns).toBe(1);
-    expect(state.reflected_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(0);
+    expect(state.total_completed_steps).toBe(1);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
 
     const secondPayload = await buildAutoReflectionPayload(
       agentId,
@@ -136,69 +141,56 @@ describe("reflectionTranscript helper", () => {
     const stateRaw = await readFile(paths.statePath, "utf-8");
     const state = JSON.parse(stateRaw) as {
       reflected_through_message_id?: string;
-      reflected_completed_turns: number;
-      turns_since_last_successful_reflection: number;
+      reflected_completed_steps: number;
+      steps_since_last_successful_reflection: number;
     };
     expect(state.reflected_through_message_id).toBeUndefined();
-    expect(state.reflected_completed_turns).toBe(0);
-    expect(state.turns_since_last_successful_reflection).toBe(1);
+    expect(state.reflected_completed_steps).toBe(0);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
 
     const retried = await buildAutoReflectionPayload(agentId, conversationId);
     expect(retried).not.toBeNull();
   });
 
-  test("legacy cursor migrates to message-id state and resumes on new transcript lines", async () => {
+  test("v2 message-id state migrates from turn counts to assistant step counts", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "first", messageId: "u1" },
-    ]);
-
-    const paths = getReflectionTranscriptPaths(agentId, conversationId);
-    await writeFile(
-      paths.statePath,
-      `${JSON.stringify({ auto_cursor_line: 999 })}\n`,
-      "utf-8",
-    );
-
-    const firstAttempt = await buildAutoReflectionPayload(
-      agentId,
-      conversationId,
-    );
-    expect(firstAttempt).toBeNull();
-
-    const clampedRaw = await readFile(paths.statePath, "utf-8");
-    const clamped = JSON.parse(clampedRaw) as {
-      schema_version: string;
-      reflected_through_message_id?: string;
-      reflected_completed_turns: number;
-      turns_since_last_successful_reflection: number;
-    };
-    expect(clamped.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
-    expect(clamped.reflected_through_message_id).toBe("u1");
-    expect(clamped.reflected_completed_turns).toBe(1);
-    expect(clamped.turns_since_last_successful_reflection).toBe(0);
-
-    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "first done",
+        phase: "finished",
+        messageId: "a1",
+      },
+      { kind: "user", id: "u2", text: "second", messageId: "u2" },
       {
         kind: "assistant",
         id: "a2",
-        text: "second",
+        text: "second done",
         phase: "finished",
         messageId: "a2",
       },
     ]);
 
-    const secondAttempt = await buildAutoReflectionPayload(
-      agentId,
-      conversationId,
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    await writeFile(
+      paths.statePath,
+      `${JSON.stringify({
+        schema_version: "v2_message_id",
+        reflected_through_message_id: "a1",
+        total_completed_turns: 2,
+        reflected_completed_turns: 1,
+        turns_since_last_successful_reflection: 1,
+      })}\n`,
+      "utf-8",
     );
-    expect(secondAttempt).not.toBeNull();
-    if (!secondAttempt) return;
-    expect(secondAttempt.startMessageId).toBe("a2");
-    expect(secondAttempt.endMessageId).toBe("a2");
 
-    const payloadText = await readFile(secondAttempt.payloadPath, "utf-8");
-    const messages = JSON.parse(payloadText);
-    expect(messages).toContainEqual({ role: "assistant", content: "second" });
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.schema_version).toBe(REFLECTION_STATE_SCHEMA_VERSION);
+    expect(state.reflected_through_message_id).toBe("a1");
+    expect(state.total_completed_steps).toBe(2);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(1);
   });
 
   test("auto payload uses actual message ids instead of transcript line ids", async () => {
@@ -259,9 +251,9 @@ describe("reflectionTranscript helper", () => {
     expect(payload).toBeNull();
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(1);
-    expect(state.reflected_completed_turns).toBe(0);
-    expect(state.turns_since_last_successful_reflection).toBe(1);
+    expect(state.total_completed_steps).toBe(1);
+    expect(state.reflected_completed_steps).toBe(0);
+    expect(state.steps_since_last_successful_reflection).toBe(1);
   });
 
   test("auto payload includes noncanonical rows before the next canonical anchor", async () => {
@@ -299,8 +291,8 @@ describe("reflectionTranscript helper", () => {
     );
     const state = await getReflectionTranscriptState(agentId, conversationId);
     expect(state.reflected_through_message_id).toBe("message-assistant-1");
-    expect(state.reflected_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(0);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
   });
 
   test("message-id cursor controls whether new payloads are available", async () => {
@@ -328,7 +320,7 @@ describe("reflectionTranscript helper", () => {
 
     let state = await getReflectionTranscriptState(agentId, conversationId);
     expect(state.reflected_through_message_id).toBe("a1");
-    expect(state.turns_since_last_successful_reflection).toBe(0);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
     await expect(
       buildAutoReflectionPayload(agentId, conversationId),
     ).resolves.toBeNull();
@@ -338,7 +330,7 @@ describe("reflectionTranscript helper", () => {
     ]);
 
     state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.turns_since_last_successful_reflection).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
     const secondPayload = await buildAutoReflectionPayload(
       agentId,
       conversationId,
@@ -348,7 +340,7 @@ describe("reflectionTranscript helper", () => {
     expect(secondPayload?.endMessageId).toBe("u2");
   });
 
-  test("turns appended during reflection are preserved across finalize", async () => {
+  test("assistant steps appended during reflection are preserved across finalize", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "first", messageId: "u1" },
       {
@@ -364,12 +356,26 @@ describe("reflectionTranscript helper", () => {
     expect(payload).not.toBeNull();
     if (!payload) return;
 
-    // Two more user turns complete while reflection is "running".
+    // Two more assistant steps complete while reflection is "running".
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u2", text: "second", messageId: "u2" },
+      {
+        kind: "assistant",
+        id: "a2",
+        text: "second done",
+        phase: "finished",
+        messageId: "a2",
+      },
     ]);
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u3", text: "third", messageId: "u3" },
+      {
+        kind: "assistant",
+        id: "a3",
+        text: "third done",
+        phase: "finished",
+        messageId: "a3",
+      },
     ]);
 
     await finalizeAutoReflectionPayload(
@@ -381,19 +387,19 @@ describe("reflectionTranscript helper", () => {
     );
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(3);
-    expect(state.reflected_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(2);
+    expect(state.total_completed_steps).toBe(3);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(2);
     expect(state.reflected_through_message_id).toBe("a1");
   });
 
-  test("assistant-only delta does not advance completed-turn counter", async () => {
+  test("assistant-only delta advances completed-step counter", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "hello", messageId: "u1" },
     ]);
 
     let state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(1);
+    expect(state.total_completed_steps).toBe(0);
 
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       {
@@ -406,7 +412,41 @@ describe("reflectionTranscript helper", () => {
     ]);
 
     state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(1);
+    expect(state.total_completed_steps).toBe(1);
+  });
+
+  test("completed-step counter ignores user, reasoning, and tool-call rows", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+      {
+        kind: "reasoning",
+        id: "r1",
+        text: "thinking",
+        phase: "finished",
+        messageId: "r1",
+      },
+      {
+        kind: "tool_call",
+        id: "tc1",
+        toolCallId: "tc1",
+        name: "Read",
+        argsText: "{}",
+        resultText: "done",
+        resultOk: true,
+        phase: "finished",
+      },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "hi",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const state = await getReflectionTranscriptState(agentId, conversationId);
+    expect(state.total_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(1);
   });
 
   test("concurrent append and finalize do not lose state updates", async () => {
@@ -428,6 +468,13 @@ describe("reflectionTranscript helper", () => {
     await Promise.all([
       appendTranscriptDeltaJsonl(agentId, conversationId, [
         { kind: "user", id: "u2", text: "second", messageId: "u2" },
+        {
+          kind: "assistant",
+          id: "a2",
+          text: "second done",
+          phase: "finished",
+          messageId: "a2",
+        },
       ]),
       finalizeAutoReflectionPayload(
         agentId,
@@ -438,13 +485,20 @@ describe("reflectionTranscript helper", () => {
       ),
       appendTranscriptDeltaJsonl(agentId, conversationId, [
         { kind: "user", id: "u3", text: "third", messageId: "u3" },
+        {
+          kind: "assistant",
+          id: "a3",
+          text: "third done",
+          phase: "finished",
+          messageId: "a3",
+        },
       ]),
     ]);
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(3);
-    expect(state.reflected_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(2);
+    expect(state.total_completed_steps).toBe(3);
+    expect(state.reflected_completed_steps).toBe(1);
+    expect(state.steps_since_last_successful_reflection).toBe(2);
     expect(state.reflected_through_message_id).toBe("a1");
   });
 
@@ -453,10 +507,11 @@ describe("reflectionTranscript helper", () => {
       Array.from({ length: 5 }, (_, i) =>
         appendTranscriptDeltaJsonl(agentId, conversationId, [
           {
-            kind: "user",
-            id: `u${i}`,
+            kind: "assistant",
+            id: `a${i}`,
             text: `msg ${i}`,
-            messageId: `m${i}`,
+            phase: "finished",
+            messageId: `a${i}`,
           },
         ]),
       ),
@@ -465,7 +520,174 @@ describe("reflectionTranscript helper", () => {
     expect(appends).toEqual([1, 1, 1, 1, 1]);
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(5);
+    expect(state.total_completed_steps).toBe(5);
+  });
+
+  test("multi payload recent uses replay slices when conversations are already reflected", async () => {
+    const convA = "conv-a";
+    const convB = "conv-b";
+    await appendTranscriptDeltaJsonl(agentId, convA, [
+      { kind: "user", id: "u-a", text: "alpha", messageId: "u-a" },
+      {
+        kind: "assistant",
+        id: "a-a",
+        text: "alpha response",
+        phase: "finished",
+        messageId: "a-a",
+      },
+    ]);
+    await appendTranscriptDeltaJsonl(agentId, convB, [
+      { kind: "user", id: "u-b", text: "beta", messageId: "u-b" },
+      {
+        kind: "assistant",
+        id: "a-b",
+        text: "beta response",
+        phase: "finished",
+        messageId: "a-b",
+      },
+    ]);
+
+    for (const conv of [convA, convB]) {
+      const payload = await buildAutoReflectionPayload(agentId, conv);
+      expect(payload).not.toBeNull();
+      if (!payload) return;
+      await finalizeAutoReflectionPayload(
+        agentId,
+        conv,
+        payload.payloadPath,
+        payload.endSnapshotLine,
+        true,
+      );
+    }
+
+    const multi = await buildMultiReflectionPayload({
+      agentId,
+      instruction: "Focus on cross-session coding preferences.",
+      selectionPolicy: { mode: "recent", limit: 10 },
+    });
+    expect(multi).not.toBeNull();
+    if (!multi) return;
+    expect(multi.manifest.user_instruction).toBe(
+      "Focus on cross-session coding preferences.",
+    );
+    expect(multi.manifest.transcripts).toHaveLength(2);
+    expect(multi.manifest.transcripts.every((t) => t.mode === "replay")).toBe(
+      true,
+    );
+
+    const manifestText = await readFile(multi.payloadPath, "utf-8");
+    expect(JSON.parse(manifestText).type).toBe(
+      "multi_transcript_reflection_payload",
+    );
+    for (const slice of multi.manifest.transcripts) {
+      const payloadText = await readFile(slice.payload_path, "utf-8");
+      const messages = JSON.parse(payloadText);
+      expect(messages.some((m: { role: string }) => m.role === "user")).toBe(
+        true,
+      );
+    }
+  });
+
+  test("multi finalizer advances only unreflected slices", async () => {
+    const replayConv = "conv-replay";
+    const freshConv = "conv-fresh";
+    await appendTranscriptDeltaJsonl(agentId, replayConv, [
+      { kind: "user", id: "u-r", text: "old", messageId: "u-r" },
+      {
+        kind: "assistant",
+        id: "a-r",
+        text: "old response",
+        phase: "finished",
+        messageId: "a-r",
+      },
+    ]);
+    await appendTranscriptDeltaJsonl(agentId, freshConv, [
+      { kind: "user", id: "u-f", text: "new", messageId: "u-f" },
+      {
+        kind: "assistant",
+        id: "a-f",
+        text: "new response",
+        phase: "finished",
+        messageId: "a-f",
+      },
+    ]);
+
+    const replayPayload = await buildAutoReflectionPayload(agentId, replayConv);
+    expect(replayPayload).not.toBeNull();
+    if (!replayPayload) return;
+    await finalizeAutoReflectionPayload(
+      agentId,
+      replayConv,
+      replayPayload.payloadPath,
+      replayPayload.endSnapshotLine,
+      true,
+    );
+
+    const multi = await buildMultiReflectionPayload({
+      agentId,
+      selectionPolicy: {
+        mode: "explicit-conversations",
+        conversationIds: [replayConv, freshConv],
+      },
+    });
+    expect(multi).not.toBeNull();
+    if (!multi) return;
+    expect(
+      multi.manifest.transcripts.map((slice) => [
+        slice.conversation_id,
+        slice.mode,
+      ]),
+    ).toEqual([
+      [replayConv, "replay"],
+      [freshConv, "unreflected"],
+    ]);
+
+    await finalizeMultiReflectionPayload(agentId, multi.manifest, true);
+
+    const replayState = await getReflectionTranscriptState(agentId, replayConv);
+    const freshState = await getReflectionTranscriptState(agentId, freshConv);
+    expect(replayState.reflected_through_message_id).toBe("a-r");
+    expect(replayState.steps_since_last_successful_reflection).toBe(0);
+    expect(freshState.reflected_through_message_id).toBe("a-f");
+    expect(freshState.steps_since_last_successful_reflection).toBe(0);
+  });
+
+  test("multi finalizer leaves cursors unchanged on failure", async () => {
+    const conv = "conv-failure";
+    await appendTranscriptDeltaJsonl(agentId, conv, [
+      { kind: "user", id: "u1", text: "new", messageId: "u1" },
+    ]);
+    const multi = await buildMultiReflectionPayload({
+      agentId,
+      selectionPolicy: {
+        mode: "explicit-conversations",
+        conversationIds: [conv],
+      },
+    });
+    expect(multi).not.toBeNull();
+    if (!multi) return;
+
+    await finalizeMultiReflectionPayload(agentId, multi.manifest, false);
+
+    const state = await getReflectionTranscriptState(agentId, conv);
+    expect(state.reflected_through_message_id).toBeUndefined();
+    expect(state.steps_since_last_successful_reflection).toBe(0);
+  });
+
+  test("listReflectionTranscriptCandidates orders by recent transcript mtime", async () => {
+    await appendTranscriptDeltaJsonl(agentId, "older", [
+      { kind: "user", id: "u-old", text: "old", messageId: "u-old" },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await appendTranscriptDeltaJsonl(agentId, "newer", [
+      { kind: "user", id: "u-new", text: "new", messageId: "u-new" },
+    ]);
+
+    const candidates = await listReflectionTranscriptCandidates(agentId);
+    expect(candidates.map((candidate) => candidate.conversationId)).toEqual([
+      "newer",
+      "older",
+    ]);
   });
 
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
@@ -586,15 +808,16 @@ describe("reflectionTranscript helper", () => {
 
   test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {
     const prompt = buildReflectionSubagentPrompt({
+      instruction: "Focus on repo gotchas.",
       memoryDir: "/tmp/memory",
       parentMemory: "<parent_memory>snapshot</parent_memory>",
     });
 
     expect(prompt).toContain("Review the conversation transcript");
     expect(prompt).not.toContain("Your current working directory is:");
-    expect(prompt).toContain(
-      "The current conversation transcript path is available as the",
-    );
+    expect(prompt).toContain("The payload path is available as the");
+    expect(prompt).toContain("multi_transcript_reflection_payload");
+    expect(prompt).toContain('mode: "replay"');
     // Prompt references the $TRANSCRIPT_PATH env var (resolved via Bash),
     // not a literal absolute path.
     expect(prompt).toContain("$TRANSCRIPT_PATH");
@@ -606,6 +829,8 @@ describe("reflectionTranscript helper", () => {
     expect(prompt).toContain(
       "Additional memory files (such as skills and external memory) may also be read and modified.",
     );
+    expect(prompt).toContain("Additional user-provided reflection instruction");
+    expect(prompt).toContain("Focus on repo gotchas.");
     expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
   });
 
@@ -797,5 +1022,99 @@ describe("reflectionTranscript helper", () => {
     expect(filtered).not.toContain("pinned into your prompt");
     expect(filtered).not.toContain("Syncing");
     expect(filtered).not.toContain("git push");
+  });
+
+  test("reflection selector prompt describes auto-only mode", () => {
+    const prompt = buildReflectionSelectorPrompt({
+      instruction: "Find repeated mistakes.",
+    });
+    expect(prompt).toContain("auto_transcript_reflection_candidates");
+    expect(prompt).toContain("Do not edit memory files");
+    expect(prompt).toContain("Return strict JSON");
+    expect(prompt).toContain("Find repeated mistakes.");
+  });
+
+  test("readReflectionAutoSelection validates and caps selector report", async () => {
+    const selected = await readReflectionAutoSelection({
+      selectionReport: JSON.stringify({
+        selected_conversations: [
+          { conversation_id: "conv-a", reason: "correction", priority: "high" },
+          { conversation_id: "conv-a", reason: "duplicate", priority: "low" },
+          {
+            conversation_id: "conv-b",
+            reason: "repo gotcha",
+            priority: "medium",
+          },
+        ],
+      }),
+      candidates: {
+        schema_version: 1,
+        type: "auto_transcript_reflection_candidates",
+        agent_id: agentId,
+        created_at: new Date().toISOString(),
+        max_selected: 1,
+        instructions: "select",
+        candidates: [
+          {
+            conversation_id: "conv-a",
+            total_completed_turns: 3,
+            reflected_completed_turns: 0,
+            turns_since_last_successful_reflection: 3,
+            has_unreflected_content: true,
+            is_current_conversation: false,
+            sources: ["unreflected"],
+            search_scores: [],
+            heuristic_score: 10,
+          },
+          {
+            conversation_id: "conv-b",
+            total_completed_turns: 3,
+            reflected_completed_turns: 3,
+            turns_since_last_successful_reflection: 0,
+            has_unreflected_content: false,
+            is_current_conversation: false,
+            sources: ["search:coding-style"],
+            search_scores: [],
+            heuristic_score: 8,
+          },
+        ],
+      },
+    });
+
+    expect(selected).toEqual([
+      { conversation_id: "conv-a", reason: "correction", priority: "high" },
+    ]);
+  });
+
+  test("readReflectionAutoSelection accepts fenced selector JSON", async () => {
+    const selected = await readReflectionAutoSelection({
+      selectionReport:
+        '```json\n{"selected_conversations":[{"conversation_id":"conv-a","reason":"correction"}]}\n```',
+      candidates: {
+        schema_version: 1,
+        type: "auto_transcript_reflection_candidates",
+        agent_id: agentId,
+        created_at: new Date().toISOString(),
+        max_selected: 5,
+        instructions: "select",
+        candidates: [
+          {
+            conversation_id: "conv-a",
+            total_completed_turns: 3,
+            reflected_completed_turns: 0,
+            turns_since_last_successful_reflection: 3,
+            has_unreflected_content: true,
+            is_current_conversation: false,
+            sources: ["unreflected"],
+            search_scores: [],
+            heuristic_score: 10,
+          },
+        ],
+      },
+    });
+
+    expect(selected).toEqual([
+      { conversation_id: "conv-a", reason: "correction" },
+    ]);
   });
 });

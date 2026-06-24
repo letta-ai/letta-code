@@ -81,9 +81,11 @@ export function normalizeModelHandleForRegistry(
   if (!modelHandle) return null;
   const [provider, ...modelParts] = modelHandle.split("/");
   const model = modelParts.join("/");
+  if (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER && model.length > 0) {
+    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
+  }
   if (
-    (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER ||
-      provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1)) &&
+    provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
     model.length > 0 &&
     !model.endsWith("-fast")
   ) {
@@ -108,7 +110,8 @@ export function getChatGptFastRegistryHandleForModelHandle(
   const [provider] = modelHandle.split("/");
   if (
     provider !== LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
-    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER
+    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER &&
+    provider !== OPENAI_CODEX_PROVIDER_NAME
   ) {
     return null;
   }
@@ -144,13 +147,29 @@ export function getReasoningTierOptionsForHandle(
   const byEffort = new Map<ModelReasoningEffort, string>();
   const registryHandle =
     normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  const effectiveContextWindow =
+    contextWindow ??
+    (() => {
+      const contextWindows = models
+        .filter((model) => model.handle === registryHandle)
+        .map(
+          (model) =>
+            (model.updateArgs as { context_window?: number } | null)
+              ?.context_window,
+        )
+        .filter((value): value is number => typeof value === "number");
+      const uniqueContextWindows = [...new Set(contextWindows)];
+      return uniqueContextWindows.length > 1
+        ? Math.min(...uniqueContextWindows)
+        : undefined;
+    })();
 
   for (const model of models) {
     if (model.handle !== registryHandle) continue;
-    if (contextWindow !== undefined) {
+    if (effectiveContextWindow !== undefined) {
       const mCtx = (model.updateArgs as { context_window?: number } | null)
         ?.context_window;
-      if (mCtx !== contextWindow) continue;
+      if (mCtx !== effectiveContextWindow) continue;
     }
     const effort = (model.updateArgs as { reasoning_effort?: unknown } | null)
       ?.reasoning_effort;

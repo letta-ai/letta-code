@@ -42,15 +42,35 @@ export async function listMcpServersWithTimeout(
   client: McpServersListClient,
   timeoutMs = MCP_SERVERS_LIST_TIMEOUT_MS,
 ): Promise<McpServer[]> {
-  const signal = AbortSignal.timeout(timeoutMs);
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(MCP_SERVERS_LIST_TIMEOUT_MESSAGE));
+    }, timeoutMs);
+  });
+
+  const listPromise = client.mcpServers.list({
+    maxRetries: 0,
+    signal: controller.signal,
+  });
+  // If the timeout wins, the aborted list request may reject later. Keep that
+  // late rejection from surfacing as an unhandled test/process error.
+  listPromise.catch(() => undefined);
 
   try {
-    return await client.mcpServers.list({ maxRetries: 0, signal });
+    return await Promise.race([listPromise, timeoutPromise]);
   } catch (error) {
-    if (signal.aborted) {
+    if (controller.signal.aborted) {
       throw new Error(MCP_SERVERS_LIST_TIMEOUT_MESSAGE);
     }
     throw error;
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 

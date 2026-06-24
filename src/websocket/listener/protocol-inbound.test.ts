@@ -3,7 +3,180 @@ import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
+  parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
+
+describe("app-server protocol hard cut", () => {
+  test.each([
+    "request_state",
+    "change_cwd",
+    "cancel_run",
+    "recover_pending_approvals",
+    "change_mode",
+    "message",
+  ])("rejects legacy command %s", (type) => {
+    const parsed = parseServerMessage(Buffer.from(JSON.stringify({ type })));
+    expect(parsed).toBeNull();
+  });
+});
+
+describe("agent/conversation management protocol-inbound validators", () => {
+  test.each([
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      create_agent: { body: { name: "Agent" }, pin_global: false },
+      create_conversation: { body: { summary: "New conversation" } },
+      cwd: "/tmp/project",
+      mode: "acceptEdits",
+      client_info: { name: "test", title: "Test", version: "1.0.0" },
+      external_tools: [
+        {
+          scope_id: "scope-1",
+          tools: [
+            {
+              name: "lookup_ticket",
+              description: "Lookup a ticket",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      type: "external_tool_call_response",
+      request_id: "ext-1",
+      result: { content: [{ type: "text", text: "ok" }] },
+    },
+    { type: "agent_list", request_id: "r1", query: { limit: 10 } },
+    { type: "agent_retrieve", request_id: "r2", agent_id: "agent-1" },
+    { type: "agent_create", request_id: "r3", body: { name: "Agent" } },
+    {
+      type: "agent_update",
+      request_id: "r4",
+      agent_id: "agent-1",
+      body: { name: "Updated" },
+    },
+    { type: "agent_delete", request_id: "r5", agent_id: "agent-1" },
+    {
+      type: "conversation_list",
+      request_id: "r6",
+      query: { agent_id: "agent-1", limit: 10 },
+    },
+    {
+      type: "conversation_retrieve",
+      request_id: "r7",
+      conversation_id: "conv-1",
+    },
+    {
+      type: "conversation_create",
+      request_id: "r8",
+      body: { agent_id: "agent-1" },
+    },
+    {
+      type: "conversation_update",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { summary: "Updated" },
+    },
+    {
+      type: "conversation_recompile",
+      request_id: "r10",
+      conversation_id: "conv-1",
+      body: { dry_run: true },
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r11",
+      conversation_id: "conv-1",
+      body: { hidden: true },
+    },
+    {
+      type: "conversation_messages_list",
+      request_id: "r12",
+      conversation_id: "conv-1",
+      query: { limit: 10 },
+    },
+    {
+      type: "conversation_compact",
+      request_id: "r13",
+      conversation_id: "conv-1",
+      body: { agent_id: "agent-1" },
+    },
+  ])("accepts $type", (message) => {
+    const parsed = parseServerMessage(Buffer.from(JSON.stringify(message)));
+    expect(parsed).toEqual(message);
+  });
+
+  test.each([
+    { type: "runtime_start", request_id: "r0", create_agent: { body: [] } },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      create_conversation: [],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      mode: "bad",
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      client_info: { title: "missing name" },
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      external_tools: [{ tools: [{ name: "bad" }] }],
+    },
+    {
+      type: "external_tool_call_response",
+      request_id: "ext-1",
+      result: { content: "not-array" },
+    },
+    { type: "agent_list", request_id: "r1", query: "bad" },
+    { type: "agent_retrieve", request_id: "r2" },
+    { type: "agent_create", request_id: "r3", body: null },
+    { type: "agent_update", request_id: "r4", agent_id: "agent-1" },
+    { type: "agent_delete", request_id: "r5" },
+    { type: "conversation_list", request_id: "r4", query: [] },
+    { type: "conversation_retrieve", request_id: "r5" },
+    { type: "conversation_create", request_id: "r6", body: "bad" },
+    { type: "conversation_update", request_id: "r7", body: {} },
+    {
+      type: "conversation_recompile",
+      request_id: "r8",
+      conversation_id: "conv-1",
+      body: [],
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: [],
+    },
+    {
+      type: "conversation_messages_list",
+      request_id: "r10",
+      conversation_id: "conv-1",
+      query: "bad",
+    },
+    {
+      type: "conversation_compact",
+      request_id: "r11",
+      conversation_id: "conv-1",
+      body: [],
+    },
+  ])("rejects invalid $type", (message) => {
+    const parsed = parseServerMessage(Buffer.from(JSON.stringify(message)));
+    expect(parsed).toBeNull();
+  });
+});
 
 describe("discord protocol-inbound validators", () => {
   test("valid discord account create passes", () => {

@@ -1,4 +1,5 @@
 import { runAgentsSubcommand } from "./agents";
+import { runAppServerSubcommand } from "./app-server";
 import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
@@ -7,6 +8,7 @@ import { runListenSubcommand } from "./listen.tsx";
 import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
+import { runModsSubcommand } from "./mods";
 import { runSetupSubcommand } from "./setup";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
 
@@ -27,12 +29,14 @@ export function subcommandNeedsEarlyBackendMode(
   command: string | undefined,
 ): boolean {
   switch (command) {
+    case "app-server":
     case "agents":
     case "connect":
     case "install":
     case "memfs":
     case "memory":
     case "messages":
+    case "mods":
     case "remote":
     case "server":
     case "skills":
@@ -60,8 +64,12 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runMemorySubcommand(rest);
     case "agents":
       return runAgentsSubcommand(rest);
+    case "app-server":
+      return runAppServerSubcommand(rest);
     case "messages":
       return runMessagesSubcommand(rest);
+    case "mods":
+      return runModsSubcommand(rest);
     case "server":
     case "remote": // alias
       return runListenSubcommand(rest);

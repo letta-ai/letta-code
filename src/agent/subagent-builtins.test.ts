@@ -67,14 +67,6 @@ describe("built-in subagents", () => {
     }
   });
 
-  test("parses subagent mode and defaults missing mode to stateful", async () => {
-    const configs = await getAllSubagentConfigs();
-
-    expect(configs.reflection?.mode).toBe("stateless");
-    expect(configs["general-purpose"]?.mode).toBe("stateful");
-    expect(configs.memory?.mode).toBe("stateful");
-  });
-
   test("reuses MemFS built-in prompts when local backend is active", async () => {
     __testSetBackend({
       capabilities: { localMemfs: true },
@@ -118,7 +110,6 @@ describe("built-in subagents", () => {
         "description: Custom reflection override",
         "tools: Read",
         "model: zaisigno/glm-5",
-        "memoryBlocks: none",
         "---",
         "Custom prompt body",
       ].join("\r\n"),
@@ -140,7 +131,6 @@ name: reflection
 description: Custom reflection override
 tools: Read
 model:
-memoryBlocks: none
 ---
 Custom prompt body`,
     );
@@ -159,7 +149,6 @@ Custom prompt body`,
 name: reflection
 description: Custom reflection override from different filename
 tools: Read
-memoryBlocks: none
 ---
 Custom prompt body`,
     );

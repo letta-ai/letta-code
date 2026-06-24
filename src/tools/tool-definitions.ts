@@ -4,8 +4,8 @@ import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
 import BashOutputDescription from "./descriptions/BashOutput.md";
 import CreateGoalDescription from "./descriptions/CreateGoal.md";
-import CreateWorktreeDescription from "./descriptions/CreateWorktree.md";
 import EditDescription from "./descriptions/Edit.md";
+import EnterWorktreeDescription from "./descriptions/EnterWorktree.md";
 import ExecCommandDescription from "./descriptions/ExecCommand.md";
 import GetGoalDescription from "./descriptions/GetGoal.md";
 import GlobDescription from "./descriptions/Glob.md";
@@ -52,8 +52,8 @@ import { ask_user_question } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
 import { bash_output } from "./impl/bash-output";
 import { create_goal } from "./impl/create-goal";
-import { create_worktree } from "./impl/create-worktree";
 import { edit } from "./impl/edit";
+import { enter_worktree } from "./impl/enter-worktree";
 import { exec_command, write_stdin } from "./impl/exec-command";
 import { get_goal } from "./impl/get-goal";
 import { glob } from "./impl/glob";
@@ -100,8 +100,8 @@ import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
 import CreateGoalSchema from "./schemas/CreateGoal.json";
-import CreateWorktreeSchema from "./schemas/CreateWorktree.json";
 import EditSchema from "./schemas/Edit.json";
+import EnterWorktreeSchema from "./schemas/EnterWorktree.json";
 import ExecCommandSchema from "./schemas/ExecCommand.json";
 import GetGoalSchema from "./schemas/GetGoal.json";
 import GlobSchema from "./schemas/Glob.json";
@@ -187,10 +187,10 @@ const toolDefinitions = {
     description: BashOutputDescription.trim(),
     impl: bash_output,
   }),
-  CreateWorktree: defineTool({
-    schema: CreateWorktreeSchema,
-    description: CreateWorktreeDescription.trim(),
-    impl: create_worktree,
+  EnterWorktree: defineTool({
+    schema: EnterWorktreeSchema,
+    description: EnterWorktreeDescription.trim(),
+    impl: enter_worktree,
   }),
   Edit: defineTool({
     schema: EditSchema,

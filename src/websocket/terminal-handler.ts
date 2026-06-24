@@ -305,6 +305,7 @@ export function handleTerminalSpawn(
       type: "terminal_exited",
       terminal_id,
       exitCode: 1,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 }

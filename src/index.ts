@@ -15,7 +15,6 @@ import {
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
@@ -56,7 +55,6 @@ import { ConversationSelector } from "./cli/components/ConversationSelector";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
-  parseJsonArrayFlag,
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
@@ -78,10 +76,7 @@ import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
 } from "./cli/subcommands/router";
-import {
-  disableExtensionsForProcess,
-  shouldDisableExtensions,
-} from "./extensions/disable";
+import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import { applyStartupPermissionMode } from "./permissions/startup";
 import {
   type Settings,
@@ -186,10 +181,12 @@ USAGE
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
+  letta mods ...        List and manage local mods
+  letta app-server ...  Run local app-server websocket transport
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
-  letta install ...     Install a skill into an agent memfs repository
+  letta install ...     Install a skill or mod package
   letta skills ...      List or delete installed agent skills
 
 OPTIONS
@@ -209,8 +206,14 @@ SUBCOMMANDS
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
+  letta mods list [--agent <id>]
+  letta mods package <mod-file> --name <package-name> [--out <dir>]
+  letta mods enable <package-spec>
+  letta mods disable <package-spec>
+  letta mods remove <package-spec>
+  letta app-server [--listen ws://127.0.0.1:4500]
   letta connect <provider> [options]
-  letta install <skill> [--agent <id> | -n <name>]
+  letta install <thing> [--agent <id> | -n <name>]
   letta skills list [--agent <id> | -n <name>]
   letta skills delete <skill_name> --agent <id>
   letta backend [api|local]
@@ -219,12 +222,10 @@ SUBCOMMANDS
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
   - If profiles exist, you'll be prompted to select one or create a new agent
-  - Profiles can be "pinned" to specific projects for quick access
+  - Agents can be pinned for quick access with /pin
   - Use /profile save <name> to bookmark your current agent
 
-  Profiles are stored in:
-  - Global: ~/.letta/settings.json (available everywhere)
-  - Local: .letta/settings.local.json (pinned to project)
+  Agent pins are stored in ~/.letta/settings.json.
 
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
@@ -235,12 +236,13 @@ EXAMPLES
   letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
   letta install official/finance/stocks --agent agent-123
+  letta install npm:@letta-ai/mod-plan-mode
 
   # inside the interactive session
   /profile save MyAgent    # Save current agent as profile
   /profiles                # Open profile selector
-  /pin                     # Pin current profile to project
-  /unpin                   # Unpin profile from project
+  /pin                     # Pin current agent
+  /unpin                   # Unpin current agent
   /logout                  # Clear saved credentials and exit
 
   # headless with JSON output (includes stats)
@@ -268,19 +270,14 @@ async function printInfo() {
   await settingsManager.loadLocalProjectSettings(cwd);
 
   // Get pinned agents
-  const localPinned = settingsManager.getLocalPinnedAgents(cwd);
-  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const pinned = settingsManager.getPinnedAgents();
   const localSettings = settingsManager.getLocalProjectSettings(cwd);
   const lastAgent = localSettings.lastAgent;
 
   // Try to fetch agent names from API (if authenticated)
   const agentNames: Record<string, string> = {};
   const allAgentIds = [
-    ...new Set([
-      ...localPinned,
-      ...globalPinned,
-      ...(lastAgent ? [lastAgent] : []),
-    ]),
+    ...new Set([...pinned, ...(lastAgent ? [lastAgent] : [])]),
   ];
 
   if (allAgentIds.length > 0) {
@@ -318,7 +315,7 @@ async function printInfo() {
   // Show which agent will be resumed
   if (lastAgent) {
     console.log(`Will resume: ${formatAgent(lastAgent)}`);
-  } else if (localPinned.length > 0 || globalPinned.length > 0) {
+  } else if (pinned.length > 0) {
     console.log("Will resume: (will show selector)");
   } else {
     console.log("Will resume: (will create new agent)");
@@ -326,30 +323,17 @@ async function printInfo() {
 
   console.log("");
 
-  // Locally pinned agents
-  if (localPinned.length > 0) {
-    console.log("Locally pinned agents (this project):");
-    for (const id of localPinned) {
+  // Pinned agents
+  if (pinned.length > 0) {
+    console.log("Pinned agents:");
+    for (const id of pinned) {
       const isLast = id === lastAgent;
       const prefix = isLast ? "→ " : "  ";
       const suffix = isLast ? " (last used)" : "";
       console.log(`  ${prefix}${formatAgent(id)}${suffix}`);
     }
   } else {
-    console.log("Locally pinned agents: (none)");
-  }
-
-  console.log("");
-
-  // Globally pinned agents
-  if (globalPinned.length > 0) {
-    console.log("Globally pinned agents:");
-    for (const id of globalPinned) {
-      const isLocal = localPinned.includes(id);
-      console.log(`    ${formatAgent(id)}${isLocal ? " (also local)" : ""}`);
-    }
-  } else {
-    console.log("Globally pinned agents: (none)");
+    console.log("Pinned agents: (none)");
   }
 }
 
@@ -385,8 +369,7 @@ function getPinnedAgentIdsForBackendMode(backendMode: BackendMode): string[] {
   configureBackendMode(backendMode);
   try {
     return settingsManager
-      .getMergedPinnedAgents()
-      .map((entry) => entry.agentId)
+      .getPinnedAgents()
       .filter((id) => isAgentIdCompatibleWithBackend(id, backendMode));
   } finally {
     configureBackendMode(previousBackendMode);
@@ -749,7 +732,7 @@ async function main(): Promise<void> {
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
   // Parse command-line arguments from a shared schema used by both TUI and headless flows.
-  // Preprocess args to support --conv as an alias for --conversation.
+  // Preprocess args to support legacy aliases before strict parsing.
   const processedArgs = preprocessCliArgs([
     process.argv[0] ?? "node",
     process.argv[1] ?? "letta",
@@ -822,7 +805,6 @@ async function main(): Promise<void> {
   // --new: Create a new conversation (for concurrent sessions)
   const forceNewConversation = values.new ?? false;
 
-  const initBlocksRaw = values["init-blocks"];
   const baseToolsRaw = values["base-tools"];
   let specifiedAgentId = values.agent ?? null;
   try {
@@ -881,7 +863,6 @@ async function main(): Promise<void> {
   const systemPromptPreset = values.system ?? undefined;
   const systemCustom = values["system-custom"] ?? undefined;
   const personalityInput = values.personality ?? undefined;
-  const memoryBlocksJson = values["memory-blocks"] ?? undefined;
   const specifiedToolset = values.toolset ?? undefined;
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
@@ -890,11 +871,11 @@ async function main(): Promise<void> {
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const noSystemInfoReminderFlag = values["no-system-info-reminder"];
-  const extensionsDisabled = shouldDisableExtensions({
-    cliFlag: values["no-extensions"],
+  const modsDisabled = shouldDisableMods({
+    cliFlag: values["no-mods"],
   });
-  if (extensionsDisabled) {
-    disableExtensionsForProcess();
+  if (modsDisabled) {
+    disableModsForProcess();
   }
   const resolvedSkillSources = (() => {
     try {
@@ -1046,16 +1027,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // --init-blocks only makes sense when creating a brand new agent
-  if (initBlocksRaw && !forceNew) {
-    console.error(
-      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
-    );
-    process.exit(1);
-  }
-
-  const initBlocks = parseCsvListFlag(initBlocksRaw);
-
   // --base-tools only makes sense when creating a brand new agent
   if (baseToolsRaw && !forceNew) {
     console.error(
@@ -1077,12 +1048,6 @@ async function main(): Promise<void> {
   }
   if (personalityInput && !forceNew) {
     console.error("Error: --personality can only be used with --new-agent");
-    process.exit(1);
-  }
-  if (personalityInput && (memoryBlocksJson || initBlocksRaw)) {
-    console.error(
-      "Error: --personality cannot be combined with --memory-blocks or --init-blocks",
-    );
     process.exit(1);
   }
 
@@ -1128,35 +1093,6 @@ async function main(): Promise<void> {
       );
       console.error(
         `Error: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      process.exit(1);
-    }
-  }
-
-  // Parse memory blocks JSON if provided
-  let memoryBlocks:
-    | Array<{ label: string; value: string; description?: string }>
-    | undefined;
-  if (memoryBlocksJson) {
-    try {
-      memoryBlocks = parseJsonArrayFlag(
-        memoryBlocksJson,
-        "memory-blocks",
-      ) as Array<{ label: string; value: string; description?: string }>;
-      // Validate each block has required fields
-      for (const block of memoryBlocks) {
-        if (
-          typeof block.label !== "string" ||
-          typeof block.value !== "string"
-        ) {
-          throw new Error(
-            "Each memory block must have 'label' and 'value' string fields",
-          );
-        }
-      }
-    } catch (error) {
-      console.error(
-        `Error: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
     }
@@ -1603,7 +1539,6 @@ async function main(): Promise<void> {
 
   function LoadingApp({
     forceNew,
-    initBlocks,
     baseTools,
     agentIdArg,
     preResolvedAgent,
@@ -1615,7 +1550,6 @@ async function main(): Promise<void> {
     isRegistryImport,
   }: {
     forceNew: boolean;
-    initBlocks?: string[];
     baseTools?: string[];
     agentIdArg: string | null;
     preResolvedAgent?: AgentState | null;
@@ -1813,11 +1747,6 @@ async function main(): Promise<void> {
           LETTA_CLOUD_API_URL;
         const isCustomApiBackend =
           startupBackendMode !== "local" && !baseURL.includes("api.letta.com");
-        const isCredentiallessLocalStartup =
-          startupBackendMode === "local" &&
-          !isCustomApiBackend &&
-          !settings.refreshToken &&
-          !apiKey;
         setStartupHasCloudCredentials(Boolean(settings.refreshToken || apiKey));
         const startupModelsPromise =
           startupBackendMode === "local"
@@ -1995,15 +1924,13 @@ async function main(): Promise<void> {
           process.cwd(),
         );
         const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
-        const localPinnedAgentIds = settingsManager
-          .getLocalPinnedAgents(process.cwd())
+        const pinnedAgentIds = settingsManager
+          .getPinnedAgents()
           .filter((agentId) =>
             isAgentIdCompatibleWithBackend(agentId, startupBackendMode),
           );
-        const localPinnedAgentId =
-          localPinnedAgentIds.length === 1
-            ? (localPinnedAgentIds[0] ?? null)
-            : null;
+        const pinnedAgentId =
+          pinnedAgentIds.length === 1 ? (pinnedAgentIds[0] ?? null) : null;
         const localAgentId =
           startupBackendMode === "local" &&
           rawLocalAgentId &&
@@ -2017,10 +1944,10 @@ async function main(): Promise<void> {
             ? rawGlobalAgentId
             : null;
 
-        // Fetch local pin + LRU agents in parallel, de-duping shared IDs.
+        // Fetch pin + LRU agents in parallel, de-duping shared IDs.
         const agentIdsToValidate = [
           ...new Set(
-            [localPinnedAgentId, localAgentId, globalAgentId].filter(
+            [pinnedAgentId, localAgentId, globalAgentId].filter(
               (agentId): agentId is string => Boolean(agentId),
             ),
           ),
@@ -2040,8 +1967,8 @@ async function main(): Promise<void> {
           }
         }
 
-        const localPinnedAgentExists = localPinnedAgentId
-          ? cachedAgents.has(localPinnedAgentId)
+        const pinnedAgentExists = pinnedAgentId
+          ? cachedAgents.has(pinnedAgentId)
           : false;
         let localAgentExists = false;
         let globalAgentExists = false;
@@ -2059,11 +1986,7 @@ async function main(): Promise<void> {
         markMilestone("STARTUP_LRU_FETCH_DONE");
 
         // Step 3: Resolve startup target using pure decision logic
-        const mergedPinned = isCredentiallessLocalStartup
-          ? settingsManager
-              .getMergedPinnedAgents(process.cwd())
-              .filter((entry) => entry.isLocal)
-          : settingsManager.getMergedPinnedAgents(process.cwd());
+        const pinnedCount = pinnedAgentIds.length;
         const fallbackSession =
           startupBackendMode === "local" &&
           !localAgentExists &&
@@ -2075,9 +1998,9 @@ async function main(): Promise<void> {
         );
         const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
-          localPinnedAgentId,
-          localPinnedAgentExists,
-          localPinnedCount: localPinnedAgentIds.length,
+          pinnedAgentId,
+          pinnedAgentExists,
+          pinnedCount,
           localAgentId,
           localConversationId: localSession?.conversationId ?? null,
           localAgentExists,
@@ -2085,7 +2008,6 @@ async function main(): Promise<void> {
           globalAgentExists,
           fallbackAgentId: fallbackSession?.agentId ?? null,
           fallbackConversationId: fallbackSession?.conversationId ?? null,
-          mergedPinnedCount: mergedPinned.length,
           forceNew: false, // forceNew short-circuited above
           needsModelPicker,
         });
@@ -2401,7 +2323,6 @@ async function main(): Promise<void> {
             systemPromptPreset,
             systemPromptCustom: systemCustom,
             memoryPromptMode: effectiveMemoryMode,
-            initBlocks,
             baseTools,
           });
           agent = result.agent;
@@ -2566,7 +2487,7 @@ async function main(): Promise<void> {
                   agent.id,
                   presetRefresh.modelHandle,
                   resumeRefreshUpdateArgs,
-                  { preserveContextWindow: true },
+                  { avoidOverwritingExistingContextWindow: true },
                 );
               }
             }
@@ -2688,7 +2609,6 @@ async function main(): Promise<void> {
           // --new flag: create a new conversation (for concurrent sessions)
           const conversation = await backend.createConversation({
             agent_id: agent.id,
-            isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
           });
           conversationIdToUse = conversation.id;
         } else {
@@ -2902,7 +2822,7 @@ async function main(): Promise<void> {
         startupHasAvailableLocalModels,
         releaseNotes,
         systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-        extensionsDisabled,
+        modsDisabled,
         fileAutocompleteFdPath,
       });
     }
@@ -2927,7 +2847,7 @@ async function main(): Promise<void> {
       releaseNotes,
       updateNotification,
       systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-      extensionsDisabled,
+      modsDisabled,
       fileAutocompleteFdPath,
     });
   }
@@ -2936,7 +2856,6 @@ async function main(): Promise<void> {
   render(
     React.createElement(LoadingApp, {
       forceNew: forceNew,
-      initBlocks: initBlocks,
       baseTools: baseTools,
       agentIdArg: specifiedAgentId,
       preResolvedAgent: nameResolvedAgent,

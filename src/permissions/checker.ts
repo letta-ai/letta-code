@@ -3,13 +3,18 @@
 
 import { resolve } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
-import {
-  checkExtensionPermissions,
-  type ExtensionPermissionDefinition,
-  getAvailableExtensionPermissionsRegistry,
-} from "@/extensions/permission-registry";
-import { extensionToolRequiresApproval } from "@/extensions/tool-registry";
 import { runPermissionRequestHooks } from "@/hooks";
+import {
+  checkModPermissions,
+  getAvailableModPermissionsRegistry,
+  type ModPermissionDefinition,
+} from "@/mods/permission-registry";
+import {
+  getAvailableModToolsRegistry,
+  type ModToolDefinition,
+  modToolApprovalPolicy,
+} from "@/mods/tool-registry";
+import type { ModContext } from "@/mods/types";
 import type { PermissionModeState } from "@/tools/manager";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
@@ -97,8 +102,9 @@ const FILE_TOOLS_V1 = [
 
 type ToolArgs = Record<string, unknown>;
 
-interface ExtensionPermissionCheckOptions {
+interface ModPermissionCheckOptions {
   conversationId?: string | null;
+  modContext?: ModContext | null;
   phase?: "approval" | "execution";
   toolCallId?: string | null;
 }
@@ -122,7 +128,11 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
   if (!envFlagEnabled("LETTA_PERMISSION_TRACE")) {
     return false;
   }
-  return result.decision === "ask" || result.decision === "deny";
+  return (
+    result.decision === "ask" ||
+    result.decision === "alwaysAsk" ||
+    result.decision === "deny"
+  );
 }
 
 /**
@@ -136,13 +146,14 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  *    passed --disable-memory-guard.
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
- * 3. Check permission mode (--permission-mode flag) → ALLOW or DENY
- * 4. Check CLI allowedTools (--allowedTools flag) → ALLOW
- * 5. For Read/Glob/Grep within working directory → ALLOW
- * 6. Check session allow rules (first match wins) → ALLOW
- * 7. Check allow rules from settings (first match wins) → ALLOW
- * 8. Check ask rules from settings (first match wins) → ASK
- * 9. Fall back to default behavior for tool → ASK or ALLOW
+ * 3. Check alwaysAsk rules and mod tool alwaysAsk policy → ALWAYS_ASK
+ * 4. Check permission mode (--permission-mode flag) → ALLOW or DENY
+ * 5. Check CLI allowedTools (--allowedTools flag) → ALLOW
+ * 6. For Read/Glob/Grep within working directory → ALLOW
+ * 7. Check session allow rules (first match wins) → ALLOW
+ * 8. Check allow rules from settings (first match wins) → ALLOW
+ * 9. Check ask rules from settings (first match wins) → ASK
+ * 10. Fall back to default behavior for tool → ASK or ALLOW
  *
  * @param toolName - Name of the tool (e.g., "Read", "Bash", "Write")
  * @param toolArgs - Tool arguments (contains file paths, commands, etc.)
@@ -156,6 +167,7 @@ export function checkPermission(
   workingDirectory: string = process.cwd(),
   modeState?: PermissionModeState,
   agentId?: string,
+  modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): PermissionCheckResult {
   const engine: PermissionEngine = isPermissionsV2Enabled() ? "v2" : "v1";
   const primary = checkPermissionForEngine(
@@ -166,6 +178,7 @@ export function checkPermission(
     workingDirectory,
     modeState,
     agentId,
+    modTools,
   );
 
   let result: PermissionCheckResult = primary.result;
@@ -197,6 +210,7 @@ export function checkPermission(
       workingDirectory,
       modeState,
       agentId,
+      modTools,
     );
 
     const mismatch =
@@ -273,6 +287,7 @@ function checkPermissionForEngine(
   workingDirectory: string,
   modeState?: PermissionModeState,
   agentId?: string,
+  modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): { result: PermissionCheckResult; trace: PermissionCheckTrace } {
   const canonicalTool = canonicalToolName(toolName);
   const queryTool = engine === "v2" ? canonicalTool : toolName;
@@ -346,6 +361,68 @@ function checkPermissionForEngine(
         trace,
       };
     }
+  }
+
+  if (sessionRules.alwaysAsk) {
+    for (const pattern of sessionRules.alwaysAsk) {
+      const matched = matchesPattern(
+        toolName,
+        query,
+        pattern,
+        workingDirectory,
+        engine,
+      );
+      traceEvent(trace, "session-always-ask-rule", undefined, pattern, matched);
+      if (matched) {
+        return {
+          result: {
+            decision: "alwaysAsk",
+            matchedRule: `${pattern} (session)`,
+            reason: "Matched alwaysAsk rule",
+          },
+          trace,
+        };
+      }
+    }
+  }
+
+  if (permissions.alwaysAsk) {
+    for (const pattern of permissions.alwaysAsk) {
+      const matched = matchesPattern(
+        toolName,
+        query,
+        pattern,
+        workingDirectory,
+        engine,
+      );
+      traceEvent(trace, "always-ask-rule", undefined, pattern, matched);
+      if (matched) {
+        return {
+          result: {
+            decision: "alwaysAsk",
+            matchedRule: pattern,
+            reason: "Matched alwaysAsk rule",
+          },
+          trace,
+        };
+      }
+    }
+  }
+
+  if (modToolApprovalPolicy(toolName, modTools) === "alwaysAsk") {
+    traceEvent(
+      trace,
+      "mod-tool-always-ask",
+      "Mod tool requires explicit approval",
+    );
+    return {
+      result: {
+        decision: "alwaysAsk",
+        matchedRule: `mod tool:${toolName}`,
+        reason: "Mod tool requires explicit approval",
+      },
+      trace,
+    };
   }
 
   // Use the scoped permission mode state when available (listener/remote mode),
@@ -536,7 +613,7 @@ function checkPermissionForEngine(
     }
   }
 
-  const defaultDecision = getDefaultDecision(toolName, toolArgs);
+  const defaultDecision = getDefaultDecision(toolName, toolArgs, modTools);
   traceEvent(trace, "default-decision", `Default: ${defaultDecision}`);
   return {
     result: {
@@ -743,10 +820,13 @@ const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
 function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
+  modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): PermissionDecision {
-  const extensionRequiresApproval = extensionToolRequiresApproval(toolName);
-  if (extensionRequiresApproval !== undefined) {
-    return extensionRequiresApproval ? "ask" : "allow";
+  const modApprovalPolicy = modToolApprovalPolicy(toolName, modTools);
+  if (modApprovalPolicy !== undefined) {
+    if (modApprovalPolicy === "auto") return "allow";
+    if (modApprovalPolicy === "alwaysAsk") return "alwaysAsk";
+    return "ask";
   }
 
   // Check TOOL_PERMISSIONS to determine if tool requires approval
@@ -829,11 +909,12 @@ export async function checkPermissionWithHooks(
   workingDirectory: string = process.cwd(),
   modeState?: PermissionModeState,
   agentId?: string,
-  extensionPermissions: Map<
+  modPermissions: Map<
     string,
-    ExtensionPermissionDefinition
-  > = getAvailableExtensionPermissionsRegistry(),
-  extensionPermissionOptions: ExtensionPermissionCheckOptions = {},
+    ModPermissionDefinition
+  > = getAvailableModPermissionsRegistry(),
+  modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
+  modPermissionOptions: ModPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
   let result = checkPermission(
@@ -843,31 +924,33 @@ export async function checkPermissionWithHooks(
     workingDirectory,
     modeState,
     agentId,
+    modTools,
   );
 
   if (result.decision !== "deny") {
-    const extensionDecision = await checkExtensionPermissions(
+    const modDecision = await checkModPermissions(
       {
         agentId: agentId ?? null,
-        conversationId: extensionPermissionOptions.conversationId ?? null,
-        toolCallId: extensionPermissionOptions.toolCallId ?? null,
+        conversationId: modPermissionOptions.conversationId ?? null,
+        toolCallId: modPermissionOptions.toolCallId ?? null,
         toolName,
         args: toolArgs,
         cwd: workingDirectory,
         workingDirectory,
         permissionMode: modeState?.mode ?? permissionMode.getMode(),
-        phase: extensionPermissionOptions.phase ?? "approval",
+        phase: modPermissionOptions.phase ?? "approval",
       },
-      extensionPermissions,
+      modPermissions,
+      modPermissionOptions.modContext,
     );
-    if (extensionDecision) {
-      result = {
-        decision: extensionDecision.decision,
-        matchedRule: extensionDecision.matchedRule,
-        reason:
-          extensionDecision.reason ??
-          `Matched ${extensionDecision.matchedRule}`,
-      };
+    if (modDecision) {
+      if (result.decision !== "alwaysAsk" || modDecision.decision === "deny") {
+        result = {
+          decision: modDecision.decision,
+          matchedRule: modDecision.matchedRule,
+          reason: modDecision.reason ?? `Matched ${modDecision.matchedRule}`,
+        };
+      }
     }
   }
 

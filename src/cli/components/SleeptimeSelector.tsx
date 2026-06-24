@@ -20,11 +20,11 @@ interface SleeptimeSelectorProps {
   onCancel: () => void;
 }
 
-function getTriggerOptions(memfsEnabled: boolean): ReflectionTrigger[] {
-  return memfsEnabled
-    ? ["off", "step-count", "compaction-event"]
-    : ["off", "step-count"];
-}
+const TRIGGER_OPTIONS: readonly ReflectionTrigger[] = [
+  "off",
+  "step-count",
+  "compaction-event",
+];
 
 function cycleOption<T extends string>(
   options: readonly T[],
@@ -81,19 +81,12 @@ export function SleeptimeSelector({
     [initialSettings],
   );
 
-  const [trigger, setTrigger] = useState<ReflectionTrigger>(() => {
-    if (!memfsEnabled && initialState.trigger === "compaction-event") {
-      return "step-count";
-    }
-    return initialState.trigger;
-  });
+  const [trigger, setTrigger] = useState<ReflectionTrigger>(
+    initialState.trigger,
+  );
   const [stepCountInput, setStepCountInput] = useState(initialState.stepCount);
   const [focusRow, setFocusRow] = useState<FocusRow>("trigger");
   const [validationError, setValidationError] = useState<string | null>(null);
-  const triggerOptions = useMemo(
-    () => getTriggerOptions(memfsEnabled),
-    [memfsEnabled],
-  );
   const visibleRows = useMemo(() => {
     const rows: FocusRow[] = ["trigger"];
     if (trigger === "step-count") {
@@ -143,6 +136,13 @@ export function SleeptimeSelector({
       return;
     }
 
+    if (!memfsEnabled) {
+      if (key.return) {
+        onCancel();
+      }
+      return;
+    }
+
     if (key.return) {
       saveSelection();
       return;
@@ -165,7 +165,7 @@ export function SleeptimeSelector({
       setValidationError(null);
       const direction: -1 | 1 = key.leftArrow ? -1 : 1;
       if (focusRow === "trigger") {
-        setTrigger((prev) => cycleOption(triggerOptions, prev, direction));
+        setTrigger((prev) => cycleOption(TRIGGER_OPTIONS, prev, direction));
       }
       return;
     }
@@ -265,59 +265,23 @@ export function SleeptimeSelector({
               </Box>
             </>
           )}
+
+          <Box height={1} />
+          <Text dimColor>
+            {"  Enter to save · ↑↓ rows · ←→/Tab options · Esc cancel"}
+          </Text>
         </>
       ) : (
         <>
-          <Box flexDirection="row">
-            <Text>{focusRow === "trigger" ? "> " : "  "}</Text>
-            <Text bold>Trigger event:</Text>
-            <Text>{"   "}</Text>
-            <Text
-              backgroundColor={
-                trigger === "off" ? colors.selector.itemHighlighted : undefined
-              }
-              color={trigger === "off" ? "black" : undefined}
-              bold={trigger === "off"}
-            >
-              {" Off "}
-            </Text>
-            <Text> </Text>
-            <Text
-              backgroundColor={
-                trigger === "step-count"
-                  ? colors.selector.itemHighlighted
-                  : undefined
-              }
-              color={trigger === "step-count" ? "black" : undefined}
-              bold={trigger === "step-count"}
-            >
-              {" Step count "}
-            </Text>
-          </Box>
+          <Text>
+            Sleep-time reflection requires the memory filesystem (memfs) to be
+            enabled for this agent.
+          </Text>
 
-          {trigger === "step-count" && (
-            <>
-              <Box height={1} />
-              <Box flexDirection="row">
-                <Text>{focusRow === "step-count" ? "> " : "  "}</Text>
-                <Text bold>Step count: </Text>
-                <Text>{stepCountInput}</Text>
-                {isEditingStepCount && <Text>█</Text>}
-                {validationError && (
-                  <Text color={colors.error.text}>
-                    {` (error: ${validationError})`}
-                  </Text>
-                )}
-              </Box>
-            </>
-          )}
+          <Box height={1} />
+          <Text dimColor>{"  Enter or Esc to close"}</Text>
         </>
       )}
-
-      <Box height={1} />
-      <Text dimColor>
-        {"  Enter to save · ↑↓ rows · ←→/Tab options · Esc cancel"}
-      </Text>
     </Box>
   );
 }

@@ -98,6 +98,15 @@ function findMatchingCurrentPreset(
       return preset.id;
     }
   }
+
+  if (
+    systemPrompt.startsWith(
+      "You are Letta Code, a state-of-the-art coding agent running within the Letta Code CLI",
+    )
+  ) {
+    return "default";
+  }
+
   return undefined;
 }
 
@@ -178,8 +187,8 @@ export function decideManagedSystemPromptUpdate(input: {
     };
   }
 
-  if (!isLettaCodePrimaryAgent(agent)) {
-    return { kind: "noop", reason: "agent is not a primary Letta Code agent" };
+  if ((agent.tags ?? []).includes(LETTA_CODE_SUBAGENT_TAG)) {
+    return { kind: "noop", reason: "agent is a Letta Code subagent" };
   }
 
   const matchingPreset = findMatchingCurrentPreset(
@@ -187,9 +196,24 @@ export function decideManagedSystemPromptUpdate(input: {
     memoryMode,
   );
   if (!matchingPreset) {
+    if (isLettaCodePrimaryAgent(agent)) {
+      return {
+        kind: "custom",
+        reason:
+          "legacy Letta Code agent prompt does not match a current preset",
+      };
+    }
+
+    return { kind: "noop", reason: "agent prompt is not managed" };
+  }
+
+  const nextSystemPrompt = buildSystemPrompt(matchingPreset, memoryMode);
+  if (currentSystemPrompt !== nextSystemPrompt) {
     return {
-      kind: "custom",
-      reason: "legacy Letta Code agent prompt does not match a current preset",
+      kind: "update",
+      nextSystemPrompt,
+      prompt: managedPrompt(matchingPreset, memoryMode, nextSystemPrompt),
+      reason: "untracked legacy Letta Code prompt detected",
     };
   }
 

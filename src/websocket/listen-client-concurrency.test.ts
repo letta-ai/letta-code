@@ -195,6 +195,11 @@ const classifyApprovalsMock = mock(async () => ({
 const executeApprovalBatchMock = mock(async () => []);
 const fetchRunErrorDetailMock = mock(async () => null);
 const realStreamModule = await import("@/cli/helpers/stream");
+const realDrainStreamWithResume = realStreamModule.drainStreamWithResume;
+const realAgentMessageModule = await import("@/agent/message");
+const realSendMessageStream = realAgentMessageModule.sendMessageStream;
+const realGetStreamToolContextId =
+  realAgentMessageModule.getStreamToolContextId;
 // Capture real implementations BEFORE applying `mock.module(...)` so they
 // can be restored in afterAll. Bun's `mock.restore()` only resets mock
 // function state — it does NOT undo `mock.module()` swaps, so mocked modules
@@ -446,6 +451,19 @@ describe("listen-client multi-worker concurrency", () => {
     // biome-ignore lint/suspicious/noExplicitAny: see above
     (fetchRunErrorDetailMock as any).mockImplementation(
       realFetchRunErrorDetail,
+    );
+    sendMessageStreamMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (sendMessageStreamMock as any).mockImplementation(realSendMessageStream);
+    getStreamToolContextIdMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (getStreamToolContextIdMock as any).mockImplementation(
+      realGetStreamToolContextId,
+    );
+    drainStreamWithResumeMock.mockReset();
+    // biome-ignore lint/suspicious/noExplicitAny: see above
+    (drainStreamWithResumeMock as any).mockImplementation(
+      realDrainStreamWithResume,
     );
     mock.restore();
   });
@@ -2523,8 +2541,8 @@ describe("listen-client multi-worker concurrency", () => {
     );
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
-    expect(state.total_completed_turns).toBe(1);
-    expect(state.turns_since_last_successful_reflection).toBe(1);
+    expect(state.total_completed_steps).toBe(0);
+    expect(state.steps_since_last_successful_reflection).toBe(0);
 
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
     const transcriptRows = (await readFile(paths.transcriptPath, "utf-8"))

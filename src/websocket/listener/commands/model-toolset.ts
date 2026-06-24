@@ -28,6 +28,7 @@ import type {
   UpdateModelResponseMessage,
   UpdateToolsetResponseMessage,
 } from "@/types/protocol_v2";
+import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
 import {
   isListModelsCommand,
   isUpdateModelCommand,
@@ -72,6 +73,27 @@ type ModelScopeSnapshot = {
   } | null;
 };
 
+function inferProviderTypeFromRegistryHandle(
+  modelHandle: string,
+): string | undefined {
+  const provider = modelHandle.split("/")[0];
+  if (!provider) return undefined;
+  if (provider === "openai-codex") return "chatgpt_oauth";
+  if (
+    provider === "anthropic" ||
+    provider === "bedrock" ||
+    provider === "google_ai" ||
+    provider === "google_vertex" ||
+    provider === "minimax" ||
+    provider === "openai" ||
+    provider === "openrouter" ||
+    provider === "zai"
+  ) {
+    return provider;
+  }
+  return undefined;
+}
+
 function buildModelHandleFromConfig(
   config: ModelScopeSnapshot["llmConfig"],
 ): string | null {
@@ -80,6 +102,13 @@ function buildModelHandleFromConfig(
     return `${config.model_endpoint_type}/${config.model}`;
   }
   return config.model ?? null;
+}
+
+function providerTypeFromModelSettings(
+  modelSettings: Record<string, unknown> | null,
+): string | null {
+  const providerType = modelSettings?.provider_type;
+  return typeof providerType === "string" ? providerType : null;
 }
 
 function withContextWindow(
@@ -162,15 +191,25 @@ export function resolveModelForUpdate(payload: {
         payload.model_handle.length > 0
           ? payload.model_handle
           : null;
+      const updateArgs =
+        byId.updateArgs && typeof byId.updateArgs === "object"
+          ? ({ ...byId.updateArgs } as Record<string, unknown>)
+          : undefined;
+      const providerType = inferProviderTypeFromRegistryHandle(byId.handle);
+      if (
+        explicitHandle &&
+        updateArgs &&
+        providerType &&
+        typeof updateArgs.provider_type !== "string"
+      ) {
+        updateArgs.provider_type = providerType;
+      }
 
       return {
         id: byId.id,
         handle: explicitHandle ?? byId.handle,
         label: byId.label,
-        updateArgs:
-          byId.updateArgs && typeof byId.updateArgs === "object"
-            ? ({ ...byId.updateArgs } as Record<string, unknown>)
-            : undefined,
+        updateArgs,
       };
     }
   }
@@ -233,7 +272,9 @@ function formatEffortSuffix(
   const effort = updateArgs.reasoning_effort;
   if (typeof effort !== "string" || effort.length === 0) return "";
   const xhighLabel =
-    modelLabel.includes("Opus 4.7") || modelLabel.includes("Opus 4.8")
+    modelLabel.includes("Fable 5") ||
+    modelLabel.includes("Opus 4.7") ||
+    modelLabel.includes("Opus 4.8")
       ? "Extra-High"
       : "Max";
   const labels: Record<string, string> = {
@@ -331,7 +372,7 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       model.handle,
       updateArgsForRequest,
-      { preserveContextWindow: shouldPreserveContextWindow },
+      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       (updatedAgent.model_settings as
@@ -344,7 +385,7 @@ export async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgsForRequest,
-      { preserveContextWindow: shouldPreserveContextWindow },
+      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       ((
@@ -367,6 +408,11 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       conversationId,
       overrideModel: model.handle,
+      overrideProviderType:
+        providerTypeFromModelSettings(modelSettings) ??
+        inferProviderTypeFromRegistryHandle(model.handle) ??
+        null,
+      modEvents: ensureListenerModAdapter(listener).events,
     });
     nextToolset = preparedToolContext.toolset;
     nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
@@ -456,6 +502,7 @@ export async function applyToolsetUpdateForRuntime(params: {
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
+      modEvents: ensureListenerModAdapter(listener).events,
     });
     nextToolset = preparedToolContext.toolset;
     scopedRuntime.currentToolset = preparedToolContext.toolset;
