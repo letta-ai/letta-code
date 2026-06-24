@@ -150,7 +150,6 @@ import {
   prepareToolExecutionContextForScope,
 } from "./tools/toolset";
 import type {
-  AutoApprovalMessage,
   BootstrapSessionStateRequest,
   CanUseToolControlRequest,
   CanUseToolResponse,
@@ -2703,14 +2702,10 @@ ${SYSTEM_REMINDER_CLOSE}
       let approvalPendingRecovery = false;
 
       if (outputFormat === "stream-json") {
-        // Track approval requests across streamed chunks
-        const autoApprovalEmitted = new Set<string>();
-
-        const streamJsonHook: DrainStreamHook = async ({
+        const streamJsonHook: DrainStreamHook = ({
           chunk,
           shouldOutput,
           errorInfo,
-          updatedApproval,
         }) => {
           let shouldOutputChunk = shouldOutput;
 
@@ -2758,40 +2753,16 @@ ${SYSTEM_REMINDER_CLOSE}
             return { stopReason: "error", shouldAccumulate: true };
           }
 
-          // Check if this approval will be auto-approved. Dedup per tool_call_id
+          // Approval-flow chunks are omitted from stream-json so the stream
+          // matches other coding agents (Claude Code / Codex): the canonical
+          // tool_call_message emitted post-drain is the single call event, and
+          // approvals are handled out-of-band. See emitLocalToolCalls.
+          const messageType = (chunk as { message_type?: string }).message_type;
           if (
-            updatedApproval &&
-            !autoApprovalEmitted.has(updatedApproval.toolCallId)
+            messageType === "approval_request_message" ||
+            messageType === "approval_response_message"
           ) {
-            const { autoAllowed } = await classifyApprovals([updatedApproval], {
-              alwaysRequiresUserInput: isInteractiveApprovalTool,
-              requireArgsForAutoApprove: true,
-              missingNameReason: "Tool call incomplete - missing name",
-              toolContextId: turnToolContextId ?? undefined,
-            });
-
-            const [approval] = autoAllowed;
-            if (approval) {
-              const permission = approval.permission;
-              shouldOutputChunk = false;
-              const autoApprovalMsg: AutoApprovalMessage = {
-                type: "auto_approval",
-                tool_call: {
-                  name: approval.approval.toolName,
-                  tool_call_id: approval.approval.toolCallId,
-                  arguments: approval.approval.toolArgs || "{}",
-                },
-                reason: permission.reason || "Allowed by permission rule",
-                matched_rule:
-                  "matchedRule" in permission && permission.matchedRule
-                    ? permission.matchedRule
-                    : "auto-approved",
-                session_id: sessionId,
-                uuid: `auto-approval-${approval.approval.toolCallId}`,
-              };
-              writeWireMessage(autoApprovalMsg);
-              autoApprovalEmitted.add(approval.approval.toolCallId);
-            }
+            shouldOutputChunk = false;
           }
 
           if (shouldOutputChunk) {
@@ -4677,6 +4648,16 @@ async function runBidirectionalMode(
               return { shouldAccumulate: true };
             }
 
+            // Omit approval-flow chunks from stream-json (see one-shot path).
+            const messageType = (chunk as { message_type?: string })
+              .message_type;
+            if (
+              messageType === "approval_request_message" ||
+              messageType === "approval_response_message"
+            ) {
+              return { shouldAccumulate: true };
+            }
+
             const chunkWithIds = chunk as typeof chunk & {
               otid?: string;
               id?: string;
@@ -4784,26 +4765,6 @@ async function runBidirectionalMode(
               })),
             ];
 
-            for (const approvalItem of autoAllowed) {
-              const permission = approvalItem.permission;
-              const autoApprovalMsg: AutoApprovalMessage = {
-                type: "auto_approval",
-                tool_call: {
-                  name: approvalItem.approval.toolName,
-                  tool_call_id: approvalItem.approval.toolCallId,
-                  arguments: approvalItem.approval.toolArgs,
-                },
-                reason: permission.reason || "auto-approved",
-                matched_rule:
-                  "matchedRule" in permission && permission.matchedRule
-                    ? permission.matchedRule
-                    : "auto-approved",
-                session_id: sessionId,
-                uuid: `auto-approval-${approvalItem.approval.toolCallId}`,
-              };
-              writeWireMessage(autoApprovalMsg);
-            }
-
             for (const ac of needsUserInput) {
               // permission.decision is ask/alwaysAsk - request permission from SDK
               const permResponse = await requestPermission(
@@ -4827,21 +4788,6 @@ async function runBidirectionalMode(
                   approval: finalApproval,
                   matchedRule: "SDK callback approved",
                 });
-
-                // Emit auto_approval event for SDK-approved tool
-                const autoApprovalMsg: AutoApprovalMessage = {
-                  type: "auto_approval",
-                  tool_call: {
-                    name: finalApproval.toolName,
-                    tool_call_id: finalApproval.toolCallId,
-                    arguments: finalApproval.toolArgs,
-                  },
-                  reason: permResponse.reason || "SDK callback approved",
-                  matched_rule: "canUseTool callback",
-                  session_id: sessionId,
-                  uuid: `auto-approval-${ac.approval.toolCallId}`,
-                };
-                writeWireMessage(autoApprovalMsg);
               } else {
                 decisions.push({
                   type: "deny",

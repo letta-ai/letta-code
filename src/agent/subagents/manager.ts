@@ -118,7 +118,6 @@ interface ExecutionState {
     stepCount?: number;
   } | null;
   displayedToolCalls: Set<string>;
-  pendingToolCalls: Map<string, { name: string; args: string }>;
 }
 
 // ============================================================================
@@ -394,11 +393,22 @@ function handleInitEvent(
 }
 
 /**
- * Handle an approval request message event
+ * Handle a tool_call_message event. The subagent runs headless with
+ * --output-format stream-json and emits a tool_call_message (with complete
+ * arguments) for every tool it calls — both server-side tools and locally
+ * executed ones. Record each so the subagent's tool-call list stays in sync.
  */
-function handleApprovalRequestEvent(
-  event: { tool_calls?: unknown[]; tool_call?: unknown },
+function handleToolCallEvent(
+  event: {
+    tool_call?: { tool_call_id?: string; name?: string; arguments?: string };
+    tool_calls?: Array<{
+      tool_call_id?: string;
+      name?: string;
+      arguments?: string;
+    }>;
+  },
   state: ExecutionState,
+  subagentId: string,
 ): void {
   const toolCalls = Array.isArray(event.tool_calls)
     ? event.tool_calls
@@ -406,43 +416,17 @@ function handleApprovalRequestEvent(
       ? [event.tool_call]
       : [];
 
-  for (const toolCall of toolCalls) {
-    const tc = toolCall as {
-      tool_call_id?: string;
-      name?: string;
-      arguments?: string;
-    };
-    const id = tc.tool_call_id;
-    if (!id) continue;
-
-    const prev = state.pendingToolCalls.get(id) || { name: "", args: "" };
-    const name = tc.name || prev.name;
-    const args = prev.args + (tc.arguments || "");
-    state.pendingToolCalls.set(id, { name, args });
-  }
-}
-
-/**
- * Handle an auto_approval event
- */
-function handleAutoApprovalEvent(
-  event: {
-    tool_call?: { tool_call_id?: string; name?: string; arguments?: string };
-  },
-  state: ExecutionState,
-  subagentId: string,
-): void {
-  const tc = event.tool_call;
-  if (!tc) return;
-  const { tool_call_id, name, arguments: tool_args = "{}" } = tc;
-  if (tool_call_id && name) {
-    recordToolCall(
-      subagentId,
-      tool_call_id,
-      name,
-      tool_args,
-      state.displayedToolCalls,
-    );
+  for (const tc of toolCalls) {
+    const { tool_call_id, name, arguments: toolArgs = "{}" } = tc;
+    if (tool_call_id && name) {
+      recordToolCall(
+        subagentId,
+        tool_call_id,
+        name,
+        toolArgs,
+        state.displayedToolCalls,
+      );
+    }
   }
 }
 
@@ -472,19 +456,6 @@ function handleResultEvent(
 
   if (event.is_error) {
     state.finalError = event.result || "Unknown error";
-  } else {
-    // Record any pending tool calls that weren't auto-approved
-    for (const [id, { name, args }] of state.pendingToolCalls.entries()) {
-      if (name && !state.displayedToolCalls.has(id)) {
-        recordToolCall(
-          subagentId,
-          id,
-          name,
-          args || "{}",
-          state.displayedToolCalls,
-        );
-      }
-    }
   }
 
   // Update state store with final stats
@@ -515,17 +486,12 @@ function processStreamEvent(
         break;
 
       case "message":
-        if (event.message_type === "approval_request_message") {
-          handleApprovalRequestEvent(event, state);
-        } else {
-          // Forward non-approval message events for WS streaming to the web UI.
-          // Approval requests are internal to the subagent's permission flow.
-          emitStreamEvent(subagentId, event);
+        // Record tool calls so the subagent's tool-call list stays in sync,
+        // then forward the message for WS streaming to the web UI.
+        if (event.message_type === "tool_call_message") {
+          handleToolCallEvent(event, state, subagentId);
         }
-        break;
-
-      case "auto_approval":
-        handleAutoApprovalEvent(event, state, subagentId);
+        emitStreamEvent(subagentId, event);
         break;
 
       case "result":
@@ -1232,7 +1198,6 @@ async function executeSubagent(
       finalError: null,
       resultStats: null,
       displayedToolCalls: new Set(),
-      pendingToolCalls: new Map(),
     };
 
     // Parse child stdout manually instead of using readline. This keeps the
