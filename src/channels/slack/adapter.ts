@@ -559,7 +559,11 @@ function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
 }
 
 function isSlackToolActionProgress(update: ChannelTurnProgressEvent): boolean {
-  return update.kind === "tool" || update.kind === "approval";
+  return (
+    update.kind === "tool" ||
+    update.kind === "approval" ||
+    update.kind === "command"
+  );
 }
 
 function isSlackHiddenToolName(toolName: string): boolean {
@@ -674,8 +678,11 @@ function resolveSlackToolActionName(
   if (update.kind === "tool") {
     return null;
   }
-  const raw =
-    update.command ?? (update.kind === "approval" ? "Tool approval" : null);
+  const raw = update.command
+    ? formatSlackToolNameForDisplay(update.command)
+    : update.kind === "approval"
+      ? "Tool approval"
+      : null;
   if (!raw) {
     return null;
   }
@@ -724,13 +731,19 @@ function buildSlackPlanUpdateChunk(
     };
   }
 
-  const runningCount = tasks.filter(
+  const runningTasks = tasks.filter(
     (task) => task.status === "in_progress" || task.status === "pending",
-  ).length;
-  if (runningCount > 0) {
+  );
+  if (runningTasks.length === 1) {
     return {
       type: "plan_update",
-      title: `Running ${pluralizeTool(runningCount)}`,
+      title: runningTasks[0]?.title ?? "Working",
+    };
+  }
+  if (runningTasks.length > 1) {
+    return {
+      type: "plan_update",
+      title: `Running ${pluralizeTool(runningTasks.length)}`,
     };
   }
 
@@ -738,7 +751,8 @@ function buildSlackPlanUpdateChunk(
   if (errorCount > 0) {
     return {
       type: "plan_update",
-      title: `${pluralizeTool(errorCount)} failed`,
+      title:
+        errorCount === 1 ? "Failed" : `${pluralizeTool(errorCount)} failed`,
     };
   }
 
@@ -747,10 +761,7 @@ function buildSlackPlanUpdateChunk(
   ).length;
   return {
     type: "plan_update",
-    title:
-      completeCount > 0
-        ? `Completed ${pluralizeTool(completeCount)}`
-        : "Running tools",
+    title: completeCount > 0 ? "Completed" : "Working",
   };
 }
 
@@ -1586,6 +1597,7 @@ export function createSlackAdapter(
       entry.mode = "stream";
       entry.streamTs = response.ts;
       rememberMessageThread(response.ts, replyToMessageId);
+      await clearSlackAssistantThreadStatus(entry.source);
       return true;
     } catch (error) {
       console.warn(
@@ -1867,6 +1879,9 @@ export function createSlackAdapter(
     if (streamChunks.length > 0) {
       entry.pendingStreamChunks ??= [];
       entry.pendingStreamChunks.push(...streamChunks);
+    } else if (!options.update && !entry.mode) {
+      entry.pendingStreamChunks ??= [];
+      entry.pendingStreamChunks.push(buildSlackPlanUpdateChunk(entry));
     }
     entry.updatedAt = now;
     progressCardByReplyKey.set(key, entry);
@@ -2483,17 +2498,12 @@ export function createSlackAdapter(
       }
 
       if (event.type === "processing") {
-        // Do not show a task card for every turn. The Slack task surface is
-        // reserved for actual tool activity; no-tool replies should render as
-        // the assistant response only. Thread status gives immediate native
-        // feedback while we wait to see whether tool progress appears.
         await Promise.all(
-          getUniqueSlackProgressSources(event.sources).map((source) => {
-            const status = getSlackAssistantThreadStatusForTurn(source);
-            return status
-              ? setSlackAssistantThreadStatus(source, status)
-              : Promise.resolve();
-          }),
+          getUniqueSlackProgressSources(event.sources).map((source) =>
+            upsertSlackProgressCard(source, "processing", "Working", {
+              force: true,
+            }),
+          ),
         );
         return;
       }
