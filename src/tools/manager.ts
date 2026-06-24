@@ -2641,7 +2641,10 @@ export async function executeTool(
       toolName: name,
     });
     if (result) {
-      return { toolReturn: result.output, status: result.status };
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
     }
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
@@ -2678,7 +2681,10 @@ export async function executeTool(
       toolName: name,
     });
     if (result) {
-      return { toolReturn: result.output, status: result.status };
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
     }
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
@@ -2737,7 +2743,10 @@ export async function executeTool(
     toolName: internalName,
   });
   if (result) {
-    return { toolReturn: result.output, status: result.status };
+    return {
+      toolReturn: result.output,
+      status: result.status,
+    };
   }
   args = eventArgs;
   const permissionDecision = await checkModPermissionForContext({
