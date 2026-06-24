@@ -82,7 +82,7 @@ export interface Settings {
   autoConversationTitles: boolean; // Generate AI conversation titles when possible
   autoConversationTitlesRollbackApplied?: boolean; // One-time rollback marker for the default-on title experiment
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
-  includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
+  includeWorktreeTool: boolean; // Include EnterWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
   channelCredentialsStore?: "file" | "keyring" | "auto"; // Where channel/connection tokens are persisted
   recentModels: string[]; // Recently used model IDs (most recent first, max 5)
@@ -127,6 +127,26 @@ export interface Settings {
 export interface StartupBackendSettings {
   preferredBackendMode?: Settings["preferredBackendMode"];
   envBaseUrl?: string;
+}
+
+// Shape of the `worktree` block in `.letta/settings.json`. The worktree tool
+// reads this directly from disk (see readProvisionConfig) rather than through
+// the settings manager, because provisioning runs against the primary checkout,
+// which may not be the loaded project root.
+export interface WorktreeProjectConfig {
+  // Directories symlinked from the primary checkout into new worktrees to avoid
+  // duplicating large gitignored trees. Defaults to ["node_modules"] when unset;
+  // set to [] to disable.
+  symlinkDirectories?: string[];
+  // Copy .letta/settings.local.json into new worktrees. Defaults to true.
+  copyLocalSettings?: boolean;
+  // Point new worktrees at the primary checkout's git hooks (e.g. husky's
+  // .husky/_), whose contents are otherwise gitignored and absent. Defaults to true.
+  linkHooks?: boolean;
+  // Extra repo-root-relative paths (files or directories) to copy into new
+  // worktrees, merged with entries from a .worktreeinclude file. Use this for
+  // gitignored config like .env that the worktree needs.
+  include?: string[];
 }
 
 export interface ProjectSettings {

@@ -16,8 +16,10 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import {
   __testOverrideNpmManagedModPackageInstaller,
+  installGitManagedModPackage,
   installLocalManagedModPackage,
   installNpmManagedModPackage,
+  parseGitManagedModPackageInstallSpecifier,
   parseNpmManagedModPackageInstallSpecifier,
   updateNpmManagedModPackage,
 } from "@/mods/package-installer";
@@ -145,6 +147,27 @@ function writeInstalledNpmPackage(params: {
   }
 }
 
+function writeCompatibilityGitPackage(params: {
+  dependencies?: Record<string, string>;
+  packageRoot: string;
+  version?: string;
+}): void {
+  mkdirSync(path.join(params.packageRoot, "src"), { recursive: true });
+  writeFileSync(path.join(params.packageRoot, "src", "mod.ts"), "export {};\n");
+  writeFileSync(
+    path.join(params.packageRoot, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "git-mod",
+        version: params.version ?? "0.1.0",
+        ...(params.dependencies ? { dependencies: params.dependencies } : {}),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
 function createChildProcess(): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
   Object.assign(child, {
@@ -212,6 +235,86 @@ describe("local managed mod package installer", () => {
     expect(() =>
       parseNpmManagedModPackageInstallSpecifier("npm:my-mod@foo\\bar"),
     ).toThrow("Invalid npm package version or tag");
+  });
+
+  test("parses GitHub package install specs", () => {
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "https://github.com/Caren/My-Mod.git@v1",
+      ),
+    ).toEqual({
+      cloneUrl: "https://github.com/caren/my-mod.git",
+      owner: "caren",
+      ref: "v1",
+      repo: "my-mod",
+      repository: "https://github.com/caren/my-mod",
+      source: "git:https://github.com/caren/my-mod",
+    });
+    expect(
+      parseGitManagedModPackageInstallSpecifier("git:github.com/caren/my-mod"),
+    ).toMatchObject({
+      cloneUrl: "https://github.com/caren/my-mod.git",
+      source: "git:https://github.com/caren/my-mod",
+    });
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "ssh://git@github.com/caren/my-mod.git@abc123",
+      ),
+    ).toMatchObject({
+      ref: "abc123",
+      source: "git:https://github.com/caren/my-mod",
+    });
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "https://github.com/caren/my-mod/tree/main",
+      ),
+    ).toBeNull();
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "https://gitlab.com/caren/my-mod",
+      ),
+    ).toBeNull();
+  });
+
+  test("rejects git refs that start with a dash (option injection)", () => {
+    expect(() =>
+      parseGitManagedModPackageInstallSpecifier(
+        "https://github.com/caren/my-mod@--orphan=evil",
+      ),
+    ).toThrow("Invalid git ref");
+    expect(() =>
+      parseGitManagedModPackageInstallSpecifier(
+        "https://github.com/caren/my-mod@-f",
+      ),
+    ).toThrow("Invalid git ref");
+    expect(() =>
+      parseGitManagedModPackageInstallSpecifier(
+        "git:github.com/caren/my-mod@-B",
+      ),
+    ).toThrow("Invalid git ref");
+    expect(() =>
+      parseGitManagedModPackageInstallSpecifier(
+        "ssh://git@github.com/caren/my-mod.git@--upload-pack=evil",
+      ),
+    ).toThrow("Invalid git ref");
+  });
+
+  test("accepts valid git refs with dots and dashes", () => {
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "https://github.com/caren/my-mod@v1.2.3",
+      ),
+    ).toMatchObject({ ref: "v1.2.3" });
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "git:github.com/caren/my-mod@release-1.0",
+      ),
+    ).toMatchObject({ ref: "release-1.0" });
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "ssh://git@github.com/caren/my-mod.git@abc123",
+      ),
+    ).toMatchObject({ ref: "abc123" });
   });
 
   test("installs a local package into the managed package directory", () => {
@@ -778,5 +881,238 @@ describe("local managed mod package installer", () => {
     expect(
       existsSync(path.join(modsRoot, "packages", "npm", "@caren", "my-mod")),
     ).toBe(false);
+  });
+
+  test("installs a GitHub package with a manifest", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    const gitCalls: Array<{ args: string[]; cwd?: string }> = [];
+    __testOverrideNpmManagedModPackageInstaller({
+      gitSpawnImpl: (_cmd, args, options) => {
+        gitCalls.push({ args, cwd: options.cwd?.toString() });
+        if (args[0] === "clone") {
+          const packageRoot = String(args.at(-1));
+          writeLocalPackage({
+            capabilities: ["commands"],
+            name: "git-mod",
+            packageRoot,
+          });
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") {
+            child.stdout?.emit("data", "abc123\n");
+          }
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+    });
+
+    const result = await installGitManagedModPackage({
+      modsRoot,
+      specifier: "https://github.com/caren/git-mod",
+    });
+
+    expect(gitCalls.map((call) => call.args)).toEqual([
+      [
+        "clone",
+        "--depth",
+        "1",
+        "https://github.com/caren/git-mod.git",
+        expect.any(String),
+      ],
+      ["rev-parse", "--short", "HEAD"],
+    ]);
+    expect(result).toMatchObject({
+      capabilities: ["commands"],
+      repository: "https://github.com/caren/git-mod",
+      rootRelativePath: "packages/git/github.com/caren/git-mod",
+      source: "git:https://github.com/caren/git-mod",
+      version: "0.1.0",
+    });
+    expect(existsSync(path.join(result.root, "mods", "index.ts"))).toBe(true);
+    expect(readRegistry(modsRoot).packages).toEqual([
+      {
+        source: "git:https://github.com/caren/git-mod",
+        version: "0.1.0",
+        enabled: true,
+        root: "packages/git/github.com/caren/git-mod",
+        entries: ["mods/index.ts"],
+      },
+    ]);
+  });
+
+  test("installs a compatibility GitHub package from src/mod.ts", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    __testOverrideNpmManagedModPackageInstaller({
+      gitSpawnImpl: (_cmd, args) => {
+        if (args[0] === "clone") {
+          writeCompatibilityGitPackage({ packageRoot: String(args.at(-1)) });
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") child.stdout?.emit("data", "def456\n");
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+    });
+
+    const result = await installGitManagedModPackage({
+      modsRoot,
+      specifier: "git:github.com/caren/compat-mod",
+    });
+
+    expect(result).toMatchObject({
+      capabilities: [],
+      entries: ["src/mod.ts"],
+      source: "git:https://github.com/caren/compat-mod",
+      version: "0.1.0",
+    });
+    expect(
+      JSON.parse(readFileSync(path.join(result.root, "package.json"), "utf8"))
+        .letta,
+    ).toEqual({
+      manifestVersion: 1,
+      mods: ["src/mod.ts"],
+    });
+    expect(readRegistry(modsRoot).packages[0]).toMatchObject({
+      root: "packages/git/github.com/caren/compat-mod",
+      entries: ["src/mod.ts"],
+    });
+  });
+
+  test("GitHub package install runs safe dependency install", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    const npmCalls: Array<{ args: string[]; cmd: string; cwd?: string }> = [];
+    __testOverrideNpmManagedModPackageInstaller({
+      platform: "linux",
+      gitSpawnImpl: (_cmd, args) => {
+        if (args[0] === "clone") {
+          writeCompatibilityGitPackage({
+            dependencies: { "left-pad": "1.0.0" },
+            packageRoot: String(args.at(-1)),
+          });
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") child.stdout?.emit("data", "abc123\n");
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+      spawnImpl: (cmd, args, options) => {
+        npmCalls.push({ args, cmd, cwd: options.cwd?.toString() });
+        if (!options.cwd) throw new Error("expected cwd");
+        const dependencyRoot = path.join(
+          options.cwd.toString(),
+          "node_modules",
+          "left-pad",
+        );
+        mkdirSync(dependencyRoot, { recursive: true });
+        writeFileSync(path.join(dependencyRoot, "index.js"), "export {};\n");
+        const child = createChildProcess();
+        queueMicrotask(() => child.emit("exit", 0));
+        return child;
+      },
+    });
+
+    const result = await installGitManagedModPackage({
+      modsRoot,
+      specifier: "https://github.com/caren/deps-mod@v1",
+    });
+
+    expect(npmCalls).toEqual([
+      {
+        cmd: "npm",
+        args: [
+          "install",
+          "--ignore-scripts",
+          "--omit=dev",
+          "--no-audit",
+          "--no-fund",
+          "--package-lock=false",
+          "--no-save",
+        ],
+        cwd: expect.any(String),
+      },
+    ]);
+    expect(
+      existsSync(
+        path.join(result.root, "node_modules", "left-pad", "index.js"),
+      ),
+    ).toBe(true);
+  });
+
+  test("GitHub packages without a manifest or conventional entry fail without writing", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    __testOverrideNpmManagedModPackageInstaller({
+      gitSpawnImpl: (_cmd, args) => {
+        if (args[0] === "clone") {
+          const packageRoot = String(args.at(-1));
+          mkdirSync(packageRoot, { recursive: true });
+          writeFileSync(
+            path.join(packageRoot, "package.json"),
+            `${JSON.stringify({ name: "not-a-mod", version: "0.1.0" })}\n`,
+          );
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") child.stdout?.emit("data", "abc123\n");
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+    });
+
+    await expect(
+      installGitManagedModPackage({
+        modsRoot,
+        specifier: "https://github.com/caren/not-a-mod",
+      }),
+    ).rejects.toThrow("GitHub repo is not an installable Letta mod package");
+    expect(existsSync(path.join(modsRoot, "packages.json"))).toBe(false);
+    expect(existsSync(path.join(modsRoot, "packages"))).toBe(false);
+  });
+
+  test("git checkout uses -- separator to prevent option injection", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    const gitCalls: Array<{ args: string[]; cwd?: string }> = [];
+    __testOverrideNpmManagedModPackageInstaller({
+      gitSpawnImpl: (_cmd, args, options) => {
+        gitCalls.push({ args, cwd: options.cwd?.toString() });
+        if (args[0] === "clone") {
+          writeLocalPackage({
+            capabilities: ["commands"],
+            name: "git-mod",
+            packageRoot: String(args.at(-1)),
+          });
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") {
+            child.stdout?.emit("data", "abc123\n");
+          }
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+    });
+
+    await installGitManagedModPackage({
+      modsRoot,
+      specifier: "https://github.com/caren/git-mod@v1.2.3",
+    });
+
+    expect(gitCalls.map((call) => call.args)).toEqual([
+      ["clone", "https://github.com/caren/git-mod.git", expect.any(String)],
+      ["checkout", "--", "v1.2.3"],
+      ["rev-parse", "--short", "HEAD"],
+    ]);
   });
 });

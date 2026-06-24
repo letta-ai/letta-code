@@ -315,7 +315,7 @@ export function filterBuiltInToolNamesByClientAllowlist(
   );
 }
 
-const WORKTREE_TOOL_NAMES = new Set<ToolName>(["CreateWorktree"]);
+const WORKTREE_TOOL_NAMES = new Set<ToolName>(["EnterWorktree"]);
 
 function shouldIncludeWorktreeTool(): boolean {
   try {
@@ -437,7 +437,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "ArtifactInteract",
   "Bash",
   "TaskOutput",
-  "CreateWorktree",
+  "EnterWorktree",
   "Edit",
   "TaskStop",
   // "MultiEdit",
@@ -477,7 +477,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "glob_gemini",
   "search_file_content",
   "memory",
-  "CreateWorktree",
+  "EnterWorktree",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -493,7 +493,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "ArtifactCall",
   "ArtifactDebugLogs",
   "ArtifactInteract",
-  "CreateWorktree",
+  "EnterWorktree",
   "memory_apply_patch",
   "Task",
   "TaskOutput",
@@ -513,7 +513,7 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   "ArtifactCall",
   "ArtifactDebugLogs",
   "ArtifactInteract",
-  "CreateWorktree",
+  "EnterWorktree",
   "memory",
   "Skill",
   "Task",
@@ -541,7 +541,7 @@ const TOOL_PERMISSIONS: Record<
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
-  CreateWorktree: { requiresApproval: true },
+  EnterWorktree: { requiresApproval: true },
   Edit: { requiresApproval: true },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },
