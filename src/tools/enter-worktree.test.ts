@@ -18,8 +18,8 @@ import {
 import { settingsManager } from "@/settings-manager";
 import {
   addWindowsPathLengthHint,
-  create_worktree,
-} from "@/tools/impl/create-worktree";
+  enter_worktree,
+} from "@/tools/impl/enter-worktree";
 import {
   clearToolsWithLock,
   executeTool,
@@ -51,9 +51,7 @@ function git(args: string[], cwd: string): string {
 }
 
 async function createRepo(): Promise<string> {
-  const repo = await mkdtemp(
-    path.join(tmpdir(), "letta-create-worktree-repo-"),
-  );
+  const repo = await mkdtemp(path.join(tmpdir(), "letta-enter-worktree-repo-"));
   git(["init", "-b", "main"], repo);
   await writeFile(path.join(repo, "README.md"), "# test\n");
   git(["add", "README.md"], repo);
@@ -84,7 +82,7 @@ function toolReturnText(value: unknown): string {
   return JSON.stringify(value);
 }
 
-describe("CreateWorktree tool", () => {
+describe("EnterWorktree tool", () => {
   let tempDirs: string[] = [];
   const originalCwd = process.cwd();
   const originalHome = process.env.HOME;
@@ -96,7 +94,7 @@ describe("CreateWorktree tool", () => {
     resetRemoteSettingsCache();
     setActiveRuntime(null);
     const fakeHome = await mkdtemp(
-      path.join(tmpdir(), "letta-create-worktree-home-"),
+      path.join(tmpdir(), "letta-enter-worktree-home-"),
     );
     tempDirs.push(fakeHome);
     process.env.HOME = fakeHome;
@@ -135,7 +133,7 @@ describe("CreateWorktree tool", () => {
     const repo = await trackRepo();
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({
+      enter_worktree({
         name: "Fix Login Flow",
         refresh_base: false,
         switch_cwd: false,
@@ -147,7 +145,7 @@ describe("CreateWorktree tool", () => {
       path.join(repo, ".letta", "worktrees", "fix-login-flow"),
     );
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     expect(result.branch_name).toStartWith("letta/fix-login-flow-");
     expect(result.base_ref).toBe("main");
@@ -165,7 +163,7 @@ describe("CreateWorktree tool", () => {
   test("switches only the active conversation cwd", async () => {
     const repo = await trackRepo();
     const fakeHome = await mkdtemp(
-      path.join(tmpdir(), "letta-create-worktree-home-"),
+      path.join(tmpdir(), "letta-enter-worktree-home-"),
     );
     tempDirs.push(fakeHome);
     process.env.HOME = fakeHome;
@@ -192,12 +190,12 @@ describe("CreateWorktree tool", () => {
         workingDirectory: repo,
       },
       async () => {
-        const toolResult = await create_worktree({
+        const toolResult = await enter_worktree({
           name: "Conversation A Feature",
           refresh_base: false,
         });
         if (!toolResult.worktree_path) {
-          throw new Error("Expected CreateWorktree to return a worktree path");
+          throw new Error("Expected EnterWorktree to return a worktree path");
         }
         expect(getCurrentWorkingDirectory()).toBe(toolResult.worktree_path);
         return toolResult;
@@ -206,7 +204,7 @@ describe("CreateWorktree tool", () => {
 
     expect(result.status).toBe("success");
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     expect(
       __listenClientTestUtils.getConversationWorkingDirectory(
@@ -234,12 +232,12 @@ describe("CreateWorktree tool", () => {
     const result = await runWithRuntimeContext(
       { workingDirectory: repo },
       async () => {
-        const toolResult = await create_worktree({
+        const toolResult = await enter_worktree({
           name: "Plain CLI Feature",
           refresh_base: false,
         });
         if (!toolResult.worktree_path) {
-          throw new Error("Expected CreateWorktree to return a worktree path");
+          throw new Error("Expected EnterWorktree to return a worktree path");
         }
         expect(getCurrentWorkingDirectory()).toBe(toolResult.worktree_path);
         return toolResult;
@@ -248,7 +246,7 @@ describe("CreateWorktree tool", () => {
 
     expect(result.status).toBe("success");
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     expect(result.switched_cwd).toBe(true);
     expect(process.cwd()).toBe(result.worktree_path);
@@ -264,7 +262,7 @@ describe("CreateWorktree tool", () => {
   test("updates the active tool context so same-turn tools use the new cwd", async () => {
     const repo = await trackRepo();
     setActiveRuntime(null);
-    await loadSpecificTools(["CreateWorktree", "Bash"]);
+    await loadSpecificTools(["EnterWorktree", "Bash"]);
 
     const prepared = await runWithRuntimeContext(
       { workingDirectory: repo },
@@ -273,7 +271,7 @@ describe("CreateWorktree tool", () => {
 
     try {
       const createResult = await executeTool(
-        "CreateWorktree",
+        "EnterWorktree",
         { name: "Same Turn Feature", refresh_base: false },
         { toolContextId: prepared.contextId },
       );
@@ -302,10 +300,10 @@ describe("CreateWorktree tool", () => {
   test("fetches the remote default branch before creating the worktree", async () => {
     const repo = await trackRepo();
     const remote = await mkdtemp(
-      path.join(tmpdir(), "letta-create-worktree-remote-"),
+      path.join(tmpdir(), "letta-enter-worktree-remote-"),
     );
     const otherClone = await mkdtemp(
-      path.join(tmpdir(), "letta-create-worktree-clone-"),
+      path.join(tmpdir(), "letta-enter-worktree-clone-"),
     );
     tempDirs.push(remote, otherClone);
 
@@ -320,7 +318,7 @@ describe("CreateWorktree tool", () => {
     git(["push", "origin", "main"], otherClone);
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({
+      enter_worktree({
         name: "Latest Remote",
         switch_cwd: false,
       }),
@@ -328,7 +326,7 @@ describe("CreateWorktree tool", () => {
 
     expect(result.status).toBe("success");
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     expect(result.base_ref).toBe("origin/main");
     const remoteFile = await readFile(
@@ -341,12 +339,12 @@ describe("CreateWorktree tool", () => {
   test("creates a worktree from repo_path when current cwd is outside a git repository", async () => {
     const repo = await trackRepo();
     const dir = await mkdtemp(
-      path.join(tmpdir(), "letta-create-worktree-empty-"),
+      path.join(tmpdir(), "letta-enter-worktree-empty-"),
     );
     tempDirs.push(dir);
 
     const result = await runWithRuntimeContext({ workingDirectory: dir }, () =>
-      create_worktree({
+      enter_worktree({
         name: "Repo Path Feature",
         repo_path: repo,
         refresh_base: false,
@@ -359,7 +357,7 @@ describe("CreateWorktree tool", () => {
       path.join(repo, ".letta", "worktrees", "repo-path-feature"),
     );
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     expect(
       path.normalize(
@@ -370,12 +368,12 @@ describe("CreateWorktree tool", () => {
 
   test("returns an error outside a git repository", async () => {
     const dir = await mkdtemp(
-      path.join(tmpdir(), "letta-create-worktree-empty-"),
+      path.join(tmpdir(), "letta-enter-worktree-empty-"),
     );
     tempDirs.push(dir);
 
     const result = await runWithRuntimeContext({ workingDirectory: dir }, () =>
-      create_worktree({ name: "No Repo", refresh_base: false }),
+      enter_worktree({ name: "No Repo", refresh_base: false }),
     );
 
     expect(result.status).toBe("error");
@@ -396,7 +394,7 @@ describe("CreateWorktree tool", () => {
     );
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({
+      enter_worktree({
         name: "symlink-deps",
         refresh_base: false,
         switch_cwd: false,
@@ -406,7 +404,7 @@ describe("CreateWorktree tool", () => {
 
     expect(result.status).toBe("success");
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     const linkPath = path.join(result.worktree_path, "node_modules");
     expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
@@ -427,7 +425,7 @@ describe("CreateWorktree tool", () => {
     );
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({
+      enter_worktree({
         name: "isolated-deps",
         refresh_base: false,
         switch_cwd: false,
@@ -436,7 +434,7 @@ describe("CreateWorktree tool", () => {
 
     expect(result.status).toBe("success");
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     // node_modules must not be present (neither symlinked nor copied).
     const linked = await lstat(
@@ -457,7 +455,7 @@ describe("CreateWorktree tool", () => {
     );
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({
+      enter_worktree({
         name: "include-env",
         refresh_base: false,
         switch_cwd: false,
@@ -466,7 +464,7 @@ describe("CreateWorktree tool", () => {
 
     expect(result.status).toBe("success");
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     expect(
       await readFile(path.join(result.worktree_path, ".env"), "utf8"),
@@ -483,7 +481,7 @@ describe("CreateWorktree tool", () => {
     );
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({
+      enter_worktree({
         name: "copy-local-settings",
         refresh_base: false,
         switch_cwd: false,
@@ -492,7 +490,7 @@ describe("CreateWorktree tool", () => {
 
     expect(result.status).toBe("success");
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     expect(
       await readFile(
@@ -515,7 +513,7 @@ describe("CreateWorktree tool", () => {
     );
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({
+      enter_worktree({
         name: "wire-hooks",
         refresh_base: false,
         switch_cwd: false,
@@ -524,7 +522,7 @@ describe("CreateWorktree tool", () => {
 
     expect(result.status).toBe("success");
     if (!result.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     const hooksDir = path.join(result.worktree_path, ".husky", "_");
     expect((await lstat(hooksDir)).isSymbolicLink()).toBe(true);
@@ -541,7 +539,7 @@ describe("CreateWorktree tool", () => {
     const created = await runWithRuntimeContext(
       { workingDirectory: repo },
       () =>
-        create_worktree({
+        enter_worktree({
           name: "Existing Feature",
           refresh_base: false,
           switch_cwd: false,
@@ -549,12 +547,12 @@ describe("CreateWorktree tool", () => {
     );
     expect(created.status).toBe("success");
     if (!created.worktree_path) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
 
     const entered = await runWithRuntimeContext(
       { workingDirectory: repo },
-      () => create_worktree({ path: created.worktree_path }),
+      () => enter_worktree({ path: created.worktree_path }),
     );
 
     expect(entered.status).toBe("success");
@@ -568,7 +566,7 @@ describe("CreateWorktree tool", () => {
   test("refuses to enter a worktree outside .letta/worktrees", async () => {
     const repo = await trackRepo();
     const external = await mkdtemp(
-      path.join(tmpdir(), "letta-create-worktree-external-"),
+      path.join(tmpdir(), "letta-enter-worktree-external-"),
     );
     tempDirs.push(external);
     const externalWorktree = path.join(external, "wt");
@@ -586,7 +584,7 @@ describe("CreateWorktree tool", () => {
     );
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({ path: externalWorktree }),
+      enter_worktree({ path: externalWorktree }),
     );
 
     expect(result.status).toBe("error");
@@ -599,7 +597,7 @@ describe("CreateWorktree tool", () => {
     await mkdir(ghost, { recursive: true });
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({ path: ghost }),
+      enter_worktree({ path: ghost }),
     );
 
     expect(result.status).toBe("error");
@@ -610,7 +608,7 @@ describe("CreateWorktree tool", () => {
     const repo = await trackRepo();
 
     const result = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({ path: repo, name: "nope" }),
+      enter_worktree({ path: repo, name: "nope" }),
     );
 
     expect(result.status).toBe("error");
@@ -624,7 +622,7 @@ describe("CreateWorktree tool", () => {
     const created = await runWithRuntimeContext(
       { workingDirectory: repo },
       () =>
-        create_worktree({
+        enter_worktree({
           name: "Shared Worktree",
           refresh_base: false,
           switch_cwd: false,
@@ -633,19 +631,19 @@ describe("CreateWorktree tool", () => {
     expect(created.status).toBe("success");
     const worktree = created.worktree_path;
     if (!worktree) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
 
     const first = await runWithRuntimeContext(
       { agentId: "agent-1", conversationId: "conv-a", workingDirectory: repo },
-      () => create_worktree({ path: worktree }),
+      () => enter_worktree({ path: worktree }),
     );
     expect(first.status).toBe("success");
     expect(first.content[0]?.text).toContain("Lock:");
 
     const blocked = await runWithRuntimeContext(
       { agentId: "agent-2", conversationId: "conv-b", workingDirectory: repo },
-      () => create_worktree({ path: worktree }),
+      () => enter_worktree({ path: worktree }),
     );
     expect(blocked.status).toBe("error");
     expect(blocked.content[0]?.text).toContain("in use by another agent");
@@ -653,7 +651,7 @@ describe("CreateWorktree tool", () => {
 
     const forced = await runWithRuntimeContext(
       { agentId: "agent-2", conversationId: "conv-b", workingDirectory: repo },
-      () => create_worktree({ path: worktree, force: true }),
+      () => enter_worktree({ path: worktree, force: true }),
     );
     expect(forced.status).toBe("success");
     expect(forced.content[0]?.text).toContain("force-claimed");
@@ -666,7 +664,7 @@ describe("CreateWorktree tool", () => {
     const created = await runWithRuntimeContext(
       { workingDirectory: repo },
       () =>
-        create_worktree({
+        enter_worktree({
           name: "Reenter Worktree",
           refresh_base: false,
           switch_cwd: false,
@@ -674,18 +672,18 @@ describe("CreateWorktree tool", () => {
     );
     const worktree = created.worktree_path;
     if (!worktree) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
 
     const first = await runWithRuntimeContext(
       { conversationId: "conv-a", workingDirectory: repo },
-      () => create_worktree({ path: worktree }),
+      () => enter_worktree({ path: worktree }),
     );
     expect(first.status).toBe("success");
 
     const again = await runWithRuntimeContext(
       { conversationId: "conv-a", workingDirectory: worktree },
-      () => create_worktree({ path: worktree }),
+      () => enter_worktree({ path: worktree }),
     );
     expect(again.status).toBe("success");
   });
@@ -695,14 +693,14 @@ describe("CreateWorktree tool", () => {
     setActiveRuntime(null);
 
     const one = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({
+      enter_worktree({
         name: "Worktree One",
         refresh_base: false,
         switch_cwd: false,
       }),
     );
     const two = await runWithRuntimeContext({ workingDirectory: repo }, () =>
-      create_worktree({
+      enter_worktree({
         name: "Worktree Two",
         refresh_base: false,
         switch_cwd: false,
@@ -711,23 +709,23 @@ describe("CreateWorktree tool", () => {
     const pathOne = one.worktree_path;
     const pathTwo = two.worktree_path;
     if (!pathOne || !pathTwo) {
-      throw new Error("Expected CreateWorktree to return worktree paths");
+      throw new Error("Expected EnterWorktree to return worktree paths");
     }
 
     // conv-a takes worktree one, then moves to worktree two (releasing one).
     await runWithRuntimeContext(
       { conversationId: "conv-a", workingDirectory: repo },
-      () => create_worktree({ path: pathOne }),
+      () => enter_worktree({ path: pathOne }),
     );
     await runWithRuntimeContext(
       { conversationId: "conv-a", workingDirectory: pathOne },
-      () => create_worktree({ path: pathTwo }),
+      () => enter_worktree({ path: pathTwo }),
     );
 
     // conv-b can now take worktree one because conv-a's lock there was freed.
     const reused = await runWithRuntimeContext(
       { conversationId: "conv-b", workingDirectory: repo },
-      () => create_worktree({ path: pathOne }),
+      () => enter_worktree({ path: pathOne }),
     );
     expect(reused.status).toBe("success");
   });
@@ -739,7 +737,7 @@ describe("CreateWorktree tool", () => {
     const created = await runWithRuntimeContext(
       { workingDirectory: repo },
       () =>
-        create_worktree({
+        enter_worktree({
           name: "Stale Worktree",
           refresh_base: false,
           switch_cwd: false,
@@ -747,7 +745,7 @@ describe("CreateWorktree tool", () => {
     );
     const worktree = created.worktree_path;
     if (!worktree) {
-      throw new Error("Expected CreateWorktree to return a worktree path");
+      throw new Error("Expected EnterWorktree to return a worktree path");
     }
     const gitDir = git(["rev-parse", "--absolute-git-dir"], worktree);
 

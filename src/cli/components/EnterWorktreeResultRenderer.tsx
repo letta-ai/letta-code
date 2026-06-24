@@ -6,16 +6,16 @@ import { Text } from "./Text";
 const PREFIX_WIDTH = 5; // `  └  ` or `     `
 const LABEL_WIDTH = 8;
 
-export interface CreateWorktreeDisplayResult {
+export interface EnterWorktreeDisplayResult {
   path?: string;
   branch?: string;
   base?: string;
   switchedCwd?: boolean;
 }
 
-export function parseCreateWorktreeResult(
+export function parseEnterWorktreeResult(
   text: string,
-): CreateWorktreeDisplayResult | null {
+): EnterWorktreeDisplayResult | null {
   const normalized = text.replace(/\r\n/g, "\n");
   const firstLine = normalized.split("\n").find((line) => line.trim());
   if (firstLine?.trim() !== "Created worktree.") {
@@ -27,7 +27,7 @@ export function parseCreateWorktreeResult(
     return match?.[1]?.trim();
   };
 
-  const result: CreateWorktreeDisplayResult = {
+  const result: EnterWorktreeDisplayResult = {
     path: field("Path"),
     branch: field("Branch"),
     base: field("Base"),
@@ -76,12 +76,12 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function CreateWorktreeResultRenderer({
+export function EnterWorktreeResultRenderer({
   resultText,
 }: {
   resultText: string;
 }) {
-  const parsed = parseCreateWorktreeResult(resultText);
+  const parsed = parseEnterWorktreeResult(resultText);
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - PREFIX_WIDTH);
 

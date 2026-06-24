@@ -82,7 +82,7 @@ export interface Settings {
   autoConversationTitles: boolean; // Generate AI conversation titles when possible
   autoConversationTitlesRollbackApplied?: boolean; // One-time rollback marker for the default-on title experiment
   autoSwapOnQuotaLimit: boolean; // Auto-switch to temporary Auto model override on quota-limit errors
-  includeWorktreeTool: boolean; // Include CreateWorktree in toolsets when true
+  includeWorktreeTool: boolean; // Include EnterWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
   channelCredentialsStore?: "file" | "keyring" | "auto"; // Where channel/connection tokens are persisted
   recentModels: string[]; // Recently used model IDs (most recent first, max 5)
