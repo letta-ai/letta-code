@@ -1789,7 +1789,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
         expect.objectContaining({
           id: "task_call-web",
           title: "Searching articles",
-          details: "letta blog",
+          output: "letta blog",
           status: "in_progress",
         }),
       ],
@@ -1854,7 +1854,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       expect.objectContaining({
         id: "task_call-web",
         title: "Searched articles",
-        details: "letta blog",
+        output: "letta blog",
         status: "complete",
       }),
       expect.objectContaining({
@@ -2098,6 +2098,72 @@ test("slack adapter closes an open stream before falling back after append failu
   });
 });
 
+test("slack adapter keeps one active progress card slot until finalized", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-2",
+    sources: [{ ...source, messageId: "1712800001.000100" }],
+    kind: "tool",
+    state: "started",
+    message: "Searching web",
+    toolCallId: "call-2",
+    toolName: "web_search",
+    toolTitle: "Search the web",
+    toolDetails: "letta slack progress cards",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_call-2",
+        title: "Search the web",
+        output: "letta slack progress cards",
+        status: "in_progress",
+      }),
+    ]),
+  });
+});
+
 test("slack adapter treats already-closed stream stop errors as benign", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -2281,7 +2347,7 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
       expect.objectContaining({
         id: "task_call-web",
         title: "Searched articles",
-        details: "letta blog",
+        output: "letta blog",
         status: "complete",
       }),
       expect.objectContaining({
@@ -2290,6 +2356,19 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
       }),
     ]),
   });
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-2",
+    sources: [{ ...source, messageId: "1712800001.000100" }],
+    kind: "tool",
+    state: "started",
+    message: "Reading again",
+    toolCallId: "call-read",
+    toolName: "read_file",
+  });
+
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
 });
 
 test("slack adapter suppresses internal channel delivery tools from progress cards", async () => {

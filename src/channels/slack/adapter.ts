@@ -586,8 +586,12 @@ function buildTerminalSlackStreamChunks(
 }
 
 function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
-  const { kind: _kind, ...chunkTask } = task;
-  return { type: "task_update", ...chunkTask };
+  const { kind: _kind, details, ...chunkTask } = task;
+  return {
+    type: "task_update",
+    ...chunkTask,
+    ...(details ? { output: details } : {}),
+  };
 }
 
 function isSlackToolActionProgress(update: ChannelTurnProgressEvent): boolean {
@@ -1197,6 +1201,7 @@ export function createSlackAdapter(
   // those threads are auto-routed without requiring an explicit @mention.
   const agentThreadTracker = createAgentThreadTracker();
   const progressCardByReplyKey = new Map<string, SlackProgressCardEntry>();
+  const activeProgressCardKeyByReplyKey = new Map<string, string>();
   const assistantStatusReplyKeys = new Set<string>();
   const assistantStatusTextByReplyKey = new Map<string, string>();
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
@@ -1435,8 +1440,40 @@ export function createSlackAdapter(
     rememberMessageThread(response.ts, replyToMessageId);
   }
 
-  function getSlackProgressReplyKey(source: ChannelTurnSource): string | null {
-    return getLifecycleReplyKey(source);
+  function buildSlackProgressCardKey(
+    source: ChannelTurnSource,
+    slotId?: string,
+  ): string | null {
+    const replyKey = getLifecycleReplyKey(source);
+    if (!replyKey) {
+      return null;
+    }
+    const turnId = firstNonEmptyString(
+      slotId,
+      source.messageId,
+      source.threadId,
+    );
+    return turnId ? `${replyKey}:slot:${turnId}` : replyKey;
+  }
+
+  function getActiveSlackProgressCardKey(
+    source: ChannelTurnSource,
+  ): string | null {
+    const replyKey = getLifecycleReplyKey(source);
+    if (!replyKey) {
+      return null;
+    }
+    return activeProgressCardKeyByReplyKey.get(replyKey) ?? null;
+  }
+
+  function getOrCreateSlackProgressCardKey(
+    source: ChannelTurnSource,
+    slotId?: string,
+  ): string | null {
+    return (
+      getActiveSlackProgressCardKey(source) ??
+      buildSlackProgressCardKey(source, slotId)
+    );
   }
 
   function getSlackProgressReplyTs(source: ChannelTurnSource): string | null {
@@ -1450,7 +1487,7 @@ export function createSlackAdapter(
     const seen = new Set<string>();
     const unique: ChannelTurnSource[] = [];
     for (const source of sources) {
-      const key = getSlackProgressReplyKey(source);
+      const key = getOrCreateSlackProgressCardKey(source);
       if (!key || seen.has(key)) {
         continue;
       }
@@ -1463,7 +1500,7 @@ export function createSlackAdapter(
   function getSlackAssistantThreadStatusForTurn(
     source: ChannelTurnSource,
   ): string | null {
-    const key = getSlackProgressReplyKey(source);
+    const key = getLifecycleReplyKey(source);
     if (!key) {
       return null;
     }
@@ -1480,7 +1517,7 @@ export function createSlackAdapter(
     source: ChannelTurnSource,
     status: string,
   ): Promise<void> {
-    const key = getSlackProgressReplyKey(source);
+    const key = getLifecycleReplyKey(source);
     const threadTs = getSlackProgressReplyTs(source);
     if (!key || !threadTs) {
       return;
@@ -1516,7 +1553,7 @@ export function createSlackAdapter(
   async function clearSlackAssistantThreadStatus(
     source: ChannelTurnSource,
   ): Promise<void> {
-    const key = getSlackProgressReplyKey(source);
+    const key = getLifecycleReplyKey(source);
     if (!key || !assistantStatusReplyKeys.has(key)) {
       return;
     }
@@ -1835,6 +1872,11 @@ export function createSlackAdapter(
         entry.updatedAt + SLACK_PROGRESS_CARD_STATE_TTL_MS <= now
       ) {
         progressCardByReplyKey.delete(key);
+        for (const [replyKey, activeKey] of activeProgressCardKeyByReplyKey) {
+          if (activeKey === key) {
+            activeProgressCardKeyByReplyKey.delete(replyKey);
+          }
+        }
       }
     }
 
@@ -1856,6 +1898,11 @@ export function createSlackAdapter(
         continue;
       }
       progressCardByReplyKey.delete(key);
+      for (const [replyKey, activeKey] of activeProgressCardKeyByReplyKey) {
+        if (activeKey === key) {
+          activeProgressCardKeyByReplyKey.delete(replyKey);
+        }
+      }
       removed += 1;
     }
   }
@@ -1866,7 +1913,10 @@ export function createSlackAdapter(
     progressText: string,
     options: { force?: boolean; update?: ChannelTurnProgressEvent } = {},
   ): Promise<void> {
-    const key = getSlackProgressReplyKey(source);
+    const key = getOrCreateSlackProgressCardKey(
+      source,
+      options.update?.batchId,
+    );
     if (!key) {
       return;
     }
@@ -1907,6 +1957,10 @@ export function createSlackAdapter(
     }
     entry.updatedAt = now;
     progressCardByReplyKey.set(key, entry);
+    const replyKey = getLifecycleReplyKey(source);
+    if (replyKey) {
+      activeProgressCardKeyByReplyKey.set(replyKey, key);
+    }
 
     if (options.force && entry.pendingTimer) {
       clearTimeout(entry.pendingTimer);
@@ -1932,12 +1986,13 @@ export function createSlackAdapter(
   async function finishSlackProgressCards(
     sources: ChannelTurnSource[],
     outcome: ChannelTurnOutcome,
+    batchId?: string,
   ): Promise<void> {
     const progress = resolveSlackLifecycleProgressText(outcome);
     const uniqueSources = getUniqueSlackProgressSources(sources);
     await Promise.all(
       uniqueSources.map(async (source) => {
-        const key = getSlackProgressReplyKey(source);
+        const key = getOrCreateSlackProgressCardKey(source, batchId);
         const entry = key ? progressCardByReplyKey.get(key) : undefined;
         if (!entry) {
           await clearSlackAssistantThreadStatus(source);
@@ -1981,6 +2036,10 @@ export function createSlackAdapter(
             },
           );
         }
+        const replyKey = getLifecycleReplyKey(source);
+        if (replyKey && activeProgressCardKeyByReplyKey.get(replyKey) === key) {
+          activeProgressCardKeyByReplyKey.delete(replyKey);
+        }
         await clearSlackAssistantThreadStatus(source);
       }),
     );
@@ -1996,9 +2055,9 @@ export function createSlackAdapter(
     if (!isNonEmptyString(replyToMessageId)) {
       return;
     }
-    const entry = progressCardByReplyKey.get(
-      `${msg.chatId}:${replyToMessageId}`,
-    );
+    const replyKey = `${msg.chatId}:${replyToMessageId}`;
+    const cardKey = activeProgressCardKeyByReplyKey.get(replyKey) ?? replyKey;
+    const entry = progressCardByReplyKey.get(cardKey);
     if (!entry) {
       return;
     }
@@ -2491,6 +2550,7 @@ export function createSlackAdapter(
         }
       }
       progressCardByReplyKey.clear();
+      activeProgressCardKeyByReplyKey.clear();
       assistantStatusReplyKeys.clear();
       assistantStatusTextByReplyKey.clear();
       pendingTopLevelDebounceKeys.clear();
@@ -2535,7 +2595,11 @@ export function createSlackAdapter(
         return;
       }
 
-      await finishSlackProgressCards(event.sources, event.outcome);
+      await finishSlackProgressCards(
+        event.sources,
+        event.outcome,
+        event.batchId,
+      );
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) {
