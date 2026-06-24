@@ -94,6 +94,7 @@ Usage:
 
 Sources:
   npm:<package>         npm mod package, e.g. npm:@letta-ai/mod-plan-mode
+  github:o/r            GitHub mod package shorthand
   git:github.com/o/r    GitHub mod package
   https://github.com/o/r GitHub mod package
   ./path/to/package     Local mod package with package.json#letta

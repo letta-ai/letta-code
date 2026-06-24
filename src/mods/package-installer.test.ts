@@ -256,6 +256,13 @@ describe("local managed mod package installer", () => {
       source: "git:https://github.com/caren/my-mod",
     });
     expect(
+      parseGitManagedModPackageInstallSpecifier("github:caren/my-mod@v2"),
+    ).toMatchObject({
+      cloneUrl: "https://github.com/caren/my-mod.git",
+      ref: "v2",
+      source: "git:https://github.com/caren/my-mod",
+    });
+    expect(
       parseGitManagedModPackageInstallSpecifier(
         "ssh://git@github.com/caren/my-mod.git@abc123",
       ),
@@ -273,6 +280,47 @@ describe("local managed mod package installer", () => {
         "https://gitlab.com/caren/my-mod",
       ),
     ).toBeNull();
+  });
+
+  test("rejects git refs that start with a dash (option injection)", () => {
+    expect(() =>
+      parseGitManagedModPackageInstallSpecifier(
+        "https://github.com/caren/my-mod@--orphan=evil",
+      ),
+    ).toThrow("Invalid git ref");
+    expect(() =>
+      parseGitManagedModPackageInstallSpecifier(
+        "https://github.com/caren/my-mod@-f",
+      ),
+    ).toThrow("Invalid git ref");
+    expect(() =>
+      parseGitManagedModPackageInstallSpecifier(
+        "git:github.com/caren/my-mod@-B",
+      ),
+    ).toThrow("Invalid git ref");
+    expect(() =>
+      parseGitManagedModPackageInstallSpecifier(
+        "ssh://git@github.com/caren/my-mod.git@--upload-pack=evil",
+      ),
+    ).toThrow("Invalid git ref");
+  });
+
+  test("accepts valid git refs with dots and dashes", () => {
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "https://github.com/caren/my-mod@v1.2.3",
+      ),
+    ).toMatchObject({ ref: "v1.2.3" });
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "git:github.com/caren/my-mod@release-1.0",
+      ),
+    ).toMatchObject({ ref: "release-1.0" });
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
+        "ssh://git@github.com/caren/my-mod.git@abc123",
+      ),
+    ).toMatchObject({ ref: "abc123" });
   });
 
   test("installs a local package into the managed package directory", () => {
@@ -915,5 +963,42 @@ describe("local managed mod package installer", () => {
     ).rejects.toThrow("GitHub repo is not an installable Letta mod package");
     expect(existsSync(path.join(modsRoot, "packages.json"))).toBe(false);
     expect(existsSync(path.join(modsRoot, "packages"))).toBe(false);
+  });
+
+  test("git checkout uses -- separator to prevent option injection", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    const gitCalls: Array<{ args: string[]; cwd?: string }> = [];
+    __testOverrideNpmManagedModPackageInstaller({
+      gitSpawnImpl: (_cmd, args, options) => {
+        gitCalls.push({ args, cwd: options.cwd?.toString() });
+        if (args[0] === "clone") {
+          writeLocalPackage({
+            capabilities: ["commands"],
+            name: "git-mod",
+            packageRoot: String(args.at(-1)),
+          });
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") {
+            child.stdout?.emit("data", "abc123\n");
+          }
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+    });
+
+    await installGitManagedModPackage({
+      modsRoot,
+      specifier: "https://github.com/caren/git-mod@v1.2.3",
+    });
+
+    expect(gitCalls.map((call) => call.args)).toEqual([
+      ["clone", "https://github.com/caren/git-mod.git", expect.any(String)],
+      ["checkout", "--", "v1.2.3"],
+      ["rev-parse", "--short", "HEAD"],
+    ]);
   });
 });

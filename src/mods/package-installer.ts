@@ -674,6 +674,9 @@ function splitGitRef(value: string): { ref?: string; source: string } {
     if (!source || !ref) {
       throw new Error(`Invalid git mod package specifier: ${value}`);
     }
+    if (!/^[a-z0-9][a-z0-9._/-]*$/i.test(ref)) {
+      throw new Error(`Invalid git ref: ${ref}`);
+    }
     return { ref, source };
   }
   return { source: value };
@@ -739,6 +742,19 @@ function parseGitHubShorthandInstallSource(
   });
 }
 
+function parseGitHubPackageInstallSource(
+  specifier: string,
+): GitManagedModPackageInstallSpecifier | null {
+  const { ref, source } = splitGitRef(specifier);
+  const parts = source.split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+  return normalizeGitHubInstallSource({
+    owner: parts[0] ?? "",
+    ...(ref ? { ref } : {}),
+    repo: parts[1] ?? "",
+  });
+}
+
 function parseGitHubSshInstallSource(
   specifier: string,
 ): GitManagedModPackageInstallSpecifier | null {
@@ -780,6 +796,9 @@ export function parseGitManagedModPackageInstallSpecifier(
   }
   if (trimmed.startsWith("git@github.com:")) {
     return parseGitHubSshInstallSource(trimmed);
+  }
+  if (trimmed.startsWith("github:")) {
+    return parseGitHubPackageInstallSource(trimmed.slice("github:".length));
   }
   if (!trimmed.startsWith("git:")) return null;
   const gitSource = trimmed.slice("git:".length);
@@ -1007,7 +1026,10 @@ async function checkoutGitPackage(params: {
       ];
   await runGit(cloneArgs, params.tempRoot);
   if (params.parsed.ref) {
-    await runGit(["checkout", params.parsed.ref], params.packageDirectory);
+    await runGit(
+      ["checkout", "--", params.parsed.ref],
+      params.packageDirectory,
+    );
   }
   const revision = await runGit(
     ["rev-parse", "--short", "HEAD"],
