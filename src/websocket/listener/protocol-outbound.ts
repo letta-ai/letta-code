@@ -852,6 +852,16 @@ export function emitDequeuedUserMessage(
   incoming: IncomingMessage,
   batch: DequeuedBatch,
 ): void {
+  // A mod-driven continue turn carries no real user input — suppress the
+  // optimistic echo so the follow-up stays seamless (matches TUI, where the
+  // continue is injected without rendering a user message).
+  if (
+    batch.items.length > 0 &&
+    batch.items.every((item) => item.kind === "mod_continue")
+  ) {
+    return;
+  }
+
   const firstUserPayload = incoming.messages.find(
     (payload): payload is MessageCreate & { client_message_id?: string } =>
       "content" in payload,

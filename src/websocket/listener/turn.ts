@@ -263,7 +263,7 @@ async function emitListenerTurnEnd(options: {
   workingDirectory: string;
   permissionMode?: string | null;
   cachedAgent?: AgentState | null;
-}): Promise<void> {
+}): Promise<string | undefined> {
   try {
     const modAdapter = ensureListenerModAdapter(options.runtime);
     const context = createListenerModContext({
@@ -272,15 +272,25 @@ async function emitListenerTurnEnd(options: {
       permissionMode: options.permissionMode ?? null,
       agent: options.cachedAgent ?? null,
     });
-    const event = {
+    const event: {
+      agentId: string;
+      conversationId: string;
+      stopReason: string;
+      assistantMessage?: string;
+      continue?: string;
+    } = {
       agentId: options.agentId,
       conversationId: options.conversationId,
       stopReason: options.stopReason,
       assistantMessage: options.assistantMessage,
     };
     await modAdapter.events.emit("turn_end", event, context);
+    return typeof event.continue === "string" && event.continue.length > 0
+      ? event.continue
+      : undefined;
   } catch {
     // Mod turn_end handlers should not block turn completion.
+    return undefined;
   }
 }
 
@@ -839,7 +849,7 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
-        await emitListenerTurnEnd({
+        const continueText = await emitListenerTurnEnd({
           agentId,
           conversationId,
           stopReason,
@@ -849,6 +859,22 @@ export async function handleIncomingMessage(
           permissionMode: turnPermissionModeState.mode,
           cachedAgent,
         });
+        if (continueText) {
+          // A mod asked to keep going: enqueue a follow-up turn. The post-turn
+          // re-pump runs it. The phantom user message is suppressed in
+          // emitDequeuedUserMessage so the continue stays seamless.
+          runtime.queueRuntime.enqueue({
+            kind: "mod_continue",
+            source: "system",
+            text: continueText,
+            agentId: agentId ?? undefined,
+            conversationId,
+            actingUserId: msg.actingUserId,
+          } as Omit<
+            import("@/queue/queue-runtime").ModContinueQueueItem,
+            "id" | "enqueuedAt"
+          >);
+        }
         try {
           const transcriptLines = toLines(buffers);
           if (transcriptLines.length > 0) {
