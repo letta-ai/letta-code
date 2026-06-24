@@ -50,6 +50,12 @@ export interface UpdateNpmManagedModPackageResult
   previousVersion: string;
 }
 
+export interface UpdateGitManagedModPackageResult
+  extends InstallLocalManagedModPackageResult {
+  enabled: boolean;
+  previousVersion: string;
+}
+
 export interface NpmManagedModPackageInstallSpecifier {
   installSpec: string;
   packageName: string;
@@ -1127,6 +1133,52 @@ export async function updateNpmManagedModPackage(params: {
       includePackageNodeModules: true,
       modsRoot: params.modsRoot,
       packageDirectory,
+    });
+    return {
+      ...updated,
+      enabled: existing.enabled,
+      previousVersion: existing.version,
+    };
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+}
+
+export async function updateGitManagedModPackage(params: {
+  modsRoot: string;
+  specifier: string;
+}): Promise<UpdateGitManagedModPackageResult> {
+  const parsed = parseGitManagedModPackageInstallSpecifier(params.specifier);
+  if (!parsed) {
+    throw new Error(`Invalid git mod package specifier: ${params.specifier}`);
+  }
+  const existing = getManagedModPackage({
+    modsRoot: params.modsRoot,
+    specifier: parsed.source,
+  }).package;
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "letta-mod-git-"));
+  try {
+    const packageDirectory = path.join(tempRoot, "repo");
+    const revision = await checkoutGitPackage({
+      packageDirectory,
+      parsed,
+      tempRoot,
+    });
+    const packageJson = readPackageJsonIfExists(packageDirectory);
+    if (hasRuntimeDependencies(packageJson)) {
+      await runNpmInstall({ tempRoot: packageDirectory });
+    }
+    const packageInfo = createGitPackageSourceInfo({
+      packageDirectory,
+      parsed,
+      revision,
+    });
+    const updated = installPreparedManagedModPackage({
+      enabled: existing.enabled,
+      includePackageNodeModules: true,
+      modsRoot: params.modsRoot,
+      packageDirectory,
+      packageInfo,
     });
     return {
       ...updated,
