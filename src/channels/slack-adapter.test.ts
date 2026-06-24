@@ -2098,6 +2098,74 @@ test("slack adapter closes an open stream before falling back after append failu
   });
 });
 
+test("slack adapter treats already-closed stream stop errors as benign", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  writeClient?.chat.stopStream.mockResolvedValueOnce({
+    ok: false,
+    error: "message_not_in_streaming_state",
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_call-1",
+        title: "Read",
+        status: "complete",
+      }),
+      expect.objectContaining({
+        type: "plan_update",
+        title: "Completed 1 tool",
+      }),
+    ]),
+  });
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
+});
+
 test("slack adapter does not show a tool card for turns without tool progress", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
