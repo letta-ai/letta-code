@@ -72,6 +72,16 @@ const DEFAULT_GIT_TIMEOUT_MS = 120_000;
 const FETCH_GIT_TIMEOUT_MS = 180_000;
 const MAX_SLUG_LENGTH = 48;
 
+type DirectorySymlinkType = "dir" | "junction";
+
+export function getDirectorySymlinkType(
+  platform: NodeJS.Platform = process.platform,
+): DirectorySymlinkType {
+  // Windows directory symlinks often require elevated privileges;
+  // junctions are the safer directory-link type there.
+  return platform === "win32" ? "junction" : "dir";
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -567,7 +577,7 @@ async function symlinkDirIntoWorktree(
   }
 
   await mkdir(path.dirname(dest), { recursive: true });
-  await symlink(source, dest, "dir");
+  await symlink(source, dest, getDirectorySymlinkType());
   return {
     linked: true,
     note: `symlinked ${normalized} from the primary checkout`,

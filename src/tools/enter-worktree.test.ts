@@ -19,6 +19,7 @@ import { settingsManager } from "@/settings-manager";
 import {
   addWindowsPathLengthHint,
   enter_worktree,
+  getDirectorySymlinkType,
 } from "@/tools/impl/enter-worktree";
 import {
   clearToolsWithLock,
@@ -781,6 +782,12 @@ describe("EnterWorktree tool", () => {
     expect(await releaseWorktreeLock({ worktreeGitDir: gitDir, owner })).toBe(
       false,
     );
+  });
+
+  test("uses junctions for directory links on windows", () => {
+    expect(getDirectorySymlinkType("win32")).toBe("junction");
+    expect(getDirectorySymlinkType("linux")).toBe("dir");
+    expect(getDirectorySymlinkType("darwin")).toBe("dir");
   });
 
   test("adds a windows path-length hint to git checkout failures", () => {
