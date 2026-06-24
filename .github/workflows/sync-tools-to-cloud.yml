@@ -87,7 +87,7 @@ jobs:
             6. Before committing, run the type checker to catch any type errors introduced by the edits:
                ```bash
                cd /tmp/letta-cloud
-               npx tsc --noEmit
+               npm run type-check
                ```
                If type errors are reported, fix them in the same branch before proceeding. Do not push broken types.
 
