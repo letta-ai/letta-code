@@ -1150,6 +1150,115 @@ describe("mod engine", () => {
     }
   });
 
+  test("turn_end continue: first handler wins", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-end.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_end", () => ({ continue: "first follow-up" }));
+          letta.events.on("turn_end", () => ({ continue: "second follow-up" }));
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        stopReason: "end_turn",
+        assistantMessage: "done",
+      };
+
+      const result = await engine.emitEvent(
+        "turn_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(2);
+      expect((event as { continue?: string }).continue).toBe("first follow-up");
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("turn_end continue: no continue when handler returns nothing", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-end.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_end", () => {});
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        stopReason: "end_turn",
+        assistantMessage: "done",
+      };
+
+      const result = await engine.emitEvent(
+        "turn_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect((event as { continue?: string }).continue).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("turn_end continue: empty string is ignored", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-end.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_end", () => ({ continue: "" }));
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        stopReason: "end_turn",
+        assistantMessage: "done",
+      };
+
+      const result = await engine.emitEvent(
+        "turn_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect((event as { continue?: string }).continue).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("reload aborts old activations and ignores stale handles", async () => {
     const root = createTempDir();
     const testGlobal = globalThis as ModTestGlobal;

@@ -95,6 +95,7 @@ import type {
   ModTool,
   ModToolRegistration,
   ModToolStartEvent,
+  ModTurnEndEvent,
   ModTurnStartEvent,
 } from "@/mods/types";
 
@@ -694,6 +695,7 @@ const SUPPORTED_MOD_EVENT_NAMES = new Set<ModEventName>([
   "conversation_close",
   "tool_start",
   "turn_start",
+  "turn_end",
 ]);
 
 function validateModEventName(name: string): asserts name is ModEventName {
@@ -713,6 +715,7 @@ function isModEventCapabilityEnabled(
     case "tool_start":
       return capabilities.events.tools;
     case "turn_start":
+    case "turn_end":
       return capabilities.events.turns;
   }
 }
@@ -779,6 +782,19 @@ function isToolStartResultWithResult(
     typeof result === "object" &&
     result !== null &&
     isToolStartResult((result as { result?: unknown }).result)
+  );
+}
+
+function isTurnEndResultWithContinue(
+  name: ModEventName,
+  result: unknown,
+): result is { continue: string } {
+  return (
+    name === "turn_end" &&
+    typeof result === "object" &&
+    result !== null &&
+    typeof (result as { continue?: unknown }).continue === "string" &&
+    (result as { continue: string }).continue.length > 0
   );
 }
 
@@ -1698,6 +1714,13 @@ export async function emitLocalModEvent<TName extends ModEventName>(
             result?: { status: "success" | "error"; output: string };
           }
         ).result = result.result;
+      }
+      if (
+        isTurnEndResultWithContinue(name, result) &&
+        !(event as ModTurnEndEvent & { continue?: unknown }).continue
+      ) {
+        (event as ModTurnEndEvent & { continue?: string }).continue =
+          result.continue;
       }
       if (result != null) {
         results.push(result as NonNullable<ModEventResultMap[TName]>);
