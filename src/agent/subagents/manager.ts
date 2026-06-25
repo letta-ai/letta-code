@@ -34,7 +34,6 @@ import {
 } from "@/constants";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
-import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
 import {
   getCurrentWorkingDirectory,
@@ -984,19 +983,6 @@ export function buildSubagentArgs(
     args.push("-p", buildSubagentPrompt(type, config, userPrompt));
   }
   args.push("--output-format", "stream-json");
-
-  // Parent-memory subagents rely on the kernel sandbox for filesystem scope, so
-  // their normal permission mode stays permissive to avoid approval deadlocks.
-  // Other subagents use their configured permission mode, or inherit from parent.
-  const subagentMode =
-    config.launchProfile === "parent-memory"
-      ? "unrestricted"
-      : config.permissionMode;
-  const parentMode = permissionMode.getMode();
-  const modeToUse = subagentMode || parentMode;
-  if (modeToUse !== "default") {
-    args.push("--permission-mode", modeToUse);
-  }
 
   // Build list of auto-approved tools:
   // 1. Inherit from parent (CLI + session rules)

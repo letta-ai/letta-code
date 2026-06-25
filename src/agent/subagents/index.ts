@@ -73,8 +73,6 @@ export interface SubagentConfig {
   background: boolean;
   /** Filesystem and env launch behavior for this subagent. */
   launchProfile: SubagentLaunchProfile;
-  /** Permission mode for this subagent (unrestricted, standard, acceptEdits). */
-  permissionMode?: string;
 }
 
 /**
@@ -188,9 +186,8 @@ function validateFrontmatter(frontmatter: Record<string, string | string[]>): {
     errors.push("Missing required field: description");
   }
 
-  // Don't validate model, permissionMode, or launchProfile here - they're handled at runtime:
+  // Don't validate model or launchProfile here - they're handled at runtime:
   // - model: resolveModel() returns null for invalid values, subagent-manager falls back
-  // - permissionMode: unknown values default to inherited behavior
   // - launchProfile: unknown values default to normal launch behavior
 
   return { valid: errors.length === 0, errors };
@@ -210,7 +207,6 @@ function parseSubagentContent(content: string): SubagentConfig {
 
   const name = frontmatter.name as string;
   const description = frontmatter.description as string;
-  const permissionMode = getStringField(frontmatter, "permissionMode");
 
   return {
     name,
@@ -225,7 +221,6 @@ function parseSubagentContent(content: string): SubagentConfig {
     launchProfile: parseLaunchProfile(
       getStringField(frontmatter, "launchProfile"),
     ),
-    permissionMode,
   };
 }
 

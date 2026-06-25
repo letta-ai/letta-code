@@ -327,7 +327,7 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-memfs");
   });
 
-  test("parent-memory launch profile uses unrestricted permission mode", () => {
+  test("subagents do not pass a permission mode override", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       {
@@ -338,9 +338,7 @@ describe("buildSubagentArgs", () => {
       "hello",
     );
 
-    expect(args).toContain("--permission-mode");
-    expect(args).toContain("unrestricted");
-    expect(args).not.toContain("memory");
+    expect(args).not.toContain("--permission-mode");
   });
 
   test("caps reflection system prompt plus initial message to startup budget", () => {
