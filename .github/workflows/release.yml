@@ -133,6 +133,10 @@ jobs:
         if: steps.detect.outputs.should_publish == 'true'
         run: bun run check
 
+      - name: Install bundled bwrap resources
+        if: steps.detect.outputs.should_publish == 'true'
+        run: bun run prepare:bwrap
+
       - name: Build bundle
         if: steps.detect.outputs.should_publish == 'true'
         run: bun run build

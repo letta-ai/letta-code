@@ -18,6 +18,26 @@ const version = pkg.version;
 const useMagick = Bun.env.USE_MAGICK;
 const features = [];
 
+function readBundledBwrapSha256() {
+  const manifestPath = join(__dirname, "vendor", "bwrap", "manifest.json");
+  if (!existsSync(manifestPath)) return {};
+
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+  const targets = manifest.targets;
+  if (!targets || typeof targets !== "object") return {};
+
+  const hashes = {};
+  for (const [key, target] of Object.entries(targets)) {
+    const sha256 = target?.sha256;
+    if (typeof sha256 === "string" && /^[a-f0-9]{64}$/i.test(sha256)) {
+      hashes[key] = sha256.toLowerCase();
+    }
+  }
+  return hashes;
+}
+
+const bundledBwrapSha256 = readBundledBwrapSha256();
+
 console.log(`📦 Building Letta Code v${version}...`);
 if (useMagick) {
   console.log(`🪄 Using magick variant of imageResize...`);
@@ -37,6 +57,7 @@ await Bun.build({
   define: {
     LETTA_VERSION: JSON.stringify(version),
     BUILD_TIME: JSON.stringify(new Date().toISOString()),
+    __BUNDLED_BWRAP_SHA256__: JSON.stringify(bundledBwrapSha256),
     __USE_MAGICK__: useMagick ? "true" : "false",
   },
   // Load text files as strings (for markdown, etc.)
