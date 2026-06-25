@@ -1,9 +1,21 @@
 import { expect, test } from "bun:test";
 import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import {
   buildChannelTurnProgressUpdatesFromDelta,
+  clearToolCallArgumentsCache,
   sanitizeChannelProgressText,
 } from "@/channels/progress";
 import type { StreamDelta } from "@/types/protocol_v2";
+
+beforeEach(() => {
+  clearToolCallArgumentsCache();
+});
 
 test("channel progress converts tool call deltas without leaking args", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
