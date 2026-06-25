@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { experimentManager } from "@/experiments/manager";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import { isLocalAgentId } from "./agent-id";
 import { ALL_SKILL_SOURCES, type SkillSource } from "./skill-sources";
@@ -207,6 +208,12 @@ export function getAgentSkillsDir(agentId: string): string {
 export async function getBundledSkills(): Promise<Skill[]> {
   const bundledPath = getBundledSkillsPath();
   const result = await discoverSkillsFromDir(bundledPath, "bundled");
+  // The creating-artifacts skill is gated behind the "artifacts" experiment.
+  // Filter it out when the experiment is disabled so it is not loaded for
+  // agents that have not opted in.
+  if (!experimentManager.isEnabled("artifacts")) {
+    return result.skills.filter((skill) => skill.id !== "creating-artifacts");
+  }
   return result.skills;
 }
 

@@ -19,6 +19,7 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -332,6 +333,26 @@ function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
   }
 
   return toolNames.filter((name) => !WORKTREE_TOOL_NAMES.has(name));
+}
+
+// Artifact app tools are gated behind the "artifacts" experiment. When the
+// experiment is disabled these tool names are filtered out of every default
+// tool array so they are never loaded for an agent.
+const ARTIFACT_TOOL_NAMES = new Set<ToolName>([
+  "ArtifactCall",
+  "ArtifactDebugLogs",
+  "ArtifactInteract",
+  "artifact_call",
+  "artifact_debug_logs",
+  "artifact_interact",
+]);
+
+function filterArtifactTools(toolNames: ToolName[]): ToolName[] {
+  if (experimentManager.isEnabled("artifacts")) {
+    return toolNames;
+  }
+
+  return toolNames.filter((name) => !ARTIFACT_TOOL_NAMES.has(name));
 }
 
 function filterExternalToolsByClientAllowlist(
@@ -1673,6 +1694,8 @@ async function resolveBaseToolNamesForModel(
   }
 
   baseToolNames = filterWorktreeTools(baseToolNames);
+
+  baseToolNames = filterArtifactTools(baseToolNames);
 
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
