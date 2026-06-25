@@ -73,6 +73,7 @@ export interface ModEventCapabilities {
   lifecycle: boolean;
   tools: boolean;
   turns: boolean;
+  compact: boolean;
 }
 
 export interface ModCapabilities {
@@ -146,7 +147,9 @@ export type ModEventName =
   | "tool_start"
   | "tool_end"
   | "turn_start"
-  | "turn_end";
+  | "turn_end"
+  | "compact_start"
+  | "compact_end";
 
 export type ModConversationOpenReason =
   | "startup"
@@ -226,6 +229,27 @@ export interface ModTurnEndResult {
   continue?: string;
 }
 
+export type ModCompactTrigger =
+  | "manual"
+  | "context_window_overflow"
+  | "context_window_limit";
+
+export interface ModCompactStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: ModCompactTrigger;
+}
+
+export interface ModCompactEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: ModCompactTrigger;
+  messagesBefore: number;
+  messagesAfter: number;
+  contextTokensBefore: number;
+  contextTokensAfter: number;
+}
+
 export interface ModEventMap {
   conversation_open: ModConversationOpenEvent;
   conversation_close: ModConversationCloseEvent;
@@ -233,6 +257,8 @@ export interface ModEventMap {
   tool_end: ModToolEndEvent;
   turn_start: ModTurnStartEvent;
   turn_end: ModTurnEndEvent;
+  compact_start: ModCompactStartEvent;
+  compact_end: ModCompactEndEvent;
 }
 
 export interface ModEventResultMap {
@@ -242,6 +268,8 @@ export interface ModEventResultMap {
   tool_end: ModToolEndResult | undefined;
   turn_start: ModTurnStartResult | undefined;
   turn_end: ModTurnEndResult | undefined;
+  compact_start: undefined;
+  compact_end: undefined;
 }
 
 export interface ModInvocationContext extends ModContext {}
