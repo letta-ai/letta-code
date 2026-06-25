@@ -40,6 +40,7 @@ import { isDebugEnabled } from "@/utils/debug";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
+import { listListenerModCommandIds } from "./mod-commands";
 import { getConversationPermissionModeState } from "./permission-mode";
 import {
   getConversationRuntime,
@@ -76,6 +77,19 @@ const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
  * web client). (LET-8948)
  */
 const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
+
+/**
+ * Built-in commands plus any commands registered by local mods. Returns the
+ * frozen built-in array unchanged when no mod commands exist, so the common
+ * case still avoids a per-status allocation. (LET-8948)
+ */
+function buildSupportedCommands(listener: ListenerRuntime): string[] {
+  const modCommandIds = listListenerModCommandIds(listener).filter(
+    (id) => !SUPPORTED_REMOTE_COMMANDS.includes(id),
+  );
+  if (modCommandIds.length === 0) return FROZEN_SUPPORTED_COMMANDS;
+  return [...SUPPORTED_REMOTE_COMMANDS, ...modCommandIds];
+}
 const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
 const PROTOCOL_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
 const PROTOCOL_PERF_ENABLED = PROTOCOL_PERF_ENV_VALUES.has(
@@ -484,7 +498,7 @@ export function buildDeviceStatus(
         }
       : {}),
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
-    supported_commands: FROZEN_SUPPORTED_COMMANDS,
+    supported_commands: buildSupportedCommands(listener),
     reflection_settings: scopedAgentId
       ? {
           agent_id: scopedAgentId,
