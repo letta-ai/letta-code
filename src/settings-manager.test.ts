@@ -1264,6 +1264,103 @@ describe("Settings Manager - Agents Array Migration", () => {
   });
 });
 
+describe("Settings Manager - Pinned Agents", () => {
+  test("getPinnedAgents excludes a local-backend agent id from a cloud session", async () => {
+    await settingsManager.initialize();
+
+    // Both pins land in the cloud bucket (no baseUrl), but the local-style id
+    // is incompatible with the cloud server key and must be filtered out.
+    settingsManager.updateSettings({
+      agents: [
+        { agentId: "agent-cloud-1", pinned: true },
+        { agentId: "agent-local-stray", pinned: true },
+      ],
+    });
+
+    expect(settingsManager.getPinnedAgents()).toEqual(["agent-cloud-1"]);
+  });
+
+  test("getPinnedAgents excludes a cloud agent id from a local-backend session", async () => {
+    await settingsManager.initialize();
+
+    const storageDir = join(testHomeDir, "lc-local-backend");
+    const localKey = `local:${resolve(storageDir)}`;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+
+    // Both pins land in the local bucket (baseUrl === localKey), but the
+    // cloud-style id is incompatible with the local server key.
+    settingsManager.updateSettings({
+      agents: [
+        { agentId: "agent-local-1", baseUrl: localKey, pinned: true },
+        { agentId: "agent-cloud-stray", baseUrl: localKey, pinned: true },
+      ],
+    });
+
+    expect(settingsManager.getPinnedAgents()).toEqual(["agent-local-1"]);
+  });
+
+  test("getPinnedAgentsForBackendMode returns the other mode's pins from a cloud session", async () => {
+    await settingsManager.initialize();
+
+    const storageDir = join(testHomeDir, "lc-local-backend");
+    const localKey = `local:${resolve(storageDir)}`;
+    // Make the local server key deterministic without switching the active
+    // session into local mode.
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+
+    settingsManager.updateSettings({
+      agents: [
+        { agentId: "agent-cloud-1", pinned: true },
+        { agentId: "agent-local-1", baseUrl: localKey, pinned: true },
+      ],
+    });
+
+    // Active session is cloud.
+    expect(settingsManager.getPinnedAgents()).toEqual(["agent-cloud-1"]);
+    // ...but we can still look up the local pins by mode (the old
+    // configureBackendMode dance returned [] here).
+    expect(settingsManager.getPinnedAgentsForBackendMode("local")).toEqual([
+      "agent-local-1",
+    ]);
+    expect(settingsManager.getPinnedAgentsForBackendMode("api")).toEqual([
+      "agent-cloud-1",
+    ]);
+  });
+
+  test("getPinnedAgentsForBackendMode('api') is scoped to the configured base URL", async () => {
+    await settingsManager.initialize();
+
+    const originalBaseUrl = process.env.LETTA_BASE_URL;
+    process.env.LETTA_BASE_URL = "https://selfhost.example.com";
+
+    try {
+      settingsManager.updateSettings({
+        agents: [
+          { agentId: "agent-cloud-1", pinned: true },
+          {
+            agentId: "agent-selfhost-1",
+            baseUrl: "selfhost.example.com",
+            pinned: true,
+          },
+        ],
+      });
+
+      // Only the pin for the active self-hosted server is returned; the
+      // api.letta.com pin belongs to a different server bucket.
+      expect(settingsManager.getPinnedAgentsForBackendMode("api")).toEqual([
+        "agent-selfhost-1",
+      ]);
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.LETTA_BASE_URL;
+      } else {
+        process.env.LETTA_BASE_URL = originalBaseUrl;
+      }
+    }
+  });
+});
+
 describe("Settings Manager - Toolset Preferences", () => {
   test("getToolsetPreference defaults to auto", async () => {
     await settingsManager.initialize();
