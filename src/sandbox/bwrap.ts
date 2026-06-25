@@ -63,7 +63,7 @@ export function buildBwrapArgs(policy: FsSandboxPolicy): string[] {
   // an ancestor. An ancestor carve-out (e.g. binding `/tmp` writable when the
   // agents tree lives under `/tmp`) re-binds the whole subtree on top of the
   // mask and silently re-exposes the denied roots. Callers must not produce
-  // such roots; this is why the parent-memory profile scopes writes to memory
+  // such roots; this is why the memory-subagent profile scopes writes to memory
   // roots and does not carve a temp dir. (Seatbelt has no equivalent: it matches
   // most-specific deny rules, independent of order.)
   for (const root of policy.deniedRoots) {

@@ -52,7 +52,7 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
 /**
  * Subagent configuration
  */
-export type SubagentLaunchProfile = "default" | "parent-memory";
+export type SubagentLaunchProfile = "default" | "memory-subagent";
 
 export interface SubagentConfig {
   /** Unique identifier for the subagent */
@@ -156,7 +156,7 @@ function parseSkills(skillsStr: string | undefined): string[] {
 function parseLaunchProfile(
   launchProfile: string | undefined,
 ): SubagentLaunchProfile {
-  return launchProfile === "parent-memory" ? "parent-memory" : "default";
+  return launchProfile === "memory-subagent" ? "memory-subagent" : "default";
 }
 
 /**

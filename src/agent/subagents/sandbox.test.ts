@@ -29,7 +29,7 @@ const LAUNCHER = {
 function baseInput(): WrapSubagentLauncherInput {
   return {
     launcher: LAUNCHER,
-    launchProfile: "parent-memory",
+    launchProfile: "memory-subagent",
     backendMode: "api",
     memoryRoots: ["/home/u/.letta/agents/parent/memory"],
     inheritedPrimaryRoot: "/home/u/.letta/agents/parent/memory",
@@ -58,7 +58,7 @@ test("isFsSandboxEnabled is on by default and only an explicit off-switch disabl
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "FALSE" })).toBe(false);
 });
 
-test("wraps a parent-memory API subagent under the backend", () => {
+test("wraps an API subagent with the memory-subagent profile under the backend", () => {
   const result = wrapSubagentLauncher(baseInput());
   expect(result).not.toBeNull();
   expect(result?.command).toBe(SANDBOX_EXEC_PATH);
@@ -85,7 +85,7 @@ test("returns null when the flag is off", () => {
   ).toBeNull();
 });
 
-test("returns null for non-parent-memory launch profiles", () => {
+test("returns null for non-memory-subagent launch profiles", () => {
   expect(
     wrapSubagentLauncher({ ...baseInput(), launchProfile: "default" }),
   ).toBeNull();
@@ -94,7 +94,7 @@ test("returns null for non-parent-memory launch profiles", () => {
   ).toBeNull();
 });
 
-test("wraps a parent-memory LOCAL subagent (deny-list against the memfs tree)", () => {
+test("wraps a LOCAL subagent with the memory-subagent profile (deny-list against the memfs tree)", () => {
   const storageDir = "/home/u/.letta/lc-local-backend";
   const memoryRoot = `${storageDir}/memfs/parent/memory`;
   const result = wrapSubagentLauncher({

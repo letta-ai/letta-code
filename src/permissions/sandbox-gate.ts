@@ -44,7 +44,7 @@ export function resolveShellSandboxContext(
   availability?: SandboxAvailability,
 ): ShellSandboxContext | null {
   if (!isFsSandboxEnabled(env)) return null;
-  // Already inside a sandbox: parent-memory subagents are confined as whole
+  // Already inside a sandbox: subagents with the memory-subagent profile are confined as whole
   // processes at spawn, so their nested shell commands must not be double
   // wrapped. Default-profile subagents do not have this sentinel and should get the
   // same per-shell-command sandbox as parent agents.

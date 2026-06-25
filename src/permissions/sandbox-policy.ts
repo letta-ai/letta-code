@@ -186,7 +186,7 @@ function deriveWritableMemoryRootsForTrees(
   return [...out];
 }
 
-export interface ParentMemorySandboxInput {
+export interface MemorySubagentSandboxInput {
   /**
    * Memory roots the child may write to — typically the resolved
    * `MEMORY_DIR` plus its `memory-worktrees` sibling.
@@ -216,7 +216,7 @@ export interface ParentMemorySandboxInput {
 }
 
 /**
- * Policy for a parent-memory subagent: it may read the filesystem broadly to do
+ * Policy for the memory-subagent launch profile: it may read the filesystem broadly to do
  * its work, write only under the harness state dir (`~/.letta`), and not read or
  * write *other* agents' memory.
  *
@@ -246,8 +246,8 @@ export interface ParentMemorySandboxInput {
  * re-carved writable in `writableRoots` because it is nested inside a denied
  * tree (the base `~/.letta` carve is overridden there by the deny).
  */
-export function buildParentMemorySandboxPolicy(
-  input: ParentMemorySandboxInput,
+export function buildMemorySubagentSandboxPolicy(
+  input: MemorySubagentSandboxInput,
 ): FsSandboxPolicy {
   const agentsTreeRoots = resolveAgentsTreeRootsInput(input.agentsTreeRoots);
 
@@ -298,7 +298,7 @@ export interface CrossAgentSandboxInput {
  * allowed (`restrictWrites: false`): the only thing this policy removes is
  * access to other agents' memory, exactly like the guard it replaces.
  *
- * Unlike the parent-memory policy, this one DOES deny reads of the agents tree.
+ * Unlike the memory-subagent policy, this one DOES deny reads of the agents tree.
  * That is only safe when the process cwd is outside the tree (the parent
  * agent's cwd is the repo); a cwd inside a read-denied subtree launches with an
  * empty environment under Seatbelt. Callers must enforce that precondition.

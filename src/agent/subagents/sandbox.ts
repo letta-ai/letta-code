@@ -1,5 +1,5 @@
 import {
-  buildParentMemorySandboxPolicy,
+  buildMemorySubagentSandboxPolicy,
   getCrossBackendAgentsTreeRoots,
 } from "@/permissions/sandbox-policy";
 import {
@@ -16,7 +16,7 @@ import type { SubagentLaunchProfile } from ".";
 /**
  * Applies an OS-level filesystem sandbox to a subagent child process at spawn.
  *
- * Parent-memory subagents (reflection, memory, init, history-analyzer) operate
+ * Subagents with the memory-subagent profile (reflection, memory, init, history-analyzer) operate
  * on their parent's memory as their working filesystem. Wrapping the whole child
  * process kernel-enforces the write scope — covering its in-process Write/Edit
  * tools, its Bash commands, and anything those spawn.
@@ -40,7 +40,7 @@ interface SubagentLauncher {
 
 export interface WrapSubagentLauncherInput {
   launcher: SubagentLauncher;
-  /** The subagent's declared launch profile; only parent-memory is wrapped. */
+  /** The subagent's declared launch profile; only memory-subagent is wrapped. */
   launchProfile: SubagentLaunchProfile | undefined;
   /** Active backend; selects the tree + write posture ("local" vs "api"). */
   backendMode: string;
@@ -68,8 +68,8 @@ export interface WrapSubagentLauncherResult {
 }
 
 /**
- * Wrap a subagent launcher under a parent-memory sandbox, or return null to
- * spawn it unchanged (flag off, not parent-memory, no backend on host, or
+ * Wrap a subagent launcher under a memory-subagent sandbox, or return null to
+ * spawn it unchanged (flag off, not memory-subagent, no backend on host, or
  * nothing to restrict).
  */
 export function wrapSubagentLauncher(
@@ -78,7 +78,7 @@ export function wrapSubagentLauncher(
   const env = input.env ?? process.env;
 
   if (!isFsSandboxEnabled(env)) return null;
-  if (input.launchProfile !== "parent-memory") return null;
+  if (input.launchProfile !== "memory-subagent") return null;
 
   const writableMemoryRoots = [...input.memoryRoots];
   if (
@@ -93,10 +93,7 @@ export function wrapSubagentLauncher(
 
   const availability = input.availability ?? detectSandboxBackend();
   if (!availability.backend) {
-    warnSandboxBackendUnavailable(
-      availability,
-      "parent-memory subagent sandbox",
-    );
+    warnSandboxBackendUnavailable(availability, "memory-subagent sandbox");
     return null;
   }
 
@@ -111,7 +108,7 @@ export function wrapSubagentLauncher(
     getTranscriptRoot(),
     ...(isLocal && storageDir ? [storageDir] : []),
   ];
-  const policy = buildParentMemorySandboxPolicy({
+  const policy = buildMemorySubagentSandboxPolicy({
     memoryRoots: writableMemoryRoots,
     agentsTreeRoots: getCrossBackendAgentsTreeRoots({
       env,

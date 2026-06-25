@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import {
   buildCrossAgentSandboxPolicy,
-  buildParentMemorySandboxPolicy,
+  buildMemorySubagentSandboxPolicy,
   canonicalizeRoot,
   deriveSelfAgentRootsForTrees,
   getCrossBackendAgentsTreeRoots,
@@ -64,13 +64,13 @@ test("getDefaultAgentsTreeRoot ends with the agents tree path", () => {
   );
 });
 
-test("parent-memory policy: writes scoped to ~/.letta, agents tree read-denied with agent dir carved readonly", () => {
+test("memory-subagent policy: writes scoped to ~/.letta, agents tree read-denied with agent dir carved readonly", () => {
   // Use the real agents tree so deriveSelfAgentRootsForTrees resolves the agent
   // dir (the policy always denies getDefaultAgentsTreeRoot(), keyed to homedir()).
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-self");
   const memoryRoot = join(agentDir, "memory");
 
-  const policy = buildParentMemorySandboxPolicy({
+  const policy = buildMemorySubagentSandboxPolicy({
     memoryRoots: [memoryRoot],
   });
 
@@ -89,12 +89,12 @@ test("parent-memory policy: writes scoped to ~/.letta, agents tree read-denied w
   expect(policy.readonlyRoots).toEqual([canonicalizeRoot(agentDir)]);
 });
 
-test("parent-memory policy folds harness roots outside ~/.letta into the base", () => {
+test("memory-subagent policy folds harness roots outside ~/.letta into the base", () => {
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-self");
   const memoryRoot = join(agentDir, "memory");
   const extra = makeTempDir(); // a harness root relocated off the default tree
 
-  const policy = buildParentMemorySandboxPolicy({
+  const policy = buildMemorySubagentSandboxPolicy({
     memoryRoots: [memoryRoot],
     harnessWritableRoots: [extra],
   });
@@ -106,7 +106,7 @@ test("parent-memory policy folds harness roots outside ~/.letta into the base", 
   expect(policy.baseWritableRoots).not.toContain(canonicalizeRoot("/tmp"));
 });
 
-test("parent-memory policy (local backend): custom tree, ~/.letta base, self memory re-carved", () => {
+test("memory-subagent policy (local backend): custom tree, ~/.letta base, self memory re-carved", () => {
   // The local backend walls off `lc-local-backend/memfs` (not ~/.letta/agents)
   // and stays write-scoped. The storage dir is added to the base (BEFORE the
   // deny) so conversations/agents/providers under it are writable while memfs
@@ -118,7 +118,7 @@ test("parent-memory policy (local backend): custom tree, ~/.letta base, self mem
   const memoryRoot = join(selfAgentDir, "memory");
   mkdirSync(memoryRoot, { recursive: true });
 
-  const policy = buildParentMemorySandboxPolicy({
+  const policy = buildMemorySubagentSandboxPolicy({
     memoryRoots: [memoryRoot],
     agentsTreeRoots: [memfsTree],
     harnessWritableRoots: [storage],
@@ -135,11 +135,13 @@ test("parent-memory policy (local backend): custom tree, ~/.letta base, self mem
   expect(policy.baseWritableRoots).toContain(canonicalizeRoot(storage));
 });
 
-test("parent-memory policy: defaults to both backend trees with write-scoping on", () => {
+test("memory-subagent policy: defaults to both backend trees with write-scoping on", () => {
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-default");
   const memoryRoot = join(agentDir, "memory");
 
-  const policy = buildParentMemorySandboxPolicy({ memoryRoots: [memoryRoot] });
+  const policy = buildMemorySubagentSandboxPolicy({
+    memoryRoots: [memoryRoot],
+  });
 
   expect(policy.restrictWrites).toBe(true);
   expect(policy.deniedRoots).toEqual(getCrossBackendAgentsTreeRoots());

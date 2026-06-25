@@ -621,7 +621,7 @@ export function resolveSubagentWorkingDirectory(
 ): string {
   if (
     options.subagentType === "reflection" &&
-    options.launchProfile === "parent-memory" &&
+    options.launchProfile === "memory-subagent" &&
     options.inheritedPrimaryRoot
   ) {
     return options.inheritedPrimaryRoot;
@@ -690,10 +690,10 @@ export interface ComposeSubagentChildEnvOptions {
   /** Parent agent ID. When present, sets LETTA_PARENT_AGENT_ID so prompts,
    * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
-  /** The subagent config's declared launch profile. Parent-memory subagents
+  /** The subagent config's declared launch profile. Subagents with the memory-subagent profile
    * operate on the parent's memory filesystem. */
   launchProfile: SubagentLaunchProfile | undefined;
-  /** Primary memory root for the parent, used by the parent-memory launch
+  /** Primary memory root for the parent, used by the memory-subagent launch
    * profile to point the child at its parent's memfs repo. Null means memfs
    * disabled or unresolvable — child operates without a MEMORY_DIR. */
   inheritedPrimaryRoot: string | null;
@@ -738,7 +738,7 @@ function buildInheritedChannelContextPayload(
  *     inherit a broad cross-agent memory-guard opt-out from the parent.
  *
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
- *     declares the parent-memory launch profile. Those subagents operate on
+ *     declares the memory-subagent launch profile. Those subagents operate on
  *     the parent's memory as their working filesystem (reflection, memory,
  *     init, history-analyzer). Other subagents keep whatever MEMORY_DIR they
  *     inherited from the parent process (usually unset).
@@ -784,10 +784,10 @@ export function composeSubagentChildEnv(
     childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "0";
   }
 
-  // Only parent-memory subagents get MEMORY_DIR pointed at the parent. Other
+  // Only subagents with the memory-subagent profile get MEMORY_DIR pointed at the parent. Other
   // subagents either have their own memfs (if memfs-enabled) or no MEMORY_DIR
   // at all — their tools will surface resolution errors appropriately.
-  if (launchProfile === "parent-memory") {
+  if (launchProfile === "memory-subagent") {
     if (inheritedPrimaryRoot) {
       childEnv.MEMORY_DIR = inheritedPrimaryRoot;
       childEnv.LETTA_MEMORY_DIR = inheritedPrimaryRoot;
@@ -1151,7 +1151,7 @@ async function executeSubagent(
       inheritedChannelContext,
     });
 
-    // Optionally confine parent-memory subagents to an OS filesystem sandbox.
+    // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.
     // Returns null (spawn unchanged) when disabled, not applicable, or no
     // backend is available on this host.
     const sandbox = wrapSubagentLauncher({
@@ -1171,7 +1171,7 @@ async function executeSubagent(
     if (sandbox) {
       debugLog(
         "subagent",
-        `parent-memory child sandboxed via ${sandbox.backend}`,
+        `memory subagent child sandboxed via ${sandbox.backend}`,
       );
     }
 

@@ -204,7 +204,7 @@ describe("resolveSubagentWorkingDirectory", () => {
     expect(cwd).toBe("/tmp/repo-root");
   });
 
-  test("reflection parent-memory subagents run from the inherited parent memory root", () => {
+  test("reflection subagents with the memory-subagent profile run from the inherited parent memory root", () => {
     const cwd = resolveSubagentWorkingDirectory(
       {
         USER_CWD: "/tmp/project-root",
@@ -212,7 +212,7 @@ describe("resolveSubagentWorkingDirectory", () => {
       "/tmp/fallback-root",
       {
         subagentType: "reflection",
-        launchProfile: "parent-memory",
+        launchProfile: "memory-subagent",
         inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
       },
     );
@@ -228,7 +228,7 @@ describe("resolveSubagentWorkingDirectory", () => {
       "/tmp/fallback-root",
       {
         subagentType: "general-purpose",
-        launchProfile: "parent-memory",
+        launchProfile: "memory-subagent",
         inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
       },
     );
@@ -332,7 +332,7 @@ describe("buildSubagentArgs", () => {
       "test-subagent",
       {
         ...baseConfig,
-        launchProfile: "parent-memory",
+        launchProfile: "memory-subagent",
       },
       null,
       "hello",

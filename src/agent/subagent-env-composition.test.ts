@@ -26,11 +26,11 @@ describe("composeSubagentChildEnv", () => {
     expect(env.LETTA_MEMORY_DIR).toBeUndefined();
   });
 
-  test("parent-memory subagent with parent + primaryRoot sets parent marker and dir", () => {
+  test("memory subagent with parent + primaryRoot sets parent marker and dir", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },
       parentAgentId: PARENT_ID,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });
 
@@ -40,7 +40,7 @@ describe("composeSubagentChildEnv", () => {
     expect(env.LETTA_CODE_AGENT_ROLE).toBe("subagent");
   });
 
-  test("parent-memory subagent with no primaryRoot keeps parent marker but clears dir", () => {
+  test("memory subagent with no primaryRoot keeps parent marker but clears dir", () => {
     // memfs disabled for parent — subagent knows its parent but has no
     // filesystem pointer. Its memory tool calls will error appropriately.
     const env = composeSubagentChildEnv({
@@ -50,7 +50,7 @@ describe("composeSubagentChildEnv", () => {
         MEMORY_DIR: "/stale/memory/dir",
       },
       parentAgentId: PARENT_ID,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: null,
     });
 
@@ -63,12 +63,12 @@ describe("composeSubagentChildEnv", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },
       parentAgentId: undefined,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });
 
     expect(env.LETTA_PARENT_AGENT_ID).toBeUndefined();
-    // Even in the parent-memory profile with an inherited root, without a parent
+    // Even in the memory-subagent profile with an inherited root, without a parent
     // ID the subagent shouldn't claim to operate on parent memory.
     // (We still set MEMORY_DIR here because that's the filesystem pointer
     // decision — the guard will still block cross-agent access because
@@ -94,7 +94,7 @@ describe("composeSubagentChildEnv", () => {
     expect(env.MEMORY_DIR).toBe(existingMemoryDir);
   });
 
-  test("parent-memory subagent overrides parent's pre-existing MEMORY_DIR", () => {
+  test("memory subagent overrides parent's pre-existing MEMORY_DIR", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: {
         HOME: "/home/user",
@@ -102,7 +102,7 @@ describe("composeSubagentChildEnv", () => {
         LETTA_MEMORY_DIR: "/stale/memory/dir",
       },
       parentAgentId: PARENT_ID,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });
 
@@ -114,7 +114,7 @@ describe("composeSubagentChildEnv", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },
       parentAgentId: PARENT_ID,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
       transcriptPath: "/tmp/payload-auto-abc123.json",
     });
@@ -126,7 +126,7 @@ describe("composeSubagentChildEnv", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },
       parentAgentId: PARENT_ID,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });
 
@@ -137,7 +137,7 @@ describe("composeSubagentChildEnv", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },
       parentAgentId: PARENT_ID,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
       transcriptPath: null,
     });
@@ -149,7 +149,7 @@ describe("composeSubagentChildEnv", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },
       parentAgentId: PARENT_ID,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
       inheritedApiKey: "sk-test-key",
       inheritedBaseUrl: "https://api.example.com",
@@ -168,7 +168,7 @@ describe("composeSubagentChildEnv", () => {
       backendMode: "local",
       localBackendStorageDir: "/tmp/lc-local-backend",
       parentAgentId: PARENT_ID,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });
 
@@ -185,7 +185,7 @@ describe("composeSubagentChildEnv", () => {
         LETTA_BASE_URL: "https://parent.example.com",
       },
       parentAgentId: PARENT_ID,
-      launchProfile: "parent-memory",
+      launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
       inheritedApiKey: null,
       inheritedBaseUrl: null,
@@ -197,7 +197,7 @@ describe("composeSubagentChildEnv", () => {
 
   test("LETTA_CODE_AGENT_ROLE is always 'subagent' regardless of launch profile", () => {
     for (const launchProfile of [
-      "parent-memory",
+      "memory-subagent",
       "default",
       undefined,
     ] as const) {
