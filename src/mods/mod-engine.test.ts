@@ -1150,6 +1150,100 @@ describe("mod engine", () => {
     }
   });
 
+  test("tool_end result: first handler wins, replaces the result", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "tool-end.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_end", (event) => {
+            if (event.toolName === "Bash" && event.status === "success") {
+              return { result: { status: "success", output: "redacted" } };
+            }
+          });
+          letta.events.on("tool_end", (event) => {
+            if (event.toolName === "Bash") {
+              return { result: { status: "error", output: "should not win" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        status: "success" as const,
+        output: "secret token abc123",
+      };
+
+      const result = await engine.emitEvent(
+        "tool_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(2);
+      expect(
+        (event as { result?: { status: string; output: string } }).result,
+      ).toEqual({
+        status: "success",
+        output: "redacted",
+      });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("tool_end result: no result when condition not met", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "tool-end.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_end", (event) => {
+            if (event.toolName === "Read") {
+              return { result: { status: "success", output: "redacted" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        status: "success" as const,
+        output: "untouched",
+      };
+
+      const result = await engine.emitEvent(
+        "tool_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect((event as { result?: unknown }).result).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("turn_end continue: first handler wins", async () => {
     const root = createTempDir();
     try {
