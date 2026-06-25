@@ -244,13 +244,37 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
       ? JSON.stringify(nestedFunction.arguments)
       : undefined);
 
-  // Accumulate fragmented arguments across stream deltas for the same tool call
+  // Accumulate fragmented arguments across stream deltas for the same tool call.
+  // If the current fragment already parses as valid JSON, use it directly
+  // and don't accumulate further (prevents duplication when complete args
+  // are sent in every delta).
   let argumentsText: string | undefined;
   if (id && rawArguments !== undefined) {
     const existing = toolCallArgumentsById.get(id);
-    const accumulated = existing ? existing + rawArguments : rawArguments;
-    toolCallArgumentsById.set(id, accumulated);
-    argumentsText = accumulated;
+    if (existing) {
+      // Already have accumulated args — check if they're complete
+      try {
+        JSON.parse(existing);
+        argumentsText = existing;
+      } catch {
+        // Previous accumulation was incomplete, keep accumulating
+        const accumulated = existing + rawArguments;
+        toolCallArgumentsById.set(id, accumulated);
+        argumentsText = accumulated;
+      }
+    } else {
+      // First fragment — check if it's already complete JSON
+      try {
+        JSON.parse(rawArguments);
+        // Complete JSON in one chunk — store and use directly
+        toolCallArgumentsById.set(id, rawArguments);
+        argumentsText = rawArguments;
+      } catch {
+        // Incomplete fragment — start accumulating
+        toolCallArgumentsById.set(id, rawArguments);
+        argumentsText = rawArguments;
+      }
+    }
   } else if (!id && rawArguments !== undefined) {
     argumentsText = rawArguments;
   }
