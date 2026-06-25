@@ -125,7 +125,7 @@ export function getRandomThinkingVerb(): string {
 export function getRandomSlackAssistantStatusVerb(agentName?: string): string {
   const index = Math.floor(Math.random() * SLACK_ASSISTANT_STATUS_VERBS.length);
   const verb = `is ${SLACK_ASSISTANT_STATUS_VERBS[index] ?? "thinking"}`;
-  return agentName ? `${agentName} ${verb}` : verb;
+  return agentName ? `${agentName} ${verb}...` : `${verb}...`;
 }
 
 // Get a random past tense verb (e.g., "thought", "processed")
