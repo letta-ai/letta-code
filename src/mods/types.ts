@@ -366,21 +366,16 @@ export type ModCommandResult =
   | { type: "output"; output: string; success?: boolean }
   | { type: "handled" };
 
-export type ModPanelContent = string | string[];
+export type ModPanelRender = (ctx: { width: number }) => string | string[];
 
 export interface ModPanelOptions {
-  content?: ModPanelContent;
   id: string;
-  order?: number;
-}
-
-export interface ModPanelUpdate {
-  content?: ModPanelContent;
+  render: ModPanelRender;
   order?: number;
 }
 
 export interface ModPanel {
-  content: string[];
+  render: ModPanelRender;
   id: string;
   owner?: ModOwner;
   order: number;
@@ -390,7 +385,7 @@ export interface ModPanel {
 
 export interface ModPanelHandle {
   close: () => void;
-  update: (update: ModPanelUpdate) => void;
+  update: (options?: { order?: number }) => void;
 }
 
 export interface ModCommandRegistration {

@@ -557,7 +557,7 @@ describe("mod engine", () => {
             });
           }
           if (letta.capabilities.ui.panels) {
-            letta.ui.openPanel({ id: "hidden", content: "hidden" });
+            letta.ui.openPanel({ id: "hidden", render: () => "hidden" });
           }
           if (letta.capabilities.tools) {
             letta.tools.register({
@@ -790,7 +790,7 @@ describe("mod engine", () => {
             description: "Should not register",
             run() { return { type: "handled" }; },
           });
-          letta.ui.openPanel({ id: "hidden", content: "hidden" });
+          letta.ui.openPanel({ id: "hidden", render: () => "hidden" });
           letta.ui.setStatus("hidden", "hidden");
           letta.ui.setStatuslineRenderer(() => "hidden");
           letta.events.on("conversation_open", () => {});
@@ -1369,7 +1369,7 @@ describe("mod engine", () => {
           globalThis.__lettaModSignal = letta.signal;
           globalThis.__lettaModPanel = letta.ui.openPanel({
             id: "status",
-            content: "first generation",
+            render: () => "first generation",
           });
         }`,
       );
@@ -1396,7 +1396,7 @@ describe("mod engine", () => {
       expect(firstSignal?.aborted).toBe(true);
       expect(Object.values(engine.getSnapshot().ui.panels)).toEqual([]);
 
-      stalePanel?.update({ content: "stale update" });
+      stalePanel?.update();
       const snapshot = engine.getSnapshot();
       expect(Object.values(snapshot.ui.panels)).toEqual([]);
       expect(snapshot.diagnostics.at(-1)).toMatchObject({
