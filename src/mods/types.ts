@@ -5,6 +5,7 @@ import type {
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ChalkInstance } from "chalk";
+import type { ModelReasoningEffort } from "@/agent/model";
 
 export interface ModWorkspaceContext {
   cwd: string;
@@ -114,6 +115,20 @@ export interface ModConversationHistoryOptions {
   includeErrors?: boolean;
 }
 
+export interface ModUpdateLlmConfigOptions {
+  /** Model handle, e.g. "anthropic/claude-opus-4-8". Omit to keep the current model. */
+  model?: string;
+  /** Reasoning effort tier. Omit to leave reasoning settings untouched. */
+  reasoningEffort?: ModelReasoningEffort;
+  /** Context window limit. Omit to leave the current limit untouched. */
+  contextWindow?: number;
+  /**
+   * Whether the change applies to this conversation only (default) or to the
+   * agent's default config. Conversation scope avoids mutating the agent default.
+   */
+  scope?: "conversation" | "agent";
+}
+
 export interface ModConversationHandle {
   id: string | null;
   fork: (
@@ -125,6 +140,12 @@ export interface ModConversationHandle {
     options?: ModConversationSendMessageOptions,
     requestOptions?: ModConversationSendMessageRequestOptions,
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
+  /**
+   * Update the model, reasoning effort, and/or context window for this
+   * conversation (or the agent default with scope: "agent"). Only the fields you
+   * pass change; others are preserved. Works for local and constellation agents.
+   */
+  updateLlmConfig: (options: ModUpdateLlmConfigOptions) => Promise<void>;
 }
 
 export type ModSourceScope =

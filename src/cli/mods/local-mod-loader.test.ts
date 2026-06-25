@@ -657,6 +657,7 @@ export default function(letta) {
               },
               getHistory: async () => [],
               sendMessageStream: async () => (async function* () {})(),
+              updateLlmConfig: async () => {},
             },
             cwd: "/tmp/project",
             model: {
@@ -713,6 +714,7 @@ export default function(letta) {
                   },
                   getHistory: async () => [],
                   sendMessageStream: async () => (async function* () {})(),
+                  updateLlmConfig: async () => {},
                 },
                 rawInput: "/legacy-command",
               })
@@ -769,6 +771,7 @@ export default function(letta) {
               },
               getHistory: async () => [],
               sendMessageStream: async () => (async function* () {})(),
+              updateLlmConfig: async () => {},
             },
             cwd: "/tmp/project",
             model: {
