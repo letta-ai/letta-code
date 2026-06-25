@@ -65,6 +65,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 "conversation_open"
 "conversation_close"
 "tool_start"
+"tool_end"
 "turn_start"
 ```
 
@@ -137,6 +138,30 @@ letta.events.on("tool_start", (event) => {
 Handlers run in registration order. Later handlers see the current args after earlier mutations/returns. If a handler throws, its partial `event.args` mutation is rolled back and the error is recorded as a mod diagnostic.
 
 `tool_start` is intentionally a trusted local mod point: it can rewrite commands, file paths, and other tool inputs before execution. Keep transforms focused and unsurprising.
+
+`tool_end` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  toolCallId: string | null;
+  toolName: string;
+  status: "success" | "error";
+  output: string;
+}
+```
+
+`tool_end` fires immediately after a tool produces a result, before the agent sees it. Handlers can inspect the result, or return `{ result: { status, output } }` to replace it:
+
+```ts
+letta.events.on("tool_end", (event) => {
+  if (event.toolName !== "Bash" || event.status !== "success") return;
+  return { result: { status: "success", output: redactSecrets(event.output) } };
+});
+```
+
+The first handler that returns a `result` wins; later handlers are shadowed. Only string results are surfaced — multimodal/image results pass through unchanged. `tool_end` is the trusted-local-mod equivalent of the `PostToolUse` / `PostToolUseFailure` hooks for observing and rewriting tool results.
 
 `turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns.
 

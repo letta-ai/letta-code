@@ -93,6 +93,7 @@ import type {
   ModPermissionRegistration,
   ModSourceScope,
   ModTool,
+  ModToolEndEvent,
   ModToolRegistration,
   ModToolStartEvent,
   ModTurnEndEvent,
@@ -694,6 +695,7 @@ const SUPPORTED_MOD_EVENT_NAMES = new Set<ModEventName>([
   "conversation_open",
   "conversation_close",
   "tool_start",
+  "tool_end",
   "turn_start",
   "turn_end",
 ]);
@@ -713,6 +715,7 @@ function isModEventCapabilityEnabled(
     case "conversation_close":
       return capabilities.events.lifecycle;
     case "tool_start":
+    case "tool_end":
       return capabilities.events.tools;
     case "turn_start":
     case "turn_end":
@@ -779,6 +782,18 @@ function isToolStartResultWithResult(
 ): result is { result: { status: "success" | "error"; output: string } } {
   return (
     name === "tool_start" &&
+    typeof result === "object" &&
+    result !== null &&
+    isToolStartResult((result as { result?: unknown }).result)
+  );
+}
+
+function isToolEndResultWithResult(
+  name: ModEventName,
+  result: unknown,
+): result is { result: { status: "success" | "error"; output: string } } {
+  return (
+    name === "tool_end" &&
     typeof result === "object" &&
     result !== null &&
     isToolStartResult((result as { result?: unknown }).result)
@@ -1711,6 +1726,16 @@ export async function emitLocalModEvent<TName extends ModEventName>(
       ) {
         (
           event as ModToolStartEvent & {
+            result?: { status: "success" | "error"; output: string };
+          }
+        ).result = result.result;
+      }
+      if (
+        isToolEndResultWithResult(name, result) &&
+        !(event as ModToolEndEvent & { result?: unknown }).result
+      ) {
+        (
+          event as ModToolEndEvent & {
             result?: { status: "success" | "error"; output: string };
           }
         ).result = result.result;

@@ -144,6 +144,7 @@ export type ModEventName =
   | "conversation_open"
   | "conversation_close"
   | "tool_start"
+  | "tool_end"
   | "turn_start"
   | "turn_end";
 
@@ -201,6 +202,19 @@ export interface ModToolStartResult {
   result?: { status: "success" | "error"; output: string };
 }
 
+export interface ModToolEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  toolCallId: string | null;
+  toolName: string;
+  status: "success" | "error";
+  output: string;
+}
+
+export interface ModToolEndResult {
+  result?: { status: "success" | "error"; output: string };
+}
+
 export interface ModTurnEndEvent {
   agentId: string | null;
   conversationId: string | null;
@@ -216,6 +230,7 @@ export interface ModEventMap {
   conversation_open: ModConversationOpenEvent;
   conversation_close: ModConversationCloseEvent;
   tool_start: ModToolStartEvent;
+  tool_end: ModToolEndEvent;
   turn_start: ModTurnStartEvent;
   turn_end: ModTurnEndEvent;
 }
@@ -224,6 +239,7 @@ export interface ModEventResultMap {
   conversation_open: undefined;
   conversation_close: undefined;
   tool_start: ModToolStartResult | undefined;
+  tool_end: ModToolEndResult | undefined;
   turn_start: ModTurnStartResult | undefined;
   turn_end: ModTurnEndResult | undefined;
 }
