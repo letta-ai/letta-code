@@ -19,6 +19,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import reflectionSubagentMd from "@/agent/subagents/builtin/reflection.md";
 import { formatCapturedOutput } from "@/integration-tests/process-diagnostics";
 import { createAuthenticatedCliTestEnv } from "./test-process-env";
 
@@ -95,8 +96,17 @@ async function runLiveBidirectionalReflectionSmoke(
   const projectDir = join(tmpRoot, "project");
   const transcriptRoot = join(tmpRoot, "transcripts");
   await mkdir(join(homeDir, ".letta"), { recursive: true });
+  await mkdir(join(homeDir, ".letta", "agents"), { recursive: true });
   await mkdir(projectDir, { recursive: true });
   await mkdir(transcriptRoot, { recursive: true });
+
+  await writeFile(
+    join(homeDir, ".letta", "agents", "reflection.md"),
+    reflectionSubagentMd.replace(
+      "\nmodel: inherit\n",
+      `\nmodel: ${args.reflectionModel}\n`,
+    ),
+  );
 
   await writeFile(
     join(homeDir, ".letta", "settings.json"),
@@ -121,7 +131,6 @@ async function runLiveBidirectionalReflectionSmoke(
       projectDir,
       transcriptRoot,
       model: args.model,
-      reflectionModel: args.reflectionModel,
     });
   } finally {
     await rm(tmpRoot, { recursive: true, force: true });
@@ -134,7 +143,6 @@ async function runLiveBidirectionalCli(paths: {
   projectDir: string;
   transcriptRoot: string;
   model: string;
-  reflectionModel: string;
 }): Promise<LiveReflectionSummary> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -164,7 +172,6 @@ async function runLiveBidirectionalCli(paths: {
         env: createAuthenticatedCliTestEnv({
           HOME: paths.homeDir,
           LETTA_TRANSCRIPT_ROOT: paths.transcriptRoot,
-          LETTA_REFLECTION_SUBAGENT_MODEL: paths.reflectionModel,
           USER_CWD: paths.projectDir,
           LETTA_DEBUG: "1",
           NO_COLOR: "1",

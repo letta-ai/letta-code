@@ -63,7 +63,6 @@ export interface ReflectionLaunchOptions {
   description: string;
   instruction?: string;
   systemPrompt?: string;
-  model?: string;
   completionConversationId?: string | (() => string);
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
@@ -241,7 +240,6 @@ export async function launchReflectionSubagent(
       subagentType: "reflection",
       prompt: reflectionPrompt,
       description,
-      model: options.model,
       silentCompletion: true,
       transcriptPath: autoPayload.payloadPath,
       parentScope: { agentId, conversationId },
