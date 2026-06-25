@@ -482,14 +482,13 @@ export function buildChannelTurnProgressUpdatesFromDelta(
         const accumulatedArgs = summary.id
           ? toolCallArgumentsById.get(summary.id)
           : undefined;
-        if (accumulatedArgs) {
+        if (accumulatedArgs && summary.id) {
           toolCallArgumentsById.delete(summary.id);
         }
         const toolWithAccumulatedArgs = accumulatedArgs
           ? { ...summary, argumentsText: accumulatedArgs }
           : summary;
-        const toolDetails =
-          formatToolProgressDetails(toolWithAccumulatedArgs);
+        const toolDetails = formatToolProgressDetails(toolWithAccumulatedArgs);
         updates.push(
           withRunId(
             {
