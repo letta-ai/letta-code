@@ -78,14 +78,22 @@ const stream = await forked.sendMessageStream([
 
 Do not call `ctx.conversation.sendMessageStream()` on the active conversation from a busy command; direct sends can conflict with the active run.
 
-### Event + status value
+### Event + panel
 
-Use lifecycle events to maintain small status values such as active conversation state. Guard both event and status capabilities.
+Use lifecycle events to maintain a small panel such as active conversation state. Guard both event and panel capabilities, and re-render with `panel.update()`.
 
 ```ts
-if (letta.capabilities.events.lifecycle && letta.capabilities.ui.statusValues) {
+if (letta.capabilities.events.lifecycle && letta.capabilities.ui.panels) {
+  let conversation = "";
+  const panel = letta.ui.openPanel({
+    id: "conversation",
+    order: 100,
+    render: ({ width, row }) => row("conversation", conversation, width),
+  });
+  disposers.push(() => panel.close());
   disposers.push(letta.events.on("conversation_open", (event) => {
-    letta.ui.setStatus("conversation", event.reason);
+    conversation = event.reason;
+    panel.update();
   }));
 }
 ```

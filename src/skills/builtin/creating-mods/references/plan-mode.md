@@ -42,7 +42,7 @@ Guard each registration with the matching capability:
 - `events.turns`: append a focused plan-mode reminder while active
 - `permissions`: block mutating tools except planning coordination tools and plan-file writes
 
-Do not use panels for persistent mode state. Panels are transient UI and can be noisy/fragile for mode indicators. Do not add a custom statusline renderer just to show plan mode; `setStatuslineRenderer` is a single global renderer, not an additive slot. This example intentionally keeps visible mode state out of scope.
+Do not use panels for persistent mode state. Panels are transient UI and can be noisy/fragile for mode indicators. Do not claim the order-0 statusline panel just to show plan mode; that slot is a single primary line, not an additive indicator. This example intentionally keeps visible mode state out of scope.
 
 ## State
 

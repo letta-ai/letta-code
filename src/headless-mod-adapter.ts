@@ -29,8 +29,6 @@ export const HEADLESS_MOD_CAPABILITIES: ModCapabilities = {
   providers: true,
   ui: {
     panels: false,
-    statusValues: false,
-    customStatuslineRenderer: false,
   },
 };
 

@@ -9,8 +9,6 @@ export const MOD_CAPABILITY_IDS = [
   "events.turns",
   "events.tools",
   "ui.panels",
-  "ui.statusValues",
-  "ui.statusline",
 ] as const;
 
 export type ModCapabilityId = (typeof MOD_CAPABILITY_IDS)[number];
@@ -33,8 +31,6 @@ export const DEFAULT_MOD_CAPABILITIES: ModCapabilities = {
   providers: true,
   ui: {
     panels: true,
-    statusValues: true,
-    customStatuslineRenderer: true,
   },
 };
 
@@ -50,8 +46,6 @@ export const DISABLED_MOD_CAPABILITIES: ModCapabilities = {
   providers: false,
   ui: {
     panels: false,
-    statusValues: false,
-    customStatuslineRenderer: false,
   },
 };
 
@@ -70,8 +64,6 @@ export function cloneModCapabilities(
     providers: capabilities.providers,
     ui: {
       panels: capabilities.ui.panels,
-      statusValues: capabilities.ui.statusValues,
-      customStatuslineRenderer: capabilities.ui.customStatuslineRenderer,
     },
   };
 }

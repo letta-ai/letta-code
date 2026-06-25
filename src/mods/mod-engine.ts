@@ -23,11 +23,6 @@ import {
   unregisterPiProvider,
   unregisterPiProvidersForOwner,
 } from "@/backend/dev/pi-provider-mod-registry";
-import type {
-  StatuslineRenderContext,
-  StatuslineRenderer,
-  StatuslineRendererOutput,
-} from "@/cli/display/statusline/types";
 import {
   cloneModCapabilities,
   resolveModCapabilities,
@@ -82,7 +77,6 @@ import type {
   ModEventName,
   ModEventRegistration,
   ModEventResultMap,
-  ModInvocationContext,
   ModOwner,
   ModPanel,
   ModPanelHandle,
@@ -105,15 +99,6 @@ export const LEGACY_GLOBAL_EXTENSIONS_DIRECTORY =
 export const MOD_CACHE_DIRECTORY = getModCacheDirectory();
 
 const requireFromRuntime = createRequire(import.meta.url);
-
-export type StatuslineRenderFunction = (
-  context: StatuslineRenderContext,
-) => StatuslineRendererOutput;
-
-export type ModStatusValue =
-  | string
-  | null
-  | ((context: ModInvocationContext) => string | null);
 
 export type LettaModDisposer = () => void;
 
@@ -171,13 +156,14 @@ export interface LettaModApi {
     report: (diagnostic: ModDiagnosticReportOptions) => void;
   };
   ui: {
-    clearPanel: (id: string) => void;
-    clearStatus: (key: string) => void;
+    closePanel: (id: string) => void;
     openPanel: (panel: ModPanelOptions) => ModPanelHandle;
-    setStatus: (key: string, value: ModStatusValue | undefined) => void;
-    setStatuslineRenderer: (
-      renderer: StatuslineRenderer | StatuslineRenderFunction,
-    ) => void;
+    /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
+    setStatus: (key: string, value?: unknown) => void;
+    /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
+    clearStatus: (key: string) => void;
+    /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
+    setStatuslineRenderer: (renderer: unknown) => void;
   };
 }
 
@@ -189,12 +175,6 @@ export interface LocalModDisposer {
 
 export interface LocalModUiRegistry {
   panels: Record<string, ModPanel>;
-  statuslineRecordDiagnostic?: ModCapabilityDiagnosticRecorder;
-  statuslineRenderer: StatuslineRenderer | null;
-  statuslineRendererOwner?: ModOwner;
-  statusOwners: Record<string, ModOwner>;
-  statusRecorders: Record<string, ModCapabilityDiagnosticRecorder>;
-  statusValues: Record<string, ModStatusValue>;
 }
 
 type LocalModEventsRegistry = Partial<
@@ -388,10 +368,6 @@ function createEmptyModRegistry(
     tools: {},
     ui: {
       panels: {},
-      statusRecorders: {},
-      statuslineRenderer: null,
-      statusOwners: {},
-      statusValues: {},
     },
   };
 }
@@ -444,9 +420,6 @@ function snapshotRegistryForReaders(
     ui: {
       ...registry.ui,
       panels: { ...registry.ui.panels },
-      statusRecorders: { ...registry.ui.statusRecorders },
-      statusOwners: { ...registry.ui.statusOwners },
-      statusValues: { ...registry.ui.statusValues },
     },
   };
 }
@@ -488,20 +461,6 @@ function removeOwnerCapabilities(
   }
 
   unregisterModToolsForOwner(owner);
-
-  for (const [key, statusOwner] of Object.entries(registry.ui.statusOwners)) {
-    if (statusOwner.id === owner.id) {
-      delete registry.ui.statusOwners[key];
-      delete registry.ui.statusRecorders[key];
-      delete registry.ui.statusValues[key];
-    }
-  }
-
-  if (registry.ui.statuslineRendererOwner?.id === owner.id) {
-    registry.ui.statuslineRenderer = null;
-    delete registry.ui.statuslineRecordDiagnostic;
-    delete registry.ui.statuslineRendererOwner;
-  }
 
   delete registry.owners[owner.id];
 }
@@ -642,22 +601,6 @@ function createImportableModPath(
   }
 
   return importPath;
-}
-
-function toStatuslineRenderer(
-  renderer: StatuslineRenderer | StatuslineRenderFunction,
-  modPath: string,
-): StatuslineRenderer {
-  if (typeof renderer === "function") {
-    return {
-      id: `local:${modPath}`,
-      label: path.basename(modPath),
-      description: modPath,
-      render: renderer,
-    };
-  }
-
-  return renderer;
 }
 
 function createLazyClient(getClient: () => Promise<Letta>): Letta {
@@ -1070,7 +1013,7 @@ function createLettaModApi(
     }
   };
 
-  const clearPanel = (id: string) => {
+  const closePanel = (id: string) => {
     if (!capabilities.ui.panels) return;
     validateModPanelId(id);
     if (!guardLive({ id, kind: "panel" })) return;
@@ -1080,6 +1023,17 @@ function createLettaModApi(
       delete registry.ui.panels[panelKey];
       onChange();
     }
+  };
+
+  const recordStatuslineDeprecation = (apiId: string) => {
+    recordCapabilityDiagnostic({
+      capability: { id: apiId, kind: "statusline" },
+      error: new Error(
+        `${apiId} is no longer available. Use letta.ui.openPanel({ id, order, render }) instead — order 0 is the primary line (replaces agent · model), negative orders stack below it.`,
+      ),
+      phase: "deprecated_api",
+      severity: "warning",
+    });
   };
 
   const unregisterTool = (name: string) => {
@@ -1353,15 +1307,7 @@ function createLettaModApi(
       report: reportDiagnostic,
     },
     ui: {
-      clearPanel,
-      clearStatus(key) {
-        if (!capabilities.ui.statusValues) return;
-        if (!guardLive({ id: key, kind: "status" })) return;
-        delete registry.ui.statusValues[key];
-        delete registry.ui.statusOwners[key];
-        delete registry.ui.statusRecorders[key];
-        onChange();
-      },
+      closePanel,
       openPanel(panel) {
         if (!capabilities.ui.panels) {
           return {
@@ -1383,7 +1329,7 @@ function createLettaModApi(
         onChange();
         return {
           close() {
-            clearPanel(panel.id);
+            closePanel(panel.id);
           },
           update(options) {
             if (!guardLive({ id: panel.id, kind: "panel" })) return;
@@ -1394,31 +1340,14 @@ function createLettaModApi(
           },
         };
       },
-      setStatus(key, value) {
-        if (!capabilities.ui.statusValues) return;
-        if (!guardLive({ id: key, kind: "status" })) return;
-        if (value == null) {
-          delete registry.ui.statusValues[key];
-          delete registry.ui.statusOwners[key];
-          delete registry.ui.statusRecorders[key];
-          onChange();
-          return;
-        }
-        registry.ui.statusValues[key] = value;
-        registry.ui.statusOwners[key] = owner;
-        registry.ui.statusRecorders[key] = recordCapabilityDiagnostic;
-        onChange();
+      setStatus() {
+        recordStatuslineDeprecation("letta.ui.setStatus");
       },
-      setStatuslineRenderer(renderer) {
-        if (!capabilities.ui.customStatuslineRenderer) return;
-        if (!guardLive({ id: owner.id, kind: "statusline" })) return;
-        registry.ui.statuslineRenderer = toStatuslineRenderer(
-          renderer,
-          owner.path,
-        );
-        registry.ui.statuslineRecordDiagnostic = recordCapabilityDiagnostic;
-        registry.ui.statuslineRendererOwner = owner;
-        onChange();
+      clearStatus() {
+        recordStatuslineDeprecation("letta.ui.clearStatus");
+      },
+      setStatuslineRenderer() {
+        recordStatuslineDeprecation("letta.ui.setStatuslineRenderer");
       },
     },
   };
@@ -1599,42 +1528,6 @@ export async function loadLocalMods(
   }
 
   return registry;
-}
-
-export function evaluateLocalModStatuses(
-  registry: LocalModRegistry | null,
-  context: ModContext,
-): Record<string, string> {
-  if (!registry) return {};
-
-  const statuses: Record<string, string> = {};
-  for (const [key, value] of Object.entries(registry.ui.statusValues)) {
-    try {
-      const nextValue =
-        typeof value === "function"
-          ? value(
-              attachDeprecatedGetContextTrap(
-                { ...context },
-                registry.ui.statusRecorders[key],
-                "ctx.getContext",
-              ),
-            )
-          : value;
-      if (nextValue != null) {
-        statuses[key] = nextValue;
-      }
-    } catch (error) {
-      registry.ui.statusRecorders[key]?.({
-        capability: { id: key, kind: "status" },
-        error: error instanceof Error ? error : new Error(String(error)),
-        phase: "status.evaluate",
-      });
-      // Status providers run during render; failed providers are skipped so the
-      // mod cannot crash the TUI.
-    }
-  }
-
-  return statuses;
 }
 
 export async function emitLocalModEvent<TName extends ModEventName>(
@@ -1818,12 +1711,6 @@ export function disposeLocalMods(registry: LocalModRegistry): void {
   registry.permissions = {};
   registry.tools = {};
   registry.ui.panels = {};
-  registry.ui.statusOwners = {};
-  registry.ui.statusRecorders = {};
-  registry.ui.statusValues = {};
-  registry.ui.statuslineRenderer = null;
-  delete registry.ui.statuslineRecordDiagnostic;
-  delete registry.ui.statuslineRendererOwner;
 }
 
 export function createModEngine(options: CreateModEngineOptions): ModEngine {

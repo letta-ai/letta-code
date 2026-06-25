@@ -224,12 +224,23 @@ export default function activate(letta) {
   if (!letta.capabilities.events.lifecycle) return;
 
   const disposers = [];
+  let conversation = "";
 
-  disposers.push(
-    letta.events.on("conversation_open", (event) => {
-      letta.ui.setStatus("conversation", event.reason);
-    }),
-  );
+  if (letta.capabilities.ui.panels) {
+    const panel = letta.ui.openPanel({
+      id: "conversation",
+      order: 100,
+      render: ({ width, row }) => row("conversation", conversation, width),
+    });
+    disposers.push(() => panel.close());
+
+    disposers.push(
+      letta.events.on("conversation_open", (event) => {
+        conversation = event.reason;
+        panel.update();
+      }),
+    );
+  }
 
   disposers.push(
     letta.events.on("conversation_close", (event) => {
@@ -239,7 +250,6 @@ export default function activate(letta) {
 
   return () => {
     for (const dispose of disposers.reverse()) dispose();
-    letta.ui.clearStatus("conversation");
   };
 }
 ```
