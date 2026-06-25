@@ -983,6 +983,7 @@ export function buildSubagentArgs(
     args.push("-p", buildSubagentPrompt(type, config, userPrompt));
   }
   args.push("--output-format", "stream-json");
+  args.push("--permission-mode", "unrestricted");
 
   // Build list of auto-approved tools:
   // 1. Inherit from parent (CLI + session rules)
