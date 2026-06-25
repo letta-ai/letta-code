@@ -78,7 +78,9 @@ function inferProviderTypeFromRegistryHandle(
 ): string | undefined {
   const provider = modelHandle.split("/")[0];
   if (!provider) return undefined;
-  if (provider === "openai-codex") return "chatgpt_oauth";
+  if (provider === "openai-codex" || provider === "chatgpt-plus-pro") {
+    return "chatgpt_oauth";
+  }
   if (
     provider === "anthropic" ||
     provider === "bedrock" ||
