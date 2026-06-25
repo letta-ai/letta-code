@@ -1189,7 +1189,10 @@ describe("MessageChannel", () => {
       },
     });
 
-    expect(result).toBe("Error: Slack send requires message or media.");
+    // The no-op guard catches this before the Slack plugin's own validation,
+    // since the legacy `text` alias is ignored and `message` is absent.
+    expect(result).toContain("Error");
+    expect(result).toContain("requires a non-empty message or media");
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
