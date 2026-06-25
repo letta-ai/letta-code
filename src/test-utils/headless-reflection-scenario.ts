@@ -24,6 +24,7 @@ import { createAuthenticatedCliTestEnv } from "./test-process-env";
 
 interface Args {
   model: string;
+  reflectionModel: string;
 }
 
 interface ReflectionTranscriptState {
@@ -61,16 +62,22 @@ interface LiveReflectionSummary {
 
 const TURN_ONE_MARKER = "LIVE_REFLECTION_TURN_ONE_MARKER";
 const TURN_TWO_MARKER = "LIVE_REFLECTION_TURN_TWO_MARKER";
+const DEFAULT_REFLECTION_MODEL = "gpt-5.4-mini-low";
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { model: "auto" };
+  const args: Args = {
+    model: "auto",
+    reflectionModel: DEFAULT_REFLECTION_MODEL,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const value = argv[i];
     if (value === "--model") {
       args.model = argv[++i] ?? args.model;
+    } else if (value === "--reflection-model") {
+      args.reflectionModel = argv[++i] ?? args.reflectionModel;
     } else if (value === "--help" || value === "-h") {
       console.log(
-        "Usage: bun run src/test-utils/headless-reflection-scenario.ts [--model auto]",
+        "Usage: bun run src/test-utils/headless-reflection-scenario.ts [--model auto] [--reflection-model gpt-5.4-mini-low]",
       );
       process.exit(0);
     } else {
@@ -114,6 +121,7 @@ async function runLiveBidirectionalReflectionSmoke(
       projectDir,
       transcriptRoot,
       model: args.model,
+      reflectionModel: args.reflectionModel,
     });
   } finally {
     await rm(tmpRoot, { recursive: true, force: true });
@@ -126,6 +134,7 @@ async function runLiveBidirectionalCli(paths: {
   projectDir: string;
   transcriptRoot: string;
   model: string;
+  reflectionModel: string;
 }): Promise<LiveReflectionSummary> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -155,6 +164,7 @@ async function runLiveBidirectionalCli(paths: {
         env: createAuthenticatedCliTestEnv({
           HOME: paths.homeDir,
           LETTA_TRANSCRIPT_ROOT: paths.transcriptRoot,
+          LETTA_REFLECTION_SUBAGENT_MODEL: paths.reflectionModel,
           USER_CWD: paths.projectDir,
           LETTA_DEBUG: "1",
           NO_COLOR: "1",
@@ -516,7 +526,9 @@ async function main(): Promise<void> {
 
   const summary = await runLiveBidirectionalReflectionSmoke(args);
   assertScenario(summary);
-  console.log(`OK: reflection / headless / ${args.model}`);
+  console.log(
+    `OK: reflection / headless / ${args.model} / reflection ${args.reflectionModel}`,
+  );
 }
 
 main().catch((error) => {

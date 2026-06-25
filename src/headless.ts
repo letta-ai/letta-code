@@ -3137,6 +3137,8 @@ async function runBidirectionalMode(
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const reflectionSubagentModel =
+    process.env.LETTA_REFLECTION_SUBAGENT_MODEL?.trim() || undefined;
   const maybeLaunchReflectionSubagent = async (
     triggerSource: Exclude<ReflectionTrigger, "off">,
   ): Promise<boolean> => {
@@ -3146,6 +3148,7 @@ async function runBidirectionalMode(
       memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
       triggerSource,
       description: AUTO_REFLECTION_DESCRIPTION,
+      model: reflectionSubagentModel,
       systemPrompt: agent.system ?? undefined,
       recompileByConversation: systemPromptRecompileByConversation,
       recompileQueuedByConversation: queuedSystemPromptRecompileByConversation,
