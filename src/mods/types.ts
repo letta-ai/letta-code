@@ -73,6 +73,8 @@ export interface ModEventCapabilities {
   lifecycle: boolean;
   tools: boolean;
   turns: boolean;
+  compact: boolean;
+  llm: boolean;
 }
 
 export interface ModCapabilities {
@@ -144,8 +146,13 @@ export type ModEventName =
   | "conversation_open"
   | "conversation_close"
   | "tool_start"
+  | "tool_end"
   | "turn_start"
-  | "turn_end";
+  | "turn_end"
+  | "compact_start"
+  | "compact_end"
+  | "llm_start"
+  | "llm_end";
 
 export type ModConversationOpenReason =
   | "startup"
@@ -201,6 +208,19 @@ export interface ModToolStartResult {
   result?: { status: "success" | "error"; output: string };
 }
 
+export interface ModToolEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  toolCallId: string | null;
+  toolName: string;
+  status: "success" | "error";
+  output: string;
+}
+
+export interface ModToolEndResult {
+  result?: { status: "success" | "error"; output: string };
+}
+
 export interface ModTurnEndEvent {
   agentId: string | null;
   conversationId: string | null;
@@ -212,20 +232,74 @@ export interface ModTurnEndResult {
   continue?: string;
 }
 
+export type ModCompactTrigger =
+  | "manual"
+  | "context_window_overflow"
+  | "context_window_limit";
+
+export interface ModCompactStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: ModCompactTrigger;
+}
+
+export interface ModCompactEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: ModCompactTrigger;
+  messagesBefore: number;
+  messagesAfter: number;
+  contextTokensBefore: number;
+  contextTokensAfter: number;
+}
+
+export interface ModLlmUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface ModLlmStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  messageCount: number;
+  contextWindow: number;
+}
+
+export interface ModLlmEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  stopReason: string;
+  usage: ModLlmUsage;
+  durationMs: number;
+}
+
 export interface ModEventMap {
   conversation_open: ModConversationOpenEvent;
   conversation_close: ModConversationCloseEvent;
   tool_start: ModToolStartEvent;
+  tool_end: ModToolEndEvent;
   turn_start: ModTurnStartEvent;
   turn_end: ModTurnEndEvent;
+  compact_start: ModCompactStartEvent;
+  compact_end: ModCompactEndEvent;
+  llm_start: ModLlmStartEvent;
+  llm_end: ModLlmEndEvent;
 }
 
 export interface ModEventResultMap {
   conversation_open: undefined;
   conversation_close: undefined;
   tool_start: ModToolStartResult | undefined;
+  tool_end: ModToolEndResult | undefined;
   turn_start: ModTurnStartResult | undefined;
   turn_end: ModTurnEndResult | undefined;
+  compact_start: undefined;
+  compact_end: undefined;
+  llm_start: undefined;
+  llm_end: undefined;
 }
 
 export interface ModInvocationContext extends ModContext {}
@@ -350,21 +424,16 @@ export type ModCommandResult =
   | { type: "output"; output: string; success?: boolean }
   | { type: "handled" };
 
-export type ModPanelContent = string | string[];
+export type ModPanelRender = (ctx: { width: number }) => string | string[];
 
 export interface ModPanelOptions {
-  content?: ModPanelContent;
   id: string;
-  order?: number;
-}
-
-export interface ModPanelUpdate {
-  content?: ModPanelContent;
+  render: ModPanelRender;
   order?: number;
 }
 
 export interface ModPanel {
-  content: string[];
+  render: ModPanelRender;
   id: string;
   owner?: ModOwner;
   order: number;
@@ -374,7 +443,7 @@ export interface ModPanel {
 
 export interface ModPanelHandle {
   close: () => void;
-  update: (update: ModPanelUpdate) => void;
+  update: (options?: { order?: number }) => void;
 }
 
 export interface ModCommandRegistration {

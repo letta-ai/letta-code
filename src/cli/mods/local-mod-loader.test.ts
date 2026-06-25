@@ -907,9 +907,8 @@ export default function(letta) {
         `export default function(letta) {
           const panel = letta.ui.openPanel({
             id: "btw",
-            content: ["┌ /btw question ┐", "│ …             │", "└───────────────┘"],
+            render: () => "answer",
           });
-          panel.update({ content: "answer" });
           return () => panel.close();
         }`,
       );
@@ -917,10 +916,9 @@ export default function(letta) {
       const registry = await loadLocalMods(options);
 
       expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
-      expect(Object.values(registry.ui.panels)[0]).toMatchObject({
-        content: ["answer"],
-        id: "btw",
-      });
+      const panel = Object.values(registry.ui.panels)[0];
+      expect(panel).toMatchObject({ id: "btw" });
+      expect(panel?.render({ width: 80 })).toBe("answer");
 
       disposeLocalMods(registry);
       expect(registry.ui.panels).toEqual({});
@@ -938,13 +936,13 @@ export default function(letta) {
       writeFileSync(
         path.join(modDir, "a.ts"),
         `export default function(letta) {
-          letta.ui.openPanel({ id: "status", content: "from a" });
+          letta.ui.openPanel({ id: "status", render: () => "from a" });
         }`,
       );
       writeFileSync(
         path.join(modDir, "b.ts"),
         `export default function(letta) {
-          letta.ui.openPanel({ id: "status", content: "from b" });
+          letta.ui.openPanel({ id: "status", render: () => "from b" });
         }`,
       );
 
@@ -952,8 +950,10 @@ export default function(letta) {
 
       expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
       expect(
-        Object.values(registry.ui.panels).map((panel) => panel.content),
-      ).toEqual([["from a"], ["from b"]]);
+        Object.values(registry.ui.panels).map((panel) =>
+          panel.render({ width: 80 }),
+        ),
+      ).toEqual(["from a", "from b"]);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

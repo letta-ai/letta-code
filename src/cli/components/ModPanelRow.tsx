@@ -11,6 +11,18 @@ function visiblePanels(panels: Record<string, ModPanel>): ModPanel[] {
   );
 }
 
+function renderPanelLines(panel: ModPanel, width: number): string[] {
+  let result: string | string[];
+  try {
+    result = panel.render({ width });
+  } catch {
+    // A mod's render fn runs inside the input render; never let it crash the UI.
+    return [];
+  }
+  const lines = Array.isArray(result) ? result : String(result).split("\n");
+  return lines.map(String);
+}
+
 export function ModPanelRow({
   panels,
   terminalWidth,
@@ -22,7 +34,7 @@ export function ModPanelRow({
   if (rowWidth === 0) return null;
 
   const lines = visiblePanels(panels ?? {})
-    .flatMap((panel) => panel.content)
+    .flatMap((panel) => renderPanelLines(panel, rowWidth))
     .slice(0, MAX_MOD_PANEL_LINES);
   if (lines.length === 0) return null;
 

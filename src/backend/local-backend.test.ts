@@ -904,6 +904,153 @@ describe("local backend pi transcript", () => {
     expect(systemPrompts[1]).not.toBe(systemPrompts[0]);
   });
 
+  test("emits compact mod-event hooks around local compaction", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-hooks-"),
+    );
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "summary-response",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Compacted summary." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    const starts: Array<{ trigger: string; conversationId: string | null }> =
+      [];
+    const ends: Array<{
+      trigger: string;
+      messagesBefore: number;
+      messagesAfter: number;
+      contextTokensBefore: number;
+      contextTokensAfter: number;
+    }> = [];
+    backend.setModEventHooks({
+      onCompactStart: (info) => {
+        starts.push({
+          trigger: info.trigger,
+          conversationId: info.conversationId,
+        });
+      },
+      onCompactEnd: (info) => {
+        ends.push({
+          trigger: info.trigger,
+          messagesBefore: info.messagesBefore,
+          messagesAfter: info.messagesAfter,
+          contextTokensBefore: info.contextTokensBefore,
+          contextTokensAfter: info.contextTokensAfter,
+        });
+      },
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+
+    expect(starts).toEqual([
+      { trigger: "manual", conversationId: conversation.id },
+    ]);
+    expect(ends).toHaveLength(1);
+    expect(ends[0]?.trigger).toBe("manual");
+    // Compaction never increases the message count.
+    expect(ends[0]?.messagesBefore).toBeGreaterThanOrEqual(
+      ends[0]?.messagesAfter ?? 0,
+    );
+    expect(ends[0]?.messagesAfter ?? 0).toBeGreaterThan(0);
+    expect(ends[0]?.contextTokensBefore ?? -1).toBeGreaterThanOrEqual(0);
+    expect(ends[0]?.contextTokensAfter ?? -1).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a throwing compact hook does not break compaction", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-hook-throws-"),
+    );
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "summary-response",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Compacted summary." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    backend.setModEventHooks({
+      onCompactStart: () => {
+        throw new Error("start hook boom");
+      },
+      onCompactEnd: () => {
+        throw new Error("end hook boom");
+      },
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const result = await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+
+    expect(result.summary).toBe("Compacted summary.");
+  });
+
   test("compaction follows the conversation model override, not the agent base", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-compact-model-"),

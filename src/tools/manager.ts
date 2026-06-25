@@ -45,6 +45,7 @@ import {
 import type {
   ModContext,
   ModSecretResolver,
+  ModToolEndEvent,
   ModToolRunContext,
   ModToolStartEvent,
   ToolApprovalPolicy,
@@ -2327,6 +2328,36 @@ async function emitToolStartEvent(options: {
   };
 }
 
+async function emitToolEndEvent(options: {
+  events?: ModEvents;
+  executionScope: RuntimeContextSnapshot;
+  modContext: ModContext;
+  toolCallId?: string;
+  toolName: string;
+  status: "success" | "error";
+  output: string;
+}): Promise<{ status: "success" | "error"; output: string } | undefined> {
+  const event: ModToolEndEvent & {
+    result?: { status: "success" | "error"; output: string };
+  } = {
+    agentId: options.executionScope.agentId ?? null,
+    conversationId: options.executionScope.conversationId ?? null,
+    toolCallId: options.toolCallId ?? null,
+    toolName: options.toolName,
+    status: options.status,
+    output: options.output,
+  };
+
+  try {
+    await emitModEvent(options.events, "tool_end", event, options.modContext);
+  } catch (error) {
+    debugLog("mods", "tool_end event failed", error);
+    return undefined;
+  }
+
+  return event.result;
+}
+
 async function executeModTool(
   toolName: string,
   tool: ModToolDefinition,
@@ -2575,7 +2606,7 @@ function toolExecutionModContext(
  * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
  * @returns Promise with the tool's execution result including status and optional stdout/stderr
  */
-export async function executeTool(
+async function executeToolInner(
   name: string,
   args: ToolArgs,
   options?: {
@@ -3044,6 +3075,64 @@ export async function executeTool(
   };
 
   return runWithRuntimeContext(executionScope, run);
+}
+
+/**
+ * Executes a tool and gives mods a chance to observe or replace the result via
+ * the `tool_end` event. A handler returning `{ result: { status, output } }`
+ * overrides what the agent sees (first handler wins). Only fires for string
+ * results — multimodal/image results pass through unchanged. Delivery is
+ * capability-gated (`events.tools`), so only enabled surfaces receive it.
+ *
+ * @param name - Name of the tool to execute
+ * @param args - Arguments object to pass to the tool
+ * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
+ * @returns Promise with the tool's execution result including status and optional stdout/stderr
+ */
+export async function executeTool(
+  ...params: Parameters<typeof executeToolInner>
+): Promise<ToolExecutionResult> {
+  const [name, args, options] = params;
+  const res = await executeToolInner(name, args, options);
+
+  const context = options?.toolContextId
+    ? getExecutionContextById(options.toolContextId)
+    : undefined;
+  const modEvents = context?.modEvents;
+  if (!modEvents || typeof res.toolReturn !== "string") {
+    return res;
+  }
+
+  const executionScope = context?.runtimeContext
+    ? buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
+        permissionModeState: context.permissionModeState,
+        runtimeContext: context.runtimeContext,
+      })
+    : buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context?.workingDirectory,
+        permissionModeState: context?.permissionModeState,
+      });
+  const modContext =
+    context?.modContext ??
+    toolExecutionModContext(executionScope, {
+      workingDirectory:
+        executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
+    });
+
+  const override = await emitToolEndEvent({
+    events: modEvents,
+    executionScope,
+    modContext,
+    toolCallId: options?.toolCallId,
+    toolName: name,
+    status: res.status,
+    output: res.toolReturn,
+  });
+
+  return override
+    ? { ...res, toolReturn: override.output, status: override.status }
+    : res;
 }
 
 /**

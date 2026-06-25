@@ -15,6 +15,7 @@ import {
 } from "@/channels/discord/adapter";
 import { __testOverrideLoadDiscordModule } from "@/channels/discord/runtime";
 import type {
+  ChannelTurnSource,
   DiscordChannelAccount,
   InboundChannelMessage,
 } from "@/channels/types";
@@ -58,12 +59,18 @@ class FakeDiscordClient {
   };
 
   readonly channels = {
-    fetch: mock(async () => null),
+    fetch: mock(async (_id: string): Promise<unknown> => null),
   };
 
-  readonly login = mock(async (_token: string) => undefined);
+  readonly login = mock(async (_token: string) => {
+    await this.onceHandlers.get("ready")?.();
+  });
   readonly destroy = mock(() => {});
   private readonly handlers = new Map<
+    string,
+    (...args: unknown[]) => unknown
+  >();
+  private readonly onceHandlers = new Map<
     string,
     (...args: unknown[]) => unknown
   >();
@@ -72,7 +79,8 @@ class FakeDiscordClient {
     FakeDiscordClient.instances.push(this);
   }
 
-  once(_event: string, _handler: (...args: unknown[]) => unknown): this {
+  once(event: string, handler: (...args: unknown[]) => unknown): this {
+    this.onceHandlers.set(event, handler);
     return this;
   }
 
@@ -163,6 +171,50 @@ function createGuildMessage(
     })),
     react: mock(async () => {}),
     reactions: { cache: new Map<string, never>() },
+  };
+}
+
+function createTurnSource(
+  overrides: Partial<ChannelTurnSource> = {},
+): ChannelTurnSource {
+  return {
+    channel: "discord",
+    accountId: "discord-bot",
+    chatId: "channel-1",
+    chatType: "direct",
+    messageId: "msg-1",
+    threadId: null,
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    ...overrides,
+  };
+}
+
+function createFetchedDiscordMessage() {
+  return {
+    id: "msg-1",
+    react: mock(async (_emoji: string) => undefined),
+    reactions: {
+      cache: new Map<string, never>(),
+      resolve: mock((_emoji: string) => null),
+    },
+  };
+}
+
+function createTextChannel(
+  message: ReturnType<
+    typeof createFetchedDiscordMessage
+  > = createFetchedDiscordMessage(),
+) {
+  return {
+    isTextBased: () => true,
+    sendTyping: mock(async () => undefined),
+    send: mock(async (_options: string | Record<string, unknown>) => ({
+      id: "sent-message",
+    })),
+    messages: {
+      fetch: mock(async (_id: string) => message),
+    },
   };
 }
 
@@ -286,6 +338,151 @@ describe("Discord adapter open-channel ingress", () => {
       isMention: false,
       isOpenChannel: true,
     });
+  });
+});
+
+describe("Discord adapter lifecycle feedback", () => {
+  test("sends typing while a turn is processing and clears it on finish", async () => {
+    const adapter = createDiscordAdapter({
+      ...discordAccountDefaults,
+      allowedChannels: {},
+      acknowledgeMessageReaction: false,
+    });
+    await adapter.start();
+
+    const client = FakeDiscordClient.instances.at(-1);
+    if (!client) throw new Error("Discord client was not created");
+    const channel = createTextChannel();
+    client.channels.fetch.mockImplementation(async () => channel);
+    const source = createTurnSource();
+
+    await adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+    expect(channel.sendTyping).not.toHaveBeenCalled();
+
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "batch-1",
+      sources: [source],
+    });
+    expect(client.channels.fetch).toHaveBeenCalledWith("channel-1");
+    expect(channel.sendTyping).toHaveBeenCalledTimes(1);
+
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "batch-1",
+      sources: [source],
+    });
+    expect(channel.sendTyping).toHaveBeenCalledTimes(1);
+
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "finished",
+      batchId: "batch-1",
+      sources: [source],
+      outcome: "completed",
+    });
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "batch-2",
+      sources: [source],
+    });
+    expect(channel.sendTyping).toHaveBeenCalledTimes(2);
+
+    await adapter.stop();
+  });
+
+  test("stops refreshing typing after sending a message", async () => {
+    const adapter = createDiscordAdapter({
+      ...discordAccountDefaults,
+      allowedChannels: {},
+      acknowledgeMessageReaction: false,
+    });
+    await adapter.start();
+
+    const client = FakeDiscordClient.instances.at(-1);
+    if (!client) throw new Error("Discord client was not created");
+    const channel = createTextChannel();
+    client.channels.fetch.mockImplementation(async () => channel);
+    const source = createTurnSource();
+
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "batch-1",
+      sources: [source],
+    });
+    expect(channel.sendTyping).toHaveBeenCalledTimes(1);
+
+    await adapter.sendMessage({
+      channel: "discord",
+      accountId: "discord-bot",
+      chatId: "channel-1",
+      text: "done",
+    });
+    expect(channel.send).toHaveBeenCalledWith({ content: "done" });
+
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "batch-2",
+      sources: [source],
+    });
+    expect(channel.sendTyping).toHaveBeenCalledTimes(2);
+
+    await adapter.stop();
+  });
+
+  test("does not send lifecycle reactions unless opted in", async () => {
+    const adapter = createDiscordAdapter({
+      ...discordAccountDefaults,
+      allowedChannels: {},
+      acknowledgeMessageReaction: false,
+    });
+    await adapter.start();
+
+    const client = FakeDiscordClient.instances.at(-1);
+    if (!client) throw new Error("Discord client was not created");
+    const message = createFetchedDiscordMessage();
+    client.channels.fetch.mockImplementation(async () =>
+      createTextChannel(message),
+    );
+    const source = createTurnSource();
+
+    await adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "finished",
+      batchId: "batch-1",
+      sources: [source],
+      outcome: "completed",
+    });
+
+    expect(message.react).not.toHaveBeenCalled();
+    await adapter.stop();
+  });
+
+  test("sends lifecycle reactions when opted in", async () => {
+    const adapter = createDiscordAdapter({
+      ...discordAccountDefaults,
+      allowedChannels: {},
+      acknowledgeMessageReaction: true,
+    });
+    await adapter.start();
+
+    const client = FakeDiscordClient.instances.at(-1);
+    if (!client) throw new Error("Discord client was not created");
+    const message = createFetchedDiscordMessage();
+    const channel = createTextChannel(message);
+    client.channels.fetch.mockImplementation(async () => channel);
+    const source = createTurnSource();
+
+    await adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "finished",
+      batchId: "batch-1",
+      sources: [source],
+      outcome: "completed",
+    });
+
+    expect(message.react).toHaveBeenNthCalledWith(1, "👀");
+    expect(message.react).toHaveBeenNthCalledWith(2, "✅");
+    await adapter.stop();
   });
 });
 

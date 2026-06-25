@@ -1925,6 +1925,20 @@ export function Input({
     previousFooterNotificationRef.current = footerNotification ?? null;
   }, [footerNotification, showStatuslineTransientHint]);
 
+  // Decoupled from input churn (value/cursorPos) so panel content only
+  // re-renders when the panels themselves change, mirroring how BtwPane
+  // stays flash-free. Folding this into lowerPane would rebuild it on every
+  // keystroke.
+  const modPanelRow = useMemo(() => {
+    if (suppressDividers) return null;
+    return (
+      <ModPanelRow
+        panels={modAdapter.registry?.ui.panels}
+        terminalWidth={terminalWidth}
+      />
+    );
+  }, [suppressDividers, modAdapter.registry?.ui.panels, terminalWidth]);
+
   const lowerPane = useMemo(() => {
     return (
       <>
@@ -1935,12 +1949,7 @@ export function Input({
 
         {interactionEnabled ? (
           <Box flexDirection="column">
-            {!suppressDividers && (
-              <ModPanelRow
-                panels={modAdapter.registry?.ui.panels}
-                terminalWidth={terminalWidth}
-              />
-            )}
+            {modPanelRow}
 
             {!suppressDividers && (
               <ProductStatusRow
@@ -2058,6 +2067,7 @@ export function Input({
     );
   }, [
     messageQueue,
+    modPanelRow,
     interactionEnabled,
     isBashMode,
     horizontalLine,

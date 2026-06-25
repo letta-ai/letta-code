@@ -196,7 +196,7 @@ export function buildReflectionSubagentPrompt(
   const lines: string[] = [];
 
   lines.push(
-    "Review the conversation transcript payload and update memory files. The payload path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit/Read/Write `file_path` is literal and does NOT expand env vars.",
+    'Review the conversation transcript payload and update memory files. The payload path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `wc -c "$TRANSCRIPT_PATH"`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit `file_path` is literal and does NOT expand env vars.',
     "",
     'The payload may be either a JSON message array for one conversation or a `multi_transcript_reflection_payload` manifest. If it is a manifest, read each `payload_path` listed in `transcripts` and synthesize across all conversations. Entries with `mode: "replay"` were already reflected before and are included intentionally for re-review/deduplication; do not ignore them just because they are replay slices.',
     "When reviewing multiple transcripts, prefer durable patterns and latest evidence across sessions. Resolve contradictions by updating stale memory at the source, deduplicate repeated facts, and avoid storing one-off task state.",

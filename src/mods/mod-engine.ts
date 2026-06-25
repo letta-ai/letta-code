@@ -85,14 +85,14 @@ import type {
   ModInvocationContext,
   ModOwner,
   ModPanel,
-  ModPanelContent,
   ModPanelHandle,
   ModPanelOptions,
-  ModPanelUpdate,
+  ModPanelRender,
   ModPermission,
   ModPermissionRegistration,
   ModSourceScope,
   ModTool,
+  ModToolEndEvent,
   ModToolRegistration,
   ModToolStartEvent,
   ModTurnEndEvent,
@@ -694,8 +694,13 @@ const SUPPORTED_MOD_EVENT_NAMES = new Set<ModEventName>([
   "conversation_open",
   "conversation_close",
   "tool_start",
+  "tool_end",
   "turn_start",
   "turn_end",
+  "compact_start",
+  "compact_end",
+  "llm_start",
+  "llm_end",
 ]);
 
 function validateModEventName(name: string): asserts name is ModEventName {
@@ -713,10 +718,17 @@ function isModEventCapabilityEnabled(
     case "conversation_close":
       return capabilities.events.lifecycle;
     case "tool_start":
+    case "tool_end":
       return capabilities.events.tools;
     case "turn_start":
     case "turn_end":
       return capabilities.events.turns;
+    case "compact_start":
+    case "compact_end":
+      return capabilities.events.compact;
+    case "llm_start":
+    case "llm_end":
+      return capabilities.events.llm;
   }
 }
 
@@ -779,6 +791,18 @@ function isToolStartResultWithResult(
 ): result is { result: { status: "success" | "error"; output: string } } {
   return (
     name === "tool_start" &&
+    typeof result === "object" &&
+    result !== null &&
+    isToolStartResult((result as { result?: unknown }).result)
+  );
+}
+
+function isToolEndResultWithResult(
+  name: ModEventName,
+  result: unknown,
+): result is { result: { status: "success" | "error"; output: string } } {
+  return (
+    name === "tool_end" &&
     typeof result === "object" &&
     result !== null &&
     isToolStartResult((result as { result?: unknown }).result)
@@ -955,30 +979,22 @@ function getModPanelKey(modPath: string, id: string): string {
   return JSON.stringify([modPath, id]);
 }
 
-function normalizePanelContent(content: ModPanelContent | undefined): string[] {
-  if (content == null) return [];
-  return Array.isArray(content)
-    ? content.map(String)
-    : String(content).split("\n");
-}
-
 function upsertModPanel(
   registry: LocalModRegistry,
   owner: ModOwner,
   id: string,
-  update: ModPanelUpdate,
+  patch: { render?: ModPanelRender; order?: number },
 ): void {
   validateModPanelId(id);
   const panelKey = getModPanelKey(owner.id, id);
   const existing = registry.ui.panels[panelKey];
+  const render = patch.render ?? existing?.render;
+  if (!render) return;
   registry.ui.panels[panelKey] = {
-    content:
-      update.content === undefined
-        ? (existing?.content ?? [])
-        : normalizePanelContent(update.content),
+    render,
     id,
     owner,
-    order: update.order ?? existing?.order ?? 100,
+    order: patch.order ?? existing?.order ?? 100,
     path: owner.path,
     updatedAt: Date.now(),
   };
@@ -1370,15 +1386,20 @@ function createLettaModApi(
           };
         }
 
-        upsertModPanel(registry, owner, panel.id, panel);
+        upsertModPanel(registry, owner, panel.id, {
+          render: panel.render,
+          order: panel.order,
+        });
         onChange();
         return {
           close() {
             clearPanel(panel.id);
           },
-          update(update) {
+          update(options) {
             if (!guardLive({ id: panel.id, kind: "panel" })) return;
-            upsertModPanel(registry, owner, panel.id, update);
+            upsertModPanel(registry, owner, panel.id, {
+              order: options?.order,
+            });
             onChange();
           },
         };
@@ -1711,6 +1732,16 @@ export async function emitLocalModEvent<TName extends ModEventName>(
       ) {
         (
           event as ModToolStartEvent & {
+            result?: { status: "success" | "error"; output: string };
+          }
+        ).result = result.result;
+      }
+      if (
+        isToolEndResultWithResult(name, result) &&
+        !(event as ModToolEndEvent & { result?: unknown }).result
+      ) {
+        (
+          event as ModToolEndEvent & {
             result?: { status: "success" | "error"; output: string };
           }
         ).result = result.result;

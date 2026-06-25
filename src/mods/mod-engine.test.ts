@@ -103,7 +103,13 @@ function createEngine(
 const TOOL_ONLY_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
   commands: false,
-  events: { lifecycle: false, tools: false, turns: false },
+  events: {
+    lifecycle: false,
+    tools: false,
+    turns: false,
+    compact: false,
+    llm: false,
+  },
   permissions: false,
   providers: false,
   ui: {
@@ -557,7 +563,7 @@ describe("mod engine", () => {
             });
           }
           if (letta.capabilities.ui.panels) {
-            letta.ui.openPanel({ id: "hidden", content: "hidden" });
+            letta.ui.openPanel({ id: "hidden", render: () => "hidden" });
           }
           if (letta.capabilities.tools) {
             letta.tools.register({
@@ -790,11 +796,13 @@ describe("mod engine", () => {
             description: "Should not register",
             run() { return { type: "handled" }; },
           });
-          letta.ui.openPanel({ id: "hidden", content: "hidden" });
+          letta.ui.openPanel({ id: "hidden", render: () => "hidden" });
           letta.ui.setStatus("hidden", "hidden");
           letta.ui.setStatuslineRenderer(() => "hidden");
           letta.events.on("conversation_open", () => {});
           letta.events.on("tool_start", () => {});
+          letta.events.on("compact_start", () => {});
+          letta.events.on("llm_start", () => {});
           letta.tools.register({
             name: "visible_tool",
             description: "Visible tool",
@@ -876,6 +884,135 @@ describe("mod engine", () => {
           error: expect.objectContaining({ message: "event failed" }),
         },
       );
+
+      engine.dispose();
+    } finally {
+      delete testGlobal.__lettaModEvents;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("delivers compact_start and compact_end events to mod handlers", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    testGlobal.__lettaModEvents = [];
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "compact.ts"),
+        `export default function(letta) {
+          letta.events.on("compact_start", (event) => {
+            globalThis.__lettaModEvents.push(
+              "start:" + event.trigger + ":" + event.conversationId,
+            );
+          });
+          letta.events.on("compact_end", (event) => {
+            globalThis.__lettaModEvents.push(
+              "end:" + event.trigger + ":" + event.messagesBefore + "->" + event.messagesAfter,
+            );
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      expect(engine.getSnapshot().events.compact_start).toHaveLength(1);
+      expect(engine.getSnapshot().events.compact_end).toHaveLength(1);
+
+      await engine.emitEvent(
+        "compact_start",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          trigger: "manual",
+        },
+        createModContext(),
+      );
+      await engine.emitEvent(
+        "compact_end",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          trigger: "context_window_overflow",
+          messagesBefore: 12,
+          messagesAfter: 3,
+          contextTokensBefore: 1000,
+          contextTokensAfter: 200,
+        },
+        createModContext(),
+      );
+
+      expect(testGlobal.__lettaModEvents).toEqual([
+        "start:manual:conversation-1",
+        "end:context_window_overflow:12->3",
+      ]);
+
+      engine.dispose();
+    } finally {
+      delete testGlobal.__lettaModEvents;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("delivers llm_start and llm_end events to mod handlers", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    testGlobal.__lettaModEvents = [];
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "llm.ts"),
+        `export default function(letta) {
+          letta.events.on("llm_start", (event) => {
+            globalThis.__lettaModEvents.push(
+              "start:" + event.model + ":" + event.messageCount + "/" + event.contextWindow,
+            );
+          });
+          letta.events.on("llm_end", (event) => {
+            globalThis.__lettaModEvents.push(
+              "end:" + event.stopReason + ":" + event.usage.totalTokens + ":" + event.durationMs + "ms",
+            );
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      expect(engine.getSnapshot().events.llm_start).toHaveLength(1);
+      expect(engine.getSnapshot().events.llm_end).toHaveLength(1);
+
+      await engine.emitEvent(
+        "llm_start",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          model: "anthropic/claude-fable-5",
+          messageCount: 8,
+          contextWindow: 200000,
+        },
+        createModContext(),
+      );
+      await engine.emitEvent(
+        "llm_end",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          model: "anthropic/claude-fable-5",
+          stopReason: "stop",
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          durationMs: 1234,
+        },
+        createModContext(),
+      );
+
+      expect(testGlobal.__lettaModEvents).toEqual([
+        "start:anthropic/claude-fable-5:8/200000",
+        "end:stop:120:1234ms",
+      ]);
 
       engine.dispose();
     } finally {
@@ -1150,6 +1287,100 @@ describe("mod engine", () => {
     }
   });
 
+  test("tool_end result: first handler wins, replaces the result", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "tool-end.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_end", (event) => {
+            if (event.toolName === "Bash" && event.status === "success") {
+              return { result: { status: "success", output: "redacted" } };
+            }
+          });
+          letta.events.on("tool_end", (event) => {
+            if (event.toolName === "Bash") {
+              return { result: { status: "error", output: "should not win" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        status: "success" as const,
+        output: "secret token abc123",
+      };
+
+      const result = await engine.emitEvent(
+        "tool_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(2);
+      expect(
+        (event as { result?: { status: string; output: string } }).result,
+      ).toEqual({
+        status: "success",
+        output: "redacted",
+      });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("tool_end result: no result when condition not met", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "tool-end.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_end", (event) => {
+            if (event.toolName === "Read") {
+              return { result: { status: "success", output: "redacted" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        status: "success" as const,
+        output: "untouched",
+      };
+
+      const result = await engine.emitEvent(
+        "tool_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect((event as { result?: unknown }).result).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("turn_end continue: first handler wins", async () => {
     const root = createTempDir();
     try {
@@ -1275,7 +1506,7 @@ describe("mod engine", () => {
           globalThis.__lettaModSignal = letta.signal;
           globalThis.__lettaModPanel = letta.ui.openPanel({
             id: "status",
-            content: "first generation",
+            render: () => "first generation",
           });
         }`,
       );
@@ -1302,7 +1533,7 @@ describe("mod engine", () => {
       expect(firstSignal?.aborted).toBe(true);
       expect(Object.values(engine.getSnapshot().ui.panels)).toEqual([]);
 
-      stalePanel?.update({ content: "stale update" });
+      stalePanel?.update();
       const snapshot = engine.getSnapshot();
       expect(Object.values(snapshot.ui.panels)).toEqual([]);
       expect(snapshot.diagnostics.at(-1)).toMatchObject({

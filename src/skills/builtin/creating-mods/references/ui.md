@@ -22,18 +22,20 @@ Panels are app/TUI-global today. Desktop/listener disables panel UI; future scop
 
 ```ts
 if (letta.capabilities.ui.panels) {
+  let status = "Working…";
   const panel = letta.ui.openPanel({
     id: "my-mod",
-    content: ["Working…"],
     order: 100,
+    render: ({ width }) => status,
   });
 
-  panel.update({ content: ["Done"] });
+  status = "Done";
+  panel.update(); // re-invokes render with the current width
   setTimeout(() => panel.close(), 5_000);
 }
 ```
 
-Panel content is plain text: a string or string array. Keep it short; use command `output` for longer text.
+`render` returns the panel body: a string or string array (one entry per line). The host owns the region — it clips each line to `width` and caps total height — so the mod owns layout: use `width` to align or build columns. The host re-invokes `render` whenever you call `panel.update()` and on terminal resize. Keep `render` cheap and side-effect-free; keep it short and use command `output` for longer text.
 
 Close panels when they are transient, and close/replace long-lived panels from the activation disposer if reload should remove them.
 

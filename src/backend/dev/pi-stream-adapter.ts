@@ -36,6 +36,8 @@ import {
   resolvePiModelForAgent,
 } from "./pi-model-factory";
 import type {
+  LlmEndInfo,
+  LlmStartInfo,
   ProviderStreamAdapter,
   ProviderStreamEvent,
   ProviderTurnInput,
@@ -111,6 +113,8 @@ export interface PiStreamAdapterOptions {
     summary: string;
     stats?: LocalCompactionStats;
   } | null>;
+  onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
+  onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
 
 class PiProviderError extends Error {
@@ -627,6 +631,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   private readonly localProviderAuthStorageDir?: string;
   private readonly onContextWindowOverflow?: PiStreamAdapterOptions["onContextWindowOverflow"];
   private readonly onContextUsage?: PiStreamAdapterOptions["onContextUsage"];
+  private readonly onLlmStart?: PiStreamAdapterOptions["onLlmStart"];
+  private readonly onLlmEnd?: PiStreamAdapterOptions["onLlmEnd"];
 
   constructor(options: PiStreamAdapterOptions = {}) {
     this.runStream = options.stream ?? defaultStream;
@@ -634,6 +640,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
     this.onContextUsage = options.onContextUsage;
+    this.onLlmStart = options.onLlmStart;
+    this.onLlmEnd = options.onLlmEnd;
   }
 
   private async *emitCompactionChunks(
@@ -727,7 +735,15 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
+    const llmStartedAt = Date.now();
     try {
+      await this.onLlmStart?.({
+        agentId: input.agentId,
+        conversationId: input.conversationId,
+        model: input.agent.model,
+        messageCount: context.messages.length,
+        contextWindow: resolved.model.contextWindow,
+      });
       const result = this.runStream(
         resolved.model as Model<string>,
         context,
@@ -758,6 +774,18 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       if (streamError) throw streamError;
       finalMessage ??= await result.result();
+      await this.onLlmEnd?.({
+        agentId: input.agentId,
+        conversationId: input.conversationId,
+        model: input.agent.model,
+        stopReason: finalMessage.stopReason,
+        usage: {
+          promptTokens: finalMessage.usage.input,
+          completionTokens: finalMessage.usage.output,
+          totalTokens: finalMessage.usage.totalTokens,
+        },
+        durationMs: Date.now() - llmStartedAt,
+      });
       if (
         finalMessage.stopReason === "error" ||
         finalMessage.stopReason === "aborted"

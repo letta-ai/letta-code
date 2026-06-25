@@ -49,8 +49,10 @@ describe("listener mod adapter", () => {
       commands: false,
       events: {
         lifecycle: false,
-        tools: false,
+        tools: true,
         turns: true,
+        compact: false,
+        llm: false,
       },
       permissions: false,
       providers: true,
@@ -471,6 +473,73 @@ describe("listener mod adapter", () => {
     });
 
     delete (globalThis as { __lettaTurnEndSeen?: unknown }).__lettaTurnEndSeen;
+    adapter.dispose();
+  });
+
+  test("tool_end handlers are delivered and can replace the result", async () => {
+    const root = createTempDir();
+    const modsDir = join(root, "mods");
+    const cacheDir = join(root, "cache");
+    mkdirSync(modsDir, { recursive: true });
+    writeFileSync(
+      join(modsDir, "tool-end-mod.ts"),
+      `export default function activate(letta) {
+        letta.events.on("tool_end", (event) => {
+          globalThis.__lettaToolEndSeen = {
+            toolName: event.toolName,
+            status: event.status,
+            output: event.output,
+          };
+          if (event.toolName === "Bash") {
+            return { result: { status: "success", output: "redacted" } };
+          }
+        });
+      }`,
+    );
+
+    const adapter = createListenerModAdapter({
+      cacheDirectory: cacheDir,
+      globalModsDirectory: modsDir,
+      sessionId: "tool-end-test",
+      workingDirectory: root,
+    });
+    await adapter.reload();
+
+    const context = createListenerModContext({
+      sessionId: "conv-tool-end-test",
+      workingDirectory: root,
+    });
+    const event: {
+      agentId: string;
+      conversationId: string;
+      toolCallId: string;
+      toolName: string;
+      status: "success" | "error";
+      output: string;
+      result?: { status: "success" | "error"; output: string };
+    } = {
+      agentId: "agent-tool-end",
+      conversationId: "conv-tool-end-test",
+      toolCallId: "call-1",
+      toolName: "Bash",
+      status: "success",
+      output: "secret",
+    };
+
+    const result = await adapter.events.emit("tool_end", event, context);
+    expect(result.diagnostics).toHaveLength(0);
+    expect(
+      (globalThis as { __lettaToolEndSeen?: unknown }).__lettaToolEndSeen,
+    ).toEqual({
+      toolName: "Bash",
+      status: "success",
+      output: "secret",
+    });
+    // events.tools is enabled for the listener, so the handler runs and its
+    // result override is written back onto the event (first handler wins).
+    expect(event.result).toEqual({ status: "success", output: "redacted" });
+
+    delete (globalThis as { __lettaToolEndSeen?: unknown }).__lettaToolEndSeen;
     adapter.dispose();
   });
 

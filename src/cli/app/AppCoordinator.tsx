@@ -123,6 +123,7 @@ import {
   useTerminalWidth,
 } from "@/cli/hooks/use-terminal-width";
 import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
+import { installLocalBackendModEventHooks } from "@/cli/mods/local-backend-mod-events";
 import type { ModConversationCloseReason } from "@/cli/mods/types";
 import {
   type LocalModAdapter,
@@ -2370,6 +2371,14 @@ export function App({
 
   useEffect(() => {
     modAdapterRef.current = modAdapter;
+  }, [modAdapter]);
+
+  useEffect(() => {
+    return installLocalBackendModEventHooks({
+      backend: getBackend(),
+      adapter: modAdapter,
+      buildContext: () => modAdapter.context,
+    });
   }, [modAdapter]);
 
   useEffect(() => {
