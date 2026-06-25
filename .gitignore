@@ -13,6 +13,7 @@ node_modules
 bun.lockb
 package-lock.json
 bin/
+/vendor/bwrap/
 letta.js
 letta.js.map
 /skills/
