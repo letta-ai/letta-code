@@ -6,6 +6,14 @@ import { isWebSearchToolName } from "@/cli/helpers/web-search-display";
 import type { StreamDelta } from "@/types/protocol_v2";
 import type { ChannelTurnProgressUpdate } from "./types";
 
+// Accumulate fragmented tool arguments across stream deltas.
+// Keyed by tool_call_id; values are the accumulated argument strings.
+const toolCallArgumentsById = new Map<string, string>();
+
+export function clearToolCallArgumentsCache(): void {
+  toolCallArgumentsById.clear();
+}
+
 const MAX_PROGRESS_TEXT_LENGTH = 140;
 const MAX_PROGRESS_DETAILS_LENGTH = 180;
 const ESCAPE_CODE = String.fromCharCode(27);
@@ -144,41 +152,55 @@ function formatToolProgressDetails(
   if (!summary.argumentsText || !summary.name) {
     return undefined;
   }
+
+  // Try JSON parse first (complete arguments)
   const parsedArguments = parseToolArguments(summary.argumentsText);
-  if (!parsedArguments) {
+  if (parsedArguments) {
+    if (isWebSearchToolName(summary.name)) {
+      const query = firstNonEmptyString(parsedArguments.query);
+      const sanitized = sanitizeChannelProgressText(
+        query,
+        MAX_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
+
+    if (isFetchWebpageToolName(summary.name)) {
+      const url = firstNonEmptyString(parsedArguments.url);
+      const sanitized = sanitizeChannelProgressText(
+        url,
+        MAX_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
+
+    if (isShellTool(summary.name)) {
+      const description = firstNonEmptyString(parsedArguments.description);
+      const sanitized = sanitizeChannelProgressText(
+        description,
+        MAX_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
+
     return undefined;
   }
 
-  if (isWebSearchToolName(summary.name)) {
-    const query = firstNonEmptyString(parsedArguments.query);
-    const sanitized = sanitizeChannelProgressText(
-      query,
-      MAX_PROGRESS_DETAILS_LENGTH,
+  // Fallback: try to extract description from fragmented/incomplete JSON
+  if (isShellTool(summary.name)) {
+    const descriptionMatch = summary.argumentsText.match(
+      /"description"\s*:\s*"([^"]+)"/,
     );
-    return sanitized || undefined;
+    if (descriptionMatch?.[1]) {
+      const sanitized = sanitizeChannelProgressText(
+        descriptionMatch[1],
+        MAX_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
   }
 
-  if (isFetchWebpageToolName(summary.name)) {
-    const url = firstNonEmptyString(parsedArguments.url);
-    const sanitized = sanitizeChannelProgressText(
-      url,
-      MAX_PROGRESS_DETAILS_LENGTH,
-    );
-    return sanitized || undefined;
-  }
-
-  // Keep Slack task rows compact. For Bash, the tool-call description is the
-  // user-facing intent; avoid exposing the raw command in the native card.
-  if (!isShellTool(summary.name)) {
-    return undefined;
-  }
-
-  const description = firstNonEmptyString(parsedArguments.description);
-  const sanitized = sanitizeChannelProgressText(
-    description,
-    MAX_PROGRESS_DETAILS_LENGTH,
-  );
-  return sanitized || undefined;
+  return undefined;
 }
 
 function extractToolCallSummary(value: unknown): ToolCallSummary | null {
@@ -203,7 +225,7 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     tool?.name,
     nestedToolFunction?.name,
   );
-  const argumentsText =
+  const rawArguments =
     firstNonEmptyString(
       record.arguments,
       record.args,
@@ -221,6 +243,18 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     nestedFunction?.arguments !== null
       ? JSON.stringify(nestedFunction.arguments)
       : undefined);
+
+  // Accumulate fragmented arguments across stream deltas for the same tool call
+  let argumentsText: string | undefined;
+  if (id && rawArguments !== undefined) {
+    const existing = toolCallArgumentsById.get(id);
+    const accumulated = existing ? existing + rawArguments : rawArguments;
+    toolCallArgumentsById.set(id, accumulated);
+    argumentsText = accumulated;
+  } else if (!id && rawArguments !== undefined) {
+    argumentsText = rawArguments;
+  }
+
   if (!id && !name) {
     return null;
   }
@@ -444,6 +478,18 @@ export function buildChannelTurnProgressUpdatesFromDelta(
         return [];
       }
       for (const { summary, status } of toolReturns) {
+        // Try to get accumulated arguments for this tool call
+        const accumulatedArgs = summary.id
+          ? toolCallArgumentsById.get(summary.id)
+          : undefined;
+        if (accumulatedArgs) {
+          toolCallArgumentsById.delete(summary.id);
+        }
+        const toolWithAccumulatedArgs = accumulatedArgs
+          ? { ...summary, argumentsText: accumulatedArgs }
+          : summary;
+        const toolDetails =
+          formatToolProgressDetails(toolWithAccumulatedArgs);
         updates.push(
           withRunId(
             {
@@ -452,6 +498,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
               message: status === "error" ? "Tool failed" : "Tool finished",
               ...(summary.id ? { toolCallId: summary.id } : {}),
               ...(summary.name ? { toolName: summary.name } : {}),
+              ...(toolDetails ? { toolDetails } : {}),
             },
             runId,
           ),
