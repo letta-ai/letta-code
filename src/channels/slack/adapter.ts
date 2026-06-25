@@ -419,6 +419,7 @@ type SlackProgressCardEntry = {
   toolTitlesByCallId?: Map<string, string>;
   toolDetailsByCallId?: Map<string, string>;
   toolTasksById?: Map<string, SlackProgressToolTask>;
+  sentDetailsByTaskId?: Map<string, string>;
   pendingStreamChunks?: SlackStreamChunk[];
   hiddenToolCallIds?: Set<string>;
   lastSentText?: string;
@@ -822,12 +823,22 @@ function buildSlackStreamProgressChunks(
   }
   const status = toSlackStreamTaskStatus(update);
   const details = resolveSlackToolActionDetails(entry, update);
+
+  // Only include details when they're new or changed — Slack's streaming
+  // API accumulates the details field across appendStream calls, so sending
+  // the same details repeatedly causes visible duplication.
+  const prevDetails = entry.sentDetailsByTaskId?.get(id);
+  const detailsChanged = details !== prevDetails;
+  if (details && detailsChanged) {
+    entry.sentDetailsByTaskId ??= new Map();
+    entry.sentDetailsByTaskId.set(id, details);
+  }
   const task = {
     id,
     kind: update.kind,
     title,
     status,
-    ...(details ? { details } : {}),
+    ...(details && detailsChanged ? { details } : {}),
   };
   entry.toolTasksById ??= new Map();
   entry.toolTasksById.set(id, task);
