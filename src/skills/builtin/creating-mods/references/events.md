@@ -171,6 +171,19 @@ letta.events.on("tool_end", (event) => {
 
 The first handler that returns a `result` wins; later handlers are shadowed. Only string results are surfaced — multimodal/image results pass through unchanged. `tool_end` is the trusted-local-mod equivalent of the `PostToolUse` / `PostToolUseFailure` hooks for observing and rewriting tool results.
 
+A handler can also react to a specific tool completing by adjusting conversation state. For example, switch model and reasoning effort when entering and exiting plan mode (`tool_end` fires only after the tool succeeds, so a denied approval won't switch):
+
+```ts
+letta.events.on("tool_end", async (event, ctx) => {
+  if (event.status !== "success") return;
+  if (event.toolName === "enter_plan_mode") {
+    await ctx.conversation.updateLlmConfig({ model: "anthropic/claude-opus-4-8", reasoningEffort: "high" });
+  } else if (event.toolName === "exit_plan_mode") {
+    await ctx.conversation.updateLlmConfig({ model: "openai/gpt-5.5", reasoningEffort: "max" });
+  }
+});
+```
+
 `turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns.
 
 Handlers can mutate `event.input` directly or return replacement input:
