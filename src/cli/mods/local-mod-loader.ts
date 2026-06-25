@@ -9,7 +9,6 @@ import {
   createModEngine as createModEngineBase,
   disposeLocalMods,
   emitLocalModEvent,
-  evaluateLocalModStatuses,
   GLOBAL_MODS_DIRECTORY,
   loadLocalMods as loadLocalModsBase,
   MOD_CACHE_DIRECTORY,
@@ -74,7 +73,6 @@ export {
   GLOBAL_MODS_DIRECTORY,
   disposeLocalMods,
   emitLocalModEvent,
-  evaluateLocalModStatuses,
   resolveLocalModSources,
 };
 
@@ -95,8 +93,6 @@ export type {
   LocalModSource,
   LocalModUiRegistry,
   ModEngine,
-  ModStatusValue,
   ResolveLocalModSourcesOptions,
-  StatuslineRenderFunction,
 } from "@/mods/mod-engine";
 export { TUI_MOD_CAPABILITIES } from "./capabilities";

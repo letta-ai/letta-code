@@ -38,6 +38,7 @@ export type {
   ModPanelHandle,
   ModPanelOptions,
   ModPanelRender,
+  ModPanelRenderContext,
   ModReflectionContext,
   ModSourceScope,
   ModTokenUsageContext,

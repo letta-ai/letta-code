@@ -7,6 +7,9 @@ export type DeprecatedApiDiagnosticRecorder = (
   >,
 ) => void;
 
+const STATUSLINE_MIGRATION =
+  "The statusline mod APIs (setStatus / clearStatus / setStatuslineRenderer) have been removed. Use letta.ui.openPanel({ id, order, render }) instead: order 0 is the primary line (replaces the built-in agent · model line), negative orders stack below it, positive orders render above the input. render(ctx) returns a string; use ctx.row / ctx.columns for layout and ctx.chalk for color.";
+
 function createDeprecatedApiError(apiId: string): Error {
   if (apiId === "letta.getContext") {
     return new Error(
@@ -16,6 +19,15 @@ function createDeprecatedApiError(apiId: string): Error {
   if (apiId === "ctx.getContext") {
     return new Error(
       "ctx.getContext is no longer available. Use ctx directly; scoped fields are available as ctx.agent, ctx.cwd, ctx.conversation, ctx.model, etc.",
+    );
+  }
+  if (
+    apiId === "letta.ui.setStatus" ||
+    apiId === "letta.ui.clearStatus" ||
+    apiId === "letta.ui.setStatuslineRenderer"
+  ) {
+    return new Error(
+      `${apiId} is no longer available. ${STATUSLINE_MIGRATION}`,
     );
   }
   return new Error(
@@ -71,6 +83,15 @@ export function findDeprecatedContextApiUsages(source: string): string[] {
   }
   if (usages.size === 0 && /\.\s*getContext\s*\(/.test(source)) {
     usages.add(".getContext()");
+  }
+  if (/\.\s*setStatuslineRenderer\s*\(/.test(source)) {
+    usages.add("letta.ui.setStatuslineRenderer");
+  }
+  if (/\.\s*setStatus\s*\(/.test(source)) {
+    usages.add("letta.ui.setStatus");
+  }
+  if (/\.\s*clearStatus\s*\(/.test(source)) {
+    usages.add("letta.ui.clearStatus");
   }
   return [...usages];
 }

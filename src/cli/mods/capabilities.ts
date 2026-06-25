@@ -14,7 +14,5 @@ export const TUI_MOD_CAPABILITIES: ModCapabilities = {
   providers: true,
   ui: {
     panels: true,
-    statusValues: true,
-    customStatuslineRenderer: true,
   },
 };

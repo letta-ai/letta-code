@@ -4,6 +4,7 @@ import type {
   LettaStreamingResponse,
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import type { ChalkInstance } from "chalk";
 
 export interface ModWorkspaceContext {
   cwd: string;
@@ -65,8 +66,6 @@ export interface ModBackgroundAgentContext {
 
 export interface ModUiCapabilities {
   panels: boolean;
-  statusValues: boolean;
-  customStatuslineRenderer: boolean;
 }
 
 export interface ModEventCapabilities {
@@ -424,8 +423,29 @@ export type ModCommandResult =
   | { type: "output"; output: string; success?: boolean }
   | { type: "handled" };
 
-export type ModPanelRender = (ctx: { width: number }) => string | string[];
+export interface ModPanelRenderContext {
+  /** Visible width available to the panel, in columns. */
+  width: number;
+  /** Live agent context (name, id) at render time. */
+  agent: ModAgentContext;
+  /** Live model context (display name, provider, ...) at render time. */
+  model: ModModelContext;
+  /** Lay out a left and right segment across `width` (ANSI-aware). */
+  row: (left: string, right: string, width: number) => string;
+  /** Spread parts evenly across `width` (ANSI-aware). */
+  columns: (parts: string[], width: number) => string;
+  /** Chalk instance for coloring panel output. */
+  chalk: ChalkInstance;
+}
 
+export type ModPanelRender = (ctx: ModPanelRenderContext) => string | string[];
+
+/**
+ * Panels are placed by a signed `order` around the input:
+ * `> 0` renders above the input (highest at the top), `0` is the primary line
+ * just below the input (overrides the built-in agent · model line), and `< 0`
+ * stacks below the primary line. A panel whose render is empty is hidden.
+ */
 export interface ModPanelOptions {
   id: string;
   render: ModPanelRender;

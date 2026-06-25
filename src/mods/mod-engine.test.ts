@@ -114,8 +114,6 @@ const TOOL_ONLY_MOD_CAPABILITIES: ModCapabilities = {
   providers: false,
   ui: {
     panels: false,
-    statusValues: false,
-    customStatuslineRenderer: false,
   },
 };
 
@@ -819,8 +817,6 @@ describe("mod engine", () => {
       expect(snapshot.commands).toEqual({});
       expect(snapshot.events).toEqual({});
       expect(snapshot.ui.panels).toEqual({});
-      expect(snapshot.ui.statusValues).toEqual({});
-      expect(snapshot.ui.statuslineRenderer).toBeNull();
       expect(Object.keys(snapshot.tools)).toEqual(["visible_tool"]);
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -842,7 +838,6 @@ describe("mod engine", () => {
             globalThis.__lettaModEvents.push(
               event.reason + ":" + event.agentId + ":" + ctx.agent.name + ":" + ctx.conversation.id,
             );
-            letta.ui.setStatus("lifecycle", event.reason);
           });
           letta.events.on("conversation_open", () => {
             throw new Error("event failed");
@@ -877,7 +872,6 @@ describe("mod engine", () => {
       expect(testGlobal.__lettaModEvents).toEqual([
         "startup:agent-1:Amelia:conversation-1",
       ]);
-      expect(snapshot.ui.statusValues.lifecycle).toBe("startup");
       expect(getModErrorDiagnostics(snapshot.diagnostics).at(-1)).toMatchObject(
         {
           phase: "event",

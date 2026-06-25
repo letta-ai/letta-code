@@ -58,8 +58,6 @@ describe("listener mod adapter", () => {
       providers: true,
       ui: {
         panels: false,
-        statusValues: false,
-        customStatuslineRenderer: false,
       },
     });
   });
@@ -188,7 +186,6 @@ describe("listener mod adapter", () => {
     });
     expect(snapshot.events).toEqual({});
     expect(snapshot.ui.panels).toEqual({});
-    expect(snapshot.ui.statusValues).toEqual({});
 
     adapter.dispose();
     expect(getRegisteredPiProvider("kilo")).toBeUndefined();
