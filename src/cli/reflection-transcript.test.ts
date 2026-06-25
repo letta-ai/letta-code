@@ -821,7 +821,7 @@ describe("reflectionTranscript helper", () => {
     // Prompt references the $TRANSCRIPT_PATH env var (resolved via Bash),
     // not a literal absolute path.
     expect(prompt).toContain("$TRANSCRIPT_PATH");
-    expect(prompt).toContain("cat $TRANSCRIPT_PATH");
+    expect(prompt).toContain('wc -c "$TRANSCRIPT_PATH"');
     expect(prompt).not.toContain("/tmp/transcript");
     expect(prompt).toContain(
       "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below.",
