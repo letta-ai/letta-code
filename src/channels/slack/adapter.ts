@@ -550,11 +550,21 @@ function buildTerminalSlackStreamChunks(
 
 function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
   const { kind: _kind, details, ...chunkTask } = task;
-  const title = details ? `${chunkTask.title} — ${details}` : chunkTask.title;
   return {
     type: "task_update",
     ...chunkTask,
-    title: sanitizeSlackProgressText(title, SLACK_STREAM_CHUNK_TEXT_MAX),
+    title: sanitizeSlackProgressText(
+      chunkTask.title,
+      SLACK_STREAM_CHUNK_TEXT_MAX,
+    ),
+    ...(details
+      ? {
+          details: sanitizeSlackProgressText(
+            details,
+            SLACK_STREAM_CHUNK_TEXT_MAX,
+          ),
+        }
+      : {}),
   };
 }
 

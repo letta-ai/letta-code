@@ -1788,7 +1788,8 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
         }),
         expect.objectContaining({
           id: "task_call-web",
-          title: "Searching articles — letta blog",
+          title: "Searching articles",
+          details: "letta blog",
           status: "in_progress",
         }),
       ],
@@ -1807,7 +1808,8 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
     expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-web",
-        title: "Searching articles — letta blog",
+        title: "Searching articles",
+        details: "letta blog",
       }),
       expect.objectContaining({
         id: "task_call-bash",
@@ -1852,7 +1854,8 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-web",
-        title: "Searched articles — letta blog",
+        title: "Searched articles",
+        details: "letta blog",
         status: "complete",
       }),
       expect.objectContaining({
@@ -2138,7 +2141,8 @@ test("slack adapter keeps one active progress card slot until finalized", async 
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-2",
-        title: "Search the web — letta slack progress cards",
+        title: "Search the web",
+        details: "letta slack progress cards",
         status: "in_progress",
       }),
     ]),
@@ -2265,7 +2269,7 @@ test("slack adapter shows a progress card while a no-tool turn is running", asyn
   expect(statusCalls.length).toBeGreaterThanOrEqual(3);
   const firstStatus = statusCalls[0]?.[0]?.status;
   const secondStatus = statusCalls[1]?.[0]?.status;
-  expect(["is cogitating", "is thinking", "is processing"]).toContain(
+  expect(["is cogitating...", "is thinking...", "is processing..."]).toContain(
     firstStatus ?? "",
   );
   expect(secondStatus).toBe(firstStatus);
@@ -2329,7 +2333,8 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-web",
-        title: "Searched articles — letta blog",
+        title: "Searched articles",
+        details: "letta blog",
         status: "complete",
       }),
       expect.objectContaining({
