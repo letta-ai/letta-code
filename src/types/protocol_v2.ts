@@ -479,7 +479,8 @@ export type QueueMessageKind =
   | "task_notification"
   | "cron_prompt"
   | "approval_result"
-  | "overlay_action";
+  | "overlay_action"
+  | "mod_continue";
 
 export type QueueMessageSource =
   | "user"

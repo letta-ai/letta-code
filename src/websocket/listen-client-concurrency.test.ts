@@ -22,6 +22,7 @@ import {
 import { permissionMode } from "@/permissions/mode";
 import type {
   MessageQueueItem,
+  ModContinueQueueItem,
   TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
 import { sharedReminderProviders } from "@/reminders/engine";
@@ -1407,6 +1408,40 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtime.queueRuntime.peek().map((item) => item.id)).toEqual([
       otherMessageItem.id,
     ]);
+  });
+
+  test("consumeQueuedTurn builds a user turn from a mod_continue-only batch", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const continueInput = {
+      kind: "mod_continue",
+      source: "system",
+      text: "double-check your work before finishing",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<ModContinueQueueItem, "id" | "enqueuedAt">;
+    const continueItem = runtime.queueRuntime.enqueue(continueInput);
+
+    if (!continueItem) {
+      throw new Error("Expected queued mod_continue item");
+    }
+
+    const consumed = __listenClientTestUtils.consumeQueuedTurn(runtime);
+
+    expect(consumed).not.toBeNull();
+    expect(
+      consumed?.dequeuedBatch.items.map((item: { id: string }) => item.id),
+    ).toEqual([continueItem.id]);
+    // No template registration needed — the continue is synthesized as a
+    // plain user turn (renders via the backend, suppressed optimistically).
+    expect(consumed?.queuedTurn.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "double-check your work before finishing" },
+        ],
+      },
+    ]);
+    expect(runtime.queueRuntime.length).toBe(0);
   });
 
   test("resolveStaleApprovals injects stale denials and queued turns without replaying tools", async () => {
