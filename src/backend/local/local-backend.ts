@@ -24,7 +24,11 @@ import {
   PiStreamAdapter,
   type PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
-import type { ProviderTurnInput } from "@/backend/dev/provider-turn-executor";
+import type {
+  LlmEndInfo,
+  LlmStartInfo,
+  ProviderTurnInput,
+} from "@/backend/dev/provider-turn-executor";
 import {
   contextTokensFromUsage,
   estimateProviderContextTokens,
@@ -84,8 +88,8 @@ export interface LocalBackendOptions {
 /**
  * Hooks the harness installs (via {@link LocalBackend.setModEventHooks}) so
  * mods can observe backend-internal lifecycle that only the local backend owns
- * (compaction today, and provider calls in a later change). The backend stays
- * mod-agnostic: it invokes these plain callbacks and never touches mod state.
+ * (compaction and provider calls). The backend stays mod-agnostic: it invokes
+ * these plain callbacks and never touches mod state.
  */
 export interface LocalBackendModEventHooks {
   onCompactStart?: (info: {
@@ -102,6 +106,8 @@ export interface LocalBackendModEventHooks {
     contextTokensBefore: number;
     contextTokensAfter: number;
   }) => void | Promise<void>;
+  onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
+  onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
 
 function sanitizeFrontmatterValue(value: string): string {
@@ -259,6 +265,8 @@ function createLocalExecutor(
     summary: string;
     stats?: LocalCompactionStats;
   } | null>,
+  onLlmStart?: (info: LlmStartInfo) => void | Promise<void>,
+  onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>,
 ): HeadlessTurnExecutor {
   if (options.executor) return options.executor;
   if (options.executionMode === "deterministic") {
@@ -270,6 +278,8 @@ function createLocalExecutor(
       localProviderAuthStorageDir: options.storageDir,
       onContextWindowOverflow,
       onContextUsage,
+      onLlmStart,
+      onLlmEnd,
     }),
   );
 }
@@ -318,6 +328,10 @@ export class LocalBackend extends HeadlessBackend {
         (input, usage) =>
           localBackendRef.current?.compactAfterContextUsage(input, usage) ??
           Promise.resolve(null),
+        (info) =>
+          localBackendRef.current?.emitLlmStart(info) ?? Promise.resolve(),
+        (info) =>
+          localBackendRef.current?.emitLlmEnd(info) ?? Promise.resolve(),
       ),
       storeOptions,
       {
@@ -376,6 +390,26 @@ export class LocalBackend extends HeadlessBackend {
       });
     } catch {
       // Mod event hooks must never break compaction.
+    }
+  }
+
+  private async emitLlmStart(info: LlmStartInfo): Promise<void> {
+    const hook = this.modEventHooks?.onLlmStart;
+    if (!hook) return;
+    try {
+      await hook(info);
+    } catch {
+      // Mod event hooks must never break a provider request.
+    }
+  }
+
+  private async emitLlmEnd(info: LlmEndInfo): Promise<void> {
+    const hook = this.modEventHooks?.onLlmEnd;
+    if (!hook) return;
+    try {
+      await hook(info);
+    } catch {
+      // Mod event hooks must never break a provider request.
     }
   }
 

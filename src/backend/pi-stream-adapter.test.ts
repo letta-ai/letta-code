@@ -16,6 +16,8 @@ import {
   type PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
+  LlmEndInfo,
+  LlmStartInfo,
   ProviderStreamEvent,
   ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
@@ -1305,5 +1307,87 @@ describe("PiStreamAdapter", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+
+  test("emits llm_start and llm_end around a provider request", async () => {
+    const finalMessage: AssistantMessage = {
+      ...assistantMessage(),
+      usage: { ...emptyLocalUsage(), input: 11, output: 7, totalTokens: 18 },
+    };
+    const stream: PiStreamFunction = () =>
+      streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+
+    const starts: LlmStartInfo[] = [];
+    const ends: LlmEndInfo[] = [];
+    const adapter = new PiStreamAdapter({
+      stream,
+      onLlmStart: (info) => {
+        starts.push(info);
+      },
+      onLlmEnd: (info) => {
+        ends.push(info);
+      },
+    });
+    await collectEvents(adapter.stream(input()));
+
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({
+      agentId: "agent-local-1",
+      conversationId: "local-conv-1",
+      model: "bedrock/us.anthropic.claude-sonnet-4-6",
+      messageCount: 1,
+    });
+    expect(starts[0]?.contextWindow).toBeGreaterThan(0);
+
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({
+      agentId: "agent-local-1",
+      conversationId: "local-conv-1",
+      model: "bedrock/us.anthropic.claude-sonnet-4-6",
+      stopReason: "stop",
+      usage: { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
+    });
+    expect(ends[0]?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("emits llm_start per provider request but llm_end only on completion across retries", async () => {
+    let calls = 0;
+    const stream: PiStreamFunction = () => {
+      calls += 1;
+      if (calls === 1) {
+        const error = assistantErrorMessage(
+          "WebSocket closed 1006 Connection ended\nretry-after-ms: 0",
+        );
+        return streamFromEvents(
+          [{ type: "error", reason: "error", error }],
+          error,
+        );
+      }
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    let startCount = 0;
+    let endCount = 0;
+    const adapter = new PiStreamAdapter({
+      stream,
+      onLlmStart: () => {
+        startCount += 1;
+      },
+      onLlmEnd: () => {
+        endCount += 1;
+      },
+    });
+    await collectEvents(adapter.stream(input()));
+
+    expect(calls).toBe(2);
+    expect(startCount).toBe(2);
+    expect(endCount).toBe(1);
   });
 });

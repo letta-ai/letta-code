@@ -74,6 +74,7 @@ export interface ModEventCapabilities {
   tools: boolean;
   turns: boolean;
   compact: boolean;
+  llm: boolean;
 }
 
 export interface ModCapabilities {
@@ -149,7 +150,9 @@ export type ModEventName =
   | "turn_start"
   | "turn_end"
   | "compact_start"
-  | "compact_end";
+  | "compact_end"
+  | "llm_start"
+  | "llm_end";
 
 export type ModConversationOpenReason =
   | "startup"
@@ -250,6 +253,29 @@ export interface ModCompactEndEvent {
   contextTokensAfter: number;
 }
 
+export interface ModLlmUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface ModLlmStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  messageCount: number;
+  contextWindow: number;
+}
+
+export interface ModLlmEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  stopReason: string;
+  usage: ModLlmUsage;
+  durationMs: number;
+}
+
 export interface ModEventMap {
   conversation_open: ModConversationOpenEvent;
   conversation_close: ModConversationCloseEvent;
@@ -259,6 +285,8 @@ export interface ModEventMap {
   turn_end: ModTurnEndEvent;
   compact_start: ModCompactStartEvent;
   compact_end: ModCompactEndEvent;
+  llm_start: ModLlmStartEvent;
+  llm_end: ModLlmEndEvent;
 }
 
 export interface ModEventResultMap {
@@ -270,6 +298,8 @@ export interface ModEventResultMap {
   turn_end: ModTurnEndResult | undefined;
   compact_start: undefined;
   compact_end: undefined;
+  llm_start: undefined;
+  llm_end: undefined;
 }
 
 export interface ModInvocationContext extends ModContext {}

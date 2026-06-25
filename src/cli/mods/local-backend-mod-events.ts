@@ -4,12 +4,13 @@ import type { ModAdapter } from "@/mods/mod-adapter";
 import type { ModCompactTrigger, ModContext } from "@/mods/types";
 
 /**
- * Wires the local backend's internal lifecycle (compaction today) into a
- * surface's mod adapter. Compaction is owned by the local backend, so these
- * events only fire for local agents; on any other backend this is a no-op.
+ * Wires the local backend's internal lifecycle (compaction and provider calls)
+ * into a surface's mod adapter. These boundaries are owned by the local
+ * backend, so the events only fire for local agents; on any other backend this
+ * is a no-op.
  *
  * The backend already guards each hook so a throwing/rejecting emit can never
- * break compaction.
+ * break compaction or a provider request.
  *
  * Returns a disposer that clears the hooks (a no-op on non-local backends).
  */
@@ -44,6 +45,33 @@ export function installLocalBackendModEventHooks(options: {
           messagesAfter: info.messagesAfter,
           contextTokensBefore: info.contextTokensBefore,
           contextTokensAfter: info.contextTokensAfter,
+        },
+        buildContext(info.conversationId),
+      );
+    },
+    onLlmStart: async (info) => {
+      await adapter.events.emit(
+        "llm_start",
+        {
+          agentId: info.agentId,
+          conversationId: info.conversationId,
+          model: info.model,
+          messageCount: info.messageCount,
+          contextWindow: info.contextWindow,
+        },
+        buildContext(info.conversationId),
+      );
+    },
+    onLlmEnd: async (info) => {
+      await adapter.events.emit(
+        "llm_end",
+        {
+          agentId: info.agentId,
+          conversationId: info.conversationId,
+          model: info.model,
+          stopReason: info.stopReason,
+          usage: info.usage,
+          durationMs: info.durationMs,
         },
         buildContext(info.conversationId),
       );
