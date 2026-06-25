@@ -85,10 +85,9 @@ import type {
   ModInvocationContext,
   ModOwner,
   ModPanel,
-  ModPanelContent,
   ModPanelHandle,
   ModPanelOptions,
-  ModPanelUpdate,
+  ModPanelRender,
   ModPermission,
   ModPermissionRegistration,
   ModSourceScope,
@@ -970,30 +969,22 @@ function getModPanelKey(modPath: string, id: string): string {
   return JSON.stringify([modPath, id]);
 }
 
-function normalizePanelContent(content: ModPanelContent | undefined): string[] {
-  if (content == null) return [];
-  return Array.isArray(content)
-    ? content.map(String)
-    : String(content).split("\n");
-}
-
 function upsertModPanel(
   registry: LocalModRegistry,
   owner: ModOwner,
   id: string,
-  update: ModPanelUpdate,
+  patch: { render?: ModPanelRender; order?: number },
 ): void {
   validateModPanelId(id);
   const panelKey = getModPanelKey(owner.id, id);
   const existing = registry.ui.panels[panelKey];
+  const render = patch.render ?? existing?.render;
+  if (!render) return;
   registry.ui.panels[panelKey] = {
-    content:
-      update.content === undefined
-        ? (existing?.content ?? [])
-        : normalizePanelContent(update.content),
+    render,
     id,
     owner,
-    order: update.order ?? existing?.order ?? 100,
+    order: patch.order ?? existing?.order ?? 100,
     path: owner.path,
     updatedAt: Date.now(),
   };
@@ -1385,15 +1376,20 @@ function createLettaModApi(
           };
         }
 
-        upsertModPanel(registry, owner, panel.id, panel);
+        upsertModPanel(registry, owner, panel.id, {
+          render: panel.render,
+          order: panel.order,
+        });
         onChange();
         return {
           close() {
             clearPanel(panel.id);
           },
-          update(update) {
+          update(options) {
             if (!guardLive({ id: panel.id, kind: "panel" })) return;
-            upsertModPanel(registry, owner, panel.id, update);
+            upsertModPanel(registry, owner, panel.id, {
+              order: options?.order,
+            });
             onChange();
           },
         };
