@@ -46,13 +46,13 @@ describe("built-in subagents", () => {
     expect(configs.reflection?.recommendedModel).toBe("inherit");
   });
 
-  test("memory-related built-ins use memory permission mode", async () => {
+  test("memory-related built-ins use the parent-memory launch profile", async () => {
     const configs = await getAllSubagentConfigs();
 
-    expect(configs.reflection?.permissionMode).toBe("memory");
-    expect(configs["history-analyzer"]?.permissionMode).toBe("memory");
-    expect(configs.memory?.permissionMode).toBe("memory");
-    expect(configs.init?.permissionMode).toBe("memory");
+    expect(configs.reflection?.launchProfile).toBe("parent-memory");
+    expect(configs["history-analyzer"]?.launchProfile).toBe("parent-memory");
+    expect(configs.memory?.launchProfile).toBe("parent-memory");
+    expect(configs.init?.launchProfile).toBe("parent-memory");
   });
 
   test("reflection exposes only Edit among first-class file tools", async () => {
