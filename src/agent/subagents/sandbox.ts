@@ -11,6 +11,7 @@ import {
 import { SANDBOX_ENV_VAR, type SandboxBackend } from "@/sandbox/policy";
 import { wrapLauncher } from "@/sandbox/wrap";
 import { getTranscriptRoot } from "@/utils/transcript-paths";
+import type { SubagentLaunchProfile } from ".";
 
 /**
  * Applies an OS-level filesystem sandbox to a subagent child process at spawn.
@@ -40,7 +41,7 @@ interface SubagentLauncher {
 export interface WrapSubagentLauncherInput {
   launcher: SubagentLauncher;
   /** The subagent's declared launch profile; only parent-memory is wrapped. */
-  launchProfile: string | undefined;
+  launchProfile: SubagentLaunchProfile | undefined;
   /** Active backend; selects the tree + write posture ("local" vs "api"). */
   backendMode: string;
   /** Resolved memory roots the child may write to (MEMORY_DIR + siblings). */

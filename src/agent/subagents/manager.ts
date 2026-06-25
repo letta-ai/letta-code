@@ -49,7 +49,11 @@ import {
 } from "@/tools/impl/shell-env";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
-import { getAllSubagentConfigs, type SubagentConfig } from ".";
+import {
+  getAllSubagentConfigs,
+  type SubagentConfig,
+  type SubagentLaunchProfile,
+} from ".";
 import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT,
@@ -611,7 +615,7 @@ export function resolveSubagentWorkingDirectory(
   fallbackCwd: string = getCurrentWorkingDirectory(),
   options: {
     subagentType?: string;
-    launchProfile?: string;
+    launchProfile?: SubagentLaunchProfile;
     inheritedPrimaryRoot?: string | null;
   } = {},
 ): string {
@@ -688,7 +692,7 @@ export interface ComposeSubagentChildEnvOptions {
   parentAgentId: string | undefined;
   /** The subagent config's declared launch profile. Parent-memory subagents
    * operate on the parent's memory filesystem. */
-  launchProfile: string | undefined;
+  launchProfile: SubagentLaunchProfile | undefined;
   /** Primary memory root for the parent, used by the parent-memory launch
    * profile to point the child at its parent's memfs repo. Null means memfs
    * disabled or unresolvable — child operates without a MEMORY_DIR. */

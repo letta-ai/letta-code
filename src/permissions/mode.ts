@@ -30,13 +30,13 @@ export function migratePermissionMode(value: string): PermissionMode | null {
 }
 
 /**
- * Result of a permission-mode check. Includes a decision and an optional
- * `reason` string the caller can surface to the agent. When `reason` is omitted
- * the caller falls back to a generic `"Permission mode: {mode}"` message.
+ * Result of a permission-mode check: the mode auto-allows the tool. A `null`
+ * result (not this type) means the mode doesn't apply and normal permission
+ * flow continues. The caller surfaces a generic `"Permission mode: {mode}"`
+ * message.
  */
 export interface ModeOverrideResult {
-  decision: "allow" | "deny";
-  reason?: string;
+  decision: "allow";
 }
 
 // Use globalThis to ensure singleton across bundle
@@ -96,8 +96,6 @@ class PermissionModeManager {
    */
   checkModeOverride(
     toolName: string,
-    _toolArgs?: Record<string, unknown>,
-    _workingDirectory: string = process.cwd(),
     modeOverride?: PermissionMode,
   ): ModeOverrideResult | null {
     const effectiveMode = modeOverride ?? this.currentMode;

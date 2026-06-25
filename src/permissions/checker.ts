@@ -429,12 +429,10 @@ function checkPermissionForEngine(
   const effectiveMode = modeState?.mode ?? permissionMode.getMode();
   const modeOverride = permissionMode.checkModeOverride(
     toolName,
-    toolArgs,
-    workingDirectory,
     effectiveMode,
   );
   if (modeOverride) {
-    const reason = modeOverride.reason ?? `Permission mode: ${effectiveMode}`;
+    const reason = `Permission mode: ${effectiveMode}`;
     traceEvent(trace, "mode-override", reason);
     return {
       result: {

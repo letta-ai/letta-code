@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 
-import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
+import {
+  type WrapSubagentLauncherInput,
+  wrapSubagentLauncher,
+} from "@/agent/subagents/sandbox";
 import { getLocalBackendCrossAgentTreeRoot } from "@/backend/local/paths";
 import {
   canonicalizeRoot,
@@ -23,7 +26,7 @@ const LAUNCHER = {
   args: ["run", "src/index.ts", "--headless"],
 };
 
-function baseInput() {
+function baseInput(): WrapSubagentLauncherInput {
   return {
     launcher: LAUNCHER,
     launchProfile: "parent-memory",

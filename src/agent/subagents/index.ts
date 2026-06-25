@@ -156,9 +156,7 @@ function parseSkills(skillsStr: string | undefined): string[] {
 function parseLaunchProfile(
   launchProfile: string | undefined,
 ): SubagentLaunchProfile {
-  if (launchProfile === "parent-memory") return "parent-memory";
-  if (launchProfile === "default") return "default";
-  return "default";
+  return launchProfile === "parent-memory" ? "parent-memory" : "default";
 }
 
 /**
