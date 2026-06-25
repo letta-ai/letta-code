@@ -20,6 +20,7 @@ This is the first slice of the hooks-v2 direction. The long-term goal is for typ
 letta.capabilities.events.lifecycle
 letta.capabilities.events.tools
 letta.capabilities.events.turns
+letta.capabilities.events.compact
 ```
 
 Guard events when writing portable mods:
@@ -55,9 +56,11 @@ letta.events.on("tool_start", (event, ctx) => {
 });
 ```
 
-Lifecycle, turn-start, and tool-start events are wired today.
+Lifecycle, turn, tool, and compaction events are wired today.
 
-Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn. `tool_start` handlers can transform the tool arguments before execution.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn. `tool_start` handlers can transform the tool arguments before execution. Compaction handlers are notification-only.
+
+`compact_start` and `compact_end` only fire on the **local backend** (compaction runs client-side there). On the constellation backend compaction happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` for portable mods.
 
 ## Supported events
 
@@ -67,6 +70,8 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 "tool_start"
 "tool_end"
 "turn_start"
+"compact_start"
+"compact_end"
 ```
 
 `conversation_open` event:
@@ -194,6 +199,34 @@ letta.events.on("turn_start", (event) => {
 Handlers run in registration order. Later handlers see the current input after earlier mutations/returns. If a handler throws, its partial `event.input` mutation is rolled back and the error is recorded as a mod diagnostic.
 
 `turn_start` is intentionally a trusted local mod point: it can rewrite user messages, approval results, and ordering. Keep transforms focused and unsurprising.
+
+`compact_start` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: "manual" | "context_window_overflow" | "context_window_limit";
+}
+```
+
+`compact_start` fires before the local backend compacts a conversation, while the full message history is still in context. `trigger` distinguishes a manual `/compact` from the two automatic triggers (provider context-window overflow, and exceeding the configured context window). Use it to checkpoint state before eviction.
+
+`compact_end` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: "manual" | "context_window_overflow" | "context_window_limit";
+  messagesBefore: number;
+  messagesAfter: number;
+  contextTokensBefore: number;
+  contextTokensAfter: number;
+}
+```
+
+`compact_end` fires after compaction completes, carrying the before/after message and context-token counts. Both events are notification-only; return values are ignored. A throwing handler is isolated and never breaks compaction.
 
 Handlers also receive:
 

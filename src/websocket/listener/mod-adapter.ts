@@ -13,6 +13,7 @@ export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
     lifecycle: false,
     tools: false,
     turns: true,
+    compact: false,
   },
   permissions: false,
   providers: true,

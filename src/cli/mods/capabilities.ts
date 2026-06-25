@@ -7,6 +7,7 @@ export const TUI_MOD_CAPABILITIES: ModCapabilities = {
     lifecycle: true,
     tools: true,
     turns: true,
+    compact: true,
   },
   permissions: true,
   providers: true,

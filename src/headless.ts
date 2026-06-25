@@ -95,6 +95,7 @@ import {
   type DrainStreamHook,
   drainStreamWithResume,
 } from "./cli/helpers/stream";
+import { installLocalBackendModEventHooks } from "./cli/mods/local-backend-mod-events";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
@@ -1584,6 +1585,18 @@ export async function handleHeadlessCommand(
     sessionStats,
   });
   await headlessModAdapter.reload();
+  installLocalBackendModEventHooks({
+    backend,
+    adapter: headlessModAdapter,
+    buildContext: (compactConversationId) =>
+      createHeadlessModContext({
+        agent,
+        conversationId: compactConversationId,
+        permissionMode: headlessPermissionMode,
+        reflectionSettings: effectiveReflectionSettings,
+        sessionStats,
+      }),
+  });
   try {
     await emitHeadlessConversationOpen({
       agent,

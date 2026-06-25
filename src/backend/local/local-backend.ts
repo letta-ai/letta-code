@@ -81,6 +81,29 @@ export interface LocalBackendOptions {
   memfsEnabled?: boolean;
 }
 
+/**
+ * Hooks the harness installs (via {@link LocalBackend.setModEventHooks}) so
+ * mods can observe backend-internal lifecycle that only the local backend owns
+ * (compaction today, and provider calls in a later change). The backend stays
+ * mod-agnostic: it invokes these plain callbacks and never touches mod state.
+ */
+export interface LocalBackendModEventHooks {
+  onCompactStart?: (info: {
+    agentId: string;
+    conversationId: string;
+    trigger: string;
+  }) => void | Promise<void>;
+  onCompactEnd?: (info: {
+    agentId: string;
+    conversationId: string;
+    trigger: string;
+    messagesBefore: number;
+    messagesAfter: number;
+    contextTokensBefore: number;
+    contextTokensAfter: number;
+  }) => void | Promise<void>;
+}
+
 function sanitizeFrontmatterValue(value: string): string {
   return value.replace(/\r?\n/g, " ").trim();
 }
@@ -267,6 +290,7 @@ export class LocalBackend extends HeadlessBackend {
   private readonly storageDir: string;
   private readonly complete?: LocalCompleteFunction;
   private readonly memfsEnabledOverride?: boolean;
+  private modEventHooks?: LocalBackendModEventHooks;
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
@@ -307,6 +331,52 @@ export class LocalBackend extends HeadlessBackend {
     this.memoryDir = options.memoryDir;
     this.complete = options.complete;
     this.memfsEnabledOverride = options.memfsEnabled;
+  }
+
+  /**
+   * Late-bound because the backend is a process-global singleton constructed
+   * before the harness mod adapter exists. The harness calls this once the
+   * registry is ready to forward backend-internal events to local mods.
+   */
+  setModEventHooks(hooks: LocalBackendModEventHooks | undefined): void {
+    this.modEventHooks = hooks;
+  }
+
+  private async emitCompactStart(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+  ): Promise<void> {
+    const hook = this.modEventHooks?.onCompactStart;
+    if (!hook) return;
+    try {
+      await hook({ agentId, conversationId, trigger });
+    } catch {
+      // Mod event hooks must never break compaction.
+    }
+  }
+
+  private async emitCompactEnd(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+    stats: LocalCompactionStats,
+  ): Promise<void> {
+    const hook = this.modEventHooks?.onCompactEnd;
+    if (!hook) return;
+    try {
+      await hook({
+        agentId,
+        conversationId,
+        trigger,
+        messagesBefore: stats.messages_count_before ?? 0,
+        messagesAfter: stats.messages_count_after ?? 0,
+        contextTokensBefore: stats.context_tokens_before ?? 0,
+        contextTokensAfter: stats.context_tokens_after ?? 0,
+      });
+    } catch {
+      // Mod event hooks must never break compaction.
+    }
   }
 
   getLocalStorageDir(): string {
@@ -681,6 +751,28 @@ export class LocalBackend extends HeadlessBackend {
   }
 
   private async compactLocalConversation(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+    body?: ConversationMessageCompactBody,
+  ): Promise<{
+    numMessagesBefore: number;
+    numMessagesAfter: number;
+    summary: string;
+    stats: LocalCompactionStats;
+  }> {
+    await this.emitCompactStart(conversationId, agentId, trigger);
+    const result = await this.compactLocalConversationInner(
+      conversationId,
+      agentId,
+      trigger,
+      body,
+    );
+    await this.emitCompactEnd(conversationId, agentId, trigger, result.stats);
+    return result;
+  }
+
+  private async compactLocalConversationInner(
     conversationId: string,
     agentId: string,
     trigger: string,

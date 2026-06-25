@@ -103,7 +103,7 @@ function createEngine(
 const TOOL_ONLY_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
   commands: false,
-  events: { lifecycle: false, tools: false, turns: false },
+  events: { lifecycle: false, tools: false, turns: false, compact: false },
   permissions: false,
   providers: false,
   ui: {
@@ -795,6 +795,7 @@ describe("mod engine", () => {
           letta.ui.setStatuslineRenderer(() => "hidden");
           letta.events.on("conversation_open", () => {});
           letta.events.on("tool_start", () => {});
+          letta.events.on("compact_start", () => {});
           letta.tools.register({
             name: "visible_tool",
             description: "Visible tool",
@@ -876,6 +877,70 @@ describe("mod engine", () => {
           error: expect.objectContaining({ message: "event failed" }),
         },
       );
+
+      engine.dispose();
+    } finally {
+      delete testGlobal.__lettaModEvents;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("delivers compact_start and compact_end events to mod handlers", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    testGlobal.__lettaModEvents = [];
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "compact.ts"),
+        `export default function(letta) {
+          letta.events.on("compact_start", (event) => {
+            globalThis.__lettaModEvents.push(
+              "start:" + event.trigger + ":" + event.conversationId,
+            );
+          });
+          letta.events.on("compact_end", (event) => {
+            globalThis.__lettaModEvents.push(
+              "end:" + event.trigger + ":" + event.messagesBefore + "->" + event.messagesAfter,
+            );
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      expect(engine.getSnapshot().events.compact_start).toHaveLength(1);
+      expect(engine.getSnapshot().events.compact_end).toHaveLength(1);
+
+      await engine.emitEvent(
+        "compact_start",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          trigger: "manual",
+        },
+        createModContext(),
+      );
+      await engine.emitEvent(
+        "compact_end",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          trigger: "context_window_overflow",
+          messagesBefore: 12,
+          messagesAfter: 3,
+          contextTokensBefore: 1000,
+          contextTokensAfter: 200,
+        },
+        createModContext(),
+      );
+
+      expect(testGlobal.__lettaModEvents).toEqual([
+        "start:manual:conversation-1",
+        "end:context_window_overflow:12->3",
+      ]);
 
       engine.dispose();
     } finally {

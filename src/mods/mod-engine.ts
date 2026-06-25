@@ -697,6 +697,8 @@ const SUPPORTED_MOD_EVENT_NAMES = new Set<ModEventName>([
   "tool_end",
   "turn_start",
   "turn_end",
+  "compact_start",
+  "compact_end",
 ]);
 
 function validateModEventName(name: string): asserts name is ModEventName {
@@ -719,6 +721,9 @@ function isModEventCapabilityEnabled(
     case "turn_start":
     case "turn_end":
       return capabilities.events.turns;
+    case "compact_start":
+    case "compact_end":
+      return capabilities.events.compact;
   }
 }
 
