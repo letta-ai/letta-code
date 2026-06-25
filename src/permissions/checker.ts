@@ -803,14 +803,14 @@ function matchesPattern(
 /**
  * Subagent types that are safe to auto-approve by default.
  * Some are read-only explorers; others are memory-rooted writers whose
- * mutations are constrained by dedicated permission-mode enforcement.
+ * mutations are constrained by the parent-memory launch sandbox.
  */
 const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
   "Recall",
-  "reflection", // Memory reflection - writes constrained by memory mode
+  "reflection", // Memory reflection - writes constrained by parent-memory sandbox
   "Reflection",
-  "history-analyzer", // History analysis - writes constrained by memory mode
+  "history-analyzer", // History analysis - writes constrained by parent-memory sandbox
 ]);
 
 /**

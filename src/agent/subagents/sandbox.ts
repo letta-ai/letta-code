@@ -1,5 +1,5 @@
 import {
-  buildMemoryModeSandboxPolicy,
+  buildParentMemorySandboxPolicy,
   getCrossBackendAgentsTreeRoots,
 } from "@/permissions/sandbox-policy";
 import {
@@ -110,7 +110,7 @@ export function wrapSubagentLauncher(
     getTranscriptRoot(),
     ...(isLocal && storageDir ? [storageDir] : []),
   ];
-  const policy = buildMemoryModeSandboxPolicy({
+  const policy = buildParentMemorySandboxPolicy({
     memoryRoots: writableMemoryRoots,
     agentsTreeRoots: getCrossBackendAgentsTreeRoots({
       env,

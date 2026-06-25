@@ -3,11 +3,7 @@ import type { SkillSource } from "./agent/skills";
 import type { MessageChannelToolDiscoveryScope } from "./channels/message-tool";
 import type { ChannelTurnSource } from "./channels/types";
 
-export type RuntimePermissionMode =
-  | "standard"
-  | "acceptEdits"
-  | "memory"
-  | "unrestricted";
+export type RuntimePermissionMode = "standard" | "acceptEdits" | "unrestricted";
 
 export interface RuntimeContextSnapshot {
   agentId?: string | null;

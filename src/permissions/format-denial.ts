@@ -35,7 +35,7 @@ const GENERIC_MATCHED_RULE_REASONS = new Set([
  *      If it already starts with "Permission denied", keep it verbatim;
  *      otherwise prefix it once with `"Permission denied: "`.
  *   4. `permission.matchedRule` — the short rule label
- *      (e.g. "cross-agent guard", "memory mode"). Prefixed with
+ *      (e.g. "cross-agent guard", "acceptEdits mode"). Prefixed with
  *      `"Permission denied by rule: "`.
  *   5. Final fallback: `"Permission denied: Unknown reason"`.
  */

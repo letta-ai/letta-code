@@ -10,7 +10,7 @@
 //
 // Spawned shell commands ARE confined by the kernel sandbox, which supersedes
 // this guard for them — so shell commands are intentionally no longer analyzed
-// here (the old token/raw-command scanner is gone). Memory-mode subagents are
+// here (the old token/raw-command scanner is gone). Parent-memory subagents are
 // also confined as whole processes and skip the guard entirely when the
 // sandbox sentinel is set. The guard is the in-process safety net; the kernel
 // is the enforcement boundary for spawned shells and process-confined subagents.
