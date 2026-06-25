@@ -25,6 +25,7 @@ export const HEADLESS_MOD_CAPABILITIES: ModCapabilities = {
     tools: true,
     turns: true,
     compact: true,
+    llm: true,
   },
   permissions: true,
   providers: true,

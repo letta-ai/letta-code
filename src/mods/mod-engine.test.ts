@@ -103,7 +103,13 @@ function createEngine(
 const TOOL_ONLY_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
   commands: false,
-  events: { lifecycle: false, tools: false, turns: false, compact: false },
+  events: {
+    lifecycle: false,
+    tools: false,
+    turns: false,
+    compact: false,
+    llm: false,
+  },
   permissions: false,
   providers: false,
   ui: {
@@ -796,6 +802,7 @@ describe("mod engine", () => {
           letta.events.on("conversation_open", () => {});
           letta.events.on("tool_start", () => {});
           letta.events.on("compact_start", () => {});
+          letta.events.on("llm_start", () => {});
           letta.tools.register({
             name: "visible_tool",
             description: "Visible tool",
@@ -940,6 +947,71 @@ describe("mod engine", () => {
       expect(testGlobal.__lettaModEvents).toEqual([
         "start:manual:conversation-1",
         "end:context_window_overflow:12->3",
+      ]);
+
+      engine.dispose();
+    } finally {
+      delete testGlobal.__lettaModEvents;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("delivers llm_start and llm_end events to mod handlers", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    testGlobal.__lettaModEvents = [];
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "llm.ts"),
+        `export default function(letta) {
+          letta.events.on("llm_start", (event) => {
+            globalThis.__lettaModEvents.push(
+              "start:" + event.model + ":" + event.messageCount + "/" + event.contextWindow,
+            );
+          });
+          letta.events.on("llm_end", (event) => {
+            globalThis.__lettaModEvents.push(
+              "end:" + event.stopReason + ":" + event.usage.totalTokens + ":" + event.durationMs + "ms",
+            );
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      expect(engine.getSnapshot().events.llm_start).toHaveLength(1);
+      expect(engine.getSnapshot().events.llm_end).toHaveLength(1);
+
+      await engine.emitEvent(
+        "llm_start",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          model: "anthropic/claude-fable-5",
+          messageCount: 8,
+          contextWindow: 200000,
+        },
+        createModContext(),
+      );
+      await engine.emitEvent(
+        "llm_end",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          model: "anthropic/claude-fable-5",
+          stopReason: "stop",
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          durationMs: 1234,
+        },
+        createModContext(),
+      );
+
+      expect(testGlobal.__lettaModEvents).toEqual([
+        "start:anthropic/claude-fable-5:8/200000",
+        "end:stop:120:1234ms",
       ]);
 
       engine.dispose();

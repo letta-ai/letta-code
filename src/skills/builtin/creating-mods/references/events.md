@@ -21,6 +21,7 @@ letta.capabilities.events.lifecycle
 letta.capabilities.events.tools
 letta.capabilities.events.turns
 letta.capabilities.events.compact
+letta.capabilities.events.llm
 ```
 
 Guard events when writing portable mods:
@@ -56,11 +57,11 @@ letta.events.on("tool_start", (event, ctx) => {
 });
 ```
 
-Lifecycle, turn, tool, and compaction events are wired today.
+Lifecycle, turn, tool, compaction, and llm events are wired today.
 
-Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn. `tool_start` handlers can transform the tool arguments before execution. Compaction handlers are notification-only.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
 
-`compact_start` and `compact_end` only fire on the **local backend** (compaction runs client-side there). On the constellation backend compaction happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` for portable mods.
+`compact_start`/`compact_end` and `llm_start`/`llm_end` only fire on the **local backend**, where compaction and provider requests run client-side. On the constellation backend that work happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` / `letta.capabilities.events.llm` for portable mods.
 
 ## Supported events
 
@@ -72,6 +73,8 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 "turn_start"
 "compact_start"
 "compact_end"
+"llm_start"
+"llm_end"
 ```
 
 `conversation_open` event:
@@ -227,6 +230,39 @@ Handlers run in registration order. Later handlers see the current input after e
 ```
 
 `compact_end` fires after compaction completes, carrying the before/after message and context-token counts. Both events are notification-only; return values are ignored. A throwing handler is isolated and never breaks compaction.
+
+`llm_start` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  messageCount: number;
+  contextWindow: number;
+}
+```
+
+`llm_start` fires right before each provider request, with the model handle, the number of messages being sent, and the model's context window. It fires once per provider request, so a retry or an overflow-triggered re-request emits another `llm_start`.
+
+`llm_end` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  stopReason: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  durationMs: number;
+}
+```
+
+`llm_end` fires once a provider request produces a final message, carrying the stop reason, token usage, and wall-clock duration. A request that fails before producing a final message (e.g. a transport error that triggers a retry) emits no `llm_end`. Both events are notification-only; return values are ignored. A throwing handler is isolated and never breaks the provider request.
 
 Handlers also receive:
 
