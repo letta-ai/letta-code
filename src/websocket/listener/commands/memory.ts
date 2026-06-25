@@ -1168,7 +1168,7 @@ export function handleMemoryProtocolCommand(
 
       try {
         const {
-          getMemoryFilesystemRoot,
+          getScopedMemoryFilesystemRoot,
           ensureLocalMemfsCheckout,
           isMemfsEnabledOnServer,
         } = await import("@/agent/memory-filesystem");
@@ -1176,7 +1176,7 @@ export function handleMemoryProtocolCommand(
         const { join } = await import("node:path");
         const { callArtifactServerFunction } = await import("./artifacts");
 
-        const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
+        const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
         if (!existsSync(join(memoryRoot, ".git"))) {
           const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
           if (!enabled) {

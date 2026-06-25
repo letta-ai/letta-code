@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -151,7 +152,13 @@ function createDataApi(input: CreateDataApiInput): ArtifactDataApi {
       if (content.trim().length === 0) {
         return null;
       }
-      return content;
+      try {
+        return JSON.parse(content);
+      } catch {
+        // Fall back to the raw string for non-JSON content (e.g. a plain
+        // string written via data.write) so callers still get a value.
+        return content;
+      }
     },
     write: (value) => {
       mkdirSync(dirname(dataPath), { recursive: true });
@@ -370,38 +377,52 @@ function formatConsoleArg(value: unknown): string {
   return inspect(value, { depth: 6, breakLength: 120 });
 }
 
-async function captureArtifactServerLogs<T>(
-  callback: () => Promise<T>,
-): Promise<{ value: T; logs: ArtifactServerLog[] }> {
-  const logs: ArtifactServerLog[] = [];
-  const originalLog = console.log;
-  const originalInfo = console.info;
-  const originalWarn = console.warn;
-  const originalError = console.error;
-  const originalDebug = console.debug;
+const artifactLogStorage = new AsyncLocalStorage<ArtifactServerLog[]>();
 
-  const createLogger = (
+let artifactConsoleInterceptorsInstalled = false;
+
+/**
+ * Install console interceptors once (lazily, on first artifact call). They
+ * route `console.*` calls into the active artifact log capture via
+ * AsyncLocalStorage, so concurrent artifact calls each capture their own logs
+ * without racing on global console save/restore. Outside an active capture the
+ * interceptors are transparent pass-throughs to the original console methods.
+ */
+function ensureArtifactConsoleInterceptorsInstalled(): void {
+  if (artifactConsoleInterceptorsInstalled) return;
+  artifactConsoleInterceptorsInstalled = true;
+
+  const createInterceptor = (
     level: ArtifactServerLog["level"],
     original: (...args: unknown[]) => void,
   ) => {
     return (...args: unknown[]): void => {
-      logs.push({
-        level,
-        message: args.map(formatConsoleArg).join(" "),
-        timestamp: new Date().toISOString(),
-      });
+      const logs = artifactLogStorage.getStore();
+      if (logs) {
+        logs.push({
+          level,
+          message: args.map(formatConsoleArg).join(" "),
+          timestamp: new Date().toISOString(),
+        });
+      }
       original(...args);
     };
   };
 
-  console.log = createLogger("log", originalLog);
-  console.info = createLogger("info", originalInfo);
-  console.warn = createLogger("warn", originalWarn);
-  console.error = createLogger("error", originalError);
-  console.debug = createLogger("debug", originalDebug);
+  console.log = createInterceptor("log", console.log);
+  console.info = createInterceptor("info", console.info);
+  console.warn = createInterceptor("warn", console.warn);
+  console.error = createInterceptor("error", console.error);
+  console.debug = createInterceptor("debug", console.debug);
+}
 
+async function captureArtifactServerLogs<T>(
+  callback: () => Promise<T>,
+): Promise<{ value: T; logs: ArtifactServerLog[] }> {
+  ensureArtifactConsoleInterceptorsInstalled();
+  const logs: ArtifactServerLog[] = [];
   try {
-    const value = await callback();
+    const value = await artifactLogStorage.run(logs, callback);
     return { value, logs };
   } catch (err) {
     const message = err instanceof Error ? err.message : formatConsoleArg(err);
@@ -411,12 +432,6 @@ async function captureArtifactServerLogs<T>(
       timestamp: new Date().toISOString(),
     });
     throw new ArtifactCallServerError({ message, logs });
-  } finally {
-    console.log = originalLog;
-    console.info = originalInfo;
-    console.warn = originalWarn;
-    console.error = originalError;
-    console.debug = originalDebug;
   }
 }
 

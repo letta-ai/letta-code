@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import {
   ensureLocalMemfsCheckout,
-  getMemoryFilesystemRoot,
+  getScopedMemoryFilesystemRoot,
   isMemfsEnabledOnServer,
 } from "@/agent/memory-filesystem";
 import { appendArtifactServerDebugLogs } from "@/websocket/listener/commands/artifact-debug-store";
@@ -58,7 +58,7 @@ export async function artifact_call(args: ArtifactCallArgs): Promise<{
     throw new Error("artifact_call: current agent id is unavailable");
   }
 
-  const memoryRoot = getMemoryFilesystemRoot(agentId);
+  const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
   if (!existsSync(join(memoryRoot, ".git"))) {
     const enabled = await isMemfsEnabledOnServer(agentId);
     if (!enabled) {
