@@ -51,15 +51,10 @@ function createStatuslineContext(): StatuslineRenderContext {
 }
 
 function renderCtx(width: number) {
+  const context = createStatuslineContext();
   return {
+    ...context,
     width,
-    agent: { id: null, name: "Test" },
-    model: {
-      id: null,
-      displayName: "test-model",
-      provider: null,
-      reasoningEffort: null,
-    },
     row,
     columns,
     chalk,
@@ -494,7 +489,7 @@ describe("local mod loader", () => {
       expect(cacheFiles[0]?.endsWith(".mjs")).toBe(true);
       const panel = Object.values(registry.ui.panels)[0];
       const output = panel?.render(renderCtx(80));
-      expect(output).toMatchObject({ props: { children: "Test" } });
+      expect(output).toMatchObject({ props: { children: "Letta Code" } });
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

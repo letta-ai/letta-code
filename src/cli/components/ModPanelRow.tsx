@@ -5,17 +5,14 @@ import {
   row,
   truncateToWidth,
 } from "@/cli/display/statusline/formatting";
-import type { ModPanel, ModPanelRenderContext } from "@/cli/mods/types";
-import type { ModAgentContext, ModModelContext } from "@/mods/types";
+import type {
+  ModContext,
+  ModPanel,
+  ModPanelRenderContext,
+} from "@/cli/mods/types";
 import { Text } from "./Text";
 
 const MAX_MOD_PANEL_LINES = 8;
-
-/** Live values supplied to panel renders (agent/model), filled in per frame. */
-export interface ModPanelLiveContext {
-  agent: ModAgentContext;
-  model: ModModelContext;
-}
 
 export type ModPanelPlacement = "above" | "below";
 
@@ -33,19 +30,18 @@ function placedPanels(
 export function renderModPanelLines(
   panel: ModPanel,
   width: number,
-  live: ModPanelLiveContext,
+  context: ModContext,
 ): string[] {
   let result: string | string[];
   try {
-    const context: ModPanelRenderContext = {
+    const renderContext: ModPanelRenderContext = {
+      ...context,
       width,
-      agent: live.agent,
-      model: live.model,
       row,
       columns,
       chalk,
     };
-    result = panel.render(context);
+    result = panel.render(renderContext);
   } catch {
     // A mod's render fn runs inside the input render; never let it crash the UI.
     return [];
@@ -65,7 +61,7 @@ export function ModPanelRow({
   panels?: Record<string, ModPanel>;
   terminalWidth: number;
   placement: ModPanelPlacement;
-  context: ModPanelLiveContext;
+  context: ModContext;
 }) {
   const rowWidth = Math.max(0, terminalWidth - 1);
   if (rowWidth === 0) return null;
