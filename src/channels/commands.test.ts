@@ -20,6 +20,7 @@ import {
   buildUnsupportedChannelCommandMessage,
   listChannelSlashCommands,
   parseChannelSlashCommand,
+  parseLettaEscapeHatch,
 } from "@/channels/commands";
 
 describe("channel slash commands", () => {
@@ -46,6 +47,7 @@ describe("channel slash commands", () => {
       "chat",
       "model",
       "reflection",
+      "letta",
     ]) {
       expect(listChannelSlashCommands()).toContainEqual(
         expect.objectContaining({ name }),
@@ -55,7 +57,7 @@ describe("channel slash commands", () => {
     const text = buildChannelHelpMessage("telegram");
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection, /letta.",
     );
   });
 
@@ -246,8 +248,33 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection, /letta.",
     );
     expect(text).toContain("without a leading slash");
+  });
+});
+
+describe("parseLettaEscapeHatch", () => {
+  test("strips /letta prefix and returns raw text", () => {
+    expect(parseLettaEscapeHatch("/letta hello")).toBe("hello");
+    expect(parseLettaEscapeHatch("/letta /reload")).toBe("/reload");
+    expect(parseLettaEscapeHatch("/letta /compact all")).toBe("/compact all");
+  });
+
+  test("handles bot suffix and whitespace", () => {
+    expect(parseLettaEscapeHatch(" /letta@LettaBot hello ")).toBe("hello");
+    expect(parseLettaEscapeHatch("/LETTA /reload")).toBe("/reload");
+  });
+
+  test("returns empty string for bare /letta with no args", () => {
+    expect(parseLettaEscapeHatch("/letta")).toBe("");
+    expect(parseLettaEscapeHatch("/letta   ")).toBe("");
+  });
+
+  test("returns null for non-letta messages", () => {
+    expect(parseLettaEscapeHatch("hello world")).toBeNull();
+    expect(parseLettaEscapeHatch("/help")).toBeNull();
+    expect(parseLettaEscapeHatch("/reload")).toBeNull();
+    expect(parseLettaEscapeHatch("")).toBeNull();
   });
 });

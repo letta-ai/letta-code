@@ -87,7 +87,7 @@ export async function handleExecuteCommand(
     connectionId?: string;
     connectionName?: string;
   },
-): Promise<void> {
+): Promise<string> {
   const scope = {
     agent_id: conversationRuntime.agentId,
     conversation_id: conversationRuntime.conversationId,
@@ -214,6 +214,7 @@ export async function handleExecuteCommand(
       output,
       success: true,
     });
+    return output;
   } catch (error) {
     trackBoundaryError({
       errorType: "listener_execute_command_failed",
@@ -227,6 +228,7 @@ export async function handleExecuteCommand(
       output: `Failed: ${errorMessage}`,
       success: false,
     });
+    return `Failed: ${errorMessage}`;
   } finally {
     // clearConversationRuntimeState sets cancelRequested = true which
     // permanently blocks the queue pump (getListenerBlockedReason returns
