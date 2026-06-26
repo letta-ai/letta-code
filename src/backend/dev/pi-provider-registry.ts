@@ -143,11 +143,14 @@ const PI_PROVIDER_OVERRIDES: Partial<
   openrouter: {
     localProviderNames: ["openrouter", LOCAL_OPENROUTER_PROVIDER_NAME],
     baseUrlEnv: () => process.env.OPENROUTER_BASE_URL,
-    headers: () => ({
-      "HTTP-Referer": "https://letta.com",
-      "X-OpenRouter-Title": "Letta Code",
-      "X-OpenRouter-Categories": "cli-agent,personal-agent",
-    }),
+    headers: () =>
+      process.env.LETTA_DISABLE_OPENROUTER_ATTRIBUTION === "1"
+        ? undefined
+        : {
+            "HTTP-Referer": "https://letta.com",
+            "X-OpenRouter-Title": "Letta Code",
+            "X-OpenRouter-Categories": "cli-agent,personal-agent",
+          },
   },
   zai: {
     providerTypes: ["zai", "zai_coding"],
