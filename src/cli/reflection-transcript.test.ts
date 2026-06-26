@@ -692,7 +692,6 @@ describe("reflectionTranscript helper", () => {
 
   test("buildParentMemorySnapshot renders tree descriptions and system <memory> blocks", async () => {
     const memoryDir = join(testRoot, "memory");
-    const normalizedMemoryDir = memoryDir.replace(/\\/g, "/");
     await mkdir(join(memoryDir, "system"), { recursive: true });
     await mkdir(join(memoryDir, "reference"), { recursive: true });
     await mkdir(join(memoryDir, "skills", "bird"), { recursive: true });
@@ -725,15 +724,14 @@ describe("reflectionTranscript helper", () => {
     expect(snapshot).toContain("SKILL.md (X/Twitter CLI for posting)");
 
     expect(snapshot).toContain("<memory>");
-    expect(snapshot).toContain(
-      `<path>${normalizedMemoryDir}/system/human.md</path>`,
-    );
+    expect(snapshot).toContain("<path>$MEMORY_DIR/system/human.md</path>");
     expect(snapshot).toContain("Dr. Wooders prefers direct answers.");
     expect(snapshot).toContain("</memory>");
 
     expect(snapshot).not.toContain(
-      `<path>${normalizedMemoryDir}/reference/project.md</path>`,
+      "<path>$MEMORY_DIR/reference/project.md</path>",
     );
+    expect(snapshot).not.toContain(memoryDir.replace(/\\/g, "/"));
     expect(snapshot).not.toContain("letta-code CLI details");
     expect(snapshot).not.toContain(
       "This body should not be inlined into parent memory.",
@@ -772,7 +770,6 @@ describe("reflectionTranscript helper", () => {
 
   test("buildParentMemorySnapshot truncates large system memory previews", async () => {
     const memoryDir = join(testRoot, "memory-large-system");
-    const normalizedMemoryDir = memoryDir.replace(/\\/g, "/");
     await mkdir(join(memoryDir, "system"), { recursive: true });
 
     const largeContent = `---\ndescription: Large system memory\n---\nSTART\n${"x".repeat(60_000)}\nEND_SHOULD_BE_TRUNCATED\n`;
@@ -797,9 +794,8 @@ describe("reflectionTranscript helper", () => {
     );
     expect(snapshot).toContain("<memory_filesystem>");
     expect(snapshot).toContain("large.md");
-    expect(snapshot).toContain(
-      `<path>${normalizedMemoryDir}/system/large.md</path>`,
-    );
+    expect(snapshot).toContain("<path>$MEMORY_DIR/system/large.md</path>");
+    expect(snapshot).not.toContain(memoryDir.replace(/\\/g, "/"));
     expect(snapshot).toContain("START");
     expect(snapshot).toContain("Memory preview truncated");
     expect(snapshot).not.toContain("END_SHOULD_BE_TRUNCATED");
@@ -809,7 +805,6 @@ describe("reflectionTranscript helper", () => {
   test("buildReflectionSubagentPrompt uses expanded reflection instructions", () => {
     const prompt = buildReflectionSubagentPrompt({
       instruction: "Focus on repo gotchas.",
-      memoryDir: "/tmp/memory",
       parentMemory: "<parent_memory>snapshot</parent_memory>",
     });
 
@@ -823,6 +818,9 @@ describe("reflectionTranscript helper", () => {
     expect(prompt).toContain("$TRANSCRIPT_PATH");
     expect(prompt).toContain('wc -c "$TRANSCRIPT_PATH"');
     expect(prompt).not.toContain("/tmp/transcript");
+    expect(prompt).not.toContain("/tmp/memory");
+    expect(prompt).not.toContain("worktree");
+    expect(prompt).toContain("$MEMORY_DIR");
     expect(prompt).toContain(
       "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below.",
     );

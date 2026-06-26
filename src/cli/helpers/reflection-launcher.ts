@@ -263,7 +263,6 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
     const parentMemory = await buildParentMemorySnapshot(worktree.worktreeDir);
     const reflectionPrompt = buildReflectionSubagentPrompt({
       instruction: params.instruction,
-      memoryDir: worktree.worktreeDir,
       parentMemory,
     });
     return { worktree, reflectionPrompt };

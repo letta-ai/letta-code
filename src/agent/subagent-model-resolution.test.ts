@@ -220,7 +220,7 @@ describe("resolveSubagentWorkingDirectory", () => {
     expect(cwd).toBe("/Users/test/.letta/agents/agent-parent/memory");
   });
 
-  test("reflection subagents prefer a harness-provided memory worktree scope", () => {
+  test("reflection subagents with memoryScope run from USER_CWD while MEMORY_DIR points at the worktree", () => {
     const cwd = resolveSubagentWorkingDirectory(
       {
         USER_CWD: "/tmp/project-root",
@@ -240,9 +240,7 @@ describe("resolveSubagentWorkingDirectory", () => {
       },
     );
 
-    expect(cwd).toBe(
-      "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
-    );
+    expect(cwd).toBe("/tmp/project-root");
   });
 
   test("non-reflection subagents still prefer USER_CWD", () => {

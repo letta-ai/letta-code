@@ -23,11 +23,9 @@ Skills are not the default. A one-off task, a fact, or a preference belongs in m
 
 You only have access to **Bash** and **Edit**. Do not call `Read`, `Write`, memory tools, recall tools, or conversation search, even if those names appear in the transcript.
 
-Your memory repo root is `$MEMORY_DIR`. For reflection, the harness sets this to a temporary git worktree of the primary agent's memory repo. Bash can expand this environment variable; Edit cannot. Keep all filesystem writes under `$MEMORY_DIR`, and run all git commands from inside `$MEMORY_DIR`.
+Your memory repo root is `$MEMORY_DIR`. Bash can expand this environment variable; Edit cannot. Keep all filesystem writes under `$MEMORY_DIR`, and run all git commands from inside `$MEMORY_DIR`.
 
-Do not create, merge, or remove git worktrees yourself. Commit only in `$MEMORY_DIR`; after you finish, the harness merges your branch back into the primary memory repo and cleans up the worktree. If that merge conflicts, the harness will notify the primary agent.
-
-Use **Edit** for every modification to a file that already exists (memory or skill). Do not rewrite existing files with Bash heredocs, scripts, or redirection. Edit paths must be absolute paths under `$MEMORY_DIR`, never literal `$MEMORY_DIR/...` strings.
+Use **Edit** for every modification to a file that already exists (memory or skill). Do not rewrite existing files with Bash heredocs, scripts, or redirection. Edit paths must be absolute paths under `$MEMORY_DIR`, never literal `$MEMORY_DIR/...` strings. To get an Edit path, resolve it with Bash first (for example, `printf "%s/system/persona.md\n" "$MEMORY_DIR"`) and then use the printed path.
 
 Use **Bash** for reading, git, and filesystem/bulk operations — not for editing the contents of existing files:
 - Inspect transcripts with bounded reads. Run `wc -c "$TRANSCRIPT_PATH"` first; if a file is <= 15000 bytes, `cat` is okay, otherwise use targeted `head`, `tail`, `grep`, and `sed -n` snippets.
@@ -36,7 +34,7 @@ Use **Bash** for reading, git, and filesystem/bulk operations — not for editin
 
 ## Memory Filesystem
 
-The primary agent's context (its prompts, skills, and external memory files) is stored in a "memory filesystem" exposed to you at `$MEMORY_DIR`. Changes to these files are reflected in the primary agent's context after they are committed here and the harness merges your worktree branch back to the main MemFS checkout.
+The primary agent's context (its prompts, skills, and external memory files) is stored in a "memory filesystem" rooted at `$MEMORY_DIR`. Changes to these files are reflected in the primary agent's context after they are committed to the MemFS git repo.
 
 The filesystem contains:
 - **Prompts** (`system/`): Always in-context. Reserve for identity, preferences, conventions, and active project context the agent needs on every turn. Keep files concise — move verbose content to external memory.
@@ -180,7 +178,7 @@ echo "CHILD_AGENT_ID=$LETTA_AGENT_ID"
 echo "PARENT_AGENT_ID=$LETTA_PARENT_AGENT_ID"
 ```
 
-Use the printed values (e.g., `agent-abc123...`) in the trailers. If a variable is empty or unset, omit that trailer. Never write a literal variable name like `$LETTA_AGENT_ID` in the commit message. Commit in `$MEMORY_DIR` only; do not merge to main or remove the worktree. Use plain `-m "..."` with an embedded multi-line string exactly as shown below:
+Use the printed values (e.g., `agent-abc123...`) in the trailers. If a variable is empty or unset, omit that trailer. Never write a literal variable name like `$LETTA_AGENT_ID` in the commit message. Run git commands only from `$MEMORY_DIR`. Use plain `-m "..."` with an embedded multi-line string exactly as shown below:
 
 ```bash
 cd $MEMORY_DIR
