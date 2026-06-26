@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -471,20 +473,49 @@ function getRuntimePackageDirectory(packageName: string): string {
   );
 }
 
+function normalizeRuntimeDependencyPath(value: string): string {
+  const normalized = path.normalize(value).replace(/^\\\\\?\\/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
 function ensureRuntimeDependencySymlink(
   cacheDirectory: string,
   packageName: string,
 ): void {
   const nodeModulesDirectory = path.join(cacheDirectory, "node_modules");
   const linkPath = path.join(nodeModulesDirectory, packageName);
-  if (existsSync(linkPath)) return;
+  const packageDirectory = path.resolve(
+    getRuntimePackageDirectory(packageName),
+  );
 
   mkdirSync(nodeModulesDirectory, { recursive: true });
-  symlinkSync(
-    getRuntimePackageDirectory(packageName),
-    linkPath,
-    process.platform === "win32" ? "junction" : "dir",
-  );
+  try {
+    const stats = lstatSync(linkPath);
+    if (!stats.isSymbolicLink()) return;
+
+    const existingTarget = readlinkSync(linkPath);
+    const resolvedTarget = path.resolve(nodeModulesDirectory, existingTarget);
+    if (
+      normalizeRuntimeDependencyPath(resolvedTarget) ===
+      normalizeRuntimeDependencyPath(packageDirectory)
+    ) {
+      return;
+    }
+
+    unlinkSync(linkPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  try {
+    symlinkSync(
+      packageDirectory,
+      linkPath,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
 }
 
 function ensureModCache(cacheDirectory: string): void {
