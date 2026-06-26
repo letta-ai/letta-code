@@ -458,6 +458,21 @@ export interface DeviceStatus {
   reflection_settings: ReflectionSettingsSnapshot | null;
   /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
   supported_commands: string[];
+  /**
+   * Slash commands contributed by locally loaded mods. Advertised separately
+   * from `supported_commands` (which gates the client's built-in allowlist) so
+   * clients can auto-surface mod commands by their own policy. Invoked through
+   * the same `execute_command` path. Omitted when no mod commands are loaded.
+   */
+  mod_commands?: ModCommandInfo[];
+}
+
+/** A mod-contributed slash command advertised to clients for rendering. */
+export interface ModCommandInfo {
+  id: string;
+  description: string;
+  /** Optional argument hint shown in the palette (e.g. "<query>"). */
+  args?: string;
 }
 
 export type LoopStatus =

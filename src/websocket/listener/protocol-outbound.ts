@@ -24,6 +24,7 @@ import type {
   LoopState,
   LoopStatus,
   LoopStatusUpdateMessage,
+  ModCommandInfo,
   QueueMessage,
   QueueUpdateMessage,
   RetryMessage,
@@ -40,6 +41,7 @@ import { isDebugEnabled } from "@/utils/debug";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
+import { listListenerModCommands } from "./mod-commands";
 import { getConversationPermissionModeState } from "./permission-mode";
 import {
   getConversationRuntime,
@@ -76,6 +78,17 @@ const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
  * web client). (LET-8948)
  */
 const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
+
+/**
+ * Mod-contributed commands for the device status, omitted entirely when no mods
+ * register commands so the common case adds no field.
+ */
+function buildModCommandsField(listener: ListenerRuntime): {
+  mod_commands?: ModCommandInfo[];
+} {
+  const modCommands = listListenerModCommands(listener);
+  return modCommands.length > 0 ? { mod_commands: modCommands } : {};
+}
 const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
 const PROTOCOL_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
 const PROTOCOL_PERF_ENABLED = PROTOCOL_PERF_ENV_VALUES.has(
@@ -485,6 +498,7 @@ export function buildDeviceStatus(
       : {}),
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: FROZEN_SUPPORTED_COMMANDS,
+    ...buildModCommandsField(listener),
     reflection_settings: scopedAgentId
       ? {
           agent_id: scopedAgentId,
