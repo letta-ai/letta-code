@@ -20,6 +20,7 @@ export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
   providers: true,
   ui: {
     panels: false,
+    dialogs: false,
   },
 };
 

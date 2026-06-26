@@ -58,6 +58,7 @@ describe("listener mod adapter", () => {
       providers: true,
       ui: {
         panels: false,
+        dialogs: false,
       },
     });
   });

@@ -1933,8 +1933,12 @@ export function Input({
     [statusLinePayload, currentModelProvider],
   );
 
+  // A mod-driven blocking dialog (letta.ui.select) takes over the input region,
+  // so hide mod panels while one is open.
+  const hasActiveModDialog = (modAdapter.registry?.ui.dialogs?.length ?? 0) > 0;
+
   const modPanelRow = useMemo(() => {
-    if (suppressDividers) return null;
+    if (suppressDividers || hasActiveModDialog) return null;
     return (
       <ModPanelRow
         panels={modAdapter.registry?.ui.panels}
@@ -1945,13 +1949,14 @@ export function Input({
     );
   }, [
     suppressDividers,
+    hasActiveModDialog,
     modAdapter.registry?.ui.panels,
     terminalWidth,
     panelLiveContext,
   ]);
 
   const modPanelRowBelow = useMemo(() => {
-    if (suppressDividers) return null;
+    if (suppressDividers || hasActiveModDialog) return null;
     return (
       <ModPanelRow
         panels={modAdapter.registry?.ui.panels}
@@ -1962,6 +1967,7 @@ export function Input({
     );
   }, [
     suppressDividers,
+    hasActiveModDialog,
     modAdapter.registry?.ui.panels,
     terminalWidth,
     panelLiveContext,

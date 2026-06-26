@@ -4940,8 +4940,15 @@ export function App({
     trajectoryTokenDisplayRef.current,
   );
   const inputVisible = !showExitStats;
+  // A mod-driven blocking dialog (letta.ui.select) owns input while open, so the
+  // main input must stop capturing keys (otherwise Enter both submits and
+  // selects the dialog's highlighted option).
+  const modDialogActive = (modAdapter.registry?.ui.dialogs?.length ?? 0) > 0;
   const inputEnabled =
-    !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+    !showExitStats &&
+    pendingApprovals.length === 0 &&
+    !anySelectorOpen &&
+    !modDialogActive;
   const onEscapeCommandCancel = useCallback(() => {
     if (isActiveConnectOperationCancellable()) {
       cancelActiveConnectOperation();

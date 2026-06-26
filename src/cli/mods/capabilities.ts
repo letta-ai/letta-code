@@ -14,5 +14,6 @@ export const TUI_MOD_CAPABILITIES: ModCapabilities = {
   providers: true,
   ui: {
     panels: true,
+    dialogs: true,
   },
 };

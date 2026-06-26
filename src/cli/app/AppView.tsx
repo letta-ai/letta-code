@@ -33,6 +33,7 @@ import { McpSelector } from "@/cli/components/McpSelector";
 import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
 import { MemoryTabViewer } from "@/cli/components/MemoryTabViewer";
 import { MessageSearch } from "@/cli/components/MessageSearch";
+import { ModDialogPrompt } from "@/cli/components/ModDialogPrompt";
 import { ModelReasoningSelector } from "@/cli/components/ModelReasoningSelector";
 import {
   ModelSelector,
@@ -481,6 +482,17 @@ export function AppView(props: AppViewProps) {
     updateAgentName,
   } = props;
 
+  // Mod-driven blocking dialog (letta.ui.select); the first queued entry is the
+  // active one. Only shown when nothing else owns input, so it never stacks
+  // under an approval/overlay; when shown it takes over the input region like
+  // AskUserQuestion does.
+  const activeModDialog = modAdapter.registry?.ui.dialogs?.[0];
+  const modDialogHasFocus =
+    !!activeModDialog &&
+    !currentApproval &&
+    !anySelectorOpen &&
+    activeOverlay === null;
+
   return (
     <Box key={resumeKey} flexDirection="column">
       <StaticTranscript
@@ -700,6 +712,18 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
+            {/* Mod-driven blocking dialog (letta.ui.select) - takes over the
+                input, resolving the awaiting select() call on submit/cancel */}
+            {activeModDialog && modDialogHasFocus && (
+              <Box marginTop={1}>
+                <ModDialogPrompt
+                  key={activeModDialog.id}
+                  dialog={activeModDialog}
+                  engine={modAdapter.engine}
+                />
+              </Box>
+            )}
+
             {/* Input row - always mounted to preserve state */}
             <Box marginTop={1}>
               <Input
@@ -717,7 +741,9 @@ export function AppView(props: AppViewProps) {
                 onBashInterrupt={handleBashInterrupt}
                 inputEnabled={inputEnabled}
                 collapseInputWhenDisabled={
-                  pendingApprovals.length > 0 || anySelectorOpen
+                  pendingApprovals.length > 0 ||
+                  anySelectorOpen ||
+                  !!activeModDialog
                 }
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}

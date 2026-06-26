@@ -67,6 +67,7 @@ export interface ModBackgroundAgentContext {
 
 export interface ModUiCapabilities {
   panels: boolean;
+  dialogs: boolean;
 }
 
 export interface ModEventCapabilities {
@@ -359,6 +360,7 @@ export type ModCapabilityKind =
   | "provider"
   | "tool"
   | "panel"
+  | "dialog"
   | "status"
   | "statusline";
 
@@ -486,6 +488,36 @@ export interface ModPanelHandle {
   close: () => void;
   update: (options?: { order?: number }) => void;
 }
+
+/**
+ * A single question in a dialog. Mirrors the shape the host's question UI
+ * (shared with the built-in AskUserQuestion tool) renders, so mods inherit any
+ * future improvements to that view for free. Omit `options` for a free-text
+ * question; set `multiSelect` for many-of-N (the answer is the chosen labels
+ * joined by ", ").
+ */
+export interface ModDialogQuestion {
+  /** The question text shown to the user. Also the key in the answers map. */
+  question: string;
+  /** Short label for the question (header chip). */
+  header: string;
+  /** Choices. Omit or leave empty for a free-text question. */
+  options?: Array<{ label: string; description?: string }>;
+  /** Allow selecting multiple options. */
+  multiSelect?: boolean;
+  /** Show a free-text "type something" option (default true). */
+  allowOther?: boolean;
+}
+
+export interface ModSelectOptions {
+  questions: ModDialogQuestion[];
+}
+
+/**
+ * Answers keyed by question text → the chosen label(s) or free text. `null`
+ * when the user cancels (ESC) or the host can't show the prompt.
+ */
+export type ModSelectResult = Record<string, string> | null;
 
 export interface ModCommandRegistration {
   id: string;

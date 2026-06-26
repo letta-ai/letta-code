@@ -11,6 +11,7 @@ export const MOD_CAPABILITY_IDS = [
   "events.compact",
   "events.llm",
   "ui.panels",
+  "ui.dialogs",
 ] as const;
 
 export type ModCapabilityId = (typeof MOD_CAPABILITY_IDS)[number];
@@ -35,6 +36,7 @@ export const DEFAULT_MOD_CAPABILITIES: ModCapabilities = {
   providers: true,
   ui: {
     panels: true,
+    dialogs: true,
   },
 };
 
@@ -52,6 +54,7 @@ export const DISABLED_MOD_CAPABILITIES: ModCapabilities = {
   providers: false,
   ui: {
     panels: false,
+    dialogs: false,
   },
 };
 
@@ -72,6 +75,7 @@ export function cloneModCapabilities(
     providers: capabilities.providers,
     ui: {
       panels: capabilities.ui.panels,
+      dialogs: capabilities.ui.dialogs,
     },
   };
 }
