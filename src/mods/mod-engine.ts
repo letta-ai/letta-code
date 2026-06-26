@@ -943,6 +943,13 @@ function upsertModPanel(
   };
 }
 
+function createNoopModPanelHandle(): ModPanelHandle {
+  return {
+    close() {},
+    update() {},
+  };
+}
+
 function createLettaModApi(
   registry: LocalModRegistry,
   owner: ModOwner,
@@ -1320,16 +1327,24 @@ function createLettaModApi(
       closePanel,
       openPanel(panel) {
         if (!capabilities.ui.panels) {
-          return {
-            close() {},
-            update() {},
-          };
+          return createNoopModPanelHandle();
         }
         if (!guardLive({ id: panel.id, kind: "panel" })) {
-          return {
-            close() {},
-            update() {},
-          };
+          return createNoopModPanelHandle();
+        }
+        if (typeof panel.render !== "function") {
+          const usedLegacyContent = Object.hasOwn(panel as object, "content");
+          recordCapabilityDiagnostic({
+            capability: { id: panel.id, kind: "panel" },
+            error: new Error(
+              usedLegacyContent
+                ? "letta.ui.openPanel now requires render(ctx), not content. Use letta.ui.openPanel({ id, order, render: () => content }) instead."
+                : "letta.ui.openPanel requires a render(ctx) function.",
+            ),
+            phase: "activate",
+            severity: "warning",
+          });
+          return createNoopModPanelHandle();
         }
 
         upsertModPanel(registry, owner, panel.id, {
