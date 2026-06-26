@@ -174,8 +174,6 @@ function getPermissionModeTransientHintInfo(mode: PermissionMode): {
         color: colors.status.success,
         glyph: "⚡︎",
       };
-    case "memory":
-      return { name: "memory mode", color: colors.status.processing };
   }
 }
 

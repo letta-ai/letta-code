@@ -77,9 +77,9 @@ describe("classifyApprovals", () => {
     }
   });
 
-  test("reports missing Bash command as validation error before memory-mode denial", async () => {
+  test("reports missing Bash command as validation error before auto-allow", async () => {
     await loadTools();
-    permissionMode.setMode("memory");
+    permissionMode.setMode("unrestricted");
     process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
 
     const result = await classifyApprovals(

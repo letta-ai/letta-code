@@ -37,7 +37,7 @@ test("cross-agent mode binds root read-write", () => {
   expect(tripleIndex(args, "--bind", "/", "/")).toBe(0);
 });
 
-test("memory mode binds root read-only (default-deny writes)", () => {
+test("write-scoped profile binds root read-only (default-deny writes)", () => {
   const args = buildBwrapArgs(MEMORY_MODE);
   expect(tripleIndex(args, "--ro-bind", "/", "/")).toBe(0);
 });

@@ -58,7 +58,7 @@ test("writable and readonly carveouts are restored after the deny", () => {
   expect(readonlyIdx).toBeGreaterThan(denyIdx);
 });
 
-test("memory mode denies all writes but keeps /dev and restores writables", () => {
+test("write-scoped profile denies all writes but keeps /dev and restores writables", () => {
   const { profile } = buildSeatbeltProfile(MEMORY_MODE);
   const globalDenyIdx = profile.indexOf('(deny file-write* (subpath "/"))');
   const devIdx = profile.indexOf('(allow file-write* (subpath "/dev"))');

@@ -89,7 +89,7 @@ export interface PendingExternalToolCall {
 }
 
 export interface ModeChangePayload {
-  mode: "standard" | "acceptEdits" | "memory" | "unrestricted";
+  mode: "standard" | "acceptEdits" | "unrestricted";
 }
 
 export interface ChangeCwdMessage {
