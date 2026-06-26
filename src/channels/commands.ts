@@ -26,14 +26,6 @@ export type ChannelSlashCommandHandlerResult = {
   text?: string;
 };
 
-export type LettaEscapeHatchHandler = (params: {
-  text: string;
-  runtime: {
-    agent_id: string;
-    conversation_id: string;
-  };
-}) => Promise<ChannelSlashCommandHandlerResult>;
-
 export type ChannelSlashCommandHandlers = {
   cancel?: (
     command: ParsedChannelSlashCommand,
