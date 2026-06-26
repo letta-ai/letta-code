@@ -41,13 +41,13 @@ function typeLabelForBackgroundAgent(agent: SubagentState): string {
   return rawType === "reflection" ? "dreaming" : rawType;
 }
 
-export function chatUrlForBackgroundAgent(
+function chatUrlForBackgroundAgent(
   agent: Pick<SubagentState, "agentURL">,
 ): string | null {
   return agent.agentURL?.startsWith("http") ? agent.agentURL : null;
 }
 
-export function shouldRenderPlainBackgroundAgentUrl(
+function shouldRenderPlainBackgroundAgentUrl(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
   return Boolean(env.TMUX);
