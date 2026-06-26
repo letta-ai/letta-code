@@ -1547,6 +1547,45 @@ describe("mod engine", () => {
     }
   });
 
+  test("diagnoses panel registrations without render", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "panel-content.ts");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          letta.ui.openPanel({
+            id: "threadkeeper",
+            order: 80,
+            content: ["legacy content panel"],
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(Object.values(snapshot.ui.panels)).toEqual([]);
+      expect(snapshot.diagnostics).toContainEqual(
+        expect.objectContaining({
+          capability: { id: "threadkeeper", kind: "panel" },
+          error: expect.objectContaining({
+            message: expect.stringContaining("requires render(ctx)"),
+          }),
+          phase: "activate",
+          severity: "warning",
+        }),
+      );
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("reload publishes an empty snapshot while mods are loading", async () => {
     const root = createTempDir();
     const testGlobal = globalThis as ModTestGlobal;
