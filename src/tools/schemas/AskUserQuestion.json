@@ -41,7 +41,7 @@
             "description": "Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive."
           }
         },
-        "required": ["question", "header", "options", "multiSelect"],
+        "required": ["question", "header", "options"],
         "additionalProperties": false
       },
       "minItems": 1,
