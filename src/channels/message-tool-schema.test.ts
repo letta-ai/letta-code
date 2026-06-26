@@ -54,6 +54,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",
+      "ask",
       "react",
       "upload-file",
       "send-rich",
@@ -79,6 +80,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.channel?.enum).toEqual(["telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",
+      "ask",
       "send-rich",
       "react",
       "upload-file",
@@ -112,11 +114,12 @@ describe("buildDynamicMessageChannelSchema", () => {
       "Currently active channels: Slack, Telegram.",
     );
     expect(resolved.description).toContain(
-      "Available actions across the active channels: send, react, upload-file, send-rich.",
+      "Available actions across the active channels: send, ask, react, upload-file, send-rich.",
     );
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",
+      "ask",
       "react",
       "upload-file",
       "send-rich",
@@ -160,6 +163,9 @@ describe("buildDynamicMessageChannelSchema", () => {
       "If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement.",
     );
     expect(resolved.description).toContain(
+      "do not use AskUserQuestion in channel turns.",
+    );
+    expect(resolved.description).toContain(
       'For lightweight acknowledgement, prefer action="react" when supported.',
     );
     expect(resolved.description).toContain(
@@ -167,6 +173,11 @@ describe("buildDynamicMessageChannelSchema", () => {
     );
     expect(resolved.description).not.toContain("Telegram");
     expect(properties.channel?.enum).toEqual(["slack"]);
-    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "ask",
+      "react",
+      "upload-file",
+    ]);
   });
 });

@@ -127,7 +127,7 @@ test("user plugins can extend the MessageChannel action schema", async () => {
     Record<string, unknown> & { enum?: string[] }
   >;
   expect(properties.channel?.enum).toEqual(["demo"]);
-  expect(properties.action?.enum).toEqual(["send", "wave"]);
+  expect(properties.action?.enum).toEqual(["send", "ask", "wave"]);
   expect(properties.intensity).toEqual({ type: "string" });
 });
 

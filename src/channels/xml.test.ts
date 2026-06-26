@@ -67,6 +67,10 @@ describe("formatChannelNotification", () => {
       'If you should reply to the external user, use MessageChannel with action="send", channel="telegram", and chat_id="12345"',
     );
     expect(reminder).toContain(
+      'use MessageChannel with action="ask", channel="telegram", chat_id="12345", and questions',
+    );
+    expect(reminder).toContain("Do not use AskUserQuestion");
+    expect(reminder).toContain(
       "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
     );
     expect(reminder).toContain(

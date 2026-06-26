@@ -1085,7 +1085,12 @@ describe("tool execution context snapshot", () => {
       >
     ).action;
 
-    expect(actionParameter?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(actionParameter?.enum).toEqual([
+      "send",
+      "ask",
+      "react",
+      "upload-file",
+    ]);
   });
 
   test("captures scoped working directories per execution context", async () => {
@@ -1195,6 +1200,7 @@ describe("tool execution context snapshot", () => {
     );
 
     expect(prepared.loadedToolNames).toContain("MessageChannel");
+    expect(prepared.loadedToolNames).not.toContain("AskUserQuestion");
     expect(messageChannel?.description).toContain(
       "Currently active channels: Slack.",
     );
