@@ -21,6 +21,8 @@ export interface MemorySubagentCompletionArgs {
   success: boolean;
   error?: string;
   subagentAgentId?: string;
+  skipRecompile?: boolean;
+  successMessageOverride?: string;
 }
 
 export interface MemorySubagentCompletionDeps {
@@ -49,7 +51,7 @@ export async function handleMemorySubagentCompletion(
     deps.recompileAgentSystemPromptImpl ?? recompileAgentSystemPrompt;
   let recompileError: string | null = null;
 
-  if (success) {
+  if (success && !args.skipRecompile) {
     try {
       let inFlight = deps.recompileByConversation.get(conversationId);
 
@@ -99,11 +101,17 @@ export async function handleMemorySubagentCompletion(
   }
 
   let baseMessage =
-    subagentType === "reflection"
+    args.successMessageOverride ??
+    (subagentType === "reflection"
       ? "Dreamed and made some memories."
-      : "Built a memory palace of you. Visit it with /palace.";
+      : "Built a memory palace of you. Visit it with /palace.");
 
-  if (subagentType === "reflection" && subagentLink && canLinkSubagent) {
+  if (
+    !args.successMessageOverride &&
+    subagentType === "reflection" &&
+    subagentLink &&
+    canLinkSubagent
+  ) {
     baseMessage = `${subagentLink} and made some memories.`;
   }
 

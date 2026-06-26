@@ -202,6 +202,7 @@ export function buildReflectionSubagentPrompt(
     "When reviewing multiple transcripts, prefer durable patterns and latest evidence across sessions. Resolve contradictions by updating stale memory at the source, deduplicate repeated facts, and avoid storing one-off task state.",
     "",
     `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
+    "This path is a harness-created temporary git worktree for reflection. Commit changes here; do not merge or remove the worktree yourself.",
     "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
     "Additional memory files (such as skills and external memory) may also be read and modified.",
     "",

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import type { SubagentState } from "@/agent/subagent-state";
 import { clearAllSubagents } from "@/agent/subagent-state";
+import type { SubagentMemoryScope } from "@/agent/subagents/manager";
 import {
   __resetBackgroundRetentionConfigForTests,
   backgroundTasks,
@@ -79,9 +80,10 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
   //   0: type, 1: prompt, 2: userModel, 3: subagentId, 4: signal,
   //   5: existingAgentId, 6: existingConversationId, 7: maxTurns,
   //   8: forkedContext, 9: parentAgentId, 10: transcriptPath,
-  //   11: parentConversationId
+  //   11: parentConversationId, 12: memoryScope
   const PARENT_ID_ARG_INDEX = 9;
   const PARENT_CONVERSATION_ID_ARG_INDEX = 11;
+  const MEMORY_SCOPE_ARG_INDEX = 12;
 
   // Typed stub matching spawnSubagent's shape so mock.calls is inferred
   // as a tuple with the 10th element addressable.
@@ -98,6 +100,7 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     parentAgentId?: string,
     transcriptPath?: string,
     parentConversationId?: string,
+    memoryScope?: SubagentMemoryScope,
   ];
 
   const makeSpawnStub = () =>
@@ -179,5 +182,35 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     // forwarded (so fallback will be exercised).
     expect(call?.[PARENT_ID_ARG_INDEX]).toBeUndefined();
     expect(call?.[PARENT_CONVERSATION_ID_ARG_INDEX]).toBeUndefined();
+  });
+
+  test("forwards memoryScope to spawnSubagent", async () => {
+    const spawnSubagentImpl = makeSpawnStub();
+    const memoryScope: SubagentMemoryScope = {
+      primaryRoot: "/tmp/memory-worktrees/reflection-1",
+      writableRoots: ["/tmp/memory-worktrees/reflection-1", "/tmp/memory/.git"],
+    };
+
+    spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Test",
+      memoryScope,
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const call = spawnSubagentImpl.mock.calls[0] as SpawnArgs | undefined;
+    expect(call?.[MEMORY_SCOPE_ARG_INDEX]).toBe(memoryScope);
   });
 });
