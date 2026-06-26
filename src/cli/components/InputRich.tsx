@@ -35,6 +35,7 @@ import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
 import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
+import type { ModContext } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
@@ -47,11 +48,7 @@ import { settingsManager } from "@/settings-manager";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
-import {
-  type ModPanelLiveContext,
-  ModPanelRow,
-  renderModPanelLines,
-} from "./ModPanelRow";
+import { ModPanelRow, renderModPanelLines } from "./ModPanelRow";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { ProductStatusRow } from "./ProductStatusRow";
 import { QueuedMessages } from "./QueuedMessages";
@@ -517,10 +514,11 @@ const StatuslineSlot = memo(function StatuslineSlot({
 
   if (idleSlotAvailable && primaryPanel) {
     const rowWidth = Math.max(0, (statuslineContext.terminalWidth ?? 0) - 1);
-    const lines = renderModPanelLines(primaryPanel, rowWidth, {
-      agent: statuslineContext.agent,
-      model: statuslineContext.model,
-    });
+    const lines = renderModPanelLines(
+      primaryPanel,
+      rowWidth,
+      statuslineContext,
+    );
     if (lines.length > 0) {
       return (
         <Box flexDirection="column">
@@ -1920,17 +1918,30 @@ export function Input({
   // re-renders when the panels themselves change, mirroring how BtwPane
   // stays flash-free. Folding this into lowerPane would rebuild it on every
   // keystroke.
-  const panelLiveContext = useMemo<ModPanelLiveContext>(
-    () => ({
-      agent: statusLinePayload.agent,
-      model: {
-        id: statusLinePayload.model.id,
-        displayName: statusLinePayload.model.display_name,
-        provider: currentModelProvider ?? null,
-        reasoningEffort: statusLinePayload.reasoning_effort,
-      },
-    }),
-    [statusLinePayload, currentModelProvider],
+  const panelLiveContext = useMemo<ModContext>(
+    () =>
+      buildStatuslineRenderContext({
+        payload: statusLinePayload,
+        ui: {
+          currentModelProvider: currentModelProvider ?? null,
+          goalStatusText: null,
+          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+          isByokProvider:
+            currentModelProvider?.startsWith("lc-") ||
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          isLocalBackend,
+          isOpenAICodexProvider:
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          rightColumnWidth: footerRightColumnWidth,
+        },
+      }),
+    [
+      currentModelProvider,
+      footerRightColumnWidth,
+      hasTemporaryModelOverride,
+      isLocalBackend,
+      statusLinePayload,
+    ],
   );
 
   const modPanelRow = useMemo(() => {

@@ -444,13 +444,10 @@ export type ModCommandResult =
   | { type: "output"; output: string; success?: boolean }
   | { type: "handled" };
 
-export interface ModPanelRenderContext {
+/** Live mod context (`cwd`, workspace, agent, model, cost, etc.) plus panel helpers. */
+export interface ModPanelRenderContext extends ModContext {
   /** Visible width available to the panel, in columns. */
   width: number;
-  /** Live agent context (name, id) at render time. */
-  agent: ModAgentContext;
-  /** Live model context (display name, provider, ...) at render time. */
-  model: ModModelContext;
   /** Lay out a left and right segment across `width` (ANSI-aware). */
   row: (left: string, right: string, width: number) => string;
   /** Spread parts evenly across `width` (ANSI-aware). */
