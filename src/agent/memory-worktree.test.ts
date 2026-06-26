@@ -45,6 +45,8 @@ beforeEach(() => {
   memoryDir = join(tempDir, "agent", "memory");
   rmSync(memoryDir, { recursive: true, force: true });
   git(tempDir, ["init", "-b", "main", memoryDir]);
+  git(memoryDir, ["config", "core.autocrlf", "false"]);
+  git(memoryDir, ["config", "core.eol", "lf"]);
   writeMemoryFile("persona.md", "base\n");
   git(memoryDir, ["add", "persona.md"]);
   git(memoryDir, ["commit", "-m", "init"]);
