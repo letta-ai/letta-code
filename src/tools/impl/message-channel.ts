@@ -1041,9 +1041,11 @@ function inferThreadIdFromChannelTurnSources(params: {
       continue;
     }
 
+    const shouldInferSlackThreadFromMessage =
+      params.input.channel === "slack" && source.chatType === "channel";
     threadIds.add(
       source.threadId ??
-        (params.input.channel === "slack" ? source.messageId : null) ??
+        (shouldInferSlackThreadFromMessage ? source.messageId : null) ??
         null,
     );
   }
