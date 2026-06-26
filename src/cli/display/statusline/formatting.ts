@@ -1,3 +1,4 @@
+import stringWidth from "string-width";
 import stripAnsi from "strip-ansi";
 
 export function truncateStatuslineText(
@@ -11,26 +12,34 @@ export function truncateStatuslineText(
 }
 
 /**
- * Visible width of a string, ignoring ANSI escape codes (colors, OSC 8 links).
- * Counts code points rather than UTF-16 units so most emoji count as 1; this
- * is an approximation (no wide-char/grapheme awareness) but matches how the
- * statusline historically measured text.
+ * Visible width of a string in terminal columns, ignoring ANSI escape codes
+ * (colors, OSC 8 links) and accounting for wide characters (CJK, emoji) that
+ * occupy two columns and zero-width/combining marks.
  */
 export function visibleWidth(value: string): number {
-  return [...stripAnsi(value)].length;
+  return stringWidth(value);
 }
 
 /**
- * Truncate to a visible width, appending "…" when clipped. For simplicity the
- * ellipsis path strips ANSI before slicing; mods that need color-preserving
- * truncation can pre-truncate to `width` themselves.
+ * Truncate to a visible column width, appending "…" when clipped. The ellipsis
+ * path strips ANSI before slicing (truncated output is not color-preserved);
+ * mods that need color-preserving truncation can pre-truncate to `width`
+ * themselves. Slices by column width so wide characters are not split.
  */
 export function truncateToWidth(value: string, width: number): string {
   if (width <= 0) return "";
   if (visibleWidth(value) <= width) return value;
   if (width === 1) return "…";
-  const chars = [...stripAnsi(value)];
-  return `${chars.slice(0, width - 1).join("")}…`;
+  const budget = width - 1; // reserve one column for the ellipsis
+  let out = "";
+  let used = 0;
+  for (const ch of stripAnsi(value)) {
+    const w = stringWidth(ch);
+    if (used + w > budget) break;
+    out += ch;
+    used += w;
+  }
+  return `${out}…`;
 }
 
 /**
