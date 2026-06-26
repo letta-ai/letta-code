@@ -460,6 +460,11 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
   return { instruction, kind: "single" };
 }
 
+function aliasBareExitCommand(input: string): string {
+  if (input === "exit" || input === "quit") return "/exit";
+  return input;
+}
+
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
   const {
     abortControllerRef,
@@ -581,6 +586,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const { notifications: taskNotifications, cleanedText } =
         extractTaskNotificationsForDisplay(msg);
       const userTextForInput = cleanedText.trim();
+      const routedUserText = aliasBareExitCommand(userTextForInput);
       const isSystemOnly =
         taskNotifications.length > 0 && userTextForInput.length === 0;
 
@@ -711,9 +717,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         setDequeueEpoch((e: number) => e + 1);
       }
 
-      const isSlashCommand = userTextForInput.startsWith("/");
+      const isSlashCommand = routedUserText.startsWith("/");
       const parsedModCommand = isSlashCommand
-        ? parseModSlashCommand(userTextForInput.trim())
+        ? parseModSlashCommand(routedUserText.trim())
         : null;
       const parsedSlashCommandName = parsedModCommand?.command ?? null;
       const matchedCustomCommand = parsedSlashCommandName
@@ -726,15 +732,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
         isSlashCommand &&
-        shouldSlashCommandBypassQueue(userTextForInput, {
+        shouldSlashCommandBypassQueue(routedUserText, {
           hasCustomCommand: Boolean(matchedCustomCommand),
           ...(matchedModCommand ? { modCommand: matchedModCommand } : {}),
         });
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
-        const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
+        const attemptedCommand = routedUserText.split(/\s+/)[0] || "/";
         const disabledMessage = `'${attemptedCommand}' is disabled while the agent is running.`;
-        const cmd = commandRunner.start(userTextForInput, disabledMessage);
+        const cmd = commandRunner.start(routedUserText, disabledMessage);
         cmd.fail(disabledMessage);
         return { submitted: true }; // Clears input
       }
@@ -753,10 +759,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // Note: userCancelledRef.current was already reset above before the queue check
       // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
-      let aliasedMsg = msg;
-      if (msg === "exit" || msg === "quit") {
-        aliasedMsg = "/exit";
-      }
+      const aliasedMsg = routedUserText;
 
       // Handle commands (messages starting with "/")
       if (aliasedMsg.startsWith("/")) {

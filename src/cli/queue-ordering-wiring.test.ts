@@ -70,6 +70,26 @@ describe("queue ordering wiring", () => {
     );
   });
 
+  test("bare exit aliases before queue classification", () => {
+    const source = readAppSource();
+    const start = source.indexOf("const onSubmit = useCallback(");
+    const end = source.indexOf("const shouldBypassQueue =");
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    const aliasIndex = segment.indexOf(
+      "const routedUserText = aliasBareExitCommand(userTextForInput)",
+    );
+    const slashIndex = segment.indexOf(
+      "const isSlashCommand = routedUserText.startsWith",
+    );
+
+    expect(aliasIndex).toBeGreaterThan(-1);
+    expect(slashIndex).toBeGreaterThan(aliasIndex);
+  });
+
   test("queued overlay effect only runs when idle and clears action before processing", () => {
     const source = readAppSource();
     const start = source.indexOf(
