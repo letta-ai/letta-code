@@ -8,6 +8,12 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCb);
 
 const GIT_TIMEOUT_MS = 30_000;
+const HARNESS_GIT_ENV = {
+  GIT_AUTHOR_NAME: "Letta Code",
+  GIT_AUTHOR_EMAIL: "noreply@letta.com",
+  GIT_COMMITTER_NAME: "Letta Code",
+  GIT_COMMITTER_EMAIL: "noreply@letta.com",
+};
 
 interface GitResult {
   stdout: string;
@@ -18,6 +24,10 @@ async function runGit(cwd: string, args: string[]): Promise<GitResult> {
   try {
     const { stdout, stderr } = await execFile("git", args, {
       cwd,
+      env: {
+        ...process.env,
+        ...HARNESS_GIT_ENV,
+      },
       encoding: "utf-8",
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: 1024 * 1024 * 5,
