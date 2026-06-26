@@ -60,6 +60,29 @@ render(ctx: {
 
 Close panels when they are transient, and close/replace long-lived panels from the activation disposer if reload should remove them.
 
+### Commands that open panels
+
+If a command's `run()` opens a panel, guard the command **registration** on `letta.capabilities.ui.panels` — not just the `openPanel` call:
+
+```ts
+export default function activate(letta) {
+  if (!letta.capabilities.commands) return;
+  if (!letta.capabilities.ui.panels) return; // panel-only command: skip where panels are unsupported
+
+  return letta.commands.register({
+    id: "mycommand",
+    description: "…",
+    run() {
+      const panel = letta.ui.openPanel({ /* … */ });
+      // …
+      return { type: "handled" };
+    },
+  });
+}
+```
+
+Guarding only the `openPanel` call is not enough. The desktop listener has `commands: true` but `ui.panels: false`, so a command registered there is advertised in the command picker while its panel work no-ops — the user sees a command that runs and does nothing. Gating the registration keeps panel-only commands out of hosts that can't render them.
+
 ## Timers and cleanup
 
 ```ts

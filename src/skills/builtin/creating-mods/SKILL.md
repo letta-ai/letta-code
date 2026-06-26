@@ -93,6 +93,8 @@ letta.capabilities.providers
 letta.capabilities.ui.panels
 ```
 
+Guard a registration on every capability its behavior depends on, not just its own surface. If a command's `run()` opens a panel, guard the command registration on `letta.capabilities.ui.panels` — not only the `openPanel` call. Hosts can support one surface but not another (the desktop listener has `commands: true` but `ui.panels: false`), so a panel-only command guarded only at the `openPanel` call still gets advertised there and shows up as a dead picker entry that silently no-ops. Register a capability only where the host can actually fulfill what it does.
+
 ## Scoped API model
 
 - In commands and events, use `ctx.conversation` for conversation operations:
@@ -136,6 +138,7 @@ Before finishing, verify:
 - Tool descriptions explain when the model should call them.
 - JSON schemas are object schemas with useful descriptions.
 - Optional UI/event APIs are capability-guarded.
+- Registrations are guarded by every capability the behavior needs, not just their own surface — e.g. a command whose `run()` opens a panel guards registration on `ui.panels` so it isn't advertised on hosts without panels (the desktop listener).
 - Provider mods are capability-guarded and clearly documented as local-agent only.
 - Timers, intervals, event registrations, and panels are cleaned up in a disposer.
 - Busy commands return `{ type: "handled" }` quickly and avoid main-conversation sends.
