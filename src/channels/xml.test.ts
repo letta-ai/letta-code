@@ -149,6 +149,23 @@ describe("formatChannelNotification", () => {
     expect(reminder).not.toContain("reply_to_message_id");
   });
 
+  test("includes ask action guidance in Slack channel reminders", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C456",
+      senderId: "U789",
+      text: "question",
+      timestamp: Date.now(),
+    };
+
+    const reminder = buildChannelReminderText(msg);
+
+    expect(reminder).toContain(
+      'use MessageChannel with action="ask", channel="slack", chat_id="C456", and questions',
+    );
+    expect(reminder).toContain("Do not use AskUserQuestion");
+  });
+
   test("adds WhatsApp media guidance for voice memo uploads", () => {
     const msg: InboundChannelMessage = {
       channel: "whatsapp",

@@ -1415,4 +1415,34 @@ describe("tool execution context snapshot", () => {
 
     expect(prepared.loadedToolNames).not.toContain("MessageChannel");
   });
+
+  test("suppresses AskUserQuestion when channel scope has active channels", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createRunningAdapter("slack", "acct-slack"));
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-opus-4-1-20250805",
+      {
+        channelToolScope: {
+          channels: [{ channelId: "slack", accountId: "acct-slack" }],
+        },
+      },
+    );
+
+    expect(prepared.loadedToolNames).toContain("MessageChannel");
+    expect(prepared.loadedToolNames).not.toContain("AskUserQuestion");
+  });
+
+  test("keeps AskUserQuestion when no channel scope is active", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-opus-4-1-20250805",
+    );
+
+    expect(prepared.loadedToolNames).toContain("AskUserQuestion");
+    expect(prepared.loadedToolNames).not.toContain("MessageChannel");
+  });
 });
