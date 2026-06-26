@@ -31,6 +31,10 @@ type ModTestGlobal = typeof globalThis & {
   __lettaModEvents?: string[];
   __lettaModGate?: Promise<void>;
   __lettaModPanel?: ModPanelHandle;
+  __lettaModAsked?: boolean;
+  __lettaModSelectResult?: Promise<Record<string, string> | null>;
+  __lettaModSelectA?: Promise<Record<string, string> | null>;
+  __lettaModSelectB?: Promise<Record<string, string> | null>;
   __lettaModSignal?: AbortSignal;
   __lettaModStarted?: () => void;
   __lettaSwapBackend?: () => void;
@@ -114,6 +118,7 @@ const TOOL_ONLY_MOD_CAPABILITIES: ModCapabilities = {
   providers: false,
   ui: {
     panels: false,
+    dialogs: false,
   },
 };
 
@@ -587,6 +592,248 @@ describe("mod engine", () => {
       expect(Object.keys(snapshot.tools)).toEqual(["visible_tool"]);
     } finally {
       delete testGlobal.__lettaModCapabilities;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("ui.select enqueues a dialog and resolves via resolveDialog", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    delete testGlobal.__lettaModSelectResult;
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "ask.ts");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          globalThis.__lettaModSelectResult = letta.ui.select({
+            questions: [
+              {
+                header: "Pick",
+                question: "Pick one",
+                options: [{ label: "A" }, { label: "B" }],
+              },
+            ],
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+
+      const snapshot = engine.getSnapshot();
+      expect(snapshot.ui.dialogs).toHaveLength(1);
+      const dialog = snapshot.ui.dialogs[0];
+      expect(dialog?.questions[0]?.question).toBe("Pick one");
+
+      const answer: Record<string, string> = { "Pick one": "A" };
+      engine.resolveDialog(dialog?.id ?? "", answer);
+
+      const result = (await testGlobal.__lettaModSelectResult) as
+        | Record<string, string>
+        | undefined;
+      expect(result).toEqual(answer);
+      // The active dialog is drained once resolved.
+      expect(engine.getSnapshot().ui.dialogs).toHaveLength(0);
+    } finally {
+      delete testGlobal.__lettaModSelectResult;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("settling a dialog directly off the snapshot drains the queue", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    delete testGlobal.__lettaModSelectResult;
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "ask.ts");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          globalThis.__lettaModSelectResult = letta.ui.select({
+            questions: [{ header: "Pick", question: "Pick one" }],
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+
+      const dialog = engine.getSnapshot().ui.dialogs[0];
+      expect(dialog).toBeDefined();
+      // Bypassing engine.resolveDialog must be equivalent: the self-dequeuing
+      // resolver removes the entry so no zombie dialog is left on screen.
+      dialog?.resolve(null);
+
+      const result = await testGlobal.__lettaModSelectResult;
+      expect(result).toBeNull();
+      expect(engine.getSnapshot().ui.dialogs).toHaveLength(0);
+    } finally {
+      delete testGlobal.__lettaModSelectResult;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("a pending dialog settles to null when the engine reloads", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    delete testGlobal.__lettaModSelectResult;
+    delete testGlobal.__lettaModAsked;
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "ask.ts");
+      mkdirSync(modDir, { recursive: true });
+      // Guard so the dialog is enqueued only on the first activation; otherwise
+      // each reload re-enqueues and we can't observe the queue draining.
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          if (globalThis.__lettaModAsked) return;
+          globalThis.__lettaModAsked = true;
+          globalThis.__lettaModSelectResult = letta.ui.select({
+            questions: [{ header: "Pick", question: "Pick one" }],
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+
+      const pending = testGlobal.__lettaModSelectResult;
+      expect(engine.getSnapshot().ui.dialogs).toHaveLength(1);
+
+      await engine.reload();
+
+      expect(await pending).toBeNull();
+      expect(engine.getSnapshot().ui.dialogs).toHaveLength(0);
+    } finally {
+      delete testGlobal.__lettaModSelectResult;
+      delete testGlobal.__lettaModAsked;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("a pending dialog settles to null when the engine is disposed", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    delete testGlobal.__lettaModSelectResult;
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "ask.ts");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          globalThis.__lettaModSelectResult = letta.ui.select({
+            questions: [{ header: "Pick", question: "Pick one" }],
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+
+      const pending = testGlobal.__lettaModSelectResult;
+      expect(engine.getSnapshot().ui.dialogs).toHaveLength(1);
+
+      engine.dispose();
+
+      expect(await pending).toBeNull();
+      expect(engine.getSnapshot().ui.dialogs).toHaveLength(0);
+    } finally {
+      delete testGlobal.__lettaModSelectResult;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("dialogs queue FIFO; resolving the active one promotes the next", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    delete testGlobal.__lettaModSelectA;
+    delete testGlobal.__lettaModSelectB;
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "ask.ts");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          globalThis.__lettaModSelectA = letta.ui.select({
+            questions: [{ header: "A", question: "Q-A", options: [{ label: "a" }] }],
+          });
+          globalThis.__lettaModSelectB = letta.ui.select({
+            questions: [{ header: "B", question: "Q-B", options: [{ label: "b" }] }],
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+
+      let dialogs = engine.getSnapshot().ui.dialogs;
+      expect(dialogs).toHaveLength(2);
+      // The first enqueued question is the active (head) entry.
+      expect(dialogs[0]?.questions[0]?.question).toBe("Q-A");
+
+      const answerA: Record<string, string> = { "Q-A": "a" };
+      engine.resolveDialog(dialogs[0]?.id ?? "", answerA);
+
+      dialogs = engine.getSnapshot().ui.dialogs;
+      expect(dialogs).toHaveLength(1);
+      expect(dialogs[0]?.questions[0]?.question).toBe("Q-B");
+      const resultA = (await testGlobal.__lettaModSelectA) as
+        | Record<string, string>
+        | undefined;
+      expect(resultA).toEqual(answerA);
+
+      const answerB: Record<string, string> = { "Q-B": "b" };
+      engine.resolveDialog(dialogs[0]?.id ?? "", answerB);
+      const resultB = (await testGlobal.__lettaModSelectB) as
+        | Record<string, string>
+        | undefined;
+      expect(resultB).toEqual(answerB);
+      expect(engine.getSnapshot().ui.dialogs).toHaveLength(0);
+    } finally {
+      delete testGlobal.__lettaModSelectA;
+      delete testGlobal.__lettaModSelectB;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("ui.select resolves null when the dialogs capability is disabled", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    delete testGlobal.__lettaModSelectResult;
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "ask.ts");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          globalThis.__lettaModSelectResult = letta.ui.select({
+            questions: [{ header: "Pick", question: "Pick one" }],
+          });
+        }`,
+      );
+
+      const engine = createEngine(root, TOOL_ONLY_MOD_CAPABILITIES);
+      await engine.reload();
+
+      expect(engine.getSnapshot().ui.dialogs).toHaveLength(0);
+      const result = await testGlobal.__lettaModSelectResult;
+      expect(result).toBeNull();
+    } finally {
+      delete testGlobal.__lettaModSelectResult;
       rmSync(root, { force: true, recursive: true });
     }
   });

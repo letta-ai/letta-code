@@ -49,6 +49,7 @@ describe("headless mod adapter", () => {
       providers: true,
       ui: {
         panels: false,
+        dialogs: false,
       },
     });
   });

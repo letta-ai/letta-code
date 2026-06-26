@@ -91,6 +91,7 @@ letta.capabilities.events.llm
 letta.capabilities.permissions
 letta.capabilities.providers
 letta.capabilities.ui.panels
+letta.capabilities.ui.dialogs
 ```
 
 ## Scoped API model

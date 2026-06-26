@@ -24,6 +24,7 @@ function createDisabledModRegistry(): LocalModRegistry {
     tools: {},
     ui: {
       panels: {},
+      dialogs: [],
     },
   };
 }
@@ -40,6 +41,7 @@ function createDisabledModEngine(registry: LocalModRegistry): ModEngine {
     reload() {
       return Promise.resolve();
     },
+    resolveDialog() {},
     subscribe(_listener: () => void) {
       return () => undefined;
     },

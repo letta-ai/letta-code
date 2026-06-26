@@ -70,6 +70,7 @@ import type {
   ModDiagnostic,
   ModDiagnosticReportOptions,
   ModDiagnosticSeverity,
+  ModDialogQuestion,
   ModEventContext,
   ModEventEmissionResult,
   ModEventHandler,
@@ -84,6 +85,8 @@ import type {
   ModPanelRender,
   ModPermission,
   ModPermissionRegistration,
+  ModSelectOptions,
+  ModSelectResult,
   ModSourceScope,
   ModTool,
   ModToolEndEvent,
@@ -158,6 +161,13 @@ export interface LettaModApi {
   ui: {
     closePanel: (id: string) => void;
     openPanel: (panel: ModPanelOptions) => ModPanelHandle;
+    /**
+     * Show a blocking question and await the answer. Renders through the same
+     * host question UI as the built-in AskUserQuestion tool. Resolves to an
+     * answers map keyed by question text, or `null` if the user cancels (ESC)
+     * or the host can't show the prompt.
+     */
+    select: (options: ModSelectOptions) => Promise<ModSelectResult>;
     /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
     setStatus: (key: string, value?: unknown) => void;
     /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
@@ -173,8 +183,24 @@ export interface LocalModDisposer {
   owner: ModOwner;
 }
 
+/**
+ * A pending blocking dialog awaiting a user answer. The host renders the active
+ * dialog (the first in the queue) and calls `engine.resolveDialog` to settle it.
+ */
+export interface ModDialog {
+  id: string;
+  questions: ModDialogQuestion[];
+  /**
+   * Settles the awaiting `letta.ui.select` call. Host-local and not
+   * serializable; remote surfaces settle by id via `engine.resolveDialog`.
+   */
+  resolve: (value: ModSelectResult) => void;
+}
+
 export interface LocalModUiRegistry {
   panels: Record<string, ModPanel>;
+  /** FIFO queue of pending dialogs; the first entry is the active one. */
+  dialogs: ModDialog[];
 }
 
 type LocalModEventsRegistry = Partial<
@@ -238,6 +264,12 @@ export interface ModEngine {
   ) => Promise<ModEventEmissionResult<TName>>;
   getSnapshot: () => LocalModRegistry;
   reload: () => Promise<void>;
+  /**
+   * Settle a pending dialog (see {@link ModDialog}) by id. Removes it from the
+   * queue and resolves the awaiting `letta.ui.select` call. A `null` value
+   * represents cancellation. No-op if the id isn't pending.
+   */
+  resolveDialog: (id: string, value: ModSelectResult) => void;
   subscribe: (listener: () => void) => () => void;
 }
 
@@ -368,6 +400,7 @@ function createEmptyModRegistry(
     tools: {},
     ui: {
       panels: {},
+      dialogs: [],
     },
   };
 }
@@ -420,6 +453,7 @@ function snapshotRegistryForReaders(
     ui: {
       ...registry.ui,
       panels: { ...registry.ui.panels },
+      dialogs: [...registry.ui.dialogs],
     },
   };
 }
@@ -950,6 +984,43 @@ function createNoopModPanelHandle(): ModPanelHandle {
   };
 }
 
+let modDialogCounter = 0;
+
+function enqueueModDialog(
+  registry: LocalModRegistry,
+  questions: ModDialogQuestion[],
+  onChange: () => void,
+): Promise<ModSelectResult> {
+  modDialogCounter += 1;
+  const id = `dialog-${modDialogCounter}`;
+  return new Promise<ModSelectResult>((settle) => {
+    let settled = false;
+    // Self-dequeuing resolver: settling a dialog also removes it from the queue
+    // and republishes, so calling resolve directly is equivalent to
+    // engine.resolveDialog and can never leave a zombie entry on screen.
+    // Idempotent, so a double-settle (e.g. resolve then flush) is a no-op.
+    const resolve = (value: ModSelectResult) => {
+      if (settled) return;
+      settled = true;
+      const index = registry.ui.dialogs.findIndex((entry) => entry.id === id);
+      if (index !== -1) {
+        registry.ui.dialogs.splice(index, 1);
+      }
+      settle(value);
+      onChange();
+    };
+    registry.ui.dialogs.push({ id, questions, resolve });
+  });
+}
+
+/** Cancel every pending dialog (resolve to null), draining the queue. */
+function flushPendingModDialogs(registry: LocalModRegistry): void {
+  // Copy first: each resolve() dequeues its own entry from registry.ui.dialogs.
+  for (const dialog of [...registry.ui.dialogs]) {
+    dialog.resolve(null);
+  }
+}
+
 function createLettaModApi(
   registry: LocalModRegistry,
   owner: ModOwner,
@@ -1325,6 +1396,21 @@ function createLettaModApi(
     },
     ui: {
       closePanel,
+      select(options) {
+        if (!capabilities.ui.dialogs) {
+          return Promise.resolve(null);
+        }
+        if (!guardLive({ id: "select", kind: "dialog" })) {
+          return Promise.resolve(null);
+        }
+        const questions = options?.questions ?? [];
+        if (questions.length === 0) {
+          return Promise.resolve(null);
+        }
+        const promise = enqueueModDialog(registry, questions, onChange);
+        onChange();
+        return promise;
+      },
       openPanel(panel) {
         if (!capabilities.ui.panels) {
           return createNoopModPanelHandle();
@@ -1763,6 +1849,9 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
 
     disposeLocalMods(activeRegistry);
     generation += 1;
+    // After the generation bump, the pending dialogs' captured onChange no-ops,
+    // so flushing settles their awaits to null without an extra publish.
+    flushPendingModDialogs(activeRegistry);
     const loadGeneration = generation;
     activeRegistry = createEmptyModRegistry(
       resolveLocalModSources(modOptions),
@@ -1800,6 +1889,9 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
     });
     loadingRegistry = nextRegistry;
     if (disposed || loadGeneration !== generation) {
+      // A newer reload (or dispose) superseded this load. Flush so any dialog a
+      // mod enqueued during activation settles to null instead of hanging.
+      flushPendingModDialogs(nextRegistry);
       disposeLocalMods(nextRegistry);
       return;
     }
@@ -1813,6 +1905,7 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
       if (disposed) return;
       disposed = true;
       generation += 1;
+      flushPendingModDialogs(activeRegistry);
       disposeLocalMods(activeRegistry);
       activeRegistry = createEmptyModRegistry(
         resolveLocalModSources(modOptions),
@@ -1844,6 +1937,12 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
       return snapshot;
     },
     reload,
+    resolveDialog(id, value) {
+      if (disposed) return;
+      // resolve is self-dequeuing and republishes; no manual publish needed.
+      const dialog = activeRegistry.ui.dialogs.find((entry) => entry.id === id);
+      dialog?.resolve(value);
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => {
