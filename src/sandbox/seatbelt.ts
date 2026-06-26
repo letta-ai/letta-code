@@ -59,6 +59,11 @@ export function buildSeatbeltProfile(policy: FsSandboxPolicy): {
     const name = `DENIED_${i}`;
     defines.push({ name, value: root });
     lines.push(`(deny file-read* file-write* (subpath (param "${name}")))`);
+    // Git linked worktrees may stat denied ancestor directories while resolving
+    // an allowed worktree path. Re-allow metadata on the denied root itself so
+    // path canonicalization can succeed without exposing directory contents or
+    // file data from other agents.
+    lines.push(`(allow file-read-metadata (literal (param "${name}")))`);
   });
 
   // 4. Restore writable roots (read + write). Emitted after every deny above so

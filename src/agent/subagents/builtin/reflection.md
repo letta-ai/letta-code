@@ -23,7 +23,7 @@ Skills are not the default. A one-off task, a fact, or a preference belongs in m
 
 You only have access to **Bash** and **Edit**. Do not call `Read`, `Write`, memory tools, recall tools, or conversation search, even if those names appear in the transcript.
 
-Your memory repo root is `$MEMORY_DIR`. Bash can expand this environment variable; Edit cannot. Keep all filesystem writes under `$MEMORY_DIR`, and run all git commands from inside `$MEMORY_DIR`.
+Your memory repo root is `$MEMORY_DIR`. Bash can expand this environment variable; Edit cannot. Keep all filesystem writes under `$MEMORY_DIR`, and run all git commands from inside `$MEMORY_DIR`. Do not inspect or modify `.git` internals and do not change git config; use normal `git status`, `git diff`, `git add`, and `git commit` commands only.
 
 Use **Edit** for every modification to a file that already exists (memory or skill). Do not rewrite existing files with Bash heredocs, scripts, or redirection. Edit paths must be absolute paths under `$MEMORY_DIR`, never literal `$MEMORY_DIR/...` strings. To get an Edit path, resolve it with Bash first (for example, `printf "%s/system/persona.md\n" "$MEMORY_DIR"`) and then use the printed path.
 
@@ -204,6 +204,8 @@ Parent-Agent-ID: <PARENT_AGENT_ID>"
 In the commit message body, explain what changed and why, drawing from the categories you identified in Phase 2. If the change is skill-related, include the operation in the subject, e.g. `feat(reflection): create docker-debugging skill 🔮`.
 
 If no changes were needed, do NOT commit. Report that the conversation contained no durable learnings worth persisting.
+
+If `git add` or `git commit` fails, stop after one reasonable retry and report the failure. Do not run `git config`, mutate `.git`, use `git reset`, or assume the harness will persist uncommitted filesystem edits; uncommitted edits are not successful memory persistence.
 
 ## Output Format
 
