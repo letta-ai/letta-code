@@ -7,7 +7,7 @@ description: Creates and edits trusted local Letta Code mods, including tools, s
 
 Use this skill to create or update trusted Letta Code mod files. Mods are trusted local code that add small composable capabilities through mod APIs, not by importing app internals. Dynamic agent/conversation/workspace/model state is passed as `ctx` to tool, command, event, and permission callbacks (panels receive live `agent`/`model` in their render context); do not read mutable global context for model-callable behavior. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`) and guard optional UI with `letta.capabilities`.
 
-Capabilities vary by surface. TUI/headless may load tools, commands, events, UI, and providers; the desktop listener loads provider-only mods for local provider discovery. Always guard optional capabilities.
+Capabilities vary by surface — not every surface loads every capability. The TUI/headless host can load tools, commands, events, UI, and providers; the desktop listener loads tools, commands, providers, and tool/turn events, but not panel UI. Always guard each registration on the capabilities its behavior needs.
 
 ## Choose where the mod file lives
 
@@ -93,7 +93,7 @@ letta.capabilities.providers
 letta.capabilities.ui.panels
 ```
 
-Guard a registration on every capability its behavior depends on, not just its own surface. If a command's `run()` opens a panel, guard the command registration on `letta.capabilities.ui.panels` — not only the `openPanel` call. Hosts can support one surface but not another (the desktop listener has `commands: true` but `ui.panels: false`), so a panel-only command guarded only at the `openPanel` call still gets advertised there and shows up as a dead picker entry that silently no-ops. Register a capability only where the host can actually fulfill what it does.
+Guard each registration on every capability its behavior depends on — not just the one that registers it. Surfaces load different capability subsets, so a registration that relies on another capability (a command that opens UI, emits an event, or calls a provider) must guard on that capability too. Otherwise it is advertised or activated on a host that cannot fulfill it and silently does nothing. Register where the host can actually do the work.
 
 ## Scoped API model
 
@@ -138,7 +138,7 @@ Before finishing, verify:
 - Tool descriptions explain when the model should call them.
 - JSON schemas are object schemas with useful descriptions.
 - Optional UI/event APIs are capability-guarded.
-- Registrations are guarded by every capability the behavior needs, not just their own surface — e.g. a command whose `run()` opens a panel guards registration on `ui.panels` so it isn't advertised on hosts without panels (the desktop listener).
+- Each registration is guarded by every capability its behavior depends on, not just the one that registers it, so it isn't advertised or activated on a surface that can't fulfill it.
 - Provider mods are capability-guarded and clearly documented as local-agent only.
 - Timers, intervals, event registrations, and panels are cleaned up in a disposer.
 - Busy commands return `{ type: "handled" }` quickly and avoid main-conversation sends.
