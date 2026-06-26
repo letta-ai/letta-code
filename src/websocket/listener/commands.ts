@@ -192,7 +192,7 @@ export async function handleExecuteCommand(
             output: `Unknown command: ${command.command_id}`,
             success: false,
           });
-          return;
+          return `Unknown command: ${command.command_id}`;
         }
         await handleModCommand(
           modCommand,
@@ -204,7 +204,7 @@ export async function handleExecuteCommand(
           scope,
           opts,
         );
-        return;
+        return "";
       }
     }
 
