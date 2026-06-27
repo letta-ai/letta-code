@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Short human-readable name for a NEW worktree, e.g. \"fix-login-flow\" or \"desktop-cwd-isolation\". Used to derive the worktree directory and default branch name. Required unless `path` is provided."
+    },
+    "path": {
+      "type": "string",
+      "description": "Path to an EXISTING worktree under .letta/worktrees/ to switch this conversation into, instead of creating one. Mutually exclusive with `name`, `branch_name`, and `base_ref`. The path must be a registered, non-prunable linked worktree of this repository."
+    },
+    "branch_name": {
+      "type": "string",
+      "description": "Optional git branch name to create (new worktrees only). If omitted, a unique branch name like letta/<name>-<suffix> is generated."
+    },
+    "base_ref": {
+      "type": "string",
+      "description": "Optional git ref to base a new worktree on. Defaults to the latest remote default branch, usually origin/main."
+    },
+    "repo_path": {
+      "type": "string",
+      "description": "Optional path to the git repository to operate on. Use this when the current conversation cwd is not inside the target repo."
+    },
+    "refresh_base": {
+      "type": "boolean",
+      "description": "Whether to fetch the remote base branch before creating the worktree. Defaults to true. (New worktrees only.)"
+    },
+    "switch_cwd": {
+      "type": "boolean",
+      "description": "Whether to switch this conversation's working directory to the worktree after create/enter. Defaults to true."
+    },
+    "symlink_dependencies": {
+      "type": "boolean",
+      "description": "Whether to symlink heavy gitignored dependency directories (default: node_modules) from the primary checkout into the new worktree to avoid reinstalling. Defaults to FALSE so the worktree stays isolated. Only set to true when you are confident this worktree will NOT install, upgrade, or change packages, because a package install into a symlinked node_modules writes through to (and can corrupt) the primary checkout's dependencies. When false, run the repo's package manager in the worktree if you need dependencies. (New worktrees only.)"
+    },
+    "force": {
+      "type": "boolean",
+      "description": "When entering an existing worktree (`path`), take over the cross-agent lock even if another agent currently holds it. Use only when certain that agent is no longer active. Defaults to false."
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

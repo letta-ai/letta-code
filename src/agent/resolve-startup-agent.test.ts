@@ -15,9 +15,10 @@ function makeInput(
   overrides: Partial<StartupResolutionInput> = {},
 ): StartupResolutionInput {
   return {
-    localPinnedAgentId: null,
-    localPinnedAgentExists: false,
-    localPinnedCount: 0,
+    pinnedAgentId: null,
+    pinnedAgentExists: false,
+    pinnedCount: 0,
+    existingPinnedCount: 0,
     localAgentId: null,
     localConversationId: null,
     localAgentExists: false,
@@ -25,7 +26,6 @@ function makeInput(
     globalAgentExists: false,
     fallbackAgentId: null,
     fallbackConversationId: null,
-    mergedPinnedCount: 0,
     forceNew: false,
     needsModelPicker: false,
     ...overrides,
@@ -51,7 +51,7 @@ describe("resolveStartupTarget", () => {
       makeInput({
         globalAgentId: "agent-global-deleted",
         globalAgentExists: false,
-        mergedPinnedCount: 3,
+        pinnedCount: 3,
       }),
     );
     expect(result).toEqual({ action: "select" });
@@ -62,7 +62,7 @@ describe("resolveStartupTarget", () => {
       makeInput({
         globalAgentId: "agent-global-deleted",
         globalAgentExists: false,
-        mergedPinnedCount: 0,
+        pinnedCount: 0,
       }),
     );
     expect(result).toEqual({ action: "create" });
@@ -85,12 +85,12 @@ describe("resolveStartupTarget", () => {
     });
   });
 
-  test("valid local pinned agent takes priority over stale local LRU", () => {
+  test("valid pinned agent takes priority over stale local LRU", () => {
     const result = resolveStartupTarget(
       makeInput({
-        localPinnedAgentId: "agent-pinned-123",
-        localPinnedAgentExists: true,
-        localPinnedCount: 1,
+        pinnedAgentId: "agent-pinned-123",
+        pinnedAgentExists: true,
+        pinnedCount: 1,
         localAgentId: "agent-last-used-456",
         localConversationId: "conv-stale-789",
         localAgentExists: true,
@@ -102,12 +102,12 @@ describe("resolveStartupTarget", () => {
     });
   });
 
-  test("valid local pinned agent preserves conversation when it matches local LRU", () => {
+  test("valid pinned agent preserves conversation when it matches local LRU", () => {
     const result = resolveStartupTarget(
       makeInput({
-        localPinnedAgentId: "agent-pinned-123",
-        localPinnedAgentExists: true,
-        localPinnedCount: 1,
+        pinnedAgentId: "agent-pinned-123",
+        pinnedAgentExists: true,
+        pinnedCount: 1,
         localAgentId: "agent-pinned-123",
         localConversationId: "conv-local-789",
         localAgentExists: true,
@@ -120,16 +120,49 @@ describe("resolveStartupTarget", () => {
     });
   });
 
-  test("multiple local pinned agents open selector before stale local LRU", () => {
+  test("multiple existing pinned agents open selector before stale local LRU", () => {
     const result = resolveStartupTarget(
       makeInput({
-        localPinnedCount: 2,
+        pinnedCount: 2,
+        existingPinnedCount: 2,
         localAgentId: "agent-last-used-456",
         localConversationId: "conv-stale-789",
         localAgentExists: true,
       }),
     );
     expect(result).toEqual({ action: "select" });
+  });
+
+  test("multiple pins but only one exists → resume that pin (stale pins ignored)", () => {
+    const result = resolveStartupTarget(
+      makeInput({
+        pinnedAgentId: "agent-pinned-live",
+        pinnedAgentExists: true,
+        pinnedCount: 3,
+        existingPinnedCount: 1,
+        localAgentId: "agent-last-used-456",
+        localAgentExists: true,
+      }),
+    );
+    expect(result).toEqual({
+      action: "resume",
+      agentId: "agent-pinned-live",
+    });
+  });
+
+  test("multiple stale pins + valid global LRU → resume LRU, not select", () => {
+    const result = resolveStartupTarget(
+      makeInput({
+        pinnedCount: 2,
+        existingPinnedCount: 0,
+        globalAgentId: "agent-global-123",
+        globalAgentExists: true,
+      }),
+    );
+    expect(result).toEqual({
+      action: "resume",
+      agentId: "agent-global-123",
+    });
   });
 
   test("dir with local LRU + invalid agent + valid global → resumes global (no conv)", () => {
@@ -192,7 +225,7 @@ describe("resolveStartupTarget", () => {
   test("no LRU but pinned agents exist → select", () => {
     const result = resolveStartupTarget(
       makeInput({
-        mergedPinnedCount: 2,
+        pinnedCount: 2,
       }),
     );
     expect(result).toEqual({ action: "select" });
@@ -224,7 +257,7 @@ describe("resolveStartupTarget", () => {
     const result = resolveStartupTarget(
       makeInput({
         needsModelPicker: true,
-        mergedPinnedCount: 5,
+        pinnedCount: 5,
       }),
     );
     expect(result).toEqual({ action: "select" });
@@ -268,7 +301,7 @@ describe("resolveStartupTarget", () => {
         localAgentExists: false,
         globalAgentId: "agent-same",
         globalAgentExists: false,
-        mergedPinnedCount: 0,
+        pinnedCount: 0,
       }),
     );
     expect(result).toEqual({ action: "create" });
@@ -281,7 +314,7 @@ describe("resolveStartupTarget", () => {
         localAgentExists: false,
         globalAgentId: "agent-same",
         globalAgentExists: false,
-        mergedPinnedCount: 1,
+        pinnedCount: 1,
       }),
     );
     expect(result).toEqual({ action: "select" });

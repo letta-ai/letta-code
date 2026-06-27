@@ -46,31 +46,25 @@ describe("built-in subagents", () => {
     expect(configs.reflection?.recommendedModel).toBe("inherit");
   });
 
-  test("memory-related built-ins use memory permission mode", async () => {
+  test("memory-related built-ins use the memory-subagent launch profile", async () => {
     const configs = await getAllSubagentConfigs();
 
-    expect(configs.reflection?.permissionMode).toBe("memory");
-    expect(configs["history-analyzer"]?.permissionMode).toBe("memory");
-    expect(configs.memory?.permissionMode).toBe("memory");
-    expect(configs.init?.permissionMode).toBe("memory");
+    expect(configs.reflection?.launchProfile).toBe("memory-subagent");
+    expect(configs["history-analyzer"]?.launchProfile).toBe("memory-subagent");
+    expect(configs.memory?.launchProfile).toBe("memory-subagent");
+    expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
 
-  test("reflection and memory built-ins do not expose first-class file tools", async () => {
+  test("reflection exposes only Edit among first-class file tools", async () => {
     const configs = await getAllSubagentConfigs();
-    const removedFileTools = ["Read", "Edit", "Write", "Glob", "Grep"];
+    const hiddenFileTools = ["Read", "Write", "Glob", "Grep"];
 
-    for (const tool of removedFileTools) {
+    expect(configs.reflection?.allowedTools).toContain("Edit");
+    expect(configs.memory?.allowedTools).not.toContain("Edit");
+    for (const tool of hiddenFileTools) {
       expect(configs.reflection?.allowedTools).not.toContain(tool);
       expect(configs.memory?.allowedTools).not.toContain(tool);
     }
-  });
-
-  test("parses subagent mode and defaults missing mode to stateful", async () => {
-    const configs = await getAllSubagentConfigs();
-
-    expect(configs.reflection?.mode).toBe("stateless");
-    expect(configs["general-purpose"]?.mode).toBe("stateful");
-    expect(configs.memory?.mode).toBe("stateful");
   });
 
   test("reuses MemFS built-in prompts when local backend is active", async () => {
@@ -116,7 +110,6 @@ describe("built-in subagents", () => {
         "description: Custom reflection override",
         "tools: Read",
         "model: zaisigno/glm-5",
-        "memoryBlocks: none",
         "---",
         "Custom prompt body",
       ].join("\r\n"),
@@ -138,7 +131,6 @@ name: reflection
 description: Custom reflection override
 tools: Read
 model:
-memoryBlocks: none
 ---
 Custom prompt body`,
     );
@@ -157,7 +149,6 @@ Custom prompt body`,
 name: reflection
 description: Custom reflection override from different filename
 tools: Read
-memoryBlocks: none
 ---
 Custom prompt body`,
     );

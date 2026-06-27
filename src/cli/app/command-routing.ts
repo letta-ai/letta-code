@@ -20,7 +20,6 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/search",
   "/feedback",
   "/pin",
-  "/pin-local",
   "/conversations",
   "/profile",
 ]);

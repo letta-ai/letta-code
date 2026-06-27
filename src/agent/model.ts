@@ -81,9 +81,11 @@ export function normalizeModelHandleForRegistry(
   if (!modelHandle) return null;
   const [provider, ...modelParts] = modelHandle.split("/");
   const model = modelParts.join("/");
+  if (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER && model.length > 0) {
+    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
+  }
   if (
-    (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER ||
-      provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1)) &&
+    provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
     model.length > 0 &&
     !model.endsWith("-fast")
   ) {
@@ -108,7 +110,8 @@ export function getChatGptFastRegistryHandleForModelHandle(
   const [provider] = modelHandle.split("/");
   if (
     provider !== LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
-    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER
+    provider !== CHATGPT_OAUTH_LLM_CONFIG_PROVIDER &&
+    provider !== OPENAI_CODEX_PROVIDER_NAME
   ) {
     return null;
   }

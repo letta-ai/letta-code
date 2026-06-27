@@ -5,6 +5,7 @@
 import { platform } from "node:os";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type { SessionContextReason } from "@/reminders/state";
+import type { ShellContext } from "@/utils/shell-context";
 import { getVersion } from "@/version";
 import { gatherGitContextSnapshot } from "./git-context";
 
@@ -79,6 +80,7 @@ export interface BuildSessionContextOptions {
   cwd?: string;
   source?: SessionContextSource;
   reason?: SessionContextReason;
+  shellContext?: ShellContext;
 }
 
 function getIntroText(
@@ -96,6 +98,30 @@ function getIntroText(
     default:
       return "The user has just initiated a new connection via the [Letta Code CLI client](https://docs.letta.com/letta-code/index.md).";
   }
+}
+
+export function buildWindowsShellNotes(shellContext?: ShellContext): string {
+  const detected = shellContext?.family;
+  const displayName = shellContext?.displayName ?? "Windows shell";
+  const shellLine = (() => {
+    switch (detected) {
+      case "powershell":
+        return `- Detected shell: ${displayName}. Prefer PowerShell-safe commands, like \`$env:NAME="value"\`, and avoid Unix-only pipeline assumptions.`;
+      case "cmd":
+        return `- Detected shell: ${displayName}. Prefer cmd-safe commands, like \`set NAME=value\`, and avoid PowerShell-only syntax.`;
+      case "bash":
+        return `- Detected shell: ${displayName}. Use Unix shell syntax.`;
+      default:
+        return "- The Bash tool uses PowerShell or cmd.exe on Windows";
+    }
+  })();
+
+  return `
+## Windows Shell Notes
+${shellLine}
+- HEREDOC syntax (e.g., \`$(cat <<'EOF'...EOF)\`) does NOT work on Windows
+- For multiline strings (git commits, PR bodies), use simple quoted strings instead
+`;
 }
 
 /**
@@ -169,12 +195,7 @@ ${gitInfo.status}
 
     // Add Windows-specific shell guidance
     if (platform() === "win32") {
-      context += `
-## Windows Shell Notes
-- The Bash tool uses PowerShell or cmd.exe on Windows
-- HEREDOC syntax (e.g., \`$(cat <<'EOF'...EOF)\`) does NOT work on Windows
-- For multiline strings (git commits, PR bodies), use simple quoted strings instead
-`;
+      context += buildWindowsShellNotes(options?.shellContext);
     }
 
     context += SYSTEM_REMINDER_CLOSE;

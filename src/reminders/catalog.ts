@@ -12,8 +12,6 @@ export type SharedReminderId =
   | "secrets-info"
   | "permission-mode"
   | "memory-git-sync"
-  | "reflection-step-count"
-  | "reflection-compaction"
   | "command-io"
   | "toolset-change";
 
@@ -73,26 +71,6 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "memory-git-sync",
       description: "Queued post-turn memory git sync status",
-      modes: [
-        "interactive",
-        "headless-one-shot",
-        "headless-bidirectional",
-        "listen",
-      ],
-    },
-    {
-      id: "reflection-step-count",
-      description: "Step-count reflection trigger handling",
-      modes: [
-        "interactive",
-        "headless-one-shot",
-        "headless-bidirectional",
-        "listen",
-      ],
-    },
-    {
-      id: "reflection-compaction",
-      description: "Compaction-triggered reflection trigger handling",
       modes: [
         "interactive",
         "headless-one-shot",

@@ -18,6 +18,7 @@ import {
   emitStreamEvent,
   updateSubagent,
 } from "@/agent/subagent-state.js";
+import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
 import {
   type BackendMode,
   getBackend,
@@ -33,7 +34,6 @@ import {
 } from "@/constants";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
-import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
 import {
   getCurrentWorkingDirectory,
@@ -49,7 +49,11 @@ import {
 } from "@/tools/impl/shell-env";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
-import { getAllSubagentConfigs, type SubagentConfig } from ".";
+import {
+  getAllSubagentConfigs,
+  type SubagentConfig,
+  type SubagentLaunchProfile,
+} from ".";
 import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_CHAR_LIMIT,
@@ -611,13 +615,13 @@ export function resolveSubagentWorkingDirectory(
   fallbackCwd: string = getCurrentWorkingDirectory(),
   options: {
     subagentType?: string;
-    permissionMode?: string;
+    launchProfile?: SubagentLaunchProfile;
     inheritedPrimaryRoot?: string | null;
   } = {},
 ): string {
   if (
     options.subagentType === "reflection" &&
-    options.permissionMode === "memory" &&
+    options.launchProfile === "memory-subagent" &&
     options.inheritedPrimaryRoot
   ) {
     return options.inheritedPrimaryRoot;
@@ -686,12 +690,12 @@ export interface ComposeSubagentChildEnvOptions {
   /** Parent agent ID. When present, sets LETTA_PARENT_AGENT_ID so prompts,
    * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
-  /** The subagent config's declared permissionMode ("memory" triggers
-   * memory-dir override; other modes leave the parent's MEMORY_DIR alone). */
-  permissionMode: string | undefined;
-  /** Primary memory root for the parent, used when permissionMode=memory to
-   * point the child at its parent's memfs repo. Null means memfs disabled
-   * or unresolvable — child operates without a MEMORY_DIR. */
+  /** The subagent config's declared launch profile. Subagents with the memory-subagent profile
+   * operate on the parent's memory filesystem. */
+  launchProfile: SubagentLaunchProfile | undefined;
+  /** Primary memory root for the parent, used by the memory-subagent launch
+   * profile to point the child at its parent's memfs repo. Null means memfs
+   * disabled or unresolvable — child operates without a MEMORY_DIR. */
   inheritedPrimaryRoot: string | null;
   /** Forwarded API key to avoid per-subagent keychain lookups. */
   inheritedApiKey?: string | null;
@@ -734,9 +738,9 @@ function buildInheritedChannelContextPayload(
  *     inherit a broad cross-agent memory-guard opt-out from the parent.
  *
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
- *     declares permissionMode=memory. Those subagents operate on the parent's
- *     memory as their working filesystem (reflection, memory, init,
- *     history-analyzer). Other subagents keep whatever MEMORY_DIR they
+ *     declares the memory-subagent launch profile. Those subagents operate on
+ *     the parent's memory as their working filesystem (reflection, memory,
+ *     init, history-analyzer). Other subagents keep whatever MEMORY_DIR they
  *     inherited from the parent process (usually unset).
  *
  * Pure function, no side effects — straightforward to unit-test.
@@ -749,7 +753,7 @@ export function composeSubagentChildEnv(
     backendMode,
     localBackendStorageDir,
     parentAgentId,
-    permissionMode,
+    launchProfile,
     inheritedPrimaryRoot,
     inheritedApiKey,
     inheritedBaseUrl,
@@ -780,10 +784,10 @@ export function composeSubagentChildEnv(
     childEnv.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "0";
   }
 
-  // Only memory-mode subagents get MEMORY_DIR pointed at the parent. Other
+  // Only subagents with the memory-subagent profile get MEMORY_DIR pointed at the parent. Other
   // subagents either have their own memfs (if memfs-enabled) or no MEMORY_DIR
   // at all — their tools will surface resolution errors appropriately.
-  if (permissionMode === "memory") {
+  if (launchProfile === "memory-subagent") {
     if (inheritedPrimaryRoot) {
       childEnv.MEMORY_DIR = inheritedPrimaryRoot;
       childEnv.LETTA_MEMORY_DIR = inheritedPrimaryRoot;
@@ -912,6 +916,7 @@ interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
   extraTools?: string[];
+  parentAgentId?: string | null;
 }
 
 /**
@@ -951,7 +956,11 @@ export function buildSubagentArgs(
   } else {
     // Create new agent (original behavior)
     args.push("--new-agent", "--system", type);
-    args.push("--tags", `type:${type}`);
+    const subagentTags = [`type:${type}`];
+    if (options.parentAgentId) {
+      subagentTags.push(`parent:${options.parentAgentId}`);
+    }
+    args.push("--tags", subagentTags.join(","));
     // Default all newly spawned subagents to non-memfs mode.
     // This avoids memfs startup overhead unless explicitly enabled elsewhere.
     args.push("--no-memfs");
@@ -978,14 +987,7 @@ export function buildSubagentArgs(
     args.push("-p", buildSubagentPrompt(type, config, userPrompt));
   }
   args.push("--output-format", "stream-json");
-
-  // Use subagent's configured permission mode, or inherit from parent
-  const subagentMode = config.permissionMode;
-  const parentMode = permissionMode.getMode();
-  const modeToUse = subagentMode || parentMode;
-  if (modeToUse !== "default") {
-    args.push("--permission-mode", modeToUse);
-  }
+  args.push("--permission-mode", "unrestricted");
 
   // Build list of auto-approved tools:
   // 1. Inherit from parent (CLI + session rules)
@@ -1006,18 +1008,6 @@ export function buildSubagentArgs(
   const parentDisallowedTools = cliPermissions.getDisallowedTools();
   if (parentDisallowedTools.length > 0) {
     args.push("--disallowedTools", parentDisallowedTools.join(","));
-  }
-
-  // Add memory block filtering if specified (only for new agents)
-  if (!isDeployingExisting) {
-    if (config.memoryBlocks === "none") {
-      args.push("--init-blocks", "none");
-    } else if (
-      Array.isArray(config.memoryBlocks) &&
-      config.memoryBlocks.length > 0
-    ) {
-      args.push("--init-blocks", config.memoryBlocks.join(","));
-    }
   }
 
   // Add tool filtering if specified (applies to both new and existing agents)
@@ -1087,6 +1077,16 @@ async function executeSubagent(
     const inheritedChannelContext =
       buildInheritedChannelContextPayload(runtimeContext);
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
+
+    let parentAgentId = parentAgentIdOverride;
+    if (!parentAgentId) {
+      try {
+        parentAgentId = getCurrentAgentId();
+      } catch {
+        // Context not available — subagent will have no parent scope.
+      }
+    }
+
     const cliArgs = buildSubagentArgs(
       type,
       config,
@@ -1098,6 +1098,7 @@ async function executeSubagent(
       {
         backendMode,
         promptTransport: "stdin",
+        parentAgentId,
         extraTools:
           config.fork && inheritedChannelContext
             ? ["MessageChannel"]
@@ -1106,18 +1107,6 @@ async function executeSubagent(
     );
 
     const launcher = resolveSubagentLauncher(cliArgs);
-    // Prefer an explicit parentAgentId captured at the synchronous
-    // spawn call site. Only fall back to the in-process context (which
-    // can drift across async yields in the listener) when no explicit
-    // ID was provided.
-    let parentAgentId = parentAgentIdOverride;
-    if (!parentAgentId) {
-      try {
-        parentAgentId = getCurrentAgentId();
-      } catch {
-        // Context not available — subagent will have no parent scope.
-      }
-    }
 
     // Resolve auth once in parent and forward to child to avoid per-subagent
     // keychain lookups under high parallel fan-out.
@@ -1142,7 +1131,7 @@ async function executeSubagent(
       getCurrentWorkingDirectory(),
       {
         subagentType: type,
-        permissionMode: config.permissionMode,
+        launchProfile: config.launchProfile,
         inheritedPrimaryRoot,
       },
     );
@@ -1154,7 +1143,7 @@ async function executeSubagent(
       backendMode,
       localBackendStorageDir,
       parentAgentId,
-      permissionMode: config.permissionMode,
+      launchProfile: config.launchProfile,
       inheritedPrimaryRoot,
       inheritedApiKey,
       inheritedBaseUrl,
@@ -1162,9 +1151,33 @@ async function executeSubagent(
       inheritedChannelContext,
     });
 
-    const proc = spawn(launcher.command, launcher.args, {
+    // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.
+    // Returns null (spawn unchanged) when disabled, not applicable, or no
+    // backend is available on this host.
+    const sandbox = wrapSubagentLauncher({
+      launcher,
+      launchProfile: config.launchProfile,
+      backendMode,
+      memoryRoots: inheritedMemoryRoots.roots,
+      inheritedPrimaryRoot,
+      localBackendStorageDir,
+    });
+    const spawnLauncher = sandbox
+      ? { command: sandbox.command, args: sandbox.args }
+      : launcher;
+    const spawnEnv = sandbox
+      ? { ...childEnv, ...sandbox.sandboxEnv }
+      : childEnv;
+    if (sandbox) {
+      debugLog(
+        "subagent",
+        `memory subagent child sandboxed via ${sandbox.backend}`,
+      );
+    }
+
+    const proc = spawn(spawnLauncher.command, spawnLauncher.args, {
       cwd: subagentWorkingDirectory,
-      env: childEnv,
+      env: spawnEnv,
     });
     proc.stdin.on("error", () => {});
     proc.stdin.end(boundedUserPrompt);

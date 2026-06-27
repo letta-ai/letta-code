@@ -20,6 +20,8 @@ This is the first slice of the hooks-v2 direction. The long-term goal is for typ
 letta.capabilities.events.lifecycle
 letta.capabilities.events.tools
 letta.capabilities.events.turns
+letta.capabilities.events.compact
+letta.capabilities.events.llm
 ```
 
 Guard events when writing portable mods:
@@ -30,7 +32,7 @@ export default function activate(letta) {
 
   return letta.events.on("conversation_open", (event, ctx) => {
     console.log(`conversation ${event.reason}: ${event.agentName ?? event.agentId}`);
-    console.log(`cwd: ${ctx.context.workspace.currentDir}`);
+    console.log(`cwd: ${ctx.cwd}`);
   });
 }
 ```
@@ -55,9 +57,11 @@ letta.events.on("tool_start", (event, ctx) => {
 });
 ```
 
-Lifecycle, turn-start, and tool-start events are wired today.
+Lifecycle, turn, tool, compaction, and llm events are wired today.
 
-Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn. `tool_start` handlers can transform the tool arguments before execution.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
+
+`compact_start`/`compact_end` and `llm_start`/`llm_end` only fire on the **local backend**, where compaction and provider requests run client-side. On the constellation backend that work happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` / `letta.capabilities.events.llm` for portable mods.
 
 ## Supported events
 
@@ -65,7 +69,12 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 "conversation_open"
 "conversation_close"
 "tool_start"
+"tool_end"
 "turn_start"
+"compact_start"
+"compact_end"
+"llm_start"
+"llm_end"
 ```
 
 `conversation_open` event:
@@ -138,6 +147,43 @@ Handlers run in registration order. Later handlers see the current args after ea
 
 `tool_start` is intentionally a trusted local mod point: it can rewrite commands, file paths, and other tool inputs before execution. Keep transforms focused and unsurprising.
 
+`tool_end` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  toolCallId: string | null;
+  toolName: string;
+  status: "success" | "error";
+  output: string;
+}
+```
+
+`tool_end` fires immediately after a tool produces a result, before the agent sees it. Handlers can inspect the result, or return `{ result: { status, output } }` to replace it:
+
+```ts
+letta.events.on("tool_end", (event) => {
+  if (event.toolName !== "Bash" || event.status !== "success") return;
+  return { result: { status: "success", output: redactSecrets(event.output) } };
+});
+```
+
+The first handler that returns a `result` wins; later handlers are shadowed. Only string results are surfaced — multimodal/image results pass through unchanged. `tool_end` is the trusted-local-mod equivalent of the `PostToolUse` / `PostToolUseFailure` hooks for observing and rewriting tool results.
+
+A handler can also react to a specific tool completing by adjusting conversation state. For example, switch model and reasoning effort when entering and exiting plan mode (`tool_end` fires only after the tool succeeds, so a denied approval won't switch):
+
+```ts
+letta.events.on("tool_end", async (event, ctx) => {
+  if (event.status !== "success") return;
+  if (event.toolName === "enter_plan_mode") {
+    await ctx.conversation.updateLlmConfig({ model: "anthropic/claude-opus-4-8", reasoningEffort: "high" });
+  } else if (event.toolName === "exit_plan_mode") {
+    await ctx.conversation.updateLlmConfig({ model: "openai/gpt-5.5", reasoningEffort: "max" });
+  }
+});
+```
+
 `turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns.
 
 Handlers can mutate `event.input` directly or return replacement input:
@@ -170,6 +216,67 @@ Handlers run in registration order. Later handlers see the current input after e
 
 `turn_start` is intentionally a trusted local mod point: it can rewrite user messages, approval results, and ordering. Keep transforms focused and unsurprising.
 
+`compact_start` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: "manual" | "context_window_overflow" | "context_window_limit";
+}
+```
+
+`compact_start` fires before the local backend compacts a conversation, while the full message history is still in context. `trigger` distinguishes a manual `/compact` from the two automatic triggers (provider context-window overflow, and exceeding the configured context window). Use it to checkpoint state before eviction.
+
+`compact_end` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: "manual" | "context_window_overflow" | "context_window_limit";
+  messagesBefore: number;
+  messagesAfter: number;
+  contextTokensBefore: number;
+  contextTokensAfter: number;
+}
+```
+
+`compact_end` fires after compaction completes, carrying the before/after message and context-token counts. Both events are notification-only; return values are ignored. A throwing handler is isolated and never breaks compaction.
+
+`llm_start` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  messageCount: number;
+  contextWindow: number;
+}
+```
+
+`llm_start` fires right before each provider request, with the model handle, the number of messages being sent, and the model's context window. It fires once per provider request, so a retry or an overflow-triggered re-request emits another `llm_start`.
+
+`llm_end` event:
+
+```ts
+{
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  stopReason: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  durationMs: number;
+}
+```
+
+`llm_end` fires once a provider request produces a final message, carrying the stop reason, token usage, and wall-clock duration. A request that fails before producing a final message (e.g. a transport error that triggers a retry) emits no `llm_end`. Both events are notification-only; return values are ignored. A throwing handler is isolated and never breaks the provider request.
+
 Handlers also receive:
 
 ```ts
@@ -180,13 +287,15 @@ Handlers also receive:
     getHistory(options?): Promise<Message[]>;
     sendMessageStream(messages, options?): Promise<AsyncIterable<chunk>>;
   };
-  context: letta.getContext();
-  getContext: () => letta.getContext();
+  agent: ModContext["agent"];
+  cwd: string;
+  model: ModContext["model"];
+  permissionMode: string | null;
   signal: AbortSignal;
 }
 ```
 
-`ctx.conversation` is bound when the event is dispatched. Use it for scoped conversation calls made while handling that event. If an event needs background model work, prefer `ctx.conversation.fork()` and send to the fork. Do not send to the active conversation from `turn_start`; that event is already in the path of sending a turn.
+`ctx` and `ctx.conversation` are bound when the event is dispatched. Use direct fields such as `ctx.agent`, `ctx.cwd`, `ctx.model`, and `ctx.permissionMode` for scoped state. If an event needs background model work, prefer `ctx.conversation.fork()` and send to the fork. Do not send to the active conversation from `turn_start`; that event is already in the path of sending a turn.
 
 Respect `ctx.signal` for long-running async work. It is aborted on `/reload` and app shutdown.
 
@@ -197,12 +306,23 @@ export default function activate(letta) {
   if (!letta.capabilities.events.lifecycle) return;
 
   const disposers = [];
+  let conversation = "";
 
-  disposers.push(
-    letta.events.on("conversation_open", (event) => {
-      letta.ui.setStatus("conversation", event.reason);
-    }),
-  );
+  if (letta.capabilities.ui.panels) {
+    const panel = letta.ui.openPanel({
+      id: "conversation",
+      order: 100,
+      render: ({ width, row }) => row("conversation", conversation, width),
+    });
+    disposers.push(() => panel.close());
+
+    disposers.push(
+      letta.events.on("conversation_open", (event) => {
+        conversation = event.reason;
+        panel.update();
+      }),
+    );
+  }
 
   disposers.push(
     letta.events.on("conversation_close", (event) => {
@@ -212,7 +332,6 @@ export default function activate(letta) {
 
   return () => {
     for (const dispose of disposers.reverse()) dispose();
-    letta.ui.clearStatus("conversation");
   };
 }
 ```

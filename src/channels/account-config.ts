@@ -7,6 +7,7 @@ import type {
   ChannelPluginAccountPatch,
   ChannelProtocolConfig,
 } from "./plugin-types";
+import { signalAccountConfigAdapter } from "./signal/account-config";
 import { slackAccountConfigAdapter } from "./slack/account-config";
 import { telegramAccountConfigAdapter } from "./telegram/account-config";
 import type { ChannelAccount } from "./types";
@@ -27,6 +28,8 @@ const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
     customAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
   whatsapp:
     whatsappAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
+  signal:
+    signalAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
 };
 
 /**

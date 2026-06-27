@@ -242,7 +242,7 @@ export function activate(letta) {
   if (letta.capabilities.events.tools) {
     disposers.push(
       letta.events.on("tool_start", (event, ctx) => {
-        const memoryDir = getMemoryDir(ctx.getContext());
+        const memoryDir = getMemoryDir(ctx);
         if (!memoryDir) return;
 
         const state = getState(event.conversationId);
@@ -308,9 +308,7 @@ export function activate(letta) {
         requiresApproval: false,
         parallelSafe: true,
         run(ctx) {
-          const key = conversationKey(
-            ctx.conversation.id ?? ctx.getContext().sessionId,
-          );
+          const key = conversationKey(ctx.conversation.id ?? ctx.sessionId);
           return JSON.stringify(
             summarizeCitations(byConversation.get(key)),
             null,
@@ -328,9 +326,7 @@ export function activate(letta) {
         description:
           "Show memory references observed by the memory citation mod this turn.",
         run(ctx) {
-          const key = conversationKey(
-            ctx.conversation.id ?? ctx.getContext().sessionId,
-          );
+          const key = conversationKey(ctx.conversation.id ?? ctx.sessionId);
           return {
             type: "output",
             output: JSON.stringify(

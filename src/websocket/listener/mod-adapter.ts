@@ -1,25 +1,25 @@
 import type Letta from "@letta-ai/letta-client";
 import { getBackend } from "@/backend";
+import { buildModInvocationContext } from "@/mods/context";
 import { createModAdapter, type ModAdapter } from "@/mods/mod-adapter";
 import type { ModCapabilities, ModContext } from "@/mods/types";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
-import { getVersion } from "@/version";
 import type { ListenerRuntime } from "./types";
 
 export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
-  tools: false,
-  commands: false,
+  tools: true,
+  commands: true,
   events: {
     lifecycle: false,
-    tools: false,
-    turns: false,
+    tools: true,
+    turns: true,
+    compact: false,
+    llm: false,
   },
   permissions: false,
   providers: true,
   ui: {
     panels: false,
-    statusValues: false,
-    customStatuslineRenderer: false,
   },
 };
 
@@ -33,66 +33,38 @@ export interface CreateListenerModAdapterOptions {
 }
 
 async function getUnavailableListenerClient(): Promise<Letta> {
-  throw new Error("letta.client is not available in listener provider mods");
+  throw new Error("letta.client is not available in listener mods");
 }
 
 export function createListenerModContext(
   options: Pick<
     CreateListenerModAdapterOptions,
     "sessionId" | "workingDirectory"
-  > = {},
+  > & {
+    agent?: {
+      id: string;
+      name?: string | null;
+      model?: string | null;
+      llm_config?: {
+        model?: string | null;
+        model_endpoint_type?: string | null;
+        reasoning_effort?: string | null;
+      } | null;
+    } | null;
+    modelIdentifier?: string | null;
+    permissionMode?: string | null;
+    toolset?: string | null;
+  } = {},
 ): ModContext {
   const cwd = options.workingDirectory ?? getCurrentWorkingDirectory();
-  return {
-    app: { version: getVersion() },
-    workspace: {
-      cwd,
-      currentDir: cwd,
-      projectDir: cwd,
-    },
-    cwd,
-    sessionId: options.sessionId ?? null,
-    lastRunId: null,
-    agent: {
-      id: null,
-      name: null,
-    },
-    model: {
-      id: null,
-      displayName: null,
-      provider: null,
-      reasoningEffort: null,
-    },
-    toolset: null,
-    systemPromptId: null,
-    permissionMode: null,
-    networkPhase: null,
-    terminalWidth: process.stdout.columns ?? null,
-    contextWindow: {
-      size: 0,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      usedPercentage: null,
-      remainingPercentage: null,
-      currentUsage: null,
-    },
-    cost: {
-      totalDurationMs: 0,
-      totalApiDurationMs: 0,
-      totalCostUsd: null,
-      totalLinesAdded: null,
-      totalLinesRemoved: null,
-    },
-    reflection: {
-      mode: null,
-      stepCount: 0,
-    },
-    memfs: {
-      enabled: false,
-      memoryDir: null,
-    },
-    backgroundAgents: [],
-  };
+  return buildModInvocationContext({
+    agent: options.agent ?? null,
+    conversationId: options.sessionId ?? null,
+    modelIdentifier: options.modelIdentifier ?? null,
+    permissionMode: options.permissionMode ?? null,
+    toolset: options.toolset ?? null,
+    workingDirectory: cwd,
+  });
 }
 
 export function createListenerModAdapter(
@@ -112,7 +84,6 @@ export function createListenerModAdapter(
     ...(options.globalModsDirectory
       ? { globalModsDirectory: options.globalModsDirectory }
       : {}),
-    initialContext: createListenerModContext(options),
   });
 }
 
@@ -128,12 +99,6 @@ export async function reloadListenerModAdapter(
   runtime: ListenerRuntime,
 ): Promise<void> {
   const adapter = ensureListenerModAdapter(runtime);
-  adapter.updateContext(
-    createListenerModContext({
-      sessionId: runtime.sessionId,
-      workingDirectory: runtime.bootWorkingDirectory,
-    }),
-  );
   await adapter.reload();
 }
 

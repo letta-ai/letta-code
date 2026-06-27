@@ -5,8 +5,7 @@ import {
   applySetMaxContext,
   formatSetMaxContextResult,
 } from "@/agent/max-context";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
-import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
@@ -26,6 +25,8 @@ import {
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
+import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
@@ -33,6 +34,7 @@ import {
 } from "@/constants";
 import { goalLoopMode } from "@/goal-loop-mode";
 import { runPreCompactHooks } from "@/hooks";
+import type { ModCommand } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
@@ -43,7 +45,9 @@ import type {
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
+import { getConversationWorkingDirectory } from "./cwd";
 import { reloadListenerModAdapter } from "./mod-adapter";
+import { getListenerModCommand, runListenerModCommand } from "./mod-commands";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -51,13 +55,17 @@ import {
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
+  emitDeviceStatusUpdate,
 } from "./protocol-outbound";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
 } from "./secrets-sync";
-import { handleIncomingMessage } from "./turn";
+import {
+  buildMaybeLaunchReflectionSubagent,
+  handleIncomingMessage,
+} from "./turn";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -138,11 +146,17 @@ export async function handleExecuteCommand(
         break;
 
       case "compact":
-        output = await handleCompactCommand(conversationRuntime, trimmedArgs);
+        output = await handleCompactCommand(
+          socket,
+          conversationRuntime,
+          trimmedArgs,
+        );
         break;
 
       case "reload":
         output = await handleReloadCommand(conversationRuntime);
+        // Re-advertise so newly (un)registered mod commands reach the client.
+        emitDeviceStatusUpdate(socket, conversationRuntime, scope);
         break;
 
       case "context-limit":
@@ -166,14 +180,32 @@ export async function handleExecuteCommand(
         output = await handleUpgradeLettaCodeCommand(opts);
         break;
 
-      default:
-        emitSlashCommandEnd(socket, conversationRuntime, scope, {
-          command_id: command.command_id,
+      default: {
+        const modCommand = getListenerModCommand(
+          conversationRuntime.listener,
+          command.command_id,
+        );
+        if (!modCommand) {
+          emitSlashCommandEnd(socket, conversationRuntime, scope, {
+            command_id: command.command_id,
+            input,
+            output: `Unknown command: ${command.command_id}`,
+            success: false,
+          });
+          return;
+        }
+        await handleModCommand(
+          modCommand,
+          command,
           input,
-          output: `Unknown command: ${command.command_id}`,
-          success: false,
-        });
+          trimmedArgs,
+          socket,
+          conversationRuntime,
+          scope,
+          opts,
+        );
         return;
+      }
     }
 
     emitSlashCommandEnd(socket, conversationRuntime, scope, {
@@ -201,6 +233,88 @@ export async function handleExecuteCommand(
     // "interrupt_in_progress"). Reset it so subsequent user messages drain.
     conversationRuntime.cancelRequested = false;
   }
+}
+
+/**
+ * Run a mod-registered slash command and surface its result. Mirrors the TUI
+ * mod command path: `output` is shown as command output, `handled` closes
+ * silently, and `prompt` injects a user turn through the normal message flow.
+ */
+async function handleModCommand(
+  modCommand: ModCommand,
+  command: ExecuteCommandCommand,
+  input: string,
+  trimmedArgs: string | undefined,
+  socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+  scope: { agent_id: string | null; conversation_id: string },
+  opts: {
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): Promise<void> {
+  const result = await runListenerModCommand(conversationRuntime, modCommand, {
+    commandId: command.command_id,
+    args: trimmedArgs ?? "",
+    rawInput: input,
+  });
+
+  if (result.type === "prompt") {
+    if (!modCommand.showInTranscript) {
+      emitSlashCommandEnd(socket, conversationRuntime, scope, {
+        command_id: command.command_id,
+        input,
+        output: `/${modCommand.id} returned a prompt with showInTranscript: false. Hidden mod commands must return output or handled.`,
+        success: false,
+      });
+      return;
+    }
+
+    const agentId = conversationRuntime.agentId;
+    if (!agentId) {
+      emitSlashCommandEnd(socket, conversationRuntime, scope, {
+        command_id: command.command_id,
+        input,
+        output: `No agent available to run /${modCommand.id}.`,
+        success: false,
+      });
+      return;
+    }
+
+    emitSlashCommandEnd(socket, conversationRuntime, scope, {
+      command_id: command.command_id,
+      input,
+      output: `Running /${modCommand.id}...`,
+      success: true,
+    });
+
+    await handleIncomingMessage(
+      {
+        type: "message",
+        agentId,
+        conversationId: conversationRuntime.conversationId,
+        messages: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "text", text: buildModCommandPrompt(result) }],
+          },
+        ],
+      },
+      socket,
+      conversationRuntime,
+      opts.onStatusChange,
+      opts.connectionId,
+    );
+    return;
+  }
+
+  emitSlashCommandEnd(socket, conversationRuntime, scope, {
+    command_id: command.command_id,
+    input,
+    output: result.type === "output" ? result.output : "",
+    success: result.type === "output" ? (result.success ?? true) : true,
+  });
 }
 
 async function handleReloadCommand(
@@ -351,6 +465,7 @@ function compactHelpOutput(): string {
 
 /** /compact — Summarize conversation history through the active Backend. */
 async function handleCompactCommand(
+  socket: WebSocket,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
 ): Promise<string> {
@@ -410,7 +525,36 @@ async function handleCompactCommand(
       compactBody,
     );
 
-    conversationRuntime.contextTracker.pendingReflectionTrigger = true;
+    // Launching reflection is best-effort — never fail the /compact itself.
+    try {
+      const reflectionSettings = getReflectionSettings(
+        agentId,
+        getConversationWorkingDirectory(
+          conversationRuntime.listener,
+          agentId,
+          conversationRuntime.conversationId,
+        ),
+      );
+      if (
+        reflectionSettings.trigger === "compaction-event" &&
+        settingsManager.isMemfsEnabled(agentId)
+      ) {
+        void buildMaybeLaunchReflectionSubagent({
+          runtime: conversationRuntime,
+          socket,
+          agentId,
+          conversationId: conversationRuntime.conversationId,
+        })("compaction-event");
+      }
+    } catch (reflectionError) {
+      debugLog(
+        "memory",
+        "Skipping post-compaction reflection:",
+        reflectionError instanceof Error
+          ? reflectionError.message
+          : String(reflectionError),
+      );
+    }
     void regenerateConversationDescription(conversationRuntime.conversationId);
 
     return [
@@ -476,7 +620,6 @@ async function handleClearCommand(
   // Create a new conversation
   const conversation = await backend.createConversation({
     agent_id: agentId,
-    isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
   });
 
   // Clear runtime state for the current conversation
@@ -518,7 +661,7 @@ async function handleDoctorCommand(
 
   const { context: gitContext } = gatherInitGitContext();
   const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getMemoryFilesystemRoot(agentId)
+    ? getScopedMemoryFilesystemRoot(agentId)
     : undefined;
 
   const doctorMessage = buildDoctorMessage({ gitContext, memoryDir });
@@ -570,7 +713,7 @@ async function handleInitCommand(
 
   const { context: gitContext } = gatherInitGitContext();
   const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getMemoryFilesystemRoot(agentId)
+    ? getScopedMemoryFilesystemRoot(agentId)
     : undefined;
 
   const initMessage = buildInitMessage({ gitContext, memoryDir });

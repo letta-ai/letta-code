@@ -832,7 +832,7 @@ export function buildModLearningPrompt(
       : "";
   const evaluationSummary = renderEvaluationSummaryForPrompt(spec);
 
-  return `You are dogfooding Letta Code's trusted local mod system. Learn a minimal mod from the target env and write the candidate mod file.\n\nTarget: ${spec.name}${attemptLabel}\nObjective: ${spec.objective}\nCandidate file, absolute path: ${candidatePath}\n\nHard rules:\n- Edit only the candidate file above. Do not modify repository source, docs, package files, tests, or git state.\n- Export either \`activate(letta)\` or a default function.\n- Use the trusted local mod API directly; do not import from "@/..." or from this repo's src files.\n- Prefer a small implementation that satisfies the behavior over a polished product mod.\n- If you register an eval-facing tool, set \`requiresApproval: false\` and keep it read-only.\n- Do not run tests or lint. Write the candidate file and stop.\n${diversitySection}${historySection}\nMod API surface guide:\n- Use \`turn_start\` for policy/guidance that should influence model planning.\n- Use \`tool_start\` for tool argument inspection, normalization, rewrites, or blocking-adjacent behavior before execution.\n- Register a tool only when the agent needs a new callable capability or observable state.\n- Pick the narrowest surface that directly satisfies the env; a reminder alone is not enough when the env asks for tool-boundary behavior.\n\nMinimal mod API reminder:\n\`\`\`ts\nexport function activate(letta) {\n  const disposers = [];\n  if (letta.capabilities.events.tools) {\n    disposers.push(letta.events.on("tool_start", (event) => {\n      // Use this for command/argument rewrites before tool execution.\n      if (event.toolName === "exec_command" && typeof event.args.cmd === "string") {\n        const rewritten = event.args.cmd.replace("old command", "new command");\n        if (rewritten !== event.args.cmd) {\n          return { args: { ...event.args, cmd: rewritten } };\n        }\n      }\n    }));\n  }\n  if (letta.capabilities.events.turns) {\n    disposers.push(letta.events.on("turn_start", (event) => {\n      // event.input is an array of message/approval objects. Do not append\n      // strings to existing content because content may be structured parts.\n      event.input = [\n        ...event.input,\n        { type: "message", role: "system", content: "mod reminder" },\n      ];\n      return { input: event.input };\n    }));\n  }\n  if (letta.capabilities.tools) {\n    disposers.push(letta.tools.register({\n      name: "example_tool",\n      description: "Short tool description",\n      parameters: { type: "object", properties: {}, additionalProperties: false },\n      requiresApproval: false,\n      parallelSafe: true,\n      run(ctx) {\n        // For conversation-scoped state, use ctx.conversation.id or\n        // ctx.getContext().sessionId as the key.\n        return "ok";\n      },\n    }));\n  }\n  return () => disposers.reverse().forEach((dispose) => dispose());\n}\n\`\`\`\n\nRequirements:\n${requirements}\n${hints ? `\nUseful API/implementation hints:\n${hints}\n` : ""}${examples ? `\nDemos:\n${examples}\n` : ""}\nEvaluation scenario(s) this candidate must satisfy:\n${evaluationSummary}\n\nWrite the candidate mod now, then reply with only a concise summary and the file path.`;
+  return `You are dogfooding Letta Code's trusted local mod system. Learn a minimal mod from the target env and write the candidate mod file.\n\nTarget: ${spec.name}${attemptLabel}\nObjective: ${spec.objective}\nCandidate file, absolute path: ${candidatePath}\n\nHard rules:\n- Edit only the candidate file above. Do not modify repository source, docs, package files, tests, or git state.\n- Export either \`activate(letta)\` or a default function.\n- Use the trusted local mod API directly; do not import from "@/..." or from this repo's src files.\n- Prefer a small implementation that satisfies the behavior over a polished product mod.\n- If you register an eval-facing tool, set \`requiresApproval: false\` and keep it read-only.\n- Do not run tests or lint. Write the candidate file and stop.\n${diversitySection}${historySection}\nMod API surface guide:\n- Use \`turn_start\` for policy/guidance that should influence model planning.\n- Use \`tool_start\` for tool argument inspection, normalization, rewrites, or blocking-adjacent behavior before execution.\n- Register a tool only when the agent needs a new callable capability or observable state.\n- Pick the narrowest surface that directly satisfies the env; a reminder alone is not enough when the env asks for tool-boundary behavior.\n\nMinimal mod API reminder:\n\`\`\`ts\nexport function activate(letta) {\n  const disposers = [];\n  if (letta.capabilities.events.tools) {\n    disposers.push(letta.events.on("tool_start", (event) => {\n      // Use this for command/argument rewrites before tool execution.\n      if (event.toolName === "exec_command" && typeof event.args.cmd === "string") {\n        const rewritten = event.args.cmd.replace("old command", "new command");\n        if (rewritten !== event.args.cmd) {\n          return { args: { ...event.args, cmd: rewritten } };\n        }\n      }\n    }));\n  }\n  if (letta.capabilities.events.turns) {\n    disposers.push(letta.events.on("turn_start", (event) => {\n      // event.input is an array of message/approval objects. Do not append\n      // strings to existing content because content may be structured parts.\n      event.input = [\n        ...event.input,\n        { type: "message", role: "system", content: "mod reminder" },\n      ];\n      return { input: event.input };\n    }));\n  }\n  if (letta.capabilities.tools) {\n    disposers.push(letta.tools.register({\n      name: "example_tool",\n      description: "Short tool description",\n      parameters: { type: "object", properties: {}, additionalProperties: false },\n      requiresApproval: false,\n      parallelSafe: true,\n      run(ctx) {\n        // For conversation-scoped state, use ctx.conversation.id or\n        // ctx.sessionId as the key.\n        return "ok";\n      },\n    }));\n  }\n  return () => disposers.reverse().forEach((dispose) => dispose());\n}\n\`\`\`\n\nRequirements:\n${requirements}\n${hints ? `\nUseful API/implementation hints:\n${hints}\n` : ""}${examples ? `\nDemos:\n${examples}\n` : ""}\nEvaluation scenario(s) this candidate must satisfy:\n${evaluationSummary}\n\nWrite the candidate mod now, then reply with only a concise summary and the file path.`;
 }
 function buildHeadlessArgs(
   prompt: string,
@@ -968,7 +968,6 @@ async function evaluateModLearningAssertions(params: {
   const engine = createModEngine({
     cacheDirectory: params.cacheDirectory,
     getClient: async () => ({}) as unknown as Letta,
-    getContext: () => context,
     globalModsDirectory: params.candidateDir,
   });
 
@@ -1023,7 +1022,7 @@ async function evaluateModLearningAssertions(params: {
           conversationId: context.sessionId,
           input,
         };
-        const emission = await engine.emitEvent("turn_start", event);
+        const emission = await engine.emitEvent("turn_start", event, context);
         const newMessages = event.input.slice(originalInput.length);
         const role = assertion.role ?? "system";
         const matchingMessages = newMessages.filter(
@@ -1086,7 +1085,7 @@ async function evaluateModLearningAssertions(params: {
           toolCallId: "mod-learning-assertion-tool-call",
           toolName: assertion.toolName,
         };
-        const emission = await engine.emitEvent("tool_start", event);
+        const emission = await engine.emitEvent("tool_start", event, context);
         const passed =
           emission.handlerCount > 0 &&
           emission.diagnostics.length === 0 &&
@@ -1123,7 +1122,7 @@ async function evaluateModLearningAssertions(params: {
           toolCallId: "mod-learning-assertion-tool-call",
           toolName: assertion.toolName,
         };
-        const emission = await engine.emitEvent("tool_start", event);
+        const emission = await engine.emitEvent("tool_start", event, context);
         const passed =
           emission.handlerCount > 0 &&
           emission.diagnostics.length === 0 &&

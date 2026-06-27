@@ -100,7 +100,7 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
     xai: "grok-4.20-0309-reasoning",
     groq: "openai/gpt-oss-120b",
     cerebras: "zai-glm-4.7",
-    zai: "glm-5.1",
+    zai: "glm-5.2",
     mistral: "devstral-medium-latest",
     minimax: "MiniMax-M2.7",
     "minimax-cn": "MiniMax-M2.7",
@@ -123,8 +123,11 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
 // These pi-ai providers are intentionally absent from Pi TUI's
 // `defaultModelPerProvider`. Keep the omission explicit so newly added pi-ai
 // providers cannot silently inherit catalog-order defaults without review.
-export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<KnownProvider> =
-  new Set(["ant-ling", "nvidia", "zai-coding-cn"]);
+export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  "ant-ling",
+  "nvidia",
+  "zai-coding-cn",
+]);
 
 const PI_PROVIDER_OVERRIDES: Partial<
   Record<KnownProvider, PiProviderOverride>
@@ -140,7 +143,11 @@ const PI_PROVIDER_OVERRIDES: Partial<
   openrouter: {
     localProviderNames: ["openrouter", LOCAL_OPENROUTER_PROVIDER_NAME],
     baseUrlEnv: () => process.env.OPENROUTER_BASE_URL,
-    headers: () => ({ "X-Title": "Letta Code" }),
+    headers: () => ({
+      "HTTP-Referer": "https://letta.com",
+      "X-OpenRouter-Title": "Letta Code",
+      "X-OpenRouter-Categories": "cli-agent,personal-agent",
+    }),
   },
   zai: {
     providerTypes: ["zai", "zai_coding"],

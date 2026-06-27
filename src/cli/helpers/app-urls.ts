@@ -56,13 +56,14 @@ export function buildAgentReference(
 export function buildAgentTerminalLink(
   agentId: string,
   options?: Parameters<typeof buildChatUrl>[1],
+  label: string = agentId,
 ): string {
   if (isLocalAgentId(agentId)) {
     return agentId;
   }
 
   const url = buildChatUrl(agentId, options);
-  return `\x1b]8;;${url}\x1b\\${agentId}\x1b]8;;\x1b\\`;
+  return `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
 }
 
 /**

@@ -2,15 +2,13 @@
 
 [![npm](https://img.shields.io/npm/v/@letta-ai/letta-code.svg?style=flat-square)](https://www.npmjs.com/package/@letta-ai/letta-code) [![Discord](https://img.shields.io/badge/discord-join-blue?style=flat-square&logo=discord)](https://discord.gg/letta)
 
-Letta Code is a memory-first agent harness, designed for long-lived agents that can learn from experience and maintain a cohesive identity across models (Claude, GPT, Gemini, GLM, Kimi, and more).
+Letta Code is a stateful agent harness for creating agents that are more like people than tools. Letta Code agents have memory, identity, and a sense of experience over time. They learn and evolve over long horizons through rewriting their own memory, skills, prompts, and even the harness itself (through mods). 
 
-You can interact with Letta Code agents through:
+Letta Code can be used interactively, or to power always-on agents that work proactively. Interact with agents through:
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
 * The [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for macOS, Windows, and Linux
 * Your browser, including [mobile](https://docs.letta.com/letta-code/remote-mobile), at [chat.letta.com](https://chat.letta.com)
 * Messaging integrations, including [Telegram](https://docs.letta.com/letta-code/channels#telegram-cli), [Slack](https://docs.letta.com/letta-code/channels#slack-cli), [Discord](https://docs.letta.com/letta-code/channels#discord-cli), and [custom channels](https://github.com/letta-ai/letta-code/blob/main/src/channels/README.md)
-
-Letta Code is a frontier coding agent and can also be used as a long-lived personal agent.
 
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
@@ -43,65 +41,14 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 npm install -g @letta-ai/letta-code
 ```
 
-Navigate to your project directory and run `letta` (see command-line options [in the docs](https://docs.letta.com/letta-code/commands)).
-
-On first run, choose how you want to start:
-
-* **Proceed locally** keeps agent state on this device. This is the local-first path and does not require a Constellation login.
-* **Login to Constellation** syncs agent state through Constellation so you can access the same agents from `chat.letta.com`, the desktop app, and other machines — and agents can work across multiple machines.
+Navigate to your project directory and run `letta` (see command-line options [in the docs](https://docs.letta.com/letta-code/commands)). You can also run the tutorial agent with: 
+```
+letta --new-agent --personality tutorial
+```
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, Z.ai coding plan, etc.), and use `/model` to swap models.
 
 You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for macOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
-
-## Local mode
-
-Local mode runs an embedded stateful agent server inside Letta Code. Agents, conversations, memory, provider connections, and secrets are stored on your machine.
-
-You can enter local mode from the first-run setup menu, or explicitly with:
-
-```bash
-letta --backend local
-```
-
-Connect a provider from inside the TUI with `/connect`, or from the shell with `letta --backend local connect`:
-
-```bash
-letta --backend local connect anthropic --api-key "$ANTHROPIC_API_KEY"
-letta --backend local connect ollama
-letta --backend local connect lmstudio
-letta --backend local connect llama-cpp
-letta --backend local connect chatgpt
-```
-
-For slow local inference servers, configure a provider-level timeout when connecting. For example, LM Studio-compatible llama-server backends that need up to 10 minutes for large-context compaction can use:
-
-```bash
-letta --backend local connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
-```
-
-Timeouts are stored per local provider in milliseconds; pass `--no-timeout` or `--timeout false` to disable the provider timeout.
-
-Then create a local agent:
-
-```bash
-letta --backend local --new-agent --model anthropic/claude-sonnet-4-6
-```
-
-Local backend state is stored by default in:
-
-```text
-~/.letta/lc-local-backend
-```
-
-You can override this location for isolated experiments:
-
-```bash
-export LETTA_LOCAL_BACKEND_DIR="$PWD/.letta-local"
-letta --backend local --new-agent
-```
-
-Local agents do not appear in the Constellation, but their memory is still a normal git repository under `~/.letta/lc-local-backend/memfs/<agent-id>/memory`.
 
 ## 🌌 Constellation
 
@@ -115,16 +62,14 @@ graph TD
     Constellation --> C["🖥️ Mac Mini"]
     Constellation --> D["📦 Sandbox"]
 ```
+To create agents on Constellation, run `/login` from the CLI or login through the desktop app. 
 
 ### Remote environments
-
-If you're interacting with an agent from desktop or chat.letta.com, you can set agents to run on any available environment. Any machine can be made into an available environment by running:
-
+Agents on Constellation can run across multiple machines. Any machine can be made into an available environment by running:
 ```bash
 letta server
 letta server --env-name "work-laptop"
 ```
-
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
 
 ## Installing external skills
@@ -163,3 +108,10 @@ See [docs/nix.md](docs/nix.md) for Home Manager and NixOS service examples.
 ---
 
 Made with 💜 in San Francisco
+
+<img
+  referrerpolicy="no-referrer-when-downgrade"
+  src="https://static.scarf.sh/a.png?x-pxid=76801c33-8e75-4055-8eea-2c8092519a90&page=README.md"
+  alt=""
+  aria-hidden="true"
+/>

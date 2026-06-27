@@ -32,6 +32,10 @@ import {
   backgroundTasks,
 } from "@/tools/impl/process_manager";
 import { LIMITS } from "@/tools/impl/truncation";
+import {
+  clearExternalTools,
+  prepareToolExecutionContextForModel,
+} from "@/tools/manager";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
   __listenClientTestUtils,
@@ -88,6 +92,7 @@ const actualChannelsService = await import("@/channels/service");
 
 afterEach(() => {
   __testSetBackend(null);
+  clearExternalTools();
   __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
   mock.restore();
 });
@@ -218,9 +223,9 @@ describe("listen-client parseServerMessage", () => {
           createAgentForPersonality: createAgentForPersonalityMock,
         }));
 
-        const originalPinGlobal = settingsManager.pinGlobal;
-        const pinGlobalMock = mock(() => {});
-        settingsManager.pinGlobal = pinGlobalMock;
+        const originalPinAgent = settingsManager.pinAgent;
+        const pinAgentMock = mock(() => {});
+        settingsManager.pinAgent = pinAgentMock;
 
         await __listenClientTestUtils.handleCreateAgentCommand(
           {
@@ -231,14 +236,14 @@ describe("listen-client parseServerMessage", () => {
           socket as unknown as WebSocket,
         );
 
-        settingsManager.pinGlobal = originalPinGlobal;
+        settingsManager.pinAgent = originalPinAgent;
 
         expect(createAgentForPersonalityMock).toHaveBeenCalledTimes(1);
         expect(createAgentForPersonalityMock).toHaveBeenCalledWith({
           personalityId: personality,
           model: undefined,
         });
-        expect(pinGlobalMock).toHaveBeenCalledWith(`agent-${personality}`);
+        expect(pinAgentMock).toHaveBeenCalledWith(`agent-${personality}`);
 
         const messages = socket.sentPayloads.map((payload) =>
           JSON.parse(payload),
@@ -256,7 +261,7 @@ describe("listen-client parseServerMessage", () => {
       }
     });
 
-    test("does not globally pin when pin_global is false", async () => {
+    test("does not pin when pin_global is false", async () => {
       const socket = new MockSocket(WebSocket.OPEN);
       const createAgentForPersonalityMock = mock(async () => ({
         agent: {
@@ -270,9 +275,9 @@ describe("listen-client parseServerMessage", () => {
         createAgentForPersonality: createAgentForPersonalityMock,
       }));
 
-      const originalPinGlobal = settingsManager.pinGlobal;
-      const pinGlobalMock = mock(() => {});
-      settingsManager.pinGlobal = pinGlobalMock;
+      const originalPinAgent = settingsManager.pinAgent;
+      const pinAgentMock = mock(() => {});
+      settingsManager.pinAgent = pinAgentMock;
 
       await __listenClientTestUtils.handleCreateAgentCommand(
         {
@@ -284,8 +289,535 @@ describe("listen-client parseServerMessage", () => {
         socket as unknown as WebSocket,
       );
 
-      settingsManager.pinGlobal = originalPinGlobal;
-      expect(pinGlobalMock).not.toHaveBeenCalled();
+      settingsManager.pinAgent = originalPinAgent;
+      expect(pinAgentMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("listen-client agent/conversation management command handling", () => {
+    test("lists, retrieves, and creates agents and conversations", async () => {
+      const storageDir = await mkdtemp(join(os.tmpdir(), "ws-management-"));
+      try {
+        class ManagementBackend extends LocalBackend {
+          override async compactConversationMessages(
+            ..._args: Parameters<LocalBackend["compactConversationMessages"]>
+          ): ReturnType<LocalBackend["compactConversationMessages"]> {
+            return {
+              num_messages_before: 4,
+              num_messages_after: 2,
+              summary: "compacted summary",
+            } as Awaited<
+              ReturnType<LocalBackend["compactConversationMessages"]>
+            >;
+          }
+        }
+
+        const backend = new ManagementBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        __testSetBackend(backend);
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_create",
+            request_id: "agent-create-1",
+            body: {
+              name: "WS Managed Agent",
+              model: "anthropic/claude-sonnet-4-6",
+            } as AgentCreateBody,
+          },
+          socket as unknown as WebSocket,
+        );
+
+        const agentCreateResponse = JSON.parse(
+          socket.sentPayloads.at(-1) ?? "{}",
+        );
+        expect(agentCreateResponse).toMatchObject({
+          type: "agent_create_response",
+          request_id: "agent-create-1",
+          success: true,
+          agent: {
+            name: "WS Managed Agent",
+          },
+        });
+        const agentId = agentCreateResponse.agent.id as string;
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_list",
+            request_id: "agent-list-1",
+            query: { limit: 10 },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_list_response",
+          request_id: "agent-list-1",
+          success: true,
+          agents: [expect.objectContaining({ id: agentId })],
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_retrieve",
+            request_id: "agent-retrieve-1",
+            agent_id: agentId,
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_retrieve_response",
+          request_id: "agent-retrieve-1",
+          success: true,
+          agent: { id: agentId },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_update",
+            request_id: "agent-update-1",
+            agent_id: agentId,
+            body: { name: "WS Managed Agent Updated" },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_update_response",
+          request_id: "agent-update-1",
+          success: true,
+          agent: { id: agentId, name: "WS Managed Agent Updated" },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_create",
+            request_id: "conversation-create-1",
+            body: { agent_id: agentId },
+          },
+          socket as unknown as WebSocket,
+        );
+        const conversationCreateResponse = JSON.parse(
+          socket.sentPayloads.at(-1) ?? "{}",
+        );
+        expect(conversationCreateResponse).toMatchObject({
+          type: "conversation_create_response",
+          request_id: "conversation-create-1",
+          success: true,
+          conversation: { agent_id: agentId },
+        });
+        const conversationId = conversationCreateResponse.conversation
+          .id as string;
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_list",
+            request_id: "conversation-list-1",
+            query: { agent_id: agentId, limit: 10 },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_list_response",
+          request_id: "conversation-list-1",
+          success: true,
+          conversations: [expect.objectContaining({ id: conversationId })],
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_retrieve",
+            request_id: "conversation-retrieve-1",
+            conversation_id: conversationId,
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_retrieve_response",
+          request_id: "conversation-retrieve-1",
+          success: true,
+          conversation: { id: conversationId },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_update",
+            request_id: "conversation-update-1",
+            conversation_id: conversationId,
+            body: { summary: "Updated conversation summary" },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_update_response",
+          request_id: "conversation-update-1",
+          success: true,
+          conversation: {
+            id: conversationId,
+            summary: "Updated conversation summary",
+          },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_recompile",
+            request_id: "conversation-recompile-1",
+            conversation_id: conversationId,
+            body: { dry_run: true },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_recompile_response",
+          request_id: "conversation-recompile-1",
+          success: true,
+          result: expect.any(String),
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_fork",
+            request_id: "conversation-fork-1",
+            conversation_id: conversationId,
+            body: { hidden: true },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_fork_response",
+          request_id: "conversation-fork-1",
+          success: true,
+          conversation: { id: expect.any(String) },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_messages_list",
+            request_id: "conversation-messages-list-1",
+            conversation_id: conversationId,
+            query: { limit: 10 },
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_messages_list_response",
+          request_id: "conversation-messages-list-1",
+          success: true,
+          messages: expect.any(Array),
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "conversation_compact",
+            request_id: "conversation-compact-1",
+            conversation_id: conversationId,
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "conversation_compact_response",
+          request_id: "conversation-compact-1",
+          success: true,
+          compaction: {
+            num_messages_before: 4,
+            num_messages_after: 2,
+            summary: "compacted summary",
+          },
+        });
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_delete",
+            request_id: "agent-delete-1",
+            agent_id: agentId,
+          },
+          socket as unknown as WebSocket,
+        );
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_delete_response",
+          request_id: "agent-delete-1",
+          success: true,
+          agent_id: agentId,
+        });
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+
+    test("soft-fails management command backend errors", async () => {
+      const storageDir = await mkdtemp(
+        join(os.tmpdir(), "ws-management-error-"),
+      );
+      try {
+        __testSetBackend(
+          new LocalBackend({ storageDir, executionMode: "deterministic" }),
+        );
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleAgentConversationManagementCommand(
+          {
+            type: "agent_retrieve",
+            request_id: "agent-retrieve-missing",
+            agent_id: "agent-missing",
+          },
+          socket as unknown as WebSocket,
+        );
+
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "agent_retrieve_response",
+          request_id: "agent-retrieve-missing",
+          success: false,
+          agent: null,
+        });
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("listen-client runtime_start command handling", () => {
+    test("creates an agent and conversation, starts runtime, and replays state", async () => {
+      const storageDir = await mkdtemp(join(os.tmpdir(), "ws-runtime-start-"));
+      const cwdDir = await mkdtemp(join(os.tmpdir(), "ws-runtime-cwd-"));
+      try {
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        __testSetBackend(backend);
+        const listener = __listenClientTestUtils.createListenerRuntime();
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: "runtime-start-create",
+            create_agent: {
+              body: {
+                name: "Runtime Agent",
+                model: "anthropic/claude-sonnet-4-6",
+              } as AgentCreateBody,
+              pin_global: false,
+            },
+            create_conversation: {
+              body: { summary: "Runtime conversation" },
+            },
+            cwd: cwdDir,
+            mode: "acceptEdits",
+            recover_approvals: false,
+          },
+          socket as unknown as WebSocket,
+          listener,
+        );
+
+        const messages = socket.sentPayloads.map((payload) =>
+          JSON.parse(payload),
+        );
+        const runtimeScope = messages[0].runtime as {
+          agent_id: string;
+          conversation_id: string;
+        };
+        expect(runtimeScope.agent_id).toEqual(expect.any(String));
+        expect(runtimeScope.conversation_id).toEqual(expect.any(String));
+        expect(messages[0]).toMatchObject({
+          type: "runtime_start_response",
+          request_id: "runtime-start-create",
+          success: true,
+          runtime: runtimeScope,
+          agent: { name: "Runtime Agent" },
+          conversation: { summary: "Runtime conversation" },
+          created: { agent: true, conversation: true },
+        });
+        expect(
+          __listenClientTestUtils.getConversationWorkingDirectory(
+            listener,
+            runtimeScope.agent_id,
+            runtimeScope.conversation_id,
+          ),
+        ).toBe(cwdDir);
+        expect(messages).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "update_device_status",
+              runtime: runtimeScope,
+              device_status: expect.objectContaining({
+                current_working_directory: cwdDir,
+                current_permission_mode: "acceptEdits",
+              }),
+            }),
+            expect.objectContaining({
+              type: "update_loop_status",
+              runtime: runtimeScope,
+            }),
+            expect.objectContaining({
+              type: "update_queue",
+              runtime: runtimeScope,
+            }),
+          ]),
+        );
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+        await rm(cwdDir, { recursive: true, force: true });
+      }
+    });
+
+    test("resumes an existing agent and conversation", async () => {
+      const storageDir = await mkdtemp(
+        join(os.tmpdir(), "ws-runtime-start-resume-"),
+      );
+      try {
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        __testSetBackend(backend);
+        const agent = await backend.createAgent({
+          name: "Runtime Existing Agent",
+          model: "anthropic/claude-sonnet-4-6",
+        } as AgentCreateBody);
+        const conversation = await backend.createConversation({
+          agent_id: agent.id,
+          summary: "Existing conversation",
+        });
+        const listener = __listenClientTestUtils.createListenerRuntime();
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: "runtime-start-resume",
+            agent_id: agent.id,
+            conversation_id: conversation.id,
+            external_tools: [
+              {
+                scope_id: "scope-1",
+                tools: [
+                  {
+                    name: "RemoteLookup",
+                    description: "Lookup a remote resource",
+                    parameters: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            ],
+            recover_approvals: false,
+          },
+          socket as unknown as WebSocket,
+          listener,
+        );
+
+        expect(JSON.parse(socket.sentPayloads[0] ?? "{}")).toMatchObject({
+          type: "runtime_start_response",
+          request_id: "runtime-start-resume",
+          success: true,
+          runtime: {
+            agent_id: agent.id,
+            conversation_id: conversation.id,
+          },
+          agent: { id: agent.id },
+          conversation: { id: conversation.id },
+          created: { agent: false, conversation: false },
+        });
+
+        const prepared = await prepareToolExecutionContextForModel(
+          "anthropic/claude-sonnet-4",
+          {
+            clientToolAllowlist: ["RemoteLookup"],
+            externalToolScopeIds: ["scope-1"],
+            runtimeContext: {
+              agentId: agent.id,
+              conversationId: conversation.id,
+            },
+          },
+        );
+        expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+          "RemoteLookup",
+        ]);
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+
+    test("starts an agent default conversation", async () => {
+      const storageDir = await mkdtemp(
+        join(os.tmpdir(), "ws-runtime-start-default-"),
+      );
+      try {
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        __testSetBackend(backend);
+        const agent = await backend.createAgent({
+          name: "Runtime Default Agent",
+          model: "anthropic/claude-sonnet-4-6",
+        } as AgentCreateBody);
+        const listener = __listenClientTestUtils.createListenerRuntime();
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: "runtime-start-default",
+            agent_id: agent.id,
+            conversation_id: "default",
+            recover_approvals: false,
+          },
+          socket as unknown as WebSocket,
+          listener,
+        );
+
+        expect(JSON.parse(socket.sentPayloads[0] ?? "{}")).toMatchObject({
+          type: "runtime_start_response",
+          request_id: "runtime-start-default",
+          success: true,
+          runtime: {
+            agent_id: agent.id,
+            conversation_id: "default",
+          },
+          agent: { id: agent.id },
+          conversation: { id: "default", agent_id: agent.id },
+          created: { agent: false, conversation: false },
+        });
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+
+    test("soft-fails invalid runtime_start combinations", async () => {
+      const storageDir = await mkdtemp(
+        join(os.tmpdir(), "ws-runtime-start-error-"),
+      );
+      try {
+        __testSetBackend(
+          new LocalBackend({ storageDir, executionMode: "deterministic" }),
+        );
+        const listener = __listenClientTestUtils.createListenerRuntime();
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: "runtime-start-invalid",
+            agent_id: "agent-1",
+            create_agent: { body: { name: "Bad" } as AgentCreateBody },
+            recover_approvals: false,
+          },
+          socket as unknown as WebSocket,
+          listener,
+        );
+
+        expect(JSON.parse(socket.sentPayloads.at(-1) ?? "{}")).toMatchObject({
+          type: "runtime_start_response",
+          request_id: "runtime-start-invalid",
+          success: false,
+          runtime: null,
+          created: { agent: false, conversation: false },
+        });
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -342,6 +874,7 @@ describe("listen-client parseServerMessage", () => {
             kind: "create_message",
             messages: [],
             client_tool_allowlist: ["Read", "Grep"],
+            external_tool_scope_ids: ["scope-1"],
           },
         }),
       ),
@@ -358,6 +891,7 @@ describe("listen-client parseServerMessage", () => {
     expect(msg?.type).toBe("input");
     if (msg?.type === "input" && msg.payload.kind === "create_message") {
       expect(msg.payload.client_tool_allowlist).toEqual(["Read", "Grep"]);
+      expect(msg.payload.external_tool_scope_ids).toEqual(["scope-1"]);
     }
     expect(changeDeviceState?.type).toBe("change_device_state");
   });
@@ -384,6 +918,30 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
+  test("rejects input create_message with invalid external tool scope ids", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            external_tool_scope_ids: ["scope-1", 42],
+          },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain(
+        "external_tool_scope_ids must be string[]",
+      );
+    }
+  });
+
   test("parses abort_message as the canonical abort command", () => {
     const abort = parseServerMessage(
       Buffer.from(
@@ -403,6 +961,7 @@ describe("listen-client parseServerMessage", () => {
       Buffer.from(
         JSON.stringify({
           type: "sync",
+          request_id: "sync-1",
           runtime: { agent_id: "agent-1", conversation_id: "default" },
           recover_approvals: false,
           force_device_status: true,
@@ -415,6 +974,7 @@ describe("listen-client parseServerMessage", () => {
     }
     expect(sync.recover_approvals).toBe(false);
     expect(sync.force_device_status).toBe(true);
+    expect(sync.request_id).toBe("sync-1");
   });
 
   test("parses cron CRUD commands", () => {
@@ -853,6 +1413,85 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("disconnect_provider");
   });
 
+  test("parses disconnect_provider command with a provider name", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "disconnect_provider",
+          request_id: "disconnect-provider-2",
+          target: "local",
+          provider_id: "codex",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("disconnect_provider");
+  });
+
+  test("parses chatgpt_usage_read command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-1",
+          target: "local",
+          provider_name: "chatgpt-work",
+          force_refresh: true,
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("parses chatgpt_usage_read command for api target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-2",
+          target: "api",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("rejects chatgpt_usage_read command for unknown target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-3",
+          target: "project",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
+  test("rejects chatgpt_usage_read command with bad force_refresh", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-4",
+          target: "local",
+          force_refresh: "true",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
   test("parses update_model command with model_id", () => {
     const parsed = parseServerMessage(
       Buffer.from(
@@ -1168,7 +1807,10 @@ describe("listen-client parseServerMessage", () => {
           mode: "sliding_window",
         },
       });
-      expect(runtime.contextTracker.pendingReflectionTrigger).toBe(true);
+      // Manual /compact now launches reflection directly (when memfs and the
+      // compaction-event trigger are enabled) instead of setting the pending
+      // flag for the next turn.
+      expect(runtime.contextTracker.pendingReflectionTrigger).toBe(false);
       expect(socket.sentPayloads.join("\n")).toContain(
         "Compaction completed (mode: sliding_window). Message buffer length reduced from 7 to 2.",
       );
@@ -2973,6 +3615,7 @@ describe("listen-client permission mode scope keys", () => {
 
   test("slack conversation created event seeds the new conversation permission mode", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.workingDirectoryByConversation.delete("conversation:conv-slack-1");
     const socket = new MockSocket(WebSocket.OPEN);
 
     __listenClientTestUtils.handleChannelRegistryEvent(
@@ -2999,10 +3642,34 @@ describe("listen-client permission mode scope keys", () => {
     ).toEqual({
       mode: "unrestricted",
     });
+    expect(
+      listener.workingDirectoryByConversation.get("conversation:conv-slack-1"),
+    ).toBe(listener.bootWorkingDirectory);
+
+    const emittedStatus = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload),
+    )[0];
+    expect(emittedStatus).toMatchObject({
+      type: "update_device_status",
+      runtime: {
+        agent_id: "agent-123",
+        conversation_id: "conv-slack-1",
+      },
+      device_status: {
+        current_working_directory: listener.bootWorkingDirectory,
+        cwd_map: {
+          "conversation:conv-slack-1": listener.bootWorkingDirectory,
+        },
+        boot_working_directory: listener.bootWorkingDirectory,
+      },
+    });
   });
 
   test("discord conversation created event seeds the new conversation permission mode", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.workingDirectoryByConversation.delete(
+      "conversation:conv-discord-1",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
 
     __listenClientTestUtils.handleChannelRegistryEvent(
@@ -3028,6 +3695,29 @@ describe("listen-client permission mode scope keys", () => {
       listener.permissionModeByConversation.get("conversation:conv-discord-1"),
     ).toEqual({
       mode: "acceptEdits",
+    });
+    expect(
+      listener.workingDirectoryByConversation.get(
+        "conversation:conv-discord-1",
+      ),
+    ).toBe(listener.bootWorkingDirectory);
+
+    const emittedStatus = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload),
+    )[0];
+    expect(emittedStatus).toMatchObject({
+      type: "update_device_status",
+      runtime: {
+        agent_id: "agent-123",
+        conversation_id: "conv-discord-1",
+      },
+      device_status: {
+        current_working_directory: listener.bootWorkingDirectory,
+        cwd_map: {
+          "conversation:conv-discord-1": listener.bootWorkingDirectory,
+        },
+        boot_working_directory: listener.bootWorkingDirectory,
+      },
     });
   });
 });
@@ -5063,11 +5753,11 @@ describe("listen-client recoverable status notices", () => {
   test("suppresses stale approval recovery from transcript and mirrors it to desktop logs", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket();
-    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalFlag = process.env.LETTA_DESKTOP_MODE;
     const originalWrite = process.stderr.write.bind(process.stderr);
     const mirroredLines: string[] = [];
 
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_DESKTOP_MODE = "1";
     process.stderr.write = ((chunk: string | Uint8Array) => {
       mirroredLines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
@@ -5087,9 +5777,9 @@ describe("listen-client recoverable status notices", () => {
     } finally {
       process.stderr.write = originalWrite as typeof process.stderr.write;
       if (originalFlag === undefined) {
-        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+        delete process.env.LETTA_DESKTOP_MODE;
       } else {
-        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+        process.env.LETTA_DESKTOP_MODE = originalFlag;
       }
     }
 
@@ -5114,11 +5804,11 @@ describe("listen-client recoverable status notices", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const firstSocket = new MockSocket();
     const secondSocket = new MockSocket();
-    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalFlag = process.env.LETTA_DESKTOP_MODE;
     const originalWrite = process.stderr.write.bind(process.stderr);
     const mirroredLines: string[] = [];
 
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_DESKTOP_MODE = "1";
     process.stderr.write = ((chunk: string | Uint8Array) => {
       mirroredLines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
@@ -5155,9 +5845,9 @@ describe("listen-client recoverable status notices", () => {
     } finally {
       process.stderr.write = originalWrite as typeof process.stderr.write;
       if (originalFlag === undefined) {
-        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+        delete process.env.LETTA_DESKTOP_MODE;
       } else {
-        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+        process.env.LETTA_DESKTOP_MODE = originalFlag;
       }
     }
 
@@ -5318,14 +6008,14 @@ describe("listen-client loop error notices", () => {
   test("suppresses abort-like loop errors from transcript and mirrors them to desktop logs", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket();
-    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalFlag = process.env.LETTA_DESKTOP_MODE;
     const originalWrite = process.stderr.write.bind(process.stderr);
     const mirroredLines: string[] = [];
     const abortError = Object.assign(new Error("The operation was aborted"), {
       name: "AbortError",
     });
 
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_DESKTOP_MODE = "1";
     process.stderr.write = ((chunk: string | Uint8Array) => {
       mirroredLines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
@@ -5343,9 +6033,9 @@ describe("listen-client loop error notices", () => {
     } finally {
       process.stderr.write = originalWrite as typeof process.stderr.write;
       if (originalFlag === undefined) {
-        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+        delete process.env.LETTA_DESKTOP_MODE;
       } else {
-        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+        process.env.LETTA_DESKTOP_MODE = originalFlag;
       }
     }
 

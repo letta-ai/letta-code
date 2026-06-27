@@ -29,16 +29,21 @@ function createInputStream(): NodeJS.ReadStream {
   return input;
 }
 
-async function renderHelpDialog(): Promise<string> {
+async function renderHelpDialog(
+  interact?: (stdin: NodeJS.ReadStream) => void | Promise<void>,
+): Promise<string> {
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
+  const stdin = createInputStream();
   const instance = render(<HelpDialog onClose={() => {}} />, {
     stdout,
-    stdin: createInputStream(),
+    stdin,
     debug: false,
     patchConsole: false,
     exitOnCtrlC: false,
   });
 
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await interact?.(stdin);
   await new Promise((resolve) => setTimeout(resolve, 20));
   instance.unmount();
   instance.cleanup();
@@ -50,7 +55,22 @@ test("HelpDialog renders its footer without raw Ink text", async () => {
   const output = await renderHelpDialog();
 
   expect(output).toContain("Letta Code v");
-  expect(output).toContain(
-    "Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel",
-  );
+  expect(output).toContain("↑↓ scroll · ←→ page · Tab switch · Esc cancel");
+});
+
+test("HelpDialog keeps spacing between commands and descriptions", async () => {
+  const output = await renderHelpDialog();
+
+  expect(output).toContain("/goal Manage goal");
+});
+
+test("HelpDialog scrolls commands with down arrow", async () => {
+  const output = await renderHelpDialog(async (stdin) => {
+    for (let i = 0; i < 10; i += 1) {
+      stdin.push("\x1b[B");
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+  });
+
+  expect(output).toContain("Page 2/");
 });

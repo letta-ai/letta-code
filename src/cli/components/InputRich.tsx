@@ -18,6 +18,7 @@ import type { ModelReasoningEffort } from "@/agent/model";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
+import { truncateToWidth } from "@/cli/display/statusline/formatting";
 import {
   DEFAULT_STATUSLINE_RENDERER_ID,
   getBuiltinStatuslineRenderer,
@@ -34,7 +35,7 @@ import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
 import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
-import { evaluateLocalModStatuses } from "@/cli/mods/local-mod-loader";
+import type { ModContext } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
@@ -44,11 +45,10 @@ import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
-import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
-import { ModPanelRow } from "./ModPanelRow";
+import { ModPanelRow, renderModPanelLines } from "./ModPanelRow";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { ProductStatusRow } from "./ProductStatusRow";
 import { QueuedMessages } from "./QueuedMessages";
@@ -171,8 +171,6 @@ function getPermissionModeTransientHintInfo(mode: PermissionMode): {
         color: colors.status.success,
         glyph: "⚡︎",
       };
-    case "memory":
-      return { name: "memory mode", color: colors.status.processing };
   }
 }
 
@@ -486,7 +484,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
     escapePressed,
   });
 
-  const baseStatuslineContext = buildStatuslineRenderContext({
+  const statuslineContext = buildStatuslineRenderContext({
     payload: statusLinePayload,
     ui: {
       currentModelProvider: currentModelProvider ?? null,
@@ -498,42 +496,42 @@ const StatuslineSlot = memo(function StatuslineSlot({
       rightColumnWidth,
     },
   });
-  const statuslineContext = {
-    ...baseStatuslineContext,
-    statuses: evaluateLocalModStatuses(
-      modAdapter.registry,
-      baseStatuslineContext,
-    ),
-  };
-  modAdapter.updateContext(statuslineContext);
 
   const builtInStatuslineRenderer = getBuiltinStatuslineRenderer(
     DEFAULT_STATUSLINE_RENDERER_ID,
   );
-  const localStatuslineRenderer =
-    modAdapter.registry?.ui.statuslineRenderer ?? null;
-  const modStatuslineLoading =
+
+  // The order-0 "primary" panel overrides the built-in agent · model line.
+  const panels = modAdapter.registry?.ui.panels ?? {};
+  const primaryPanel = Object.values(panels)
+    .filter((panel) => panel.order === 0)
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  const modPanelsLoading =
     modAdapter.isLoading &&
-    (modAdapter.hasModSources || modAdapter.hadStatuslineRenderer);
-  const customStatuslineActive = Boolean(
-    localStatuslineRenderer || modStatuslineLoading,
-  );
+    (modAdapter.hasModSources || modAdapter.hadModPanels);
+  const customStatuslineActive = Boolean(primaryPanel || modPanelsLoading);
   const idleSlotAvailable = !hideFooterContent && !preemption && !transientHint;
 
-  if (idleSlotAvailable && localStatuslineRenderer) {
-    try {
-      return localStatuslineRenderer.render(statuslineContext);
-    } catch (error) {
-      debugLog(
-        "mods",
-        "statusline renderer %s failed: %s",
-        localStatuslineRenderer.id,
-        error instanceof Error ? error.message : String(error),
+  if (idleSlotAvailable && primaryPanel) {
+    const rowWidth = Math.max(0, (statuslineContext.terminalWidth ?? 0) - 1);
+    const lines = renderModPanelLines(
+      primaryPanel,
+      rowWidth,
+      statuslineContext,
+    );
+    if (lines.length > 0) {
+      return (
+        <Box flexDirection="column">
+          {lines.map((line, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: panel content is caller-owned text
+            <Text key={index}>{truncateToWidth(line || " ", rowWidth)}</Text>
+          ))}
+        </Box>
       );
     }
   }
 
-  if (idleSlotAvailable && modStatuslineLoading) {
+  if (idleSlotAvailable && modPanelsLoading) {
     return <BlankStatuslineRow rightColumnWidth={rightColumnWidth} />;
   }
 
@@ -1916,6 +1914,70 @@ export function Input({
     previousFooterNotificationRef.current = footerNotification ?? null;
   }, [footerNotification, showStatuslineTransientHint]);
 
+  // Decoupled from input churn (value/cursorPos) so panel content only
+  // re-renders when the panels themselves change, mirroring how BtwPane
+  // stays flash-free. Folding this into lowerPane would rebuild it on every
+  // keystroke.
+  const panelLiveContext = useMemo<ModContext>(
+    () =>
+      buildStatuslineRenderContext({
+        payload: statusLinePayload,
+        ui: {
+          currentModelProvider: currentModelProvider ?? null,
+          goalStatusText: null,
+          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+          isByokProvider:
+            currentModelProvider?.startsWith("lc-") ||
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          isLocalBackend,
+          isOpenAICodexProvider:
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          rightColumnWidth: footerRightColumnWidth,
+        },
+      }),
+    [
+      currentModelProvider,
+      footerRightColumnWidth,
+      hasTemporaryModelOverride,
+      isLocalBackend,
+      statusLinePayload,
+    ],
+  );
+
+  const modPanelRow = useMemo(() => {
+    if (suppressDividers) return null;
+    return (
+      <ModPanelRow
+        panels={modAdapter.registry?.ui.panels}
+        terminalWidth={terminalWidth}
+        placement="above"
+        context={panelLiveContext}
+      />
+    );
+  }, [
+    suppressDividers,
+    modAdapter.registry?.ui.panels,
+    terminalWidth,
+    panelLiveContext,
+  ]);
+
+  const modPanelRowBelow = useMemo(() => {
+    if (suppressDividers) return null;
+    return (
+      <ModPanelRow
+        panels={modAdapter.registry?.ui.panels}
+        terminalWidth={terminalWidth}
+        placement="below"
+        context={panelLiveContext}
+      />
+    );
+  }, [
+    suppressDividers,
+    modAdapter.registry?.ui.panels,
+    terminalWidth,
+    panelLiveContext,
+  ]);
+
   const lowerPane = useMemo(() => {
     return (
       <>
@@ -1926,12 +1988,7 @@ export function Input({
 
         {interactionEnabled ? (
           <Box flexDirection="column">
-            {!suppressDividers && (
-              <ModPanelRow
-                panels={modAdapter.registry?.ui.panels}
-                terminalWidth={terminalWidth}
-              />
-            )}
+            {modPanelRow}
 
             {!suppressDividers && (
               <ProductStatusRow
@@ -2041,6 +2098,8 @@ export function Input({
                 transientHint={statuslineTransientHint}
               />
             )}
+
+            {!suppressDividers && modPanelRowBelow}
           </Box>
         ) : reserveInputSpace ? (
           <Box height={inputChromeHeight} />
@@ -2049,6 +2108,8 @@ export function Input({
     );
   }, [
     messageQueue,
+    modPanelRow,
+    modPanelRowBelow,
     interactionEnabled,
     isBashMode,
     horizontalLine,

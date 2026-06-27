@@ -16,9 +16,13 @@ describe("listen subcommand telemetry", () => {
   const originalInitialize = settingsManager.initialize;
   const originalApiKey = process.env.LETTA_API_KEY;
   const originalBaseUrl = process.env.LETTA_BASE_URL;
-  const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  const originalDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
   const originalRestoreEnabledChannels =
     process.env.LETTA_RESTORE_ENABLED_CHANNELS;
+  const originalRestoreChannelAgentScope =
+    process.env.LETTA_RESTORE_CHANNEL_AGENT_SCOPE;
+  const originalRestoreEnabledChannelsAgentScope =
+    process.env.LETTA_RESTORE_ENABLED_CHANNELS_AGENT_SCOPE;
   const originalIgnoreSelfHostedListenerError =
     process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
 
@@ -29,8 +33,10 @@ describe("listen subcommand telemetry", () => {
     telemetry.cleanup();
     delete process.env.LETTA_API_KEY;
     delete process.env.LETTA_BASE_URL;
-    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    delete process.env.LETTA_DESKTOP_MODE;
     delete process.env.LETTA_RESTORE_ENABLED_CHANNELS;
+    delete process.env.LETTA_RESTORE_CHANNEL_AGENT_SCOPE;
+    delete process.env.LETTA_RESTORE_ENABLED_CHANNELS_AGENT_SCOPE;
     delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
     __listenSubcommandTestUtils.setOAuthDepsForTests({
       LETTA_CLOUD_API_URL: "https://api.letta.com",
@@ -72,15 +78,27 @@ describe("listen subcommand telemetry", () => {
       process.env.LETTA_BASE_URL = originalBaseUrl;
     }
     if (originalDesktopDebugPanel === undefined) {
-      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      delete process.env.LETTA_DESKTOP_MODE;
     } else {
-      process.env.LETTA_DESKTOP_DEBUG_PANEL = originalDesktopDebugPanel;
+      process.env.LETTA_DESKTOP_MODE = originalDesktopDebugPanel;
     }
     if (originalRestoreEnabledChannels === undefined) {
       delete process.env.LETTA_RESTORE_ENABLED_CHANNELS;
     } else {
       process.env.LETTA_RESTORE_ENABLED_CHANNELS =
         originalRestoreEnabledChannels;
+    }
+    if (originalRestoreChannelAgentScope === undefined) {
+      delete process.env.LETTA_RESTORE_CHANNEL_AGENT_SCOPE;
+    } else {
+      process.env.LETTA_RESTORE_CHANNEL_AGENT_SCOPE =
+        originalRestoreChannelAgentScope;
+    }
+    if (originalRestoreEnabledChannelsAgentScope === undefined) {
+      delete process.env.LETTA_RESTORE_ENABLED_CHANNELS_AGENT_SCOPE;
+    } else {
+      process.env.LETTA_RESTORE_ENABLED_CHANNELS_AGENT_SCOPE =
+        originalRestoreEnabledChannelsAgentScope;
     }
     if (originalIgnoreSelfHostedListenerError === undefined) {
       delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;

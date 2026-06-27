@@ -213,6 +213,7 @@ type ConversationLoopContext = {
   > | null>;
   llmApiErrorRetriesRef: MutableRefObject<number>;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
+  maybeRunPostTurnReflection: () => Promise<void>;
   needsEagerApprovalCheck: boolean;
   openTrajectorySegment: () => void;
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
@@ -309,6 +310,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     lastSentInputRef,
     llmApiErrorRetriesRef,
     llmConfigRef,
+    maybeRunPostTurnReflection,
     needsEagerApprovalCheck,
     openTrajectorySegment,
     pendingInterruptRecoveryConversationIdRef,
@@ -639,7 +641,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             conversationId: conversationIdRef.current ?? null,
             input: currentInput,
           };
-          await modAdapter.events.emit("turn_start", turnStartEvent);
+          await modAdapter.events.emit(
+            "turn_start",
+            turnStartEvent,
+            modAdapter.context,
+          );
           currentInput = isTurnInputArray(turnStartEvent.input)
             ? turnStartEvent.input
             : originalInput;
@@ -1579,6 +1585,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
             pendingTranscriptStartLineIndexRef.current = null;
 
+            // Evaluate reflection triggers now that the turn's transcript
+            // delta is on disk, so step counts include this turn.
+            await maybeRunPostTurnReflection();
+
             // Get last assistant message, user message, and reasoning for Stop hook
             const bufferedLines = Array.from(
               buffersRef.current.byId.values(),
@@ -1638,6 +1648,54 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       role: "user",
                       content: hookMessage,
                       otid: hookMessageOtid,
+                    },
+                  ],
+                  { allowReentry: true },
+                );
+              }, 0);
+              return;
+            }
+
+            // Emit turn_end mod event. A mod may return { continue: "..." } to
+            // append a follow-up user message and start another turn.
+            const turnEndEvent: {
+              agentId: string | null;
+              conversationId: string | null;
+              stopReason: string;
+              assistantMessage?: string;
+              continue?: string;
+            } = {
+              agentId: agentIdRef.current ?? null,
+              conversationId: conversationIdRef.current ?? null,
+              stopReason: stopReasonToHandle,
+              assistantMessage,
+            };
+            let turnEndContinue: string | undefined;
+            try {
+              await modAdapter.events.emit(
+                "turn_end",
+                turnEndEvent,
+                modAdapter.context,
+              );
+              turnEndContinue =
+                typeof turnEndEvent.continue === "string"
+                  ? turnEndEvent.continue
+                  : undefined;
+            } catch {
+              // turn_end handlers are best-effort; never block turn completion.
+              turnEndContinue = undefined;
+            }
+
+            if (turnEndContinue) {
+              const continueOtid = randomUUID();
+              setTimeout(() => {
+                processConversation(
+                  [
+                    {
+                      type: "message",
+                      role: "user",
+                      content: turnEndContinue,
+                      otid: continueOtid,
                     },
                   ],
                   { allowReentry: true },

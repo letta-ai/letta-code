@@ -7,5 +7,9 @@
     "declarationMap": true,
     "outDir": "./dist/types"
   },
-  "include": ["src/types/protocol.ts", "src/types/app-server-protocol.ts"]
+  "include": [
+    "src/types/protocol.ts",
+    "src/types/app-server-protocol.ts",
+    "src/app-server-client.ts"
+  ]
 }

@@ -5,6 +5,7 @@ Add a permission rule to Letta Code settings.
 Usage:
     python3 add_permission.py --rule "Bash(npm run:*)" --type allow --scope user
     python3 add_permission.py --rule "Read(src/**)" --type allow --scope project
+    python3 add_permission.py --rule "Bash(git push:*)" --type alwaysAsk --scope user
 """
 
 import argparse
@@ -99,7 +100,7 @@ def main():
     parser.add_argument(
         "--type",
         required=True,
-        choices=["allow", "deny", "ask"],
+        choices=["allow", "deny", "ask", "alwaysAsk"],
         help="Type of permission rule",
     )
     parser.add_argument(

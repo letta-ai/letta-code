@@ -6,8 +6,29 @@
  * from the legacy protocol.ts surface.
  */
 
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  AgentCreateParams,
+  AgentListParams,
+  AgentState,
+  AgentUpdateParams,
+  MessageCreate,
+} from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  Message as LettaMessage,
+  LettaStreamingResponse,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  Conversation,
+  ConversationCreateParams,
+  ConversationListParams,
+  ConversationRecompileParams,
+  ConversationUpdateParams,
+} from "@letta-ai/letta-client/resources/conversations/conversations";
+import type {
+  CompactionResponse,
+  MessageCompactParams,
+  MessageListParams,
+} from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
@@ -130,11 +151,7 @@ export interface RuntimeEnvelope {
   idempotency_key: string;
 }
 
-export type DevicePermissionMode =
-  | "standard"
-  | "acceptEdits"
-  | "memory"
-  | "unrestricted";
+export type DevicePermissionMode = "standard" | "acceptEdits" | "unrestricted";
 
 export type ToolsetName =
   | "codex"
@@ -377,6 +394,7 @@ export interface ChannelRouteSnapshot {
   agent_id: string;
   conversation_id: string;
   enabled: boolean;
+  outbound_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -440,6 +458,21 @@ export interface DeviceStatus {
   reflection_settings: ReflectionSettingsSnapshot | null;
   /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
   supported_commands: string[];
+  /**
+   * Slash commands contributed by locally loaded mods. Advertised separately
+   * from `supported_commands` (which gates the client's built-in allowlist) so
+   * clients can auto-surface mod commands by their own policy. Invoked through
+   * the same `execute_command` path. Omitted when no mod commands are loaded.
+   */
+  mod_commands?: ModCommandInfo[];
+}
+
+/** A mod-contributed slash command advertised to clients for rendering. */
+export interface ModCommandInfo {
+  id: string;
+  description: string;
+  /** Optional argument hint shown in the palette (e.g. "<query>"). */
+  args?: string;
 }
 
 export type LoopStatus =
@@ -457,7 +490,8 @@ export type QueueMessageKind =
   | "task_notification"
   | "cron_prompt"
   | "approval_result"
-  | "overlay_action";
+  | "overlay_action"
+  | "mod_continue";
 
 export type QueueMessageSource =
   | "user"
@@ -619,6 +653,7 @@ export interface SubagentSnapshot {
   subagent_id: string;
   subagent_type: string;
   description: string;
+  prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
   model?: string;
@@ -679,6 +714,12 @@ export interface InputCreateMessagePayload {
    * client tools for this turn.
    */
   client_tool_allowlist?: string[];
+  /**
+   * Optional scoped external tools to expose for this turn. Runtime-start
+   * external tools with a scope_id stay hidden unless selected here; unscoped
+   * external tools for the runtime remain available normally.
+   */
+  external_tool_scope_ids?: string[];
 }
 
 export type InputApprovalResponsePayload = {
@@ -711,6 +752,7 @@ export interface ChangeDeviceStateCommand {
 export interface AbortMessageCommand {
   type: "abort_message";
   runtime: RuntimeScope;
+  /** When provided, app-server sends abort_message_response on the control channel. */
   request_id?: string;
   run_id?: string | null;
 }
@@ -718,6 +760,8 @@ export interface AbortMessageCommand {
 export interface SyncCommand {
   type: "sync";
   runtime: RuntimeScope;
+  /** When provided, app-server sends sync_response after replaying state. */
+  request_id?: string;
   /**
    * Whether the device should probe backend state for stale pending approvals.
    * Defaults to true for older clients. Lightweight status/recovery syncs should
@@ -729,6 +773,92 @@ export interface SyncCommand {
    * listener's last device-status snapshot for this socket/scope is unchanged.
    */
   force_device_status?: boolean;
+}
+
+export interface RuntimeStartCreateAgentOptions {
+  /** Body forwarded to the Letta agents create API. */
+  body: AgentCreateParams;
+  /** Whether to pin the created agent globally. Defaults to true. */
+  pin_global?: boolean;
+}
+
+export interface RuntimeStartCreateConversationOptions {
+  /** Body forwarded to the Letta conversations create API. */
+  body?: Omit<ConversationCreateParams, "agent_id">;
+}
+
+export interface RuntimeStartClientInfo {
+  name: string;
+  title?: string;
+  version?: string;
+}
+
+export interface ExternalToolDefinitionPayload {
+  name: string;
+  label?: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface RuntimeStartExternalToolsGroup {
+  /** Hidden controller-defined scope used to select these tools on input turns. */
+  scope_id?: string;
+  tools: readonly ExternalToolDefinitionPayload[];
+}
+
+export interface RuntimeStartCommand {
+  type: "runtime_start";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Existing agent to start/resume a runtime for. Mutually exclusive with create_agent. */
+  agent_id?: string;
+  /** Create a new agent before starting the runtime. Mutually exclusive with agent_id. */
+  create_agent?: RuntimeStartCreateAgentOptions;
+  /** Existing conversation to start/resume. Mutually exclusive with create_conversation. */
+  conversation_id?: string;
+  /** Create a new conversation for the resolved agent before starting the runtime. */
+  create_conversation?: RuntimeStartCreateConversationOptions;
+  /** Initial working directory for this runtime scope. Null resets to listener boot CWD. */
+  cwd?: string | null;
+  /** Initial permission mode for this runtime scope. */
+  mode?: DevicePermissionMode;
+  /** Optional client metadata for diagnostics/future protocol negotiation. */
+  client_info?: RuntimeStartClientInfo;
+  /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */
+  recover_approvals?: boolean;
+  /** Force the initial state replay to include update_device_status. Defaults to true. */
+  force_device_status?: boolean;
+  /** Controller-owned tools registered atomically with the resolved runtime. */
+  external_tools?: readonly RuntimeStartExternalToolsGroup[];
+}
+
+export interface ExternalToolCallRequestMessage {
+  type: "external_tool_call_request";
+  request_id: string;
+  runtime?: RuntimeScope;
+  scope_id?: string;
+  tool_call_id: string;
+  tool_name: string;
+  input: Record<string, unknown>;
+}
+
+export interface ExternalToolCallResultContent {
+  type: string;
+  text?: string;
+  data?: string;
+  mimeType?: string;
+}
+
+export interface ExternalToolCallResult {
+  content: readonly ExternalToolCallResultContent[];
+  is_error?: boolean;
+}
+
+export interface ExternalToolCallResponseCommand {
+  type: "external_tool_call_response";
+  request_id: string;
+  result?: ExternalToolCallResult;
+  error?: string;
 }
 
 export interface TerminalSpawnCommand {
@@ -774,6 +904,25 @@ export interface TerminalExitedMessage {
   type: "terminal_exited";
   terminal_id: string;
   exitCode: number;
+  error?: string;
+}
+
+export interface AbortMessageResponseMessage {
+  type: "abort_message_response";
+  request_id: string;
+  runtime: RuntimeScope;
+  /** True when an active turn or pending approval was interrupted. */
+  aborted: boolean;
+  success: boolean;
+  error?: string;
+}
+
+export interface SyncResponseMessage {
+  type: "sync_response";
+  request_id: string;
+  runtime: RuntimeScope;
+  success: boolean;
+  error?: string;
 }
 
 export interface SearchFilesCommand {
@@ -1229,6 +1378,7 @@ export interface ListModelsCommand {
 }
 
 export type ConnectProviderStorageTarget = "local";
+export type ChatGPTUsageReadTarget = "local" | "api";
 
 export interface ListConnectProvidersCommand {
   type: "list_connect_providers";
@@ -1260,6 +1410,20 @@ export interface DisconnectProviderCommand {
   target: ConnectProviderStorageTarget;
   /** Provider id from list_connect_providers. */
   provider_id: string;
+  /** Optional connected provider name to remove when a row has multiple aliases. */
+  provider_name?: string;
+}
+
+export interface ChatGPTUsageReadCommand {
+  type: "chatgpt_usage_read";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Provider store to inspect. */
+  target: ChatGPTUsageReadTarget;
+  /** Optional connected ChatGPT provider alias. Defaults to the built-in alias. */
+  provider_name?: string;
+  /** Skip the short listener-side cache. */
+  force_refresh?: boolean;
 }
 
 export interface ConnectProviderField {
@@ -1300,7 +1464,10 @@ export interface ConnectProviderEntry {
   requires_api_key: boolean;
   fields?: ConnectProviderField[];
   auth_methods?: ConnectProviderAuthMethod[];
+  /** First connected provider, preserved for older clients. */
   connected: ConnectProviderConnectionState;
+  /** All connected provider aliases represented by this row. */
+  connected_providers: ConnectProviderConnectionState[];
 }
 
 export interface ListConnectProvidersResponseMessage {
@@ -1330,6 +1497,65 @@ export interface DisconnectProviderResponseMessage {
   providers: ConnectProviderEntry[];
   models_may_have_changed: boolean;
   error?: string;
+}
+
+export interface ChatGPTUsageWindowPayload {
+  label: string;
+  usedPercent: number | null;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface ChatGPTUsageCreditsPayload {
+  balance?: string | null;
+  availableCount?: number | null;
+  hasCredits?: boolean | null;
+  unlimited?: boolean | null;
+}
+
+export interface ChatGPTUsageIndividualLimitPayload {
+  limit: string;
+  used: string;
+  remainingPercent: number;
+  resetsAt: number;
+}
+
+export interface ChatGPTUsageSnapshotPayload {
+  providerName: string;
+  fetchedAt: string;
+  summary: string;
+  planType?: string | null;
+  limitReached?: boolean | null;
+  rateLimitReachedType?: string | null;
+  primary: ChatGPTUsageWindowPayload | null;
+  secondary: ChatGPTUsageWindowPayload | null;
+  additional: ChatGPTUsageWindowPayload[];
+  credits?: ChatGPTUsageCreditsPayload | null;
+  individualLimit?: ChatGPTUsageIndividualLimitPayload | null;
+}
+
+export interface ChatGPTUsageReadErrorPayload {
+  code:
+    | "bad_request"
+    | "not_connected"
+    | "unsupported_target"
+    | "refresh_failed"
+    | "unauthorized"
+    | "forbidden"
+    | "rate_limited"
+    | "network_error"
+    | "bad_response";
+  message: string;
+  retryAfterMs?: number;
+}
+
+export interface ChatGPTUsageReadResponseMessage {
+  type: "chatgpt_usage_read_response";
+  request_id: string;
+  success: boolean;
+  target: ChatGPTUsageReadTarget;
+  usage?: ChatGPTUsageSnapshotPayload;
+  error?: ChatGPTUsageReadErrorPayload;
 }
 
 export interface UpdateModelPayload {
@@ -1541,6 +1767,119 @@ export interface CreateAgentCommand {
   pin_global?: boolean;
 }
 
+export interface AgentListCommand {
+  type: "agent_list";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Query params forwarded to the Letta agents list API. */
+  query?: AgentListParams;
+}
+
+export interface AgentRetrieveCommand {
+  type: "agent_retrieve";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  agent_id: string;
+}
+
+export interface AgentCreateCommand {
+  type: "agent_create";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Body forwarded to the Letta agents create API. */
+  body: AgentCreateParams;
+}
+
+export interface AgentUpdateCommand {
+  type: "agent_update";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  agent_id: string;
+  /** Body forwarded to the Letta agents update API. */
+  body: AgentUpdateParams;
+}
+
+export interface AgentDeleteCommand {
+  type: "agent_delete";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  agent_id: string;
+}
+
+export interface ConversationListCommand {
+  type: "conversation_list";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Query params forwarded to the Letta conversations list API. */
+  query?: ConversationListParams;
+}
+
+export interface ConversationRetrieveCommand {
+  type: "conversation_retrieve";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+}
+
+export interface ConversationCreateCommand {
+  type: "conversation_create";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** Body forwarded to the Letta conversations create API. */
+  body: ConversationCreateParams;
+}
+
+export interface ConversationUpdateCommand {
+  type: "conversation_update";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  /** Body forwarded to the Letta conversations update API. */
+  body: ConversationUpdateParams;
+}
+
+export interface ConversationRecompileCommand {
+  type: "conversation_recompile";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  /** Body/query forwarded to the Letta conversations recompile API. */
+  body?: ConversationRecompileParams;
+}
+
+export interface ConversationForkBody {
+  /** Agent ID for agent-direct mode with the default conversation. */
+  agent_id?: string | null;
+  /** Whether the forked conversation should be hidden. */
+  hidden?: boolean;
+}
+
+export interface ConversationForkCommand {
+  type: "conversation_fork";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  body?: ConversationForkBody;
+}
+
+export interface ConversationMessagesListCommand {
+  type: "conversation_messages_list";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  /** Query params forwarded to the Letta conversation messages list API. */
+  query?: MessageListParams;
+}
+
+export interface ConversationCompactCommand {
+  type: "conversation_compact";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  conversation_id: string;
+  /** Body forwarded to the Letta conversation messages compact API. */
+  body?: MessageCompactParams;
+}
+
 export interface GetCwdMapCommand {
   type: "get_cwd_map";
   /** Echoed back in the response for request correlation. */
@@ -1555,42 +1894,6 @@ export interface GetCwdMapResponseMessage {
   cwd_map: Record<string, string>;
   /** Listener boot CWD used when a conversation has no entry in cwd_map. */
   boot_working_directory: string | null;
-  error?: string;
-}
-
-export type ConversationPinScope = "global" | "local_project" | "both";
-export type ConversationPinAction = "pin" | "unpin" | "toggle";
-
-export interface ListConversationPinsCommand {
-  type: "list_conversation_pins";
-  request_id: string;
-  runtime: RuntimeScope;
-}
-
-export interface ListConversationPinsResponseMessage {
-  type: "list_conversation_pins_response";
-  request_id: string;
-  success: boolean;
-  pins: Array<{ conversation_id: string; is_local: boolean }>;
-  error?: string;
-}
-
-export interface SetConversationPinCommand {
-  type: "set_conversation_pin";
-  request_id: string;
-  runtime: RuntimeScope;
-  conversation_id: string;
-  action: ConversationPinAction;
-  scope?: ConversationPinScope;
-}
-
-export interface SetConversationPinResponseMessage {
-  type: "set_conversation_pin_response";
-  request_id: string;
-  success: boolean;
-  conversation_id: string;
-  pinned: boolean;
-  pins: Array<{ conversation_id: string; is_local: boolean }>;
   error?: string;
 }
 
@@ -1870,6 +2173,128 @@ export interface CreateAgentResponseMessage {
   agent_id?: string;
   name?: string;
   model?: string;
+  error?: string;
+}
+
+export interface AgentListResponseMessage {
+  type: "agent_list_response";
+  request_id: string;
+  success: boolean;
+  agents: AgentState[];
+  error?: string;
+}
+
+export interface AgentRetrieveResponseMessage {
+  type: "agent_retrieve_response";
+  request_id: string;
+  success: boolean;
+  agent: AgentState | null;
+  error?: string;
+}
+
+export interface AgentCreateResponseMessage {
+  type: "agent_create_response";
+  request_id: string;
+  success: boolean;
+  agent: AgentState | null;
+  error?: string;
+}
+
+export interface AgentUpdateResponseMessage {
+  type: "agent_update_response";
+  request_id: string;
+  success: boolean;
+  agent: AgentState | null;
+  error?: string;
+}
+
+export interface AgentDeleteResponseMessage {
+  type: "agent_delete_response";
+  request_id: string;
+  success: boolean;
+  agent_id: string;
+  error?: string;
+}
+
+export interface ConversationListResponseMessage {
+  type: "conversation_list_response";
+  request_id: string;
+  success: boolean;
+  conversations: Conversation[];
+  error?: string;
+}
+
+export interface ConversationRetrieveResponseMessage {
+  type: "conversation_retrieve_response";
+  request_id: string;
+  success: boolean;
+  conversation: Conversation | null;
+  error?: string;
+}
+
+export interface ConversationCreateResponseMessage {
+  type: "conversation_create_response";
+  request_id: string;
+  success: boolean;
+  conversation: Conversation | null;
+  error?: string;
+}
+
+export interface ConversationUpdateResponseMessage {
+  type: "conversation_update_response";
+  request_id: string;
+  success: boolean;
+  conversation: Conversation | null;
+  error?: string;
+}
+
+export interface ConversationRecompileResponseMessage {
+  type: "conversation_recompile_response";
+  request_id: string;
+  success: boolean;
+  result: string | null;
+  error?: string;
+}
+
+export interface ForkedConversationReference {
+  id: string;
+}
+
+export interface ConversationForkResponseMessage {
+  type: "conversation_fork_response";
+  request_id: string;
+  success: boolean;
+  conversation: ForkedConversationReference | null;
+  error?: string;
+}
+
+export interface ConversationMessagesListResponseMessage {
+  type: "conversation_messages_list_response";
+  request_id: string;
+  success: boolean;
+  messages: LettaMessage[];
+  error?: string;
+}
+
+export interface ConversationCompactResponseMessage {
+  type: "conversation_compact_response";
+  request_id: string;
+  success: boolean;
+  compaction: CompactionResponse | null;
+  error?: string;
+}
+
+export interface RuntimeStartResponseMessage {
+  type: "runtime_start_response";
+  request_id: string;
+  success: boolean;
+  runtime: RuntimeScope | null;
+  agent: AgentState | null;
+  conversation: Conversation | null;
+  created: {
+    agent: boolean;
+    conversation: boolean;
+  };
   error?: string;
 }
 
@@ -2279,6 +2704,8 @@ export type WsProtocolCommand =
   | ChangeDeviceStateCommand
   | AbortMessageCommand
   | SyncCommand
+  | RuntimeStartCommand
+  | ExternalToolCallResponseCommand
   | TerminalSpawnCommand
   | TerminalInputCommand
   | TerminalResizeCommand
@@ -2305,6 +2732,7 @@ export type WsProtocolCommand =
   | ListConnectProvidersCommand
   | ConnectProviderCommand
   | DisconnectProviderCommand
+  | ChatGPTUsageReadCommand
   | UpdateModelCommand
   | UpdateToolsetCommand
   | CronListCommand
@@ -2318,9 +2746,20 @@ export type WsProtocolCommand =
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
+  | AgentListCommand
+  | AgentRetrieveCommand
+  | AgentCreateCommand
+  | AgentUpdateCommand
+  | AgentDeleteCommand
+  | ConversationListCommand
+  | ConversationRetrieveCommand
+  | ConversationCreateCommand
+  | ConversationUpdateCommand
+  | ConversationRecompileCommand
+  | ConversationForkCommand
+  | ConversationMessagesListCommand
+  | ConversationCompactCommand
   | GetCwdMapCommand
-  | ListConversationPinsCommand
-  | SetConversationPinCommand
   | GetReflectionSettingsCommand
   | SetReflectionSettingsCommand
   | GetExperimentsCommand
@@ -2360,6 +2799,9 @@ export type WsProtocolMessage =
   | QueueUpdateMessage
   | StreamDeltaMessage
   | SubagentStateUpdateMessage
+  | ExternalToolCallRequestMessage
+  | AbortMessageResponseMessage
+  | SyncResponseMessage
   | TerminalOutputMessage
   | TerminalSpawnedMessage
   | TerminalExitedMessage
@@ -2385,6 +2827,7 @@ export type WsProtocolMessage =
   | ListConnectProvidersResponseMessage
   | ConnectProviderResponseMessage
   | DisconnectProviderResponseMessage
+  | ChatGPTUsageReadResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
   | CronListResponseMessage
@@ -2400,10 +2843,22 @@ export type WsProtocolMessage =
   | SkillDisableResponseMessage
   | SkillsUpdatedMessage
   | CreateAgentResponseMessage
+  | AgentListResponseMessage
+  | AgentRetrieveResponseMessage
+  | AgentCreateResponseMessage
+  | AgentUpdateResponseMessage
+  | AgentDeleteResponseMessage
+  | ConversationListResponseMessage
+  | ConversationRetrieveResponseMessage
+  | ConversationCreateResponseMessage
+  | ConversationUpdateResponseMessage
+  | ConversationRecompileResponseMessage
+  | ConversationForkResponseMessage
+  | ConversationMessagesListResponseMessage
+  | ConversationCompactResponseMessage
+  | RuntimeStartResponseMessage
   | GetExperimentsResponseMessage
   | SetExperimentResponseMessage
-  | ListConversationPinsResponseMessage
-  | SetConversationPinResponseMessage
   | GetReflectionSettingsResponseMessage
   | SetReflectionSettingsResponseMessage
   | ChannelsListResponseMessage

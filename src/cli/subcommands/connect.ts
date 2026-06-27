@@ -27,6 +27,11 @@ import {
   type ProviderConnectionOptions,
   providerStorageTargetLabel,
 } from "@/providers/byok-providers";
+import {
+  getOpenAICodexProvider,
+  normalizeChatGPTOAuthProviderName,
+  OPENAI_CODEX_PROVIDER_NAME,
+} from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
 
@@ -39,6 +44,7 @@ const CONNECT_OPTIONS = {
   region: { type: "string" },
   profile: { type: "string" },
   "base-url": { type: "string" },
+  name: { type: "string" },
   timeout: { type: "string" },
   "no-timeout": { type: "boolean" },
 } as const;
@@ -65,7 +71,7 @@ interface ConnectSubcommandDeps {
     profile?: string,
     options?: ProviderConnectionOptions,
   ) => Promise<unknown>;
-  isChatGPTOAuthConnected: () => Promise<boolean>;
+  isChatGPTOAuthConnected: (providerName?: string) => Promise<boolean>;
   runChatGPTOAuthConnectFlow: (
     callbacks: ChatGPTOAuthFlowCallbacks,
   ) => Promise<unknown>;
@@ -93,7 +99,11 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
   promptSecret: promptSecret,
   checkProviderApiKey,
   createOrUpdateProvider,
-  isChatGPTOAuthConnected,
+  isChatGPTOAuthConnected: (providerName) =>
+    isChatGPTOAuthConnected({
+      getProvider: () =>
+        getOpenAICodexProvider({}, providerName ?? OPENAI_CODEX_PROVIDER_NAME),
+    }),
   runChatGPTOAuthConnectFlow,
   runLocalOAuthConnectFlow,
   providerStorageTargetLabel,
@@ -109,7 +119,9 @@ function formatUsage(): string {
     "",
     "Examples:",
     "  letta connect chatgpt",
+    "  letta connect chatgpt --name chatgpt-work",
     "  letta connect codex",
+    "  letta connect codex --method device-code",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
@@ -137,6 +149,10 @@ function connectionOptionsFromArgs(
 
 function hasConnectionOptions(options: ProviderConnectionOptions): boolean {
   return options.baseURL !== undefined || options.timeout !== undefined;
+}
+
+function normalizeOAuthLoginMethod(value: string): string {
+  return value.trim().toLowerCase().replace(/-/g, "_");
 }
 
 function formatBedrockUsage(): string {
@@ -225,22 +241,35 @@ export async function runConnectSubcommand(
     try {
       if (provider.target !== "local") {
         await io.ensureSettingsReady();
+        let providerName: string;
+        try {
+          providerName = normalizeChatGPTOAuthProviderName(
+            readStringOption(parsed.values.name),
+          );
+        } catch (error) {
+          io.stderr(error instanceof Error ? error.message : String(error));
+          return 1;
+        }
 
-        if (await io.isChatGPTOAuthConnected()) {
+        if (await io.isChatGPTOAuthConnected(providerName)) {
           io.stdout(
-            "Already connected to ChatGPT via OAuth. Use /connect in the TUI and select ChatGPT / Codex plan to disconnect or re-authenticate.",
+            `Already connected to ChatGPT via OAuth as '${providerName}'. Use /connect in the TUI and select ChatGPT / Codex plan to disconnect or re-authenticate.`,
           );
           return 0;
         }
 
         await io.runChatGPTOAuthConnectFlow({
+          providerName,
           onStatus: (status) => io.stdout(status),
         });
 
-        io.stdout("Successfully connected to ChatGPT OAuth.");
+        io.stdout(
+          `Successfully connected to ChatGPT OAuth.\nProvider '${providerName}' saved.`,
+        );
         return 0;
       }
 
+      const loginMethod = readStringOption(parsed.values.method);
       await io.runLocalOAuthConnectFlow(provider.byokProvider, {
         onStatus: (status) => io.stdout(status),
         onPrompt: async (prompt) => {
@@ -253,6 +282,22 @@ export async function runConnectSubcommand(
           return io.promptSecret(
             `${prompt.message}${prompt.placeholder ? ` (${prompt.placeholder})` : ""}: `,
           );
+        },
+        onSelect: async (prompt) => {
+          if (loginMethod) {
+            const normalized = normalizeOAuthLoginMethod(loginMethod);
+            const match = prompt.options.find(
+              (option) => normalizeOAuthLoginMethod(option.id) === normalized,
+            );
+            if (!match) {
+              throw new Error(
+                `Unknown ${provider.byokProvider.displayName} login method: ${loginMethod}. Available: ${prompt.options.map((option) => option.id).join(", ")}`,
+              );
+            }
+            return match.id;
+          }
+          // Default to the provider's first (default) option, e.g. browser login.
+          return prompt.options[0]?.id;
         },
       });
 

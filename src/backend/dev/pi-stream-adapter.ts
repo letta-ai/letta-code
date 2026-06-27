@@ -22,6 +22,7 @@ import {
 import { removeOrphanLocalToolResults } from "@/backend/local/local-message-projection";
 import { resolveAvailableLocalModelForTurn } from "@/backend/local/local-model-config";
 import type { ClientTool } from "@/tools/manager";
+import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
@@ -35,6 +36,8 @@ import {
   resolvePiModelForAgent,
 } from "./pi-model-factory";
 import type {
+  LlmEndInfo,
+  LlmStartInfo,
   ProviderStreamAdapter,
   ProviderStreamEvent,
   ProviderTurnInput,
@@ -47,6 +50,8 @@ import {
 } from "./provider-turn-executor";
 
 const LOCAL_PROVIDER_MAX_RETRIES = 3;
+const LOCAL_PROVIDER_ADAPTIVE_IMAGE_ELISION_AFTER_RETRIES =
+  LOCAL_PROVIDER_MAX_RETRIES - 1;
 const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 // Classifier threshold for oversized request payloads. This is a transport
 // limit, not a token limit: providers accept image-heavy requests whose
@@ -59,8 +64,26 @@ const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
 // of in-context images still succeeded against Anthropic at ~400k context
 // tokens, while ~11.8MB failed with "Connection error." on every provider.
 // 8MB keeps headroom under Anthropic's documented 32MB cap while staying
-// above known-good payloads.
-const LOCAL_PROVIDER_REQUEST_BYTE_LIMIT = 8_000_000;
+// above known-good payloads. Local networks can fail below that threshold, so
+// LETTA_LOCAL_REQUEST_BYTE_LIMIT can lower the reactive classifier in dev.
+const DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT = 8_000_000;
+const LOCAL_PROVIDER_REQUEST_BYTE_LIMIT_ENV = "LETTA_LOCAL_REQUEST_BYTE_LIMIT";
+
+function localProviderRequestByteLimit(): number {
+  const raw = process.env[LOCAL_PROVIDER_REQUEST_BYTE_LIMIT_ENV];
+  if (!raw) return DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT;
+  }
+  return Math.floor(parsed);
+}
+
+function localProviderRequestByteTarget(
+  limit = localProviderRequestByteLimit(),
+) {
+  return Math.floor(limit * 0.75);
+}
 
 export type PiStreamFunction = (
   model: Model<string>,
@@ -90,6 +113,8 @@ export interface PiStreamAdapterOptions {
     summary: string;
     stats?: LocalCompactionStats;
   } | null>;
+  onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
+  onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
 
 class PiProviderError extends Error {
@@ -457,10 +482,136 @@ function isOverflowError(error: unknown, contextWindow?: number): boolean {
 // provider failure; it never preemptively blocks a request.
 function isOversizedPayloadTransportFailure(input: ProviderTurnInput): boolean {
   const requestBytes = estimateProviderRequestBytes(input);
-  return (
-    requestBytes !== undefined &&
-    requestBytes > LOCAL_PROVIDER_REQUEST_BYTE_LIMIT
+  const requestByteLimit = localProviderRequestByteLimit();
+  return requestBytes !== undefined && requestBytes > requestByteLimit;
+}
+
+interface ImageElisionCandidate {
+  messageIndex: number;
+  blockIndex: number;
+  mimeType?: string;
+  bytes: number;
+}
+
+interface ImagePayloadElision {
+  input: ProviderTurnInput;
+  beforeBytes: number;
+  afterBytes: number;
+  requestByteLimit: number;
+  requestByteTarget: number;
+  elidedImages: number;
+  elidedBytes: number;
+}
+
+function imagePayloadBytes(data: unknown): number {
+  return typeof data === "string" ? data.length : 0;
+}
+
+function imageElisionPlaceholder(mimeType: string | undefined, bytes: number) {
+  const mb = (bytes / 1_000_000).toFixed(1);
+  return `[Image omitted from this provider retry to reduce local request size: ${
+    mimeType ?? "image"
+  }, ~${mb}MB. The original image remains stored in conversation history.]`;
+}
+
+function imageElisionCandidates(
+  messages: readonly LocalMessage[],
+): ImageElisionCandidate[] {
+  const candidates: ImageElisionCandidate[] = [];
+  messages.forEach((message, messageIndex) => {
+    if (message.role !== "user" && message.role !== "toolResult") return;
+    if (!Array.isArray(message.content)) return;
+    message.content.forEach((block, blockIndex) => {
+      if (block.type !== "image") return;
+      const bytes = imagePayloadBytes(block.data);
+      if (bytes <= 0) return;
+      candidates.push({
+        messageIndex,
+        blockIndex,
+        mimeType: block.mimeType,
+        bytes,
+      });
+    });
+  });
+  // Prefer removing older images first; within a single message, remove larger
+  // blobs first. If the request is still too large, this naturally proceeds to
+  // newer images as needed.
+  return candidates.sort(
+    (a, b) =>
+      a.messageIndex - b.messageIndex ||
+      b.bytes - a.bytes ||
+      a.blockIndex - b.blockIndex,
   );
+}
+
+function elideImagePayload(
+  messages: readonly LocalMessage[],
+  candidate: ImageElisionCandidate,
+): LocalMessage[] {
+  const message = messages[candidate.messageIndex];
+  if (!message) return [...messages];
+  if (message.role !== "user" && message.role !== "toolResult") {
+    return [...messages];
+  }
+  if (!Array.isArray(message.content)) return [...messages];
+  const block = message.content[candidate.blockIndex];
+  if (block?.type !== "image") return [...messages];
+
+  const content = [...message.content];
+  content[candidate.blockIndex] = {
+    type: "text",
+    text: imageElisionPlaceholder(candidate.mimeType, candidate.bytes),
+  };
+  const next = [...messages];
+  next[candidate.messageIndex] = { ...message, content } as LocalMessage;
+  return next;
+}
+
+function elideImagePayloadsForProviderRetry(
+  input: ProviderTurnInput,
+  options: { allowUnderLimit?: boolean } = {},
+): ImagePayloadElision | null {
+  const beforeBytes = estimateProviderRequestBytes(input);
+  const requestByteLimit = localProviderRequestByteLimit();
+  if (
+    beforeBytes === undefined ||
+    (!options.allowUnderLimit && beforeBytes <= requestByteLimit)
+  ) {
+    return null;
+  }
+  const requestByteTarget = options.allowUnderLimit
+    ? Math.min(
+        localProviderRequestByteTarget(requestByteLimit),
+        Math.floor(beforeBytes * 0.75),
+      )
+    : localProviderRequestByteTarget(requestByteLimit);
+
+  const candidates = imageElisionCandidates(input.uiMessages);
+  if (candidates.length === 0) return null;
+
+  let uiMessages = input.uiMessages;
+  let afterBytes = beforeBytes;
+  let elidedImages = 0;
+  let elidedBytes = 0;
+  for (const candidate of candidates) {
+    if (afterBytes <= requestByteTarget) break;
+    uiMessages = elideImagePayload(uiMessages, candidate);
+    elidedImages += 1;
+    elidedBytes += candidate.bytes;
+    afterBytes =
+      estimateProviderRequestBytes({ ...input, uiMessages }) ?? afterBytes;
+  }
+
+  if (elidedImages === 0 || afterBytes >= beforeBytes) return null;
+  return {
+    input: { ...input, uiMessages },
+    beforeBytes,
+    afterBytes,
+    requestByteLimit,
+    requestByteTarget,
+    elidedImages,
+    elidedBytes,
+  };
 }
 
 function defaultStream(
@@ -480,6 +631,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   private readonly localProviderAuthStorageDir?: string;
   private readonly onContextWindowOverflow?: PiStreamAdapterOptions["onContextWindowOverflow"];
   private readonly onContextUsage?: PiStreamAdapterOptions["onContextUsage"];
+  private readonly onLlmStart?: PiStreamAdapterOptions["onLlmStart"];
+  private readonly onLlmEnd?: PiStreamAdapterOptions["onLlmEnd"];
 
   constructor(options: PiStreamAdapterOptions = {}) {
     this.runStream = options.stream ?? defaultStream;
@@ -487,6 +640,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
     this.onContextUsage = options.onContextUsage;
+    this.onLlmStart = options.onLlmStart;
+    this.onLlmEnd = options.onLlmEnd;
   }
 
   private async *emitCompactionChunks(
@@ -580,7 +735,15 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
+    const llmStartedAt = Date.now();
     try {
+      await this.onLlmStart?.({
+        agentId: input.agentId,
+        conversationId: input.conversationId,
+        model: input.agent.model,
+        messageCount: context.messages.length,
+        contextWindow: resolved.model.contextWindow,
+      });
       const result = this.runStream(
         resolved.model as Model<string>,
         context,
@@ -611,6 +774,18 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       if (streamError) throw streamError;
       finalMessage ??= await result.result();
+      await this.onLlmEnd?.({
+        agentId: input.agentId,
+        conversationId: input.conversationId,
+        model: input.agent.model,
+        stopReason: finalMessage.stopReason,
+        usage: {
+          promptTokens: finalMessage.usage.input,
+          completionTokens: finalMessage.usage.output,
+          totalTokens: finalMessage.usage.totalTokens,
+        },
+        durationMs: Date.now() - llmStartedAt,
+      });
       if (
         finalMessage.stopReason === "error" ||
         finalMessage.stopReason === "aborted"
@@ -677,6 +852,22 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           contextOverflowCompactions < LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS &&
           isOversizedPayloadTransportFailure(activeInput)
         ) {
+          const imageElision = elideImagePayloadsForProviderRetry(activeInput);
+          if (imageElision) {
+            debugLog(
+              "pi-stream",
+              "oversized payload transport failure: elided %d image(s) (%d -> %d bytes, limit %d, target %d) from provider retry context",
+              imageElision.elidedImages,
+              imageElision.beforeBytes,
+              imageElision.afterBytes,
+              imageElision.requestByteLimit,
+              imageElision.requestByteTarget,
+            );
+            activeInput = imageElision.input;
+            transientRetries = 0;
+            continue;
+          }
+
           // Unlike the provider-reported overflow branch above, the original
           // error here is retryable. If compaction itself fails (for example
           // the summarizer model call errors), fall back to the normal
@@ -697,6 +888,35 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
               compaction,
               "context_window_overflow",
             );
+            continue;
+          }
+        }
+
+        // Adaptive image elision: a fixed byte limit cannot capture a user's
+        // current uplink. If a retryable transport error repeats before any
+        // model output, shed provider-context-only image bytes even when the
+        // request is below the configured classifier threshold.
+        if (
+          retryableTransportError &&
+          !emittedModelOutput &&
+          transientRetries >=
+            LOCAL_PROVIDER_ADAPTIVE_IMAGE_ELISION_AFTER_RETRIES
+        ) {
+          const imageElision = elideImagePayloadsForProviderRetry(activeInput, {
+            allowUnderLimit: true,
+          });
+          if (imageElision) {
+            debugLog(
+              "pi-stream",
+              "retryable transport failures persisted: adaptively elided %d image(s) (%d -> %d bytes, limit %d, target %d) from provider retry context",
+              imageElision.elidedImages,
+              imageElision.beforeBytes,
+              imageElision.afterBytes,
+              imageElision.requestByteLimit,
+              imageElision.requestByteTarget,
+            );
+            activeInput = imageElision.input;
+            transientRetries = 0;
             continue;
           }
         }

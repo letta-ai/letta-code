@@ -72,20 +72,18 @@ function createConversation(): ModConversationHandle {
     async sendMessageStream() {
       return (async function* emptyStream() {})();
     },
+    async updateLlmConfig() {},
   };
 }
 
 function createToolContext(memoryDir: string): ModToolRunContext {
   return {
-    agent: { id: "agent-1" },
+    ...createContext(memoryDir),
     args: {},
     conversation: createConversation(),
-    cwd: "/tmp/project",
-    getContext: () => createContext(memoryDir),
-    permissionMode: "standard",
+    secret: async () => null,
     signal: new AbortController().signal,
     toolCallId: "toolu-snapshot",
-    workingDirectory: "/tmp/project",
   };
 }
 
@@ -110,9 +108,9 @@ describe("memory citations example mod", () => {
       const engine = createModEngine({
         cacheDirectory: path.join(root, "mod-cache"),
         getClient: async () => ({}) as unknown as Letta,
-        getContext: () => createContext(memoryDir),
         globalModsDirectory: modDir,
       });
+      const context = createContext(memoryDir);
 
       await engine.reload();
       expect(engine.getSnapshot().diagnostics).toEqual([]);
@@ -130,39 +128,51 @@ describe("memory citations example mod", () => {
         conversationId: "conversation-1",
         input,
       };
-      await engine.emitEvent("turn_start", turnEvent);
+      await engine.emitEvent("turn_start", turnEvent, context);
       expect(turnEvent.input).toHaveLength(2);
       expect(String(turnEvent.input[1]?.content)).toContain(
         "memory_citation_snapshot",
       );
 
-      await engine.emitEvent("tool_start", {
-        agentId: "agent-1",
-        args: { file_path: path.join(memoryDir, "reference", "harbor.md") },
-        conversationId: "conversation-1",
-        toolCallId: "toolu-read",
-        toolName: "Read",
-      });
-      await engine.emitEvent("tool_start", {
-        agentId: "agent-1",
-        args: { command: 'cat "$MEMORY_DIR/system/collaboration.md"' },
-        conversationId: "conversation-1",
-        toolCallId: "toolu-bash",
-        toolName: "Bash",
-      });
-      await engine.emitEvent("tool_start", {
-        agentId: "agent-1",
-        args: {
-          cmd: `sed -n '1,80p' ${path.join(
-            memoryDir,
-            "reference",
-            "learning-mods.md",
-          )}`,
+      await engine.emitEvent(
+        "tool_start",
+        {
+          agentId: "agent-1",
+          args: { file_path: path.join(memoryDir, "reference", "harbor.md") },
+          conversationId: "conversation-1",
+          toolCallId: "toolu-read",
+          toolName: "Read",
         },
-        conversationId: "conversation-1",
-        toolCallId: "toolu-exec-command",
-        toolName: "exec_command",
-      });
+        context,
+      );
+      await engine.emitEvent(
+        "tool_start",
+        {
+          agentId: "agent-1",
+          args: { command: 'cat "$MEMORY_DIR/system/collaboration.md"' },
+          conversationId: "conversation-1",
+          toolCallId: "toolu-bash",
+          toolName: "Bash",
+        },
+        context,
+      );
+      await engine.emitEvent(
+        "tool_start",
+        {
+          agentId: "agent-1",
+          args: {
+            cmd: `sed -n '1,80p' ${path.join(
+              memoryDir,
+              "reference",
+              "learning-mods.md",
+            )}`,
+          },
+          conversationId: "conversation-1",
+          toolCallId: "toolu-exec-command",
+          toolName: "exec_command",
+        },
+        context,
+      );
 
       const snapshotTool = getModToolDefinition("memory_citation_snapshot");
       expect(snapshotTool).toBeDefined();

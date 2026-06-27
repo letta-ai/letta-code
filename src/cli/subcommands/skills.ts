@@ -10,18 +10,32 @@ import {
 import { mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
-import { parseArgs } from "node:util";
+import { parseArgs, TextDecoder, TextEncoder } from "node:util";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { isLocalAgentId } from "@/agent/agent-id";
+import {
+  type InstallLocalManagedModPackageResult,
+  installGitManagedModPackage,
+  installLocalManagedModPackage,
+  installNpmManagedModPackage,
+  isLocalLettaModPackageDirectory,
+  parseGitManagedModPackageInstallSpecifier,
+} from "@/mods/package-installer";
+import { resolveDefaultGlobalModsDirectory } from "@/mods/paths";
 import { parseFrontmatter } from "@/utils/frontmatter";
 
 const HERMES_REPO_URL = "https://github.com/NousResearch/hermes-agent.git";
 const HERMES_OPTIONAL_SKILLS_DIR = "optional-skills";
+export const MAX_DIRECT_SKILL_FILE_BYTES = 1024 * 1024;
 
 interface SkillSourceLocation {
   repoUrl: string;
   branch: string | null;
   subdir: string | null;
+}
+
+interface DirectSkillFileSourceLocation {
+  url: string;
 }
 
 interface InstallResult {
@@ -53,6 +67,19 @@ interface ClawHubSourceLocation {
   version: string | null;
 }
 
+type ResolvedSkillSource =
+  | { type: "git"; location: SkillSourceLocation }
+  | { type: "direct-file"; location: DirectSkillFileSourceLocation }
+  | { type: "clawhub"; location: ClawHubSourceLocation };
+
+type FetchSkillFile = (
+  ...args: Parameters<typeof fetch>
+) => ReturnType<typeof fetch>;
+
+interface RunInstallOptions {
+  globalModsDirectory?: string;
+}
+
 const CLAWHUB_API_BASE_URL = "https://clawhub.ai/api/v1";
 
 let activeAgentPromptStatus: { stop: () => void } | null = null;
@@ -61,15 +88,20 @@ function printUsage(): void {
   console.log(
     `
 Usage:
-  letta install <skill> [--agent <id> | -n <agent name>] [--force]
+  letta install <thing> [--agent <id> | -n <agent name>] [--force]
   letta skills list [--agent <id> | -n <agent name>]
   letta skills delete <skill_name> --agent <id>
 
 Sources:
+  npm:<package>         npm mod package, e.g. npm:@letta-ai/mod-plan-mode
+  git:github.com/o/r    GitHub mod package
+  https://github.com/o/r GitHub mod package
+  ./path/to/package     Local mod package with package.json#letta
   official/<path>         Hermes official optional skill, e.g. official/finance/stocks
   clawhub/<slug>          ClawHub registry skill, e.g. clawhub/nano-banana-pro
   clawhub:<slug>          ClawHub registry skill, optionally <slug>@<version>
   https://github.com/...  GitHub repository, tree URL, or SKILL.md blob URL
+  https://.../SKILL.md    Direct external skill file URL
   owner/repo/path         GitHub repo/path shorthand
 
 Options:
@@ -223,16 +255,36 @@ async function resolveAgentId(
   return promptForAgent(promptStatusMessage);
 }
 
+function parseAbsoluteUrl(input: string): URL | null {
+  try {
+    return new URL(input);
+  } catch {
+    return null;
+  }
+}
+
+function isLocalhostHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
+
 export function parseGitHubSpecifier(
   input: string,
 ): SkillSourceLocation | null {
   const trimmed = input.trim();
+  const url = parseAbsoluteUrl(trimmed);
 
   if (
-    trimmed.startsWith("https://github.com/") ||
-    trimmed.startsWith("http://github.com/")
+    url &&
+    (url.protocol === "https:" || url.protocol === "http:") &&
+    url.hostname.toLowerCase() === "github.com"
   ) {
-    const url = new URL(trimmed);
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts.length < 2) return null;
     const [owner, repoWithSuffix] = parts;
@@ -250,6 +302,8 @@ export function parseGitHubSpecifier(
     }
     return { repoUrl, branch: null, subdir: null };
   }
+
+  if (url) return null;
 
   const shorthand = trimmed.split("/").filter(Boolean);
   if (shorthand.length >= 3 && shorthand[0] !== "official") {
@@ -269,6 +323,22 @@ export function parseGitHubSpecifier(
   }
 
   return null;
+}
+
+export function parseDirectSkillFileUrlSpecifier(
+  input: string,
+): DirectSkillFileSourceLocation | null {
+  const url = parseAbsoluteUrl(input.trim());
+  if (!url) return null;
+  if (url.username || url.password) return null;
+  if (
+    url.protocol !== "https:" &&
+    !(url.protocol === "http:" && isLocalhostHostname(url.hostname))
+  ) {
+    return null;
+  }
+  if (basename(url.pathname).toLowerCase() !== "skill.md") return null;
+  return { url: url.toString() };
 }
 
 export function parseClawHubSpecifier(
@@ -324,6 +394,28 @@ function parseOfficialSpecifier(input: string): SkillSourceLocation | null {
     branch: null,
     subdir: `${HERMES_OPTIONAL_SKILLS_DIR}/${relativePath}`,
   };
+}
+
+function resolveSkillSourceSpecifier(
+  input: string,
+): ResolvedSkillSource | null {
+  const clawHubSource = parseClawHubSpecifier(input);
+  if (clawHubSource) {
+    return { type: "clawhub", location: clawHubSource };
+  }
+
+  const gitSource =
+    parseOfficialSpecifier(input) ?? parseGitHubSpecifier(input);
+  if (gitSource) {
+    return { type: "git", location: gitSource };
+  }
+
+  const directFileSource = parseDirectSkillFileUrlSpecifier(input);
+  if (directFileSource) {
+    return { type: "direct-file", location: directFileSource };
+  }
+
+  return null;
 }
 
 async function execFile(
@@ -386,6 +478,91 @@ async function cloneSkillSource(
     ? join(tmpDir, resolvedLocation.subdir)
     : tmpDir;
   return { tmpDir, sourceDir };
+}
+
+function assertDirectSkillFileSize(
+  receivedBytes: number,
+  maxBytes: number,
+): void {
+  if (receivedBytes > maxBytes) {
+    throw new Error(`Direct skill file exceeds ${maxBytes} byte limit.`);
+  }
+}
+
+async function readResponseTextWithLimit(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength) {
+    const parsedLength = Number.parseInt(contentLength, 10);
+    if (Number.isFinite(parsedLength)) {
+      assertDirectSkillFileSize(parsedLength, maxBytes);
+    }
+  }
+
+  if (!response.body) {
+    const text = await response.text();
+    assertDirectSkillFileSize(
+      new TextEncoder().encode(text).byteLength,
+      maxBytes,
+    );
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      receivedBytes += value.byteLength;
+      if (receivedBytes > maxBytes) {
+        await reader.cancel();
+        assertDirectSkillFileSize(receivedBytes, maxBytes);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(receivedBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
+
+export async function downloadDirectSkillFileSource(
+  location: DirectSkillFileSourceLocation,
+  options: { fetchImpl?: FetchSkillFile } = {},
+): Promise<{ tmpDir: string; sourceDir: string }> {
+  const response = await (options.fetchImpl ?? fetch)(location.url);
+  if (!response.ok) {
+    throw new Error(
+      `Direct skill file download failed for ${location.url}: ${response.status}`,
+    );
+  }
+
+  const skillText = await readResponseTextWithLimit(
+    response,
+    MAX_DIRECT_SKILL_FILE_BYTES,
+  );
+  const tmpDir = mkdtempSync(join(tmpdir(), "letta-direct-skill-"));
+  try {
+    const sourceDir = join(tmpDir, "skill");
+    await mkdir(sourceDir, { recursive: true });
+    writeFileSync(join(sourceDir, "SKILL.md"), skillText, "utf8");
+    return { tmpDir, sourceDir };
+  } catch (error) {
+    rmSync(tmpDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function fetchJson(url: string): Promise<unknown> {
@@ -620,27 +797,32 @@ async function installSkill(
   agentId: string,
   force: boolean,
 ): Promise<InstallResult> {
-  const clawHubSource = parseClawHubSpecifier(specifier);
-  const gitSource = clawHubSource
-    ? null
-    : (parseOfficialSpecifier(specifier) ?? parseGitHubSpecifier(specifier));
-  if (!gitSource && !clawHubSource) {
+  const source = resolveSkillSourceSpecifier(specifier);
+  if (!source) {
     throw new Error(`Unsupported skill source: ${specifier}`);
   }
 
   const memoryDir = await getAgentMemoryDir(agentId);
   let tmpDir: string | null = null;
   try {
-    const downloaded = gitSource
-      ? await cloneSkillSource(gitSource)
-      : await downloadClawHubSkillSource(
-          clawHubSource as ClawHubSourceLocation,
-        );
+    let downloaded: { tmpDir: string; sourceDir: string };
+    if (source.type === "git") {
+      downloaded = await cloneSkillSource(source.location);
+    } else if (source.type === "direct-file") {
+      downloaded = await downloadDirectSkillFileSource(source.location);
+    } else {
+      downloaded = await downloadClawHubSkillSource(source.location);
+    }
     tmpDir = downloaded.tmpDir;
     const sourceDir = resolve(downloaded.sourceDir);
     assertInside(tmpDir, sourceDir);
     if (!existsSync(sourceDir)) {
-      const missingPath = gitSource?.subdir || clawHubSource?.slug || ".";
+      const missingPath =
+        source.type === "git"
+          ? (source.location.subdir ?? ".")
+          : source.type === "direct-file"
+            ? source.location.url
+            : source.location.slug;
       throw new Error(`Skill path not found: ${missingPath}`);
     }
     const result = await installSkillDirectory({ sourceDir, memoryDir, force });
@@ -757,7 +939,36 @@ function stopAgentPromptStatus(): void {
   activeAgentPromptStatus = null;
 }
 
-async function runInstall(argv: string[]): Promise<number> {
+function hasInstallAgentScope(
+  values: ReturnType<typeof parseSkillsArgs>["values"],
+): boolean {
+  return Boolean(values.agent || values["agent-id"] || values.name);
+}
+
+function printManagedModPackageInstallResult(
+  result: InstallLocalManagedModPackageResult,
+  options: { includeDetails?: boolean } = {},
+): void {
+  console.log(
+    "Warning: mods are trusted local code and can execute on startup.",
+  );
+  if (options.includeDetails) {
+    console.log(`Source: ${result.source}`);
+    if (result.repository) {
+      console.log(`Repository: ${result.repository}`);
+    }
+    if (result.capabilities.length > 0) {
+      console.log(`Capabilities: ${result.capabilities.join(", ")}`);
+    }
+  }
+  console.log(`Installed ${result.source}@${result.version}`);
+  console.log("Run /reload in active sessions for changes to take effect.");
+}
+
+async function runInstall(
+  argv: string[],
+  options: RunInstallOptions = {},
+): Promise<number> {
   let parsed: ReturnType<typeof parseSkillsArgs>;
   try {
     parsed = parseSkillsArgs(argv);
@@ -781,6 +992,81 @@ async function runInstall(argv: string[]): Promise<number> {
     return 1;
   }
 
+  if (specifier.startsWith("npm:")) {
+    if (hasInstallAgentScope(parsed.values)) {
+      console.error("Agent-scoped mod package install is not supported yet.");
+      return 1;
+    }
+    if (parsed.values.force) {
+      console.error("--force is only supported for skill installs.");
+      return 1;
+    }
+    try {
+      const result = await installNpmManagedModPackage({
+        modsRoot:
+          options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
+        specifier,
+      });
+      printManagedModPackageInstallResult(result, { includeDetails: true });
+      return 0;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+  }
+
+  let gitPackageSpecifier: ReturnType<
+    typeof parseGitManagedModPackageInstallSpecifier
+  >;
+  try {
+    gitPackageSpecifier = parseGitManagedModPackageInstallSpecifier(specifier);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+  if (gitPackageSpecifier) {
+    if (hasInstallAgentScope(parsed.values)) {
+      console.error("Agent-scoped mod package install is not supported yet.");
+      return 1;
+    }
+    if (parsed.values.force) {
+      console.error("--force is only supported for skill installs.");
+      return 1;
+    }
+    try {
+      const result = await installGitManagedModPackage({
+        modsRoot:
+          options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
+        specifier,
+      });
+      printManagedModPackageInstallResult(result, { includeDetails: true });
+      return 0;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+  }
+
+  const maybeLocalPath = resolve(specifier);
+  if (isLocalLettaModPackageDirectory(maybeLocalPath)) {
+    if (hasInstallAgentScope(parsed.values)) {
+      console.error("Agent-scoped mod package install is not supported yet.");
+      return 1;
+    }
+    try {
+      const result = installLocalManagedModPackage({
+        modsRoot:
+          options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
+        packageDirectory: maybeLocalPath,
+      });
+      printManagedModPackageInstallResult(result);
+      return 0;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+  }
+
   try {
     const agentId = await initializeAndResolveAgent(
       parsed.values,
@@ -801,8 +1087,11 @@ async function runInstall(argv: string[]): Promise<number> {
   }
 }
 
-export async function runInstallSubcommand(argv: string[]): Promise<number> {
-  return runInstall(argv);
+export async function runInstallSubcommand(
+  argv: string[],
+  options: RunInstallOptions = {},
+): Promise<number> {
+  return runInstall(argv, options);
 }
 
 async function runList(argv: string[]): Promise<number> {

@@ -50,6 +50,78 @@ describe("app-server protocol export", () => {
         success: true,
         reflection_settings: null,
       },
+      {
+        type: "agent_list_response",
+        request_id: "req",
+        success: true,
+        agents: [],
+      },
+      {
+        type: "agent_update_response",
+        request_id: "req",
+        success: true,
+        agent: null,
+      },
+      {
+        type: "agent_delete_response",
+        request_id: "req",
+        success: true,
+        agent_id: "agent-1",
+      },
+      {
+        type: "conversation_list_response",
+        request_id: "req",
+        success: true,
+        conversations: [],
+      },
+      {
+        type: "conversation_update_response",
+        request_id: "req",
+        success: true,
+        conversation: null,
+      },
+      {
+        type: "conversation_recompile_response",
+        request_id: "req",
+        success: true,
+        result: null,
+      },
+      {
+        type: "conversation_fork_response",
+        request_id: "req",
+        success: true,
+        conversation: null,
+      },
+      {
+        type: "conversation_messages_list_response",
+        request_id: "req",
+        success: true,
+        messages: [],
+      },
+      {
+        type: "conversation_compact_response",
+        request_id: "req",
+        success: true,
+        compaction: null,
+      },
+      {
+        type: "runtime_start_response",
+        request_id: "req",
+        success: true,
+        runtime: null,
+        agent: null,
+        conversation: null,
+        created: { agent: false, conversation: false },
+      },
+      {
+        type: "external_tool_call_request",
+        request_id: "req",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        scope_id: "scope-1",
+        tool_call_id: "call-1",
+        tool_name: "lookup_ticket",
+        input: { id: "ABC-123" },
+      },
     ] satisfies WsProtocolMessage[];
 
     expect(messages.map((message) => message.type)).toEqual([
@@ -61,6 +133,17 @@ describe("app-server protocol export", () => {
       "terminal_output",
       "search_branches_response",
       "get_reflection_settings_response",
+      "agent_list_response",
+      "agent_update_response",
+      "agent_delete_response",
+      "conversation_list_response",
+      "conversation_update_response",
+      "conversation_recompile_response",
+      "conversation_fork_response",
+      "conversation_messages_list_response",
+      "conversation_compact_response",
+      "runtime_start_response",
+      "external_tool_call_request",
     ]);
   });
 });

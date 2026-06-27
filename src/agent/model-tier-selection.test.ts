@@ -186,26 +186,6 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
-  test("returns byok reasoning options for chatgpt-plus-pro gpt-5.3-codex", () => {
-    const options = getReasoningTierOptionsForHandle(
-      "chatgpt-plus-pro/gpt-5.3-codex",
-    );
-    expect(options.map((option) => option.effort)).toEqual([
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-    ]);
-    expect(options.map((option) => option.modelId)).toEqual([
-      "gpt-5.3-codex-plus-pro-none",
-      "gpt-5.3-codex-plus-pro-low",
-      "gpt-5.3-codex-plus-pro-medium",
-      "gpt-5.3-codex-plus-pro-high",
-      "gpt-5.3-codex-plus-pro-xhigh",
-    ]);
-  });
-
   test("returns byok reasoning options for chatgpt-plus-pro gpt-5.5", () => {
     const options = getReasoningTierOptionsForHandle(
       "chatgpt-plus-pro/gpt-5.5",
@@ -271,6 +251,9 @@ describe("getReasoningTierOptionsForHandle", () => {
     expect(
       getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.4"),
     ).toBe("chatgpt-plus-pro/gpt-5.4-fast");
+    expect(
+      getChatGptFastRegistryHandleForModelHandle("chatgpt-plus-pro/gpt-5.5"),
+    ).toBe("chatgpt-plus-pro/gpt-5.5-fast");
     expect(
       getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.5-fast"),
     ).toBeNull();

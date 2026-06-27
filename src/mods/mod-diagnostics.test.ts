@@ -33,6 +33,9 @@ describe("mod diagnostics", () => {
     expect(getModDiagnosticSeverity("report", "warning")).toBe("warning");
     expect(getModDiagnosticSeverity("report", "error")).toBe("error");
     expect(getModDiagnosticSeverity("activate")).toBe("error");
+    expect(getModDiagnosticSeverity("deprecated_api")).toBe("warning");
+    expect(getModDiagnosticSeverity("deprecated_api", "error")).toBe("error");
+    expect(getModDiagnosticSeverity("legacy_extension")).toBe("warning");
     expect(getModDiagnosticSeverity("event")).toBe("error");
   });
 
@@ -151,6 +154,53 @@ describe("mod diagnostics", () => {
         },
       ],
       errorCount: 2,
+      warningCount: 1,
+    });
+  });
+
+  test("adds structured migration hints for removed getContext APIs", () => {
+    const owner = createOwner();
+    const report = createModDiagnosticsReport([
+      {
+        capability: { id: "legacy", kind: "tool" },
+        error: createError("ctx.getContext is not a function"),
+        owner,
+        phase: "tool.isEnabled",
+        timestamp: 400,
+      },
+    ]);
+
+    expect(report.diagnostics[0]).toMatchObject({
+      capability: { id: "legacy", kind: "tool" },
+      hint: "Dynamic context is now passed as ctx to commands, tools, events, permissions, and UI renderers. Use ctx.agent, ctx.cwd, ctx.conversation, ctx.model, etc.",
+      message: "ctx.getContext is not a function",
+      phase: "tool.isEnabled",
+    });
+  });
+
+  test("adds structured migration hints for deprecated API diagnostics", () => {
+    const owner = createOwner();
+    const report = createModDiagnosticsReport([
+      {
+        capability: { id: "letta.getContext", kind: "api" },
+        error: createError("Mod source uses removed API: letta.getContext"),
+        owner,
+        phase: "deprecated_api",
+        severity: "warning",
+        timestamp: 500,
+      },
+    ]);
+
+    expect(report).toMatchObject({
+      diagnostics: [
+        {
+          capability: { id: "letta.getContext", kind: "api" },
+          hint: "letta.getContext has been removed. Activation has no dynamic invocation context. Move dynamic work into a command, tool, event, permission, status, or statusline callback that receives ctx, or use explicit/global state such as process.cwd() for activation-time background work.",
+          phase: "deprecated_api",
+          severity: "warning",
+        },
+      ],
+      errorCount: 0,
       warningCount: 1,
     });
   });

@@ -12,7 +12,6 @@ import {
   type SubagentState,
   subscribe as subscribeToSubagents,
 } from "@/agent/subagent-state";
-import { buildChatUrl } from "@/cli/helpers/app-urls.js";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -42,9 +41,16 @@ function typeLabelForBackgroundAgent(agent: SubagentState): string {
   return rawType === "reflection" ? "dreaming" : rawType;
 }
 
-function chatUrlForBackgroundAgent(agent: SubagentState): string | null {
-  const agentId = agent.agentURL?.match(/\/(?:agents|chat)\/([^/?#]+)/)?.[1];
-  return agentId ? buildChatUrl(agentId) : null;
+function chatUrlForBackgroundAgent(
+  agent: Pick<SubagentState, "agentURL">,
+): string | null {
+  return agent.agentURL?.startsWith("http") ? agent.agentURL : null;
+}
+
+function shouldRenderPlainBackgroundAgentUrl(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return Boolean(env.TMUX);
 }
 
 function visibleProductStatusIndicators(
@@ -80,7 +86,7 @@ function renderDreamingStatus(agent: SubagentState): ReactNode {
   const elapsedS = Math.round((Date.now() - agent.startTime) / 1000);
   const typeLabel = typeLabelForBackgroundAgent(agent);
   const chatUrl = chatUrlForBackgroundAgent(agent);
-  const isTmux = Boolean(process.env.TMUX);
+  const renderPlainUrl = shouldRenderPlainBackgroundAgentUrl();
 
   return (
     <Text>
@@ -90,13 +96,13 @@ function renderDreamingStatus(agent: SubagentState): ReactNode {
         marginRight={0}
         pulseIntervalMs={400}
       />
-      {chatUrl && isTmux ? (
+      {chatUrl && renderPlainUrl ? (
         <>
           <Text color={colors.bgSubagent.label}>{typeLabel}</Text>
-          <Text dimColor>: {chatUrl}</Text>
+          <Text dimColor> {chatUrl}</Text>
         </>
       ) : chatUrl ? (
-        <Link url={chatUrl} fallback={false}>
+        <Link url={chatUrl}>
           <Text color={colors.bgSubagent.label}>{typeLabel}</Text>
         </Link>
       ) : (

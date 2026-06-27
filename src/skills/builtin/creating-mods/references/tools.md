@@ -17,8 +17,10 @@ For tools that are part of a larger mod with commands, UI, local state, or event
 - Description: explain when the model should use it.
 - Parameters: JSON Schema object. Use `additionalProperties: false` when possible.
 - `requiresApproval: false` only for read-only, low-risk local introspection.
+- `approvalPolicy: "alwaysAsk"` only for tools that must pause for human approval even in unrestricted/yolo mode.
 - `parallelSafe: true` only for read-only tools with no shared mutation or long-lived exclusive resource.
-- Use `ctx.cwd` / `ctx.workingDirectory` as the workspace.
+- Use `ctx.cwd` as the invocation workspace.
+- Use the dynamic context passed to `run(ctx)` (`ctx.agent`, `ctx.model`, `ctx.toolset`, `ctx.permissionMode`) instead of reading global app context.
 - Use `await ctx.conversation.getHistory()` when a tool needs recent conversation context. It returns the most recent messages in chronological order by default.
 - Respect `ctx.signal` for long-running work when practical.
 - Tools should return information for the model to use; they should not start hidden model runs.
@@ -121,6 +123,23 @@ letta.tools.register({
   async run(ctx) {
     // mutate only the requested file, with clear output
     return "formatted";
+  },
+});
+```
+
+## Always-ask tool
+
+Use `approvalPolicy: "alwaysAsk"` when a tool represents a human gate rather than a risky operation. Deny rules and permission overlays still win, but unrestricted/yolo mode will not auto-approve it.
+
+```ts
+letta.tools.register({
+  name: "exit_plan_mode",
+  description: "Exit plan mode after the user has reviewed and approved the plan.",
+  parameters: { type: "object", properties: {}, additionalProperties: false },
+  approvalPolicy: "alwaysAsk",
+  parallelSafe: false,
+  run(ctx) {
+    return "Plan approved. You can now start coding.";
   },
 });
 ```

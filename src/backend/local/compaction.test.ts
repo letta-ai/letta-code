@@ -24,7 +24,7 @@ function summaryAssistantMessage(): AssistantMessage {
 }
 
 describe("local compaction summarizer options", () => {
-  test("passes settings-derived reasoning to the summarization request", async () => {
+  test("uses Opus for Fable compaction summaries while preserving reasoning", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-compaction-"));
     try {
       await createOrUpdateLocalProvider({
@@ -46,6 +46,7 @@ describe("local compaction summarizer options", () => {
       let capturedOptions:
         | (SimpleStreamOptions & Record<string, unknown>)
         | undefined;
+      let capturedModelId: string | undefined;
       const summary = await summarizeLocalMessagesAll({
         agent: {
           id: "agent-local-1",
@@ -62,13 +63,18 @@ describe("local compaction summarizer options", () => {
         },
         messages,
         localProviderAuthStorageDir: storageDir,
-        complete: async (_model, _context, options) => {
+        complete: async (model, _context, options) => {
+          capturedModelId = model.id;
           capturedOptions = options;
           return summaryAssistantMessage();
         },
       });
 
       expect(summary).toBe("summary of prior work");
+      // Fable 5 can refuse compaction-summarizer prompts and pi-ai currently
+      // masks that refusal as "An unknown error occurred". Use Opus for the
+      // auxiliary summary call while preserving the session reasoning level.
+      expect(capturedModelId).toBe("claude-opus-4-8");
       // Pi parity (createSummarizationOptions): summarization requests carry
       // the session thinking level. Without options.reasoning, pi-ai sends
       // `thinking: {type: "disabled"}`, which adaptive-thinking Anthropic
@@ -92,6 +98,7 @@ describe("local compaction summarizer options", () => {
       let capturedOptions:
         | (SimpleStreamOptions & Record<string, unknown>)
         | undefined;
+      let capturedModelId: string | undefined;
       await summarizeLocalMessagesAll({
         agent: {
           id: "agent-local-1",
@@ -114,12 +121,14 @@ describe("local compaction summarizer options", () => {
           },
         ],
         localProviderAuthStorageDir: storageDir,
-        complete: async (_model, _context, options) => {
+        complete: async (model, _context, options) => {
+          capturedModelId = model.id;
           capturedOptions = options;
           return summaryAssistantMessage();
         },
       });
 
+      expect(capturedModelId).toBe("claude-sonnet-4-6");
       expect(capturedOptions?.reasoning).toBeUndefined();
     } finally {
       await rm(storageDir, { recursive: true, force: true });

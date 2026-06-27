@@ -90,6 +90,13 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Voice memo/audio uploads must be Ogg/Opus (.ogg, .oga, or .opus), not MP3/M4A/WAV. Replies are sent as the linked WhatsApp number.',
     );
   }
+  if (msg.channel === "signal") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On Signal, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Replies are sent as the linked Signal account through signal-cli-rest-api.',
+    );
+  }
   if (msg.attachments?.length) {
     lines.splice(
       lines.length - 2,
@@ -137,6 +144,15 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
   }
 
   return `<attachment ${attrs.join(" ")} />`;
+}
+
+function canEmitInlineImageContentPart(mimeType: string): boolean {
+  const normalized = mimeType.split(";")[0]?.trim().toLowerCase();
+  return (
+    !!normalized &&
+    normalized.startsWith("image/") &&
+    normalized !== "image/svg+xml"
+  );
 }
 
 function buildReactionXml(msg: InboundChannelMessage): string | null {
@@ -310,7 +326,7 @@ export function formatChannelNotification(
         typeof attachment.imageDataBase64 !== "string" ||
         attachment.imageDataBase64.length === 0 ||
         typeof attachment.mimeType !== "string" ||
-        !attachment.mimeType.startsWith("image/")
+        !canEmitInlineImageContentPart(attachment.mimeType)
       ) {
         return [];
       }

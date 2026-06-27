@@ -11,7 +11,7 @@ import {
   normalizePermissionRule,
   permissionRulesEquivalent,
 } from "./rule-normalization";
-import type { PermissionRules } from "./types";
+import type { PermissionRules, PermissionRuleType } from "./types";
 
 type SettingsPermissions = Omit<PermissionRules, "mode"> & {
   mode?: string;
@@ -134,6 +134,7 @@ function clonePermissions(permissions: PermissionRules): PermissionRules {
     allow: [...(permissions.allow || [])],
     deny: [...(permissions.deny || [])],
     ask: [...(permissions.ask || [])],
+    alwaysAsk: [...(permissions.alwaysAsk || [])],
     additionalDirectories: [...(permissions.additionalDirectories || [])],
   };
   if (permissions.mode) {
@@ -158,6 +159,16 @@ function invalidatePermissionSourcesInDirectory(directoryPath: string): void {
   }
 }
 
+function shouldStartPermissionWatchers(): boolean {
+  // Unit tests still validate signatures on every load. Avoid long-lived
+  // fs.watch handles there, because Bun/macOS runners can hang the worker even
+  // with non-persistent watchers.
+  return (
+    process.env.NODE_ENV !== "test" &&
+    process.env.LETTA_DISABLE_PERMISSION_WATCHERS !== "1"
+  );
+}
+
 function watchPath(path: string, onChange: () => void): void {
   if (watchers.has(path) || !exists(path)) {
     return;
@@ -165,6 +176,7 @@ function watchPath(path: string, onChange: () => void): void {
 
   try {
     const watcher = watch(path, { persistent: false }, onChange);
+    watcher.unref?.();
     watcher.on("error", () => {
       watcher.close();
       watchers.delete(path);
@@ -178,6 +190,10 @@ function watchPath(path: string, onChange: () => void): void {
 }
 
 function ensurePermissionWatchers(sources: string[]): void {
+  if (!shouldStartPermissionWatchers()) {
+    return;
+  }
+
   for (const source of sources) {
     watchPath(source, () => invalidatePermissionSource(source));
 
@@ -225,6 +241,7 @@ export async function loadPermissions(
     allow: [],
     deny: [],
     ask: [],
+    alwaysAsk: [],
     additionalDirectories: [],
   };
 
@@ -282,6 +299,9 @@ function mergePermissions(
   if (source.ask) {
     target.ask = mergeRuleList(target.ask, source.ask);
   }
+  if (source.alwaysAsk) {
+    target.alwaysAsk = mergeRuleList(target.alwaysAsk, source.alwaysAsk);
+  }
   if (source.additionalDirectories) {
     target.additionalDirectories = [
       ...(target.additionalDirectories || []),
@@ -308,7 +328,7 @@ function mergeRuleList(
  */
 export async function savePermissionRule(
   rule: string,
-  ruleType: "allow" | "deny" | "ask",
+  ruleType: PermissionRuleType,
   scope: "project" | "local" | "user",
   workingDirectory: string = process.cwd(),
 ): Promise<void> {

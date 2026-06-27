@@ -139,7 +139,9 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       decision = "ask";
     }
 
-    if (decision === "ask" && opts.treatAskAsDeny) {
+    const needsHumanApproval = decision === "ask" || decision === "alwaysAsk";
+
+    if (needsHumanApproval && opts.treatAskAsDeny) {
       autoDenied.push({
         approval,
         permission,
@@ -157,7 +159,7 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       parsedArgs,
     };
 
-    if (decision === "ask") {
+    if (needsHumanApproval) {
       needsUserInput.push(entry);
     } else if (decision === "deny") {
       autoDenied.push(entry);
