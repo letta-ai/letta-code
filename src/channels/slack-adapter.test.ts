@@ -1491,7 +1491,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
   });
   expect(appendCall?.chunks?.[0]).toMatchObject({
     type: "plan_update",
-    title: "Completed",
+    title: "Working",
   });
   expect(appendCall?.chunks?.[1]).toMatchObject({
     type: "task_update",
@@ -1503,6 +1503,24 @@ test("slack adapter streams native task progress and clears thread status", asyn
   expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
     channel: "C123",
     ts: "1712800000.000300",
+    chunks: [
+      {
+        type: "task_update",
+        id: "task_call-1",
+        title: "shell_exec",
+        status: "complete",
+      },
+      {
+        type: "task_update",
+        id: "task_reasoning_1",
+        title: "Finished",
+        status: "complete",
+      },
+      {
+        type: "plan_update",
+        title: "Completed",
+      },
+    ],
   });
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
     channel_id: "C123",
@@ -1614,13 +1632,8 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
   expect(runningTwoAppend?.chunks).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        id: "task_call-web",
-        title: "Searching articles",
-        details: "letta blog",
-      }),
-      expect.objectContaining({
         id: "task_call-bash",
-        title: "Bash",
+        title: "Running",
       }),
     ]),
   );
@@ -1636,7 +1649,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       }),
       expect.objectContaining({
         id: "task_call-bash",
-        title: "Bash",
+        title: "Running",
         status: "in_progress",
       }),
       expect.objectContaining({
@@ -1646,7 +1659,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       }),
       expect.objectContaining({
         id: "task_call-bash",
-        title: "Bash",
+        title: "Ran",
         status: "complete",
       }),
       expect.objectContaining({
@@ -1662,7 +1675,6 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       expect.objectContaining({
         id: "task_call-web",
         title: "Searched articles",
-        details: "letta blog",
         status: "complete",
       }),
       expect.objectContaining({
@@ -1865,16 +1877,6 @@ test("slack adapter does not create fallback cards after stream append failure",
     ts: "1712800000.000300",
     chunks: [
       {
-        type: "plan_update",
-        title: "Read",
-      },
-      {
-        type: "task_update",
-        id: "task_call-1",
-        title: "Read",
-        status: "in_progress",
-      },
-      {
         type: "task_update",
         id: "task_call-1",
         title: "Read",
@@ -1948,7 +1950,7 @@ test("slack adapter keeps one active progress card slot until finalized", async 
     chunks: expect.arrayContaining([
       expect.objectContaining({
         id: "task_call-2",
-        title: "Search the web",
+        title: "Searching the web",
         details: "letta slack progress cards",
         status: "in_progress",
       }),
@@ -2141,7 +2143,6 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
       expect.objectContaining({
         id: "task_call-web",
         title: "Searched articles",
-        details: "letta blog",
         status: "complete",
       }),
       expect.objectContaining({

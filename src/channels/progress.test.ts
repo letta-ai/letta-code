@@ -64,7 +64,7 @@ test("channel progress uses web_search query as task details", () => {
       toolCallId: "call-1",
       toolName: "web_search",
       toolDetails: "letta blog",
-      toolTitle: "Search the web",
+      toolTitle: "Searching the web",
     },
   ]);
 });
@@ -125,7 +125,7 @@ test("channel progress uses Bash descriptions as task details", () => {
       toolCallId: "call-1",
       toolName: "Bash",
       toolDetails: "Check system details",
-      toolTitle: "Bash",
+      toolTitle: "Running",
     },
   ]);
 });
@@ -156,7 +156,7 @@ test("channel progress renders approval request deltas as tool rows", () => {
       runId: "run-1",
       toolCallId: "approval-1",
       toolName: "Bash",
-      toolTitle: "Bash",
+      toolTitle: "Running",
       toolDetails: "List channel source files",
     },
   ]);
@@ -188,8 +188,38 @@ test("channel progress extracts tool details when arguments is an object", () =>
       runId: "run-1",
       toolCallId: "approval-1",
       toolName: "Bash",
-      toolTitle: "Bash",
+      toolTitle: "Running",
       toolDetails: "List channel source files",
+    },
+  ]);
+});
+
+test("channel progress falls back to shell command preview when description is missing", () => {
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        tool_call_id: "call-1",
+        name: "exec_command",
+        arguments: JSON.stringify({
+          cmd: "git diff --stat; git status --short",
+          shell: "powershell",
+        }),
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: exec_command",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "exec_command",
+      toolTitle: "Running",
+      toolDetails: "git diff --stat; git status --short",
     },
   ]);
 });
