@@ -10,6 +10,7 @@ import {
   getAgentSkillsDir,
   isModelInvocableSkill,
   isSkillAvailableForAgent,
+  PROJECT_SKILLS_DIR,
   SKILLS_DIR,
   type Skill,
   type SkillDiscoveryError,
@@ -340,7 +341,7 @@ function resolveSkillDiscoveryContext(
 }
 
 function getPrimaryProjectSkillsDirectory(): string {
-  return join(process.cwd(), ".agents", "skills");
+  return join(process.cwd(), PROJECT_SKILLS_DIR);
 }
 
 export interface DiscoverClientSideSkillsOptions {
