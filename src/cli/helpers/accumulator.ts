@@ -1590,3 +1590,139 @@ export function linesToTranscript(lines: Line[]): string {
   }
   return parts.join("\n");
 }
+
+export interface LinesToMarkdownOptions {
+  /** Include assistant reasoning blocks (default: false). */
+  includeReasoning?: boolean;
+  /** Include tool calls and their results (default: true). */
+  includeToolCalls?: boolean;
+}
+
+/**
+ * Pick a backtick fence long enough to safely wrap `content` so that any
+ * embedded backtick runs don't prematurely close the code block.
+ */
+function markdownFence(content: string): string {
+  let longest = 0;
+  const runs = content.match(/`+/g);
+  if (runs) {
+    for (const run of runs) longest = Math.max(longest, run.length);
+  }
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+/** Wrap `content` in a fenced code block with an optional language hint. */
+function markdownCodeBlock(content: string, lang = ""): string {
+  const fence = markdownFence(content);
+  return `${fence}${lang}\n${content.replace(/\n+$/, "")}\n${fence}`;
+}
+
+/** Pretty-print tool arguments as JSON when possible, else return raw text. */
+function formatToolArgs(argsText: string | undefined): {
+  text: string;
+  lang: string;
+} {
+  const raw = (argsText ?? "").trim();
+  if (!raw) return { text: "{}", lang: "json" };
+  try {
+    return { text: JSON.stringify(JSON.parse(raw), null, 2), lang: "json" };
+  } catch {
+    return { text: raw, lang: "" };
+  }
+}
+
+/**
+ * Serialize display lines into a clean, human-readable Markdown transcript.
+ *
+ * Unlike {@link linesToTranscript} (XML-tagged output tuned for the reflection
+ * subagent), this produces GitHub-flavored Markdown with `##` role headers and
+ * fenced code blocks for tool calls — suitable for sharing or pasting into
+ * docs, issues, or chats (used by the `/copy` command).
+ */
+export function linesToMarkdown(
+  lines: Line[],
+  options: LinesToMarkdownOptions = {},
+): string {
+  const includeReasoning = options.includeReasoning ?? false;
+  const includeToolCalls = options.includeToolCalls ?? true;
+  const blocks: string[] = [];
+  // Track the last role block so streaming continuation lines (split at
+  // paragraph boundaries) merge back into a single section instead of
+  // emitting a fresh header per fragment.
+  let lastMergeKind: "assistant" | "reasoning" | null = null;
+
+  for (const line of lines) {
+    switch (line.kind) {
+      case "user": {
+        const text = line.text.trim();
+        if (text) blocks.push(`## User\n\n${text}`);
+        lastMergeKind = null;
+        break;
+      }
+      case "assistant": {
+        const text = line.text.trim();
+        if (!text) break;
+        if (
+          line.isContinuation &&
+          lastMergeKind === "assistant" &&
+          blocks.length > 0
+        ) {
+          blocks[blocks.length - 1] += `\n\n${text}`;
+        } else {
+          blocks.push(`## Assistant\n\n${text}`);
+        }
+        lastMergeKind = "assistant";
+        break;
+      }
+      case "reasoning": {
+        if (!includeReasoning) {
+          lastMergeKind = null;
+          break;
+        }
+        const text = line.text.trim();
+        if (!text) break;
+        if (
+          line.isContinuation &&
+          lastMergeKind === "reasoning" &&
+          blocks.length > 0
+        ) {
+          blocks[blocks.length - 1] += `\n\n${text}`;
+        } else {
+          blocks.push(`### Reasoning\n\n${text}`);
+        }
+        lastMergeKind = "reasoning";
+        break;
+      }
+      case "tool_call": {
+        lastMergeKind = null;
+        if (!includeToolCalls || !line.name) break;
+        const parts = [`### Tool: \`${line.name}\``];
+        const { text: argsBody, lang } = formatToolArgs(line.argsText);
+        parts.push(markdownCodeBlock(argsBody, lang));
+        if (line.resultText) {
+          const label = line.resultOk === false ? "Result (error)" : "Result";
+          parts.push(
+            `<details>\n<summary>${label}</summary>\n\n${markdownCodeBlock(
+              line.resultText,
+            )}\n\n</details>`,
+          );
+        }
+        blocks.push(parts.join("\n\n"));
+        break;
+      }
+      case "error": {
+        const text = line.text.trim();
+        if (text) blocks.push(`## Error\n\n${text}`);
+        lastMergeKind = null;
+        break;
+      }
+      default:
+        // Skip status, separator, command, event, trajectory_summary,
+        // bash_command lines — they aren't part of the conversation content.
+        lastMergeKind = null;
+        break;
+    }
+  }
+
+  return blocks.join("\n\n");
+}
