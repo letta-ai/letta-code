@@ -643,7 +643,7 @@ async function handleClearCommand(
  *
  * Builds the doctor system-reminder message (same as the CLI /doctor)
  * and feeds it through `handleIncomingMessage` so the agent runs a full
- * turn executing the `context_doctor` skill.
+ * turn executing the `context-doctor` skill.
  */
 async function handleDoctorCommand(
   socket: WebSocket,
