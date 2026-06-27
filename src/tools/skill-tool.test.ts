@@ -332,6 +332,40 @@ describe("Skill tool memory filesystem lookup", () => {
     );
   });
 
+  test("loads canonical .agents/skills project skills before legacy .skills", async () => {
+    const skillName = "canonical-project-skill";
+    const projectRoot = join(tempRoot, "project-root");
+    const canonicalSkillDir = join(projectRoot, ".agents", "skills", skillName);
+    const legacySkillDir = join(projectRoot, ".skills", skillName);
+
+    currentSkillsDirectory = join(projectRoot, ".skills");
+    mkdirSync(canonicalSkillDir, { recursive: true });
+    mkdirSync(legacySkillDir, { recursive: true });
+    writeFileSync(
+      join(canonicalSkillDir, "SKILL.md"),
+      "---\nname: canonical-project-skill\ndescription: canonical\n---\n\nLoaded from .agents/skills.",
+      "utf8",
+    );
+    writeFileSync(
+      join(legacySkillDir, "SKILL.md"),
+      "---\nname: canonical-project-skill\ndescription: legacy\n---\n\nLoaded from .skills.",
+      "utf8",
+    );
+
+    process.env.USER_CWD = projectRoot;
+
+    const result = await runScopedSkill({
+      skill: skillName,
+      toolCallId: "tc-canonical-project",
+    });
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded from .agents/skills.");
+    expect(queued[0]?.content).not.toContain("Loaded from .skills.");
+  });
+
   test("renders skill arguments and skill directory substitutions", () => {
     const rendered = renderSkillContent(
       "deploy",
