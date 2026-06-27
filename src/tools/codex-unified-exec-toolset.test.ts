@@ -27,6 +27,7 @@ describe("Codex unified exec toolset", () => {
   test("documents LC-specific omission of upstream sandbox fields", () => {
     const properties = Object.keys(ExecCommandSchema.properties);
 
+    expect(properties).toContain("description");
     expect(properties).not.toContain("sandbox_permissions");
     expect(properties).not.toContain("justification");
     expect(properties).not.toContain("prefix_rule");
@@ -38,6 +39,8 @@ describe("Codex unified exec toolset", () => {
       "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
       "",
       "For ordinary one-shot commands, omit `yield_time_ms` and let the default wait for completion; set `yield_time_ms` only when intentionally returning early from a long-running or interactive command.",
+      "",
+      "Use the optional `description` field for a clear, concise user-facing description of what the command does. Describe the purpose, not the shell syntax. This may be shown directly in chat as part of a status row like `Running command: <description>` or `Ran command: <description>`. For simple commands, keep it brief (5-10 words). For commands that are harder to parse at a glance, add enough context to clarify what it does.",
       "",
       extractCommitGuidance(ShellDescription),
     ].join("\n");
