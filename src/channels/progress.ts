@@ -1,3 +1,6 @@
+import { appendFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   getDisplayToolName,
   isShellTool,
@@ -16,12 +19,25 @@ export function clearToolCallArgumentsCache(): void {
 
 const MAX_PROGRESS_TEXT_LENGTH = 140;
 const MAX_PROGRESS_DETAILS_LENGTH = 180;
+const MAX_SHELL_PROGRESS_DETAILS_LENGTH = 64;
 const ESCAPE_CODE = String.fromCharCode(27);
 const ANSI_ESCAPE_RE = new RegExp(`${ESCAPE_CODE}\\[[0-9;?]*[ -/]*[@-~]`, "g");
 const SECRET_ASSIGNMENT_RE =
   /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|\S+)/gi;
 const SECRET_JSON_RE =
   /(["']?(?:token|secret|password|api[_-]?key|access[_-]?key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|\S+)/gi;
+const CHANNEL_PROGRESS_DEBUG_LOG = join(
+  homedir(),
+  ".letta",
+  "logs",
+  "slack-debug.log",
+);
+
+function debugChannelProgress(message: string): void {
+  try {
+    appendFileSync(CHANNEL_PROGRESS_DEBUG_LOG, `${message}\n`);
+  } catch {}
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
@@ -91,11 +107,96 @@ export function sanitizeChannelProgressIdentifier(
   return cleaned || fallback;
 }
 
+function summarizeShellCommand(command: string): string {
+  const normalized = sanitizeChannelProgressText(command, 10_000);
+  if (!normalized) {
+    return "";
+  }
+
+  const firstSemicolonSegments = normalized
+    .split(/\s*;\s*/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const firstTwoSegments = firstSemicolonSegments.slice(0, 2).join("; ");
+  const previewSource =
+    firstTwoSegments.length > 0 && firstTwoSegments.length <= 70
+      ? firstTwoSegments
+      : (firstSemicolonSegments[0] ?? normalized);
+  const withoutPipeline = previewSource.split(/\s*\|\s*/)[0] ?? previewSource;
+  const withoutHugePattern = withoutPipeline.replace(
+    /\s+-Pattern\s+.*$/i,
+    " -Pattern …",
+  );
+  const withoutLineVariable = withoutHugePattern.replace(
+    /^\$lines\s*=\s*/i,
+    "",
+  );
+
+  if (withoutLineVariable.trim()) {
+    return sanitizeChannelProgressText(
+      withoutLineVariable,
+      MAX_SHELL_PROGRESS_DETAILS_LENGTH,
+    );
+  }
+  return sanitizeChannelProgressText(
+    normalized,
+    MAX_SHELL_PROGRESS_DETAILS_LENGTH,
+  );
+}
+
 type ToolCallSummary = {
   id?: string;
   name?: string;
   argumentsText?: string;
+  descriptionText?: string;
 };
+
+function formatShellProgressDetailsFromArguments(
+  summary: ToolCallSummary,
+  parsedArguments: Record<string, unknown>,
+): string | undefined {
+  const description = firstNonEmptyString(
+    summary.descriptionText,
+    parsedArguments.description,
+  );
+  if (description) {
+    return (
+      sanitizeChannelProgressText(description, MAX_PROGRESS_DETAILS_LENGTH) ||
+      undefined
+    );
+  }
+
+  const commandPreview = firstNonEmptyString(
+    parsedArguments.command,
+    parsedArguments.cmd,
+  );
+  return summarizeShellCommand(commandPreview ?? "") || undefined;
+}
+
+function formatFragmentedShellProgressDetails(
+  summary: ToolCallSummary,
+): string | undefined {
+  const descriptionMatch = summary.argumentsText?.match(
+    /"description"\s*:\s*"([^"]+)"/,
+  );
+  if (descriptionMatch?.[1]) {
+    return (
+      sanitizeChannelProgressText(
+        descriptionMatch[1],
+        MAX_PROGRESS_DETAILS_LENGTH,
+      ) || undefined
+    );
+  }
+
+  const commandMatch = summary.argumentsText?.match(
+    /"(?:command|cmd)"\s*:\s*"([^"]+)"/,
+  );
+  if (commandMatch?.[1]) {
+    return summarizeShellCommand(commandMatch[1]) || undefined;
+  }
+
+  return undefined;
+}
 
 type ToolReturnSummary = {
   summary: ToolCallSummary;
@@ -115,16 +216,27 @@ function parseToolArguments(
   }
 }
 
+function stringifyRecordArgument(value: unknown): string | undefined {
+  const record = asRecord(value);
+  return record ? JSON.stringify(record) : undefined;
+}
+
 function formatToolProgressTitle(
   summary: ToolCallSummary,
-  _state: ChannelTurnProgressUpdate["state"],
+  state: ChannelTurnProgressUpdate["state"],
 ): string | undefined {
   if (isWebSearchToolName(summary.name)) {
-    return "Search the web";
+    if (state === "completed") {
+      return "Searched the web";
+    }
+    if (state === "error") {
+      return "Attempted to search the web";
+    }
+    return "Searching the web";
   }
 
   if (summary.name && isShellTool(summary.name)) {
-    return "Bash";
+    return state === "completed" ? "Ran" : "Running";
   }
 
   if (summary.name) {
@@ -149,7 +261,17 @@ function isFetchWebpageToolName(name: string | undefined): boolean {
 function formatToolProgressDetails(
   summary: ToolCallSummary,
 ): string | undefined {
-  if (!summary.argumentsText || !summary.name) {
+  if (!summary.name) {
+    return undefined;
+  }
+  if (!summary.argumentsText) {
+    if (isShellTool(summary.name)) {
+      const sanitized = sanitizeChannelProgressText(
+        summary.descriptionText,
+        MAX_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
     return undefined;
   }
 
@@ -175,9 +297,66 @@ function formatToolProgressDetails(
     }
 
     if (isShellTool(summary.name)) {
-      const description = firstNonEmptyString(parsedArguments.description);
+      const description = firstNonEmptyString(
+        summary.descriptionText,
+        parsedArguments.description,
+      );
+      debugChannelProgress(
+        `[DETAILS-BASH-PARSED] id=${summary.id ?? "none"} keys=${Object.keys(parsedArguments).join(",")} description=${description ?? "none"}`,
+      );
+      return formatShellProgressDetailsFromArguments(summary, parsedArguments);
+    }
+
+    if (summary.name === "Read" || summary.name === "read") {
+      const filePath = firstNonEmptyString(
+        parsedArguments.file_path,
+        parsedArguments.filePath,
+        parsedArguments.path,
+      );
       const sanitized = sanitizeChannelProgressText(
-        description,
+        filePath,
+        MAX_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
+
+    if (summary.name === "Glob" || summary.name === "glob") {
+      const pattern = firstNonEmptyString(parsedArguments.pattern);
+      const sanitized = sanitizeChannelProgressText(
+        pattern,
+        MAX_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
+
+    if (summary.name === "Grep" || summary.name === "grep") {
+      const pattern = firstNonEmptyString(parsedArguments.pattern);
+      const sanitized = sanitizeChannelProgressText(
+        pattern,
+        MAX_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
+
+    if (summary.name === "Edit" || summary.name === "edit") {
+      const filePath = firstNonEmptyString(
+        parsedArguments.file_path,
+        parsedArguments.filePath,
+      );
+      const sanitized = sanitizeChannelProgressText(
+        filePath,
+        MAX_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
+
+    if (summary.name === "Write" || summary.name === "write") {
+      const filePath = firstNonEmptyString(
+        parsedArguments.file_path,
+        parsedArguments.filePath,
+      );
+      const sanitized = sanitizeChannelProgressText(
+        filePath,
         MAX_PROGRESS_DETAILS_LENGTH,
       );
       return sanitized || undefined;
@@ -188,12 +367,28 @@ function formatToolProgressDetails(
 
   // Fallback: try to extract description from fragmented/incomplete JSON
   if (isShellTool(summary.name)) {
-    const descriptionMatch = summary.argumentsText.match(
-      /"description"\s*:\s*"([^"]+)"/,
+    const details = formatFragmentedShellProgressDetails(summary);
+    debugChannelProgress(
+      `[DETAILS-BASH-FALLBACK] id=${summary.id ?? "none"} matched=${details ?? "none"} text=${sanitizeChannelProgressText(summary.argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
     );
-    if (descriptionMatch?.[1]) {
+    return details;
+  }
+
+  // Fallback: try to extract file_path from fragmented/incomplete JSON
+  if (
+    summary.name === "Read" ||
+    summary.name === "read" ||
+    summary.name === "Edit" ||
+    summary.name === "edit" ||
+    summary.name === "Write" ||
+    summary.name === "write"
+  ) {
+    const filePathMatch = summary.argumentsText.match(
+      /"file_path"\s*:\s*"([^"]+)"/,
+    );
+    if (filePathMatch?.[1]) {
       const sanitized = sanitizeChannelProgressText(
-        descriptionMatch[1],
+        filePathMatch[1],
         MAX_PROGRESS_DETAILS_LENGTH,
       );
       return sanitized || undefined;
@@ -225,6 +420,17 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     tool?.name,
     nestedToolFunction?.name,
   );
+  const descriptionText = firstNonEmptyString(
+    record.description,
+    record.display_description,
+    record.displayDescription,
+    record.summary,
+    record.reason,
+    record.purpose,
+    nestedFunction?.description,
+    tool?.description,
+    nestedToolFunction?.description,
+  );
   const rawArguments =
     firstNonEmptyString(
       record.arguments,
@@ -236,13 +442,22 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
       nestedToolFunction?.arguments,
       nestedToolFunction?.args,
     ) ??
-    (typeof record.arguments === "object" && record.arguments !== null
-      ? JSON.stringify(record.arguments)
-      : undefined) ??
-    (typeof nestedFunction?.arguments === "object" &&
-    nestedFunction?.arguments !== null
-      ? JSON.stringify(nestedFunction.arguments)
-      : undefined);
+    stringifyRecordArgument(record.arguments) ??
+    stringifyRecordArgument(record.args) ??
+    stringifyRecordArgument(record.input) ??
+    stringifyRecordArgument(nestedFunction?.arguments) ??
+    stringifyRecordArgument(nestedFunction?.args) ??
+    stringifyRecordArgument(tool?.arguments) ??
+    stringifyRecordArgument(tool?.args) ??
+    stringifyRecordArgument(tool?.input) ??
+    stringifyRecordArgument(nestedToolFunction?.arguments) ??
+    stringifyRecordArgument(nestedToolFunction?.args);
+
+  if (name && isShellTool(name)) {
+    debugChannelProgress(
+      `[EXTRACT-BASH] id=${id ?? "none"} keys=${Object.keys(record).join(",")} descriptionText=${descriptionText ?? "none"} rawType=${typeof rawArguments} raw=${sanitizeChannelProgressText(rawArguments, MAX_PROGRESS_DETAILS_LENGTH)}`,
+    );
+  }
 
   // Accumulate fragmented arguments across stream deltas for the same tool call.
   // If the current fragment already parses as valid JSON, use it directly
@@ -251,28 +466,43 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
   let argumentsText: string | undefined;
   if (id && rawArguments !== undefined) {
     const existing = toolCallArgumentsById.get(id);
-    if (existing) {
-      // Already have accumulated args — check if they're complete
-      try {
-        JSON.parse(existing);
+    const rawArgumentsAreComplete = parseToolArguments(rawArguments) !== null;
+    if (rawArgumentsAreComplete) {
+      // Complete current arguments should replace earlier partial/object args.
+      // Some streams first expose only command content, then later include the
+      // human-friendly description; freezing the first parseable object hides it.
+      toolCallArgumentsById.set(id, rawArguments);
+      argumentsText = rawArguments;
+      if (name && isShellTool(name)) {
+        debugChannelProgress(
+          `[ARGS-BASH-REPLACE-COMPLETE] id=${id} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
+        );
+      }
+    } else if (existing) {
+      if (parseToolArguments(existing)) {
         argumentsText = existing;
-      } catch {
-        // Previous accumulation was incomplete, keep accumulating
+        if (name && isShellTool(name)) {
+          debugChannelProgress(
+            `[ARGS-BASH-KEEP-EXISTING] id=${id} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
+          );
+        }
+      } else {
         const accumulated = existing + rawArguments;
         toolCallArgumentsById.set(id, accumulated);
         argumentsText = accumulated;
+        if (name && isShellTool(name)) {
+          debugChannelProgress(
+            `[ARGS-BASH-ACCUMULATE] id=${id} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
+          );
+        }
       }
     } else {
-      // First fragment — check if it's already complete JSON
-      try {
-        JSON.parse(rawArguments);
-        // Complete JSON in one chunk — store and use directly
-        toolCallArgumentsById.set(id, rawArguments);
-        argumentsText = rawArguments;
-      } catch {
-        // Incomplete fragment — start accumulating
-        toolCallArgumentsById.set(id, rawArguments);
-        argumentsText = rawArguments;
+      toolCallArgumentsById.set(id, rawArguments);
+      argumentsText = rawArguments;
+      if (name && isShellTool(name)) {
+        debugChannelProgress(
+          `[ARGS-BASH-START] id=${id} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
+        );
       }
     }
   } else if (!id && rawArguments !== undefined) {
@@ -286,6 +516,14 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     ...(id ? { id: sanitizeChannelProgressIdentifier(id, "tool-call") } : {}),
     ...(name ? { name: sanitizeChannelProgressIdentifier(name, "tool") } : {}),
     ...(argumentsText ? { argumentsText } : {}),
+    ...(descriptionText
+      ? {
+          descriptionText: sanitizeChannelProgressText(
+            descriptionText,
+            MAX_PROGRESS_DETAILS_LENGTH,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -512,6 +750,10 @@ export function buildChannelTurnProgressUpdatesFromDelta(
         const toolWithAccumulatedArgs = accumulatedArgs
           ? { ...summary, argumentsText: accumulatedArgs }
           : summary;
+        const toolTitle = formatToolProgressTitle(
+          toolWithAccumulatedArgs,
+          status,
+        );
         const toolDetails = formatToolProgressDetails(toolWithAccumulatedArgs);
         updates.push(
           withRunId(
@@ -521,6 +763,7 @@ export function buildChannelTurnProgressUpdatesFromDelta(
               message: status === "error" ? "Tool failed" : "Tool finished",
               ...(summary.id ? { toolCallId: summary.id } : {}),
               ...(summary.name ? { toolName: summary.name } : {}),
+              ...(toolTitle ? { toolTitle } : {}),
               ...(toolDetails ? { toolDetails } : {}),
             },
             runId,
