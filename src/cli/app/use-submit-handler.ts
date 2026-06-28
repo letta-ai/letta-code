@@ -41,6 +41,10 @@ import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { CustomCommand } from "@/cli/commands/custom";
+import {
+  handleModsCommand,
+  parseModsGenerateEnvCommand,
+} from "@/cli/commands/mods";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
@@ -925,6 +929,71 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
           }
 
+          return { submitted: true };
+        }
+
+        const modsGenerateEnvCommand = parseModsGenerateEnvCommand(trimmed);
+        if (modsGenerateEnvCommand) {
+          const args = modsGenerateEnvCommand.args;
+          const cmd = commandRunner.start(
+            trimmed,
+            args
+              ? `Starting mod env generation for: ${args}`
+              : "Starting mod env generation...",
+          );
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /mods generate-env.",
+            );
+            return { submitted: false };
+          }
+
+          setCommandRunning(true);
+          try {
+            const { loadRenderedSkillContent, wrapSkillContent } = await import(
+              "@/tools/impl/skill"
+            );
+            const skillContent = await loadRenderedSkillContent(
+              "generating-mod-envs",
+              {
+                agentId,
+                args,
+                allowDisabledModelInvocation: true,
+              },
+            );
+            const request = args
+              ? `The user ran \`/mods generate-env ${args}\`. Use the loaded skill to help them generate, review, validate, or improve a mod learning env JSON.`
+              : "The user ran `/mods generate-env` without arguments. Use the loaded skill's bare behavior for mod learning env generation.";
+
+            cmd.finish("Running mod env generation...", true);
+            await processConversationWithQueuedApprovals([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(
+                  `${wrapSkillContent("generating-mod-envs", skillContent)}\n\n${SYSTEM_REMINDER_OPEN}\n${request}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
+                otid: randomUUID(),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to run /mods generate-env: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
+        const modsCommand = handleModsCommand(trimmed, {
+          commandRunner,
+          currentModelId,
+          cwd: getCurrentWorkingDirectory(),
+        });
+        if (modsCommand.handled) {
           return { submitted: true };
         }
 

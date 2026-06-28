@@ -1,0 +1,57 @@
+{
+  "name": "<Display name> mod learner demo",
+  "slug": "example-mod-env",
+  "targetModName": "example-mod-env.ts",
+  "objective": "Learn a trusted local mod that <specific behavior>.",
+  "requirements": [
+    "<Concrete behavior requirement>",
+    "<Concrete eval-facing requirement>"
+  ],
+  "candidateDiversityHints": [
+    "<Alternative implementation strategy for candidate 1>",
+    "<Alternative implementation strategy for candidate 2>"
+  ],
+  "modApiHints": [
+    "Use export function activate(letta) or a default export.",
+    "Use only the trusted local mod API exposed through the letta argument; do not import from repo source files."
+  ],
+  "examples": [
+    {
+      "input": "<Short demo input>",
+      "expected": "<Expected behavior>"
+    }
+  ],
+  "evaluation": {
+    "outputFormat": "stream-json",
+    "timeoutMs": 900000,
+    "maxTurns": 8,
+    "forbiddenTraceMarkers": [
+      "[mods] failed to load",
+      "[extensions] failed to load",
+      "loaded 0 mod(s)",
+      "loaded 0 extension(s)"
+    ],
+    "scenarios": [
+      {
+        "name": "happy-path",
+        "memoryFiles": {
+          "reference/<fixture>.md": "# Fixture\n\nThe sentinel is <SENTINEL-OK>.\n"
+        },
+        "prompt": "<Prompt that triggers the mod and requires the sentinel in the final answer>. The memory directory is available in MEMORY_DIR.",
+        "requiredResultMarkers": ["<SENTINEL-OK>"],
+        "requiredTraceMarkers": ["<stable trace marker>"],
+        "forbiddenResultMarkers": ["<known bad final answer marker>"]
+      },
+      {
+        "name": "negative-control",
+        "prompt": "<Prompt where the mod behavior should not trigger>.",
+        "requiredResultMarkers": ["<ordinary answer marker>"],
+        "forbiddenResultMarkers": ["<mod-only marker>"],
+        "forbiddenTraceMarkers": [
+          "<tool or event marker that should not appear>"
+        ]
+      }
+    ],
+    "prompt": "Run all configured evaluation.scenarios."
+  }
+}

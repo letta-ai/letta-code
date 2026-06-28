@@ -306,6 +306,15 @@ export const commands: Record<string, Command> = {
       return "Reloading...";
     },
   },
+  "/mods": {
+    desc: "Run mod learning targets",
+    order: 27.3,
+    args: "learn [memory-citations] [options] | generate-env [request]",
+    handler: () => {
+      // Handled specially in use-submit-handler.ts to stream mod learning progress
+      return "Starting mod learning...";
+    },
+  },
   "/ade": {
     desc: "Open agent in ADE (browser)",
     order: 28,
