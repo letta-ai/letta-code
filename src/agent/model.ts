@@ -53,6 +53,29 @@ const LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX = "openai-codex/";
 const CHATGPT_OAUTH_LLM_CONFIG_PROVIDER = "chatgpt_oauth";
 export const CHATGPT_FAST_SERVICE_TIER = "priority";
 
+const KNOWN_LLM_CONFIG_ENDPOINT_TYPES = new Set([
+  "anthropic",
+  "bedrock",
+  "chatgpt_oauth",
+  "google_ai",
+  "google_vertex",
+  "minimax",
+  "moonshot",
+  "moonshot_coding",
+  "openai",
+  "openrouter",
+  "zai",
+  "zai_coding",
+]);
+
+const LLM_CONFIG_ENDPOINT_TYPE_MODEL_HANDLE_PROVIDERS = new Map([
+  [CHATGPT_OAUTH_LLM_CONFIG_PROVIDER, OPENAI_CODEX_PROVIDER_NAME],
+  ["lmstudio_openai", "lmstudio"],
+  ["llama_cpp", "llama.cpp"],
+  ["llama.cpp", "llama.cpp"],
+  ["ollama_cloud", "ollama-cloud"],
+]);
+
 export function isLocalModelHandle(modelHandle: string): boolean {
   return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
     modelHandle.startsWith(prefix),
@@ -98,6 +121,161 @@ function modelPortion(modelHandle: string): string | null {
   const slashIndex = modelHandle.indexOf("/");
   if (slashIndex === -1) return null;
   return modelHandle.slice(slashIndex + 1);
+}
+
+function providerPrefix(modelHandle: string): string | null {
+  const slashIndex = modelHandle.indexOf("/");
+  if (slashIndex <= 0) return null;
+  return modelHandle.slice(0, slashIndex);
+}
+
+function modelHandleProviderPrefixes(): Set<string> {
+  return new Set(
+    models
+      .map((model) => providerPrefix(model.handle))
+      .filter((provider): provider is string => provider !== null),
+  );
+}
+
+function localModelProviderPrefixes(): Set<string> {
+  return new Set(
+    LOCAL_MODEL_HANDLE_PREFIXES.map((prefix) => prefix.slice(0, -1)),
+  );
+}
+
+function isKnownModelProviderPrefix(provider: string): boolean {
+  return (
+    KNOWN_LLM_CONFIG_ENDPOINT_TYPES.has(provider) ||
+    modelHandleProviderPrefixes().has(provider) ||
+    localModelProviderPrefixes().has(provider)
+  );
+}
+
+function isKnownProviderPrefixedHandle(modelHandle: string): boolean {
+  const provider = providerPrefix(modelHandle);
+  return provider !== null && isKnownModelProviderPrefix(provider);
+}
+
+function modelHandleProviderForEndpointType(endpointType: string): string {
+  return (
+    LLM_CONFIG_ENDPOINT_TYPE_MODEL_HANDLE_PROVIDERS.get(endpointType) ??
+    endpointType
+  );
+}
+
+function endpointTypeMatchesModelProvider(
+  endpointType: string,
+  modelProvider: string,
+): boolean {
+  return (
+    endpointType === modelProvider ||
+    modelHandleProviderForEndpointType(endpointType) === modelProvider ||
+    (endpointType === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER &&
+      modelProvider === "openai-codex") ||
+    endpointType === "openai"
+  );
+}
+
+function exactRegistryModelHandle(modelHandle: string): string | null {
+  const registryHandle =
+    normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  return models.some((model) => model.handle === registryHandle)
+    ? registryHandle
+    : null;
+}
+
+function uniqueRegistryHandleForModelName(modelName: string): string | null {
+  const matches = new Set(
+    models
+      .filter((model) => modelPortion(model.handle) === modelName)
+      .map((model) => model.handle),
+  );
+  return matches.size === 1 ? ([...matches][0] ?? null) : null;
+}
+
+export function normalizeKnownModelHandle(modelHandle: string): string {
+  const registryHandle =
+    normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  const exact = exactRegistryModelHandle(registryHandle);
+  if (exact) return exact;
+
+  const model = modelPortion(registryHandle);
+  if (!model) {
+    return uniqueRegistryHandleForModelName(registryHandle) ?? registryHandle;
+  }
+
+  const provider = providerPrefix(registryHandle);
+  if (provider && !isKnownModelProviderPrefix(provider)) {
+    return registryHandle;
+  }
+
+  return uniqueRegistryHandleForModelName(model) ?? registryHandle;
+}
+
+export function resolveModelHandleFromLlmConfig(
+  llmConfig: ModelConfigSnapshot | null | undefined,
+): string | null {
+  if (!llmConfig?.model) return null;
+
+  const model = llmConfig.model;
+  const endpointType = llmConfig.model_endpoint_type;
+  if (endpointType) {
+    const normalizedModel = normalizeModelHandleForRegistry(model) ?? model;
+    const modelProvider = providerPrefix(normalizedModel);
+    if (
+      modelProvider &&
+      isKnownModelProviderPrefix(modelProvider) &&
+      endpointTypeMatchesModelProvider(endpointType, modelProvider)
+    ) {
+      return normalizeKnownModelHandle(normalizedModel);
+    }
+
+    return normalizeKnownModelHandle(
+      `${modelHandleProviderForEndpointType(endpointType)}/${model}`,
+    );
+  }
+
+  const normalizedModel = normalizeKnownModelHandle(model);
+  if (
+    normalizedModel !== model ||
+    exactRegistryModelHandle(normalizedModel) ||
+    isKnownProviderPrefixedHandle(normalizedModel)
+  ) {
+    return normalizedModel;
+  }
+
+  return model;
+}
+
+function endpointTypeForModelHandleProvider(provider: string): string | null {
+  if (provider === OPENAI_CODEX_PROVIDER_NAME || provider === "openai-codex") {
+    return CHATGPT_OAUTH_LLM_CONFIG_PROVIDER;
+  }
+  if (KNOWN_LLM_CONFIG_ENDPOINT_TYPES.has(provider)) return provider;
+  if (localModelProviderPrefixes().has(provider)) return provider;
+  return null;
+}
+
+export function mapModelHandleToLlmConfigPatch(
+  modelHandle: string,
+  providerType?: string | null,
+): Pick<ModelConfigSnapshot, "model" | "model_endpoint_type"> {
+  const normalizedHandle = normalizeKnownModelHandle(modelHandle);
+  const provider = providerPrefix(normalizedHandle);
+  const model = modelPortion(normalizedHandle);
+  if (!provider || !model) {
+    return { model: normalizedHandle };
+  }
+
+  const endpointType =
+    typeof providerType === "string" && providerType.length > 0
+      ? providerType
+      : endpointTypeForModelHandleProvider(provider);
+  if (!endpointType) {
+    return { model: normalizedHandle };
+  }
+
+  return { model, model_endpoint_type: endpointType };
 }
 
 export function isLocalChatGptOAuthModelHandle(modelHandle: string): boolean {

@@ -16,6 +16,10 @@ import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import {
+  mapModelHandleToLlmConfigPatch,
+  resolveModelHandleFromLlmConfig,
+} from "@/agent/model";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -148,6 +152,45 @@ function supportedModelSettingsFromBody(
   return modelSettings;
 }
 
+function providerTypeFromModelSettings(
+  modelSettings: Record<string, unknown> | undefined,
+): string | null {
+  const providerType = modelSettings?.provider_type;
+  return typeof providerType === "string" && providerType.length > 0
+    ? providerType
+    : null;
+}
+
+function normalizeLocalModelHandle(
+  model: string,
+  modelSettings?: Record<string, unknown>,
+  legacyLlmConfig?: Record<string, unknown>,
+): string {
+  const providerType = providerTypeFromModelSettings(modelSettings);
+  const legacyEndpointType = legacyLlmConfig?.model_endpoint_type;
+  return (
+    resolveModelHandleFromLlmConfig({
+      model,
+      model_endpoint_type:
+        providerType ??
+        (typeof legacyEndpointType === "string" ? legacyEndpointType : null),
+    }) ?? model
+  );
+}
+
+function modelHandleFromLegacyLlmConfig(
+  legacyLlmConfig: Record<string, unknown>,
+): string | null {
+  const model = legacyLlmConfig.model;
+  if (typeof model !== "string") return null;
+  const modelEndpointType = legacyLlmConfig.model_endpoint_type;
+  return resolveModelHandleFromLlmConfig({
+    model,
+    model_endpoint_type:
+      typeof modelEndpointType === "string" ? modelEndpointType : null,
+  });
+}
+
 function createDefaultAgentRecord(
   agentId: string,
   defaultAgentName: string,
@@ -172,14 +215,16 @@ function createLocalAgentRecord(
   const bodyRecord = body as Record<string, unknown>;
   const tags = isStringArray(bodyRecord.tags) ? bodyRecord.tags : [];
   const hidden = normalizeAgentHiddenFlag(bodyRecord.hidden, tags);
+  const modelSettings = supportedModelSettingsFromBody(bodyRecord);
+  const requestedModel = optionalString(bodyRecord.model) ?? defaultAgentModel;
   return {
     id: `agent-local-${randomUUID()}`,
     name: optionalString(bodyRecord.name) ?? defaultAgentName,
     description: optionalStringOrNull(bodyRecord.description) ?? null,
     system: optionalString(bodyRecord.system) ?? "",
     tags,
-    model: optionalString(bodyRecord.model) ?? defaultAgentModel,
-    model_settings: supportedModelSettingsFromBody(bodyRecord),
+    model: normalizeLocalModelHandle(requestedModel, modelSettings),
+    model_settings: modelSettings,
     ...(hidden !== undefined ? { hidden } : {}),
   };
 }
@@ -262,7 +307,15 @@ function createLocalConversationRecord(
     summary: optionalStringOrNull(bodyRecord.summary) ?? null,
     in_context_message_ids: [],
     ...(typeof bodyRecord.model === "string" || bodyRecord.model === null
-      ? { model: bodyRecord.model }
+      ? {
+          model:
+            bodyRecord.model === null
+              ? null
+              : normalizeLocalModelHandle(
+                  bodyRecord.model,
+                  modelSettings ?? {},
+                ),
+        }
       : {}),
     ...(modelSettings !== undefined ? { model_settings: modelSettings } : {}),
     ...(typeof bodyRecord.context_window_limit === "number"
@@ -284,6 +337,7 @@ function updateLocalConversationRecord(
     ...current,
     updated_at: updatedAt,
   };
+  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
   if (typeof bodyRecord.archived === "boolean") {
     next.archived = bodyRecord.archived;
     next.archived_at = bodyRecord.archived
@@ -301,9 +355,11 @@ function updateLocalConversationRecord(
     next.last_message_at = bodyRecord.last_message_at;
   }
   if (typeof bodyRecord.model === "string" || bodyRecord.model === null) {
-    next.model = bodyRecord.model;
+    next.model =
+      bodyRecord.model === null
+        ? null
+        : normalizeLocalModelHandle(bodyRecord.model, modelSettings ?? {});
   }
-  const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
   if (modelSettings !== undefined) {
     next.model_settings = modelSettings as StoredConversation["model_settings"];
   }
@@ -318,6 +374,22 @@ function updateLocalConversationRecord(
     next.summary = bodyRecord.summary;
   }
   return next;
+}
+
+function normalizeStoredConversationRecord(
+  conversation: StoredConversation,
+): StoredConversation {
+  if (typeof conversation.model !== "string") return conversation;
+  const modelSettings = isRecord(conversation.model_settings)
+    ? conversation.model_settings
+    : {};
+  const normalizedModel = normalizeLocalModelHandle(
+    conversation.model,
+    modelSettings,
+  );
+  return normalizedModel === conversation.model
+    ? conversation
+    : { ...conversation, model: normalizedModel };
 }
 
 function normalizeAgentRecord(
@@ -346,16 +418,18 @@ function normalizeAgentRecord(
   const compactionSettings = optionalRecordOrNull(value.compaction_settings);
   const tags = isStringArray(value.tags) ? value.tags : [];
   const hidden = normalizeAgentHiddenFlag(value.hidden, tags);
+  const storedModel = optionalString(value.model);
+  const legacyModel = modelHandleFromLegacyLlmConfig(legacyLlmConfig);
+  const model = storedModel
+    ? normalizeLocalModelHandle(storedModel, modelSettings, legacyLlmConfig)
+    : (legacyModel ?? defaultAgentModel);
   return {
     id: value.id,
     name: optionalString(value.name) ?? "Letta Code",
     description: optionalStringOrNull(value.description) ?? null,
     system: optionalString(value.system) ?? "",
     tags,
-    model:
-      optionalString(value.model) ??
-      optionalString(legacyLlmConfig.model) ??
-      defaultAgentModel,
+    model,
     model_settings: modelSettings,
     ...(hidden !== undefined ? { hidden } : {}),
     ...(compactionSettings !== undefined
@@ -389,6 +463,10 @@ export function projectLocalAgentState(
       : typeof record.model_settings.enable_reasoner === "boolean"
         ? record.model_settings.enable_reasoner
         : undefined;
+  const llmConfigModelPatch = mapModelHandleToLlmConfigPatch(
+    record.model,
+    providerTypeFromModelSettings(record.model_settings),
+  );
   return {
     id: record.id,
     name: record.name,
@@ -408,8 +486,7 @@ export function projectLocalAgentState(
     // Temporary compatibility shim for older runtime call sites. Local storage
     // keeps only `model` + `model_settings`.
     llm_config: {
-      model: record.model,
-      model_endpoint_type: "openai",
+      ...llmConfigModelPatch,
       model_endpoint: "https://example.invalid/v1",
       context_window:
         typeof record.model_settings.context_window_limit === "number"
@@ -1358,10 +1435,11 @@ export class LocalStore {
     const systemChanged =
       nextSystem !== undefined && nextSystem !== existingRecord.system;
     const requestedModel = bodyRecord.model;
+    const requestedModelSettings = supportedModelSettingsFromBody(bodyRecord);
     const nextModel =
       typeof requestedModel === "string" &&
       !shouldUseDefaultLocalModel(requestedModel)
-        ? requestedModel
+        ? normalizeLocalModelHandle(requestedModel, requestedModelSettings)
         : typeof requestedModel === "string" && this.defaultAgentModel
           ? this.defaultAgentModel
           : undefined;
@@ -1372,7 +1450,7 @@ export class LocalStore {
       : undefined;
     const nextModelSettings = {
       ...(modelChanged ? {} : existingRecord.model_settings),
-      ...supportedModelSettingsFromBody(bodyRecord),
+      ...requestedModelSettings,
       ...(modelChanged ? (nextModelDefaults ?? {}) : {}),
     };
     const updated = {
@@ -1604,8 +1682,15 @@ export class LocalStore {
   ): StoredConversation {
     const requestedModel = (body as Record<string, unknown>).model;
     if (typeof requestedModel !== "string") return conversation;
-    if (previousConversation.model === requestedModel) return conversation;
-    const defaults = this.modelSettingsDefaultsForModel(requestedModel);
+    const normalizedRequestedModel = normalizeLocalModelHandle(
+      requestedModel,
+      isRecord(conversation.model_settings) ? conversation.model_settings : {},
+    );
+    if (previousConversation.model === normalizedRequestedModel)
+      return conversation;
+    const defaults = this.modelSettingsDefaultsForModel(
+      normalizedRequestedModel,
+    );
     if (!defaults || Object.keys(defaults).length === 0) return conversation;
     const existingSettings = isRecord(conversation.model_settings)
       ? conversation.model_settings
@@ -3017,14 +3102,15 @@ export class LocalStore {
     const existing = this.conversations.get(key);
     if (existing && options.forceRefresh !== true) return existing;
 
+    const normalizedInput = normalizeStoredConversationRecord(input);
     const timing = transcriptTimingForConversationDir(conversationDir);
     const requiresFullTimestampRepair =
-      isSyntheticLocalTimestamp(input.created_at) ||
-      isSyntheticLocalTimestamp(input.updated_at) ||
-      isSyntheticLocalTimestamp(input.last_message_at);
+      isSyntheticLocalTimestamp(normalizedInput.created_at) ||
+      isSyntheticLocalTimestamp(normalizedInput.updated_at) ||
+      isSyntheticLocalTimestamp(normalizedInput.last_message_at);
     const conversation = requiresFullTimestampRepair
-      ? input
-      : repairSyntheticConversationTimestamps(input, [], timing);
+      ? normalizedInput
+      : repairSyntheticConversationTimestamps(normalizedInput, [], timing);
     let compiledSystemPrompt: LocalCompiledSystemPrompt | undefined;
     try {
       compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
