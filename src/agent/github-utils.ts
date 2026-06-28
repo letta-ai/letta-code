@@ -13,15 +13,42 @@ export interface GitHubEntry {
  * Fetch GitHub contents using gh CLI (authenticated) or direct API
  * Returns array of directory/file entries
  */
+function validateGitHubParam(value: string, name: string): void {
+  if (!value || typeof value !== "string") {
+    throw new Error(`Invalid ${name}: must be a non-empty string`);
+  }
+  if (name === "path") {
+    if (!/^[a-zA-Z0-9._~/-]+$/.test(value)) {
+      throw new Error(`Invalid ${name}: contains disallowed characters`);
+    }
+  } else if (name === "owner" || name === "repo") {
+    if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
+      throw new Error(`Invalid ${name}: contains disallowed characters`);
+    }
+  } else if (name === "branch") {
+    if (!/^[a-zA-Z0-9._~:/-]+$/.test(value)) {
+      throw new Error(`Invalid ${name}: contains disallowed characters`);
+    }
+  }
+}
+
 export async function fetchGitHubContents(
   owner: string,
   repo: string,
   branch: string,
   path: string,
 ): Promise<GitHubEntry[]> {
+  validateGitHubParam(owner, "owner");
+  validateGitHubParam(repo, "repo");
+  validateGitHubParam(branch, "branch");
+  if (path) {
+    validateGitHubParam(path, "path");
+  }
+
+  const encodedPath = path ? encodeURIComponent(path).replace(/%2F/g, "/") : "";
   const apiPath = path
-    ? `repos/${owner}/${repo}/contents/${path}?ref=${branch}`
-    : `repos/${owner}/${repo}/contents?ref=${branch}`;
+    ? `repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`
+    : `repos/${owner}/${repo}/contents?ref=${encodeURIComponent(branch)}`;
 
   // Try gh CLI (authenticated, 5000 req/hr)
   try {
@@ -36,7 +63,7 @@ export async function fetchGitHubContents(
   }
 
   // Try direct API
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`;
   const response = await fetch(url, {
     headers: {
       Accept: "application/vnd.github.v3+json",
