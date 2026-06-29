@@ -2590,6 +2590,60 @@ test("slack adapter posts the lifecycle error back into the same thread as a cod
   });
 });
 
+test("slack adapter posts lifecycle errors in direct messages without threading", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-dm-error",
+    outcome: "error",
+    error: "DM failure",
+    sources: [
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "D123",
+        chatType: "direct",
+        messageId: "1712800000.000300",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+      {
+        channel: "slack",
+        accountId: "slack-test-account",
+        chatId: "D123",
+        chatType: "direct",
+        messageId: "1712800000.000301",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(
+    writeClient?.assistant.threads.setStatus.mock.calls ?? [],
+  ).toHaveLength(0);
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "D123",
+    text: "Turn failed:\n```\nDM failure\n```",
+  });
+});
+
 test("slack adapter dedupes lifecycle error posts by reply destination", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,

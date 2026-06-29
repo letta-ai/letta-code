@@ -224,6 +224,62 @@ test("channel progress falls back to shell command preview when description is m
   ]);
 });
 
+test("channel progress clear removes accumulated tool argument details", () => {
+  expect(
+    buildChannelTurnProgressUpdatesFromDelta({
+      message_type: "tool_call_message",
+      run_id: "run-1",
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "exec_command",
+          arguments: JSON.stringify({
+            cmd: "git status --short",
+          }),
+        },
+      ],
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: exec_command",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "exec_command",
+      toolTitle: "Running",
+      toolDetails: "git status --short",
+    },
+  ]);
+
+  clearToolCallArgumentsCache();
+
+  expect(
+    buildChannelTurnProgressUpdatesFromDelta({
+      message_type: "tool_return_message",
+      run_id: "run-1",
+      tool_returns: [
+        {
+          tool_call_id: "call-1",
+          name: "exec_command",
+          status: "success",
+          tool_return: "ok",
+        },
+      ],
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "completed",
+      message: "Tool finished",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "exec_command",
+      toolTitle: "Ran",
+    },
+  ]);
+});
+
 test("channel progress maps canonical parallel tool return arrays", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "tool_return_message",

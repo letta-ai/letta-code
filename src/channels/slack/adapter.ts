@@ -1,7 +1,5 @@
-import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
 import { listChannelSlashCommands } from "@/channels/commands";
 import {
@@ -468,9 +466,9 @@ type SlackProgressCardEntry = {
 };
 
 function debugSlackProgress(message: string): void {
-  try {
-    appendFileSync(SLACK_PROGRESS_DEBUG_LOG, `${message}\n`);
-  } catch {}
+  if (process.env.LETTA_SLACK_PROGRESS_DEBUG === "1") {
+    console.debug(`[Slack progress] ${message}`);
+  }
 }
 
 function describeSlackStreamChunk(
@@ -1767,6 +1765,19 @@ export function createSlackAdapter(
     return `${source.chatId}:${replyToMessageId}`;
   }
 
+  function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
+    if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
+      return null;
+    }
+    if (
+      source.chatType === "direct" ||
+      resolveSlackChatType(source.chatId) === "direct"
+    ) {
+      return `${source.chatId}:direct`;
+    }
+    return getLifecycleReplyKey(source);
+  }
+
   function formatSlackLifecycleErrorMessage(
     errorText: string,
     runId?: string | null,
@@ -3012,7 +3023,7 @@ export function createSlackAdapter(
 
       const uniqueReplySources = new Map<string, ChannelTurnSource>();
       for (const source of event.sources) {
-        const key = getLifecycleReplyKey(source);
+        const key = getLifecycleErrorReplyKey(source);
         if (!key || uniqueReplySources.has(key)) {
           continue;
         }
