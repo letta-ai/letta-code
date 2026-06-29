@@ -1641,15 +1641,20 @@ async function cloneRepositoryMount(args: {
 }): Promise<void> {
   if (!existsSync(args.directory)) {
     mkdirSync(args.directory, { recursive: true });
-    await runGitWithRetry(
-      args.directory,
-      ["clone", args.remoteUrl, "."],
-      args.token,
-      {
-        operation: `clone repository ${args.repositoryName}`,
-        timeoutMs: GIT_CLONE_TIMEOUT_MS,
-      },
-    );
+    try {
+      await runGitWithRetry(
+        args.directory,
+        ["clone", args.remoteUrl, "."],
+        args.token,
+        {
+          operation: `clone repository ${args.repositoryName}`,
+          timeoutMs: GIT_CLONE_TIMEOUT_MS,
+        },
+      );
+    } catch (err) {
+      rmSync(args.directory, { recursive: true, force: true });
+      throw err;
+    }
   } else if (!existsSync(join(args.directory, ".git"))) {
     throw new Error(
       `create_repository: mount path already exists and is not a git repository: ${args.directory}`,
