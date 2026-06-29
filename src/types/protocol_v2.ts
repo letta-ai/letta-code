@@ -34,6 +34,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
 export type ExperimentId =
+  | "artifacts"
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"
@@ -1211,6 +1212,21 @@ export interface ReadMemoryFileCommand {
   encoding?: "utf8" | "base64";
 }
 
+/** List a directory from the agent's MemFS working tree. */
+export interface ListMemoryDirectoryCommand {
+  type: "list_memory_directory";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose memory to list. */
+  agent_id: string;
+  /** Relative to the memory root. */
+  path: string;
+  /** Include regular files in the response. Defaults to true. */
+  include_files?: boolean;
+  /** Return all descendant entries in one response. Defaults to false. */
+  recursive?: boolean;
+}
+
 /**
  * Write a file into the agent's MemFS and commit.
  *
@@ -1248,6 +1264,66 @@ export interface DeleteMemoryFileCommand {
   path: string;
   /** Optional commit message; defaults to a sensible fallback. */
   commit_message?: string;
+}
+
+/** Call a function exported by external/artifacts/<app_name>/server/server.js. */
+export interface ArtifactCallCommand {
+  type: "artifact_call";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+  /** The agent whose MemFS external app should run. */
+  agent_id: string;
+  /** App directory name under external/. */
+  app_name: string;
+  /** Function name returned by server/server.js. */
+  function_name: string;
+  /** JSON-serializable function arguments. */
+  args?: unknown;
+}
+
+export interface ArtifactDebugLogEntry {
+  source: "html" | "server" | "system";
+  level: "log" | "info" | "warn" | "error" | "debug";
+  message: string;
+  timestamp: string;
+  requestId?: string;
+  functionName?: string;
+}
+
+/** Update the in-memory artifact debug log snapshot for an open artifact panel. */
+export interface ArtifactDebugLogsSnapshotCommand {
+  type: "artifact_debug_logs_snapshot";
+  agent_id: string;
+  app_name: string;
+  html_logs: ArtifactDebugLogEntry[];
+  server_logs: ArtifactDebugLogEntry[];
+}
+
+export type ArtifactInteractAction =
+  | "snapshot"
+  | "click"
+  | "input"
+  | "select"
+  | "keydown"
+  | "submit"
+  | "wait_for_selector"
+  | "wait_for_text"
+  | "wait_for_change"
+  | "wait_for_idle"
+  | "wait_for_data_change";
+
+export interface ArtifactInteractResponseCommand {
+  type: "artifact_interact_response";
+  request_id: string;
+  agent_id: string;
+  app_name: string;
+  action: ArtifactInteractAction;
+  success: boolean;
+  result?: unknown;
+  error?: string;
+  logs?: ArtifactDebugLogEntry[];
+  total_logs?: number;
+  logs_truncated?: boolean;
 }
 
 export interface MemoryCommitDiffCommand {
@@ -2725,8 +2801,12 @@ export type WsProtocolCommand =
   | MemoryFileAtRefCommand
   | MemoryCommitDiffCommand
   | ReadMemoryFileCommand
+  | ListMemoryDirectoryCommand
   | WriteMemoryFileCommand
   | DeleteMemoryFileCommand
+  | ArtifactCallCommand
+  | ArtifactDebugLogsSnapshotCommand
+  | ArtifactInteractResponseCommand
   | EnableMemfsCommand
   | ListModelsCommand
   | ListConnectProvidersCommand

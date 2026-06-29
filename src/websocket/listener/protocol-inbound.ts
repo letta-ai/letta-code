@@ -9,6 +9,10 @@ import type {
   AgentListCommand,
   AgentRetrieveCommand,
   AgentUpdateCommand,
+  ArtifactCallCommand,
+  ArtifactDebugLogsSnapshotCommand,
+  ArtifactInteractAction,
+  ArtifactInteractResponseCommand,
   ChangeDeviceStateCommand,
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -66,6 +70,7 @@ import type {
   ListConnectProvidersCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
+  ListMemoryDirectoryCommand,
   ListModelsCommand,
   MemoryCommitDiffCommand,
   MemoryFileAtRefCommand,
@@ -753,6 +758,22 @@ export function isReadMemoryFileCommand(
   );
 }
 
+export function isListMemoryDirectoryCommand(
+  value: unknown,
+): value is ListMemoryDirectoryCommand {
+  if (!value || typeof value !== "object") return false;
+  const type = Reflect.get(value, "type");
+  const requestId = Reflect.get(value, "request_id");
+  const agentId = Reflect.get(value, "agent_id");
+  const path = Reflect.get(value, "path");
+  return (
+    type === "list_memory_directory" &&
+    typeof requestId === "string" &&
+    typeof agentId === "string" &&
+    typeof path === "string"
+  );
+}
+
 export function isWriteMemoryFileCommand(
   value: unknown,
 ): value is WriteMemoryFileCommand {
@@ -796,6 +817,113 @@ export function isDeleteMemoryFileCommand(
     typeof c.agent_id === "string" &&
     typeof c.path === "string" &&
     (c.commit_message === undefined || typeof c.commit_message === "string")
+  );
+}
+
+export function isArtifactCallCommand(
+  value: unknown,
+): value is ArtifactCallCommand {
+  if (!value || typeof value !== "object") return false;
+  const type = Reflect.get(value, "type");
+  const requestId = Reflect.get(value, "request_id");
+  const agentId = Reflect.get(value, "agent_id");
+  const appName = Reflect.get(value, "app_name");
+  const functionName = Reflect.get(value, "function_name");
+  return (
+    type === "artifact_call" &&
+    typeof requestId === "string" &&
+    typeof agentId === "string" &&
+    typeof appName === "string" &&
+    typeof functionName === "string"
+  );
+}
+
+function isArtifactDebugLogEntry(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const source = Reflect.get(value, "source");
+  const level = Reflect.get(value, "level");
+  const message = Reflect.get(value, "message");
+  const timestamp = Reflect.get(value, "timestamp");
+  const requestId = Reflect.get(value, "requestId");
+  const functionName = Reflect.get(value, "functionName");
+  return (
+    (source === "html" || source === "server" || source === "system") &&
+    (level === "log" ||
+      level === "info" ||
+      level === "warn" ||
+      level === "error" ||
+      level === "debug") &&
+    typeof message === "string" &&
+    typeof timestamp === "string" &&
+    (requestId === undefined || typeof requestId === "string") &&
+    (functionName === undefined || typeof functionName === "string")
+  );
+}
+
+export function isArtifactDebugLogsSnapshotCommand(
+  value: unknown,
+): value is ArtifactDebugLogsSnapshotCommand {
+  if (!value || typeof value !== "object") return false;
+  const type = Reflect.get(value, "type");
+  const agentId = Reflect.get(value, "agent_id");
+  const appName = Reflect.get(value, "app_name");
+  const htmlLogs = Reflect.get(value, "html_logs");
+  const serverLogs = Reflect.get(value, "server_logs");
+  return (
+    type === "artifact_debug_logs_snapshot" &&
+    typeof agentId === "string" &&
+    typeof appName === "string" &&
+    Array.isArray(htmlLogs) &&
+    htmlLogs.every(isArtifactDebugLogEntry) &&
+    Array.isArray(serverLogs) &&
+    serverLogs.every(isArtifactDebugLogEntry)
+  );
+}
+
+function isArtifactInteractAction(
+  value: unknown,
+): value is ArtifactInteractAction {
+  return (
+    value === "snapshot" ||
+    value === "click" ||
+    value === "input" ||
+    value === "select" ||
+    value === "keydown" ||
+    value === "submit" ||
+    value === "wait_for_selector" ||
+    value === "wait_for_text" ||
+    value === "wait_for_change" ||
+    value === "wait_for_idle" ||
+    value === "wait_for_data_change"
+  );
+}
+
+export function isArtifactInteractResponseCommand(
+  value: unknown,
+): value is ArtifactInteractResponseCommand {
+  if (!value || typeof value !== "object") return false;
+  const type = Reflect.get(value, "type");
+  const requestId = Reflect.get(value, "request_id");
+  const agentId = Reflect.get(value, "agent_id");
+  const appName = Reflect.get(value, "app_name");
+  const action = Reflect.get(value, "action");
+  const success = Reflect.get(value, "success");
+  const error = Reflect.get(value, "error");
+  const logs = Reflect.get(value, "logs");
+  const totalLogs = Reflect.get(value, "total_logs");
+  const logsTruncated = Reflect.get(value, "logs_truncated");
+  return (
+    type === "artifact_interact_response" &&
+    typeof requestId === "string" &&
+    typeof agentId === "string" &&
+    typeof appName === "string" &&
+    isArtifactInteractAction(action) &&
+    typeof success === "boolean" &&
+    (error === undefined || typeof error === "string") &&
+    (logs === undefined ||
+      (Array.isArray(logs) && logs.every(isArtifactDebugLogEntry))) &&
+    (totalLogs === undefined || typeof totalLogs === "number") &&
+    (logsTruncated === undefined || typeof logsTruncated === "boolean")
   );
 }
 
@@ -2137,8 +2265,12 @@ export function parseServerMessage(
       isMemoryFileAtRefCommand(parsed) ||
       isMemoryCommitDiffCommand(parsed) ||
       isReadMemoryFileCommand(parsed) ||
+      isListMemoryDirectoryCommand(parsed) ||
       isWriteMemoryFileCommand(parsed) ||
       isDeleteMemoryFileCommand(parsed) ||
+      isArtifactCallCommand(parsed) ||
+      isArtifactDebugLogsSnapshotCommand(parsed) ||
+      isArtifactInteractResponseCommand(parsed) ||
       isEnableMemfsCommand(parsed) ||
       isListModelsCommand(parsed) ||
       isListConnectProvidersCommand(parsed) ||

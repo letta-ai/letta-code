@@ -19,6 +19,7 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -335,6 +336,26 @@ function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
   return toolNames.filter((name) => !WORKTREE_TOOL_NAMES.has(name));
 }
 
+// Artifact app tools are gated behind the "artifacts" experiment. When the
+// experiment is disabled these tool names are filtered out of every default
+// tool array so they are never loaded for an agent.
+const ARTIFACT_TOOL_NAMES = new Set<ToolName>([
+  "ArtifactCall",
+  "ArtifactDebugLogs",
+  "ArtifactInteract",
+  "artifact_call",
+  "artifact_debug_logs",
+  "artifact_interact",
+]);
+
+function filterArtifactTools(toolNames: ToolName[]): ToolName[] {
+  if (experimentManager.isEnabled("artifacts")) {
+    return toolNames;
+  }
+
+  return toolNames.filter((name) => !ARTIFACT_TOOL_NAMES.has(name));
+}
+
 function filterExternalToolsByClientAllowlist(
   externalTools: Map<string, ExternalToolDefinition>,
   clientToolAllowlist?: string[],
@@ -434,6 +455,9 @@ function filterModToolsByClientAllowlist(
 
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
+  "ArtifactCall",
+  "ArtifactDebugLogs",
+  "ArtifactInteract",
   "Bash",
   "TaskOutput",
   "EnterWorktree",
@@ -458,12 +482,18 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   // TODO(codex-parity): add once request_user_input tool exists in raw codex path.
   // "request_user_input",
   "apply_patch",
+  "artifact_call",
+  "artifact_debug_logs",
+  "artifact_interact",
   "memory_apply_patch",
   "update_plan",
   "view_image",
 ];
 
 export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
+  "artifact_call",
+  "artifact_debug_logs",
+  "artifact_interact",
   "run_shell_command",
   "read_file_gemini",
   "list_directory",
@@ -483,6 +513,9 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
+  "ArtifactCall",
+  "ArtifactDebugLogs",
+  "ArtifactInteract",
   "EnterWorktree",
   "memory_apply_patch",
   "Task",
@@ -500,6 +533,9 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
+  "ArtifactCall",
+  "ArtifactDebugLogs",
+  "ArtifactInteract",
   "EnterWorktree",
   "memory",
   "Skill",
@@ -522,6 +558,9 @@ const TOOL_PERMISSIONS: Record<
   { requiresApproval: boolean; approvalPolicy?: ToolApprovalPolicy }
 > = {
   AskUserQuestion: { requiresApproval: true },
+  ArtifactCall: { requiresApproval: false },
+  ArtifactDebugLogs: { requiresApproval: false },
+  ArtifactInteract: { requiresApproval: false },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
@@ -556,6 +595,9 @@ const TOOL_PERMISSIONS: Record<
   list_dir: { requiresApproval: false },
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
+  artifact_call: { requiresApproval: false },
+  artifact_debug_logs: { requiresApproval: false },
+  artifact_interact: { requiresApproval: false },
   update_plan: { requiresApproval: false },
   get_goal: { requiresApproval: false },
   create_goal: { requiresApproval: false },
@@ -1653,6 +1695,8 @@ async function resolveBaseToolNamesForModel(
   }
 
   baseToolNames = filterWorktreeTools(baseToolNames);
+
+  baseToolNames = filterArtifactTools(baseToolNames);
 
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(

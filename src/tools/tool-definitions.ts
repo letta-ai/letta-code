@@ -1,5 +1,8 @@
 import { defineTool, type ToolAssets } from "./define-tool";
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
+import ArtifactCallDescription from "./descriptions/ArtifactCall.md";
+import ArtifactDebugLogsDescription from "./descriptions/ArtifactDebugLogs.md";
+import ArtifactInteractDescription from "./descriptions/ArtifactInteract.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
 import BashOutputDescription from "./descriptions/BashOutput.md";
@@ -48,6 +51,9 @@ import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteStdinDescription from "./descriptions/WriteStdin.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
 import { apply_patch } from "./impl/apply-patch";
+import { artifact_call } from "./impl/artifact-call";
+import { artifact_debug_logs } from "./impl/artifact-debug-logs";
+import { artifact_interact } from "./impl/artifact-interact";
 import { ask_user_question } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
 import { bash_output } from "./impl/bash-output";
@@ -96,6 +102,9 @@ import { write_file_gemini } from "./impl/write-file-gemini";
 import { write_todos } from "./impl/write-todos-gemini";
 
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
+import ArtifactCallSchema from "./schemas/ArtifactCall.json";
+import ArtifactDebugLogsSchema from "./schemas/ArtifactDebugLogs.json";
+import ArtifactInteractSchema from "./schemas/ArtifactInteract.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
@@ -176,6 +185,21 @@ const toolDefinitions = {
     schema: AskUserQuestionSchema,
     description: AskUserQuestionDescription.trim(),
     impl: ask_user_question,
+  }),
+  ArtifactCall: defineTool({
+    schema: ArtifactCallSchema,
+    description: ArtifactCallDescription.trim(),
+    impl: artifact_call,
+  }),
+  ArtifactDebugLogs: defineTool({
+    schema: ArtifactDebugLogsSchema,
+    description: ArtifactDebugLogsDescription.trim(),
+    impl: artifact_debug_logs,
+  }),
+  ArtifactInteract: defineTool({
+    schema: ArtifactInteractSchema,
+    description: ArtifactInteractDescription.trim(),
+    impl: artifact_interact,
   }),
   Bash: defineTool({
     schema: BashSchema,
@@ -347,6 +371,21 @@ const toolDefinitions = {
     schema: ApplyPatchSchema,
     description: ApplyPatchDescription.trim(),
     impl: apply_patch,
+  }),
+  artifact_call: defineTool({
+    schema: ArtifactCallSchema,
+    description: ArtifactCallDescription.trim(),
+    impl: artifact_call,
+  }),
+  artifact_debug_logs: defineTool({
+    schema: ArtifactDebugLogsSchema,
+    description: ArtifactDebugLogsDescription.trim(),
+    impl: artifact_debug_logs,
+  }),
+  artifact_interact: defineTool({
+    schema: ArtifactInteractSchema,
+    description: ArtifactInteractDescription.trim(),
+    impl: artifact_interact,
   }),
   update_plan: defineTool({
     schema: UpdatePlanSchema,

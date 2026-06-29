@@ -1,0 +1,1 @@
+Read or clear in-memory artifact debug logs captured from the artifact panel. Logs are stored only in the running Letta Code process and are not written to memory. Omit app_name to list artifacts with available snapshots. Set clear=true after debugging to remove the snapshot.

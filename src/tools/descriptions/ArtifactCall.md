@@ -1,0 +1,1 @@
+Call a function exported by an artifact's external/artifacts/<app_name>/server/server.js. Use this to exercise artifact server behavior and inspect returned results without interacting with browser UI or writing debug logs to memory. The response includes only the last few logs by default; use log_limit to adjust or artifact_debug_logs for detailed logs.

@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "app_name": {
+      "type": "string",
+      "description": "Artifact directory name under external/artifacts."
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "snapshot",
+        "click",
+        "input",
+        "select",
+        "keydown",
+        "submit",
+        "wait_for_selector",
+        "wait_for_text",
+        "wait_for_change",
+        "wait_for_idle",
+        "wait_for_data_change"
+      ],
+      "description": "UI action to perform inside the artifact iframe."
+    },
+    "selector": {
+      "type": "string",
+      "description": "CSS selector for element-targeted actions."
+    },
+    "value": {
+      "type": "string",
+      "description": "Value for input/select actions."
+    },
+    "text": {
+      "type": "string",
+      "description": "Text to wait for with wait_for_text."
+    },
+    "key": {
+      "type": "string",
+      "description": "Keyboard key for keydown actions."
+    },
+    "timeout_ms": {
+      "type": "number",
+      "description": "Timeout for wait actions and the overall UI response."
+    },
+    "log_limit": {
+      "type": "number",
+      "description": "Maximum number of trailing HTML/server logs to include in the tool response. Defaults to 5. Use 0 to omit logs; use artifact_debug_logs for detailed logs."
+    }
+  },
+  "required": ["app_name", "action"],
+  "additionalProperties": false
+}
