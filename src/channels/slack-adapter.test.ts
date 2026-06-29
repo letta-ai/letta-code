@@ -467,6 +467,34 @@ test("slack adapter maps thread metadata to thread_ts", async () => {
   });
 });
 
+test("slack adapter does not thread direct messages", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "D123",
+    text: "hello dm",
+    threadId: "1712800000.000200",
+    replyToMessageId: "1712800000.000201",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "D123",
+    text: "hello dm",
+  });
+});
+
 test("slack adapter sendDirectReply uses the dedicated write client", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -489,6 +517,30 @@ test("slack adapter sendDirectReply uses the dedicated write client", async () =
     channel: "C123",
     text: "reply text",
     thread_ts: "1712800000.000200",
+  });
+});
+
+test("slack adapter sendDirectReply does not thread direct messages", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendDirectReply("D123", "reply text", {
+    replyToMessageId: "1712800000.000200",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "D123",
+    text: "reply text",
   });
 });
 
@@ -530,7 +582,7 @@ test("slack adapter forwards DM messages as direct channel input", async () => {
       senderId: "U123",
       text: "hello from slack",
       messageId: "1712800000.000100",
-      threadId: "1712800000.000100",
+      threadId: null,
       chatType: "direct",
     }),
   );
@@ -1720,6 +1772,63 @@ test("slack adapter streams native task progress and clears thread status", asyn
     thread_ts: "1712790000.000050",
     status: "",
   });
+});
+
+test("slack adapter does not start thread progress in direct messages", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "D123",
+    chatType: "direct" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712800000.000100",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(
+    writeClient?.assistant.threads.setStatus.mock.calls ?? [],
+  ).toHaveLength(0);
+  expect(writeClient?.chat.startStream.mock.calls ?? []).toHaveLength(0);
+  expect(writeClient?.chat.appendStream.mock.calls ?? []).toHaveLength(0);
+  expect(writeClient?.chat.stopStream.mock.calls ?? []).toHaveLength(0);
+  expect(writeClient?.chat.postMessage.mock.calls ?? []).toHaveLength(0);
 });
 
 test("slack adapter keeps separate task rows for parallel tool progress", async () => {
