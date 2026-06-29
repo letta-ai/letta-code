@@ -591,7 +591,9 @@ export async function tryHandleChannelSlashCommand(
   await adapter.sendDirectReply(
     msg.chatId,
     text,
-    msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+    msg.messageId || msg.threadId
+      ? { replyToMessageId: msg.messageId, threadId: msg.threadId ?? null }
+      : undefined,
   );
   return true;
 }
