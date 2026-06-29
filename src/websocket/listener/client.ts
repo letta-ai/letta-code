@@ -144,6 +144,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   reminderState: ListenerRuntime["reminderState"];
   reconnectTimeout: NodeJS.Timeout | null;
   heartbeatInterval: NodeJS.Timeout | null;
+  lastPongAt: number | null;
   intentionallyClosed: boolean;
   hasSuccessfulConnection: boolean;
   everConnected: boolean;
@@ -183,6 +184,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     reminderState: ListenerRuntime["reminderState"];
     reconnectTimeout: NodeJS.Timeout | null;
     heartbeatInterval: NodeJS.Timeout | null;
+    lastPongAt: number | null;
     intentionallyClosed: boolean;
     hasSuccessfulConnection: boolean;
     everConnected: boolean;
@@ -312,6 +314,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.heartbeatInterval,
       set: (value: NodeJS.Timeout | null) => {
         listener.heartbeatInterval = value;
+      },
+    },
+    lastPongAt: {
+      get: () => listener.lastPongAt,
+      set: (value: number | null) => {
+        listener.lastPongAt = value;
       },
     },
     intentionallyClosed: {
