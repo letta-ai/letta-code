@@ -284,10 +284,22 @@ function truncateChannelSummaryPreview(
 export function buildSlackConversationSummary(
   msg: Pick<
     InboundChannelMessage,
-    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+    | "chatId"
+    | "chatLabel"
+    | "chatType"
+    | "senderId"
+    | "senderName"
+    | "text"
+    | "threadId"
   >,
 ): string {
   if (msg.chatType === "direct") {
+    if (msg.threadId?.trim()) {
+      const preview = truncateChannelSummaryPreview(msg.text);
+      return preview
+        ? `[Slack] DM thread with ${msg.senderName?.trim() || msg.senderId}: ${preview}`
+        : `[Slack] DM thread with ${msg.senderName?.trim() || msg.senderId}`;
+    }
     return `[Slack] DM with ${msg.senderName?.trim() || msg.senderId}`;
   }
 
@@ -1832,7 +1844,7 @@ export class ChannelRegistry {
       threadId:
         msg.chatType === "channel"
           ? (msg.threadId ?? msg.messageId ?? null)
-          : null,
+          : (msg.threadId ?? null),
       agentId: config.agentId,
       conversationId,
       enabled: true,
@@ -1892,7 +1904,7 @@ export class ChannelRegistry {
 
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     const routeThreadId =
-      msg.chatType === "channel" ? (msg.threadId ?? null) : null;
+      msg.channel === "slack" ? (msg.threadId ?? null) : null;
     let route = getRouteFromStore(
       msg.channel,
       msg.chatId,

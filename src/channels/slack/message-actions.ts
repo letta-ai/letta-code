@@ -24,8 +24,9 @@ async function sendSlackMessage(
     chatId: request.chatId,
     text: formatted.text,
     replyToMessageId: isDirect ? undefined : request.replyToMessageId,
-    threadId:
-      isDirect || request.replyToMessageId
+    threadId: isDirect
+      ? (request.threadId ?? route.threadId ?? null)
+      : request.replyToMessageId
         ? null
         : (request.threadId ?? route.threadId ?? null),
     mediaPath: request.mediaPath,

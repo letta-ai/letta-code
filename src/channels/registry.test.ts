@@ -1048,6 +1048,21 @@ describe("buildSlackConversationSummary", () => {
     ).toBe("[Slack] DM with Charles");
   });
 
+  test("labels threaded direct messages with a clipped text preview", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "D123",
+        chatType: "direct",
+        threadId: "1712790000.000050",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "  following up in the DM thread about the deploy preview  ",
+      }),
+    ).toBe(
+      "[Slack] DM thread with Charles: following up in the DM thread about the deploy preview",
+    );
+  });
+
   test("labels channel threads with a clipped text preview", () => {
     expect(
       buildSlackConversationSummary({
