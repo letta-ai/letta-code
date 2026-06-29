@@ -249,6 +249,40 @@ function isFetchWebpageToolName(name: string | undefined): boolean {
   );
 }
 
+function isSkillToolName(name: string | undefined): boolean {
+  return name === "Skill" || name === "skill";
+}
+
+function formatSkillProgressDetailsFromArguments(
+  parsedArguments: Record<string, unknown>,
+): string | undefined {
+  const skillName = firstNonEmptyString(
+    parsedArguments.skill,
+    parsedArguments.skillName,
+  );
+  const sanitized = sanitizeChannelProgressText(
+    skillName,
+    MAX_PROGRESS_DETAILS_LENGTH,
+  );
+  return sanitized || undefined;
+}
+
+function formatFragmentedSkillProgressDetails(
+  summary: ToolCallSummary,
+): string | undefined {
+  const skillMatch = summary.argumentsText?.match(
+    /"(?:skill|skillName)"\s*:\s*"([^"]+)"/,
+  );
+  if (!skillMatch?.[1]) {
+    return undefined;
+  }
+  const sanitized = sanitizeChannelProgressText(
+    skillMatch[1],
+    MAX_PROGRESS_DETAILS_LENGTH,
+  );
+  return sanitized || undefined;
+}
+
 function formatToolProgressDetails(
   summary: ToolCallSummary,
 ): string | undefined {
@@ -285,6 +319,10 @@ function formatToolProgressDetails(
         MAX_PROGRESS_DETAILS_LENGTH,
       );
       return sanitized || undefined;
+    }
+
+    if (isSkillToolName(summary.name)) {
+      return formatSkillProgressDetailsFromArguments(parsedArguments);
     }
 
     if (isShellTool(summary.name)) {
@@ -363,6 +401,10 @@ function formatToolProgressDetails(
       `[DETAILS-BASH-FALLBACK] id=${summary.id ?? "none"} matched=${details ?? "none"} text=${sanitizeChannelProgressText(summary.argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
     );
     return details;
+  }
+
+  if (isSkillToolName(summary.name)) {
+    return formatFragmentedSkillProgressDetails(summary);
   }
 
   // Fallback: try to extract file_path from fragmented/incomplete JSON
