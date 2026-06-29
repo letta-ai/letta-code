@@ -1705,6 +1705,127 @@ export async function createAgentRepository(args: {
   };
 }
 
+interface AgentRepositoryResponse {
+  repositories: Array<{
+    id: string;
+    name: string;
+    is_primary: boolean;
+    permissions: string;
+  }>;
+}
+
+export interface SyncAgentRepositoriesResult {
+  mounted: number;
+  skipped: number;
+  failed: number;
+  summaries: string[];
+}
+
+async function listAttachedAgentRepositories(agentId: string): Promise<
+  Array<{
+    id: string;
+    name: string;
+    permissions: string;
+  }>
+> {
+  const response = await apiRequest<AgentRepositoryResponse>(
+    "GET",
+    `/v1/agents/${encodeURIComponent(agentId)}/repositories`,
+  );
+  return response.repositories
+    .filter(
+      (repository) => !repository.is_primary && repository.name !== "memory",
+    )
+    .map((repository) => ({
+      id: repository.id,
+      name: repository.name,
+      permissions: repository.permissions,
+    }));
+}
+
+async function syncAttachedRepository(args: {
+  agentId: string;
+  repositoryName: string;
+  token: string;
+}): Promise<string> {
+  const repositoryName = validateAgentRepositoryName(args.repositoryName);
+  const directory = getRepositoryMountDir(args.agentId, repositoryName);
+  const remoteUrl = getRepositoryRemoteUrl(args.agentId, repositoryName);
+
+  await cloneRepositoryMount({
+    agentId: args.agentId,
+    repositoryName,
+    directory,
+    remoteUrl,
+    token: args.token,
+  });
+  return `${repositoryName}: ${directory}`;
+}
+
+export async function syncAttachedAgentRepositories(
+  agentId: string,
+): Promise<SyncAgentRepositoriesResult> {
+  let repositories: Awaited<ReturnType<typeof listAttachedAgentRepositories>>;
+  try {
+    repositories = await listAttachedAgentRepositories(agentId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    debugWarn(
+      "memfs-git",
+      `Failed to list attached repositories for ${agentId}: ${message}`,
+    );
+    return {
+      mounted: 0,
+      skipped: 0,
+      failed: 1,
+      summaries: [`Failed to list attached repositories: ${message}`],
+    };
+  }
+
+  if (repositories.length === 0) {
+    return { mounted: 0, skipped: 0, failed: 0, summaries: [] };
+  }
+
+  const token = await getAuthToken();
+  const results = await Promise.allSettled(
+    repositories.map((repository) =>
+      syncAttachedRepository({
+        agentId,
+        repositoryName: repository.name,
+        token,
+      }),
+    ),
+  );
+
+  const summaries: string[] = [];
+  let mounted = 0;
+  let failed = 0;
+
+  for (let index = 0; index < results.length; index += 1) {
+    const repository = repositories[index];
+    if (!repository) continue;
+    const result = results[index];
+    if (!result) continue;
+    if (result.status === "fulfilled") {
+      mounted += 1;
+      summaries.push(result.value);
+    } else {
+      failed += 1;
+      const message =
+        result.reason instanceof Error
+          ? result.reason.message
+          : String(result.reason);
+      summaries.push(`${repository.name}: failed: ${message}`);
+      debugWarn(
+        "memfs-git",
+        `Failed to sync attached repository ${repository.name}: ${message}`,
+      );
+    }
+  }
+
+  return { mounted, skipped: 0, failed, summaries };
+}
+
 /**
  * Clone the agent's state repo into the memory directory.
  *
@@ -1779,6 +1900,8 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
 
   // Set canonical local git identity (letta.agentId, user.email, user.name)
   await ensureLocalMemfsGitConfig(dir, agentId);
+
+  await syncAttachedAgentRepositories(agentId);
 }
 
 /**
@@ -1813,6 +1936,7 @@ export async function pullMemory(
     );
     const output = stdout + stderr;
     const updated = !output.includes("Already up to date");
+    await syncAttachedAgentRepositories(agentId);
     return {
       updated,
       summary: updated ? output.trim() : "Already up to date",
@@ -1820,9 +1944,11 @@ export async function pullMemory(
   } catch {
     if (!(await hasMergeBaseWithUpstream(dir))) {
       try {
+        const summary = await recoverMemoryPullByResettingToRemote(dir, token);
+        await syncAttachedAgentRepositories(agentId);
         return {
           updated: true,
-          summary: await recoverMemoryPullByResettingToRemote(dir, token),
+          summary,
         };
       } catch (recoverErr) {
         const recoverMsg =
@@ -1843,13 +1969,19 @@ export async function pullMemory(
         token,
         { operation: "pull --rebase" },
       );
+      await syncAttachedAgentRepositories(agentId);
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
       if (isRecoverableMemoryPullHistoryError(rebaseErr)) {
         try {
+          const summary = await recoverMemoryPullByResettingToRemote(
+            dir,
+            token,
+          );
+          await syncAttachedAgentRepositories(agentId);
           return {
             updated: true,
-            summary: await recoverMemoryPullByResettingToRemote(dir, token),
+            summary,
           };
         } catch (recoverErr) {
           const recoverMsg =
