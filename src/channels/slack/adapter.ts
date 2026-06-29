@@ -1,7 +1,5 @@
-import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
 import { listChannelSlashCommands } from "@/channels/commands";
 import {
@@ -415,13 +413,6 @@ const SLACK_PROGRESS_CARD_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
 const SLACK_STREAM_CHUNK_TEXT_MAX = 256;
 const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
-const SLACK_PROGRESS_DEBUG_LOG = join(
-  homedir(),
-  ".letta",
-  "logs",
-  "slack-debug.log",
-);
-
 type SlackProgressCardState =
   | "processing"
   | "completed"
@@ -461,9 +452,9 @@ type SlackProgressCardEntry = {
 };
 
 function debugSlackProgress(message: string): void {
-  try {
-    appendFileSync(SLACK_PROGRESS_DEBUG_LOG, `${message}\n`);
-  } catch {}
+  if (process.env.LETTA_SLACK_PROGRESS_DEBUG === "1") {
+    console.debug(`[Slack progress] ${message}`);
+  }
 }
 
 function describeSlackStreamChunk(
@@ -1682,6 +1673,19 @@ export function createSlackAdapter(
       return null;
     }
     return `${source.chatId}:${replyToMessageId}`;
+  }
+
+  function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
+    if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
+      return null;
+    }
+    if (
+      source.chatType === "direct" ||
+      resolveSlackChatType(source.chatId) === "direct"
+    ) {
+      return `${source.chatId}:direct`;
+    }
+    return getLifecycleReplyKey(source);
   }
 
   function formatSlackLifecycleErrorMessage(errorText: string): string {
@@ -2915,7 +2919,7 @@ export function createSlackAdapter(
 
       const uniqueReplySources = new Map<string, ChannelTurnSource>();
       for (const source of event.sources) {
-        const key = getLifecycleReplyKey(source);
+        const key = getLifecycleErrorReplyKey(source);
         if (!key || uniqueReplySources.has(key)) {
           continue;
         }

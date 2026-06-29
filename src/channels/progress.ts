@@ -1,6 +1,3 @@
-import { appendFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   getDisplayToolName,
   isShellTool,
@@ -26,17 +23,11 @@ const SECRET_ASSIGNMENT_RE =
   /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|\S+)/gi;
 const SECRET_JSON_RE =
   /(["']?(?:token|secret|password|api[_-]?key|access[_-]?key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|\S+)/gi;
-const CHANNEL_PROGRESS_DEBUG_LOG = join(
-  homedir(),
-  ".letta",
-  "logs",
-  "slack-debug.log",
-);
 
 function debugChannelProgress(message: string): void {
-  try {
-    appendFileSync(CHANNEL_PROGRESS_DEBUG_LOG, `${message}\n`);
-  } catch {}
+  if (process.env.LETTA_SLACK_PROGRESS_DEBUG === "1") {
+    console.debug(`[Channel progress] ${message}`);
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

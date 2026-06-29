@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { clearToolCallArgumentsCache } from "@/channels/progress";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
@@ -561,6 +562,7 @@ async function drainQueuedMessages(
         runtime.activeChannelTurnSources = null;
         runtime.activeChannelTurnBatchId = null;
         if (channelTurnSources.length > 0) {
+          clearToolCallArgumentsCache();
           const outcome = mapTurnLifecycleOutcome(
             runtime.lastStopReason,
             didThrow,
