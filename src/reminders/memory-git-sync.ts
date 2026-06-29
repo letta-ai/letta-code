@@ -134,21 +134,34 @@ export async function runPostTurnMemorySync(
 
   try {
     const syncResult = await syncPendingMemoryCommitsAfterTurn(params.agentId);
+    const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
+    if (syncReminder) {
+      params.enqueueReminder?.(syncReminder);
+      await params.emitWarning?.(syncReminder);
+    }
+  } catch (error) {
+    debugWarn(
+      "memfs-git",
+      `${debugLabel} failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  try {
     const repositorySyncResult = await syncPendingRepositoryCommitsAfterTurn(
       params.agentId,
     );
-    const reminders = [
-      formatMemoryPostTurnSyncReminder(syncResult),
-      ...formatRepositoriesPostTurnSyncReminders(repositorySyncResult),
-    ].filter((reminder) => reminder !== null);
-    for (const reminder of reminders) {
+    for (const reminder of formatRepositoriesPostTurnSyncReminders(
+      repositorySyncResult,
+    )) {
       params.enqueueReminder?.(reminder);
       await params.emitWarning?.(reminder);
     }
   } catch (error) {
     debugWarn(
       "memfs-git",
-      `${debugLabel} failed: ${
+      `${debugLabel} repository sync failed: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

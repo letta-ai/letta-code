@@ -2458,7 +2458,7 @@ export async function syncPendingRepositoryCommitsAfterTurn(
     backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs;
   const repositories = await listAttachedAgentRepositories(agentId);
   const token = await getAuthToken();
-  const results = await Promise.all(
+  const settledResults = await Promise.allSettled(
     repositories.map((repository) =>
       syncPendingRepositoryCommits({
         agentId,
@@ -2469,6 +2469,23 @@ export async function syncPendingRepositoryCommitsAfterTurn(
       }),
     ),
   );
+  const results = settledResults.map((result, index) => {
+    const repository = repositories[index];
+    if (result.status === "fulfilled") return result.value;
+    const path = repository
+      ? getRepositoryMountDir(agentId, repository.name)
+      : "";
+    return {
+      name: repository?.name ?? "unknown",
+      path,
+      permissions: repository?.permissions ?? "unknown",
+      status: "push_failed" as const,
+      summary:
+        result.reason instanceof Error
+          ? result.reason.message
+          : String(result.reason),
+    };
+  });
   return { results, localOnly };
 }
 
