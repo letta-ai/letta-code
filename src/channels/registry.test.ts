@@ -251,6 +251,61 @@ describe("ChannelRegistry", () => {
     expect(replies[0]?.text).toContain("Telegram is connected to Letta Code");
   });
 
+  test("Slack threaded DM slash command replies stay in the DM thread", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+      threadId?: string | null;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+          threadId: options?.threadId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "D123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/help",
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      chatId: "D123",
+      replyToMessageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+    });
+    expect(replies[0]?.text).toContain("Slack is connected to Letta Code");
+  });
+
   test("unsupported slash commands get direct channel guidance instead of agent delivery", async () => {
     const replies: Array<{
       chatId: string;
