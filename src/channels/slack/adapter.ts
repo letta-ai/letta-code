@@ -2067,7 +2067,13 @@ export function createSlackAdapter(
         const didAppend = await appendSlackProgressStream(entry, chunksToSend);
         didSend = didAppend;
         if (!didAppend) {
-          await stopSlackProgressStream(entry);
+          const didStop = await stopSlackProgressStream(entry);
+          if (didStop) {
+            entry.mode = undefined;
+            entry.streamTs = undefined;
+            entry.pendingStreamChunks = undefined;
+            didSend = true;
+          }
         }
       }
 
