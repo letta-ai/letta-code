@@ -38,6 +38,8 @@ export interface OAuthError {
   error_description?: string;
 }
 
+const activeDeviceTokenPolls = new Map<string, Promise<TokenResponse>>();
+
 export type CredentialValidationFailureReason =
   | "invalid_credentials"
   | "network_error"
@@ -190,6 +192,36 @@ export async function pollForToken(
   deviceName?: string,
   signal?: AbortSignal,
 ): Promise<TokenResponse> {
+  const activePoll = activeDeviceTokenPolls.get(deviceCode);
+  if (activePoll) {
+    return activePoll;
+  }
+
+  const poll = pollForTokenOnce(
+    deviceCode,
+    interval,
+    expiresIn,
+    deviceId,
+    deviceName,
+    signal,
+  );
+  activeDeviceTokenPolls.set(deviceCode, poll);
+
+  try {
+    return await poll;
+  } finally {
+    activeDeviceTokenPolls.delete(deviceCode);
+  }
+}
+
+async function pollForTokenOnce(
+  deviceCode: string,
+  interval: number = 5,
+  expiresIn: number = 900,
+  deviceId: string,
+  deviceName?: string,
+  signal?: AbortSignal,
+): Promise<TokenResponse> {
   const startTime = Date.now();
   const expiresInMs = expiresIn * 1000;
   let pollInterval = interval * 1000;
@@ -269,6 +301,12 @@ export async function pollForToken(
 
       if (error.error === "expired_token") {
         throw new Error("Device code expired");
+      }
+
+      if (error.error === "already_used") {
+        throw new Error(
+          "Device code was already used before Letta Code received the token. Please start login again. If this keeps happening, another OAuth poller may be racing this one.",
+        );
       }
 
       throw new Error(`OAuth error: ${error.error_description || error.error}`);

@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { configureBackendMode } from "@/backend";
 import { Text } from "@/cli/components/Text";
 import { settingsManager } from "@/settings-manager";
-import { pollForToken, requestDeviceCode } from "./oauth";
+import {
+  LETTA_CLOUD_API_URL,
+  pollForToken,
+  requestDeviceCode,
+  validateCredentialsWithResult,
+} from "./oauth";
 
 interface ConstellationLoginViewProps {
   onComplete?: () => void;
@@ -44,9 +49,33 @@ export function ConstellationLoginView({
     const run = async () => {
       try {
         if (process.env.LETTA_API_KEY) {
-          setError(
-            "LETTA_API_KEY is set in your environment, so OAuth login cannot replace the credential Letta Code is using. Unset LETTA_API_KEY and try again.",
+          const baseURL = process.env.LETTA_BASE_URL || LETTA_CLOUD_API_URL;
+          const validation = await validateCredentialsWithResult(
+            baseURL,
+            process.env.LETTA_API_KEY,
           );
+
+          if (!validation.ok) {
+            setError(
+              `LETTA_API_KEY is set in your environment but is not valid: ${validation.message}`,
+            );
+            return;
+          }
+
+          settingsManager.updateSettings({
+            env: {
+              LETTA_API_KEY: process.env.LETTA_API_KEY,
+              ...(process.env.LETTA_BASE_URL && {
+                LETTA_BASE_URL: process.env.LETTA_BASE_URL,
+              }),
+            },
+            preferredBackendMode: "api",
+          });
+          await settingsManager.flush();
+          configureBackendMode("api");
+
+          setDoneMessage(successMessage);
+          setTimeout(() => onCompleteRef.current?.(), 500);
           return;
         }
 
