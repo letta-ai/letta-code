@@ -2329,6 +2329,7 @@ async function emitToolStartEvent(options: {
 }
 
 async function emitToolEndEvent(options: {
+  args: ToolArgs;
   events?: ModEvents;
   executionScope: RuntimeContextSnapshot;
   modContext: ModContext;
@@ -2344,6 +2345,7 @@ async function emitToolEndEvent(options: {
     conversationId: options.executionScope.conversationId ?? null,
     toolCallId: options.toolCallId ?? null,
     toolName: options.toolName,
+    args: cloneToolArgsForModEvent(options.args),
     status: options.status,
     output: options.output,
   };
@@ -2619,6 +2621,7 @@ async function executeToolInner(
     /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
+    toolEndArgsRef?: { current: ToolArgs };
   },
 ): Promise<ToolExecutionResult> {
   const context = options?.toolContextId
@@ -2672,11 +2675,13 @@ async function executeToolInner(
       toolName: name,
     });
     if (result) {
+      if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
       return {
         toolReturn: result.output,
         status: result.status,
       };
     }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
@@ -2712,11 +2717,13 @@ async function executeToolInner(
       toolName: name,
     });
     if (result) {
+      if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
       return {
         toolReturn: result.output,
         status: result.status,
       };
     }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
@@ -2774,12 +2781,14 @@ async function executeToolInner(
     toolName: internalName,
   });
   if (result) {
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
     return {
       toolReturn: result.output,
       status: result.status,
     };
   }
   args = eventArgs;
+  if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
   const permissionDecision = await checkModPermissionForContext({
     args,
     context,
@@ -2819,6 +2828,7 @@ async function executeToolInner(
         ...preHookResult.updatedInput,
       };
     }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
     try {
       // Inject options for tools that support them without altering schemas
@@ -3093,7 +3103,11 @@ export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
 ): Promise<ToolExecutionResult> {
   const [name, args, options] = params;
-  const res = await executeToolInner(name, args, options);
+  const toolEndArgsRef = { current: args };
+  const res = await executeToolInner(name, args, {
+    ...options,
+    toolEndArgsRef,
+  });
 
   const context = options?.toolContextId
     ? getExecutionContextById(options.toolContextId)
@@ -3121,6 +3135,7 @@ export async function executeTool(
     });
 
   const override = await emitToolEndEvent({
+    args: toolEndArgsRef.current,
     events: modEvents,
     executionScope,
     modContext,
