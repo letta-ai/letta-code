@@ -24,6 +24,7 @@ import {
   getDisplayToolName,
   isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
+import { isWebSearchToolName } from "@/cli/helpers/web-search-display";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
@@ -384,7 +385,7 @@ function resolveSlackOutboundThreadTs(params: {
   replyToMessageId?: string | null;
 }): string | undefined {
   if (resolveSlackChatType(params.chatId) === "direct") {
-    return undefined;
+    return firstNonEmptyString(params.threadId);
   }
   return firstNonEmptyString(params.threadId, params.replyToMessageId);
 }
@@ -396,7 +397,7 @@ function resolveSlackSourceThreadTs(
     source.chatType === "direct" ||
     resolveSlackChatType(source.chatId) === "direct"
   ) {
-    return undefined;
+    return firstNonEmptyString(source.threadId);
   }
   return firstNonEmptyString(source.threadId, source.messageId);
 }
@@ -448,6 +449,7 @@ type SlackProgressCardEntry = {
   lastSentAt: number;
   pendingTimer?: ReturnType<typeof setTimeout>;
   pendingFlush?: Promise<void>;
+  requeuedFailedChunks?: boolean;
   updatedAt: number;
 };
 
@@ -711,7 +713,7 @@ function formatSlackToolNameForDisplay(
   if (update && isShellTool(toolName)) {
     return update.state === "completed" ? "Ran" : "Running";
   }
-  if (update && toolName === "web_search") {
+  if (update && isWebSearchToolName(toolName)) {
     if (update.state === "completed") {
       return "Searched the web";
     }
@@ -1309,19 +1311,21 @@ function buildSlackThreadLabel(
   msg: InboundChannelMessage,
   starterText?: string,
 ): string | undefined {
-  if (msg.chatType !== "channel") {
-    return undefined;
-  }
-
   const roomLabel =
-    isNonEmptyString(msg.chatLabel) && msg.chatLabel !== msg.chatId
+    msg.chatType === "channel" &&
+    isNonEmptyString(msg.chatLabel) &&
+    msg.chatLabel !== msg.chatId
       ? ` in ${msg.chatLabel}`
       : "";
   const preview = truncateSlackThreadLabel(starterText ?? msg.text);
+  const threadLabel =
+    msg.chatType === "direct" ? "Slack DM thread" : "Slack thread";
   if (preview) {
-    return `Slack thread${roomLabel}: ${preview}`;
+    return `${threadLabel}${roomLabel}: ${preview}`;
   }
-  return roomLabel ? `Slack thread${roomLabel}` : `Slack thread ${msg.chatId}`;
+  return roomLabel
+    ? `${threadLabel}${roomLabel}`
+    : `${threadLabel} ${msg.chatId}`;
 }
 
 function buildSlackChannelContextLabel(
@@ -1683,7 +1687,10 @@ export function createSlackAdapter(
       source.chatType === "direct" ||
       resolveSlackChatType(source.chatId) === "direct"
     ) {
-      return `${source.chatId}:direct`;
+      const replyToMessageId = resolveSlackSourceThreadTs(source);
+      return isNonEmptyString(replyToMessageId)
+        ? `${source.chatId}:${replyToMessageId}`
+        : `${source.chatId}:direct`;
     }
     return getLifecycleReplyKey(source);
   }
@@ -1833,7 +1840,7 @@ export function createSlackAdapter(
 
   function canStartSlackStream(source: ChannelTurnSource): boolean {
     if (source.chatType === "direct") {
-      return false;
+      return isNonEmptyString(source.threadId);
     }
     if (source.chatType !== "channel") {
       return true;
@@ -2053,8 +2060,9 @@ export function createSlackAdapter(
         entry.latestText,
       );
       if (
-        entry.lastSentText !== latestText ||
-        (entry.pendingStreamChunks?.length ?? 0) > 0
+        !entry.requeuedFailedChunks &&
+        (entry.lastSentText !== latestText ||
+          (entry.pendingStreamChunks?.length ?? 0) > 0)
       ) {
         await flushSlackProgressCard(key, entry);
       }
@@ -2062,6 +2070,7 @@ export function createSlackAdapter(
     }
 
     const operation = (async () => {
+      entry.requeuedFailedChunks = false;
       const replyToMessageId = getSlackProgressReplyTs(entry.source);
       if (!replyToMessageId) {
         return;
@@ -2113,6 +2122,7 @@ export function createSlackAdapter(
           ...chunksToSend,
           ...(entry.pendingStreamChunks ?? []),
         ];
+        entry.requeuedFailedChunks = true;
       }
 
       delete entry.latestUpdate;
@@ -2135,6 +2145,7 @@ export function createSlackAdapter(
     await operation;
     if (
       progressCardByReplyKey.get(key) === entry &&
+      !entry.requeuedFailedChunks &&
       (entry.pendingStreamChunks?.length ?? 0) > 0
     ) {
       await flushSlackProgressCard(key, entry);
@@ -2506,9 +2517,9 @@ export function createSlackAdapter(
       });
       const chatType = resolveSlackChatType(channelId);
       const threadId =
-        chatType === "channel"
-          ? (firstNonEmptyString(rawMessage.thread_ts, rawMessage.ts) ?? null)
-          : null;
+        chatType === "direct"
+          ? (firstNonEmptyString(rawMessage.thread_ts) ?? null)
+          : (firstNonEmptyString(rawMessage.thread_ts, rawMessage.ts) ?? null);
       rememberMessageThread(rawMessage.ts, threadId);
       const senderName = await resolveUserName(instance, rawMessage.user);
 
@@ -2536,7 +2547,7 @@ export function createSlackAdapter(
           text,
           timestamp: slackTimestampToMillis(rawMessage.ts),
           messageId: rawMessage.ts,
-          threadId: null,
+          threadId,
           chatType: "direct",
           isMention: wasMentioned,
           attachments,
@@ -2759,7 +2770,9 @@ export function createSlackAdapter(
       const threadId =
         chatType === "channel"
           ? (knownThreadIdsByMessageId.get(targetMessageId) ?? targetMessageId)
-          : null;
+          : chatType === "direct"
+            ? (knownThreadIdsByMessageId.get(targetMessageId) ?? null)
+            : null;
 
       const inbound: InboundChannelMessage = {
         channel: "slack",
@@ -3057,7 +3070,6 @@ export function createSlackAdapter(
     ): Promise<InboundChannelMessage> {
       if (
         msg.channel !== "slack" ||
-        msg.chatType !== "channel" ||
         !isNonEmptyString(msg.threadId) ||
         !isNonEmptyString(msg.messageId)
       ) {

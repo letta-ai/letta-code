@@ -1041,8 +1041,7 @@ function inferThreadIdFromChannelTurnSources(params: {
       continue;
     }
 
-    const sourceThreadId =
-      source.chatType === "direct" ? null : (source.threadId ?? null);
+    const sourceThreadId = source.threadId ?? null;
     const fallbackThreadId =
       params.input.channel === "slack" && source.chatType !== "direct"
         ? source.messageId
@@ -1163,7 +1162,7 @@ export async function message_channel(
         request: buildMessageChannelRequest(
           input,
           input.chatId,
-          inferredThreadId ?? input.threadId,
+          inferredThreadId ?? route.threadId ?? input.threadId,
         ),
         route,
         adapter,
