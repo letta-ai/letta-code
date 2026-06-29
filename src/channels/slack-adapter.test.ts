@@ -572,6 +572,32 @@ test("slack adapter sendDirectReply does not thread direct messages", async () =
   });
 });
 
+test("slack adapter sendDirectReply preserves explicit direct message threads", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendDirectReply("D123", "reply text", {
+    replyToMessageId: "1712800000.000201",
+    threadId: "1712800000.000100",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "D123",
+    text: "reply text",
+    thread_ts: "1712800000.000100",
+  });
+});
+
 test("slack adapter forwards DM messages as direct channel input", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
