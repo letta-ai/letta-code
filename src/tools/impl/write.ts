@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { expandFilePath } from "@/utils/file-path";
 import { writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation.js";
 
@@ -16,9 +17,7 @@ export async function write(args: WriteArgs): Promise<WriteResult> {
   validateRequiredParams(args, ["file_path", "content"], "Write");
   const { file_path, content } = args;
   const userCwd = getCurrentWorkingDirectory();
-  const resolvedPath = path.isAbsolute(file_path)
-    ? file_path
-    : path.resolve(userCwd, file_path);
+  const resolvedPath = expandFilePath(file_path, userCwd);
   try {
     const dir = path.dirname(resolvedPath);
     await fs.mkdir(dir, { recursive: true });
