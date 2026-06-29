@@ -70,6 +70,36 @@ test("channel progress uses web_search query as task details", () => {
   ]);
 });
 
+test("channel progress uses Skill names as task details", () => {
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        id: "call-1",
+        function: {
+          name: "Skill",
+          arguments: JSON.stringify({
+            skill: "maintaining-machine-maintenance",
+          }),
+        },
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Skill",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Skill",
+      toolDetails: "maintaining-machine-maintenance",
+    },
+  ]);
+});
+
 test("channel progress uses Letta Code display names for tool titles", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "tool_call_message",
@@ -126,6 +156,36 @@ test("channel progress uses Bash descriptions as task details", () => {
       toolCallId: "call-1",
       toolName: "Bash",
       toolDetails: "Check system details",
+      toolTitle: "Running",
+    },
+  ]);
+});
+
+test("channel progress uses exec_command descriptions as task details", () => {
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        tool_call_id: "call-1",
+        name: "exec_command",
+        arguments: JSON.stringify({
+          cmd: "git status --short",
+          description: "Check working tree status",
+        }),
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: exec_command",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "exec_command",
+      toolDetails: "Check working tree status",
       toolTitle: "Running",
     },
   ]);
