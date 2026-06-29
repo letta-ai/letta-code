@@ -1632,6 +1632,46 @@ function validateAgentRepositoryName(name: string): string {
   return trimmed;
 }
 
+async function maybeUpdateRepositoryRemoteOrigin(args: {
+  directory: string;
+  remoteUrl: string;
+}): Promise<void> {
+  const expectedOrigin = normalizeRemoteUrl(args.remoteUrl);
+  let currentOrigin = "";
+  try {
+    const { stdout } = await runGit(args.directory, [
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    currentOrigin = stdout.trim();
+  } catch {
+    await runGit(args.directory, ["remote", "add", "origin", expectedOrigin]);
+    return;
+  }
+
+  if (normalizeRemoteUrl(currentOrigin) !== expectedOrigin) {
+    await runGit(args.directory, [
+      "remote",
+      "set-url",
+      "origin",
+      expectedOrigin,
+    ]);
+  }
+}
+
+async function prepareAttachedRepositoryForGitOps(args: {
+  agentId: string;
+  repositoryName: string;
+  directory: string;
+  remoteUrl: string;
+  token: string;
+}): Promise<void> {
+  await maybeUpdateRepositoryRemoteOrigin(args);
+  await configureLocalCredentialHelper(args.directory, args.token);
+  await ensureLocalMemfsGitConfig(args.directory, args.agentId);
+}
+
 async function cloneRepositoryMount(args: {
   agentId: string;
   repositoryName: string;
@@ -1660,13 +1700,13 @@ async function cloneRepositoryMount(args: {
       `create_repository: mount path already exists and is not a git repository: ${args.directory}`,
     );
   } else {
+    await prepareAttachedRepositoryForGitOps(args);
     await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
       operation: `pull repository ${args.repositoryName}`,
     });
   }
 
-  await configureLocalCredentialHelper(args.directory, args.token);
-  await ensureLocalMemfsGitConfig(args.directory, args.agentId);
+  await prepareAttachedRepositoryForGitOps(args);
 }
 
 export async function createAgentRepository(args: {
@@ -1714,6 +1754,12 @@ interface AgentRepositoryResponse {
   }>;
 }
 
+export interface AttachedAgentRepository {
+  id: string;
+  name: string;
+  permissions: string;
+}
+
 export interface SyncAgentRepositoriesResult {
   mounted: number;
   skipped: number;
@@ -1721,13 +1767,9 @@ export interface SyncAgentRepositoriesResult {
   summaries: string[];
 }
 
-async function listAttachedAgentRepositories(agentId: string): Promise<
-  Array<{
-    id: string;
-    name: string;
-    permissions: string;
-  }>
-> {
+async function listAttachedAgentRepositories(
+  agentId: string,
+): Promise<AttachedAgentRepository[]> {
   const response = await apiRequest<AgentRepositoryResponse>(
     "GET",
     `/v1/agents/${encodeURIComponent(agentId)}/repositories`,
@@ -2046,6 +2088,19 @@ export interface MemoryPostTurnSyncResult {
   localOnly: boolean;
 }
 
+export interface RepositoryPostTurnSyncResult {
+  name: string;
+  path: string;
+  permissions: string;
+  status: MemoryPostTurnSyncStatus;
+  summary: string;
+}
+
+export interface RepositoriesPostTurnSyncResult {
+  results: RepositoryPostTurnSyncResult[];
+  localOnly: boolean;
+}
+
 /**
  * Check git status of the memory directory.
  * Used to decide whether to inject a sync reminder.
@@ -2053,45 +2108,7 @@ export interface MemoryPostTurnSyncResult {
 export async function getMemoryGitStatus(
   agentId: string,
 ): Promise<MemoryGitStatus> {
-  const dir = getScopedMemoryFilesystemRoot(agentId);
-
-  // Check for uncommitted changes
-  const { stdout: statusOut } = await runGit(dir, ["status", "--porcelain"]);
-  const dirty = statusOut.trim().length > 0;
-
-  // Check if local is ahead of remote
-  let aheadOfRemote = false;
-  try {
-    const { stdout: revListOut } = await runGit(dir, [
-      "rev-list",
-      "--count",
-      "@{u}..HEAD",
-    ]);
-    const aheadCount = parseInt(revListOut.trim(), 10);
-    aheadOfRemote = aheadCount > 0;
-  } catch {
-    // No upstream configured or other error - ignore
-  }
-
-  // Build summary
-  const parts: string[] = [];
-  if (dirty) {
-    const changedFiles = statusOut
-      .trim()
-      .split("\n")
-      .filter((l) => l.trim())
-      .map((l) => l.trim());
-    parts.push(`${changedFiles.length} uncommitted change(s)`);
-  }
-  if (aheadOfRemote) {
-    parts.push("local commits not pushed to remote");
-  }
-
-  return {
-    dirty,
-    aheadOfRemote,
-    summary: parts.length > 0 ? parts.join(", ") : "clean",
-  };
+  return getMemoryGitStatusForDir(getScopedMemoryFilesystemRoot(agentId));
 }
 
 function isUnmergedStatusCode(code: string): boolean {
@@ -2171,6 +2188,288 @@ async function getMemoryAheadBehind(
     // No upstream configured or unable to inspect divergence.
     return null;
   }
+}
+
+export interface AttachedRepositoriesGitStatus {
+  dirty: boolean;
+  aheadOfRemote: boolean;
+  summary: string;
+  repositories: Array<{
+    name: string;
+    path: string;
+    permissions: string;
+    dirty: boolean;
+    aheadOfRemote: boolean;
+    summary: string;
+  }>;
+}
+
+export async function getAttachedRepositoriesGitStatus(
+  agentId: string,
+): Promise<AttachedRepositoriesGitStatus> {
+  const repositories = await listAttachedAgentRepositories(agentId);
+  const results = await Promise.allSettled(
+    repositories.map(async (repository) => {
+      const path = getRepositoryMountDir(agentId, repository.name);
+      if (!existsSync(join(path, ".git"))) {
+        return {
+          name: repository.name,
+          path,
+          permissions: repository.permissions,
+          dirty: false,
+          aheadOfRemote: false,
+          summary: "not mounted",
+        };
+      }
+      const status = await getMemoryGitStatusForDir(path);
+      return {
+        name: repository.name,
+        path,
+        permissions: repository.permissions,
+        dirty: status.dirty,
+        aheadOfRemote: status.aheadOfRemote,
+        summary: status.summary,
+      };
+    }),
+  );
+
+  const repoStatuses = results.map((result, index) => {
+    const repository = repositories[index];
+    if (result.status === "fulfilled") return result.value;
+    const message =
+      result.reason instanceof Error
+        ? result.reason.message
+        : String(result.reason);
+    return {
+      name: repository?.name ?? "unknown",
+      path: repository ? getRepositoryMountDir(agentId, repository.name) : "",
+      permissions: repository?.permissions ?? "unknown",
+      dirty: false,
+      aheadOfRemote: false,
+      summary: `status failed: ${message}`,
+    };
+  });
+
+  const dirty = repoStatuses.some((repository) => repository.dirty);
+  const aheadOfRemote = repoStatuses.some(
+    (repository) => repository.aheadOfRemote,
+  );
+  const affected = repoStatuses.filter(
+    (repository) =>
+      repository.dirty ||
+      repository.aheadOfRemote ||
+      repository.summary !== "clean",
+  );
+
+  return {
+    dirty,
+    aheadOfRemote,
+    summary:
+      affected.length > 0
+        ? affected
+            .map((repository) => `${repository.name}: ${repository.summary}`)
+            .join("; ")
+        : "clean",
+    repositories: repoStatuses,
+  };
+}
+
+async function getMemoryGitStatusForDir(dir: string): Promise<MemoryGitStatus> {
+  const { stdout: statusOut } = await runGit(dir, ["status", "--porcelain"]);
+  const dirty = statusOut.trim().length > 0;
+
+  let aheadOfRemote = false;
+  try {
+    const { stdout: revListOut } = await runGit(dir, [
+      "rev-list",
+      "--count",
+      "@{u}..HEAD",
+    ]);
+    aheadOfRemote = (Number.parseInt(revListOut.trim(), 10) || 0) > 0;
+  } catch {
+    aheadOfRemote = false;
+  }
+
+  const parts: string[] = [];
+  if (dirty) {
+    const changedFiles = statusOut
+      .trim()
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((line) => line.trim());
+    parts.push(`${changedFiles.length} uncommitted change(s)`);
+  }
+  if (aheadOfRemote) {
+    parts.push("local commits not pushed to remote");
+  }
+
+  return {
+    dirty,
+    aheadOfRemote,
+    summary: parts.length > 0 ? parts.join(", ") : "clean",
+  };
+}
+
+async function syncPendingRepositoryCommits(args: {
+  agentId: string;
+  repository: AttachedAgentRepository;
+  localOnly: boolean;
+  remoteSupported: boolean;
+  token: string;
+}): Promise<RepositoryPostTurnSyncResult> {
+  const path = getRepositoryMountDir(args.agentId, args.repository.name);
+  const base = {
+    name: args.repository.name,
+    path,
+    permissions: args.repository.permissions,
+  };
+
+  if (!existsSync(join(path, ".git"))) {
+    return {
+      ...base,
+      status: "skipped",
+      summary: "Repository is not mounted.",
+    };
+  }
+
+  const { stdout: statusOut } = await runGit(path, ["status", "--porcelain"]);
+  const conflictSummary = await getMemoryConflictSummary(path, statusOut);
+  if (conflictSummary) {
+    return { ...base, status: "conflict", summary: conflictSummary };
+  }
+
+  if (statusOut.trim().length > 0) {
+    const changedCount = statusOut
+      .split("\n")
+      .filter((line) => line.trim().length > 0).length;
+    return {
+      ...base,
+      status: "dirty",
+      summary: `${changedCount} uncommitted repository change(s).`,
+    };
+  }
+
+  if (args.repository.permissions !== "read_write") {
+    return {
+      ...base,
+      status: "skipped",
+      summary: "Repository is read-only.",
+    };
+  }
+
+  if (!args.remoteSupported) {
+    return {
+      ...base,
+      status: "skipped",
+      summary: args.localOnly
+        ? "Local backend has no Letta remote to push."
+        : "Active backend does not support remote repository pushes.",
+    };
+  }
+
+  const remoteUrl = getRepositoryRemoteUrl(args.agentId, args.repository.name);
+  await prepareAttachedRepositoryForGitOps({
+    agentId: args.agentId,
+    repositoryName: args.repository.name,
+    directory: path,
+    remoteUrl,
+    token: args.token,
+  });
+  const divergence = await getMemoryAheadBehind(path);
+  if (!divergence || divergence.ahead <= 0) {
+    return {
+      ...base,
+      status: "clean",
+      summary: "Repository is clean and has no pending commits to push.",
+    };
+  }
+
+  try {
+    await runGitWithRetry(path, ["push", "-u", "origin", "main"], args.token, {
+      operation: `post-turn push pending repository commits for ${args.repository.name}`,
+    });
+    return {
+      ...base,
+      status: "pushed",
+      summary: `Pushed ${divergence.ahead} pending repository commit(s).`,
+    };
+  } catch (pushError) {
+    if (!isNonFastForwardPushError(pushError)) {
+      return {
+        ...base,
+        status: "push_failed",
+        summary:
+          pushError instanceof Error ? pushError.message : String(pushError),
+      };
+    }
+
+    try {
+      await runGitWithRetry(path, ["pull", "--rebase"], args.token, {
+        operation: `post-turn rebase repository ${args.repository.name} before push`,
+      });
+      const postRebaseConflictSummary = await getMemoryConflictSummary(path);
+      if (postRebaseConflictSummary) {
+        return {
+          ...base,
+          status: "conflict",
+          summary: postRebaseConflictSummary,
+        };
+      }
+      await runGitWithRetry(
+        path,
+        ["push", "-u", "origin", "main"],
+        args.token,
+        {
+          operation: `post-turn push rebased repository commits for ${args.repository.name}`,
+        },
+      );
+      return {
+        ...base,
+        status: "pushed",
+        summary: `Rebased and pushed ${divergence.ahead} pending repository commit(s).`,
+      };
+    } catch (rebaseOrPushError) {
+      const postFailureConflictSummary = await getMemoryConflictSummary(path);
+      if (postFailureConflictSummary) {
+        return {
+          ...base,
+          status: "conflict",
+          summary: postFailureConflictSummary,
+        };
+      }
+      return {
+        ...base,
+        status: "push_failed",
+        summary:
+          rebaseOrPushError instanceof Error
+            ? rebaseOrPushError.message
+            : String(rebaseOrPushError),
+      };
+    }
+  }
+}
+
+export async function syncPendingRepositoryCommitsAfterTurn(
+  agentId: string,
+): Promise<RepositoriesPostTurnSyncResult> {
+  const { getBackend } = await import("@/backend");
+  const backend = getBackend();
+  const localOnly =
+    backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs;
+  const repositories = await listAttachedAgentRepositories(agentId);
+  const token = await getAuthToken();
+  const results = await Promise.all(
+    repositories.map((repository) =>
+      syncPendingRepositoryCommits({
+        agentId,
+        repository,
+        localOnly,
+        remoteSupported: backend.capabilities.remoteMemfs,
+        token,
+      }),
+    ),
+  );
+  return { results, localOnly };
 }
 
 export async function syncPendingMemoryCommitsAfterTurn(

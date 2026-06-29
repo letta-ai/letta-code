@@ -1,6 +1,9 @@
 import {
   type MemoryPostTurnSyncResult,
+  type RepositoriesPostTurnSyncResult,
+  type RepositoryPostTurnSyncResult,
   syncPendingMemoryCommitsAfterTurn,
+  syncPendingRepositoryCommitsAfterTurn,
 } from "@/agent/memory-git";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { debugWarn } from "@/utils/debug";
@@ -59,6 +62,57 @@ Inspect the memory repository and resolve any local git issue. The harness will 
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
+export function formatRepositoryPostTurnSyncReminder(
+  result: RepositoryPostTurnSyncResult,
+): string | null {
+  if (
+    result.status === "clean" ||
+    result.status === "pushed" ||
+    result.status === "skipped"
+  ) {
+    return null;
+  }
+
+  if (result.status === "conflict") {
+    return `${SYSTEM_REMINDER_OPEN}
+REPOSITORY GIT CONFLICT: The attached repository "${result.name}" needs manual conflict resolution.
+
+Repository directory: ${result.path}
+Status: ${result.summary}
+
+Resolve the merge/rebase conflicts in the repository, stage the resolved files, and complete the merge/rebase or create the needed commit. The harness will retry remote push after a future turn when the repo is clean.
+${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  if (result.status === "dirty") {
+    return `${SYSTEM_REMINDER_OPEN}
+REPOSITORY COMMIT NEEDED: The attached repository "${result.name}" has uncommitted changes.
+
+Repository directory: ${result.path}
+Status: ${result.summary}
+
+Commit these repository changes when appropriate. The harness pushes clean committed changes automatically for read/write attached repositories after turns.
+${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  return `${SYSTEM_REMINDER_OPEN}
+REPOSITORY SYNC FAILED: The harness could not push pending commits for attached repository "${result.name}".
+
+Repository directory: ${result.path}
+Status: ${result.summary}
+
+Inspect the repository and resolve any local git issue. The harness will retry remote push after a future turn when the repo is clean.
+${SYSTEM_REMINDER_CLOSE}`;
+}
+
+export function formatRepositoriesPostTurnSyncReminders(
+  result: RepositoriesPostTurnSyncResult,
+): string[] {
+  return result.results
+    .map((repository) => formatRepositoryPostTurnSyncReminder(repository))
+    .filter((reminder) => reminder !== null);
+}
+
 export async function runPostTurnMemorySync(
   params: RunPostTurnMemorySyncParams,
 ): Promise<void> {
@@ -80,12 +134,17 @@ export async function runPostTurnMemorySync(
 
   try {
     const syncResult = await syncPendingMemoryCommitsAfterTurn(params.agentId);
-    const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
-    if (!syncReminder) {
-      return;
+    const repositorySyncResult = await syncPendingRepositoryCommitsAfterTurn(
+      params.agentId,
+    );
+    const reminders = [
+      formatMemoryPostTurnSyncReminder(syncResult),
+      ...formatRepositoriesPostTurnSyncReminders(repositorySyncResult),
+    ].filter((reminder) => reminder !== null);
+    for (const reminder of reminders) {
+      params.enqueueReminder?.(reminder);
+      await params.emitWarning?.(reminder);
     }
-    params.enqueueReminder?.(syncReminder);
-    await params.emitWarning?.(syncReminder);
   } catch (error) {
     debugWarn(
       "memfs-git",
