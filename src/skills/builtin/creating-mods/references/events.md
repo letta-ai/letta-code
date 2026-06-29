@@ -155,16 +155,18 @@ Handlers run in registration order. Later handlers see the current args after ea
   conversationId: string | null;
   toolCallId: string | null;
   toolName: string;
+  args: Record<string, unknown>;
   status: "success" | "error";
   output: string;
 }
 ```
 
-`tool_end` fires immediately after a tool produces a result, before the agent sees it. Handlers can inspect the result, or return `{ result: { status, output } }` to replace it:
+`tool_end` fires immediately after a tool produces a result, before the agent sees it. `event.args` contains the effective tool invocation arguments after `tool_start` transforms, so handlers can react to the specific file, command, query, etc. Handlers can inspect the result, or return `{ result: { status, output } }` to replace it:
 
 ```ts
 letta.events.on("tool_end", (event) => {
   if (event.toolName !== "Bash" || event.status !== "success") return;
+  if (typeof event.args.command !== "string") return;
   return { result: { status: "success", output: redactSecrets(event.output) } };
 });
 ```

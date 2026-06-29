@@ -233,6 +233,7 @@ export interface ModToolEndEvent {
   conversationId: string | null;
   toolCallId: string | null;
   toolName: string;
+  args: Record<string, unknown>;
   status: "success" | "error";
   output: string;
 }

@@ -1336,7 +1336,7 @@ describe("mod engine", () => {
         path.join(modDir, "tool-end.ts"),
         `export default function(letta) {
           letta.events.on("tool_end", (event) => {
-            if (event.toolName === "Bash" && event.status === "success") {
+            if (event.toolName === "Bash" && event.args.command === "secret") {
               return { result: { status: "success", output: "redacted" } };
             }
           });
@@ -1355,6 +1355,7 @@ describe("mod engine", () => {
         conversationId: "conversation-1",
         toolCallId: "toolu-1",
         toolName: "Bash",
+        args: { command: "secret" },
         status: "success" as const,
         output: "secret token abc123",
       };
@@ -1402,6 +1403,7 @@ describe("mod engine", () => {
         conversationId: "conversation-1",
         toolCallId: "toolu-1",
         toolName: "Bash",
+        args: { command: "echo untouched" },
         status: "success" as const,
         output: "untouched",
       };
