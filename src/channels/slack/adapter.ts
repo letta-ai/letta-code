@@ -3162,12 +3162,13 @@ export function createSlackAdapter(
     async sendDirectReply(
       chatId: string,
       text: string,
-      options?: { replyToMessageId?: string },
+      options?: { replyToMessageId?: string; threadId?: string | null },
     ): Promise<void> {
       await ensureApp();
       const slackClient = await ensureWriteClient();
       const threadTs = resolveSlackOutboundThreadTs({
         chatId,
+        threadId: options?.threadId,
         replyToMessageId: options?.replyToMessageId,
       });
       const response = await slackClient.chat.postMessage({

@@ -426,6 +426,18 @@ function buildChannelTurnSource(
   };
 }
 
+function buildDirectReplyOptions(
+  msg: Pick<InboundChannelMessage, "messageId" | "threadId">,
+): { replyToMessageId?: string; threadId?: string | null } | undefined {
+  if (!msg.messageId && !msg.threadId) {
+    return undefined;
+  }
+  return {
+    replyToMessageId: msg.threadId ?? msg.messageId ?? undefined,
+    threadId: msg.threadId ?? null,
+  };
+}
+
 function getChannelApprovalScopeKey(params: {
   channel: string;
   accountId?: string;
@@ -1206,9 +1218,11 @@ export class ChannelRegistry {
 
     const parsed = parseChannelControlRequestResponse(pending.event, msg.text);
     if (parsed.type === "reprompt") {
-      await adapter.sendDirectReply(msg.chatId, parsed.message, {
-        replyToMessageId: msg.threadId ?? msg.messageId,
-      });
+      await adapter.sendDirectReply(
+        msg.chatId,
+        parsed.message,
+        buildDirectReplyOptions(msg),
+      );
       return true;
     }
 
@@ -1216,9 +1230,7 @@ export class ChannelRegistry {
       await adapter.sendDirectReply(
         msg.chatId,
         "I’m reconnecting to Letta Code right now, so I couldn’t use that reply yet. Please send it again in a moment.",
-        {
-          replyToMessageId: msg.threadId ?? msg.messageId,
-        },
+        buildDirectReplyOptions(msg),
       );
       return true;
     }
@@ -1237,9 +1249,7 @@ export class ChannelRegistry {
       await adapter.sendDirectReply(
         msg.chatId,
         "That approval prompt expired before I could use your reply. Please ask the agent to try again.",
-        {
-          replyToMessageId: msg.threadId ?? msg.messageId,
-        },
+        buildDirectReplyOptions(msg),
       );
     }
 
@@ -1880,11 +1890,7 @@ export class ChannelRegistry {
       await adapter.sendDirectReply(
         msg.chatId,
         buildSlackAppSetupInstructions(),
-        msg.chatType === "channel" && msg.threadId
-          ? { replyToMessageId: msg.threadId }
-          : msg.messageId
-            ? { replyToMessageId: msg.messageId }
-            : undefined,
+        buildDirectReplyOptions(msg),
       );
       return null;
     }
@@ -1897,6 +1903,7 @@ export class ChannelRegistry {
         await adapter.sendDirectReply(
           msg.chatId,
           "You are not on the allowed users list for this Slack app.",
+          buildDirectReplyOptions(msg),
         );
         return null;
       }
