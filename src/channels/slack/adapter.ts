@@ -380,6 +380,29 @@ function resolveSlackChatType(chatId: string): "direct" | "channel" {
   return chatId.startsWith("D") ? "direct" : "channel";
 }
 
+function resolveSlackOutboundThreadTs(params: {
+  chatId: string;
+  threadId?: string | null;
+  replyToMessageId?: string | null;
+}): string | undefined {
+  if (resolveSlackChatType(params.chatId) === "direct") {
+    return undefined;
+  }
+  return firstNonEmptyString(params.threadId, params.replyToMessageId);
+}
+
+function resolveSlackSourceThreadTs(
+  source: ChannelTurnSource,
+): string | undefined {
+  if (
+    source.chatType === "direct" ||
+    resolveSlackChatType(source.chatId) === "direct"
+  ) {
+    return undefined;
+  }
+  return firstNonEmptyString(source.threadId, source.messageId);
+}
+
 function normalizeSlackReactionName(value: string): string {
   return value.trim().replace(/^:+|:+$/g, "");
 }
@@ -1248,13 +1271,17 @@ async function uploadSlackFile(
     throw new Error(`Failed to upload Slack file: HTTP ${uploadResp.status}`);
   }
 
+  const threadTs = resolveSlackOutboundThreadTs({
+    chatId: msg.chatId,
+    threadId: msg.threadId,
+    replyToMessageId: msg.replyToMessageId,
+  });
+
   const completeResp = await slackClient.files.completeUploadExternal({
     files: [{ id: uploadUrlResp.file_id, title: uploadTitle }],
     channel_id: msg.chatId,
     ...(msg.text.trim() ? { initial_comment: msg.text } : {}),
-    ...((msg.threadId ?? msg.replyToMessageId)
-      ? { thread_ts: msg.threadId ?? msg.replyToMessageId }
-      : {}),
+    ...(threadTs ? { thread_ts: threadTs } : {}),
   });
 
   if (!completeResp.ok) {
@@ -1650,7 +1677,7 @@ export function createSlackAdapter(
     if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
       return null;
     }
-    const replyToMessageId = source.threadId ?? source.messageId;
+    const replyToMessageId = resolveSlackSourceThreadTs(source);
     if (!isNonEmptyString(replyToMessageId)) {
       return null;
     }
@@ -1668,19 +1695,16 @@ export function createSlackAdapter(
     source: ChannelTurnSource,
     errorText: string,
   ): Promise<void> {
-    const replyToMessageId = source.threadId ?? source.messageId;
-    if (!isNonEmptyString(replyToMessageId)) {
-      return;
-    }
+    const replyToMessageId = resolveSlackSourceThreadTs(source);
 
     await ensureApp();
     const slackClient = await ensureWriteClient();
     const response = await slackClient.chat.postMessage({
       channel: source.chatId,
       text: formatSlackLifecycleErrorMessage(errorText),
-      thread_ts: replyToMessageId,
+      ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
     });
-    rememberMessageThread(response.ts, replyToMessageId);
+    rememberMessageThread(response.ts, replyToMessageId ?? null);
   }
 
   function buildSlackProgressCardKey(
@@ -1720,7 +1744,7 @@ export function createSlackAdapter(
   }
 
   function getSlackProgressReplyTs(source: ChannelTurnSource): string | null {
-    const replyToMessageId = source.threadId ?? source.messageId;
+    const replyToMessageId = resolveSlackSourceThreadTs(source);
     return isNonEmptyString(replyToMessageId) ? replyToMessageId : null;
   }
 
@@ -1804,6 +1828,9 @@ export function createSlackAdapter(
   }
 
   function canStartSlackStream(source: ChannelTurnSource): boolean {
+    if (source.chatType === "direct") {
+      return false;
+    }
     if (source.chatType !== "channel") {
       return true;
     }
@@ -2340,7 +2367,11 @@ export function createSlackAdapter(
     if (msg.channel !== "slack" || msg.reaction) {
       return;
     }
-    const replyToMessageId = msg.threadId ?? msg.replyToMessageId;
+    const replyToMessageId = resolveSlackOutboundThreadTs({
+      chatId: msg.chatId,
+      threadId: msg.threadId,
+      replyToMessageId: msg.replyToMessageId,
+    });
     if (!isNonEmptyString(replyToMessageId)) {
       return;
     }
@@ -2478,8 +2509,6 @@ export function createSlackAdapter(
       const senderName = await resolveUserName(instance, rawMessage.user);
 
       if (chatType === "direct") {
-        const directThreadId =
-          firstNonEmptyString(rawMessage.thread_ts, rawMessage.ts) ?? null;
         const seenKey = `${channelId}:${rawMessage.ts}`;
         const wasSeen = markIngressMessageSeen(channelId, rawMessage.ts);
         if (!wasSeen) {
@@ -2503,7 +2532,7 @@ export function createSlackAdapter(
           text,
           timestamp: slackTimestampToMillis(rawMessage.ts),
           messageId: rawMessage.ts,
-          threadId: directThreadId,
+          threadId: null,
           chatType: "direct",
           isMention: wasMentioned,
           attachments,
@@ -2963,18 +2992,19 @@ export function createSlackAdapter(
         return result;
       }
 
+      const threadTs = resolveSlackOutboundThreadTs({
+        chatId: msg.chatId,
+        threadId: msg.threadId,
+        replyToMessageId: msg.replyToMessageId,
+      });
+
       const response = await slackClient.chat.postMessage({
         channel: msg.chatId,
         text: msg.text,
-        ...((msg.threadId ?? msg.replyToMessageId)
-          ? { thread_ts: msg.threadId ?? msg.replyToMessageId }
-          : {}),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
       });
 
-      rememberMessageThread(
-        response.ts,
-        msg.threadId ?? msg.replyToMessageId ?? response.ts ?? null,
-      );
+      rememberMessageThread(response.ts, threadTs ?? null);
 
       await finishSlackProgressCardForOutboundMessage(msg);
 
@@ -2988,17 +3018,16 @@ export function createSlackAdapter(
     ): Promise<void> {
       await ensureApp();
       const slackClient = await ensureWriteClient();
+      const threadTs = resolveSlackOutboundThreadTs({
+        chatId,
+        replyToMessageId: options?.replyToMessageId,
+      });
       const response = await slackClient.chat.postMessage({
         channel: chatId,
         text,
-        ...(options?.replyToMessageId
-          ? { thread_ts: options.replyToMessageId }
-          : {}),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
       });
-      rememberMessageThread(
-        response.ts,
-        options?.replyToMessageId ?? response.ts ?? null,
-      );
+      rememberMessageThread(response.ts, threadTs ?? null);
     },
 
     async handleControlRequestEvent(
@@ -3008,18 +3037,14 @@ export function createSlackAdapter(
       const slackClient = await ensureWriteClient();
       const text = formatChannelControlRequestPrompt(event);
       const blocks = formatSlackControlRequestBlocks(event);
+      const threadTs = resolveSlackSourceThreadTs(event.source);
       const response = await slackClient.chat.postMessage({
         channel: event.source.chatId,
         text,
         ...(blocks ? { blocks } : {}),
-        ...((event.source.threadId ?? event.source.messageId)
-          ? { thread_ts: event.source.threadId ?? event.source.messageId }
-          : {}),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
       });
-      rememberMessageThread(
-        response.ts,
-        event.source.threadId ?? event.source.messageId ?? response.ts ?? null,
-      );
+      rememberMessageThread(response.ts, threadTs ?? null);
     },
 
     async prepareInboundMessage(
