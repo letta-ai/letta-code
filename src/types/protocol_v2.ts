@@ -34,6 +34,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
 export type ExperimentId =
+  | "artifacts"
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"

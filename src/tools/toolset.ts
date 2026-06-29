@@ -7,6 +7,7 @@ import { getSupportedChannelIds } from "@/channels/plugin-registry";
 import { getChannelRegistry } from "@/channels/registry";
 import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
 import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
+import { experimentManager } from "@/experiments/manager";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
 import type { ModContext } from "@/mods/types";
@@ -38,6 +39,22 @@ import {
 import type { ToolName } from "./tool-definitions";
 
 // Toolset definitions from manager.ts (single source of truth)
+
+const ARTIFACT_TOOL_NAMES: ToolName[] = [
+  "read_artifact_file",
+  "write_artifact_file",
+];
+
+function appendArtifactToolsIfEnabled(toolNames: ToolName[]): ToolName[] {
+  const artifactToolSet = new Set<ToolName>(ARTIFACT_TOOL_NAMES);
+  const withoutArtifactTools = toolNames.filter(
+    (name) => !artifactToolSet.has(name),
+  );
+  if (!experimentManager.isEnabled("artifacts")) {
+    return withoutArtifactTools;
+  }
+  return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
+}
 // Keep these as direct references at call-sites (not top-level aliases) to avoid
 // temporal-dead-zone issues under circular import initialization.
 
@@ -153,7 +170,7 @@ function getToolNamesForToolset(
     tools.push("MessageChannel" as ToolName);
   }
 
-  return tools;
+  return appendArtifactToolsIfEnabled(tools);
 }
 
 export function getGoalToolNamesForToolset(
