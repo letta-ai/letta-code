@@ -2055,7 +2055,8 @@ test("slack adapter does not create fallback cards after stream append failure",
     kind: "tool",
     state: "started",
     message: "Searching files",
-    toolCallId: "call-1",
+    toolCallId: "call-2",
+    toolName: "grep",
   });
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
@@ -2065,6 +2066,8 @@ test("slack adapter does not create fallback cards after stream append failure",
   });
 
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(1);
   expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
     channel: "C123",
     ts: "1712800000.000300",
@@ -2076,8 +2079,14 @@ test("slack adapter does not create fallback cards after stream append failure",
         status: "complete",
       },
       {
+        type: "task_update",
+        id: "task_call-2",
+        title: "Search",
+        status: "complete",
+      },
+      {
         type: "plan_update",
-        title: "Completed",
+        title: "Working",
       },
     ],
   });
