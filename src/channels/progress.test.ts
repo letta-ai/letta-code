@@ -33,6 +33,7 @@ test("channel progress converts tool call deltas without leaking args", () => {
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "shell_exec",
+      toolTitle: "Running",
     },
   ]);
 });

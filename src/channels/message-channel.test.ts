@@ -115,10 +115,79 @@ describe("MessageChannel", () => {
     });
   });
 
-  test("does not infer Slack DM threads from active turn metadata", async () => {
+  test("does not infer Slack DM threads from flat active turn metadata", async () => {
     const registry = new ChannelRegistry();
 
     const sendMessage = mock(async () => ({ messageId: "slack-dm-msg" }));
+
+    const adapter: ChannelAdapter = {
+      id: "slack:account-1",
+      channelId: "slack",
+      accountId: "account-1",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("slack", {
+      accountId: "account-1",
+      chatId: "D123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "slack",
+      chat_id: "D123",
+      message: "hello from DM",
+      replyTo: "1712800000.000099",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+      channelTurnSources: [
+        {
+          channel: "slack",
+          accountId: "account-1",
+          chatId: "D123",
+          chatType: "direct",
+          messageId: "1712800000.000100",
+          threadId: null,
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    expect(result).toContain("Message sent to slack");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "slack",
+      accountId: "account-1",
+      chatId: "D123",
+      text: "hello from DM",
+      replyToMessageId: undefined,
+      threadId: null,
+      parseMode: undefined,
+    });
+  });
+
+  test("preserves explicit Slack DM threads from active turn metadata", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({
+      messageId: "slack-dm-thread-msg",
+    }));
 
     const adapter: ChannelAdapter = {
       id: "slack:account-1",
@@ -150,8 +219,7 @@ describe("MessageChannel", () => {
       action: "send",
       channel: "slack",
       chat_id: "D123",
-      message: "hello from DM",
-      replyTo: "1712800000.000099",
+      message: "hello from a DM thread",
       parentScope: {
         agentId: "agent-1",
         conversationId: "default",
@@ -163,7 +231,7 @@ describe("MessageChannel", () => {
           chatId: "D123",
           chatType: "direct",
           messageId: "1712800000.000100",
-          threadId: "1712800000.000100",
+          threadId: "1712790000.000050",
           agentId: "agent-1",
           conversationId: "default",
         },
@@ -175,9 +243,9 @@ describe("MessageChannel", () => {
       channel: "slack",
       accountId: "account-1",
       chatId: "D123",
-      text: "hello from DM",
+      text: "hello from a DM thread",
       replyToMessageId: undefined,
-      threadId: null,
+      threadId: "1712790000.000050",
       parseMode: undefined,
     });
   });
