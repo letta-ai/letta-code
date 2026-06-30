@@ -8,8 +8,10 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 
 describe("toolNameMapping display mappings", () => {
-  test("maps memory_apply_patch to a friendly label", () => {
-    expect(getDisplayToolName("memory_apply_patch")).toBe("Memory Patch");
+  test("maps memory tools to one friendly label", () => {
+    expect(getDisplayToolName("memory")).toBe("Memory");
+    expect(getDisplayToolName("memory_apply_patch")).toBe("Memory");
+    expect(getDisplayToolName("memory_insert")).toBe("Memory");
   });
 
   test("maps shell_exec to the shell tool family", () => {
