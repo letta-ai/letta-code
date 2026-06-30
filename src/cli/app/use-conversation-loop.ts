@@ -699,6 +699,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           });
           buffersRef.current.order.push(statusId);
           refreshDerived();
+          userCancelledRef.current = false;
           return;
         }
 
