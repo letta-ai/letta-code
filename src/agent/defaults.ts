@@ -11,7 +11,6 @@ import { getServerUrl } from "@/backend/api/client";
 import { settingsManager } from "@/settings-manager";
 import { type CreateAgentOptions, createAgent } from "./create";
 import { parseMdxFrontmatter } from "./memory";
-import { GIT_MEMORY_ENABLED_TAG } from "./memory-git";
 import { getDefaultModel, resolveModel } from "./model";
 import { MEMORY_PROMPTS } from "./prompt-assets";
 
@@ -152,20 +151,6 @@ async function addTagToAgent(
   }
 }
 
-async function ensureMemfsTagOnAgent(
-  backend: Backend,
-  agent: AgentState,
-): Promise<AgentState> {
-  const currentTags = agent.tags ?? [];
-  if (currentTags.includes(GIT_MEMORY_ENABLED_TAG)) {
-    return agent;
-  }
-
-  const tags = [...currentTags, GIT_MEMORY_ENABLED_TAG];
-  await backend.updateAgent(agent.id, { tags });
-  return { ...agent, tags };
-}
-
 /**
  * Create a fresh default Letta Code agent and pin it globally.
  * Always creates a new agent — does NOT search by tag to avoid picking up
@@ -196,14 +181,11 @@ export async function ensureDefaultAgents(
         ? "memfs"
         : undefined;
 
-    let { agent } = await createAgent({
+    const { agent } = await createAgent({
       ...DEFAULT_AGENT_CONFIGS.memo,
       model: await resolveDefaultAgentModel(backend, options?.preferredModel),
       memoryPromptMode,
     });
-    if (willAutoEnableMemfs) {
-      agent = await ensureMemfsTagOnAgent(backend, agent);
-    }
     await addTagToAgent(backend, agent.id, MEMO_TAG);
     settingsManager.pinAgent(agent.id);
 
