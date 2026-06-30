@@ -1855,12 +1855,6 @@ test("slack adapter streams native task progress and clears thread status", asyn
         status: "complete",
       },
       {
-        type: "task_update",
-        id: "task_reasoning_1",
-        title: "Finished",
-        status: "complete",
-      },
-      {
         type: "plan_update",
         title: "Completed",
       },
@@ -1871,6 +1865,118 @@ test("slack adapter streams native task progress and clears thread status", asyn
     thread_ts: "1712790000.000050",
     status: "",
   });
+});
+
+test("slack adapter keeps reasoning updates out of concrete task rows", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-read",
+    toolName: "read_file",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Read files",
+    toolCallId: "call-read",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "thinking",
+    state: "updated",
+    message: "Thinking",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running command",
+    toolCallId: "call-bash",
+    toolName: "exec_command",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  const startCalls = writeClient?.chat.startStream.mock
+    .calls as unknown as Array<[{ chunks?: Array<Record<string, unknown>> }]>;
+  const appendCalls = writeClient?.chat.appendStream.mock
+    .calls as unknown as Array<[{ chunks?: Array<Record<string, unknown>> }]>;
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    [{ chunks?: Array<Record<string, unknown>> }]
+  >;
+  expect(appendCalls.map(([call]) => call.chunks)).toEqual(
+    expect.arrayContaining([
+      [
+        {
+          type: "plan_update",
+          title: "Thinking",
+        },
+      ],
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "task_call-bash",
+          title: "Running",
+          status: "in_progress",
+        }),
+      ]),
+    ]),
+  );
+  const streamedChunks = [
+    ...startCalls.flatMap(([call]) => call.chunks ?? []),
+    ...appendCalls.flatMap(([call]) => call.chunks ?? []),
+    ...stopCalls.flatMap(([call]) => call.chunks ?? []),
+  ];
+  expect(streamedChunks).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: expect.stringMatching(/^task_reasoning/) }),
+    ]),
+  );
+  expect(streamedChunks).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ title: "Finished" }),
+      expect.objectContaining({ title: "Thought" }),
+    ]),
+  );
 });
 
 test("slack adapter does not start thread progress in direct messages", async () => {
