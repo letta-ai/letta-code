@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from "node:crypto";
 import {
   type AssistantMessage,
   type AssistantMessageEvent,
@@ -380,6 +381,91 @@ function withAnthropicOutputEffort(
   };
 }
 
+const OPENROUTER_TRACE_FIELD_LIMIT = 128;
+let openRouterTraceHmacSecret: Buffer | undefined;
+
+function openRouterTraceValue(value: string): string {
+  return value.slice(0, OPENROUTER_TRACE_FIELD_LIMIT);
+}
+
+function openRouterTraceSecret(): Buffer {
+  openRouterTraceHmacSecret ??= randomBytes(32);
+  return openRouterTraceHmacSecret;
+}
+
+function openRouterTracePseudonym(purpose: string, value: string): string {
+  return openRouterTraceValue(
+    createHmac("sha256", openRouterTraceSecret())
+      .update(`openrouter-broadcast:${purpose}:`)
+      .update(value)
+      .digest("hex"),
+  );
+}
+
+function isTelemetryOptedOut(): boolean {
+  const telem = process.env.LETTA_CODE_TELEM;
+  return telem === "0" || telem === "false" || process.env.DO_NOT_TRACK === "1";
+}
+
+function hasHeader(
+  headers: Record<string, string> | undefined,
+  name: string,
+): boolean {
+  const normalizedName = name.toLowerCase();
+  return Object.keys(headers ?? {}).some(
+    (header) => header.toLowerCase() === normalizedName,
+  );
+}
+
+function withOpenRouterSessionHeader(
+  headers: Record<string, string> | undefined,
+  conversationId: string,
+): Record<string, string> {
+  if (hasHeader(headers, "x-session-id")) return headers ?? {};
+  return {
+    ...(headers ?? {}),
+    "x-session-id": openRouterTracePseudonym("conversation", conversationId),
+  };
+}
+
+function withOpenRouterBroadcastTraceData(
+  existing: SimpleStreamOptions["onPayload"] | undefined,
+  input: ProviderTurnInput,
+  generationName: string,
+): SimpleStreamOptions["onPayload"] {
+  const pseudonymousSessionId = openRouterTracePseudonym(
+    "conversation",
+    input.conversationId,
+  );
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+    if (!isRecord(next)) return upstreamChanged ? next : undefined;
+
+    const existingTrace = isRecord(next.trace) ? next.trace : {};
+    const sessionId =
+      typeof next.session_id === "string"
+        ? next.session_id
+        : pseudonymousSessionId;
+    return {
+      ...next,
+      session_id: sessionId,
+      trace: {
+        trace_id: pseudonymousSessionId,
+        trace_name: "letta-code",
+        span_name: "agent-turn",
+        generation_name: generationName,
+        ...existingTrace,
+      },
+    };
+  };
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -680,11 +766,16 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
+    const enrichOpenRouterTrace =
+      resolved.provider === "openrouter" && !isTelemetryOptedOut();
+    const headers = enrichOpenRouterTrace
+      ? withOpenRouterSessionHeader(resolved.headers, input.conversationId)
+      : resolved.headers;
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-      ...(resolved.headers ? { headers: resolved.headers } : {}),
+      ...(headers ? { headers } : {}),
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
@@ -711,6 +802,13 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         : {}),
     };
+    if (enrichOpenRouterTrace) {
+      options.onPayload = withOpenRouterBroadcastTraceData(
+        options.onPayload,
+        input,
+        resolved.model.id,
+      );
+    }
     if (resolved.model.api === "openai-responses") {
       // pi-ai replays OpenAI Responses output items from transcript history.
       // Those upstream item IDs (rs_*, msg_*, fc_*) are not retrievable when the
