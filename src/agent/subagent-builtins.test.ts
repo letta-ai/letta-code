@@ -55,16 +55,29 @@ describe("built-in subagents", () => {
     expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
 
-  test("reflection exposes only Edit among first-class file tools", async () => {
+  test("memory-writing built-ins expose Edit but hide broad file tools", async () => {
     const configs = await getAllSubagentConfigs();
     const hiddenFileTools = ["Read", "Write", "Glob", "Grep"];
 
     expect(configs.reflection?.allowedTools).toContain("Edit");
-    expect(configs.memory?.allowedTools).not.toContain("Edit");
+    expect(configs.memory?.allowedTools).toContain("Edit");
+    expect(configs.memory?.allowedTools).toContain("Bash");
+    expect(configs.memory?.allowedTools).toContain("TaskOutput");
     for (const tool of hiddenFileTools) {
       expect(configs.reflection?.allowedTools).not.toContain(tool);
       expect(configs.memory?.allowedTools).not.toContain(tool);
     }
+  });
+
+  test("memory subagent is forked and background by default", async () => {
+    const configs = await getAllSubagentConfigs();
+
+    expect(configs.memory?.fork).toBe(true);
+    expect(configs.memory?.background).toBe(true);
+    expect(configs.memory?.recommendedModel).toBe("inherit");
+    expect(configs.memory?.description).toContain(
+      "replace memory/memory_apply_patch",
+    );
   });
 
   test("reuses MemFS built-in prompts when local backend is active", async () => {
@@ -78,7 +91,7 @@ describe("built-in subagents", () => {
     expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
     expect(configs.init?.systemPrompt).not.toContain("git push");
     expect(configs.memory?.systemPrompt).toContain(
-      'WORKTREE_DIR="$MEMORY_DIR-worktrees"',
+      "Memory-edit instructions are injected inline",
     );
     expect(configs.memory?.systemPrompt).not.toContain("git push");
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
