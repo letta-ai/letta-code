@@ -14,6 +14,7 @@ import type {
 import {
   PiStreamAdapter,
   type PiStreamFunction,
+  withOpenRouterSessionHeader,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
   LlmEndInfo,
@@ -895,7 +896,14 @@ describe("PiStreamAdapter", () => {
         const payload = {
           model: "anthropic/claude-sonnet-4",
           messages: [{ role: "user", content: "hello" }],
-          trace: { custom_key: "kept" },
+          session_id: "local-conv-1",
+          trace: {
+            trace_id: "local-conv-1",
+            trace_name: "local-conv-1",
+            span_name: "agent-local-1",
+            generation_name: "agent-local-1",
+            custom_key: "kept",
+          },
         };
         const finalMessage = {
           ...assistantMessage(),
@@ -963,6 +971,19 @@ describe("PiStreamAdapter", () => {
       expect(serializedPayload).not.toContain("agent-local-1");
       expect(serializedPayload).not.toContain("conversation_id");
       expect(serializedPayload).not.toContain("agent_id");
+
+      for await (const _event of adapter.stream({
+        ...baseInput,
+        conversationId: "local-conv-2",
+        agent: {
+          ...baseInput.agent,
+          model: "openrouter/anthropic/claude-sonnet-4",
+          model_settings: { provider_type: "openrouter" },
+        },
+      })) {
+        // drain a different conversation to verify pseudonyms are not constant
+      }
+      expect(capturedOptions?.headers?.["x-session-id"]).not.toBe(sessionId);
     } finally {
       if (previousDoNotTrack === undefined) delete process.env.DO_NOT_TRACK;
       else process.env.DO_NOT_TRACK = previousDoNotTrack;
@@ -972,10 +993,31 @@ describe("PiStreamAdapter", () => {
     }
   });
 
+  test("normalizes pre-existing OpenRouter session headers case-insensitively", () => {
+    const headers = withOpenRouterSessionHeader(
+      {
+        "X-Session-Id": "local-conv-1",
+        "X-SESSION-ID": "agent-local-1",
+        "x-Session-Id": "local-conv-2",
+        "x-other-header": "kept",
+      },
+      "pseudonymous-session",
+    );
+
+    expect(headers).toEqual({
+      "x-other-header": "kept",
+      "x-session-id": "pseudonymous-session",
+    });
+    expect(JSON.stringify(headers)).not.toContain("local-conv-1");
+    expect(JSON.stringify(headers)).not.toContain("agent-local-1");
+    expect(JSON.stringify(headers)).not.toContain("local-conv-2");
+  });
+
   test("skips OpenRouter Broadcast trace enrichment when telemetry is opted out", async () => {
     for (const [envKey, envValue] of [
       ["DO_NOT_TRACK", "1"],
       ["LETTA_CODE_TELEM", "0"],
+      ["LETTA_CODE_TELEM", "false"],
     ] as const) {
       const storageDir = await mkdtemp(
         join(tmpdir(), "pi-stream-openrouter-broadcast-opt-out-"),
@@ -1031,6 +1073,7 @@ describe("PiStreamAdapter", () => {
         }
 
         expect(capturedOptions?.headers?.["x-session-id"]).toBeUndefined();
+        expect(capturedOptions?.sessionId).toBeUndefined();
         expect(capturedOptions?.onPayload).toBeUndefined();
       } finally {
         if (previousDoNotTrack === undefined) delete process.env.DO_NOT_TRACK;

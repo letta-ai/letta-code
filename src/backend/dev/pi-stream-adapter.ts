@@ -407,24 +407,18 @@ function isTelemetryOptedOut(): boolean {
   return telem === "0" || telem === "false" || process.env.DO_NOT_TRACK === "1";
 }
 
-function hasHeader(
+export function withOpenRouterSessionHeader(
   headers: Record<string, string> | undefined,
-  name: string,
-): boolean {
-  const normalizedName = name.toLowerCase();
-  return Object.keys(headers ?? {}).some(
-    (header) => header.toLowerCase() === normalizedName,
-  );
-}
-
-function withOpenRouterSessionHeader(
-  headers: Record<string, string> | undefined,
-  conversationId: string,
+  pseudonymousSessionId: string,
 ): Record<string, string> {
-  if (hasHeader(headers, "x-session-id")) return headers ?? {};
+  const safeHeaders = Object.fromEntries(
+    Object.entries(headers ?? {}).filter(
+      ([key]) => key.toLowerCase() !== "x-session-id",
+    ),
+  );
   return {
-    ...(headers ?? {}),
-    "x-session-id": openRouterTracePseudonym("conversation", conversationId),
+    ...safeHeaders,
+    "x-session-id": pseudonymousSessionId,
   };
 }
 
@@ -448,19 +442,15 @@ function withOpenRouterBroadcastTraceData(
     if (!isRecord(next)) return upstreamChanged ? next : undefined;
 
     const existingTrace = isRecord(next.trace) ? next.trace : {};
-    const sessionId =
-      typeof next.session_id === "string"
-        ? next.session_id
-        : pseudonymousSessionId;
     return {
       ...next,
-      session_id: sessionId,
+      session_id: pseudonymousSessionId,
       trace: {
+        ...existingTrace,
         trace_id: pseudonymousSessionId,
         trace_name: "letta-code",
         span_name: "agent-turn",
         generation_name: generationName,
-        ...existingTrace,
       },
     };
   };
@@ -766,10 +756,19 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
-    const enrichOpenRouterTrace =
-      resolved.provider === "openrouter" && !isTelemetryOptedOut();
-    const headers = enrichOpenRouterTrace
-      ? withOpenRouterSessionHeader(resolved.headers, input.conversationId)
+    const pseudonymousOpenRouterSessionId =
+      resolved.provider === "openrouter" && !isTelemetryOptedOut()
+        ? openRouterTracePseudonym("conversation", input.conversationId)
+        : undefined;
+    const sessionId =
+      resolved.provider === "openrouter"
+        ? pseudonymousOpenRouterSessionId
+        : input.conversationId;
+    const headers = pseudonymousOpenRouterSessionId
+      ? withOpenRouterSessionHeader(
+          resolved.headers,
+          pseudonymousOpenRouterSessionId,
+        )
       : resolved.headers;
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
@@ -778,7 +777,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(headers ? { headers } : {}),
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
-      sessionId: input.conversationId,
+      ...(sessionId ? { sessionId } : {}),
       ...(reasoningForSettings(input.agent.model_settings)
         ? { reasoning: reasoningForSettings(input.agent.model_settings) }
         : {}),
@@ -802,7 +801,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         : {}),
     };
-    if (enrichOpenRouterTrace) {
+    if (pseudonymousOpenRouterSessionId) {
       options.onPayload = withOpenRouterBroadcastTraceData(
         options.onPayload,
         input,
