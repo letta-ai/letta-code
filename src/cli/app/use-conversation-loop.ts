@@ -97,6 +97,7 @@ import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { goalLoopMode } from "@/goal-loop-mode";
 import { runStopHooks } from "@/hooks";
+import { getTurnStartCancel } from "@/mods/turn-start-cancel";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { formatPermissionDenial } from "@/permissions/format-denial";
 import type { PermissionMode } from "@/permissions/mode";
@@ -632,6 +633,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         return;
       }
       processingConversationRef.current += 1;
+      let turnStartCancelReason: string | null = null;
 
       if (hasUserMessageInput(currentInput)) {
         const originalInput = currentInput;
@@ -649,9 +651,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           currentInput = isTurnInputArray(turnStartEvent.input)
             ? turnStartEvent.input
             : originalInput;
+          turnStartCancelReason =
+            getTurnStartCancel(turnStartEvent)?.reason ?? null;
         } catch {
           // Mod turn_start handlers should not block sending the turn.
           currentInput = originalInput;
+          turnStartCancelReason = null;
         }
       }
 
@@ -685,6 +690,19 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       let preserveTranscriptStartForApproval = false;
 
       try {
+        if (turnStartCancelReason) {
+          const statusId = uid("status");
+          buffersRef.current.byId.set(statusId, {
+            kind: "status",
+            id: statusId,
+            lines: [turnStartCancelReason],
+          });
+          buffersRef.current.order.push(statusId);
+          refreshDerived();
+          userCancelledRef.current = false;
+          return;
+        }
+
         // Check if user hit escape before we started
         if (userCancelledRef.current) {
           userCancelledRef.current = false; // Reset for next time
