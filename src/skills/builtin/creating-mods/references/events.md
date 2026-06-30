@@ -59,7 +59,7 @@ letta.events.on("tool_start", (event, ctx) => {
 
 Lifecycle, turn, tool, compaction, and llm events are wired today.
 
-Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform or cancel outbound user-message turns. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
 
 `compact_start`/`compact_end` and `llm_start`/`llm_end` only fire on the **local backend**, where compaction and provider requests run client-side. On the constellation backend that work happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` / `letta.capabilities.events.llm` for portable mods.
 
@@ -186,7 +186,7 @@ letta.events.on("tool_end", async (event, ctx) => {
 });
 ```
 
-`turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns.
+`turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns. Listener/Desktop skips approval-only continuations so mods do not rewrite approval payloads; do not rely on `turn_start` to block approval-only continuations on every surface.
 
 Handlers can mutate `event.input` directly or return replacement input:
 
@@ -213,6 +213,18 @@ letta.events.on("turn_start", (event) => {
   return { input: event.input };
 });
 ```
+
+Handlers can also cancel a user-message turn before it reaches the backend/model:
+
+```ts
+letta.events.on("turn_start", (event) => {
+  if (!isPlanModeActive(event.conversationId)) {
+    return { cancel: { reason: "Run /plan first." } };
+  }
+});
+```
+
+If multiple handlers cancel, the first valid cancel reason wins. A valid reason is a non-empty string after trimming. Cancellation does not synthesize an assistant response or tool result; it only tells the host not to submit this turn.
 
 Handlers run in registration order. Later handlers see the current input after earlier mutations/returns. If a handler throws, its partial `event.input` mutation is rolled back and the error is recorded as a mod diagnostic.
 

@@ -211,8 +211,13 @@ export interface ModTurnStartEvent {
   input: Array<MessageCreate | ApprovalCreate>;
 }
 
+export interface ModTurnStartCancelResult {
+  reason: string;
+}
+
 export interface ModTurnStartResult {
   input?: Array<MessageCreate | ApprovalCreate>;
+  cancel?: ModTurnStartCancelResult;
 }
 
 export interface ModToolStartEvent {

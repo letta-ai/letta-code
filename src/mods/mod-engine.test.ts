@@ -1129,6 +1129,99 @@ describe("mod engine", () => {
     }
   });
 
+  test("lets turn_start handlers cancel with first valid reason", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-start-cancel.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_start", () => ({
+            cancel: { reason: "   " },
+          }));
+          letta.events.on("turn_start", () => ({
+            cancel: { reason: " Run /plan first. " },
+          }));
+          letta.events.on("turn_start", (event) => {
+            event.cancel = { reason: "mutated event should not win" };
+            return { cancel: { reason: "second reason should not win" } };
+          });
+          letta.events.on("turn_start", () => {
+            throw new Error("turn_start failed after cancel");
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event: {
+        agentId: string;
+        cancel?: { reason: string };
+        conversationId: string;
+        input: Array<{ role: "user"; content: string }>;
+      } = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        input: [{ role: "user", content: "hello" }],
+      };
+
+      const result = await engine.emitEvent(
+        "turn_start",
+        event,
+        createModContext(),
+      );
+
+      expect(result).toMatchObject({
+        handlerCount: 4,
+        name: "turn_start",
+      });
+      expect(result.diagnostics).toHaveLength(1);
+      expect(event.cancel).toEqual({ reason: "Run /plan first." });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("ignores turn_start cancel set directly on the event", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-start-cancel-mutation.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_start", (event) => {
+            event.cancel = { reason: "direct mutation should not cancel" };
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event: {
+        agentId: string;
+        cancel?: { reason: string };
+        conversationId: string;
+        input: Array<{ role: "user"; content: string }>;
+      } = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        input: [{ role: "user", content: "hello" }],
+      };
+
+      await engine.emitEvent("turn_start", event, createModContext());
+
+      expect(event.cancel).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("lets tool_start handlers replace args in registration order", async () => {
     const root = createTempDir();
     try {
