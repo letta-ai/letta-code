@@ -1353,7 +1353,7 @@ describe("PiStreamAdapter", () => {
     expect(ends[0]?.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  test("emits llm_start per provider request but llm_end only on completion across retries", async () => {
+  test("emits llm_end for failed and successful provider requests across retries", async () => {
     let calls = 0;
     const stream: PiStreamFunction = () => {
       calls += 1;
@@ -1374,20 +1374,69 @@ describe("PiStreamAdapter", () => {
     };
 
     let startCount = 0;
-    let endCount = 0;
+    const ends: LlmEndInfo[] = [];
     const adapter = new PiStreamAdapter({
       stream,
       onLlmStart: () => {
         startCount += 1;
       },
-      onLlmEnd: () => {
-        endCount += 1;
+      onLlmEnd: (info) => {
+        ends.push(info);
       },
     });
     await collectEvents(adapter.stream(input()));
 
     expect(calls).toBe(2);
     expect(startCount).toBe(2);
-    expect(endCount).toBe(1);
+    expect(ends).toHaveLength(2);
+    expect(ends[0]).toMatchObject({
+      stopReason: "llm_api_error",
+      usage: null,
+      error: {
+        errorType: "llm_error",
+        retryable: true,
+      },
+    });
+    expect(ends[0]?.error?.message).toContain("WebSocket closed");
+    expect(ends[1]).toMatchObject({
+      stopReason: "stop",
+    });
+    expect(ends[1]?.error).toBeUndefined();
+    expect(ends[1]?.usage).not.toBeNull();
+  });
+
+  test("emits one llm_end with error details for final error messages", async () => {
+    const finalMessage = assistantErrorMessage("usage limit reached");
+    const stream: PiStreamFunction = () =>
+      streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+
+    const ends: LlmEndInfo[] = [];
+    const adapter = new PiStreamAdapter({
+      stream,
+      onLlmEnd: (info) => {
+        ends.push(info);
+      },
+    });
+
+    await expect(collectEvents(adapter.stream(input()))).rejects.toThrow(
+      "usage limit reached",
+    );
+
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({
+      stopReason: "error",
+      usage: {
+        promptTokens: finalMessage.usage.input,
+        completionTokens: finalMessage.usage.output,
+        totalTokens: finalMessage.usage.totalTokens,
+      },
+      error: {
+        message: "usage limit reached",
+        retryable: false,
+      },
+    });
   });
 });
