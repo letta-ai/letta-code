@@ -1186,14 +1186,56 @@ describe("local backend pi transcript", () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-unconfigured-local-"),
     );
+    const fetchImpl = (async () =>
+      new Response("not found", { status: 404 })) as unknown as typeof fetch;
 
-    const handles = (await listLocalModels(storageDir)).map(
-      (model) => model.handle,
-    );
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
     expect(handles.some((handle) => handle.startsWith("ollama/"))).toBe(false);
     expect(handles.some((handle) => handle.startsWith("lmstudio/"))).toBe(
       false,
     );
+    expect(handles.some((handle) => handle.startsWith("llama.cpp/"))).toBe(
+      false,
+    );
+  });
+
+  test("auto-detects reachable local model endpoints without saved providers", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-autodetect-local-"),
+    );
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      if (url === "http://localhost:11434/api/tags") {
+        return new Response(
+          JSON.stringify({ models: [{ name: "qwen2.5-coder:7b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(
+          JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual([
+      "http://localhost:11434/v1/models",
+      "http://localhost:11434/api/tags",
+      "http://127.0.0.1:1234/v1/models",
+      "http://localhost:8080/v1/models",
+    ]);
+    expect(handles).toContain("ollama/qwen2.5-coder:7b");
+    expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles.some((handle) => handle.startsWith("llama.cpp/"))).toBe(
       false,
     );

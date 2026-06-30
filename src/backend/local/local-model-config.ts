@@ -18,6 +18,7 @@ import {
   listConfiguredPiProviders,
   localModelHandle,
   localProviderType,
+  PI_PROVIDER_SPECS,
   resolveLocalModel,
   resolveProviderFromModelHandle,
   resolveProviderFromProviderType,
@@ -203,6 +204,10 @@ function providerRecordFor(
 
 function isDiscoverableLocalProvider(provider: PiProvider): boolean {
   return getPiProviderSpec(provider).localModelDiscovery !== undefined;
+}
+
+function isAutoDetectableLocalEndpointProvider(provider: PiProvider): boolean {
+  return getPiProviderSpec(provider).autoDetectLocalEndpoint === true;
 }
 
 function isPiProviderForLocalModelHandle(
@@ -485,7 +490,15 @@ export async function listLocalModels(
       parsePositiveNumber(options.discoveryTimeoutMs) ??
       LOCAL_MODEL_DISCOVERY_TIMEOUT_MS,
   };
-  for (const provider of listConfiguredPiProviders(providerNames)) {
+  const providersToDiscover = new Set([
+    ...listConfiguredPiProviders(providerNames),
+    ...(providerNames.size === 0
+      ? PI_PROVIDER_SPECS.filter((provider) =>
+          isAutoDetectableLocalEndpointProvider(provider.id),
+        ).map((provider) => provider.id)
+      : []),
+  ]);
+  for (const provider of providersToDiscover) {
     if (registeredProvidersWithModels.has(provider)) continue;
     if (isDiscoverableLocalProvider(provider)) {
       try {
