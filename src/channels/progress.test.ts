@@ -243,6 +243,112 @@ test("channel progress uses exec_command descriptions as task details", () => {
   ]);
 });
 
+test("channel progress remembers tool names across streamed exec_command args", () => {
+  expect(
+    buildChannelTurnProgressUpdatesFromDelta({
+      message_type: "approval_request_message",
+      run_id: "run-1",
+      tool_calls: {
+        tool_call_id: "call-1",
+        name: "exec_command",
+        arguments: null,
+      },
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: exec_command",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "exec_command",
+      toolTitle: "Running",
+    },
+  ]);
+
+  let updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "approval_request_message",
+    run_id: "run-1",
+    tool_calls: {
+      tool_call_id: "call-1",
+      name: null,
+      arguments: '{"cmd":"git status --short","description":"Check',
+    },
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: exec_command",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "exec_command",
+      toolDetails: "git status --short",
+      toolTitle: "Running",
+    },
+  ]);
+
+  updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "approval_request_message",
+    run_id: "run-1",
+    tool_calls: {
+      tool_call_id: "call-1",
+      name: null,
+      arguments: ' working tree status"}',
+    },
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: exec_command",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "exec_command",
+      toolDetails: "Check working tree status",
+      toolTitle: "Running",
+    },
+  ]);
+});
+
+test("channel progress remembers tool names across streamed Skill args", () => {
+  buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "approval_request_message",
+    run_id: "run-1",
+    tool_call: {
+      tool_call_id: "call-1",
+      name: "Skill",
+      arguments: null,
+    },
+  } as unknown as StreamDelta);
+
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "approval_request_message",
+    run_id: "run-1",
+    tool_call: {
+      tool_call_id: "call-1",
+      name: null,
+      arguments: JSON.stringify({
+        skill: "maintaining-machine-maintenance",
+      }),
+    },
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Skill",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Skill",
+      toolDetails: "maintaining-machine-maintenance",
+    },
+  ]);
+});
+
 test("channel progress renders approval request deltas as tool rows", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "approval_request_message",
