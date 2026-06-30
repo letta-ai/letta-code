@@ -4,7 +4,6 @@ import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
 import BashOutputDescription from "./descriptions/BashOutput.md";
 import CreateGoalDescription from "./descriptions/CreateGoal.md";
-import CreateRepositoryDescription from "./descriptions/CreateRepository.md";
 import EditDescription from "./descriptions/Edit.md";
 import EnterWorktreeDescription from "./descriptions/EnterWorktree.md";
 import ExecCommandDescription from "./descriptions/ExecCommand.md";
@@ -53,7 +52,6 @@ import { ask_user_question } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
 import { bash_output } from "./impl/bash-output";
 import { create_goal } from "./impl/create-goal";
-import { create_repository } from "./impl/create-repository";
 import { edit } from "./impl/edit";
 import { enter_worktree } from "./impl/enter-worktree";
 import { exec_command, write_stdin } from "./impl/exec-command";
@@ -102,7 +100,6 @@ import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
 import CreateGoalSchema from "./schemas/CreateGoal.json";
-import CreateRepositorySchema from "./schemas/CreateRepository.json";
 import EditSchema from "./schemas/Edit.json";
 import EnterWorktreeSchema from "./schemas/EnterWorktree.json";
 import ExecCommandSchema from "./schemas/ExecCommand.json";
@@ -194,11 +191,6 @@ const toolDefinitions = {
     schema: EnterWorktreeSchema,
     description: EnterWorktreeDescription.trim(),
     impl: enter_worktree,
-  }),
-  create_repository: defineTool({
-    schema: CreateRepositorySchema,
-    description: CreateRepositoryDescription.trim(),
-    impl: create_repository,
   }),
   Edit: defineTool({
     schema: EditSchema,

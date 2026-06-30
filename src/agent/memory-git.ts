@@ -22,7 +22,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { getClient } from "@/backend/api/client";
 import {
@@ -251,6 +251,108 @@ export function getRepositoryMountDir(
   repositoryName: string,
 ): string {
   return join(dirname(getMemoryRepoDir(agentId)), repositoryName);
+}
+
+function validateAgentRepositoryName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("repository name is required");
+  }
+  if (trimmed !== name) {
+    throw new Error("repository name cannot have leading or trailing whitespace");
+  }
+  if (trimmed === "." || trimmed === "..") {
+    throw new Error("invalid repository name");
+  }
+  if (trimmed.toLowerCase() === "memory") {
+    throw new Error("'memory' is reserved");
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+    throw new Error(
+      "repository name can only contain letters, numbers, dots, underscores, and hyphens",
+    );
+  }
+  if (trimmed.length > 64) {
+    throw new Error("repository name is too long");
+  }
+  return trimmed;
+}
+
+async function maybeUpdateRepositoryRemoteOrigin(args: {
+  directory: string;
+  remoteUrl: string;
+}): Promise<void> {
+  const expectedOrigin = normalizeRemoteUrl(args.remoteUrl);
+  let currentOrigin = "";
+  try {
+    const { stdout } = await runGit(args.directory, [
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    currentOrigin = stdout.trim();
+  } catch {
+    await runGit(args.directory, ["remote", "add", "origin", expectedOrigin]);
+    return;
+  }
+
+  if (normalizeRemoteUrl(currentOrigin) !== expectedOrigin) {
+    await runGit(args.directory, [
+      "remote",
+      "set-url",
+      "origin",
+      expectedOrigin,
+    ]);
+  }
+}
+
+async function prepareAttachedRepositoryForGitOps(args: {
+  agentId: string;
+  repositoryName: string;
+  directory: string;
+  remoteUrl: string;
+  token: string;
+}): Promise<void> {
+  await maybeUpdateRepositoryRemoteOrigin(args);
+  await configureLocalCredentialHelper(args.directory, args.token);
+  await ensureLocalMemfsGitConfig(args.directory, args.agentId);
+}
+
+async function cloneRepositoryMount(args: {
+  agentId: string;
+  repositoryName: string;
+  directory: string;
+  remoteUrl: string;
+  token: string;
+}): Promise<void> {
+  if (!existsSync(args.directory)) {
+    mkdirSync(args.directory, { recursive: true });
+    try {
+      await runGitWithRetry(
+        args.directory,
+        ["clone", args.remoteUrl, "."],
+        args.token,
+        {
+          operation: `clone repository ${args.repositoryName}`,
+          timeoutMs: GIT_CLONE_TIMEOUT_MS,
+        },
+      );
+    } catch (err) {
+      rmSync(args.directory, { recursive: true, force: true });
+      throw err;
+    }
+  } else if (!existsSync(join(args.directory, ".git"))) {
+    throw new Error(
+      `repository mount path already exists and is not a git repository: ${args.directory}`,
+    );
+  } else {
+    await prepareAttachedRepositoryForGitOps(args);
+    await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
+      operation: `pull repository ${args.repositoryName}`,
+    });
+  }
+
+  await prepareAttachedRepositoryForGitOps(args);
 }
 
 /**
@@ -1579,170 +1681,6 @@ export async function initializeLocalMemoryRepo(
     "-m",
     "chore: initialize empty local memory",
   ]);
-}
-
-interface CreateRepositoryResponse {
-  id: string;
-  name: string;
-}
-
-interface LinkAgentRepositoryResponse {
-  repository: {
-    id: string;
-    name: string;
-    is_primary: boolean;
-    permissions: string;
-  };
-}
-
-export interface CreateAgentRepositoryResult {
-  id: string;
-  name: string;
-  path: string;
-  remoteUrl: string;
-}
-
-function validateAgentRepositoryName(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    throw new Error("create_repository: name is required");
-  }
-  if (trimmed !== name) {
-    throw new Error(
-      "create_repository: name cannot have leading or trailing whitespace",
-    );
-  }
-  if (trimmed === "." || trimmed === "..") {
-    throw new Error("create_repository: invalid repository name");
-  }
-  if (trimmed.toLowerCase() === "memory") {
-    throw new Error("create_repository: 'memory' is reserved");
-  }
-  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
-    throw new Error(
-      "create_repository: name can only contain letters, numbers, dots, underscores, and hyphens",
-    );
-  }
-  if (trimmed.length > 64) {
-    throw new Error("create_repository: name is too long");
-  }
-  if (basename(trimmed) !== trimmed) {
-    throw new Error("create_repository: name must not contain path separators");
-  }
-  return trimmed;
-}
-
-async function maybeUpdateRepositoryRemoteOrigin(args: {
-  directory: string;
-  remoteUrl: string;
-}): Promise<void> {
-  const expectedOrigin = normalizeRemoteUrl(args.remoteUrl);
-  let currentOrigin = "";
-  try {
-    const { stdout } = await runGit(args.directory, [
-      "remote",
-      "get-url",
-      "origin",
-    ]);
-    currentOrigin = stdout.trim();
-  } catch {
-    await runGit(args.directory, ["remote", "add", "origin", expectedOrigin]);
-    return;
-  }
-
-  if (normalizeRemoteUrl(currentOrigin) !== expectedOrigin) {
-    await runGit(args.directory, [
-      "remote",
-      "set-url",
-      "origin",
-      expectedOrigin,
-    ]);
-  }
-}
-
-async function prepareAttachedRepositoryForGitOps(args: {
-  agentId: string;
-  repositoryName: string;
-  directory: string;
-  remoteUrl: string;
-  token: string;
-}): Promise<void> {
-  await maybeUpdateRepositoryRemoteOrigin(args);
-  await configureLocalCredentialHelper(args.directory, args.token);
-  await ensureLocalMemfsGitConfig(args.directory, args.agentId);
-}
-
-async function cloneRepositoryMount(args: {
-  agentId: string;
-  repositoryName: string;
-  directory: string;
-  remoteUrl: string;
-  token: string;
-}): Promise<void> {
-  if (!existsSync(args.directory)) {
-    mkdirSync(args.directory, { recursive: true });
-    try {
-      await runGitWithRetry(
-        args.directory,
-        ["clone", args.remoteUrl, "."],
-        args.token,
-        {
-          operation: `clone repository ${args.repositoryName}`,
-          timeoutMs: GIT_CLONE_TIMEOUT_MS,
-        },
-      );
-    } catch (err) {
-      rmSync(args.directory, { recursive: true, force: true });
-      throw err;
-    }
-  } else if (!existsSync(join(args.directory, ".git"))) {
-    throw new Error(
-      `create_repository: mount path already exists and is not a git repository: ${args.directory}`,
-    );
-  } else {
-    await prepareAttachedRepositoryForGitOps(args);
-    await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
-      operation: `pull repository ${args.repositoryName}`,
-    });
-  }
-
-  await prepareAttachedRepositoryForGitOps(args);
-}
-
-export async function createAgentRepository(args: {
-  agentId: string;
-  name: string;
-}): Promise<CreateAgentRepositoryResult> {
-  const name = validateAgentRepositoryName(args.name);
-  const created = await apiRequest<CreateRepositoryResponse>(
-    "POST",
-    "/v1/repositories",
-    { name },
-  );
-  const linked = await apiRequest<LinkAgentRepositoryResponse>(
-    "POST",
-    `/v1/agents/${encodeURIComponent(args.agentId)}/repositories`,
-    { repository_id: created.id, permissions: "read_write" },
-  );
-  const repositoryName = linked.repository.name || created.name;
-  const directory = getRepositoryMountDir(args.agentId, repositoryName);
-  const remoteUrl = getRepositoryRemoteUrl(args.agentId, repositoryName);
-  const token = await getAuthToken();
-
-  await cloneRepositoryMount({
-    agentId: args.agentId,
-    repositoryName,
-    directory,
-    remoteUrl,
-    token,
-  });
-
-  return {
-    id: linked.repository.id || created.id,
-    name: repositoryName,
-    path: directory,
-    remoteUrl,
-  };
 }
 
 interface AgentRepositoryResponse {

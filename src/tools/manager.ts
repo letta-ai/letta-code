@@ -437,7 +437,6 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Bash",
   "TaskOutput",
   "EnterWorktree",
-  "create_repository",
   "Edit",
   "TaskStop",
   // "MultiEdit",
@@ -460,7 +459,6 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   // "request_user_input",
   "apply_patch",
   "memory_apply_patch",
-  "create_repository",
   "update_plan",
   "view_image",
 ];
@@ -473,7 +471,6 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "search_file_content",
   "memory",
   "EnterWorktree",
-  "create_repository",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -487,7 +484,6 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
   "EnterWorktree",
-  "create_repository",
   "memory_apply_patch",
   "Task",
   "TaskOutput",
@@ -505,7 +501,6 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
   "EnterWorktree",
-  "create_repository",
   "memory",
   "Skill",
   "Task",
@@ -531,7 +526,6 @@ const TOOL_PERMISSIONS: Record<
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
   EnterWorktree: { requiresApproval: true },
-  create_repository: { requiresApproval: false },
   Edit: { requiresApproval: true },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },
