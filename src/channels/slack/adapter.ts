@@ -226,8 +226,6 @@ function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
   return isConstructorFunction<SlackAppConstructor>(app) ? app : null;
 }
 const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
-const SLACK_REASONING_TASK_ID_PREFIX = "task_reasoning_";
-
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
   const defaultExport =
     mod && typeof mod === "object" ? Reflect.get(mod, "default") : undefined;
@@ -455,8 +453,6 @@ type SlackProgressCardEntry = {
   toolTasksById?: Map<string, SlackProgressToolTask>;
   sentTaskDetailsById?: Map<string, string>;
   reasoningActive?: boolean;
-  activeReasoningTaskId?: string;
-  reasoningTaskSequence?: number;
   pendingStreamChunks?: SlackStreamChunk[];
   hiddenToolCallIds?: Set<string>;
   lastSentText?: string;
@@ -810,9 +806,6 @@ function formatSlackToolTitleForTerminalStatus(
   title: string,
   status: SlackStreamTaskStatus,
 ): string {
-  if (status === "complete" && (title === "Thinking" || title === "Working")) {
-    return getCompletedSlackReasoningTaskTitle(title);
-  }
   if (title === "Running") {
     return status === "complete" ? "Ran" : "Running";
   }
@@ -976,92 +969,6 @@ function buildSlackPlanUpdateChunk(
   };
 }
 
-function getSlackReasoningTaskTitle(entry: SlackProgressCardEntry): string {
-  return entry.reasoningActive ? "Thinking" : "Working";
-}
-
-function getCompletedSlackReasoningTaskTitle(title: string): string {
-  if (title === "Thinking") {
-    return "Thought";
-  }
-  if (title === "Working") {
-    return "Finished";
-  }
-  return title;
-}
-
-function isSlackReasoningTaskId(id: string): boolean {
-  return id.startsWith(SLACK_REASONING_TASK_ID_PREFIX);
-}
-
-function hasRunningRealSlackTask(entry: SlackProgressCardEntry): boolean {
-  for (const task of entry.toolTasksById?.values() ?? []) {
-    if (isSlackReasoningTaskId(task.id)) {
-      continue;
-    }
-    if (task.status === "in_progress" || task.status === "pending") {
-      return true;
-    }
-  }
-  return false;
-}
-
-function ensureSlackReasoningTask(
-  entry: SlackProgressCardEntry,
-): SlackStreamChunk[] {
-  if (entry.status !== "processing" || hasRunningRealSlackTask(entry)) {
-    return [];
-  }
-
-  entry.toolTasksById ??= new Map();
-  const title = getSlackReasoningTaskTitle(entry);
-  const prevTask = entry.activeReasoningTaskId
-    ? entry.toolTasksById.get(entry.activeReasoningTaskId)
-    : undefined;
-  if (prevTask?.status === "in_progress" && prevTask.title === title) {
-    return [];
-  }
-
-  const id =
-    prevTask?.status === "in_progress"
-      ? prevTask.id
-      : `${SLACK_REASONING_TASK_ID_PREFIX}${(entry.reasoningTaskSequence ?? 0) + 1}`;
-  if (prevTask?.status !== "in_progress") {
-    entry.reasoningTaskSequence = (entry.reasoningTaskSequence ?? 0) + 1;
-    entry.activeReasoningTaskId = id;
-  }
-
-  const task: SlackProgressToolTask = {
-    id,
-    kind: "thinking",
-    title,
-    status: "in_progress",
-  };
-  entry.toolTasksById.set(id, task);
-  return [toSlackTaskUpdateChunk(task)];
-}
-
-function completeSlackReasoningTask(
-  entry: SlackProgressCardEntry,
-): SlackStreamChunk[] {
-  const activeReasoningTaskId = entry.activeReasoningTaskId;
-  const prevTask = activeReasoningTaskId
-    ? entry.toolTasksById?.get(activeReasoningTaskId)
-    : undefined;
-  if (!prevTask || prevTask.status === "complete") {
-    return [];
-  }
-
-  const task: SlackProgressToolTask = {
-    ...prevTask,
-    title: getCompletedSlackReasoningTaskTitle(prevTask.title),
-    status: "complete",
-  };
-  entry.toolTasksById?.set(prevTask.id, task);
-  entry.activeReasoningTaskId = undefined;
-  return [toSlackTaskUpdateChunk(task)];
-}
-
 function resolveSlackToolActionTaskId(
   update: ChannelTurnProgressEvent,
 ): string | null {
@@ -1109,13 +1016,10 @@ function buildSlackStreamProgressChunks(
     entry.reasoningActive = reasoningActive;
     // Do not create a stream for reasoning-only turns. If a stream already
     // exists because visible tools ran earlier in the turn, update the native
-    // plan/header title to reflect current reasoning.
-    const reasoningChunks =
-      entry.mode === "stream" ? ensureSlackReasoningTask(entry) : [];
+    // plan/header title without adding synthetic task rows. Synthetic rows
+    // become stale next to concrete tool rows because Slack keeps every task id.
     const chunks =
-      entry.mode === "stream"
-        ? [buildSlackPlanUpdateChunk(entry), ...reasoningChunks]
-        : [];
+      entry.mode === "stream" ? [buildSlackPlanUpdateChunk(entry)] : [];
     debugSlackProgress(
       `[REASONING] kind=${update.kind} state=${update.state} active=${reasoningActive} mode=${entry.mode ?? "none"} chunks=${describeSlackStreamChunks(chunks)}`,
     );
@@ -1172,14 +1076,9 @@ function buildSlackStreamProgressChunks(
   };
   entry.toolTasksById ??= new Map();
   const chunks: SlackStreamChunk[] = [];
-  if (!prevTask && status === "in_progress") {
-    entry.reasoningActive = false;
-    chunks.push(...completeSlackReasoningTask(entry));
-  }
+  entry.reasoningActive = false;
 
   entry.toolTasksById.set(id, task);
-
-  const reasoningChunks = ensureSlackReasoningTask(entry);
 
   // Only include details in the chunk when they actually changed.
   // Slack's streaming API accumulates the details field across
@@ -1198,7 +1097,6 @@ function buildSlackStreamProgressChunks(
       ? { details }
       : {}),
   });
-  chunks.push(...reasoningChunks);
 
   debugSlackProgress(
     `[BUILD-CHUNKS] id=${id} title=${title} status=${status} details=${details ?? "none"} detailsChanged=${detailsChanged} chunks=${describeSlackStreamChunks(chunks)}`,
@@ -2339,7 +2237,7 @@ export function createSlackAdapter(
     // For thinking/responding events, track header state without creating
     // stream chunks — we only want a streaming block when actual tools are
     // called. Still save the entry so an existing stream can update its plan
-    // title, or a later tool can start from the latest reasoning state.
+    // title, and the next tool update can clear the transient state.
     const isReasoningEvent =
       options.update?.kind === "thinking" ||
       options.update?.kind === "responding";
@@ -2360,10 +2258,10 @@ export function createSlackAdapter(
       activeProgressCardKeyByReplyKey.set(replyKey, key);
     }
 
-    // Reasoning-only updates are tracked so a later tool start can include a
-    // completed Thinking row, but they must not start/throttle the Slack stream.
-    // Otherwise the first real tool can be delayed by the reasoning timestamp
-    // and appear only once it has already completed.
+    // Reasoning-only updates with no stream chunks are status state only; they
+    // must not start/throttle the Slack stream. Otherwise the first real tool
+    // can be delayed by the reasoning timestamp and appear only once it has
+    // already completed.
     if (isReasoningEvent && streamChunks.length === 0) {
       debugSlackProgress(
         `[UPSERT-REASONING-NO-FLUSH] kind=${options.update?.kind} state=${options.update?.state}`,
