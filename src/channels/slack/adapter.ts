@@ -1045,7 +1045,14 @@ function buildSlackStreamProgressChunks(
     return [];
   }
   const status = toSlackStreamTaskStatus(update);
-  const details = resolveSlackToolActionDetails(entry, update);
+  const resolvedDetails = resolveSlackToolActionDetails(entry, update);
+  const sentDetails = entry.sentTaskDetailsById?.get(id);
+  // Slack task streams append changed details for a task instead of replacing
+  // them. Once details have rendered, keep that string stable for the task.
+  const details =
+    sentDetails && resolvedDetails && sentDetails !== resolvedDetails
+      ? sentDetails
+      : resolvedDetails;
 
   // Skip the entire appendStream call if nothing has changed for this task.
   // Slack's streaming API re-renders details on every appendStream, so even

@@ -332,7 +332,7 @@ test("channel progress uses exec_command descriptions as task details", () => {
   ]);
 });
 
-test("channel progress remembers tool names across streamed exec_command args", () => {
+test("channel progress waits for streamed exec_command descriptions", () => {
   expect(
     buildChannelTurnProgressUpdatesFromDelta({
       message_type: "approval_request_message",
@@ -373,7 +373,6 @@ test("channel progress remembers tool names across streamed exec_command args", 
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "exec_command",
-      toolDetails: "git status --short",
       toolTitle: "Running",
     },
   ]);
