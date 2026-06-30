@@ -9,9 +9,11 @@ import type { ChannelTurnProgressUpdate } from "./types";
 // Accumulate fragmented tool arguments across stream deltas.
 // Keyed by tool_call_id; values are the accumulated argument strings.
 const toolCallArgumentsById = new Map<string, string>();
+const toolCallNamesById = new Map<string, string>();
 
 export function clearToolCallArgumentsCache(): void {
   toolCallArgumentsById.clear();
+  toolCallNamesById.clear();
 }
 
 const MAX_PROGRESS_TEXT_LENGTH = 140;
@@ -445,7 +447,10 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     record.toolCallId,
     record.call_id,
   );
-  const name = firstNonEmptyString(
+  const cacheId = id
+    ? sanitizeChannelProgressIdentifier(id, "tool-call")
+    : undefined;
+  const extractedName = firstNonEmptyString(
     record.name,
     record.tool_name,
     record.toolName,
@@ -453,6 +458,11 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     tool?.name,
     nestedToolFunction?.name,
   );
+  if (cacheId && extractedName) {
+    toolCallNamesById.set(cacheId, extractedName);
+  }
+  const name =
+    extractedName ?? (cacheId ? toolCallNamesById.get(cacheId) : undefined);
   const descriptionText = firstNonEmptyString(
     record.description,
     record.display_description,
@@ -497,18 +507,18 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
   // and don't accumulate further (prevents duplication when complete args
   // are sent in every delta).
   let argumentsText: string | undefined;
-  if (id && rawArguments !== undefined) {
-    const existing = toolCallArgumentsById.get(id);
+  if (cacheId && rawArguments !== undefined) {
+    const existing = toolCallArgumentsById.get(cacheId);
     const rawArgumentsAreComplete = parseToolArguments(rawArguments) !== null;
     if (rawArgumentsAreComplete) {
       // Complete current arguments should replace earlier partial/object args.
       // Some streams first expose only command content, then later include the
       // human-friendly description; freezing the first parseable object hides it.
-      toolCallArgumentsById.set(id, rawArguments);
+      toolCallArgumentsById.set(cacheId, rawArguments);
       argumentsText = rawArguments;
       if (name && isShellTool(name)) {
         debugChannelProgress(
-          `[ARGS-BASH-REPLACE-COMPLETE] id=${id} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
+          `[ARGS-BASH-REPLACE-COMPLETE] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
         );
       }
     } else if (existing) {
@@ -516,25 +526,25 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
         argumentsText = existing;
         if (name && isShellTool(name)) {
           debugChannelProgress(
-            `[ARGS-BASH-KEEP-EXISTING] id=${id} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
+            `[ARGS-BASH-KEEP-EXISTING] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
           );
         }
       } else {
         const accumulated = existing + rawArguments;
-        toolCallArgumentsById.set(id, accumulated);
+        toolCallArgumentsById.set(cacheId, accumulated);
         argumentsText = accumulated;
         if (name && isShellTool(name)) {
           debugChannelProgress(
-            `[ARGS-BASH-ACCUMULATE] id=${id} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
+            `[ARGS-BASH-ACCUMULATE] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
           );
         }
       }
     } else {
-      toolCallArgumentsById.set(id, rawArguments);
+      toolCallArgumentsById.set(cacheId, rawArguments);
       argumentsText = rawArguments;
       if (name && isShellTool(name)) {
         debugChannelProgress(
-          `[ARGS-BASH-START] id=${id} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
+          `[ARGS-BASH-START] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
         );
       }
     }
@@ -546,7 +556,7 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     return null;
   }
   return {
-    ...(id ? { id: sanitizeChannelProgressIdentifier(id, "tool-call") } : {}),
+    ...(cacheId ? { id: cacheId } : {}),
     ...(name ? { name: sanitizeChannelProgressIdentifier(name, "tool") } : {}),
     ...(argumentsText ? { argumentsText } : {}),
     ...(descriptionText
@@ -779,6 +789,9 @@ export function buildChannelTurnProgressUpdatesFromDelta(
           : undefined;
         if (accumulatedArgs && summary.id) {
           toolCallArgumentsById.delete(summary.id);
+        }
+        if (summary.id) {
+          toolCallNamesById.delete(summary.id);
         }
         const toolWithAccumulatedArgs = accumulatedArgs
           ? { ...summary, argumentsText: accumulatedArgs }

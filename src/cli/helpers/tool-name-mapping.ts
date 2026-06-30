@@ -14,6 +14,8 @@ import { MEMORY_TOOL_NAMES } from "@/tools/toolset";
  * - Gemini toolset (snake_case and PascalCase)
  */
 export function getDisplayToolName(rawName: string): string {
+  if (MEMORY_TOOL_NAMES.has(rawName)) return "Memory";
+
   // Anthropic toolset
   if (rawName === "write") return "Write";
   if (rawName === "edit" || rawName === "multi_edit") return "Update";
@@ -44,7 +46,6 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "list_dir") return "LS";
   if (rawName === "grep_files") return "Search";
   if (rawName === "apply_patch") return "Patch";
-  if (rawName === "memory_apply_patch") return "Memory Patch";
   if (rawName === "web_search") return "Web Search";
   if (rawName === "fetch_webpage") return "Fetch Webpage";
 
