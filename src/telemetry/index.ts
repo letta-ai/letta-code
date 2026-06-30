@@ -99,6 +99,8 @@ export interface ReflectionStartData {
   conversation_id?: string;
   start_message_id?: string;
   end_message_id?: string;
+  version?: string;
+  platform?: string;
 }
 
 export interface ReflectionEndData {
@@ -109,6 +111,8 @@ export interface ReflectionEndData {
   error?: string;
   step_count?: number;
   duration_ms?: number;
+  version?: string;
+  platform?: string;
 }
 
 export function isLettaCodeDesktopRuntime(
@@ -712,6 +716,8 @@ class TelemetryManager {
       conversation_id: options?.conversationId,
       start_message_id: options?.startMessageId,
       end_message_id: options?.endMessageId,
+      version: getVersion(),
+      platform: process.platform,
     };
     this.track("reflection_start", data);
   }
@@ -738,6 +744,8 @@ class TelemetryManager {
       error: options?.error,
       step_count: options?.stepCount,
       duration_ms: options?.durationMs,
+      version: getVersion(),
+      platform: process.platform,
     };
     this.track("reflection_end", data);
   }
