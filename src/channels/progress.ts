@@ -1,6 +1,7 @@
 import {
   getDisplayToolName,
   isShellTool,
+  isTaskTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isWebSearchToolName } from "@/cli/helpers/web-search-display";
 import type { StreamDelta } from "@/types/protocol_v2";
@@ -21,6 +22,7 @@ export function clearToolCallArgumentsCache(): void {
 const MAX_PROGRESS_TEXT_LENGTH = 140;
 const MAX_PROGRESS_DETAILS_LENGTH = 180;
 const MAX_SHELL_PROGRESS_DETAILS_LENGTH = 64;
+const MAX_SUBAGENT_PROGRESS_DETAILS_LENGTH = 180;
 const ESCAPE_CODE = String.fromCharCode(27);
 const ANSI_ESCAPE_RE = new RegExp(`${ESCAPE_CODE}\\[[0-9;?]*[ -/]*[@-~]`, "g");
 const SECRET_ASSIGNMENT_RE =
@@ -193,6 +195,68 @@ function formatFragmentedShellProgressDetails(
   return undefined;
 }
 
+function formatSubagentNestedValue(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  return (
+    firstNonEmptyString(
+      record.prompt,
+      record.task,
+      record.instructions,
+      record.instruction,
+      record.command,
+      record.description,
+      record.message,
+    ) ?? stringifyRecordArgument(record)
+  );
+}
+
+function formatSubagentProgressDetailsFromArguments(
+  summary: ToolCallSummary,
+  parsedArguments: Record<string, unknown>,
+): string | undefined {
+  const preview = firstNonEmptyString(
+    parsedArguments.prompt,
+    parsedArguments.task,
+    parsedArguments.instructions,
+    parsedArguments.instruction,
+    parsedArguments.request,
+    parsedArguments.command,
+    formatSubagentNestedValue(parsedArguments.input),
+    formatSubagentNestedValue(parsedArguments.payload),
+    formatSubagentNestedValue(parsedArguments.args),
+    summary.descriptionText,
+    parsedArguments.description,
+    parsedArguments.subject,
+  );
+  const sanitized = sanitizeChannelProgressText(
+    preview,
+    MAX_SUBAGENT_PROGRESS_DETAILS_LENGTH,
+  );
+  return sanitized || undefined;
+}
+
+function formatFragmentedSubagentProgressDetails(
+  summary: ToolCallSummary,
+): string | undefined {
+  const previewMatch = summary.argumentsText?.match(
+    /"(?:prompt|task|instructions|instruction|request|command|description|subject)"\s*:\s*"([^"]+)"/,
+  );
+  if (!previewMatch?.[1]) {
+    return undefined;
+  }
+  const sanitized = sanitizeChannelProgressText(
+    previewMatch[1],
+    MAX_SUBAGENT_PROGRESS_DETAILS_LENGTH,
+  );
+  return sanitized || undefined;
+}
+
 type ToolReturnSummary = {
   summary: ToolCallSummary;
   status: "completed" | "error";
@@ -228,6 +292,10 @@ function formatToolProgressTitle(
       return "Attempted to search the web";
     }
     return "Searching the web";
+  }
+
+  if (summary.name && isTaskTool(summary.name)) {
+    return "Subagent";
   }
 
   if (summary.name && isShellTool(summary.name)) {
@@ -294,6 +362,13 @@ function formatToolProgressDetails(
     return undefined;
   }
   if (!summary.argumentsText) {
+    if (isTaskTool(summary.name)) {
+      const sanitized = sanitizeChannelProgressText(
+        summary.descriptionText,
+        MAX_SUBAGENT_PROGRESS_DETAILS_LENGTH,
+      );
+      return sanitized || undefined;
+    }
     if (isShellTool(summary.name)) {
       const sanitized = sanitizeChannelProgressText(
         summary.descriptionText,
@@ -327,6 +402,13 @@ function formatToolProgressDetails(
 
     if (isSkillToolName(summary.name)) {
       return formatSkillProgressDetailsFromArguments(parsedArguments);
+    }
+
+    if (isTaskTool(summary.name)) {
+      return formatSubagentProgressDetailsFromArguments(
+        summary,
+        parsedArguments,
+      );
     }
 
     if (isShellTool(summary.name)) {
@@ -409,6 +491,10 @@ function formatToolProgressDetails(
 
   if (isSkillToolName(summary.name)) {
     return formatFragmentedSkillProgressDetails(summary);
+  }
+
+  if (isTaskTool(summary.name)) {
+    return formatFragmentedSubagentProgressDetails(summary);
   }
 
   // Fallback: try to extract file_path from fragmented/incomplete JSON
