@@ -19,6 +19,7 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
@@ -318,6 +319,10 @@ export function filterBuiltInToolNamesByClientAllowlist(
 }
 
 const WORKTREE_TOOL_NAMES = new Set<ToolName>(["EnterWorktree"]);
+const ARTIFACT_TOOL_NAMES: ToolName[] = [
+  "read_artifact_file",
+  "write_artifact_file",
+];
 
 function shouldIncludeWorktreeTool(): boolean {
   try {
@@ -333,6 +338,19 @@ function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
   }
 
   return toolNames.filter((name) => !WORKTREE_TOOL_NAMES.has(name));
+}
+
+function resolveArtifactToolNames(toolNames: ToolName[]): ToolName[] {
+  const artifactToolSet = new Set<ToolName>(ARTIFACT_TOOL_NAMES);
+  const withoutArtifactTools = toolNames.filter(
+    (name) => !artifactToolSet.has(name),
+  );
+
+  if (!experimentManager.isEnabled("artifacts")) {
+    return withoutArtifactTools;
+  }
+
+  return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
 }
 
 function filterExternalToolsByClientAllowlist(
@@ -537,6 +555,7 @@ const TOOL_PERMISSIONS: Record<
   MessageChannel: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
+  read_artifact_file: { requiresApproval: false },
   view_image: { requiresApproval: false },
   ViewImage: { requiresApproval: false },
   ReadLSP: { requiresApproval: false },
@@ -548,6 +567,7 @@ const TOOL_PERMISSIONS: Record<
   TaskUpdate: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
+  write_artifact_file: { requiresApproval: false },
   shell_command: { requiresApproval: true },
   exec_command: { requiresApproval: true },
   write_stdin: { requiresApproval: false },
@@ -1653,6 +1673,8 @@ async function resolveBaseToolNamesForModel(
   }
 
   baseToolNames = filterWorktreeTools(baseToolNames);
+
+  baseToolNames = resolveArtifactToolNames(baseToolNames);
 
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
