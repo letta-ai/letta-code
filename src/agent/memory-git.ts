@@ -16,7 +16,6 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -1826,57 +1825,46 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
       timeoutMs: GIT_CLONE_TIMEOUT_MS,
     });
   } else if (!existsSync(join(dir, ".git"))) {
-    // Directory exists but isn't a git repo (legacy local layout). If it is
-    // empty, clone directly into it to avoid moving .git across directories
-    // (Windows can transiently deny that rename after git clone).
-    const entries = readdirSync(dir).filter((entry) => entry !== ".DS_Store");
-    if (entries.length === 0) {
-      await runGitWithRetry(dir, ["clone", url, "."], token, {
-        operation: "clone memory repo",
+    // Directory exists but isn't a git repo (legacy local layout)
+    // Clone to temp, move .git/ into existing dir, then checkout files.
+    const tmpDir = `${dir}-git-clone-tmp`;
+    try {
+      if (existsSync(tmpDir)) {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+      mkdirSync(tmpDir, { recursive: true });
+      await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
+        operation: "clone memory repo (tmp migration)",
         timeoutMs: GIT_CLONE_TIMEOUT_MS,
       });
-    } else {
-      // Non-empty legacy local layout: clone to temp, move .git/ into existing
-      // dir, then checkout files while preserving existing local files.
-      const tmpDir = `${dir}-git-clone-tmp`;
+
+      // Move .git into the existing memory directory
+      renameSync(join(tmpDir, ".git"), join(dir, ".git"));
+
+      // Reset to match remote state. Skip when the remote has no HEAD
+      // yet (empty repo, e.g. a freshly-allocated training agent) —
+      // `git checkout -- .` fails with "pathspec '.' did not match any
+      // file(s) known to git" in that case, which is fatal here. When
+      // there's nothing on the remote there's nothing to restore, so
+      // leaving the existing local files in place is the right move.
       try {
-        if (existsSync(tmpDir)) {
-          rmSync(tmpDir, { recursive: true, force: true });
-        }
-        mkdirSync(tmpDir, { recursive: true });
-        await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
-          operation: "clone memory repo (tmp migration)",
-          timeoutMs: GIT_CLONE_TIMEOUT_MS,
-        });
+        await runGit(dir, ["rev-parse", "--verify", "HEAD"], token);
+        await runGit(dir, ["checkout", "--", "."], token);
+      } catch (checkoutErr) {
+        const msg =
+          checkoutErr instanceof Error
+            ? checkoutErr.message
+            : String(checkoutErr);
+        debugLog(
+          "memfs-git",
+          `Skipping checkout (likely empty remote, no HEAD yet): ${msg}`,
+        );
+      }
 
-        // Move .git into the existing memory directory
-        renameSync(join(tmpDir, ".git"), join(dir, ".git"));
-
-        // Reset to match remote state. Skip when the remote has no HEAD
-        // yet (empty repo, e.g. a freshly-allocated training agent) —
-        // `git checkout -- .` fails with "pathspec '.' did not match any
-        // file(s) known to git" in that case, which is fatal here. When
-        // there's nothing on the remote there's nothing to restore, so
-        // leaving the existing local files in place is the right move.
-        try {
-          await runGit(dir, ["rev-parse", "--verify", "HEAD"], token);
-          await runGit(dir, ["checkout", "--", "."], token);
-        } catch (checkoutErr) {
-          const msg =
-            checkoutErr instanceof Error
-              ? checkoutErr.message
-              : String(checkoutErr);
-          debugLog(
-            "memfs-git",
-            `Skipping checkout (likely empty remote, no HEAD yet): ${msg}`,
-          );
-        }
-
-        debugLog("memfs-git", "Migrated existing memory directory to git repo");
-      } finally {
-        if (existsSync(tmpDir)) {
-          rmSync(tmpDir, { recursive: true, force: true });
-        }
+      debugLog("memfs-git", "Migrated existing memory directory to git repo");
+    } finally {
+      if (existsSync(tmpDir)) {
+        rmSync(tmpDir, { recursive: true, force: true });
       }
     }
   }
