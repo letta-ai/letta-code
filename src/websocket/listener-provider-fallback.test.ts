@@ -28,7 +28,7 @@ describe("listener provider fallback", () => {
       }),
     );
 
-    expect(state.sourceModelId).toBe("sonnet");
+    expect(state.sourceModelId).toBe("sonnet-4.6");
     expect(maybeApplyProviderFallback(state, 1)).toBeNull();
 
     const fallbackHandle = maybeApplyProviderFallback(state, 2);

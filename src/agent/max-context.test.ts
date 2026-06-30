@@ -43,7 +43,7 @@ describe("max context command helpers", () => {
 
   test("resolves model.json default context windows", () => {
     expect(
-      resolveModelJsonContextWindow({ modelId: "sonnet" }).contextWindow,
+      resolveModelJsonContextWindow({ modelId: "sonnet-4.6" }).contextWindow,
     ).toBe(200_000);
     expect(
       resolveModelJsonContextWindow({
@@ -80,7 +80,7 @@ describe("max context command helpers", () => {
           agentId: agent.id,
           conversationId: "default",
           args: `${MIN_CONTEXT_WINDOW_TOKENS - 1}`,
-          currentModelId: "sonnet",
+          currentModelId: "sonnet-4.6",
         }),
       ).rejects.toThrow("at least 30,000 tokens");
 
@@ -89,7 +89,7 @@ describe("max context command helpers", () => {
           agentId: agent.id,
           conversationId: "default",
           args: "250000",
-          currentModelId: "sonnet",
+          currentModelId: "sonnet-4.6",
         }),
       ).rejects.toThrow("model.json default of 200,000 tokens");
 
@@ -97,7 +97,7 @@ describe("max context command helpers", () => {
         agentId: agent.id,
         conversationId: "default",
         args: "10000 --override",
-        currentModelId: "sonnet",
+        currentModelId: "sonnet-4.6",
       });
       expect(overrideResult.contextWindow).toBe(10_000);
       expect(overrideResult.appliedTo).toBe("agent");
@@ -113,7 +113,7 @@ describe("max context command helpers", () => {
         agentId: agent.id,
         conversationId: "default",
         args: "",
-        currentModelId: "sonnet",
+        currentModelId: "sonnet-4.6",
       });
       expect(resetResult.contextWindow).toBe(200_000);
       expect(resetResult.reset).toBe(true);
@@ -133,7 +133,7 @@ describe("max context command helpers", () => {
         agentId: agent.id,
         conversationId: conversation.id,
         args: "50000",
-        currentModelId: "sonnet",
+        currentModelId: "sonnet-4.6",
       });
       expect(conversationResult.appliedTo).toBe("conversation");
       expect(conversationResult.conversationModelSettings).toMatchObject({
