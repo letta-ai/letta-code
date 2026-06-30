@@ -23,6 +23,7 @@ import { getRandomSlackAssistantStatusVerb } from "@/cli/helpers/thinking-messag
 import {
   getDisplayToolName,
   isShellTool,
+  isTaskTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isWebSearchToolName } from "@/cli/helpers/web-search-display";
 import {
@@ -720,6 +721,9 @@ function formatSlackToolNameForDisplay(
   toolName: string,
   update?: ChannelTurnProgressEvent,
 ): string {
+  if (isTaskTool(toolName)) {
+    return "Subagent";
+  }
   if (update && isShellTool(toolName)) {
     return update.state === "completed" ? "Ran" : "Running";
   }

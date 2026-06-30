@@ -152,6 +152,95 @@ test("channel progress uses cached Skill names for streamed argument fragments",
   ]);
 });
 
+test("channel progress labels subagent dispatches and previews prompts", () => {
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        id: "call-1",
+        function: {
+          name: "Agent",
+          arguments: JSON.stringify({
+            description: "Inspect Slack progress",
+            prompt:
+              "Review the Slack rich progress patch with TOKEN=secret and tell @channel nothing.",
+            subagent_type: "general-purpose",
+          }),
+        },
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Agent",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Agent",
+      toolTitle: "Subagent",
+      toolDetails:
+        "Review the Slack rich progress patch with TOKEN=[redacted] and tell @​channel nothing.",
+    },
+  ]);
+});
+
+test("channel progress keeps subagent prompt previews across streamed fragments", () => {
+  expect(
+    buildChannelTurnProgressUpdatesFromDelta({
+      message_type: "tool_call_message",
+      run_id: "run-1",
+      tool_calls: [
+        {
+          id: "call-1",
+          function: {
+            name: "Task",
+            arguments: '{"prompt":"Audit Slack',
+          },
+        },
+      ],
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Task",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Task",
+      toolTitle: "Subagent",
+    },
+  ]);
+
+  expect(
+    buildChannelTurnProgressUpdatesFromDelta({
+      message_type: "tool_call_message",
+      run_id: "run-1",
+      tool_calls: [
+        {
+          id: "call-1",
+          function: {
+            arguments: ' progress rows"}',
+          },
+        },
+      ],
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Task",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Task",
+      toolTitle: "Subagent",
+      toolDetails: "Audit Slack progress rows",
+    },
+  ]);
+});
+
 test("channel progress uses Letta Code display names for tool titles", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "tool_call_message",
