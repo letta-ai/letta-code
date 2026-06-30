@@ -2144,7 +2144,7 @@ test("slack adapter renders approval progress without thread status noise", asyn
       {
         type: "task_update",
         id: "task_approval-1",
-        title: "Approval needed: Memory Patch",
+        title: "Approval needed: Memory",
         status: "pending",
       },
     ],
@@ -2193,7 +2193,7 @@ test("slack adapter posts generic approval prompts as compact cards", async () =
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "*Approval needed*\nRun `Memory Patch`?",
+          text: "*Approval needed*\nRun `Memory`?",
         },
       },
       {
