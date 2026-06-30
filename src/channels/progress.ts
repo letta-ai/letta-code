@@ -10,10 +10,12 @@ import type { ChannelTurnProgressUpdate } from "./types";
 // Keyed by tool_call_id; values are the accumulated argument strings.
 const toolCallArgumentsById = new Map<string, string>();
 const toolCallNamesById = new Map<string, string>();
+const toolCallDescriptionsById = new Map<string, string>();
 
 export function clearToolCallArgumentsCache(): void {
   toolCallArgumentsById.clear();
   toolCallNamesById.clear();
+  toolCallDescriptionsById.clear();
 }
 
 const MAX_PROGRESS_TEXT_LENGTH = 140;
@@ -474,6 +476,16 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     tool?.description,
     nestedToolFunction?.description,
   );
+  if (cacheId && descriptionText) {
+    toolCallDescriptionsById.set(
+      cacheId,
+      sanitizeChannelProgressText(descriptionText, MAX_PROGRESS_DETAILS_LENGTH),
+    );
+  }
+  const resolvedName = name;
+  const resolvedDescriptionText =
+    descriptionText ??
+    (cacheId ? toolCallDescriptionsById.get(cacheId) : undefined);
   const rawArguments =
     firstNonEmptyString(
       record.arguments,
@@ -496,9 +508,9 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     stringifyRecordArgument(nestedToolFunction?.arguments) ??
     stringifyRecordArgument(nestedToolFunction?.args);
 
-  if (name && isShellTool(name)) {
+  if (resolvedName && isShellTool(resolvedName)) {
     debugChannelProgress(
-      `[EXTRACT-BASH] id=${id ?? "none"} keys=${Object.keys(record).join(",")} descriptionText=${descriptionText ?? "none"} rawType=${typeof rawArguments} raw=${sanitizeChannelProgressText(rawArguments, MAX_PROGRESS_DETAILS_LENGTH)}`,
+      `[EXTRACT-BASH] id=${id ?? "none"} keys=${Object.keys(record).join(",")} descriptionText=${resolvedDescriptionText ?? "none"} rawType=${typeof rawArguments} raw=${sanitizeChannelProgressText(rawArguments, MAX_PROGRESS_DETAILS_LENGTH)}`,
     );
   }
 
@@ -516,7 +528,7 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
       // human-friendly description; freezing the first parseable object hides it.
       toolCallArgumentsById.set(cacheId, rawArguments);
       argumentsText = rawArguments;
-      if (name && isShellTool(name)) {
+      if (resolvedName && isShellTool(resolvedName)) {
         debugChannelProgress(
           `[ARGS-BASH-REPLACE-COMPLETE] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
         );
@@ -524,7 +536,7 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     } else if (existing) {
       if (parseToolArguments(existing)) {
         argumentsText = existing;
-        if (name && isShellTool(name)) {
+        if (resolvedName && isShellTool(resolvedName)) {
           debugChannelProgress(
             `[ARGS-BASH-KEEP-EXISTING] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
           );
@@ -533,7 +545,7 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
         const accumulated = existing + rawArguments;
         toolCallArgumentsById.set(cacheId, accumulated);
         argumentsText = accumulated;
-        if (name && isShellTool(name)) {
+        if (resolvedName && isShellTool(resolvedName)) {
           debugChannelProgress(
             `[ARGS-BASH-ACCUMULATE] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
           );
@@ -542,7 +554,7 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     } else {
       toolCallArgumentsById.set(cacheId, rawArguments);
       argumentsText = rawArguments;
-      if (name && isShellTool(name)) {
+      if (resolvedName && isShellTool(resolvedName)) {
         debugChannelProgress(
           `[ARGS-BASH-START] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
         );
@@ -552,17 +564,19 @@ function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     argumentsText = rawArguments;
   }
 
-  if (!id && !name) {
+  if (!id && !resolvedName) {
     return null;
   }
   return {
     ...(cacheId ? { id: cacheId } : {}),
-    ...(name ? { name: sanitizeChannelProgressIdentifier(name, "tool") } : {}),
+    ...(resolvedName
+      ? { name: sanitizeChannelProgressIdentifier(resolvedName, "tool") }
+      : {}),
     ...(argumentsText ? { argumentsText } : {}),
-    ...(descriptionText
+    ...(resolvedDescriptionText
       ? {
           descriptionText: sanitizeChannelProgressText(
-            descriptionText,
+            resolvedDescriptionText,
             MAX_PROGRESS_DETAILS_LENGTH,
           ),
         }
@@ -574,15 +588,23 @@ function extractToolCalls(delta: Record<string, unknown>): ToolCallSummary[] {
   const candidates: unknown[] = [];
   if (Array.isArray(delta.tool_calls)) {
     candidates.push(...delta.tool_calls);
+  } else {
+    candidates.push(delta.tool_calls);
   }
   if (Array.isArray(delta.toolCalls)) {
     candidates.push(...delta.toolCalls);
+  } else {
+    candidates.push(delta.toolCalls);
   }
   if (Array.isArray(delta.tools)) {
     candidates.push(...delta.tools);
+  } else {
+    candidates.push(delta.tools);
   }
   if (Array.isArray(delta.approvals)) {
     candidates.push(...delta.approvals);
+  } else {
+    candidates.push(delta.approvals);
   }
   candidates.push(delta.tool_call, delta.toolCall, delta.approval);
 
