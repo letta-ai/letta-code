@@ -63,21 +63,40 @@ type SlackRepliesPage = {
   response_metadata?: { next_cursor?: string };
 };
 
+type SlackThreadAttachmentParams = {
+  accountId?: string;
+  token?: string;
+  transcribeVoice?: boolean;
+};
+
+type SlackThreadAttachmentOptions = {
+  accountId: string;
+  token: string;
+  transcribeVoice?: boolean;
+};
+
 export type SlackThreadMessage = {
   text: string;
   userId?: string;
   botId?: string;
   ts?: string;
+  attachments?: ChannelMessageAttachment[];
 };
 
-function mapSlackThreadMessage(
+async function mapSlackThreadMessage(
   message: SlackRepliesPageMessage,
-): SlackThreadMessage {
+  attachmentOptions?: SlackThreadAttachmentOptions,
+): Promise<SlackThreadMessage> {
+  const attachments = await resolveSlackMessageAttachments(
+    message,
+    attachmentOptions,
+  );
   return {
     text: resolveSlackThreadMessageText(message),
     userId: isNonEmptyString(message.user) ? message.user : undefined,
     botId: isNonEmptyString(message.bot_id) ? message.bot_id : undefined,
     ts: isNonEmptyString(message.ts) ? message.ts : undefined,
+    ...(attachments.length > 0 ? { attachments } : {}),
   };
 }
 
@@ -507,19 +526,18 @@ function collectSlackFiles(rawEvent: unknown): SlackFileLike[] {
   return Array.from(deduped.values()).slice(0, MAX_SLACK_ATTACHMENTS);
 }
 
-export async function resolveSlackInboundAttachments(params: {
+async function resolveSlackFilesAsAttachments(params: {
   accountId: string;
   token: string;
-  rawEvent: unknown;
+  files: SlackFileLike[];
   transcribeVoice?: boolean;
 }): Promise<ChannelMessageAttachment[]> {
-  const files = collectSlackFiles(params.rawEvent);
-  if (files.length === 0) {
+  if (params.files.length === 0) {
     return [];
   }
 
   const resolved = await Promise.all(
-    files.map((file) =>
+    params.files.map((file) =>
       downloadSlackAttachment({
         accountId: params.accountId,
         token: params.token,
@@ -534,17 +552,79 @@ export async function resolveSlackInboundAttachments(params: {
   );
 }
 
+function resolveSlackThreadAttachmentOptions(
+  params: SlackThreadAttachmentParams,
+): SlackThreadAttachmentOptions | undefined {
+  if (!isNonEmptyString(params.accountId) || !isNonEmptyString(params.token)) {
+    return undefined;
+  }
+
+  return {
+    accountId: params.accountId,
+    token: params.token,
+    transcribeVoice: params.transcribeVoice,
+  };
+}
+
+function hasSlackThreadMessageContent(
+  message: SlackRepliesPageMessage,
+  attachmentOptions?: SlackThreadAttachmentOptions,
+): boolean {
+  if (resolveSlackThreadMessageText(message)) {
+    return true;
+  }
+  return Boolean(attachmentOptions && collectSlackFiles(message).length > 0);
+}
+
+function hasHydratedSlackThreadMessageContent(
+  message: SlackThreadMessage,
+): boolean {
+  return message.text.length > 0 || Boolean(message.attachments?.length);
+}
+
+async function resolveSlackMessageAttachments(
+  message: SlackRepliesPageMessage,
+  attachmentOptions?: SlackThreadAttachmentOptions,
+): Promise<ChannelMessageAttachment[]> {
+  if (!attachmentOptions) {
+    return [];
+  }
+
+  return resolveSlackFilesAsAttachments({
+    accountId: attachmentOptions.accountId,
+    token: attachmentOptions.token,
+    files: collectSlackFiles(message),
+    transcribeVoice: attachmentOptions.transcribeVoice,
+  });
+}
+
+export async function resolveSlackInboundAttachments(params: {
+  accountId: string;
+  token: string;
+  rawEvent: unknown;
+  transcribeVoice?: boolean;
+}): Promise<ChannelMessageAttachment[]> {
+  return resolveSlackFilesAsAttachments({
+    accountId: params.accountId,
+    token: params.token,
+    files: collectSlackFiles(params.rawEvent),
+    transcribeVoice: params.transcribeVoice,
+  });
+}
+
 export async function readSlackAttachmentFile(
   localPath: string,
 ): Promise<Buffer> {
   return readFile(localPath);
 }
 
-export async function resolveSlackThreadStarter(params: {
-  channelId: string;
-  threadTs: string;
-  client: SlackRepliesClient;
-}): Promise<SlackThreadMessage | null> {
+export async function resolveSlackThreadStarter(
+  params: {
+    channelId: string;
+    threadTs: string;
+    client: SlackRepliesClient;
+  } & SlackThreadAttachmentParams,
+): Promise<SlackThreadMessage | null> {
   try {
     const response = (await params.client.conversations.replies({
       channel: params.channelId,
@@ -558,29 +638,27 @@ export async function resolveSlackThreadStarter(params: {
       return null;
     }
 
-    const text = resolveSlackThreadMessageText(message);
-    if (!text) {
+    const attachmentOptions = resolveSlackThreadAttachmentOptions(params);
+    if (!hasSlackThreadMessageContent(message, attachmentOptions)) {
       return null;
     }
 
-    return {
-      text,
-      userId: isNonEmptyString(message.user) ? message.user : undefined,
-      botId: isNonEmptyString(message.bot_id) ? message.bot_id : undefined,
-      ts: isNonEmptyString(message.ts) ? message.ts : undefined,
-    };
+    const mapped = await mapSlackThreadMessage(message, attachmentOptions);
+    return hasHydratedSlackThreadMessageContent(mapped) ? mapped : null;
   } catch {
     return null;
   }
 }
 
-export async function resolveSlackThreadHistory(params: {
-  channelId: string;
-  threadTs: string;
-  client: SlackRepliesClient;
-  currentMessageTs?: string;
-  limit?: number;
-}): Promise<SlackThreadMessage[]> {
+export async function resolveSlackThreadHistory(
+  params: {
+    channelId: string;
+    threadTs: string;
+    client: SlackRepliesClient;
+    currentMessageTs?: string;
+    limit?: number;
+  } & SlackThreadAttachmentParams,
+): Promise<SlackThreadMessage[]> {
   const maxMessages = params.limit ?? 20;
   if (!Number.isFinite(maxMessages) || maxMessages <= 0) {
     return [];
@@ -588,6 +666,7 @@ export async function resolveSlackThreadHistory(params: {
 
   const fetchLimit = 200;
   const retained: SlackRepliesPageMessage[] = [];
+  const attachmentOptions = resolveSlackThreadAttachmentOptions(params);
   let cursor: string | undefined;
 
   try {
@@ -601,8 +680,7 @@ export async function resolveSlackThreadHistory(params: {
       })) as SlackRepliesPage;
 
       for (const message of response.messages ?? []) {
-        const text = resolveSlackThreadMessageText(message);
-        if (!text) {
+        if (!hasSlackThreadMessageContent(message, attachmentOptions)) {
           continue;
         }
         if (params.currentMessageTs && message.ts === params.currentMessageTs) {
@@ -625,24 +703,32 @@ export async function resolveSlackThreadHistory(params: {
           : undefined;
     } while (cursor);
 
-    return retained.map(mapSlackThreadMessage);
+    const mapped = await Promise.all(
+      retained.map((message) =>
+        mapSlackThreadMessage(message, attachmentOptions),
+      ),
+    );
+    return mapped.filter(hasHydratedSlackThreadMessageContent);
   } catch {
     return [];
   }
 }
 
-export async function resolveSlackChannelHistory(params: {
-  channelId: string;
-  beforeTs: string;
-  client: SlackRepliesClient;
-  limit?: number;
-}): Promise<SlackThreadMessage[]> {
+export async function resolveSlackChannelHistory(
+  params: {
+    channelId: string;
+    beforeTs: string;
+    client: SlackRepliesClient;
+    limit?: number;
+  } & SlackThreadAttachmentParams,
+): Promise<SlackThreadMessage[]> {
   const maxMessages = params.limit ?? 20;
   if (!Number.isFinite(maxMessages) || maxMessages <= 0) {
     return [];
   }
 
   const fetchLimit = Math.min(Math.max(maxMessages * 3, maxMessages), 100);
+  const attachmentOptions = resolveSlackThreadAttachmentOptions(params);
 
   try {
     const response = (await params.client.conversations.history({
@@ -658,12 +744,17 @@ export async function resolveSlackChannelHistory(params: {
           return false;
         }
 
-        return Boolean(resolveSlackThreadMessageText(message));
+        return hasSlackThreadMessageContent(message, attachmentOptions);
       })
       .slice(0, fetchLimit)
       .reverse();
 
-    return retained.slice(-maxMessages).map(mapSlackThreadMessage);
+    const mapped = await Promise.all(
+      retained
+        .slice(-maxMessages)
+        .map((message) => mapSlackThreadMessage(message, attachmentOptions)),
+    );
+    return mapped.filter(hasHydratedSlackThreadMessageContent);
   } catch {
     return [];
   }

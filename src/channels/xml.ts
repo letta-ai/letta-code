@@ -32,6 +32,18 @@ function escapeXmlAttribute(text: string): string {
   return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
+function hasNotificationAttachmentPaths(msg: InboundChannelMessage): boolean {
+  if (msg.attachments?.length) {
+    return true;
+  }
+  if (msg.threadContext?.starter?.attachments?.length) {
+    return true;
+  }
+  return Boolean(
+    msg.threadContext?.history?.some((entry) => entry.attachments?.length),
+  );
+}
+
 /**
  * Format the reminder text that explains channel reply semantics to the agent.
  */
@@ -97,7 +109,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       'On Signal, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Replies are sent as the linked Signal account through signal-cli-rest-api.',
     );
   }
-  if (msg.attachments?.length) {
+  if (hasNotificationAttachmentPaths(msg)) {
     lines.splice(
       lines.length - 2,
       0,
@@ -215,7 +227,11 @@ function buildThreadContextEntryXml(
   }
 
   const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
-  return `<${tagName}${attrString}>\n${escapeXmlText(entry.text)}\n</${tagName}>`;
+  const body = [
+    ...(entry.text ? [escapeXmlText(entry.text)] : []),
+    ...(entry.attachments ?? []).map(buildAttachmentXml),
+  ].join("\n");
+  return `<${tagName}${attrString}>\n${body}\n</${tagName}>`;
 }
 
 function buildThreadContextXml(msg: InboundChannelMessage): string | null {

@@ -1509,12 +1509,18 @@ export function createSlackAdapter(
       }
 
       const slackApp = await ensureApp();
+      const threadAttachmentParams = {
+        accountId: config.accountId,
+        token: config.botToken,
+        transcribeVoice: config.transcribeVoice === true,
+      };
       const starter =
         shouldHydrateExistingThreadContext && isFirstRouteTurn
           ? await resolveSlackThreadStarter({
               channelId: msg.chatId,
               threadTs: msg.threadId,
               client: slackApp.client,
+              ...threadAttachmentParams,
             })
           : null;
       const resolvedHistory = shouldHydrateExistingThreadContext
@@ -1524,12 +1530,14 @@ export function createSlackAdapter(
             client: slackApp.client,
             currentMessageTs: msg.messageId,
             limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
+            ...threadAttachmentParams,
           })
         : await resolveSlackChannelHistory({
             channelId: msg.chatId,
             beforeTs: msg.messageId,
             client: slackApp.client,
             limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
+            ...threadAttachmentParams,
           });
       // Existing routed thread turns already deliver human messages into the
       // Letta conversation. Bot-authored Slack messages are intentionally not
@@ -1589,6 +1597,9 @@ export function createSlackAdapter(
                     starter.botId,
                   ),
                   text: starter.text,
+                  ...(starter.attachments?.length
+                    ? { attachments: starter.attachments }
+                    : {}),
                 },
               }
             : {}),
@@ -1602,6 +1613,9 @@ export function createSlackAdapter(
                     entry.botId,
                   ),
                   text: entry.text,
+                  ...(entry.attachments?.length
+                    ? { attachments: entry.attachments }
+                    : {}),
                 })),
               }
             : {}),
