@@ -43,6 +43,9 @@ describe("max context command helpers", () => {
 
   test("resolves model.json default context windows", () => {
     expect(
+      resolveModelJsonContextWindow({ modelId: "sonnet" }).contextWindow,
+    ).toBe(1_000_000);
+    expect(
       resolveModelJsonContextWindow({ modelId: "sonnet-4.6" }).contextWindow,
     ).toBe(200_000);
     expect(
@@ -67,7 +70,7 @@ describe("max context command helpers", () => {
       __testSetBackend(backend);
       const agent = await backend.createAgent({
         name: "Max Context Agent",
-        model: "anthropic/claude-sonnet-4-6",
+        model: "anthropic/claude-sonnet-5",
         model_settings: {
           provider_type: "anthropic",
           effort: "high",
@@ -80,7 +83,7 @@ describe("max context command helpers", () => {
           agentId: agent.id,
           conversationId: "default",
           args: `${MIN_CONTEXT_WINDOW_TOKENS - 1}`,
-          currentModelId: "sonnet-4.6",
+          currentModelId: "sonnet",
         }),
       ).rejects.toThrow("at least 30,000 tokens");
 
@@ -88,16 +91,16 @@ describe("max context command helpers", () => {
         applySetMaxContext({
           agentId: agent.id,
           conversationId: "default",
-          args: "250000",
-          currentModelId: "sonnet-4.6",
+          args: "1100000",
+          currentModelId: "sonnet",
         }),
-      ).rejects.toThrow("model.json default of 200,000 tokens");
+      ).rejects.toThrow("model.json default of 1,000,000 tokens");
 
       const overrideResult = await applySetMaxContext({
         agentId: agent.id,
         conversationId: "default",
         args: "10000 --override",
-        currentModelId: "sonnet-4.6",
+        currentModelId: "sonnet",
       });
       expect(overrideResult.contextWindow).toBe(10_000);
       expect(overrideResult.appliedTo).toBe("agent");
@@ -113,9 +116,9 @@ describe("max context command helpers", () => {
         agentId: agent.id,
         conversationId: "default",
         args: "",
-        currentModelId: "sonnet-4.6",
+        currentModelId: "sonnet",
       });
-      expect(resetResult.contextWindow).toBe(200_000);
+      expect(resetResult.contextWindow).toBe(1_000_000);
       expect(resetResult.reset).toBe(true);
 
       await backend.updateAgent(agent.id, {
@@ -133,7 +136,7 @@ describe("max context command helpers", () => {
         agentId: agent.id,
         conversationId: conversation.id,
         args: "50000",
-        currentModelId: "sonnet-4.6",
+        currentModelId: "sonnet",
       });
       expect(conversationResult.appliedTo).toBe("conversation");
       expect(conversationResult.conversationModelSettings).toMatchObject({

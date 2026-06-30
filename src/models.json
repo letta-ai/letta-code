@@ -781,6 +781,19 @@
       }
     },
     {
+      "id": "bedrock-sonnet-5",
+      "handle": "bedrock/us.anthropic.claude-sonnet-5",
+      "label": "Bedrock Sonnet 5",
+      "shortLabel": "Sonnet 5 BR",
+      "description": "Sonnet 5 via AWS Bedrock",
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 64000,
+        "max_reasoning_tokens": 31999,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "haiku",
       "handle": "anthropic/claude-haiku-4-5",
       "label": "Haiku 4.5",
