@@ -284,12 +284,18 @@ Handlers run in registration order. Later handlers see the current input after e
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
-  };
+  } | null;
   durationMs: number;
+  error?: {
+    message: string;
+    detail: string;
+    errorType: "llm_error" | "local_backend_error";
+    retryable: boolean;
+  };
 }
 ```
 
-`llm_end` fires once a provider request produces a final message, carrying the stop reason, token usage, and wall-clock duration. A request that fails before producing a final message (e.g. a transport error that triggers a retry) emits no `llm_end`. Both events are notification-only; return values are ignored. A throwing handler is isolated and never breaks the provider request.
+`llm_end` fires when a provider request ends, success or failure. Successful requests include token usage. Requests that fail before usage is available set `usage: null` and include `error`. Retry/failover effects are not supported yet; both events are notification-only and return values are ignored. A throwing handler is isolated and never breaks the provider request.
 
 Handlers also receive:
 

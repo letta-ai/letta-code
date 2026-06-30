@@ -1014,7 +1014,7 @@ describe("mod engine", () => {
           });
           letta.events.on("llm_end", (event) => {
             globalThis.__lettaModEvents.push(
-              "end:" + event.stopReason + ":" + event.usage.totalTokens + ":" + event.durationMs + "ms",
+              "end:" + event.stopReason + ":" + (event.usage?.totalTokens ?? "no-usage") + ":" + (event.error?.message ?? "no-error") + ":" + event.durationMs + "ms",
             );
           });
         }`,
@@ -1048,10 +1048,29 @@ describe("mod engine", () => {
         },
         createModContext(),
       );
+      await engine.emitEvent(
+        "llm_end",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          model: "anthropic/claude-fable-5",
+          stopReason: "llm_api_error",
+          usage: null,
+          error: {
+            message: "provider failed",
+            detail: "provider failed\nretry-after-ms: 0",
+            errorType: "llm_error" as const,
+            retryable: true,
+          },
+          durationMs: 42,
+        },
+        createModContext(),
+      );
 
       expect(testGlobal.__lettaModEvents).toEqual([
         "start:anthropic/claude-fable-5:8/200000",
-        "end:stop:120:1234ms",
+        "end:stop:120:no-error:1234ms",
+        "end:llm_api_error:no-usage:provider failed:42ms",
       ]);
 
       engine.dispose();
