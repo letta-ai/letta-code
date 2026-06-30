@@ -185,13 +185,10 @@ function formatFragmentedShellProgressDetails(
     );
   }
 
-  const commandMatch = summary.argumentsText?.match(
-    /"(?:command|cmd)"\s*:\s*"([^"]+)"/,
-  );
-  if (commandMatch?.[1]) {
-    return summarizeShellCommand(commandMatch[1]) || undefined;
-  }
-
+  // Do not expose command previews from incomplete shell-tool JSON. Slack's
+  // task stream appends, rather than replaces, changed details for the same
+  // task id; sending a provisional command before the streamed description
+  // arrives leaves both strings glued together in the preview.
   return undefined;
 }
 
