@@ -259,7 +259,9 @@ function validateAgentRepositoryName(name: string): string {
     throw new Error("repository name is required");
   }
   if (trimmed !== name) {
-    throw new Error("repository name cannot have leading or trailing whitespace");
+    throw new Error(
+      "repository name cannot have leading or trailing whitespace",
+    );
   }
   if (trimmed === "." || trimmed === "..") {
     throw new Error("invalid repository name");
