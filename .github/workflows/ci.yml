@@ -367,6 +367,61 @@ jobs:
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output json --parallel on
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output stream-json --parallel on
 
+  headless-ollama:
+    needs: [classify, check]
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    name: Headless Ollama / ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    # Land non-blocking while we observe CPU inference timing + tiny-model
+    # reliability; flip to a required check once stable.
+    continue-on-error: true
+    # Ollama inference runs on the CPU-only runner, so keep a generous cap.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Smallest tool-capable model to keep CPU inference + pull time bounded.
+        model: [qwen2.5:0.5b]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun install --frozen-lockfile
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama server
+        run: |
+          ollama serve > /tmp/ollama.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:11434/api/version >/dev/null 2>&1; then
+              echo "Ollama is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Ollama failed to start within 30s"
+          cat /tmp/ollama.log
+          exit 1
+
+      - name: Pull model
+        run: ollama pull "${{ matrix.model }}"
+
+      - name: Run local backend headless scenario against Ollama
+        env:
+          OLLAMA_BASE_URL: http://localhost:11434/v1
+        run: |
+          bun run src/test-utils/headless-scenario.ts --backend local --model "ollama/${{ matrix.model }}" --output text --parallel on
+
   reflection-headless:
     needs: [classify, check]
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}

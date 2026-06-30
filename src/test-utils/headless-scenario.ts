@@ -27,7 +27,7 @@ import {
 const execFile = promisify(execFileCb);
 
 type Backend = "api" | "local";
-type LocalProvider = "openai" | "anthropic" | "google";
+type LocalProvider = "openai" | "anthropic" | "google" | "ollama";
 
 type Args = {
   backend: Backend;
@@ -76,7 +76,7 @@ function parseArgs(argv: string[]): Args {
   }
   if (
     args.provider !== undefined &&
-    !["openai", "anthropic", "google"].includes(args.provider)
+    !["openai", "anthropic", "google", "ollama"].includes(args.provider)
   ) {
     throw new Error(`Invalid --provider ${args.provider}`);
   }
@@ -84,6 +84,9 @@ function parseArgs(argv: string[]): Args {
 }
 
 function inferLocalProvider(model: string): LocalProvider {
+  if (model.startsWith("ollama/")) {
+    return "ollama";
+  }
   if (
     model.startsWith("google/") ||
     model.startsWith("google_ai/") ||
@@ -113,6 +116,14 @@ async function ensurePrereqs(args: Args): Promise<"ok" | "skip"> {
   }
 
   const provider = args.provider ?? inferLocalProvider(args.model);
+  // Ollama is a local endpoint (no API key); it needs a reachable base URL.
+  if (provider === "ollama") {
+    if (!process.env.OLLAMA_BASE_URL) {
+      console.log("SKIP: Missing env OLLAMA_BASE_URL");
+      return "skip";
+    }
+    return "ok";
+  }
   const requiredKey =
     provider === "anthropic"
       ? "ANTHROPIC_API_KEY"
@@ -157,6 +168,7 @@ function scenarioPrompt(backend: Backend): string {
 function providerEnvValue(provider: LocalProvider): string {
   if (provider === "openai") return "openai-responses";
   if (provider === "google") return "google";
+  if (provider === "ollama") return "ollama";
   return "anthropic";
 }
 
