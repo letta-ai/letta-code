@@ -74,6 +74,34 @@ Avoid:
 - broad capability matrices that exist mainly to promise stability
 - semantic APIs whose only consumer is hypothetical
 
+## Breaking changes and diagnostics
+
+Breaking changes are welcome when they make the mods API simpler, more extensible, or closer to the real harness boundary. A breaking change is acceptable when an outdated mod fails in a way an agent can diagnose and repair.
+
+Every intentional API break should have a diagnostic plan:
+
+- **Fail loudly at the mod boundary.** Do not silently ignore old behavior or emulate it indefinitely.
+- **Attribute the failure to the mod owner.** Include the source path, phase, and capability metadata when available.
+- **Name what changed.** The message should say which API or shape is no longer supported.
+- **Point at the replacement.** Include the new API, field, event, or file location the agent should use.
+- **Keep compatibility aids temporary.** Runtime traps or migration diagnostics are repair scaffolding, not long-term API surfaces.
+- **Test an outdated mod.** Add or update a regression test that loads the old shape and verifies the diagnostic is specific enough to unblock an agent.
+
+Good diagnostic messages are short but actionable:
+
+```text
+letta.ui.setStatuslineRenderer was removed. Use letta.ui.openPanel({ id, order, render }) instead.
+```
+
+Avoid vague diagnostics:
+
+```text
+mod failed
+unsupported API
+```
+
+The goal is not to avoid breaking mods. The goal is for an agent to see the diagnostic, edit the mod, reload, and continue without human debugging.
+
 ## Recovery requirements
 
 Kernel-style only works if recovery is strong. Changes in this directory should preserve or improve:
