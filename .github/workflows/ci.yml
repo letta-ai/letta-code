@@ -367,23 +367,25 @@ jobs:
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output json --parallel on
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output stream-json --parallel on
 
-  headless-ollama:
+  ollama-smoke:
     needs: [classify, check]
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
-    name: Headless Ollama / ${{ matrix.model }}
+    name: Ollama Smoke / ${{ matrix.model }}
     runs-on: ubuntu-latest
-    # Land non-blocking while we observe CPU inference timing + tiny-model
-    # reliability; flip to a required check once stable.
+    # Land non-blocking while we observe CPU inference timing + reliability;
+    # flip to a required check once stable.
     continue-on-error: true
     # Ollama inference runs on the CPU-only runner, so keep a generous cap.
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # qwen2.5:3b balances tool-calling reliability against CPU-only
-        # inference time. 0.5b/1b are too weak for the multi-step parallel
-        # tool-call + memory scenario (never emits the success sentinel).
-        model: [qwen2.5:3b]
+        # Small fast model: this job runs a lightweight provider smoke
+        # (--smoke), not the full tool-calling scenario, so it only needs to
+        # round-trip a trivial prompt. The strict scenario is unworkable on
+        # CPU runners (0.5b/1b too weak to emit the sentinel; 3b too slow and
+        # hits the 6-min/attempt CLI timeout).
+        model: [qwen2.5:1.5b]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -418,11 +420,11 @@ jobs:
       - name: Pull model
         run: ollama pull "${{ matrix.model }}"
 
-      - name: Run local backend headless scenario against Ollama
+      - name: Run Ollama provider smoke (connect + autodetect + round-trip)
         env:
           OLLAMA_BASE_URL: http://localhost:11434/v1
         run: |
-          bun run src/test-utils/headless-scenario.ts --backend local --model "ollama/${{ matrix.model }}" --output text --parallel on
+          bun run src/test-utils/headless-scenario.ts --backend local --model "ollama/${{ matrix.model }}" --output text --parallel on --smoke
 
   reflection-headless:
     needs: [classify, check]

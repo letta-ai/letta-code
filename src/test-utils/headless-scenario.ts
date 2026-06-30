@@ -35,6 +35,11 @@ type Args = {
   output: "text" | "json" | "stream-json";
   parallel: "on" | "off" | "hybrid";
   provider?: LocalProvider;
+  // Smoke mode: trivial no-tools prompt asserting a sentinel word. Exercises
+  // the provider request path (connect/autodetect/round-trip) without the full
+  // tool-calling scenario — needed for weak/slow local models (e.g. Ollama on
+  // CPU runners) that cannot pass the frontier-model scenario in time.
+  smoke: boolean;
 };
 
 interface RunResult {
@@ -51,10 +56,12 @@ function parseArgs(argv: string[]): Args {
     output: Args["output"];
     parallel: Args["parallel"];
     provider?: LocalProvider;
+    smoke: boolean;
   } = {
     backend: "api",
     output: "text",
     parallel: "on",
+    smoke: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
@@ -63,6 +70,7 @@ function parseArgs(argv: string[]): Args {
     else if (v === "--output") args.output = argv[++i] as Args["output"];
     else if (v === "--parallel") args.parallel = argv[++i] as Args["parallel"];
     else if (v === "--provider") args.provider = argv[++i] as LocalProvider;
+    else if (v === "--smoke") args.smoke = true;
   }
   if (!args.model) throw new Error("Missing --model");
   if (!["api", "local"].includes(args.backend)) {
@@ -161,8 +169,17 @@ function localScenarioPrompt(): string {
   );
 }
 
-function scenarioPrompt(backend: Backend): string {
-  return backend === "local" ? localScenarioPrompt() : apiScenarioPrompt();
+function smokePrompt(): string {
+  return (
+    "This is an automated CI smoke test (no human to assist). " +
+    "Do not call any tools. " +
+    "Respond with exactly the single uppercase word PONG and nothing else."
+  );
+}
+
+function scenarioPrompt(args: Args): string {
+  if (args.smoke) return smokePrompt();
+  return args.backend === "local" ? localScenarioPrompt() : apiScenarioPrompt();
 }
 
 function providerEnvValue(provider: LocalProvider): string {
@@ -191,7 +208,7 @@ async function runCLI(args: Args): Promise<RunResult> {
     "run",
     "dev",
     "-p",
-    scenarioPrompt(args.backend),
+    scenarioPrompt(args),
     "--yolo",
     "--new-agent",
   ];
@@ -309,6 +326,7 @@ async function validateLocalStorage(storageDir: string | undefined) {
 }
 
 const REQUIRED_MARKERS = ["BANANA"];
+const SMOKE_MARKERS = ["PONG"];
 const MAX_ATTEMPTS = 3;
 
 function assertContainsAll(hay: string, needles: string[]) {
@@ -345,9 +363,13 @@ function extractStreamJsonAssistantText(stdout: string): string {
   return parts.join("");
 }
 
-function validateOutput(stdout: string, output: Args["output"]) {
+function validateOutput(
+  stdout: string,
+  output: Args["output"],
+  markers: string[],
+) {
   if (output === "text") {
-    assertContainsAll(stdout, REQUIRED_MARKERS);
+    assertContainsAll(stdout, markers);
     return;
   }
 
@@ -355,7 +377,7 @@ function validateOutput(stdout: string, output: Args["output"]) {
     try {
       const obj = JSON.parse(stdout);
       const result = String(obj?.result ?? "");
-      assertContainsAll(result, REQUIRED_MARKERS);
+      assertContainsAll(result, markers);
       return;
     } catch (e) {
       throw new Error(`Invalid JSON output: ${(e as Error).message}`);
@@ -366,7 +388,7 @@ function validateOutput(stdout: string, output: Args["output"]) {
   if (!streamText) {
     throw new Error("No assistant/result content found in stream-json output");
   }
-  assertContainsAll(streamText, REQUIRED_MARKERS);
+  assertContainsAll(streamText, markers);
 }
 
 async function main() {
@@ -390,8 +412,14 @@ async function main() {
           })}`,
         );
       }
-      validateOutput(run.stdout, args.output);
-      if (args.backend === "local") {
+      validateOutput(
+        run.stdout,
+        args.output,
+        args.smoke ? SMOKE_MARKERS : REQUIRED_MARKERS,
+      );
+      // Smoke mode only asserts the sentinel; it deliberately skips the
+      // tool-driven MemFS validation since it issues a no-tools prompt.
+      if (args.backend === "local" && !args.smoke) {
         await validateLocalStorage(run.localStorageDir);
       }
       console.log(`OK: ${args.backend} / ${args.model} / ${args.output}`);
