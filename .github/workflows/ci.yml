@@ -380,8 +380,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Smallest tool-capable model to keep CPU inference + pull time bounded.
-        model: [qwen2.5:0.5b]
+        # qwen2.5:3b balances tool-calling reliability against CPU-only
+        # inference time. 0.5b/1b are too weak for the multi-step parallel
+        # tool-call + memory scenario (never emits the success sentinel).
+        model: [qwen2.5:3b]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
