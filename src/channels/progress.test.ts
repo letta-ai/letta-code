@@ -100,6 +100,58 @@ test("channel progress uses Skill names as task details", () => {
   ]);
 });
 
+test("channel progress uses cached Skill names for streamed argument fragments", () => {
+  expect(
+    buildChannelTurnProgressUpdatesFromDelta({
+      message_type: "tool_call_message",
+      run_id: "run-1",
+      tool_calls: [
+        {
+          id: "call-1",
+          function: {
+            name: "Skill",
+            arguments: '{"skill":"maintaining-',
+          },
+        },
+      ],
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Skill",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Skill",
+    },
+  ]);
+
+  expect(
+    buildChannelTurnProgressUpdatesFromDelta({
+      message_type: "tool_call_message",
+      run_id: "run-1",
+      tool_calls: [
+        {
+          id: "call-1",
+          function: {
+            arguments: 'machine-maintenance"}',
+          },
+        },
+      ],
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Skill",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Skill",
+      toolDetails: "maintaining-machine-maintenance",
+    },
+  ]);
+});
+
 test("channel progress uses Letta Code display names for tool titles", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "tool_call_message",
