@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildSlackDebounceKey,
   buildTopLevelSlackConversationKey,
+  createAgentThreadTracker,
   resolveSlackInboundDebounceMs,
 } from "@/channels/slack/adapter";
 
@@ -254,5 +255,34 @@ describe("resolveSlackInboundDebounceMs", () => {
       1234,
     );
     restoreEnv();
+  });
+});
+
+describe("createAgentThreadTracker", () => {
+  test("remembers and checks thread IDs", () => {
+    const tracker = createAgentThreadTracker();
+    expect(tracker.has("1234567890.123456")).toBe(false);
+    tracker.remember("1234567890.123456");
+    expect(tracker.has("1234567890.123456")).toBe(true);
+    expect(tracker.has("9999999999.999999")).toBe(false);
+  });
+
+  test("clear removes all tracked threads", () => {
+    const tracker = createAgentThreadTracker();
+    tracker.remember("1111111111.111111");
+    tracker.remember("2222222222.222222");
+    expect(tracker.has("1111111111.111111")).toBe(true);
+    expect(tracker.has("2222222222.222222")).toBe(true);
+    tracker.clear();
+    expect(tracker.has("1111111111.111111")).toBe(false);
+    expect(tracker.has("2222222222.222222")).toBe(false);
+  });
+
+  test("remember refreshes TTL for existing thread", () => {
+    const tracker = createAgentThreadTracker();
+    tracker.remember("1234567890.123456");
+    // Remembering again should extend the TTL
+    tracker.remember("1234567890.123456");
+    expect(tracker.has("1234567890.123456")).toBe(true);
   });
 });
