@@ -577,9 +577,6 @@ const TOOL_PERMISSIONS: Record<
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
   update_plan: { requiresApproval: false },
-  get_goal: { requiresApproval: false },
-  create_goal: { requiresApproval: false },
-  update_goal: { requiresApproval: false },
   // Gemini toolset
   glob_gemini: { requiresApproval: false },
   list_directory: { requiresApproval: false },
@@ -598,9 +595,6 @@ const TOOL_PERMISSIONS: Record<
   GrepFiles: { requiresApproval: false },
   ApplyPatch: { requiresApproval: true },
   UpdatePlan: { requiresApproval: false },
-  GetGoal: { requiresApproval: false },
-  CreateGoal: { requiresApproval: false },
-  UpdateGoal: { requiresApproval: false },
   // Gemini-2 toolset (PascalCase)
   RunShellCommand: { requiresApproval: true },
   ReadFileGemini: { requiresApproval: false },

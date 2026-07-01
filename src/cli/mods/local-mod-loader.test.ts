@@ -40,7 +40,6 @@ function createStatuslineContext(): StatuslineRenderContext {
     statuses: { mode: "fast" },
     ui: {
       currentModelProvider: "anthropic",
-      goalStatusText: null,
       hasTemporaryModelOverride: false,
       isByokProvider: false,
       isLocalBackend: true,

@@ -26,7 +26,6 @@ import {
 import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
 import {
   type ExecutionPhase,
   getPhaseVisual,
@@ -488,7 +487,6 @@ const StatuslineSlot = memo(function StatuslineSlot({
     payload: statusLinePayload,
     ui: {
       currentModelProvider: currentModelProvider ?? null,
-      goalStatusText: null,
       hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
       isByokProvider,
       isLocalBackend,
@@ -915,8 +913,6 @@ export function Input({
   onEscapeCancel,
   onEscapeCommandCancel,
   inputDisabled = false,
-  goalLoopActive = false,
-  onGoalLoopExit,
   conversationId,
   onPasteError,
   restoredInput,
@@ -968,8 +964,6 @@ export function Input({
   onEscapeCancel?: () => void;
   onEscapeCommandCancel?: () => boolean;
   inputDisabled?: boolean;
-  goalLoopActive?: boolean;
-  onGoalLoopExit?: () => void;
   conversationId?: string;
   onPasteError?: (message: string) => void;
   restoredInput?: string | null;
@@ -1419,7 +1413,7 @@ export function Input({
   // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
   // consume the keystroke before it renders (no flicker).
 
-  // Handle Shift+Tab for permission mode cycling (or goal loop exit)
+  // Handle Shift+Tab for permission mode cycling
   useInput((_input, key) => {
     if (!interactionEnabled) return;
 
@@ -1445,12 +1439,6 @@ export function Input({
     }
 
     if (key.shift && key.tab) {
-      // If a goal loop is active, pause it before cycling permission mode.
-      if (goalLoopActive && onGoalLoopExit) {
-        onGoalLoopExit();
-        return;
-      }
-
       // Cycle through permission modes
       const modes: PermissionMode[] = [
         "unrestricted",
@@ -1785,51 +1773,9 @@ export function Input({
       modeName: hintInfo.name,
       modeColor: hintInfo.color,
       modeGlyph: hintInfo.glyph,
-      showExitHint: goalLoopActive,
+      showExitHint: false,
     });
-  }, [currentMode, goalLoopActive, showStatuslineTransientHint]);
-
-  // Goal product status text. Stored in state (rather than recomputed every
-  // render) so we only trigger a re-render when the displayed string actually
-  // changes. The previous implementation used setGoalFooterTick + setInterval
-  // which forced a full Input re-render every second while a goal was active,
-  // matching the flicker pattern documented in review-knowledge.md.
-  const currentGoal = conversationId
-    ? settingsManager.getConversationGoal(conversationId)
-    : null;
-  const goalStatus = currentGoal?.status ?? null;
-  const goalActiveStartedAt = currentGoal?.activeStartedAt ?? null;
-  const goalIsActive = goalStatus === "active";
-
-  const [goalStatusText, setGoalStatusText] = useState<string | null>(() =>
-    currentGoal ? formatGoalStatusIndicator(currentGoal) : null,
-  );
-
-  // Sync on prop-driven changes (status transitions, clear, pause, complete).
-  // goalStatus and goalActiveStartedAt are intentional triggers — they detect
-  // transitions even though the effect body re-reads via getConversationGoal.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are change triggers, not values used in the effect body
-  useEffect(() => {
-    const goal = conversationId
-      ? settingsManager.getConversationGoal(conversationId)
-      : null;
-    const nextText = goal ? formatGoalStatusIndicator(goal) : null;
-    setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
-  }, [conversationId, goalStatus, goalActiveStartedAt]);
-
-  // While the goal is active, re-check the formatted string each second but
-  // only re-render when it actually changes. Combined with the fixed-width
-  // format from formatGoalElapsedSeconds, the string changes at most once per
-  // second and the change is always same-width, so no product row flicker.
-  useEffect(() => {
-    if (!goalIsActive || !conversationId) return;
-    const timer = setInterval(() => {
-      const goal = settingsManager.getConversationGoal(conversationId);
-      const nextText = goal ? formatGoalStatusIndicator(goal) : null;
-      setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [goalIsActive, conversationId]);
+  }, [currentMode, showStatuslineTransientHint]);
 
   // Create a horizontal line using box-drawing characters.
   const horizontalLine = useMemo(
@@ -1924,7 +1870,6 @@ export function Input({
         payload: statusLinePayload,
         ui: {
           currentModelProvider: currentModelProvider ?? null,
-          goalStatusText: null,
           hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
           isByokProvider:
             currentModelProvider?.startsWith("lc-") ||
@@ -1991,10 +1936,7 @@ export function Input({
             {modPanelRow}
 
             {!suppressDividers && (
-              <ProductStatusRow
-                goalStatusText={goalStatusText}
-                terminalWidth={terminalWidth}
-              />
+              <ProductStatusRow terminalWidth={terminalWidth} />
             )}
 
             {/* Top horizontal divider */}
@@ -2080,7 +2022,7 @@ export function Input({
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
-                showExitHint={modeInfo?.showExitHint ?? goalLoopActive}
+                showExitHint={modeInfo?.showExitHint ?? false}
                 currentModelProvider={currentModelProvider}
                 isOpenAICodexProvider={
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
@@ -2136,7 +2078,6 @@ export function Input({
     modeInfo?.color,
     modeInfo?.glyph,
     modeInfo?.showExitHint,
-    goalLoopActive,
     currentModel,
     currentReasoningEffort,
     fileAutocompleteFdPath,
@@ -2149,7 +2090,6 @@ export function Input({
     statusLinePayload,
     modAdapter,
 
-    goalStatusText,
     promptChar,
     promptVisualWidth,
     suppressDividers,
