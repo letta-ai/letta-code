@@ -12,6 +12,7 @@ import {
   registerPiProvider,
 } from "@/backend/dev/pi-provider-mod-registry";
 import {
+  getPiProviderSpec,
   PI_PROVIDER_SPECS,
   PI_TUI_DEFAULT_MODEL_IDS,
   PI_TUI_DEFAULTLESS_PROVIDER_IDS,
@@ -26,8 +27,50 @@ import {
 import { getProviderConfigs } from "@/providers/byok-providers";
 
 describe("local pi provider catalog", () => {
+  const originalDisableOpenRouterAttribution =
+    process.env.LETTA_DISABLE_OPENROUTER_ATTRIBUTION;
+  const originalDoNotTrack = process.env.DO_NOT_TRACK;
+
+  function restoreEnvVar(name: string, value: string | undefined): void {
+    if (value === undefined) {
+      delete process.env[name];
+      return;
+    }
+    process.env[name] = value;
+  }
+
   afterEach(() => {
     clearRegisteredPiProviders();
+    restoreEnvVar(
+      "LETTA_DISABLE_OPENROUTER_ATTRIBUTION",
+      originalDisableOpenRouterAttribution,
+    );
+    restoreEnvVar("DO_NOT_TRACK", originalDoNotTrack);
+  });
+
+  test("OpenRouter catalog sends attribution headers by default", () => {
+    delete process.env.LETTA_DISABLE_OPENROUTER_ATTRIBUTION;
+    delete process.env.DO_NOT_TRACK;
+
+    expect(getPiProviderSpec("openrouter").headers?.()).toEqual({
+      "HTTP-Referer": "https://letta.com",
+      "X-OpenRouter-Categories": "cli-agent,personal-agent",
+      "X-OpenRouter-Title": "Letta Code",
+    });
+  });
+
+  test("OpenRouter catalog omits attribution headers for explicit opt-out", () => {
+    process.env.LETTA_DISABLE_OPENROUTER_ATTRIBUTION = "1";
+    delete process.env.DO_NOT_TRACK;
+
+    expect(getPiProviderSpec("openrouter").headers?.()).toBeUndefined();
+  });
+
+  test("OpenRouter catalog omits attribution headers for DO_NOT_TRACK", () => {
+    delete process.env.LETTA_DISABLE_OPENROUTER_ATTRIBUTION;
+    process.env.DO_NOT_TRACK = "1";
+
+    expect(getPiProviderSpec("openrouter").headers?.()).toBeUndefined();
   });
 
   test("Constellation /connect configs exclude local-only providers", () => {
