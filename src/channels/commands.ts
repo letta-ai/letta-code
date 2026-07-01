@@ -478,14 +478,22 @@ function getFallbackModelEntries(
   return preferred.length > 0 ? preferred : Array.from(byHandle.values());
 }
 
-function formatChannelModelEntry(entry: ChannelModelListEntry): string {
+function modelCommandPrefix(channelId: string): "/model" | "!model" {
+  return channelId === "slack" ? "!model" : "/model";
+}
+
+function formatChannelModelEntry(
+  channelId: string,
+  entry: ChannelModelListEntry,
+): string {
   const selector = entry.id || entry.handle;
   const handleText = entry.handle === entry.label ? "" : ` — ${entry.handle}`;
-  return `• ${entry.label}${handleText} (/model ${selector})`;
+  return `• ${entry.label}${handleText} (${modelCommandPrefix(channelId)} ${selector})`;
 }
 
 function appendModelEntrySection(
   lines: string[],
+  channelId: string,
   title: string,
   entries: ChannelModelListEntry[],
   limit: number,
@@ -493,7 +501,7 @@ function appendModelEntrySection(
   if (entries.length === 0) return;
   lines.push("", `${title}:`);
   for (const entry of entries.slice(0, limit)) {
-    lines.push(formatChannelModelEntry(entry));
+    lines.push(formatChannelModelEntry(channelId, entry));
   }
   const remaining = entries.length - limit;
   if (remaining > 0) {
@@ -540,8 +548,20 @@ export function buildChannelModelListMessage(
     );
   }
 
-  appendModelEntrySection(lines, "Recent models", recentEntries, limit);
-  appendModelEntrySection(lines, "Available models", availableEntries, limit);
+  appendModelEntrySection(
+    lines,
+    channelId,
+    "Recent models",
+    recentEntries,
+    limit,
+  );
+  appendModelEntrySection(
+    lines,
+    channelId,
+    "Available models",
+    availableEntries,
+    limit,
+  );
 
   if (availableEntries.length === 0) {
     lines.push(
@@ -550,10 +570,14 @@ export function buildChannelModelListMessage(
     );
   }
 
-  lines.push(
-    "",
-    "Use /model <handle-or-id> to switch this chat's routed model.",
-  );
+  lines.push("");
+  if (channelId === "slack") {
+    lines.push(
+      "Mention the app with !model <handle-or-id> to switch this thread's routed model.",
+    );
+  } else {
+    lines.push("Use /model <handle-or-id> to switch this chat's routed model.");
+  }
   return lines.join("\n");
 }
 
