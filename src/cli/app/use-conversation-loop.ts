@@ -1992,6 +1992,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               await classifyApprovals(approvalsToProcess, {
                 getContext: analyzeToolApproval,
                 alwaysRequiresUserInput,
+                requireArgsForAutoApprove: true,
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
                 toolContextId: approvalToolContextIdRef.current,
