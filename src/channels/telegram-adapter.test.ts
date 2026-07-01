@@ -398,6 +398,36 @@ test("telegram channel account start rolls back enabled state when adapter start
   );
 });
 
+test("telegram channel account start fails before grammY sees an empty token", async () => {
+  createChannelAccountLive(
+    "telegram",
+    {
+      displayName: "Missing Token Telegram Bot",
+      enabled: false,
+      token: "",
+      dmPolicy: "pairing",
+    },
+    { accountId: "telegram-missing-token" },
+  );
+
+  await expect(
+    startChannelAccountLive("telegram", "telegram-missing-token"),
+  ).rejects.toThrow("missing its bot token");
+
+  expect(FakeBot.instances).toHaveLength(0);
+  expect(
+    getChannelAccountSnapshot("telegram", "telegram-missing-token"),
+  ).toEqual(
+    expect.objectContaining({
+      channelId: "telegram",
+      accountId: "telegram-missing-token",
+      enabled: false,
+      running: false,
+      configured: false,
+    }),
+  );
+});
+
 test("telegram channel routes permission prompts and approvals through the topic", async () => {
   createChannelAccountLive(
     "telegram",

@@ -143,6 +143,46 @@ describe("channel credential storage", () => {
     expect(persistedText).toContain("__letta_secret_refs");
   });
 
+  test("keyring mode preserves secret refs when stored credentials are missing", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    mkdirSync(join(channelsRoot, "slack"), { recursive: true });
+    const persistedAccount = {
+      ...makeSlackAccount(),
+      botToken: undefined,
+      appToken: undefined,
+      __letta_secret_refs: {
+        botToken: true,
+        appToken: true,
+      },
+    };
+    writeFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      `${JSON.stringify({ accounts: [persistedAccount] }, null, 2)}\n`,
+    );
+    const before = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+
+    await expect(hydrateChannelAccountSecrets("slack")).rejects.toThrow(
+      "The saved secret reference was preserved",
+    );
+
+    expect(
+      readFileSync(join(channelsRoot, "slack", "accounts.json"), "utf-8"),
+    ).toBe(before);
+    expect(readAccountsFile(channelsRoot, "slack")).toMatchObject({
+      accounts: [
+        {
+          __letta_secret_refs: {
+            botToken: true,
+            appToken: true,
+          },
+        },
+      ],
+    });
+  });
+
   test("deleting an account removes keyring secrets", async () => {
     __setActiveChannelCredentialsStoreModeForTests("keyring");
 

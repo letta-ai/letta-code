@@ -1312,7 +1312,7 @@ export async function startChannelLive(
   if (!isAccountConfigured(existing)) {
     if (isTelegramChannelAccount(existing)) {
       throw new Error(
-        'Channel "telegram" is missing a token. Configure it first.',
+        'Channel "telegram" is missing its bot token. Re-add the BotFather token in Channels or set LETTA_CHANNEL_CREDENTIALS_STORE=file and update the account before restarting the listener.',
       );
     }
     if (isDiscordChannelAccount(existing)) {
@@ -1709,7 +1709,7 @@ export async function startChannelAccountLive(
   if (!isAccountConfigured(existing)) {
     if (isTelegramChannelAccount(existing)) {
       throw new Error(
-        'Channel "telegram" account is missing a token. Configure it first.',
+        'Channel "telegram" account is missing its bot token. Re-add the BotFather token in Channels or set LETTA_CHANNEL_CREDENTIALS_STORE=file and update the account before restarting the listener.',
       );
     }
     if (isDiscordChannelAccount(existing)) {

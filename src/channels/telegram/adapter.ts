@@ -167,6 +167,16 @@ function logTelegramStartup(
   options?.logger?.(`[Telegram] ${message}`);
 }
 
+function assertTelegramTokenPresent(config: TelegramChannelAccount): void {
+  if (config.token.trim().length > 0) {
+    return;
+  }
+
+  throw new Error(
+    `Telegram account ${config.accountId} is missing its bot token. Re-add the BotFather token in Channels or set LETTA_CHANNEL_CREDENTIALS_STORE=file and update the account before restarting the listener.`,
+  );
+}
+
 async function stopTelegramBotQuietly(
   telegramBot: TelegramBot,
   options: ChannelAdapterStartOptions | undefined,
@@ -899,6 +909,7 @@ export function createTelegramAdapter(
     logTelegramStartup(options, "loading grammY runtime");
     const grammy = await ensureModule();
     logTelegramStartup(options, "grammY runtime loaded");
+    assertTelegramTokenPresent(config);
     const Bot = resolveTelegramBotConstructor(grammy);
     logTelegramStartup(
       options,
