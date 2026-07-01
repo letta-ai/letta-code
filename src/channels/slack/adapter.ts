@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
-import { listChannelSlashCommands } from "@/channels/commands";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
@@ -17,6 +16,7 @@ import type {
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
+import { listSlackNativeSlashCommands } from "./manifest";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
@@ -1188,13 +1188,8 @@ export function createSlackAdapter(
       }
     };
 
-    for (const definition of listChannelSlashCommands()) {
-      for (const commandName of [
-        definition.name,
-        ...(definition.aliases ?? []),
-      ]) {
-        instance.command(`/${commandName}`, handleNativeChannelSlashCommand);
-      }
+    for (const definition of listSlackNativeSlashCommands()) {
+      instance.command(definition.command, handleNativeChannelSlashCommand);
     }
 
     const handleReactionEvent = async (
