@@ -20,4 +20,12 @@ describe("session context reminder", () => {
     expect(context).not.toContain("Agent name");
     expect(context).not.toContain("Server location");
   });
+
+  test("uses environment-changed intro for intra-session environment switches", () => {
+    const context = buildSessionContext({ reason: "environment_changed" });
+
+    expect(context).toContain(
+      "The execution environment for this conversation has changed. Updated environment context follows.",
+    );
+  });
 });
