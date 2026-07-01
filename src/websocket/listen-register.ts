@@ -4,6 +4,7 @@
  */
 
 import { getSelfUpdateStatus } from "@/updater/auto-update";
+import { getLettaCodeRequestHeaders } from "@/utils/letta-code-headers";
 import { getVersion } from "@/version.ts";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
 
@@ -85,8 +86,8 @@ export async function registerWithCloud(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...getLettaCodeRequestHeaders(),
       Authorization: `Bearer ${opts.apiKey}`,
-      "X-Letta-Source": "letta-code",
     },
     body: JSON.stringify({
       deviceId: opts.deviceId,

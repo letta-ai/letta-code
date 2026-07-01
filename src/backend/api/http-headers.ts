@@ -1,4 +1,4 @@
-import packageJson from "../../../package.json";
+import { getLettaCodeRequestHeaders } from "@/utils/letta-code-headers";
 
 /**
  * Get standard headers for manual HTTP calls to Letta API.
@@ -7,8 +7,7 @@ import packageJson from "../../../package.json";
 export function getLettaCodeHeaders(apiKey?: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "User-Agent": `letta-code/${packageJson.version}`,
-    "X-Letta-Source": "letta-code",
+    ...getLettaCodeRequestHeaders(),
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
   };
 }

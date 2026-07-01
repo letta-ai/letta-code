@@ -6,6 +6,7 @@
 import Letta from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { getLettaCodeRequestHeaders } from "@/utils/letta-code-headers";
 
 export const LETTA_CLOUD_API_URL = "https://api.letta.com";
 
@@ -399,7 +400,7 @@ export async function validateCredentialsWithResult(
     const client = new Letta({
       apiKey,
       baseURL: baseUrl,
-      defaultHeaders: { "X-Letta-Source": "letta-code" },
+      defaultHeaders: getLettaCodeRequestHeaders(),
     });
 
     // Try to list agents - this requires valid authentication

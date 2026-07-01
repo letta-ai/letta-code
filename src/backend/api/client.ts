@@ -5,8 +5,8 @@ import { experimentManager } from "@/experiments/manager";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
+import { getLettaCodeRequestHeaders } from "@/utils/letta-code-headers";
 import { createTimingFetch, isTimingsEnabled } from "@/utils/timing";
-import packageJson from "../../../package.json";
 
 const SDK_DIAGNOSTIC_MAX_LEN = 400;
 const SDK_DIAGNOSTIC_MAX_LINES = 4;
@@ -129,8 +129,7 @@ export function getClientDefaultHeaders(): Record<string, string> {
   const nodeExperiment = experimentManager.getSnapshot("node");
 
   return {
-    "X-Letta-Source": "letta-code",
-    "User-Agent": `letta-code/${packageJson.version}`,
+    ...getLettaCodeRequestHeaders(),
     // Identify this device on user-message turns so the cloud can
     // persist the (agent, conversation) → device association and
     // restore it on other browsers/sessions. The cloud middleware

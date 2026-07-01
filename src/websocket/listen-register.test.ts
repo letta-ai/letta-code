@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { getVersion } from "@/version";
 import {
   registerWithCloud,
   registerWithCloudRetry,
@@ -49,9 +50,11 @@ describe("registerWithCloud", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe(
       "Bearer sk-test-key",
     );
-    expect((init.headers as Record<string, string>)["X-Letta-Source"]).toBe(
-      "letta-code",
-    );
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Letta-Source"]).toBe("letta-code");
+    expect(headers["User-Agent"]).toBe(`letta-code/${getVersion()}`);
+    expect(headers["X-Letta-Client-Name"]).toBe("letta-code");
+    expect(headers["X-Letta-Client-Version"]).toBe(getVersion());
     const body = JSON.parse(init.body as string);
     expect(body).toMatchObject({
       deviceId: "device-123",
