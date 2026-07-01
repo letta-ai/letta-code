@@ -51,6 +51,49 @@ describe("drainStream stop reason", () => {
     expect(result.sawStopReasonChunk).toBe(true);
   });
 
+  test("removes incomplete tools from terminal llm_api_error streams", async () => {
+    const fakeStream = {
+      controller: new AbortController(),
+      async *[Symbol.asyncIterator]() {
+        yield {
+          message_type: "approval_request_message",
+          tool_call: {
+            tool_call_id: "tc-failed-run",
+            name: "exec_command",
+            arguments: '{"cmd":"git status"}',
+          },
+        } as LettaStreamingResponse;
+        yield {
+          message_type: "stop_reason",
+          stop_reason: "llm_api_error",
+        } as LettaStreamingResponse;
+        throw new Error("peer closed connection");
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+
+    const buffers = createBuffers("agent-test");
+    const result = await drainStream(
+      fakeStream,
+      buffers,
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      true,
+    );
+
+    expect(result.stopReason).toBe("llm_api_error");
+    expect(
+      Array.from(buffers.byId.values()).some(
+        (line) => line.kind === "tool_call" && line.phase !== "finished",
+      ),
+    ).toBe(false);
+    expect(buffers.interrupted).toBe(false);
+  });
+
   test("coerces end_turn with pending approvals into requires_approval", async () => {
     const fakeStream = {
       controller: new AbortController(),
@@ -70,11 +113,8 @@ describe("drainStream stop reason", () => {
       },
     } as unknown as Stream<LettaStreamingResponse>;
 
-    const result = await drainStream(
-      fakeStream,
-      createBuffers("agent-test"),
-      () => {},
-    );
+    const buffers = createBuffers("agent-test");
+    const result = await drainStream(fakeStream, buffers, () => {});
 
     expect(result.stopReason).toBe("requires_approval");
     expect(result.sawStopReasonChunk).toBe(true);
@@ -85,6 +125,11 @@ describe("drainStream stop reason", () => {
         toolArgs: '{"command":"pwd"}',
       },
     ]);
+    const line = buffers.byId.get("tc-end-turn");
+    expect(line?.kind).toBe("tool_call");
+    if (line?.kind === "tool_call") {
+      expect(line.phase).toBe("ready");
+    }
   });
 
   test("end_turn removes orphaned tool calls entirely (tool_call_message without approval_request or tool_return)", async () => {

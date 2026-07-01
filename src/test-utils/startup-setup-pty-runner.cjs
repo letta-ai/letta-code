@@ -4,6 +4,7 @@ const path = require("node:path");
 const pty = require("node-pty");
 
 const [, , cliPath, projectRoot] = process.argv;
+const INK_BRACKETED_PASTE_ENABLE = "\x1b[?2004h";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -116,6 +117,12 @@ async function main() {
         `Local transcript error leaked into setup. Output:\n${initialOutput}`,
       );
     }
+
+    await waitForOutput(
+      () => output,
+      (current) => current.includes(INK_BRACKETED_PASTE_ENABLE),
+      "setup menu raw input mode",
+    );
 
     const beforeInputLength = output.length;
     terminal.write("\x1b[A");

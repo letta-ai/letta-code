@@ -19,35 +19,46 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { createExtensionConversationHandle } from "@/extensions/conversation-handle";
-import {
-  type ExtensionEvents,
-  emitExtensionEvent,
-} from "@/extensions/event-emitter";
-import {
-  checkExtensionPermissions,
-  type ExtensionPermissionDecisionResult,
-  type ExtensionPermissionDefinition,
-  getAvailableExtensionPermissionsRegistry,
-} from "@/extensions/permission-registry";
-import {
-  type ExtensionToolDefinition,
-  extensionToolRequiresApproval,
-  getAvailableExtensionToolsRegistry,
-  getExtensionToolDefinition,
-  isExtensionToolParallelSafe,
-  runExtensionTool,
-} from "@/extensions/tool-registry";
-import type { ExtensionToolRunContext } from "@/extensions/types";
+import { experimentManager } from "@/experiments/manager";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from "@/hooks";
+import { buildModInvocationContext } from "@/mods/context";
+import { createModConversationHandle } from "@/mods/conversation-handle";
+import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
+import { emitModEvent, type ModEvents } from "@/mods/event-emitter";
+import {
+  checkModPermissions,
+  getAvailableModPermissionsRegistry,
+  type ModPermissionDecisionResult,
+  type ModPermissionDefinition,
+} from "@/mods/permission-registry";
+import {
+  getAvailableModToolsRegistry,
+  getModToolDefinition,
+  isModToolParallelSafe,
+  type ModToolDefinition,
+  modToolApprovalPolicy,
+  runModTool,
+} from "@/mods/tool-registry";
+import type {
+  ModContext,
+  ModSecretResolver,
+  ModToolEndEvent,
+  ModToolRunContext,
+  ModToolStartEvent,
+  ToolApprovalPolicy,
+} from "@/mods/types";
 import {
   permissionMode as globalPermissionMode,
   type PermissionMode,
 } from "@/permissions/mode";
+import type {
+  PermissionDecision,
+  PermissionRuleType,
+} from "@/permissions/types";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   getCurrentWorkingDirectory,
@@ -58,7 +69,9 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
+import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
+import { toolFilter } from "./filter";
 import {
   functionToolForm,
   type JsonSchema,
@@ -305,7 +318,11 @@ export function filterBuiltInToolNamesByClientAllowlist(
   );
 }
 
-const WORKTREE_TOOL_NAMES = new Set<ToolName>(["CreateWorktree"]);
+const WORKTREE_TOOL_NAMES = new Set<ToolName>(["EnterWorktree"]);
+const ARTIFACT_TOOL_NAMES: ToolName[] = [
+  "read_artifact_file",
+  "write_artifact_file",
+];
 
 function shouldIncludeWorktreeTool(): boolean {
   try {
@@ -321,6 +338,19 @@ function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
   }
 
   return toolNames.filter((name) => !WORKTREE_TOOL_NAMES.has(name));
+}
+
+function resolveArtifactToolNames(toolNames: ToolName[]): ToolName[] {
+  const artifactToolSet = new Set<ToolName>(ARTIFACT_TOOL_NAMES);
+  const withoutArtifactTools = toolNames.filter(
+    (name) => !artifactToolSet.has(name),
+  );
+
+  if (!experimentManager.isEnabled("artifacts")) {
+    return withoutArtifactTools;
+  }
+
+  return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
 }
 
 function filterExternalToolsByClientAllowlist(
@@ -339,32 +369,84 @@ function filterExternalToolsByClientAllowlist(
   );
 }
 
-function filterExtensionToolsByClientAllowlist(
-  extensionTools: Map<string, ExtensionToolDefinition>,
+function filterToolRegistryByClientAllowlist(
+  registry: ToolRegistry,
   clientToolAllowlist?: string[],
-): Map<string, ExtensionToolDefinition> {
+): ToolRegistry {
   if (clientToolAllowlist === undefined) {
-    return new Map(extensionTools);
+    return new Map(registry);
   }
 
   const allowSet = new Set(clientToolAllowlist);
   return new Map(
-    Array.from(extensionTools.entries()).filter(([name, tool]) =>
-      matchesClientToolAllowlistEntry(allowSet, tool.name, name),
+    Array.from(registry.entries()).filter(([internalName]) =>
+      matchesClientToolAllowlistEntry(
+        allowSet,
+        getServerToolName(internalName),
+        internalName,
+      ),
     ),
   );
 }
 
-function filterExtensionToolsByName(
-  extensionTools: Map<string, ExtensionToolDefinition>,
-  filter?: (name: string) => boolean,
-): Map<string, ExtensionToolDefinition> {
-  if (!filter) {
-    return new Map(extensionTools);
+function filterExternalToolsByRuntimeContext(
+  externalTools: Map<string, ExternalToolDefinition>,
+  runtimeContext: RuntimeContextSnapshot,
+): Map<string, ExternalToolDefinition> {
+  return new Map(
+    Array.from(externalTools.entries()).filter(([, tool]) => {
+      if (!tool.runtime) {
+        return true;
+      }
+      return (
+        tool.runtime.agentId === runtimeContext.agentId &&
+        tool.runtime.conversationId === runtimeContext.conversationId
+      );
+    }),
+  );
+}
+
+function filterExternalToolsByScopeIds(
+  externalTools: Map<string, ExternalToolDefinition>,
+  externalToolScopeIds?: string[],
+): Map<string, ExternalToolDefinition> {
+  const selectedScopes = new Set(externalToolScopeIds ?? []);
+  return new Map(
+    Array.from(externalTools.entries()).filter(([, tool]) => {
+      if (tool.scopeId === undefined) {
+        return true;
+      }
+      return selectedScopes.has(tool.scopeId);
+    }),
+  );
+}
+
+function toModelFacingExternalToolMap(
+  externalTools: Map<string, ExternalToolDefinition>,
+): Map<string, ExternalToolDefinition> {
+  const modelFacingTools = new Map<string, ExternalToolDefinition>();
+  for (const tool of externalTools.values()) {
+    // MVP: if one runtime exposes duplicate model-facing names, the later
+    // registration wins. We keep cross-runtime registrations isolated by using
+    // namespaced internal keys before this final model-facing collapse.
+    modelFacingTools.set(tool.name, tool);
+  }
+  return modelFacingTools;
+}
+
+function filterModToolsByClientAllowlist(
+  modTools: Map<string, ModToolDefinition>,
+  clientToolAllowlist?: string[],
+): Map<string, ModToolDefinition> {
+  if (clientToolAllowlist === undefined) {
+    return new Map(modTools);
   }
 
+  const allowSet = new Set(clientToolAllowlist);
   return new Map(
-    Array.from(extensionTools.entries()).filter(([name]) => filter(name)),
+    Array.from(modTools.entries()).filter(([name, tool]) =>
+      matchesClientToolAllowlistEntry(allowSet, tool.name, name),
+    ),
   );
 }
 
@@ -372,7 +454,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
   "TaskOutput",
-  "CreateWorktree",
+  "EnterWorktree",
   "Edit",
   "TaskStop",
   // "MultiEdit",
@@ -406,7 +488,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "glob_gemini",
   "search_file_content",
   "memory",
-  "CreateWorktree",
+  "EnterWorktree",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -419,7 +501,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "CreateWorktree",
+  "EnterWorktree",
   "memory_apply_patch",
   "Task",
   "TaskOutput",
@@ -436,7 +518,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "CreateWorktree",
+  "EnterWorktree",
   "memory",
   "Skill",
   "Task",
@@ -453,12 +535,15 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
 ];
 
 // Tool permissions configuration
-const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
+const TOOL_PERMISSIONS: Record<
+  ToolName,
+  { requiresApproval: boolean; approvalPolicy?: ToolApprovalPolicy }
+> = {
   AskUserQuestion: { requiresApproval: true },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
-  CreateWorktree: { requiresApproval: true },
+  EnterWorktree: { requiresApproval: true },
   Edit: { requiresApproval: true },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },
@@ -470,6 +555,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   MessageChannel: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
+  read_artifact_file: { requiresApproval: false },
   view_image: { requiresApproval: false },
   ViewImage: { requiresApproval: false },
   ReadLSP: { requiresApproval: false },
@@ -481,6 +567,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   TaskUpdate: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
+  write_artifact_file: { requiresApproval: false },
   shell_command: { requiresApproval: true },
   exec_command: { requiresApproval: true },
   write_stdin: { requiresApproval: false },
@@ -601,9 +688,10 @@ type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
-  extensionEvents?: ExtensionEvents;
-  extensionPermissions: Map<string, ExtensionPermissionDefinition>;
-  extensionTools: Map<string, ExtensionToolDefinition>;
+  modContext?: ModContext;
+  modEvents?: ModEvents;
+  modPermissions: Map<string, ModPermissionDefinition>;
+  modTools: Map<string, ModToolDefinition>;
   workingDirectory: string;
   runtimeContext: RuntimeContextSnapshot;
   permissionModeState: PermissionModeState;
@@ -824,6 +912,15 @@ export interface ExternalToolDefinition {
   label?: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
+  /** Internal registration key; model-facing calls still use name. */
+  registrationKey?: string;
+  /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
+  scopeId?: string;
+  /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
+  runtime?: {
+    agentId?: string;
+    conversationId?: string;
+  };
 }
 
 /**
@@ -833,6 +930,7 @@ export type ExternalToolExecutor = (
   toolCallId: string,
   toolName: string,
   input: Record<string, unknown>,
+  context?: { tool: ExternalToolDefinition },
 ) => Promise<{
   content: Array<{
     type: string;
@@ -866,7 +964,17 @@ function getExternalToolsRegistry(): Map<string, ExternalToolDefinition> {
 export function registerExternalTools(tools: ExternalToolDefinition[]): void {
   const registry = getExternalToolsRegistry();
   for (const tool of tools) {
-    registry.set(tool.name, tool);
+    registry.set(tool.registrationKey ?? tool.name, tool);
+  }
+}
+
+export function unregisterExternalTools(tools: ExternalToolDefinition[]): void {
+  const registry = getExternalToolsRegistry();
+  for (const tool of tools) {
+    const registrationKey = tool.registrationKey ?? tool.name;
+    if (registry.get(registrationKey) === tool) {
+      registry.delete(registrationKey);
+    }
   }
 }
 
@@ -909,7 +1017,11 @@ export function getExternalToolDefinition(
  * Get all external tools as ClientTool format
  */
 export function getExternalToolsAsClientTools(): ClientTool[] {
-  return Array.from(getExternalToolsRegistry().values()).map((tool) => ({
+  return Array.from(
+    toModelFacingExternalToolMap(
+      filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
+    ).values(),
+  ).map((tool) => ({
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
@@ -924,6 +1036,7 @@ export async function executeExternalTool(
   toolName: string,
   input: Record<string, unknown>,
   executorOverride?: ExternalToolExecutor,
+  toolDefinition?: ExternalToolDefinition,
 ): Promise<ToolExecutionResult> {
   const executor = executorOverride ?? getExternalToolExecutor();
   if (!executor) {
@@ -934,7 +1047,13 @@ export async function executeExternalTool(
   }
 
   try {
-    const result = await executor(toolCallId, toolName, input);
+    const tool = toolDefinition ?? getExternalToolDefinition(toolName);
+    const result = await executor(
+      toolCallId,
+      toolName,
+      input,
+      tool ? { tool } : undefined,
+    );
 
     // Convert external tool result to ToolExecutionResult format
     const textContent = result.content
@@ -958,49 +1077,49 @@ export async function executeExternalTool(
 /**
  * Get all loaded tools in the format expected by the Letta API's client_tools field.
  * Maps internal tool names to server-facing names for proper tool invocation.
- * Includes built-in, external, and extension tools.
+ * Includes built-in, external, and mod tools.
  */
 export function getClientToolsFromRegistry(): ClientTool[] {
   return buildClientToolsFromSnapshot(
     withDynamicMessageChannelCache(toolRegistry),
-    getExternalToolsRegistry(),
-    getAvailableExtensionToolsRegistry(),
+    toModelFacingExternalToolMap(
+      filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
+    ),
+    getAvailableModToolsRegistry(),
   );
 }
 
 function buildClientToolsFromSnapshot(
   registry: ToolRegistry,
   externalTools: Map<string, ExternalToolDefinition>,
-  extensionTools: Map<string, ExtensionToolDefinition>,
+  modTools: Map<string, ModToolDefinition>,
 ): ClientTool[] {
   const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
     serializeFunctionOnlyToolPayload(getServerToolName(name), tool.modelForm),
   );
   for (const name of externalTools.keys()) {
-    if (extensionTools.has(name)) {
+    if (modTools.has(name)) {
       debugLog(
         "tools",
-        "extension tool %s shadows external tool with same name",
+        "mod tool %s shadows external tool with same name",
         name,
       );
     }
   }
   const externalClientTools = Array.from(externalTools.values())
-    .filter((tool) => !extensionTools.has(tool.name))
+    .filter((tool) => !modTools.has(tool.name))
     .map((tool) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
     }));
-  const extensionClientTools = Array.from(extensionTools.values()).map(
-    (tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    }),
-  );
+  const modClientTools = Array.from(modTools.values()).map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+  }));
 
-  return [...builtInTools, ...externalClientTools, ...extensionClientTools];
+  return [...builtInTools, ...externalClientTools, ...modClientTools];
 }
 
 function getEffectivePermissionModeState(
@@ -1025,43 +1144,57 @@ function capturePreparedToolExecutionContext(
     toolRegistry: ToolRegistry;
     externalTools: Map<string, ExternalToolDefinition>;
     externalExecutor?: ExternalToolExecutor;
-    extensionEvents?: ExtensionEvents;
-    extensionPermissions: Map<string, ExtensionPermissionDefinition>;
-    extensionTools: Map<string, ExtensionToolDefinition>;
+    modContext?: ModContext;
+    modEvents?: ModEvents;
+    modPermissions: Map<string, ModPermissionDefinition>;
+    modTools: Map<string, ModToolDefinition>;
   },
   options?: {
     clientToolAllowlist?: string[];
-    extensionToolNameFilter?: (name: string) => boolean;
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
-    extensionEvents?: ExtensionEvents;
+    modContext?: ModContext;
+    modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
   },
 ): PreparedToolExecutionContext {
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
+  const clientToolAllowlist =
+    options?.clientToolAllowlist ?? toolFilter.getEnabledTools() ?? undefined;
   if (options?.channelToolScope !== undefined) {
     runtimeContext.channelToolScope = options.channelToolScope;
   }
   if (options?.channelTurnSources?.length) {
     runtimeContext.channelTurnSources = [...options.channelTurnSources];
   }
+  const toolRegistrySnapshot = filterToolRegistryByClientAllowlist(
+    withDynamicMessageChannelCache(snapshot.toolRegistry),
+    clientToolAllowlist,
+  );
   const executionSnapshot: ToolExecutionContextSnapshot = {
-    toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
-    externalTools: filterExternalToolsByClientAllowlist(
-      snapshot.externalTools,
-      options?.clientToolAllowlist,
+    toolRegistry: toolRegistrySnapshot,
+    externalTools: toModelFacingExternalToolMap(
+      filterExternalToolsByClientAllowlist(
+        filterExternalToolsByScopeIds(
+          filterExternalToolsByRuntimeContext(
+            snapshot.externalTools,
+            runtimeContext,
+          ),
+          options?.externalToolScopeIds,
+        ),
+        clientToolAllowlist,
+      ),
     ),
     externalExecutor: snapshot.externalExecutor,
-    extensionEvents: options?.extensionEvents ?? snapshot.extensionEvents,
-    extensionPermissions: snapshot.extensionPermissions,
-    extensionTools: filterExtensionToolsByClientAllowlist(
-      filterExtensionToolsByName(
-        snapshot.extensionTools,
-        options?.extensionToolNameFilter,
-      ),
-      options?.clientToolAllowlist,
+    modContext: options?.modContext ?? snapshot.modContext,
+    modEvents: options?.modEvents ?? snapshot.modEvents,
+    modPermissions: snapshot.modPermissions,
+    modTools: filterModToolsByClientAllowlist(
+      snapshot.modTools,
+      clientToolAllowlist,
     ),
     workingDirectory:
       runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
@@ -1078,9 +1211,13 @@ function capturePreparedToolExecutionContext(
     clientTools: buildClientToolsFromSnapshot(
       executionSnapshot.toolRegistry,
       executionSnapshot.externalTools,
-      executionSnapshot.extensionTools,
+      executionSnapshot.modTools,
     ),
-    loadedToolNames: Array.from(executionSnapshot.toolRegistry.keys()),
+    loadedToolNames: buildClientToolsFromSnapshot(
+      executionSnapshot.toolRegistry,
+      new Map(),
+      executionSnapshot.modTools,
+    ).map((tool) => tool.name),
   };
 }
 
@@ -1092,18 +1229,21 @@ function capturePreparedToolExecutionContext(
 export function captureToolExecutionContext(
   workingDirectory: string = getCurrentWorkingDirectory(),
   permissionModeState?: PermissionModeState,
+  modContext?: ModContext,
 ): CapturedToolExecutionContext {
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: new Map(toolRegistry),
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
-      extensionTools: getAvailableExtensionToolsRegistry(),
+      modContext,
+      modPermissions: getAvailableModPermissionsRegistry(modContext),
+      modTools: getAvailableModToolsRegistry(modContext),
     },
     {
       workingDirectory,
       permissionModeState,
+      modContext,
     },
   );
 }
@@ -1114,8 +1254,8 @@ export async function prepareCurrentToolExecutionContext(options?: {
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: ChannelTurnSource[];
-  extensionEvents?: ExtensionEvents;
-  extensionToolNameFilter?: (name: string) => boolean;
+  modContext?: ModContext;
+  modEvents?: ModEvents;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -1128,9 +1268,10 @@ export async function prepareCurrentToolExecutionContext(options?: {
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEvents: options?.extensionEvents,
-      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
-      extensionTools: getAvailableExtensionToolsRegistry(),
+      modContext: options?.modContext,
+      modEvents: options?.modEvents,
+      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
+      modTools: getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1140,12 +1281,13 @@ export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
-    extensionEvents?: ExtensionEvents;
-    extensionToolNameFilter?: (name: string) => boolean;
+    modContext?: ModContext;
+    modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1158,9 +1300,10 @@ export async function prepareToolExecutionContextForSpecificTools(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEvents: options?.extensionEvents,
-      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
-      extensionTools: getAvailableExtensionToolsRegistry(),
+      modContext: options?.modContext,
+      modEvents: options?.modEvents,
+      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
+      modTools: getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1172,12 +1315,13 @@ export async function prepareToolExecutionContextForModel(
     exclude?: ToolName[];
     include?: ToolName[];
     clientToolAllowlist?: string[];
+    externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
-    extensionEvents?: ExtensionEvents;
-    extensionToolNameFilter?: (name: string) => boolean;
+    modContext?: ModContext;
+    modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1190,9 +1334,10 @@ export async function prepareToolExecutionContextForModel(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      extensionEvents: options?.extensionEvents,
-      extensionPermissions: getAvailableExtensionPermissionsRegistry(),
-      extensionTools: getAvailableExtensionToolsRegistry(),
+      modContext: options?.modContext,
+      modEvents: options?.modEvents,
+      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
+      modTools: getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1204,35 +1349,57 @@ export async function prepareToolExecutionContextForModel(
  * @returns Tool permissions object with requiresApproval flag
  */
 export function getToolPermissions(toolName: string) {
-  const extensionRequiresApproval = extensionToolRequiresApproval(toolName);
-  if (extensionRequiresApproval !== undefined) {
-    return { requiresApproval: extensionRequiresApproval };
-  }
-  return TOOL_PERMISSIONS[toolName as ToolName] || { requiresApproval: false };
+  const approvalPolicy = getToolApprovalPolicy(toolName);
+  return { requiresApproval: approvalPolicy !== "auto", approvalPolicy };
 }
 
-export function isExtensionToolParallelSafeForContext(
+export function getToolApprovalPolicy(
+  toolName: string,
+  contextId?: string | null,
+): ToolApprovalPolicy {
+  const context = contextId ? getExecutionContextById(contextId) : undefined;
+  const modPolicy = modToolApprovalPolicy(
+    toolName,
+    context?.modTools ?? getAvailableModToolsRegistry(),
+  );
+  if (modPolicy) return modPolicy;
+
+  const toolPermission = TOOL_PERMISSIONS[toolName as ToolName];
+  if (!toolPermission) return "auto";
+  if (toolPermission.approvalPolicy) return toolPermission.approvalPolicy;
+  return toolPermission.requiresApproval ? "ask" : "auto";
+}
+
+export function isModToolParallelSafeForContext(
   toolName: string,
   contextId?: string,
 ): boolean {
   const context = contextId ? getExecutionContextById(contextId) : undefined;
-  return isExtensionToolParallelSafe(
+  return isModToolParallelSafe(
     toolName,
-    context?.extensionTools ?? getAvailableExtensionToolsRegistry(),
+    context?.modTools ?? getAvailableModToolsRegistry(),
   );
 }
 
-async function checkExtensionPermissionForContext(options: {
+async function checkModPermissionForContext(options: {
   args: ToolArgs;
   context?: ToolExecutionContextSnapshot;
   phase: "approval" | "execution";
   toolCallId?: string | null;
   toolName: string;
   workingDirectory: string;
-}): Promise<ExtensionPermissionDecisionResult | undefined> {
+}): Promise<ModPermissionDecisionResult | undefined> {
   const runtimeContext = options.context?.runtimeContext;
   const permissionModeState = options.context?.permissionModeState;
-  return checkExtensionPermissions(
+  const modContext =
+    options.context?.modContext ??
+    buildModInvocationContext({
+      conversationId: runtimeContext?.conversationId ?? null,
+      permissionMode:
+        permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
+      workingDirectory: options.workingDirectory,
+    });
+  return checkModPermissions(
     {
       agentId: runtimeContext?.agentId ?? null,
       conversationId: runtimeContext?.conversationId ?? null,
@@ -1245,8 +1412,9 @@ async function checkExtensionPermissionForContext(options: {
         permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
       phase: options.phase,
     },
-    options.context?.extensionPermissions ??
-      getAvailableExtensionPermissionsRegistry(),
+    options.context?.modPermissions ??
+      getAvailableModPermissionsRegistry(modContext),
+    modContext,
   );
 }
 
@@ -1255,7 +1423,7 @@ async function checkExtensionPermissionForContext(options: {
  * @param toolName - Name of the tool
  * @param toolArgs - Tool arguments
  * @param workingDirectory - Current working directory (defaults to process.cwd())
- * @returns Permission decision: "allow", "deny", or "ask"
+ * @returns Permission decision: "allow", "deny", "ask", or "alwaysAsk"
  */
 export async function checkToolPermission(
   toolName: string,
@@ -1266,7 +1434,7 @@ export async function checkToolPermission(
   toolContextIdArg?: string | null,
   toolCallIdArg?: string | null,
 ): Promise<{
-  decision: "allow" | "deny" | "ask";
+  decision: PermissionDecision;
   matchedRule?: string;
   reason?: string;
 }> {
@@ -1282,6 +1450,13 @@ export async function checkToolPermission(
     permissionModeStateArg ?? context?.permissionModeState;
   const effectiveAgentId =
     agentIdArg ?? context?.runtimeContext.agentId ?? undefined;
+  const modContext =
+    context?.modContext ??
+    buildModInvocationContext({
+      conversationId: context?.runtimeContext.conversationId ?? null,
+      permissionMode: effectivePermissionModeState?.mode ?? null,
+      workingDirectory: effectiveWorkingDirectory,
+    });
 
   const permissions = await loadPermissions(effectiveWorkingDirectory);
   return runWithRuntimeContext(
@@ -1298,10 +1473,12 @@ export async function checkToolPermission(
         effectiveWorkingDirectory,
         effectivePermissionModeState,
         effectiveAgentId,
-        context?.extensionPermissions ??
-          getAvailableExtensionPermissionsRegistry(),
+        context?.modPermissions ??
+          getAvailableModPermissionsRegistry(modContext),
+        context?.modTools ?? getAvailableModToolsRegistry(modContext),
         {
           conversationId: context?.runtimeContext.conversationId ?? null,
+          modContext,
           phase: "approval",
           toolCallId: toolCallIdArg ?? null,
         },
@@ -1312,13 +1489,13 @@ export async function checkToolPermission(
 /**
  * Save a permission rule to settings
  * @param rule - Permission rule (e.g., "Read(src/**)")
- * @param ruleType - Type of rule ("allow", "deny", or "ask")
+ * @param ruleType - Type of rule ("allow", "deny", "ask", or "alwaysAsk")
  * @param scope - Where to save ("project", "local", "user", or "session")
  * @param workingDirectory - Current working directory
  */
 export async function savePermissionRule(
   rule: string,
-  ruleType: "allow" | "deny" | "ask",
+  ruleType: PermissionRuleType,
   scope: "project" | "local" | "user" | "session",
   workingDirectory: string = process.cwd(),
 ): Promise<void> {
@@ -1490,6 +1667,8 @@ async function resolveBaseToolNamesForModel(
   }
 
   baseToolNames = filterWorktreeTools(baseToolNames);
+
+  baseToolNames = resolveArtifactToolNames(baseToolNames);
 
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
@@ -1781,6 +1960,126 @@ function isMultimodalContent(
   );
 }
 
+const MOD_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+
+type InvocationSecretRedactions = Map<string, string>;
+
+function normalizeModSecretName(name: string): string {
+  const normalized = name.toUpperCase();
+  if (!MOD_SECRET_NAME_PATTERN.test(normalized)) {
+    throw new Error(
+      `Invalid secret name '${name}'. Use uppercase letters, numbers, and underscores only. Must start with a letter or underscore.`,
+    );
+  }
+  return normalized;
+}
+
+function scrubInvocationSecretRedactions(
+  input: string,
+  redactions: InvocationSecretRedactions,
+): string {
+  let result = input;
+  const entries = Array.from(redactions.entries()).sort(
+    ([, a], [, b]) => b.length - a.length,
+  );
+  for (const [name, value] of entries) {
+    if (value.length > 0) {
+      result = result.replaceAll(value, `${name}=<REDACTED>`);
+    }
+  }
+  return result;
+}
+
+function scrubModToolString(
+  input: string,
+  agentId: string | undefined,
+  redactions: InvocationSecretRedactions,
+): string {
+  return scrubInvocationSecretRedactions(
+    scrubSecretsFromString(input, agentId),
+    redactions,
+  );
+}
+
+function scrubModToolReturnContent(
+  content: ToolReturnContent,
+  agentId: string | undefined,
+  redactions: InvocationSecretRedactions,
+): ToolReturnContent {
+  if (typeof content === "string") {
+    return scrubModToolString(content, agentId, redactions);
+  }
+  return content.map((block) =>
+    block.type === "text"
+      ? { ...block, text: scrubModToolString(block.text, agentId, redactions) }
+      : block,
+  );
+}
+
+function scrubModToolLines(
+  lines: string[] | undefined,
+  agentId: string | undefined,
+  redactions: InvocationSecretRedactions,
+): string[] | undefined {
+  return lines?.map((line) => scrubModToolString(line, agentId, redactions));
+}
+
+function createScrubbedError(error: unknown, message: string): Error {
+  const scrubbedError = new Error(message);
+  if (error instanceof Error) {
+    scrubbedError.name = error.name;
+  }
+  return scrubbedError;
+}
+
+function createModSecretResolver(options: {
+  addRedaction: (name: string, value: string) => void;
+  agentId: string | null | undefined;
+}): ModSecretResolver {
+  let agentSecretsPromise: Promise<Record<string, string>> | null = null;
+
+  const loadAgentSecrets = async (): Promise<Record<string, string>> => {
+    if (!options.agentId) return {};
+    agentSecretsPromise ??= refreshAndListSecrets(options.agentId).then(
+      (entries) =>
+        Object.fromEntries(entries.map(({ key, value }) => [key, value])),
+    );
+    return agentSecretsPromise;
+  };
+
+  return async (name, resolverOptions) => {
+    const key = normalizeModSecretName(name);
+    let agentLookupError: unknown;
+
+    if (options.agentId) {
+      try {
+        const agentSecrets = await loadAgentSecrets();
+        if (Object.hasOwn(agentSecrets, key)) {
+          const value = agentSecrets[key] ?? "";
+          options.addRedaction(key, value);
+          return value;
+        }
+      } catch (error) {
+        agentLookupError = error;
+      }
+    }
+
+    if (resolverOptions?.envFallback === true) {
+      const value = process.env[key];
+      if (value !== undefined) {
+        options.addRedaction(key, value);
+        return value;
+      }
+    }
+
+    if (agentLookupError !== undefined) {
+      throw agentLookupError;
+    }
+
+    return null;
+  };
+}
+
 function flattenToolResponse(result: unknown): ToolReturnContent {
   if (result === null || result === undefined) {
     return "";
@@ -1898,7 +2197,7 @@ function createLinkedAbortSignal(signals: Array<AbortSignal | undefined>): {
   };
 }
 
-function getExtensionToolStatus(result: unknown): "success" | "error" {
+function getModToolStatus(result: unknown): "success" | "error" {
   if (!isRecord(result)) return "success";
   if (result.status === "error" || result.isError === true) return "error";
   if (result.success === false) return "error";
@@ -1984,7 +2283,7 @@ function appendHookFeedbackToToolReturn(
   return [...toolReturn, { type: "text" as const, text: feedbackMessage }];
 }
 
-function cloneToolArgsForExtensionEvent(args: ToolArgs): ToolArgs {
+function cloneToolArgsForModEvent(args: ToolArgs): ToolArgs {
   try {
     return structuredClone(args);
   } catch {
@@ -1992,10 +2291,11 @@ function cloneToolArgsForExtensionEvent(args: ToolArgs): ToolArgs {
   }
 }
 
-function createExtensionPermissionToolResult(
-  decision: ExtensionPermissionDecisionResult,
+function createModPermissionToolResult(
+  decision: ModPermissionDecisionResult,
 ): ToolExecutionResult {
-  const isApprovalRequest = decision.decision === "ask";
+  const isApprovalRequest =
+    decision.decision === "ask" || decision.decision === "alwaysAsk";
   const action = isApprovalRequest ? "blocked" : "denied";
   const fallbackReason = isApprovalRequest
     ? "Approval requested but cannot reopen during execution."
@@ -2012,32 +2312,73 @@ function isToolStartArgs(value: unknown): value is ToolArgs {
 
 async function emitToolStartEvent(options: {
   args: ToolArgs;
-  events?: ExtensionEvents;
+  events?: ModEvents;
   executionScope: RuntimeContextSnapshot;
+  modContext: ModContext;
   toolCallId?: string;
   toolName: string;
-}): Promise<{ args: ToolArgs }> {
-  const event = {
+}): Promise<{
+  args: ToolArgs;
+  result?: { status: "success" | "error"; output: string };
+}> {
+  const event: ModToolStartEvent & {
+    result?: { status: "success" | "error"; output: string };
+  } = {
     agentId: options.executionScope.agentId ?? null,
     conversationId: options.executionScope.conversationId ?? null,
     toolCallId: options.toolCallId ?? null,
     toolName: options.toolName,
-    args: cloneToolArgsForExtensionEvent(options.args),
+    args: cloneToolArgsForModEvent(options.args),
   };
 
   try {
-    await emitExtensionEvent(options.events, "tool_start", event);
+    await emitModEvent(options.events, "tool_start", event, options.modContext);
   } catch (error) {
-    debugLog("extensions", "tool_start event failed", error);
+    debugLog("mods", "tool_start event failed", error);
     return { args: options.args };
   }
 
-  return { args: isToolStartArgs(event.args) ? event.args : options.args };
+  return {
+    args: isToolStartArgs(event.args) ? event.args : options.args,
+    result: event.result,
+  };
 }
 
-async function executeExtensionTool(
+async function emitToolEndEvent(options: {
+  args: ToolArgs;
+  events?: ModEvents;
+  executionScope: RuntimeContextSnapshot;
+  modContext: ModContext;
+  toolCallId?: string;
+  toolName: string;
+  status: "success" | "error";
+  output: string;
+}): Promise<{ status: "success" | "error"; output: string } | undefined> {
+  const event: ModToolEndEvent & {
+    result?: { status: "success" | "error"; output: string };
+  } = {
+    agentId: options.executionScope.agentId ?? null,
+    conversationId: options.executionScope.conversationId ?? null,
+    toolCallId: options.toolCallId ?? null,
+    toolName: options.toolName,
+    args: cloneToolArgsForModEvent(options.args),
+    status: options.status,
+    output: options.output,
+  };
+
+  try {
+    await emitModEvent(options.events, "tool_end", event, options.modContext);
+  } catch (error) {
+    debugLog("mods", "tool_end event failed", error);
+    return undefined;
+  }
+
+  return event.result;
+}
+
+async function executeModTool(
   toolName: string,
-  tool: ExtensionToolDefinition,
+  tool: ModToolDefinition,
   args: ToolArgs,
   executionScope: RuntimeContextSnapshot,
   options: {
@@ -2046,6 +2387,7 @@ async function executeExtensionTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     workingDirectory: string;
     scopedAgentId?: string;
+    modContext?: ModContext;
   },
 ): Promise<ToolExecutionResult> {
   const startTime = Date.now();
@@ -2054,6 +2396,12 @@ async function executeExtensionTool(
     tool.activationSignal,
   ]);
   const { signal } = linkedSignal;
+  const redactions: InvocationSecretRedactions = new Map();
+  const addRedaction = (name: string, value: string): void => {
+    if (value.length > 0) {
+      redactions.set(name, value);
+    }
+  };
 
   const run = async (): Promise<ToolExecutionResult> => {
     const preHookResult = await runPreToolUseHooks(
@@ -2073,27 +2421,33 @@ async function executeExtensionTool(
 
     try {
       const backend = getBackend();
-      const context: ExtensionToolRunContext = {
+      const modContext = toolExecutionModContext(executionScope, options);
+      const context: ModToolRunContext = {
+        ...modContext,
         args: args as Record<string, unknown>,
-        cwd: options.workingDirectory,
-        workingDirectory: options.workingDirectory,
         toolCallId: options.toolCallId ?? null,
         signal,
+        secret: createModSecretResolver({
+          addRedaction,
+          agentId: modContext.agent.id,
+        }),
         ...(options.onOutput
           ? {
               onOutput: (chunk: string, stream: "stdout" | "stderr") => {
                 options.onOutput?.(
                   stripAnsi(
-                    scrubSecretsFromString(chunk, options.scopedAgentId),
+                    scrubModToolString(
+                      chunk,
+                      options.scopedAgentId,
+                      redactions,
+                    ),
                   ),
                   stream,
                 );
               },
             }
           : {}),
-        permissionMode: executionScope.permissionMode ?? null,
-        agent: { id: executionScope.agentId ?? null },
-        conversation: createExtensionConversationHandle({
+        conversation: createModConversationHandle({
           agentId: executionScope.agentId,
           backend,
           conversationId: executionScope.conversationId,
@@ -2105,19 +2459,33 @@ async function executeExtensionTool(
           },
           workingDirectory: options.workingDirectory,
         }),
-        getContext: tool.getContext,
       };
-      const result = await runExtensionTool(tool, context);
+      const result = await runModTool(
+        tool,
+        attachDeprecatedGetContextTrap(
+          context,
+          tool.recordDiagnostic,
+          "ctx.getContext",
+        ),
+      );
       const duration = Date.now() - startTime;
       const recordResult = isRecord(result) ? result : undefined;
-      const stdout = isStringArray(recordResult?.stdout)
-        ? recordResult.stdout
-        : undefined;
-      const stderr = isStringArray(recordResult?.stderr)
-        ? recordResult.stderr
-        : undefined;
-      const toolStatus = getExtensionToolStatus(result);
-      const flattenedResponse = flattenToolResponse(result);
+      const stdout = scrubModToolLines(
+        isStringArray(recordResult?.stdout) ? recordResult.stdout : undefined,
+        options.scopedAgentId,
+        redactions,
+      );
+      const stderr = scrubModToolLines(
+        isStringArray(recordResult?.stderr) ? recordResult.stderr : undefined,
+        options.scopedAgentId,
+        redactions,
+      );
+      const toolStatus = getModToolStatus(result);
+      const flattenedResponse = scrubModToolReturnContent(
+        flattenToolResponse(result),
+        options.scopedAgentId,
+        redactions,
+      );
       const responseSize =
         typeof flattenedResponse === "string"
           ? flattenedResponse.length
@@ -2135,7 +2503,7 @@ async function executeExtensionTool(
       const hookFeedback = await collectPostToolHookFeedback(
         {
           args: args as Record<string, unknown>,
-          debugLabel: "extension tool result path",
+          debugLabel: "mod tool result path",
           scopedAgentId: options.scopedAgentId,
           toolCallId: options.toolCallId,
           toolName,
@@ -2175,11 +2543,21 @@ async function executeExtensionTool(
         : error instanceof Error
           ? error.name
           : "unknown";
-      const errorMessage = isAbort
-        ? INTERRUPTED_BY_USER
-        : error instanceof Error
-          ? error.message
-          : String(error);
+      const errorMessage = scrubModToolString(
+        isAbort
+          ? INTERRUPTED_BY_USER
+          : error instanceof Error
+            ? error.message
+            : String(error),
+        options.scopedAgentId,
+        redactions,
+      );
+
+      tool.recordDiagnostic?.({
+        capability: { id: toolName, kind: "tool" },
+        error: createScrubbedError(error, errorMessage),
+        phase: "tool.run",
+      });
 
       telemetry.trackToolUsage(
         toolName,
@@ -2193,7 +2571,7 @@ async function executeExtensionTool(
       const hookFeedback = await collectPostToolHookFeedback(
         {
           args: args as Record<string, unknown>,
-          debugLabel: "extension tool exception path",
+          debugLabel: "mod tool exception path",
           scopedAgentId: options.scopedAgentId,
           toolCallId: options.toolCallId,
           toolName,
@@ -2225,6 +2603,19 @@ async function executeExtensionTool(
   }
 }
 
+function toolExecutionModContext(
+  executionScope: RuntimeContextSnapshot,
+  options: { workingDirectory: string; modContext?: ModContext },
+): ModContext {
+  return buildModInvocationContext({
+    agent: { id: executionScope.agentId ?? null },
+    base: options.modContext,
+    conversationId: executionScope.conversationId ?? null,
+    permissionMode: executionScope.permissionMode ?? null,
+    workingDirectory: options.workingDirectory,
+  });
+}
+
 /**
  * Executes a tool by name with the provided arguments.
  *
@@ -2233,7 +2624,7 @@ async function executeExtensionTool(
  * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
  * @returns Promise with the tool's execution result including status and optional stdout/stderr
  */
-export async function executeTool(
+async function executeToolInner(
   name: string,
   args: ToolArgs,
   options?: {
@@ -2246,6 +2637,7 @@ export async function executeTool(
     /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
+    toolEndArgsRef?: { current: ToolArgs };
   },
 ): Promise<ToolExecutionResult> {
   const context = options?.toolContextId
@@ -2262,9 +2654,7 @@ export async function executeTool(
     context?.externalTools ?? getExternalToolsRegistry();
   const activeExternalExecutor =
     context?.externalExecutor ?? getExternalToolExecutor();
-  const activeExtensionTools =
-    context?.extensionTools ?? getAvailableExtensionToolsRegistry();
-  const extensionEvents = context?.extensionEvents;
+  const modEvents = context?.modEvents;
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
         workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
@@ -2278,23 +2668,37 @@ export async function executeTool(
   const workingDirectory =
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
+  const modContext =
+    context?.modContext ??
+    toolExecutionModContext(executionScope, { workingDirectory });
+  const activeModTools =
+    context?.modTools ?? getAvailableModToolsRegistry(modContext);
 
-  if (activeExtensionTools.has(name)) {
-    const extensionTool = activeExtensionTools.get(name);
-    if (!extensionTool) {
+  if (activeModTools.has(name)) {
+    const modTool = activeModTools.get(name);
+    if (!modTool) {
       return {
-        toolReturn: `Extension tool not found: ${name}`,
+        toolReturn: `Mod tool not found: ${name}`,
         status: "error",
       };
     }
-    const { args: eventArgs } = await emitToolStartEvent({
+    const { args: eventArgs, result } = await emitToolStartEvent({
       args,
-      events: extensionEvents,
+      events: modEvents,
       executionScope,
+      modContext,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
-    const permissionDecision = await checkExtensionPermissionForContext({
+    if (result) {
+      if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
+    }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+    const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
       phase: "execution",
@@ -2304,34 +2708,39 @@ export async function executeTool(
     });
     if (permissionDecision?.decision !== undefined) {
       if (permissionDecision.decision !== "allow") {
-        return createExtensionPermissionToolResult(permissionDecision);
+        return createModPermissionToolResult(permissionDecision);
       }
     }
-    return executeExtensionTool(
-      name,
-      extensionTool,
-      eventArgs,
-      executionScope,
-      {
-        signal: options?.signal,
-        toolCallId: options?.toolCallId,
-        onOutput: options?.onOutput,
-        workingDirectory,
-        scopedAgentId,
-      },
-    );
+    return executeModTool(name, modTool, eventArgs, executionScope, {
+      signal: options?.signal,
+      toolCallId: options?.toolCallId,
+      onOutput: options?.onOutput,
+      workingDirectory,
+      scopedAgentId,
+      modContext,
+    });
   }
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
-    const { args: eventArgs } = await emitToolStartEvent({
+    const externalTool = activeExternalTools.get(name);
+    const { args: eventArgs, result } = await emitToolStartEvent({
       args,
-      events: extensionEvents,
+      events: modEvents,
       executionScope,
+      modContext,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
-    const permissionDecision = await checkExtensionPermissionForContext({
+    if (result) {
+      if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
+    }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+    const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
       phase: "execution",
@@ -2341,7 +2750,7 @@ export async function executeTool(
     });
     if (permissionDecision?.decision !== undefined) {
       if (permissionDecision.decision !== "allow") {
-        return createExtensionPermissionToolResult(permissionDecision);
+        return createModPermissionToolResult(permissionDecision);
       }
     }
     return executeExternalTool(
@@ -2349,6 +2758,7 @@ export async function executeTool(
       name,
       eventArgs as Record<string, unknown>,
       activeExternalExecutor,
+      externalTool,
     );
   }
 
@@ -2357,7 +2767,7 @@ export async function executeTool(
     const availableTools = [
       ...Array.from(activeRegistry.keys()),
       ...Array.from(activeExternalTools.keys()),
-      ...Array.from(activeExtensionTools.keys()),
+      ...Array.from(activeModTools.keys()),
     ];
     return {
       toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
@@ -2370,7 +2780,7 @@ export async function executeTool(
     const availableTools = [
       ...Array.from(activeRegistry.keys()),
       ...Array.from(activeExternalTools.keys()),
-      ...Array.from(activeExtensionTools.keys()),
+      ...Array.from(activeModTools.keys()),
     ];
     return {
       toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
@@ -2378,15 +2788,24 @@ export async function executeTool(
     };
   }
 
-  const { args: eventArgs } = await emitToolStartEvent({
+  const { args: eventArgs, result } = await emitToolStartEvent({
     args,
-    events: extensionEvents,
+    events: modEvents,
     executionScope,
+    modContext,
     toolCallId: options?.toolCallId,
     toolName: internalName,
   });
+  if (result) {
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+    return {
+      toolReturn: result.output,
+      status: result.status,
+    };
+  }
   args = eventArgs;
-  const permissionDecision = await checkExtensionPermissionForContext({
+  if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
+  const permissionDecision = await checkModPermissionForContext({
     args,
     context,
     phase: "execution",
@@ -2396,7 +2815,7 @@ export async function executeTool(
   });
   if (permissionDecision?.decision !== undefined) {
     if (permissionDecision.decision !== "allow") {
-      return createExtensionPermissionToolResult(permissionDecision);
+      return createModPermissionToolResult(permissionDecision);
     }
   }
   const startTime = Date.now();
@@ -2425,6 +2844,7 @@ export async function executeTool(
         ...preHookResult.updatedInput,
       };
     }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
     try {
       // Inject options for tools that support them without altering schemas
@@ -2684,6 +3104,69 @@ export async function executeTool(
 }
 
 /**
+ * Executes a tool and gives mods a chance to observe or replace the result via
+ * the `tool_end` event. A handler returning `{ result: { status, output } }`
+ * overrides what the agent sees (first handler wins). Only fires for string
+ * results — multimodal/image results pass through unchanged. Delivery is
+ * capability-gated (`events.tools`), so only enabled surfaces receive it.
+ *
+ * @param name - Name of the tool to execute
+ * @param args - Arguments object to pass to the tool
+ * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
+ * @returns Promise with the tool's execution result including status and optional stdout/stderr
+ */
+export async function executeTool(
+  ...params: Parameters<typeof executeToolInner>
+): Promise<ToolExecutionResult> {
+  const [name, args, options] = params;
+  const toolEndArgsRef = { current: args };
+  const res = await executeToolInner(name, args, {
+    ...options,
+    toolEndArgsRef,
+  });
+
+  const context = options?.toolContextId
+    ? getExecutionContextById(options.toolContextId)
+    : undefined;
+  const modEvents = context?.modEvents;
+  if (!modEvents || typeof res.toolReturn !== "string") {
+    return res;
+  }
+
+  const executionScope = context?.runtimeContext
+    ? buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
+        permissionModeState: context.permissionModeState,
+        runtimeContext: context.runtimeContext,
+      })
+    : buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context?.workingDirectory,
+        permissionModeState: context?.permissionModeState,
+      });
+  const modContext =
+    context?.modContext ??
+    toolExecutionModContext(executionScope, {
+      workingDirectory:
+        executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
+    });
+
+  const override = await emitToolEndEvent({
+    args: toolEndArgsRef.current,
+    events: modEvents,
+    executionScope,
+    modContext,
+    toolCallId: options?.toolCallId,
+    toolName: name,
+    status: res.status,
+    output: res.toolReturn,
+  });
+
+  return override
+    ? { ...res, toolReturn: override.output, status: override.status }
+    : res;
+}
+
+/**
  * Gets all loaded tool names (for passing to Letta agent creation).
  *
  * @returns Array of tool names
@@ -2709,14 +3192,14 @@ export function getToolSchemas(): ToolSchema[] {
   const builtInSchemas = Array.from(
     withDynamicMessageChannelCache(toolRegistry).values(),
   ).map((tool) => tool.schema);
-  const extensionSchemas = Array.from(
-    getAvailableExtensionToolsRegistry().values(),
-  ).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.parameters as JsonSchema,
-  }));
-  return [...builtInSchemas, ...extensionSchemas];
+  const modSchemas = Array.from(getAvailableModToolsRegistry().values()).map(
+    (tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.parameters as JsonSchema,
+    }),
+  );
+  return [...builtInSchemas, ...modSchemas];
 }
 
 /**
@@ -2731,12 +3214,12 @@ export function getToolSchema(name: string): ToolSchema | undefined {
     return withDynamicMessageChannelCache(toolRegistry).get(internalName)
       ?.schema;
   }
-  const extensionTool = getExtensionToolDefinition(name);
-  if (extensionTool) {
+  const modTool = getModToolDefinition(name);
+  if (modTool) {
     return {
-      name: extensionTool.name,
-      description: extensionTool.description,
-      input_schema: extensionTool.parameters as JsonSchema,
+      name: modTool.name,
+      description: modTool.description,
+      input_schema: modTool.parameters as JsonSchema,
     };
   }
   const externalTool = getExternalToolDefinition(name);

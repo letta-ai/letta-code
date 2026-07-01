@@ -22,5 +22,6 @@ export interface LocalAgentRecord {
   tags: string[];
   model: string;
   model_settings: Record<string, unknown>;
+  hidden?: boolean | null;
   compaction_settings?: Record<string, unknown> | null;
 }

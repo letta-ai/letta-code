@@ -53,15 +53,6 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: { description: "Create new conversation (for concurrent sessions)" },
   },
-  "init-blocks": {
-    parser: { type: "string" },
-    mode: "both",
-    help: {
-      argLabel: "<list>",
-      description:
-        'Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,skills")',
-    },
-  },
   "base-tools": {
     parser: { type: "string" },
     mode: "both",
@@ -113,11 +104,6 @@ export const CLI_FLAG_CATALOG = {
         'Personality preset for --new-agent: "letta-code", "tutorial", "blank", "linus", "kawaii", "claude", or "codex"',
     },
   },
-  "memory-blocks": { parser: { type: "string" }, mode: "both" },
-  "block-value": {
-    parser: { type: "string", multiple: true },
-    mode: "headless",
-  },
   toolset: {
     parser: { type: "string" },
     mode: "both",
@@ -153,7 +139,7 @@ export const CLI_FLAG_CATALOG = {
     mode: "headless",
     help: {
       description:
-        "Disable the headless cross-agent memory guard for this parent agent process.",
+        "Disable the cross-agent memory guard for this parent agent process.",
       continuationLines: [
         "Allows intentional access to other agents' memory directories.",
         "Ignored by subagents; their memory guard remains enabled.",
@@ -266,12 +252,12 @@ export const CLI_FLAG_CATALOG = {
         "Disable first-turn environment reminder (device/git/cwd context)",
     },
   },
-  "no-extensions": {
+  "no-mods": {
     parser: { type: "boolean" },
     mode: "both",
     help: {
-      description: "Disable local extensions for this session",
-      continuationLines: ["Recovery alias: LETTA_DISABLE_EXTENSIONS=1 letta"],
+      description: "Disable local mods for this session",
+      continuationLines: ["Recovery alias: LETTA_DISABLE_MODS=1 letta"],
     },
   },
   "reflection-trigger": {
@@ -279,16 +265,8 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: {
       argLabel: "<mode>",
-      description: "Sleeptime trigger: off, step-count, compaction-event",
-    },
-  },
-  "reflection-behavior": {
-    parser: { type: "string" },
-    mode: "both",
-    help: {
-      argLabel: "<mode>",
       description:
-        "DEPRECATED: reflection always auto-launches subagents (flag accepted for compatibility)",
+        "Sleeptime trigger: off, step-count, compaction-event (requires memfs unless off)",
     },
   },
   "reflection-step-count": {
@@ -381,7 +359,11 @@ export function renderCliOptionsHelp(): string {
 }
 
 export function preprocessCliArgs(args: string[]): string[] {
-  return args.map((arg) => (arg === "--conv" ? "--conversation" : arg));
+  return args.map((arg) => {
+    if (arg === "--conv") return "--conversation";
+    if (arg === "--no-extensions") return "--no-mods";
+    return arg;
+  });
 }
 
 export function parseCliArgs(args: string[], strict: boolean) {

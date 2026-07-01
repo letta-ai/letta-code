@@ -52,7 +52,12 @@ describe("buildDynamicMessageChannelSchema", () => {
 
     const properties = schema.properties as Record<string, { enum?: string[] }>;
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
-    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "react",
+      "upload-file",
+      "send-rich",
+    ]);
   });
 
   test("keeps Telegram-only tool actions narrowed to Telegram-supported actions", async () => {
@@ -72,7 +77,12 @@ describe("buildDynamicMessageChannelSchema", () => {
 
     const properties = schema.properties as Record<string, { enum?: string[] }>;
     expect(properties.channel?.enum).toEqual(["telegram"]);
-    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "send-rich",
+      "react",
+      "upload-file",
+    ]);
   });
 
   test("builds description from the same discovery result as the schema", async () => {
@@ -102,10 +112,15 @@ describe("buildDynamicMessageChannelSchema", () => {
       "Currently active channels: Slack, Telegram.",
     );
     expect(resolved.description).toContain(
-      "Available actions across the active channels: send, react, upload-file.",
+      "Available actions across the active channels: send, react, upload-file, send-rich.",
     );
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
-    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "react",
+      "upload-file",
+      "send-rich",
+    ]);
   });
 
   test("can narrow discovery to the channels bound for the current conversation scope", async () => {
@@ -143,6 +158,12 @@ describe("buildDynamicMessageChannelSchema", () => {
     );
     expect(resolved.description).toContain(
       "If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement.",
+    );
+    expect(resolved.description).toContain(
+      'For lightweight acknowledgement, prefer action="react" when supported.',
+    );
+    expect(resolved.description).toContain(
+      "If the useful response belongs later, schedule the follow-up instead of sending a placeholder.",
     );
     expect(resolved.description).not.toContain("Telegram");
     expect(properties.channel?.enum).toEqual(["slack"]);

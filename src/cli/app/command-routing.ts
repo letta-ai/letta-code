@@ -9,7 +9,6 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/personality",
   "/subagents",
   "/memory",
-  "/goal",
   "/sleeptime",
   "/mcp",
   "/help",
@@ -20,7 +19,6 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/search",
   "/feedback",
   "/pin",
-  "/pin-local",
   "/conversations",
   "/profile",
 ]);
@@ -36,10 +34,10 @@ const NON_STATE_COMMANDS = new Set([
   "/hooks",
   "/search",
   "/memory",
-  "/goal",
   "/feedback",
   "/export",
   "/download",
+  "/mods", // starts background local mod-learning runs; does not need the foreground lock
   "/reasoning-tab",
   "/secret",
   "/palace", // read-only memory viewer
@@ -74,10 +72,10 @@ export function shouldSlashCommandBypassQueue(
   msg: string,
   options: {
     hasCustomCommand?: boolean;
-    extensionCommand?: { runWhenBusy: boolean };
+    modCommand?: { runWhenBusy: boolean };
   } = {},
 ): boolean {
   if (options.hasCustomCommand) return false;
-  if (options.extensionCommand) return options.extensionCommand.runWhenBusy;
+  if (options.modCommand) return options.modCommand.runWhenBusy;
   return isInteractiveCommand(msg) || isNonStateCommand(msg);
 }

@@ -5,7 +5,6 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import { ISOLATED_BLOCK_LABELS } from "@/agent/memory";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import type { ModelReasoningEffort } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality";
@@ -57,7 +56,6 @@ import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { WindowTitlePicker } from "@/cli/components/WindowTitlePicker";
 import { WorktreeDiffSelector } from "@/cli/components/WorktreeDiffSelector";
 import { AnimationProvider } from "@/cli/contexts/AnimationContext";
-import type { LocalExtensionAdapter } from "@/cli/extensions/use-local-extension-adapter";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import {
@@ -82,6 +80,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
+import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -226,7 +225,6 @@ type AppViewProps = {
   ) => Promise<void>;
   handleProfileEscapeCancel: () => void;
   handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
-  handleGoalLoopExit: () => void;
   handleSleeptimeModeSelect: (
     reflectionSettings: ReflectionSettings,
     commandId?: string | null,
@@ -261,7 +259,6 @@ type AppViewProps = {
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
   pendingIds: Set<string>;
-  pinDialogLocal: boolean;
   precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;
   profileConfirmPending: {
     name: string;
@@ -324,7 +321,7 @@ type AppViewProps = {
   terminalTitleData: WindowTitleData;
   onTitlePreview: (title: string | null) => void;
   onTitlePreviewEnd: () => void;
-  extensionAdapter: LocalExtensionAdapter;
+  modAdapter: LocalModAdapter;
   fileAutocompleteFdPath?: string | null;
   streaming: boolean;
   stubDescriptions: Map<string, string>;
@@ -333,7 +330,6 @@ type AppViewProps = {
   usedContextTokens: number;
   contextWindowSize: number | null | undefined;
   uiPermissionMode: PermissionMode;
-  uiGoalLoopActive: boolean;
   updateAgentName: (name: string) => void;
 };
 
@@ -404,7 +400,6 @@ export function AppView(props: AppViewProps) {
     handlePersonalitySelect,
     handleProfileEscapeCancel,
     handleQuestionSubmit,
-    handleGoalLoopExit,
     handleSleeptimeModeSelect,
     handleSystemPromptSelect,
     handleToolsetSelect,
@@ -429,7 +424,6 @@ export function AppView(props: AppViewProps) {
     pendingApprovals,
     pendingConversationSwitchRef,
     pendingIds,
-    pinDialogLocal,
     precomputedDiffsRef,
     profileConfirmPending,
     queueDisplay,
@@ -472,7 +466,7 @@ export function AppView(props: AppViewProps) {
     terminalTitleData,
     onTitlePreview,
     onTitlePreviewEnd,
-    extensionAdapter,
+    modAdapter,
     streaming,
     stubDescriptions,
     thinkingMessage,
@@ -480,7 +474,6 @@ export function AppView(props: AppViewProps) {
     usedContextTokens,
     contextWindowSize,
     uiPermissionMode,
-    uiGoalLoopActive,
     updateAgentName,
   } = props;
 
@@ -751,8 +744,6 @@ export function AppView(props: AppViewProps) {
                 }
                 onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
-                goalLoopActive={uiGoalLoopActive}
-                onGoalLoopExit={handleGoalLoopExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
@@ -762,7 +753,7 @@ export function AppView(props: AppViewProps) {
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
                 statusLinePayload={statusLinePayload}
-                extensionAdapter={extensionAdapter}
+                modAdapter={modAdapter}
                 statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
                 showInspirationalPromptHints={showInspirationalPromptHints}
@@ -946,7 +937,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
-                onStartOAuth={async (provider, target) => {
+                onStartOAuth={async (provider, target, providerName) => {
                   const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
@@ -963,10 +954,10 @@ export function AppView(props: AppViewProps) {
                         refreshDerived,
                         setCommandRunning,
                         target,
-                        onCodexConnected: () => {
+                        onCodexConnected: (providerName) => {
                           markLocalModelsAvailable();
                           setModelSelectorOptions({
-                            filterProvider: "chatgpt-plus-pro",
+                            filterProvider: providerName,
                             forceRefresh: true,
                           });
                           openOverlay(
@@ -977,7 +968,12 @@ export function AppView(props: AppViewProps) {
                           );
                         },
                       },
-                      `/connect ${provider.id === "openai-codex-oauth" ? "chatgpt" : provider.id}`,
+                      `/connect ${
+                        provider.id === "openai-codex-oauth" ||
+                        provider.providerType === "chatgpt_oauth"
+                          ? "chatgpt"
+                          : provider.id
+                      }${providerName ? ` --name ${providerName}` : ""}`,
                     );
                   } finally {
                     setActiveConnectCommandId(null);
@@ -1339,7 +1335,6 @@ export function AppView(props: AppViewProps) {
                     // Create a new conversation
                     const conversation = await getBackend().createConversation({
                       agent_id: agentId,
-                      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
                     });
 
                     await maybeCarryOverActiveConversationModel(
@@ -1671,7 +1666,6 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "pin" && (
               <PinDialog
                 currentName={agentName || ""}
-                local={pinDialogLocal}
                 onSubmit={async (newName) => {
                   const overlayCommand = completeOverlay("pin");
                   setCommandRunning(true);
@@ -1679,14 +1673,11 @@ export function AppView(props: AppViewProps) {
                   const cmd =
                     overlayCommand ??
                     commandRunner.start("/pin", "Pinning agent...");
-                  const scopeText = pinDialogLocal
-                    ? "to this project"
-                    : "globally";
                   const displayName =
                     newName || agentName || agentId.slice(0, 12);
 
                   cmd.update({
-                    output: `Pinning "${displayName}" ${scopeText}...`,
+                    output: `Pinning "${displayName}"...`,
                     phase: "running",
                   });
 
@@ -1700,17 +1691,13 @@ export function AppView(props: AppViewProps) {
                     }
 
                     // Pin the agent
-                    if (pinDialogLocal) {
-                      settingsManager.pinLocal(agentId);
-                    } else {
-                      settingsManager.pinGlobal(agentId);
-                    }
+                    settingsManager.pinAgent(agentId);
 
                     if (newName && newName !== agentName) {
                       cmd.agentHint = `Your name is now "${newName}" — acknowledge this and save your new name to memory.`;
                     }
                     cmd.finish(
-                      `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
+                      `Pinned "${newName || agentName || agentId.slice(0, 12)}".`,
                       true,
                     );
                   } catch (error) {

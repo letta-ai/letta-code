@@ -19,8 +19,25 @@ export { listProviders };
 // Provider name constant for letta-code's ChatGPT OAuth provider
 export const OPENAI_CODEX_PROVIDER_NAME = "chatgpt-plus-pro";
 
+const CHATGPT_OAUTH_PROVIDER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+
 // Provider type for ChatGPT OAuth (backend handles transformation)
 export const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";
+
+export function normalizeChatGPTOAuthProviderName(
+  providerName?: string | null,
+): string {
+  const normalized = (providerName ?? OPENAI_CODEX_PROVIDER_NAME).trim();
+  if (!normalized) {
+    throw new Error("ChatGPT provider name cannot be empty.");
+  }
+  if (!CHATGPT_OAUTH_PROVIDER_NAME_PATTERN.test(normalized)) {
+    throw new Error(
+      "ChatGPT provider name may only contain letters, numbers, dots, underscores, and hyphens.",
+    );
+  }
+  return normalized;
+}
 
 /**
  * ChatGPT OAuth configuration persisted by the active provider store.
@@ -54,8 +71,12 @@ function encodeOAuthConfig(config: ChatGPTOAuthConfig): string {
  */
 export async function getOpenAICodexProvider(
   options: ProviderOperationOptions = {},
+  providerName: string = OPENAI_CODEX_PROVIDER_NAME,
 ): Promise<ProviderResponse | null> {
-  return getProviderByName(OPENAI_CODEX_PROVIDER_NAME, options);
+  return getProviderByName(
+    normalizeChatGPTOAuthProviderName(providerName),
+    options,
+  );
 }
 
 /**
@@ -65,10 +86,11 @@ export async function getOpenAICodexProvider(
 export async function createOpenAICodexProvider(
   config: ChatGPTOAuthConfig,
   options: ProviderOperationOptions = {},
+  providerName: string = OPENAI_CODEX_PROVIDER_NAME,
 ): Promise<ProviderResponse> {
   return createProvider(
     CHATGPT_OAUTH_PROVIDER_TYPE,
-    OPENAI_CODEX_PROVIDER_NAME,
+    normalizeChatGPTOAuthProviderName(providerName),
     encodeOAuthConfig(config),
     undefined,
     undefined,
@@ -111,14 +133,25 @@ export async function updateOpenAICodexProvider(
 export async function createOrUpdateOpenAICodexProvider(
   config: ChatGPTOAuthConfig,
   options: ProviderOperationOptions = {},
+  providerName: string = OPENAI_CODEX_PROVIDER_NAME,
 ): Promise<ProviderResponse> {
-  const existing = await getOpenAICodexProvider(options);
+  const normalizedProviderName =
+    normalizeChatGPTOAuthProviderName(providerName);
+  const existing = await getOpenAICodexProvider(
+    options,
+    normalizedProviderName,
+  );
 
   if (existing) {
+    if (existing.provider_type !== CHATGPT_OAUTH_PROVIDER_TYPE) {
+      throw new Error(
+        `Provider '${normalizedProviderName}' already exists with type '${existing.provider_type}'. Choose a different ChatGPT provider name.`,
+      );
+    }
     return updateOpenAICodexProvider(existing.id, config, options);
   }
 
-  return createOpenAICodexProvider(config, options);
+  return createOpenAICodexProvider(config, options, normalizedProviderName);
 }
 
 /**

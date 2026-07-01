@@ -109,6 +109,80 @@ describe("buildClientSkillsPayload", () => {
     expect(result.skills.map((skill) => skill.id)).toEqual(["manual-only"]);
   });
 
+  test("excludes bundled image generation skill for local agents", async () => {
+    const { buildClientSkillsPayload, discoverClientSideSkills } = await import(
+      "@/agent/client-skills"
+    );
+
+    const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => ({
+      skills: [
+        {
+          ...baseSkill,
+          id: "image-generation",
+          description: "Generate images",
+          path: "/tmp/bundled/image-generation/SKILL.md",
+          source: "bundled",
+        },
+        {
+          ...baseSkill,
+          id: "safe-bundled",
+          description: "Safe bundled skill",
+          path: "/tmp/bundled/safe/SKILL.md",
+          source: "bundled",
+        },
+      ],
+      errors: [],
+    });
+
+    const discovery = await discoverClientSideSkills({
+      agentId: "agent-local-123",
+      skillsDirectory: "/tmp/.skills",
+      skillSources: ["bundled"],
+      discoverSkillsFn,
+    });
+
+    expect(discovery.skills.map((skill) => skill.id)).toEqual(["safe-bundled"]);
+
+    const payload = await buildClientSkillsPayload({
+      agentId: "agent-local-123",
+      skillsDirectory: "/tmp/.skills",
+      skillSources: ["bundled"],
+      discoverSkillsFn,
+    });
+
+    expect(payload.clientSkills.map((skill) => skill.name)).toEqual([
+      "safe-bundled",
+    ]);
+  });
+
+  test("keeps project image generation skills for local agents", async () => {
+    const { discoverClientSideSkills } = await import("@/agent/client-skills");
+
+    const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => ({
+      skills: [
+        {
+          ...baseSkill,
+          id: "image-generation",
+          description: "Project override",
+          path: "/tmp/project/image-generation/SKILL.md",
+          source: "project",
+        },
+      ],
+      errors: [],
+    });
+
+    const result = await discoverClientSideSkills({
+      agentId: "agent-local-123",
+      skillsDirectory: "/tmp/.skills",
+      skillSources: ["project"],
+      discoverSkillsFn,
+    });
+
+    expect(result.skills.map((skill) => skill.id)).toEqual([
+      "image-generation",
+    ]);
+  });
+
   test("excludes skills marked disable-model-invocation from client_skills", async () => {
     const { buildClientSkillsPayload } = await import("@/agent/client-skills");
 

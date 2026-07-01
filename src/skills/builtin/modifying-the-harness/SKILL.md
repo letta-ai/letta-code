@@ -75,6 +75,14 @@ Load the `letta-api-client` skill for richer SDK examples.
 ## 1. Change permissions
 
 Permissions decide which tool calls are allowed, denied, or require approval.
+Use `alwaysAsk` when a rule should request human approval even in
+`unrestricted`/yolo mode.
+
+Settings `ask` rules request approval in normal permission modes, but they do
+not override `unrestricted`/yolo mode. For a mod tool that must pause for human
+approval even in unrestricted mode, set `approvalPolicy: "alwaysAsk"` in the
+tool registration. For broader dynamic policy, use a mod permission overlay or
+a blocking hook.
 
 ### Rule syntax
 
@@ -91,6 +99,15 @@ python3 <skill-dir>/scripts/add_permission.py \
   --scope user
 ```
 
+Force approval even in yolo mode:
+
+```bash
+python3 <skill-dir>/scripts/add_permission.py \
+  --rule "Bash(git push:*)" \
+  --type alwaysAsk \
+  --scope user
+```
+
 ### Edit directly
 
 ```json
@@ -98,7 +115,8 @@ python3 <skill-dir>/scripts/add_permission.py \
   "permissions": {
     "allow": ["Bash(npm:*)", "Read(src/**)"],
     "deny": ["Bash(rm -rf:*)"],
-    "ask": []
+    "ask": [],
+    "alwaysAsk": ["Bash(git push:*)"]
   }
 }
 ```
@@ -215,6 +233,7 @@ Find your own entry by matching `agentId === $LETTA_AGENT_ID`, then edit the fie
 |------|----------------|
 | Auto-approve curl | `add_permission.py --rule "Bash(curl:*)" --type allow --scope user` |
 | Block `rm -rf` | Add `"Bash(rm -rf:*)"` to `permissions.deny`, or add a `PreToolUse` hook |
+| Always ask before git push | `add_permission.py --rule "Bash(git push:*)" --type alwaysAsk --scope user` |
 | Log all Bash calls | `add_hook.py --event PreToolUse --matcher Bash --type command --command '...' --scope user` |
 | Auto-format after edits | `add_hook.py --event PostToolUse --matcher "Edit|Write" --type command --command '...' --scope project` |
 | Gate edits with LLM | `add_hook.py --event PreToolUse --matcher "Edit|Write" --type prompt --prompt '...' --scope user` |
@@ -237,7 +256,7 @@ Find your own entry by matching `agentId === $LETTA_AGENT_ID`, then edit the fie
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/add_permission.py` | Add an allow/deny/ask rule to any scope |
+| `scripts/add_permission.py` | Add an allow/deny/ask/alwaysAsk rule to any scope |
 | `scripts/add_hook.py` | Add a command or prompt hook to any event |
 | `scripts/show_config.py` | Show merged permissions, hooks, and per-agent settings across all scopes |
 

@@ -18,7 +18,7 @@ const CMD_COL_WIDTH = 14;
 
 const BUILTIN_SKILL_ALIASES = new Set([
   "acquiring-skills",
-  "context_doctor",
+  "context-doctor",
   "converting-mcps-to-skills",
   "creating-skills",
   "customizing-statusline",
@@ -67,8 +67,8 @@ export function SlashCommandAutocomplete({
   onAutocomplete,
   onActiveChange,
   agentId,
-  workingDirectory = process.cwd(),
-  extensionCommands = {},
+  workingDirectory: _workingDirectory = process.cwd(),
+  modCommands = {},
 }: AutocompleteProps) {
   const columns = useTerminalWidth();
   const terminalRows = useTerminalRows();
@@ -131,28 +131,21 @@ export function SlashCommandAutocomplete({
     };
   }, [agentId]);
 
-  // Check pin status to conditionally show/hide pin/unpin commands, merge with custom commands
+  // Check pin status to conditionally show/hide pin/unpin commands
   const allCommands = useMemo(() => {
     let builtins = _allCommands;
 
     if (agentId) {
       try {
-        const globalPinned = settingsManager.getGlobalPinnedAgents();
-        const localPinned =
-          settingsManager.getLocalPinnedAgents(workingDirectory);
-
-        const isPinnedGlobally = globalPinned.includes(agentId);
-        const isPinnedLocally = localPinned.includes(agentId);
-        const isPinnedAnywhere = isPinnedGlobally || isPinnedLocally;
-        const isPinnedBoth = isPinnedGlobally && isPinnedLocally;
+        const isPinned = settingsManager.isAgentPinned(agentId);
 
         builtins = _allCommands.filter((cmd) => {
-          // Hide /pin if agent is pinned both locally AND globally
-          if (cmd.cmd === "/pin" && isPinnedBoth) {
+          // Hide /pin if agent is already pinned
+          if (cmd.cmd === "/pin" && isPinned) {
             return false;
           }
-          // Hide /unpin if agent is not pinned anywhere
-          if (cmd.cmd === "/unpin" && !isPinnedAnywhere) {
+          // Hide /unpin if agent is not pinned
+          if (cmd.cmd === "/unpin" && !isPinned) {
             return false;
           }
           return true;
@@ -163,29 +156,27 @@ export function SlashCommandAutocomplete({
       }
     }
 
-    const extensionCommandMatches: CommandMatch[] = Object.values(
-      extensionCommands,
-    ).map((command) => ({
-      cmd: `/${command.id}`,
-      desc: `${command.description}${command.args ? ` ${command.args}` : ""} (extension)`,
-      order: command.order,
-    }));
+    const modCommandMatches: CommandMatch[] = Object.values(modCommands).map(
+      (command) => ({
+        cmd: `/${command.id}`,
+        desc: `${command.description}${command.args ? ` ${command.args}` : ""} (mod)`,
+        order: command.order,
+      }),
+    );
 
     const customCommandNames = new Set(customCommands.map((cmd) => cmd.cmd));
-    const extensionCommandNames = new Set(
-      extensionCommandMatches.map((cmd) => cmd.cmd),
-    );
+    const modCommandNames = new Set(modCommandMatches.map((cmd) => cmd.cmd));
     const visibleBuiltins = builtins.filter(
       (cmd) =>
-        !customCommandNames.has(cmd.cmd) && !extensionCommandNames.has(cmd.cmd),
+        !customCommandNames.has(cmd.cmd) && !modCommandNames.has(cmd.cmd),
     );
-    const visibleExtensionCommands = extensionCommandMatches.filter(
+    const visibleModCommands = modCommandMatches.filter(
       (cmd) => !customCommandNames.has(cmd.cmd),
     );
 
     const reservedCommands = new Set([
       ...visibleBuiltins.map((cmd) => cmd.cmd),
-      ...visibleExtensionCommands.map((cmd) => cmd.cmd),
+      ...visibleModCommands.map((cmd) => cmd.cmd),
       ...customCommands.map((cmd) => cmd.cmd),
     ]);
     const visibleSkillCommands = skillCommands.filter(
@@ -195,17 +186,11 @@ export function SlashCommandAutocomplete({
     // Merge command sources and sort by order.
     return [
       ...visibleBuiltins,
-      ...visibleExtensionCommands,
+      ...visibleModCommands,
       ...customCommands,
       ...visibleSkillCommands,
     ].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
-  }, [
-    agentId,
-    workingDirectory,
-    extensionCommands,
-    customCommands,
-    skillCommands,
-  ]);
+  }, [agentId, modCommands, customCommands, skillCommands]);
 
   const queryInfo = useMemo(
     () => extractSearchQuery(currentInput, cursorPosition),

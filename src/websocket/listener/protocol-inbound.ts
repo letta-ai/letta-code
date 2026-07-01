@@ -4,6 +4,11 @@ import { isSupportedChannelId } from "@/channels/plugin-registry";
 import type { ExperimentId } from "@/experiments/types";
 import type {
   AbortMessageCommand,
+  AgentCreateCommand,
+  AgentDeleteCommand,
+  AgentListCommand,
+  AgentRetrieveCommand,
+  AgentUpdateCommand,
   ChangeDeviceStateCommand,
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -25,8 +30,17 @@ import type {
   ChannelsListCommand,
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
+  ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
   ConnectProviderCommand,
+  ConversationCompactCommand,
+  ConversationCreateCommand,
+  ConversationForkCommand,
+  ConversationListCommand,
+  ConversationMessagesListCommand,
+  ConversationRecompileCommand,
+  ConversationRetrieveCommand,
+  ConversationUpdateCommand,
   CreateAgentCommand,
   CronAddCommand,
   CronDeleteAllCommand,
@@ -35,11 +49,13 @@ import type {
   CronListCommand,
   CronRunsCommand,
   CronTriggerCommand,
+  CronUpdateCommand,
   DeleteMemoryFileCommand,
   DisconnectProviderCommand,
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
+  ExternalToolCallResponseCommand,
   FileOpsCommand,
   GetCwdMapCommand,
   GetExperimentsCommand,
@@ -48,7 +64,6 @@ import type {
   GrepInFilesCommand,
   InputCommand,
   ListConnectProvidersCommand,
-  ListConversationPinsCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
   ListModelsCommand,
@@ -59,11 +74,11 @@ import type {
   ReadMemoryFileCommand,
   RemoveQueueItemCommand,
   RuntimeScope,
+  RuntimeStartCommand,
   SearchBranchesCommand,
   SearchFilesCommand,
   SecretApplyCommand,
   SecretListCommand,
-  SetConversationPinCommand,
   SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -115,6 +130,10 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   );
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 function isRuntimeScope(value: unknown): value is RuntimeScope {
   if (!value || typeof value !== "object") {
     return false;
@@ -148,6 +167,7 @@ function isInputCommand(value: unknown): value is InputCommand {
     kind?: unknown;
     messages?: unknown;
     client_tool_allowlist?: unknown;
+    external_tool_scope_ids?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -156,7 +176,9 @@ function isInputCommand(value: unknown): value is InputCommand {
     return (
       Array.isArray(payload.messages) &&
       (payload.client_tool_allowlist === undefined ||
-        isStringArray(payload.client_tool_allowlist))
+        isStringArray(payload.client_tool_allowlist)) &&
+      (payload.external_tool_scope_ids === undefined ||
+        isStringArray(payload.external_tool_scope_ids))
     );
   }
   if (payload.kind === "approval_response") {
@@ -190,6 +212,7 @@ function getInvalidInputReason(value: unknown): {
     kind?: unknown;
     messages?: unknown;
     client_tool_allowlist?: unknown;
+    external_tool_scope_ids?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -210,6 +233,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.payload.client_tool_allowlist must be string[]",
+      };
+    }
+    if (
+      payload.external_tool_scope_ids !== undefined &&
+      !isStringArray(payload.external_tool_scope_ids)
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.external_tool_scope_ids must be string[]",
       };
     }
     return null;
@@ -303,16 +336,134 @@ function isSyncCommand(value: unknown): value is SyncCommand {
   const candidate = value as {
     type?: unknown;
     runtime?: unknown;
+    request_id?: unknown;
     recover_approvals?: unknown;
     force_device_status?: unknown;
   };
   return (
     candidate.type === "sync" &&
     isRuntimeScope(candidate.runtime) &&
+    (candidate.request_id === undefined ||
+      typeof candidate.request_id === "string") &&
     (candidate.recover_approvals === undefined ||
       typeof candidate.recover_approvals === "boolean") &&
     (candidate.force_device_status === undefined ||
       typeof candidate.force_device_status === "boolean")
+  );
+}
+
+function isDevicePermissionMode(value: unknown): boolean {
+  return (
+    value === "standard" || value === "acceptEdits" || value === "unrestricted"
+  );
+}
+
+function isRuntimeStartCreateAgentOptions(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  return (
+    isObjectRecord(value.body) &&
+    (value.pin_global === undefined || typeof value.pin_global === "boolean")
+  );
+}
+
+function isRuntimeStartCreateConversationOptions(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  return value.body === undefined || isObjectRecord(value.body);
+}
+
+function isRuntimeStartClientInfo(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  return (
+    typeof value.name === "string" &&
+    (value.title === undefined || typeof value.title === "string") &&
+    (value.version === undefined || typeof value.version === "string")
+  );
+}
+
+function isExternalToolDefinitionPayload(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  return (
+    typeof value.name === "string" &&
+    (value.label === undefined || typeof value.label === "string") &&
+    typeof value.description === "string" &&
+    isObjectRecord(value.parameters)
+  );
+}
+
+function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  return (
+    (value.scope_id === undefined || typeof value.scope_id === "string") &&
+    Array.isArray(value.tools) &&
+    value.tools.every(isExternalToolDefinitionPayload)
+  );
+}
+
+export function isRuntimeStartCommand(
+  value: unknown,
+): value is RuntimeStartCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    create_agent?: unknown;
+    conversation_id?: unknown;
+    create_conversation?: unknown;
+    cwd?: unknown;
+    mode?: unknown;
+    client_info?: unknown;
+    recover_approvals?: unknown;
+    force_device_status?: unknown;
+    external_tools?: unknown;
+  };
+  return (
+    c.type === "runtime_start" &&
+    typeof c.request_id === "string" &&
+    (c.agent_id === undefined || typeof c.agent_id === "string") &&
+    (c.create_agent === undefined ||
+      isRuntimeStartCreateAgentOptions(c.create_agent)) &&
+    (c.conversation_id === undefined ||
+      typeof c.conversation_id === "string") &&
+    (c.create_conversation === undefined ||
+      isRuntimeStartCreateConversationOptions(c.create_conversation)) &&
+    (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
+    (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
+    (c.recover_approvals === undefined ||
+      typeof c.recover_approvals === "boolean") &&
+    (c.force_device_status === undefined ||
+      typeof c.force_device_status === "boolean") &&
+    (c.external_tools === undefined ||
+      (Array.isArray(c.external_tools) &&
+        c.external_tools.every(isRuntimeStartExternalToolsGroup)))
+  );
+}
+
+export function isExternalToolCallResponseCommand(
+  value: unknown,
+): value is ExternalToolCallResponseCommand {
+  if (!isObjectRecord(value)) return false;
+  if (
+    value.type !== "external_tool_call_response" ||
+    typeof value.request_id !== "string"
+  ) {
+    return false;
+  }
+  if (value.error !== undefined && typeof value.error !== "string") {
+    return false;
+  }
+  if (value.result === undefined) {
+    return typeof value.error === "string";
+  }
+  if (!isObjectRecord(value.result)) {
+    return false;
+  }
+  return (
+    Array.isArray(value.result.content) &&
+    value.result.content.every(isObjectRecord) &&
+    (value.result.is_error === undefined ||
+      typeof value.result.is_error === "boolean")
   );
 }
 
@@ -728,12 +879,34 @@ export function isDisconnectProviderCommand(
     request_id?: unknown;
     target?: unknown;
     provider_id?: unknown;
+    provider_name?: unknown;
   };
   return (
     c.type === "disconnect_provider" &&
     typeof c.request_id === "string" &&
     c.target === "local" &&
-    typeof c.provider_id === "string"
+    typeof c.provider_id === "string" &&
+    (c.provider_name === undefined || typeof c.provider_name === "string")
+  );
+}
+
+export function isChatGPTUsageReadCommand(
+  value: unknown,
+): value is ChatGPTUsageReadCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    target?: unknown;
+    provider_name?: unknown;
+    force_refresh?: unknown;
+  };
+  return (
+    c.type === "chatgpt_usage_read" &&
+    typeof c.request_id === "string" &&
+    (c.target === "local" || c.target === "api") &&
+    (c.provider_name === undefined || typeof c.provider_name === "string") &&
+    (c.force_refresh === undefined || typeof c.force_refresh === "boolean")
   );
 }
 
@@ -891,6 +1064,41 @@ export function isCronTriggerCommand(
   );
 }
 
+export function isCronUpdateCommand(
+  value: unknown,
+): value is CronUpdateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    task_id?: unknown;
+    name?: unknown;
+    description?: unknown;
+    conversation_id?: unknown;
+    cron?: unknown;
+    timezone?: unknown;
+    recurring?: unknown;
+    prompt?: unknown;
+    scheduled_for?: unknown;
+  };
+  return (
+    c.type === "cron_update" &&
+    typeof c.request_id === "string" &&
+    typeof c.task_id === "string" &&
+    (c.name === undefined || typeof c.name === "string") &&
+    (c.description === undefined || typeof c.description === "string") &&
+    (c.conversation_id === undefined ||
+      typeof c.conversation_id === "string") &&
+    (c.cron === undefined || typeof c.cron === "string") &&
+    (c.timezone === undefined || typeof c.timezone === "string") &&
+    (c.recurring === undefined || typeof c.recurring === "boolean") &&
+    (c.prompt === undefined || typeof c.prompt === "string") &&
+    (c.scheduled_for === undefined ||
+      c.scheduled_for === null ||
+      typeof c.scheduled_for === "string")
+  );
+}
+
 export function isCronDeleteCommand(
   value: unknown,
 ): value is CronDeleteCommand {
@@ -979,44 +1187,221 @@ export function isCreateAgentCommand(
   );
 }
 
-export function isListConversationPinsCommand(
-  value: unknown,
-): value is ListConversationPinsCommand {
+export function isAgentListCommand(value: unknown): value is AgentListCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as {
     type?: unknown;
     request_id?: unknown;
-    runtime?: unknown;
+    query?: unknown;
   };
   return (
-    c.type === "list_conversation_pins" &&
+    c.type === "agent_list" &&
     typeof c.request_id === "string" &&
-    isRuntimeScope(c.runtime)
+    (c.query === undefined || isObjectRecord(c.query))
   );
 }
 
-export function isSetConversationPinCommand(
+export function isAgentRetrieveCommand(
   value: unknown,
-): value is SetConversationPinCommand {
+): value is AgentRetrieveCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as {
     type?: unknown;
     request_id?: unknown;
-    runtime?: unknown;
-    conversation_id?: unknown;
-    action?: unknown;
-    scope?: unknown;
+    agent_id?: unknown;
   };
   return (
-    c.type === "set_conversation_pin" &&
+    c.type === "agent_retrieve" &&
     typeof c.request_id === "string" &&
-    isRuntimeScope(c.runtime) &&
+    typeof c.agent_id === "string"
+  );
+}
+
+export function isAgentCreateCommand(
+  value: unknown,
+): value is AgentCreateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "agent_create" &&
+    typeof c.request_id === "string" &&
+    isObjectRecord(c.body)
+  );
+}
+
+export function isAgentUpdateCommand(
+  value: unknown,
+): value is AgentUpdateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "agent_update" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string" &&
+    isObjectRecord(c.body)
+  );
+}
+
+export function isAgentDeleteCommand(
+  value: unknown,
+): value is AgentDeleteCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    agent_id?: unknown;
+  };
+  return (
+    c.type === "agent_delete" &&
+    typeof c.request_id === "string" &&
+    typeof c.agent_id === "string"
+  );
+}
+
+export function isConversationListCommand(
+  value: unknown,
+): value is ConversationListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "conversation_list" &&
+    typeof c.request_id === "string" &&
+    (c.query === undefined || isObjectRecord(c.query))
+  );
+}
+
+export function isConversationRetrieveCommand(
+  value: unknown,
+): value is ConversationRetrieveCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+  };
+  return (
+    c.type === "conversation_retrieve" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string"
+  );
+}
+
+export function isConversationCreateCommand(
+  value: unknown,
+): value is ConversationCreateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_create" &&
+    typeof c.request_id === "string" &&
+    isObjectRecord(c.body)
+  );
+}
+
+export function isConversationUpdateCommand(
+  value: unknown,
+): value is ConversationUpdateCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_update" &&
+    typeof c.request_id === "string" &&
     typeof c.conversation_id === "string" &&
-    (c.action === "pin" || c.action === "unpin" || c.action === "toggle") &&
-    (c.scope === undefined ||
-      c.scope === "global" ||
-      c.scope === "local_project" ||
-      c.scope === "both")
+    isObjectRecord(c.body)
+  );
+}
+
+export function isConversationRecompileCommand(
+  value: unknown,
+): value is ConversationRecompileCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_recompile" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string" &&
+    (c.body === undefined || isObjectRecord(c.body))
+  );
+}
+
+export function isConversationForkCommand(
+  value: unknown,
+): value is ConversationForkCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_fork" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string" &&
+    (c.body === undefined || isObjectRecord(c.body))
+  );
+}
+
+export function isConversationMessagesListCommand(
+  value: unknown,
+): value is ConversationMessagesListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "conversation_messages_list" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string" &&
+    (c.query === undefined || isObjectRecord(c.query))
+  );
+}
+
+export function isConversationCompactCommand(
+  value: unknown,
+): value is ConversationCompactCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    conversation_id?: unknown;
+    body?: unknown;
+  };
+  return (
+    c.type === "conversation_compact" &&
+    typeof c.request_id === "string" &&
+    typeof c.conversation_id === "string" &&
+    (c.body === undefined || isObjectRecord(c.body))
   );
 }
 
@@ -1731,6 +2116,8 @@ export function parseServerMessage(
       isChangeDeviceStateCommand(parsed) ||
       isAbortMessageCommand(parsed) ||
       isSyncCommand(parsed) ||
+      isRuntimeStartCommand(parsed) ||
+      isExternalToolCallResponseCommand(parsed) ||
       isTerminalSpawnCommand(parsed) ||
       isTerminalInputCommand(parsed) ||
       isTerminalResizeCommand(parsed) ||
@@ -1757,6 +2144,7 @@ export function parseServerMessage(
       isListConnectProvidersCommand(parsed) ||
       isConnectProviderCommand(parsed) ||
       isDisconnectProviderCommand(parsed) ||
+      isChatGPTUsageReadCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
       isUpdateToolsetCommand(parsed) ||
       isCronListCommand(parsed) ||
@@ -1764,16 +2152,28 @@ export function parseServerMessage(
       isCronGetCommand(parsed) ||
       isCronRunsCommand(parsed) ||
       isCronTriggerCommand(parsed) ||
+      isCronUpdateCommand(parsed) ||
       isCronDeleteCommand(parsed) ||
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
+      isAgentListCommand(parsed) ||
+      isAgentRetrieveCommand(parsed) ||
+      isAgentCreateCommand(parsed) ||
+      isAgentUpdateCommand(parsed) ||
+      isAgentDeleteCommand(parsed) ||
+      isConversationListCommand(parsed) ||
+      isConversationRetrieveCommand(parsed) ||
+      isConversationCreateCommand(parsed) ||
+      isConversationUpdateCommand(parsed) ||
+      isConversationRecompileCommand(parsed) ||
+      isConversationForkCommand(parsed) ||
+      isConversationMessagesListCommand(parsed) ||
+      isConversationCompactCommand(parsed) ||
       isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||
-      isListConversationPinsCommand(parsed) ||
-      isSetConversationPinCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||

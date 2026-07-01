@@ -6,6 +6,7 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
+const INPUT_PROMPT = "> ";
 
 interface FeedbackDialogProps {
   onSubmit: (message: string) => void;
@@ -20,6 +21,7 @@ export function FeedbackDialog({
 }: FeedbackDialogProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
+  const inputWidth = Math.max(terminalWidth - INPUT_PROMPT.length, 10);
 
   const [feedbackText, setFeedbackText] = useState(initialValue);
   const [error, setError] = useState("");
@@ -62,13 +64,17 @@ export function FeedbackDialog({
       </Box>
 
       <Box flexDirection="row">
-        <Text color={colors.selector.itemHighlighted}>{"> "}</Text>
-        <PasteAwareTextInput
-          value={feedbackText}
-          onChange={setFeedbackText}
-          onSubmit={handleSubmit}
-          placeholder="(type your feedback)"
-        />
+        <Box width={INPUT_PROMPT.length} flexShrink={0}>
+          <Text color={colors.selector.itemHighlighted}>{INPUT_PROMPT}</Text>
+        </Box>
+        <Box width={inputWidth} flexGrow={1}>
+          <PasteAwareTextInput
+            value={feedbackText}
+            onChange={setFeedbackText}
+            onSubmit={handleSubmit}
+            placeholder="(type your feedback)"
+          />
+        </Box>
       </Box>
 
       {error && (

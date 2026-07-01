@@ -17,6 +17,7 @@ import {
   buildShellLaunchers,
   selectAvailableShellLauncher,
 } from "./shell-launchers.js";
+import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -33,6 +34,7 @@ const EXEC_SESSION_CLEANUP_MS = 5 * 60 * 1000;
 
 interface ExecCommandArgs {
   cmd: string;
+  description?: string;
   workdir?: string;
   shell?: string;
   tty?: boolean;
@@ -646,10 +648,20 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
   const launchers = buildExecLaunchers(args);
-  const launcher = selectAvailableShellLauncher(launchers, env);
-  if (!launcher) {
+  const rawLauncher = selectAvailableShellLauncher(launchers, env);
+  if (!rawLauncher) {
     throw new Error("Command must be a non-empty string");
   }
+  // Confine the session (pipe or PTY) under the cross-agent shell sandbox.
+  // The spawn helpers re-note the launcher for worktree ownership, but the
+  // wrapper hides the inner shell from that inspection, so note the unwrapped
+  // launcher here first.
+  const sandboxed = applyShellSandbox(rawLauncher, cwd, env);
+  if (sandboxed.backend) {
+    noteExpectedWorktreeForLauncher(rawLauncher, cwd);
+  }
+  const launcher = sandboxed.launcher;
+  const spawnEnv = sandboxed.env;
 
   const session: ExecSession = {
     id,
@@ -669,7 +681,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     processLauncher = spawnProcess({
       launcher,
       cwd,
-      env,
+      env: spawnEnv,
       session,
       outputFile,
     });

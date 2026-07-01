@@ -13,6 +13,7 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
+import { detectShellContext } from "@/utils/shell-context";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -34,7 +35,6 @@ import { buildClientSkillsPayload } from "./agent/client-skills";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
-import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import {
   getModelInfo,
@@ -66,12 +66,12 @@ import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
   parseCsvListFlag,
-  parseJsonArrayFlag,
   parsePositiveIntFlag,
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
 import {
   createBuffers,
+  findLastAssistantText,
   type Line,
   markIncompleteToolsAsCancelled,
   toLines,
@@ -85,6 +85,7 @@ import {
   type ReflectionSettings,
   type ReflectionTrigger,
 } from "./cli/helpers/memory-reminder";
+import { maybeLaunchPostTurnReflection } from "./cli/helpers/post-turn-reflection";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
@@ -94,6 +95,7 @@ import {
   type DrainStreamHook,
   drainStreamWithResume,
 } from "./cli/helpers/stream";
+import { installLocalBackendModEventHooks } from "./cli/mods/local-backend-mod-events";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
@@ -101,18 +103,16 @@ import {
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import {
-  disableExtensionsForProcess,
-  shouldDisableExtensions,
-} from "./extensions/disable";
-import type { ExtensionAdapter } from "./extensions/extension-adapter";
-import type { ExtensionConversationOpenReason } from "./extensions/types";
-import {
-  createHeadlessExtensionAdapter,
-  createHeadlessExtensionContext,
+  createHeadlessModAdapter,
+  createHeadlessModContext,
   emitHeadlessConversationClose,
   emitHeadlessConversationOpen,
-} from "./headless-extension-adapter";
+} from "./headless-mod-adapter";
 import { computeDiffPreviews } from "./helpers/diff-preview";
+import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
+import type { ModAdapter } from "./mods/mod-adapter";
+import { getTurnStartCancel } from "./mods/turn-start-cancel";
+import type { ModContext, ModConversationOpenReason } from "./mods/types";
 import { formatPermissionDenial } from "./permissions/format-denial";
 import { applyStartupPermissionMode } from "./permissions/startup";
 import { QueueRuntime } from "./queue/queue-runtime";
@@ -128,7 +128,6 @@ import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
 import {
   createSharedReminderState,
   enqueueMemoryGitSyncReminder,
-  syncReminderStateFromContextTracker,
 } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
@@ -193,8 +192,13 @@ const PROVIDER_FALLBACK_MAP: Record<string, string> = {
   "opus-4.6-medium": "bedrock-opus-4.6",
   "opus-4.6-high": "bedrock-opus-4.6",
   "opus-4.6-xhigh": "bedrock-opus-4.6",
-  // Sonnet 4.6 variants → Bedrock Sonnet 4.6
-  sonnet: "bedrock-sonnet-4.6",
+  // Sonnet 5 variants → Bedrock Sonnet 5; Sonnet 4.6 variants → Bedrock Sonnet 4.6
+  sonnet: "bedrock-sonnet-5",
+  "sonnet-5-no-reasoning": "bedrock-sonnet-5",
+  "sonnet-5-low": "bedrock-sonnet-5",
+  "sonnet-5-medium": "bedrock-sonnet-5",
+  "sonnet-5-xhigh": "bedrock-sonnet-5",
+  "sonnet-4.6": "bedrock-sonnet-4.6",
   "sonnet-1m": "bedrock-sonnet-4.6",
   "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
   "sonnet-4.6-low": "bedrock-sonnet-4.6",
@@ -323,7 +327,6 @@ export const __headlessTestUtils = {
 
 type ReflectionOverrides = {
   trigger?: ReflectionTrigger;
-  deprecatedBehaviorRaw?: string;
   stepCount?: number;
 };
 
@@ -331,10 +334,9 @@ function parseReflectionOverrides(
   values: ParsedCliArgs["values"],
 ): ReflectionOverrides {
   const triggerRaw = values["reflection-trigger"];
-  const behaviorRaw = values["reflection-behavior"];
   const stepCountRaw = values["reflection-step-count"];
 
-  if (!triggerRaw && !behaviorRaw && !stepCountRaw) {
+  if (!triggerRaw && !stepCountRaw) {
     return {};
   }
 
@@ -351,15 +353,6 @@ function parseReflectionOverrides(
       );
     }
     overrides.trigger = triggerRaw;
-  }
-
-  if (behaviorRaw !== undefined) {
-    if (behaviorRaw !== "reminder" && behaviorRaw !== "auto-launch") {
-      throw new Error(
-        `Invalid --reflection-behavior "${behaviorRaw}". Valid values: reminder, auto-launch`,
-      );
-    }
-    overrides.deprecatedBehaviorRaw = behaviorRaw;
   }
 
   if (stepCountRaw !== undefined) {
@@ -379,11 +372,7 @@ function parseReflectionOverrides(
 }
 
 function hasReflectionOverrides(overrides: ReflectionOverrides): boolean {
-  return (
-    overrides.trigger !== undefined ||
-    overrides.deprecatedBehaviorRaw !== undefined ||
-    overrides.stepCount !== undefined
-  );
+  return overrides.trigger !== undefined || overrides.stepCount !== undefined;
 }
 
 async function applyReflectionOverrides(
@@ -400,16 +389,10 @@ async function applyReflectionOverrides(
     return merged;
   }
 
-  if (overrides.deprecatedBehaviorRaw !== undefined) {
-    console.warn(
-      "Warning: --reflection-behavior is deprecated and ignored. Reflection now always auto-launches subagents.",
-    );
-  }
-
   const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  if (!memfsEnabled && merged.trigger === "compaction-event") {
+  if (!memfsEnabled && merged.trigger !== "off") {
     throw new Error(
-      "--reflection-trigger compaction-event requires memfs enabled for this agent.",
+      `--reflection-trigger ${merged.trigger} requires memfs enabled for this agent.`,
     );
   }
 
@@ -429,7 +412,8 @@ async function prepareHeadlessToolExecutionContext(params: {
   conversationId: string;
   overrideModel?: string | null;
   cachedAgent?: AgentState | null;
-  extensionEvents?: ExtensionAdapter["events"];
+  modContext?: ModContext;
+  modEvents?: ModAdapter["events"];
 }): Promise<{
   preparedToolContext: Awaited<
     ReturnType<typeof prepareToolExecutionContextForScope>
@@ -443,7 +427,8 @@ async function prepareHeadlessToolExecutionContext(params: {
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
     cachedAgent: params.cachedAgent,
-    extensionEvents: params.extensionEvents,
+    modContext: params.modContext,
+    modEvents: params.modEvents,
   });
 
   return {
@@ -463,23 +448,152 @@ function isTurnInputArray(
   );
 }
 
+type HeadlessTurnStartEmission =
+  | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
+  | { cancelled: true; reason: string };
+
+async function emitHeadlessTurnStartCancellationOutput(options: {
+  agent: AgentState;
+  conversationId: string;
+  outputFormat: string;
+  reason: string;
+  sessionId: string;
+}): Promise<void> {
+  if (options.outputFormat === "stream-json") {
+    const errorMsg: ErrorMessage = {
+      type: "error",
+      message: options.reason,
+      stop_reason: "cancelled",
+      session_id: options.sessionId,
+      uuid: `error-turn-start-cancel-${randomUUID()}`,
+    };
+    await writeWireMessageAsync(errorMsg);
+    const resultMsg: ResultMessage = {
+      type: "result",
+      subtype: "error",
+      session_id: options.sessionId,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 0,
+      result: options.reason,
+      agent_id: options.agent.id,
+      conversation_id: options.conversationId,
+      run_ids: [],
+      usage: null,
+      uuid: `result-turn-start-cancel-${randomUUID()}`,
+      stop_reason: "cancelled",
+    };
+    await writeWireMessageAsync(resultMsg);
+  } else if (options.outputFormat === "json") {
+    await writeFinalHeadlessStdout(
+      `${JSON.stringify(
+        {
+          type: "result",
+          subtype: "error",
+          is_error: true,
+          duration_ms: 0,
+          duration_api_ms: 0,
+          num_turns: 0,
+          result: options.reason,
+          agent_id: options.agent.id,
+          conversation_id: options.conversationId,
+          usage: null,
+          stop_reason: "cancelled",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    console.error(`Error: ${options.reason}`);
+  }
+}
+
+function writeBidirectionalTurnStartCancellation(options: {
+  agent: AgentState;
+  conversationId: string;
+  reason: string;
+  sessionId: string;
+}): void {
+  const errorMsg: ErrorMessage = {
+    type: "error",
+    message: options.reason,
+    stop_reason: "cancelled",
+    session_id: options.sessionId,
+    uuid: `error-turn-start-cancel-${randomUUID()}`,
+  };
+  writeWireMessage(errorMsg);
+
+  const resultMsg: ResultMessage = {
+    type: "result",
+    subtype: "error",
+    session_id: options.sessionId,
+    duration_ms: 0,
+    duration_api_ms: 0,
+    num_turns: 0,
+    result: options.reason,
+    agent_id: options.agent.id,
+    conversation_id: options.conversationId,
+    run_ids: [],
+    usage: null,
+    uuid: `result-turn-start-cancel-${randomUUID()}`,
+    stop_reason: "cancelled",
+  };
+  writeWireMessage(resultMsg);
+}
+
 async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
   input: Array<MessageCreate | ApprovalCreate>;
-  adapter: ExtensionAdapter;
-}): Promise<Array<MessageCreate | ApprovalCreate>> {
+  adapter: ModAdapter;
+  context: ModContext;
+}): Promise<HeadlessTurnStartEmission> {
   try {
     const event = {
       agentId: options.agent.id,
       conversationId: options.conversationId,
       input: options.input,
     };
-    await options.adapter.events.emit("turn_start", event);
-    return isTurnInputArray(event.input) ? event.input : options.input;
+    await options.adapter.events.emit("turn_start", event, options.context);
+    const cancel = getTurnStartCancel(event);
+    if (cancel) return { cancelled: true, reason: cancel.reason };
+    return {
+      cancelled: false,
+      input: isTurnInputArray(event.input) ? event.input : options.input,
+    };
   } catch {
-    // Extension turn_start handlers should not block sending the turn.
-    return options.input;
+    // Mod turn_start handlers should not block sending the turn.
+    return { cancelled: false, input: options.input };
+  }
+}
+
+async function emitHeadlessTurnEnd(options: {
+  agent: AgentState;
+  conversationId: string;
+  stopReason: string;
+  assistantMessage?: string;
+  adapter: ModAdapter;
+  context: ModContext;
+}): Promise<string | undefined> {
+  try {
+    const event: {
+      agentId: string | null;
+      conversationId: string | null;
+      stopReason: string;
+      assistantMessage?: string;
+      continue?: string;
+    } = {
+      agentId: options.agent.id,
+      conversationId: options.conversationId,
+      stopReason: options.stopReason,
+      assistantMessage: options.assistantMessage,
+    };
+    await options.adapter.events.emit("turn_end", event, options.context);
+    return typeof event.continue === "string" ? event.continue : undefined;
+  } catch {
+    // Mod turn_end handlers should not block turn completion.
+    return undefined;
   }
 }
 
@@ -487,12 +601,14 @@ async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
   approvalMessages: Array<MessageCreate | ApprovalCreate>;
-  extensionEvents?: ExtensionAdapter["events"];
+  modContext?: ModContext;
+  modEvents?: ModAdapter["events"];
 }): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   const approvalToolContext = await prepareHeadlessToolExecutionContext({
     agentId: params.agentId,
     conversationId: params.conversationId,
-    extensionEvents: params.extensionEvents,
+    modContext: params.modContext,
+    modEvents: params.modEvents,
   });
 
   return await sendMessageStream(
@@ -546,11 +662,11 @@ export async function handleHeadlessCommand(
 ) {
   const { values, positionals } = parsedArgs;
   telemetry.setSurface(getTerminalTelemetrySurface(true));
-  const extensionsDisabled = shouldDisableExtensions({
-    cliFlag: values["no-extensions"],
+  const modsDisabled = shouldDisableMods({
+    cliFlag: values["no-mods"],
   });
-  if (extensionsDisabled) {
-    disableExtensionsForProcess();
+  if (modsDisabled) {
+    disableModsForProcess();
   }
 
   // Set tool filter if provided (controls which tools are loaded)
@@ -686,9 +802,6 @@ export async function handleHeadlessCommand(
   const systemCustom = values["system-custom"];
   const personalityInput = values.personality;
   const embeddingModel = values.embedding;
-  const memoryBlocksJson = values["memory-blocks"];
-  const blockValueArgs = values["block-value"];
-  const initBlocksRaw = values["init-blocks"];
   const baseToolsRaw = values["base-tools"];
   const skillsDirectory = values.skills ?? skillsDirectoryOverride;
   const noSkillsFlag = values["no-skills"];
@@ -965,15 +1078,6 @@ export async function handleHeadlessCommand(
     }
   }
 
-  if (initBlocksRaw && !forceNew) {
-    console.error(
-      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
-    );
-    process.exit(1);
-  }
-
-  const initBlocks = parseCsvListFlag(initBlocksRaw);
-
   if (baseToolsRaw && !forceNew) {
     console.error(
       "Error: --base-tools can only be used together with --new to control initial base tools.",
@@ -996,12 +1100,6 @@ export async function handleHeadlessCommand(
     console.error("Error: --personality can only be used with --new-agent");
     process.exit(1);
   }
-  if (personalityInput && (memoryBlocksJson !== undefined || initBlocksRaw)) {
-    console.error(
-      "Error: --personality cannot be combined with --memory-blocks or --init-blocks",
-    );
-    process.exit(1);
-  }
 
   // Validate system prompt options (--system and --system-custom are mutually exclusive)
   if (systemPromptPreset && systemCustom) {
@@ -1009,80 +1107,6 @@ export async function handleHeadlessCommand(
       "Error: --system and --system-custom are mutually exclusive. Use one or the other.",
     );
     process.exit(1);
-  }
-
-  // Parse memory blocks JSON if provided
-  // Supports two formats:
-  // - CreateBlock: { label: string, value: string, description?: string }
-  // - BlockReference: { blockId: string }
-  let memoryBlocks:
-    | Array<
-        | { label: string; value: string; description?: string }
-        | { blockId: string }
-      >
-    | undefined;
-  if (memoryBlocksJson !== undefined) {
-    if (!forceNew) {
-      console.error(
-        "Error: --memory-blocks can only be used together with --new to provide initial memory blocks.",
-      );
-      process.exit(1);
-    }
-    try {
-      memoryBlocks = parseJsonArrayFlag(memoryBlocksJson, "memory-blocks") as
-        | Array<{ label: string; value: string; description?: string }>
-        | Array<{ blockId: string }>;
-      // Validate each block has required fields
-      for (const block of memoryBlocks) {
-        const hasBlockId =
-          "blockId" in block && typeof block.blockId === "string";
-        const hasLabelValue =
-          "label" in block &&
-          "value" in block &&
-          typeof block.label === "string" &&
-          typeof block.value === "string";
-
-        if (!hasBlockId && !hasLabelValue) {
-          throw new Error(
-            "Each memory block must have either 'blockId' (string) or 'label' and 'value' (strings)",
-          );
-        }
-      }
-    } catch (error) {
-      trackHeadlessBoundaryError(
-        "headless_memory_blocks_parse_failed",
-        error,
-        "headless_startup_memory_blocks",
-      );
-      console.error(
-        `Error: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      process.exit(1);
-    }
-  }
-
-  // Parse --block-value args (format: label=value)
-  let blockValues: Record<string, string> | undefined;
-  if (blockValueArgs && blockValueArgs.length > 0) {
-    if (!forceNew) {
-      console.error(
-        "Error: --block-value can only be used together with --new to set block values.",
-      );
-      process.exit(1);
-    }
-    blockValues = {};
-    for (const arg of blockValueArgs) {
-      const eqIndex = arg.indexOf("=");
-      if (eqIndex === -1) {
-        console.error(
-          `Error: Invalid --block-value format "${arg}". Expected format: label=value`,
-        );
-        process.exit(1);
-      }
-      const label = arg.slice(0, eqIndex);
-      const value = arg.slice(eqIndex + 1);
-      blockValues[label] = value;
-    }
   }
 
   // Priority 0: --conversation derives agent from conversation ID.
@@ -1220,10 +1244,8 @@ export async function handleHeadlessCommand(
       systemPromptPreset,
       systemPromptCustom: systemCustom,
       memoryPromptMode: effectiveMemoryMode,
-      initBlocks,
       baseTools,
-      memoryBlocks: personalityOptions?.memoryBlocks ?? memoryBlocks,
-      blockValues,
+      memoryBlocks: personalityOptions?.memoryBlocks,
       tags: personalityOptions?.tags ?? tags,
     };
     let result: Awaited<ReturnType<typeof createAgent>>;
@@ -1340,7 +1362,7 @@ export async function handleHeadlessCommand(
             agent.id,
             presetRefresh.modelHandle,
             resumeRefreshUpdateArgs,
-            { preserveContextWindow: true },
+            { avoidOverwritingExistingContextWindow: true },
           );
         }
       }
@@ -1349,7 +1371,7 @@ export async function handleHeadlessCommand(
 
   // Determine which conversation to use
   let conversationId: string;
-  let conversationOpenReason: ExtensionConversationOpenReason = "startup";
+  let conversationOpenReason: ModConversationOpenReason = "startup";
   let effectiveReflectionSettings: ReflectionSettings;
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
@@ -1562,14 +1584,6 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Determine which blocks to isolate for the conversation
-  const isolatedBlockLabels: string[] =
-    initBlocks === undefined
-      ? [...ISOLATED_BLOCK_LABELS]
-      : ISOLATED_BLOCK_LABELS.filter((label) =>
-          initBlocks.includes(label as string),
-        );
-
   if (specifiedConversationId) {
     if (specifiedConversationId === "default") {
       // "default" is the agent's primary message history (no explicit conversation)
@@ -1603,7 +1617,6 @@ export async function handleHeadlessCommand(
     // body fields unchanged — remove the cast once the SDK is bumped.
     const createParams: ConversationCreateBody = {
       agent_id: agent.id,
-      isolated_block_labels: isolatedBlockLabels,
     };
     if (fromAgentId) {
       (createParams as { hidden?: boolean }).hidden = true;
@@ -1623,7 +1636,6 @@ export async function handleHeadlessCommand(
     // primary conversation.
     const conversation = await backend.createConversation({
       agent_id: agent.id,
-      isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
     conversationOpenReason = "new";
@@ -1661,25 +1673,45 @@ export async function handleHeadlessCommand(
 
   const sessionStats = new SessionStats();
   const headlessPermissionMode = startupPermissionMode.mode;
-  const headlessExtensionAdapter = createHeadlessExtensionAdapter({
+  const headlessModAdapter = createHeadlessModAdapter({
     agent,
     backend,
     conversationId,
     permissionMode: headlessPermissionMode,
     reflectionSettings: effectiveReflectionSettings,
     sessionStats,
-    disabled: extensionsDisabled,
+    disabled: modsDisabled,
   });
-  await headlessExtensionAdapter.reload();
+  const initialHeadlessModContext = createHeadlessModContext({
+    agent,
+    conversationId,
+    permissionMode: headlessPermissionMode,
+    reflectionSettings: effectiveReflectionSettings,
+    sessionStats,
+  });
+  await headlessModAdapter.reload();
+  installLocalBackendModEventHooks({
+    backend,
+    adapter: headlessModAdapter,
+    buildContext: (compactConversationId) =>
+      createHeadlessModContext({
+        agent,
+        conversationId: compactConversationId,
+        permissionMode: headlessPermissionMode,
+        reflectionSettings: effectiveReflectionSettings,
+        sessionStats,
+      }),
+  });
   try {
     await emitHeadlessConversationOpen({
       agent,
       conversationId,
       reason: conversationOpenReason,
-      adapter: headlessExtensionAdapter,
+      adapter: headlessModAdapter,
+      context: initialHeadlessModContext,
     });
   } catch {
-    // Extension lifecycle events should not block headless startup.
+    // Mod lifecycle events should not block headless startup.
   }
 
   let availableTools =
@@ -1697,7 +1729,8 @@ export async function handleHeadlessCommand(
       agentId: agent.id,
       conversationId,
       cachedAgent: agent as AgentState,
-      extensionEvents: headlessExtensionAdapter.events,
+      modContext: initialHeadlessModContext,
+      modEvents: headlessModAdapter.events,
     });
     availableTools = initialToolContext.availableTools;
     cachedAgent = initialToolContext.preparedToolContext.agent;
@@ -1716,7 +1749,7 @@ export async function handleHeadlessCommand(
       resolvedSkillSources,
       systemInfoReminderEnabled,
       effectiveReflectionSettings,
-      headlessExtensionAdapter,
+      headlessModAdapter,
     );
     return;
   }
@@ -1737,31 +1770,30 @@ export async function handleHeadlessCommand(
     try {
       if (!headlessConversationClosed) {
         headlessConversationClosed = true;
-        headlessExtensionAdapter.updateContext(
-          createHeadlessExtensionContext({
-            agent,
-            conversationId,
-            lastRunId: lastKnownRunId,
-            permissionMode: headlessPermissionMode,
-            reflectionSettings: effectiveReflectionSettings,
-            sessionStats,
-          }),
-        );
+        const closeModContext = createHeadlessModContext({
+          agent,
+          conversationId,
+          lastRunId: lastKnownRunId,
+          permissionMode: headlessPermissionMode,
+          reflectionSettings: effectiveReflectionSettings,
+          sessionStats,
+        });
         try {
           await emitHeadlessConversationClose({
             agent,
             conversationId,
             durationMs: sessionStats.getSnapshot().totalWallMs,
-            adapter: headlessExtensionAdapter,
+            adapter: headlessModAdapter,
+            context: closeModContext,
           });
         } catch {
-          // Extension lifecycle events should not block headless shutdown.
+          // Mod lifecycle events should not block headless shutdown.
         }
       }
       telemetry.trackSessionEnd(sessionStats.getSnapshot(), exitReason);
       await telemetry.flush();
     } finally {
-      headlessExtensionAdapter.dispose();
+      headlessModAdapter.dispose();
       telemetry.setSessionStatsGetter(undefined);
     }
     return await flushAndExit(code);
@@ -1869,7 +1901,14 @@ export async function handleHeadlessCommand(
         agentId: agent.id,
         conversationId,
         approvalMessages,
-        extensionEvents: headlessExtensionAdapter.events,
+        modContext: createHeadlessModContext({
+          agent,
+          conversationId,
+          permissionMode: headlessPermissionMode,
+          reflectionSettings: effectiveReflectionSettings,
+          sessionStats,
+        }),
+        modEvents: headlessModAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -1940,10 +1979,6 @@ ${SYSTEM_REMINDER_CLOSE}
     pushPart(systemReminder);
   }
 
-  syncReminderStateFromContextTracker(
-    sharedReminderState,
-    reminderContextTracker,
-  );
   const lastRunAt = (agent as { last_run_completion?: string })
     .last_run_completion;
   const { parts: sharedReminderParts } = await buildSharedReminderParts({
@@ -1958,8 +1993,8 @@ ${SYSTEM_REMINDER_CLOSE}
     state: sharedReminderState,
     systemInfoReminderEnabled,
     workingDirectory: getCurrentWorkingDirectory(),
-    reflectionSettings: effectiveReflectionSettings,
     skillSources: resolvedSkillSources,
+    shellContext: detectShellContext(),
   });
   for (const part of sharedReminderParts) {
     pushPart(part.text);
@@ -2029,21 +2064,32 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
-  headlessExtensionAdapter.updateContext(
-    createHeadlessExtensionContext({
-      agent,
-      conversationId,
-      permissionMode: headlessPermissionMode,
-      reflectionSettings: effectiveReflectionSettings,
-      sessionStats,
-    }),
-  );
-  currentInput = await emitHeadlessTurnStart({
+  const turnStartModContext = createHeadlessModContext({
+    agent,
+    conversationId,
+    permissionMode: headlessPermissionMode,
+    reflectionSettings: effectiveReflectionSettings,
+    sessionStats,
+  });
+  const initialTurnStartEmission = await emitHeadlessTurnStart({
     agent,
     conversationId,
     input: currentInput,
-    adapter: headlessExtensionAdapter,
+    adapter: headlessModAdapter,
+    context: turnStartModContext,
   });
+  if (initialTurnStartEmission.cancelled) {
+    await emitHeadlessTurnStartCancellationOutput({
+      agent,
+      conversationId,
+      outputFormat,
+      reason: initialTurnStartEmission.reason,
+      sessionId,
+    });
+    await exitHeadless(1, "headless_turn_start_cancelled");
+  } else {
+    currentInput = initialTurnStartEmission.input;
+  }
 
   // Track lastRunId outside the while loop so it's available in catch block
   let llmApiErrorRetries = 0;
@@ -2119,7 +2165,14 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId,
           overrideModel: overrideModelHandle ?? preparedEffectiveModel,
           cachedAgent,
-          extensionEvents: headlessExtensionAdapter.events,
+          modContext: createHeadlessModContext({
+            agent,
+            conversationId,
+            permissionMode: headlessPermissionMode,
+            reflectionSettings: effectiveReflectionSettings,
+            sessionStats,
+          }),
+          modEvents: headlessModAdapter.events,
         });
         availableTools = turnToolContext.availableTools;
         stream = await sendMessageStream(conversationId, currentInput, {
@@ -2376,6 +2429,7 @@ ${SYSTEM_REMINDER_CLOSE}
               alwaysRequiresUserInput: isInteractiveApprovalTool,
               requireArgsForAutoApprove: true,
               missingNameReason: "Tool call incomplete - missing name",
+              toolContextId: turnToolContextId ?? undefined,
             });
 
             const [approval] = autoAllowed;
@@ -2485,6 +2539,49 @@ ${SYSTEM_REMINDER_CLOSE}
         llmApiErrorRetries = 0;
         emptyResponseRetries = 0;
         conversationBusyRetries = 0;
+
+        // Emit turn_end. A mod may return { continue: "..." } to append a
+        // follow-up user message and run another turn. Auto-continues re-enter
+        // the loop and count against --max-turns via checkMaxTurns at the top.
+        const continueMessage = await emitHeadlessTurnEnd({
+          agent,
+          conversationId,
+          stopReason,
+          assistantMessage: findLastAssistantText(toLines(buffers)),
+          adapter: headlessModAdapter,
+          context: turnStartModContext,
+        });
+
+        if (continueMessage) {
+          currentInput = [
+            {
+              role: "user",
+              content: continueMessage,
+              otid: randomUUID(),
+            },
+          ];
+          const continueTurnStartEmission = await emitHeadlessTurnStart({
+            agent,
+            conversationId,
+            input: currentInput,
+            adapter: headlessModAdapter,
+            context: turnStartModContext,
+          });
+          if (continueTurnStartEmission.cancelled) {
+            await emitHeadlessTurnStartCancellationOutput({
+              agent,
+              conversationId,
+              outputFormat,
+              reason: continueTurnStartEmission.reason,
+              sessionId,
+            });
+            await exitHeadless(1, "headless_turn_start_cancelled");
+          } else {
+            currentInput = continueTurnStartEmission.input;
+          }
+          continue;
+        }
+
         break;
       }
 
@@ -2520,6 +2617,7 @@ ${SYSTEM_REMINDER_CLOSE}
             alwaysRequiresUserInput: isInteractiveApprovalTool,
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
+            toolContextId: turnToolContextId ?? undefined,
           });
 
         const decisions: Decision[] = [
@@ -3114,7 +3212,7 @@ async function runBidirectionalMode(
   skillSources: SkillSource[],
   systemInfoReminderEnabled: boolean,
   reflectionSettings: ReflectionSettings,
-  headlessExtensionAdapter: ExtensionAdapter,
+  headlessModAdapter: ModAdapter,
 ): Promise<void> {
   const sessionId = agent.id;
   const backend = getBackend();
@@ -3135,16 +3233,21 @@ async function runBidirectionalMode(
             agent,
             conversationId,
             durationMs: null,
-            adapter: headlessExtensionAdapter,
+            adapter: headlessModAdapter,
+            context: createHeadlessModContext({
+              agent,
+              conversationId,
+              reflectionSettings,
+            }),
           });
         } catch {
-          // Extension lifecycle events should not block headless shutdown.
+          // Mod lifecycle events should not block headless shutdown.
         }
       }
       telemetry.trackSessionEnd(undefined, exitReason);
       await telemetry.flush();
     } finally {
-      headlessExtensionAdapter.dispose();
+      headlessModAdapter.dispose();
     }
     return await flushAndExit(code);
   };
@@ -3256,7 +3359,12 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId,
         approvalMessages,
-        extensionEvents: headlessExtensionAdapter.events,
+        modContext: createHeadlessModContext({
+          agent,
+          conversationId,
+          reflectionSettings,
+        }),
+        modEvents: headlessModAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
         approvalStream,
@@ -3636,7 +3744,12 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId: targetConversationId,
         approvalMessages: [approvalInput],
-        extensionEvents: headlessExtensionAdapter.events,
+        modContext: createHeadlessModContext({
+          agent,
+          conversationId: targetConversationId,
+          reflectionSettings,
+        }),
+        modEvents: headlessModAdapter.events,
       });
 
       const drainResult = await drainStreamWithResume(
@@ -4010,10 +4123,6 @@ async function runBidirectionalMode(
         let sawStreamError = false; // Track if we emitted an error during streaming
         let preStreamTransientRetries = 0;
 
-        syncReminderStateFromContextTracker(
-          sharedReminderState,
-          reminderContextTracker,
-        );
         const lastRunAt = (agent as { last_run_completion?: string })
           .last_run_completion;
         const { parts: sharedReminderParts } = await buildSharedReminderParts({
@@ -4028,17 +4137,13 @@ async function runBidirectionalMode(
           state: sharedReminderState,
           systemInfoReminderEnabled,
           workingDirectory: getCurrentWorkingDirectory(),
-          reflectionSettings,
           skillSources,
-          maybeLaunchReflectionSubagent,
         });
-        headlessExtensionAdapter.updateContext(
-          createHeadlessExtensionContext({
-            agent,
-            conversationId,
-            reflectionSettings,
-          }),
-        );
+        const turnStartModContext = createHeadlessModContext({
+          agent,
+          conversationId,
+          reflectionSettings,
+        });
         const enrichedContent = prependReminderPartsToContent(userContent, [
           ...sharedReminderParts,
         ]);
@@ -4047,12 +4152,23 @@ async function runBidirectionalMode(
         let currentInput: Array<MessageCreate | ApprovalCreate> = [
           { role: "user", content: enrichedContent, otid: userOtid },
         ];
-        currentInput = await emitHeadlessTurnStart({
+        const turnStartEmission = await emitHeadlessTurnStart({
           agent,
           conversationId,
           input: currentInput,
-          adapter: headlessExtensionAdapter,
+          adapter: headlessModAdapter,
+          context: turnStartModContext,
         });
+        if (turnStartEmission.cancelled) {
+          writeBidirectionalTurnStartCancellation({
+            agent,
+            conversationId,
+            reason: turnStartEmission.reason,
+            sessionId,
+          });
+          continue;
+        }
+        currentInput = turnStartEmission.input;
 
         // Approval handling loop - continue until end_turn or error
         while (true) {
@@ -4091,7 +4207,12 @@ async function runBidirectionalMode(
             const turnToolContext = await prepareHeadlessToolExecutionContext({
               agentId: agent.id,
               conversationId,
-              extensionEvents: headlessExtensionAdapter.events,
+              modContext: createHeadlessModContext({
+                agent,
+                conversationId,
+                reflectionSettings,
+              }),
+              modEvents: headlessModAdapter.events,
             });
             availableTools = turnToolContext.availableTools;
             stream = await sendMessageStream(conversationId, currentInput, {
@@ -4285,6 +4406,7 @@ async function runBidirectionalMode(
                 alwaysRequiresUserInput: isInteractiveApprovalTool,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
+                toolContextId: turnToolContextId ?? undefined,
               });
 
             const decisions: Decision[] = [
@@ -4324,7 +4446,7 @@ async function runBidirectionalMode(
             }
 
             for (const ac of needsUserInput) {
-              // permission.decision === "ask" - request permission from SDK
+              // permission.decision is ask/alwaysAsk - request permission from SDK
               const permResponse = await requestPermission(
                 ac.approval.toolCallId,
                 ac.approval.toolName,
@@ -4454,6 +4576,26 @@ async function runBidirectionalMode(
                 transcriptError instanceof Error
                   ? transcriptError.message
                   : String(transcriptError)
+              }`,
+            );
+          }
+          try {
+            await maybeLaunchPostTurnReflection({
+              agentId: agent.id,
+              conversationId,
+              memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
+              reflectionSettings,
+              reminderState: sharedReminderState,
+              contextTracker: reminderContextTracker,
+              launch: maybeLaunchReflectionSubagent,
+            });
+          } catch (reflectionError) {
+            debugWarn(
+              "memory",
+              `Failed to evaluate post-turn reflection: ${
+                reflectionError instanceof Error
+                  ? reflectionError.message
+                  : String(reflectionError)
               }`,
             );
           }

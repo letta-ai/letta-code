@@ -80,6 +80,36 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
   });
 
+  test("uses Codex unified exec description when present", () => {
+    const args = JSON.stringify({
+      cmd: "git status --short",
+      description: "Show working tree status",
+    });
+
+    const formatted = formatArgsDisplay(args, "exec_command");
+    expect(formatted.display).toBe("Show working tree status");
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "run",
+      label: "Run",
+      rawCommand: "git status --short",
+    });
+  });
+
+  test("uses Gemini shell description when present", () => {
+    const args = JSON.stringify({
+      command: "git status --short",
+      description: "Show working tree status",
+    });
+
+    const formatted = formatArgsDisplay(args, "RunShellCommand");
+    expect(formatted.display).toBe("Show working tree status");
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "run",
+      label: "Run",
+      rawCommand: "git status --short",
+    });
+  });
+
   test("summarizes Codex write_stdin without raw polling args", () => {
     const args = JSON.stringify({
       session_id: 8,
@@ -110,7 +140,7 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     expect(formatted.shellSemantic).toBeUndefined();
   });
 
-  test("summarizes Codex write_stdin polling with Codex-like language", () => {
+  test("summarizes Codex write_stdin polling as a background terminal check", () => {
     const args = JSON.stringify({
       session_id: 8,
       yield_time_ms: 1000,
@@ -118,7 +148,7 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
 
     const formatted = formatArgsDisplay(args, "write_stdin");
-    expect(formatted.displayName).toBe("Waited for background terminal");
+    expect(formatted.displayName).toBe("Checked background terminal");
     expect(formatted.display).toBe("(session 8)");
     expect(formatted.shellSemantic).toBeUndefined();
   });

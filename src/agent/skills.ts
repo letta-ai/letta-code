@@ -2,7 +2,7 @@
  * Skills module - provides skill discovery and management functionality
  *
  * Skills are discovered from four sources (in order of priority):
- * 1. Project skills: .skills/ in current directory (highest priority - overrides)
+ * 1. Project skills: .agents/skills/ in current directory, with .skills/ as a legacy fallback (highest priority - overrides)
  * 2. Agent skills: ~/.letta/agents/{agent-id}/memory/skills/ for agent-specific skills
  * 3. Global skills: ~/.letta/skills/ for user's personal skills
  * 4. Bundled skills: embedded in package (lowest priority - defaults)
@@ -13,6 +13,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import { isLocalAgentId } from "./agent-id";
 import { ALL_SKILL_SOURCES, type SkillSource } from "./skill-sources";
 
 /**
@@ -154,8 +155,30 @@ export function isUserInvocableSkill(skill: Skill): boolean {
   return skill.userInvocable !== false;
 }
 
+const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set(["image-generation"]);
+
+export function isSkillAvailableForAgent(
+  skill: Skill,
+  agentId?: string,
+): boolean {
+  if (
+    skill.source === "bundled" &&
+    agentId &&
+    isLocalAgentId(agentId) &&
+    LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS.has(skill.id)
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /**
- * Default directory name where project skills are stored
+ * Canonical directory where project skills are stored.
+ */
+export const PROJECT_SKILLS_DIR = join(".agents", "skills");
+
+/**
+ * Legacy directory name where project skills were stored.
  */
 export const SKILLS_DIR = ".skills";
 
@@ -229,7 +252,7 @@ async function discoverSkillsFromDir(
  * Later sources override earlier ones with the same ID.
  *
  * Priority order (highest to lowest):
- * 1. Project skills (.skills/ in current directory)
+ * 1. Project skills (the provided project skills path; callers may scan .agents/skills before .skills)
  * 2. Agent skills (~/.letta/agents/{agent-id}/memory/skills/)
  * 3. Global skills (~/.letta/skills/)
  * 4. Bundled skills (embedded in package)

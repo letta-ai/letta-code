@@ -113,9 +113,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   // Check if current agent is pinned
   const isPinned = useMemo(() => {
     if (!agentId) return false;
-    const localPinned = settingsManager.getLocalPinnedAgents();
-    const globalPinned = settingsManager.getGlobalPinnedAgents();
-    return localPinned.includes(agentId) || globalPinned.includes(agentId);
+    return settingsManager.isAgentPinned(agentId);
   }, [agentId]);
 
   const isCloudUser = serverUrl?.includes("api.letta.com");

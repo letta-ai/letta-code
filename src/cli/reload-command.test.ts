@@ -10,7 +10,7 @@ describe("/reload command", () => {
     const source = readFileSync(registryPath, "utf-8");
 
     expect(source).toContain('"/reload"');
-    expect(source).toContain("Reload settings and local extensions");
+    expect(source).toContain("Reload settings and local mods");
   });
 
   test("AppCoordinator owns the in-place reload callback", () => {
@@ -27,11 +27,11 @@ describe("/reload command", () => {
     );
     expect(source).toContain("refreshCustomCommands()");
     expect(source).toContain(
-      'void extensionAdapter.events.emit("conversation_close"',
+      'void modAdapter.events.emit(\n      "conversation_close"',
     );
-    expect(source).toContain("await extensionAdapter.reload()");
+    expect(source).toContain("await modAdapter.reload()");
     expect(source).toContain(
-      'void extensionAdapter.events.emit("conversation_open"',
+      'void modAdapter.events.emit(\n      "conversation_open"',
     );
     expect(source).toContain('reason: "reload"');
   });
@@ -44,7 +44,7 @@ describe("/reload command", () => {
 
     expect(source).toContain('trimmed === "/reload"');
     expect(source).toContain("await onReload()");
-    expect(source).toContain("Reloaded settings and local extensions");
+    expect(source).toContain("Reloaded settings and local mods");
   });
 
   test("/reload has a busy guard", () => {

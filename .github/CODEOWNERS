@@ -4,7 +4,7 @@
 /src/agent/memoryGit.ts @letta-ai/system-prompt-owners
 
 # WebSocket listener and protocol code
-/src/websocket/ @cpacker @4shub @carenthomas
+/src/websocket/ @cpacker @4shub @kl2806 @carenthomas @christinatong01 @jnjpng
 
 # Headless mode runtime
 /src/headless.ts @cpacker @4shub @kl2806 @devanshrj @sarahwooders @jnjpng @carenthomas
@@ -15,4 +15,4 @@
 /src/agent/prompts/source_codex.md @kl2806
 
 # TUI/CLI runtime and UI
-/src/cli/ @cpacker @4shub @sarahwooders @jnjpng @carenthomas
+/src/cli/ @cpacker @4shub @kl2806 @sarahwooders @jnjpng @carenthomas @christinatong01

@@ -109,58 +109,6 @@ jobs:
       - name: Lint & Type Check
         run: bun run check
 
-  telegram-live-smoke:
-    needs: [classify, check]
-    name: Telegram Live Smoke
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    if: >
-      needs.classify.outputs.channels_changed == 'true' &&
-      (github.event_name == 'push' ||
-      (github.event_name == 'pull_request' &&
-      github.actor != 'dependabot[bot]' &&
-      github.event.pull_request.head.repo.full_name == github.repository))
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.0
-
-      - name: Install dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun install --frozen-lockfile
-
-      - name: Validate Telegram smoke secrets
-        env:
-          TELEGRAM_SMOKE_BOT_TOKEN: ${{ secrets.TELEGRAM_SMOKE_BOT_TOKEN }}
-          TELEGRAM_SMOKE_CHAT_ID: ${{ secrets.TELEGRAM_SMOKE_CHAT_ID }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${TELEGRAM_SMOKE_BOT_TOKEN:-}" ]; then
-            echo "::error::Missing required GitHub secret TELEGRAM_SMOKE_BOT_TOKEN"
-            exit 1
-          fi
-
-          if [ -z "${TELEGRAM_SMOKE_CHAT_ID:-}" ]; then
-            echo "::error::Missing required GitHub secret TELEGRAM_SMOKE_CHAT_ID"
-            exit 1
-          fi
-
-      - name: Run Telegram live smoke
-        env:
-          LETTA_RUN_LIVE_TELEGRAM_SMOKE: "1"
-          TELEGRAM_SMOKE_BOT_TOKEN: ${{ secrets.TELEGRAM_SMOKE_BOT_TOKEN }}
-          TELEGRAM_SMOKE_CHAT_ID: ${{ secrets.TELEGRAM_SMOKE_CHAT_ID }}
-          TELEGRAM_SMOKE_THREAD_ID: ${{ secrets.TELEGRAM_SMOKE_THREAD_ID }}
-        run: bun test src/channels/telegram-live-smoke.test.ts --timeout 30000
-
   update-chain-smoke:
     needs: check
     name: Update Chain Smoke
@@ -418,6 +366,90 @@ jobs:
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output text --parallel on
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output json --parallel on
           bun run src/test-utils/headless-scenario.ts --backend local --model "${{ matrix.model }}" --output stream-json --parallel on
+
+  ollama-smoke:
+    needs: [classify, check]
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    name: Ollama Smoke / ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    # Land non-blocking while we observe CPU inference timing + reliability;
+    # flip to a required check once stable.
+    continue-on-error: true
+    # Ollama inference runs on the CPU-only runner, so keep a generous cap.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Small fast model: this job runs a lightweight provider smoke
+        # (--smoke), not the full tool-calling scenario, so it only needs to
+        # round-trip a trivial prompt. The strict scenario is unworkable on
+        # CPU runners (0.5b/1b too weak to emit the sentinel; 3b too slow and
+        # hits the 6-min/attempt CLI timeout).
+        model: [qwen2.5:1.5b]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun install --frozen-lockfile
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama server
+        run: |
+          ollama serve > /tmp/ollama.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:11434/api/version >/dev/null 2>&1; then
+              echo "Ollama is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Ollama failed to start within 30s"
+          cat /tmp/ollama.log
+          exit 1
+
+      - name: Pull model
+        run: ollama pull "${{ matrix.model }}"
+
+      - name: Run Ollama provider smoke (connect + autodetect + round-trip)
+        env:
+          OLLAMA_BASE_URL: http://localhost:11434/v1
+        run: |
+          bun run src/test-utils/headless-scenario.ts --backend local --model "ollama/${{ matrix.model }}" --output text --parallel on --smoke
+
+  reflection-headless:
+    needs: [classify, check]
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    name: Reflection / Headless
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun install --frozen-lockfile
+
+      - name: Run headless reflection scenario
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+        run: bun run src/test-utils/headless-reflection-scenario.ts --model auto
 
   docker:
     needs: [classify, check]

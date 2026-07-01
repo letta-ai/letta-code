@@ -3,8 +3,8 @@ import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
 import BashOutputDescription from "./descriptions/BashOutput.md";
-import CreateWorktreeDescription from "./descriptions/CreateWorktree.md";
 import EditDescription from "./descriptions/Edit.md";
+import EnterWorktreeDescription from "./descriptions/EnterWorktree.md";
 import ExecCommandDescription from "./descriptions/ExecCommand.md";
 import GlobDescription from "./descriptions/Glob.md";
 // Gemini toolset
@@ -20,6 +20,7 @@ import MemoryApplyPatchDescription from "./descriptions/MemoryApplyPatch.md";
 import MessageChannelDescription from "./descriptions/MessageChannel.md";
 import MultiEditDescription from "./descriptions/MultiEdit.md";
 import ReadDescription from "./descriptions/Read.md";
+import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
 import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
 import ReadFileGeminiDescription from "./descriptions/ReadFileGemini.md";
 import ReadLSPDescription from "./descriptions/ReadLSP.md";
@@ -41,15 +42,17 @@ import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
 import WriteDescription from "./descriptions/Write.md";
+import WriteArtifactFileDescription from "./descriptions/WriteArtifactFile.md";
 import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteStdinDescription from "./descriptions/WriteStdin.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
 import { apply_patch } from "./impl/apply-patch";
+import { read_artifact_file, write_artifact_file } from "./impl/artifact-files";
 import { ask_user_question } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
 import { bash_output } from "./impl/bash-output";
-import { create_worktree } from "./impl/create-worktree";
 import { edit } from "./impl/edit";
+import { enter_worktree } from "./impl/enter-worktree";
 import { exec_command, write_stdin } from "./impl/exec-command";
 import { glob } from "./impl/glob";
 // Gemini toolset
@@ -93,8 +96,8 @@ import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
-import CreateWorktreeSchema from "./schemas/CreateWorktree.json";
 import EditSchema from "./schemas/Edit.json";
+import EnterWorktreeSchema from "./schemas/EnterWorktree.json";
 import ExecCommandSchema from "./schemas/ExecCommand.json";
 import GlobSchema from "./schemas/Glob.json";
 // Gemini toolset
@@ -110,6 +113,7 @@ import MemoryApplyPatchSchema from "./schemas/MemoryApplyPatch.json";
 import MessageChannelSchema from "./schemas/MessageChannel.json";
 import MultiEditSchema from "./schemas/MultiEdit.json";
 import ReadSchema from "./schemas/Read.json";
+import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
 import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
 import ReadFileGeminiSchema from "./schemas/ReadFileGemini.json";
 import ReadLSPSchema from "./schemas/ReadLSP.json";
@@ -131,6 +135,7 @@ import TodoWriteSchema from "./schemas/TodoWrite.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
 import WriteSchema from "./schemas/Write.json";
+import WriteArtifactFileSchema from "./schemas/WriteArtifactFile.json";
 import WriteFileGeminiSchema from "./schemas/WriteFileGemini.json";
 import WriteStdinSchema from "./schemas/WriteStdin.json";
 import WriteTodosGeminiSchema from "./schemas/WriteTodosGemini.json";
@@ -178,10 +183,10 @@ const toolDefinitions = {
     description: BashOutputDescription.trim(),
     impl: bash_output,
   }),
-  CreateWorktree: defineTool({
-    schema: CreateWorktreeSchema,
-    description: CreateWorktreeDescription.trim(),
-    impl: create_worktree,
+  EnterWorktree: defineTool({
+    schema: EnterWorktreeSchema,
+    description: EnterWorktreeDescription.trim(),
+    impl: enter_worktree,
   }),
   Edit: defineTool({
     schema: EditSchema,
@@ -243,6 +248,11 @@ const toolDefinitions = {
     description: ReadDescription.trim(),
     impl: read,
   }),
+  read_artifact_file: defineTool({
+    schema: ReadArtifactFileSchema,
+    description: ReadArtifactFileDescription.trim(),
+    impl: read_artifact_file,
+  }),
   view_image: defineTool({
     schema: ViewImageSchema,
     description: ViewImageDescription.trim(),
@@ -298,6 +308,11 @@ const toolDefinitions = {
     schema: WriteSchema,
     description: WriteDescription.trim(),
     impl: write,
+  }),
+  write_artifact_file: defineTool({
+    schema: WriteArtifactFileSchema,
+    description: WriteArtifactFileDescription.trim(),
+    impl: write_artifact_file,
   }),
   shell_command: defineTool({
     schema: ShellCommandSchema,

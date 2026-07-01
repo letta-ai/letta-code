@@ -7,6 +7,7 @@ import type {
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { debugLog } from "@/utils/debug.js";
+import { expandFilePath } from "@/utils/file-path";
 import { resizeImageIfNeeded } from "@/utils/image-resize.js";
 import { getUtf16Bom, readUtf8TextStrict } from "@/utils/text-files";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
@@ -210,9 +211,7 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
   validateRequiredParams(args, ["file_path"], "Read");
   const { file_path, offset, limit } = args;
   const userCwd = getCurrentWorkingDirectory();
-  const resolvedPath = path.isAbsolute(file_path)
-    ? file_path
-    : path.resolve(userCwd, file_path);
+  const resolvedPath = expandFilePath(file_path, userCwd);
   try {
     const stats = await fs.stat(resolvedPath);
     if (stats.isDirectory())

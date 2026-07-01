@@ -6,6 +6,7 @@ import { submitTelemetryMetadata } from "@/backend/api/metadata";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
 import { debugLogFile } from "@/utils/debug";
+import { isLoopbackHostname, parseUrl } from "@/utils/url";
 import { getVersion } from "@/version";
 
 export type TelemetrySurface =
@@ -98,6 +99,8 @@ export interface ReflectionStartData {
   conversation_id?: string;
   start_message_id?: string;
   end_message_id?: string;
+  version?: string;
+  platform?: string;
 }
 
 export interface ReflectionEndData {
@@ -108,12 +111,14 @@ export interface ReflectionEndData {
   error?: string;
   step_count?: number;
   duration_ms?: number;
+  version?: string;
+  platform?: string;
 }
 
 export function isLettaCodeDesktopRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return env.LETTA_DESKTOP_DEBUG_PANEL === "1";
+  return env.LETTA_DESKTOP_MODE === "1";
 }
 
 export function getTerminalTelemetrySurface(
@@ -130,38 +135,16 @@ export function getListenerTelemetrySurface(
     : "letta_code_cli_server";
 }
 
-function parseTelemetryUrl(value: string): URL | null {
-  try {
-    return new URL(value);
-  } catch {
-    try {
-      return new URL(`http://${value}`);
-    } catch {
-      return null;
-    }
-  }
-}
-
 function isTelemetryCloudServerUrl(serverUrl: string): boolean {
-  const parsed = parseTelemetryUrl(serverUrl);
-  const cloud = parseTelemetryUrl(LETTA_CLOUD_API_URL);
+  const parsed = parseUrl(serverUrl, { allowMissingProtocol: true });
+  const cloud = parseUrl(LETTA_CLOUD_API_URL, { allowMissingProtocol: true });
   return Boolean(parsed && cloud && parsed.hostname === cloud.hostname);
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  return (
-    normalized === "localhost" ||
-    normalized === "0.0.0.0" ||
-    normalized === "::1" ||
-    normalized.startsWith("127.")
-  );
-}
-
 function isLikelyDeprecatedDockerBackendUrl(serverUrl: string): boolean {
-  const parsed = parseTelemetryUrl(serverUrl);
+  const parsed = parseUrl(serverUrl, { allowMissingProtocol: true });
   return Boolean(
-    parsed && isLoopbackHost(parsed.hostname) && parsed.port === "8283",
+    parsed && isLoopbackHostname(parsed.hostname) && parsed.port === "8283",
   );
 }
 
@@ -307,13 +290,18 @@ class TelemetryManager {
   }
 
   /**
-   * Check if telemetry is enabled based on LETTA_CODE_TELEM env var
-   * Enabled by default unless explicitly disabled or using self-hosted server
+   * Check if telemetry is enabled based on environment variables.
+   * Enabled by default unless explicitly disabled.
    */
   private isTelemetryEnabled(): boolean {
-    // Check environment variable - must be explicitly set to "0" or "false" to disable
+    // LETTA_CODE_TELEM is Letta Code's specific opt-out. DO_NOT_TRACK is a
+    // broader convention also honored by install-time analytics packages.
     const envValue = process.env.LETTA_CODE_TELEM;
     if (envValue === "0" || envValue === "false") {
+      return false;
+    }
+
+    if (process.env.DO_NOT_TRACK === "1") {
       return false;
     }
 
@@ -728,6 +716,8 @@ class TelemetryManager {
       conversation_id: options?.conversationId,
       start_message_id: options?.startMessageId,
       end_message_id: options?.endMessageId,
+      version: getVersion(),
+      platform: process.platform,
     };
     this.track("reflection_start", data);
   }
@@ -754,6 +744,8 @@ class TelemetryManager {
       error: options?.error,
       step_count: options?.stepCount,
       duration_ms: options?.durationMs,
+      version: getVersion(),
+      platform: process.platform,
     };
     this.track("reflection_end", data);
   }

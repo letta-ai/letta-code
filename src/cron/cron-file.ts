@@ -634,12 +634,12 @@ export function claimSchedulerLease(): string {
     if (data.scheduler_owner) {
       const existingOwner = data.scheduler_owner;
       const { pid, token: existingToken } = existingOwner;
-      if (isProcessAlive(pid, existingOwner)) {
+      if (pid !== process.pid && isProcessAlive(pid, existingOwner)) {
         throw new Error(
           `Scheduler lease held by PID ${pid} (token ${existingToken}). Cannot claim.`,
         );
       }
-      // Stale lease from dead process — take over
+      // Stale lease from dead process or self-reclaim — take over
     }
 
     data.scheduler_owner = {
