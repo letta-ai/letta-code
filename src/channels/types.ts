@@ -372,6 +372,8 @@ export interface ChannelRoute {
   enabled: boolean;
   /** Whether this route permits outbound MessageChannel sends. Defaults true. */
   outboundEnabled?: boolean;
+  /** Slack-only: a detached thread stays silent until the app is mentioned again. */
+  detached?: boolean;
   /** ISO 8601 creation timestamp. */
   createdAt: string;
   /** ISO 8601 update timestamp. */
