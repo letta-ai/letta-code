@@ -1,6 +1,8 @@
 /**
  * Model resolution and handling utilities
  */
+
+import { resolveProviderFromRawLocalModelHandle } from "@/backend/dev/pi-provider-registry";
 import modelsData from "@/models.json";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 
@@ -207,6 +209,13 @@ export function resolveModel(modelIdentifier: string): string | null {
   // For self-hosted servers: if it looks like a handle (contains /), pass it through
   // This allows using models not in models.json (e.g., from server's /v1/models)
   if (modelIdentifier.includes("/")) {
+    return modelIdentifier;
+  }
+
+  // Ollama commonly uses raw IDs like "llama3.1:latest". Treat those as
+  // local model handles instead of rejecting them before the local backend can
+  // attach the Ollama provider metadata.
+  if (resolveProviderFromRawLocalModelHandle(modelIdentifier)) {
     return modelIdentifier;
   }
 

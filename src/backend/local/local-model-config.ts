@@ -321,9 +321,15 @@ export function localModelSettingsForHandle(
   const provider = resolveProviderFromModelHandle(handle);
   if (!provider) return undefined;
   const modelId = stripProviderHandlePrefix(handle, provider);
+  const providerTypeSettings = {
+    provider_type: localProviderTypeForModelConfig(provider),
+  };
   return (
     registeredModelSettingsForProviderModel(provider, modelId) ??
-    catalogModelSettingsForProviderModel(provider, modelId)
+    catalogModelSettingsForProviderModel(provider, modelId) ??
+    (getPiProviderSpec(provider).createCustomModel
+      ? providerTypeSettings
+      : undefined)
   );
 }
 
@@ -374,6 +380,44 @@ export async function resolveAvailableLocalModelForTurn(input: {
     typeof input.model === "string" &&
     !isUnselectedLocalModelHandle(input.model)
   ) {
+    const settingsForHandle = localModelSettingsForHandle(input.model);
+    if (settingsForHandle) {
+      const baseProvider = resolveProviderFromProviderType(
+        baseSettings.provider_type,
+      );
+      const preferBaseProvider =
+        baseProvider !== undefined &&
+        baseProvider !== "openai" &&
+        !input.model.includes("/");
+      return {
+        model: input.model,
+        modelSettings: preferBaseProvider
+          ? { ...settingsForHandle, ...baseSettings }
+          : { ...baseSettings, ...settingsForHandle },
+      };
+    }
+
+    if (resolveProviderFromProviderType(baseSettings.provider_type)) {
+      return { model: input.model, modelSettings: baseSettings };
+    }
+
+    const models = await listLocalModels(input.storageDir);
+    const selected = models.find((entry) => {
+      const provider = providerForLocalModelListEntry(entry);
+      if (!provider) return false;
+      return stripProviderHandlePrefix(entry.handle, provider) === input.model;
+    });
+    if (selected) {
+      return {
+        model: selected.handle,
+        modelSettings: {
+          ...baseSettings,
+          ...localModelSettingsForHandle(selected.handle),
+          provider_type: selected.model_endpoint_type,
+        },
+      };
+    }
+
     return { model: input.model, modelSettings: baseSettings };
   }
 

@@ -7,6 +7,7 @@ import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import {
   applyPiEnvOverrides,
   resolvePiModelForAgent,
+  resolvePiProviderFromAgent,
 } from "@/backend/dev/pi-model-factory";
 import {
   clearRegisteredPiProviders,
@@ -40,6 +41,48 @@ async function withEnv<T>(
 describe("pi model factory", () => {
   afterEach(() => {
     clearRegisteredPiProviders();
+  });
+
+  test("resolves raw Ollama model IDs without falling back to OpenAI", () => {
+    expect(resolvePiProviderFromAgent("llama3.1:latest", {})).toBe("ollama");
+    expect(
+      resolvePiProviderFromAgent("llama3.1:latest", {
+        provider_type: "openai",
+      }),
+    ).toBe("ollama");
+  });
+
+  test("honors explicit local provider metadata before raw Ollama heuristics", () => {
+    expect(
+      resolvePiProviderFromAgent("qwen2.5-coder:7b", {
+        provider_type: "lmstudio_openai",
+      }),
+    ).toBe("lmstudio");
+  });
+
+  test("routes raw Ollama model IDs to a configured local Ollama endpoint", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-ollama-raw-id-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "ollama",
+        providerName: "lc-ollama",
+        apiKey: "not-needed",
+        baseURL: "http://localhost:11434/v1",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "llama3.1:latest",
+        {},
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.provider).toBe("ollama");
+      expect(resolved.model.id).toBe("llama3.1:latest");
+      expect(resolved.model.baseUrl).toBe("http://localhost:11434/v1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("notifies subscribers when mod provider registry changes", () => {

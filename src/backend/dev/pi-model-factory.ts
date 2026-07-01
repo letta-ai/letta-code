@@ -29,8 +29,9 @@ import {
   LOCAL_ZAI_CODING_PROVIDER_NAME,
   LOCAL_ZAI_PROVIDER_NAME,
   type PiProvider,
-  resolveProviderFromModelHandle,
+  resolveProviderFromPrefixedModelHandle,
   resolveProviderFromProviderType,
+  resolveProviderFromRawLocalModelHandle,
   stripProviderHandlePrefix,
 } from "./pi-provider-registry";
 import {
@@ -171,13 +172,20 @@ export function resolvePiProviderFromAgent(
   ) as PiProvider | undefined;
   if (registeredProvider) return registeredProvider;
 
-  const handleProvider = resolveProviderFromModelHandle(model);
+  const handleProvider = resolveProviderFromPrefixedModelHandle(model);
   if (handleProvider) return handleProvider;
 
+  const rawLocalProvider = resolveProviderFromRawLocalModelHandle(model);
   const settingsProvider = resolveProviderFromProviderType(
     modelSettings.provider_type,
   );
-  if (settingsProvider) return settingsProvider;
+  if (
+    settingsProvider &&
+    !(settingsProvider === "openai" && rawLocalProvider)
+  ) {
+    return settingsProvider;
+  }
+  if (rawLocalProvider) return rawLocalProvider;
 
   if (model && !isUnselectedLocalModelHandle(model)) {
     const slashIndex = model.indexOf("/");

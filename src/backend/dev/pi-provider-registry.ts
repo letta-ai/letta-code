@@ -367,13 +367,38 @@ export function expectedPiProviderList(): string {
   return PI_PROVIDER_SPECS.map((provider) => `"${provider.id}"`).join(", ");
 }
 
-export function resolveProviderFromModelHandle(
+export function resolveProviderFromPrefixedModelHandle(
   model: string | undefined,
 ): PiProvider | undefined {
   if (!model) return undefined;
   return PI_PROVIDER_SPECS.find((provider) =>
     provider.handlePrefixes.some((prefix) => model.startsWith(prefix)),
   )?.id;
+}
+
+export function resolveProviderFromModelHandle(
+  model: string | undefined,
+): PiProvider | undefined {
+  const prefixedProvider = resolveProviderFromPrefixedModelHandle(model);
+  if (prefixedProvider) return prefixedProvider;
+
+  return resolveProviderFromRawLocalModelHandle(model);
+}
+
+export function resolveProviderFromRawLocalModelHandle(
+  model: string | undefined,
+): PiProvider | undefined {
+  if (!model || model.includes("/")) return undefined;
+  const trimmed = model.trim();
+  if (!trimmed.includes(":")) return undefined;
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)+$/.test(
+      trimmed,
+    )
+  ) {
+    return undefined;
+  }
+  return "ollama";
 }
 
 export function resolveProviderFromProviderType(
