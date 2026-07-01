@@ -202,6 +202,7 @@ export function buildReflectionSubagentPrompt(
     "",
     "The primary agent's memory filesystem is available through the `$MEMORY_DIR` environment variable.",
     "Run git commands only from `$MEMORY_DIR`; the harness handles integration after your commit. If `git add` or `git commit` fails, report the failure instead of changing git config, inspecting `.git` internals, or assuming uncommitted edits will be persisted.",
+    "Avoid broad ref history commands such as `git log --all` or `git log --oneline --all` while reflecting.",
     'When using Edit, first resolve the absolute file path from `$MEMORY_DIR` with Bash (for example: `printf "%s/system/persona.md\\n" "$MEMORY_DIR"`) and use the printed path. Do not hardcode memory paths from the prompt.',
     "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
     "Additional memory files (such as skills and external memory) may also be read and modified.",

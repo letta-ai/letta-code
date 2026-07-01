@@ -77,6 +77,28 @@ function buildReflectionWorktreeId(now: Date = new Date()): string {
   return `${timestamp}-${randomUUID().slice(0, 8)}`;
 }
 
+function summarizeReflectionCommitSubject(subject: string): string {
+  const summary = subject
+    .trim()
+    .replace(/^[a-z]+(?:\([^)]+\))?!?:\s*/i, "")
+    .trim();
+  return summary || "reflection memory updates";
+}
+
+async function buildReflectionMergeMessage(
+  parentMemoryDir: string,
+  branchName: string,
+): Promise<string> {
+  const result = await tryRunGit(parentMemoryDir, [
+    "log",
+    "-1",
+    "--pretty=%s",
+    branchName,
+  ]);
+  const summary = summarizeReflectionCommitSubject(result?.stdout ?? "");
+  return `merge(reflection): ${summary}`;
+}
+
 export interface ReflectionMemoryWorktree {
   id: string;
   parentMemoryDir: string;
@@ -482,10 +504,15 @@ export async function finalizeReflectionMemoryWorktree(
     worktree.parentMemoryDir,
     commitCount,
   );
+  const mergeMessage = await buildReflectionMergeMessage(
+    worktree.parentMemoryDir,
+    worktree.branchName,
+  );
   const mergeResult = await tryRunGit(worktree.parentMemoryDir, [
     "merge",
     worktree.branchName,
-    "--no-edit",
+    "-m",
+    mergeMessage,
   ]);
   if (!mergeResult) {
     await tryRunGit(worktree.parentMemoryDir, ["merge", "--abort"]);

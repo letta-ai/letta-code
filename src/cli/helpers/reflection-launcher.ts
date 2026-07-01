@@ -226,16 +226,20 @@ export function formatReflectionIntegrationReminder(
 ): string {
   const resolveCommands = `cd ${JSON.stringify(integration.parentMemoryDir)}
 git status
+reflection_branch=${JSON.stringify(integration.reflectionBranch)}
+reflection_subject=$(git log -1 --pretty=%s "$reflection_branch")
+reflection_summary=$(printf '%s' "$reflection_subject" | sed -E 's/^[a-z]+(\\([^)]+\\))?!?:[[:space:]]*//I')
+merge_message="merge(reflection): \${reflection_summary:-reflection memory updates}"
 # If parent MemFS has unrelated changes, inspect changes, then commit or discard them.
 # Then merge the reflection branch and resolve conflicts if prompted:
-git merge ${JSON.stringify(integration.reflectionBranch)} --no-edit || {
+git merge "$reflection_branch" -m "$merge_message" || {
   git status
-  echo "Resolve conflicted memory files, then run: git add -A && git commit --no-edit"
+  echo "Resolve conflicted memory files, then stage specific resolved files and run: git commit --no-edit"
   exit 1
 }
 
 git worktree remove ${JSON.stringify(integration.reflectionWorktreeDir)}
-git branch -d ${JSON.stringify(integration.reflectionBranch)}`;
+git branch -d "$reflection_branch"`;
 
   const reminder = `${SYSTEM_REMINDER_OPEN}
 ACTION REQUIRED: Resolve pending reflection memory merge.
