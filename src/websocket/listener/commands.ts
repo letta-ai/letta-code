@@ -14,6 +14,7 @@ import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildGoalContinuationPrompt,
   formatGoalSummary,
+  GOAL_DEFAULT_MAX_STEPS,
   GOAL_USAGE,
   GOAL_USAGE_HINT,
   goalStatusLabel,
@@ -66,7 +67,11 @@ import {
   buildMaybeLaunchReflectionSubagent,
   handleIncomingMessage,
 } from "./turn";
-import type { ConversationRuntime, StartListenerOptions } from "./types";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  StartListenerOptions,
+} from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 
@@ -798,6 +803,41 @@ async function handleRememberCommand(
 }
 
 /**
+ * Kick off an autonomous goal turn without blocking the /goal command result.
+ *
+ * The turn (and its full continuation loop in handleIncomingMessage) is chained
+ * onto the conversation message queue so it stays serialized with other turns
+ * and runs in the background — the command can return its confirmation
+ * immediately while the agent grinds on the goal.
+ */
+function startGoalLoopTurnInBackground(
+  socket: WebSocket,
+  conversationRuntime: ConversationRuntime,
+  message: IncomingMessage,
+  opts: {
+    onStatusChange?: StartListenerOptions["onStatusChange"];
+    connectionId?: string;
+  },
+): void {
+  conversationRuntime.messageQueue = conversationRuntime.messageQueue
+    .then(() =>
+      handleIncomingMessage(
+        message,
+        socket,
+        conversationRuntime,
+        opts.onStatusChange,
+        opts.connectionId,
+      ),
+    )
+    .catch((error: unknown) => {
+      console.error(
+        "[Goal] Autonomous goal loop failed:",
+        error instanceof Error ? error.message : error,
+      );
+    });
+}
+
+/**
  * /goal — Manage conversation goals with auto-continuation.
  *
  * Subcommands:
@@ -899,7 +939,11 @@ async function handleGoalCommand(
       }
     } else if (lowerGoalArg === "resume") {
       settingsManager.setConversationGoalToolsEnabled(conversationId, true);
-      goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
+      goalLoopMode.activateGoal(
+        goal.objective,
+        goal.tokenBudget,
+        goal.maxSteps ?? GOAL_DEFAULT_MAX_STEPS,
+      );
       permState.mode = "unrestricted";
       persistPermissionModeMapForRuntime(conversationRuntime.listener);
 
@@ -922,9 +966,13 @@ async function handleGoalCommand(
         tokenBudget: storedGoal?.tokenBudget ?? goalState.tokenBudget,
         timeUsedSeconds:
           (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
+        currentStep: goalState.currentIteration,
+        maxSteps: goalState.maxSteps,
       });
 
-      await handleIncomingMessage(
+      startGoalLoopTurnInBackground(
+        socket,
+        conversationRuntime,
         {
           type: "message",
           agentId,
@@ -937,10 +985,7 @@ async function handleGoalCommand(
             },
           ],
         },
-        socket,
-        conversationRuntime,
-        opts.onStatusChange,
-        opts.connectionId,
+        opts,
       );
     }
 
@@ -970,8 +1015,13 @@ async function handleGoalCommand(
     conversationRuntime.activeWorkingDirectory ?? process.cwd(),
     parsedGoal.tokenBudget,
     true,
+    parsedGoal.maxSteps,
   );
-  goalLoopMode.activateGoal(parsedGoal.objective, parsedGoal.tokenBudget);
+  goalLoopMode.activateGoal(
+    parsedGoal.objective,
+    parsedGoal.tokenBudget,
+    parsedGoal.maxSteps,
+  );
 
   const permState = getOrCreateConversationPermissionModeStateRef(
     conversationRuntime.listener,
@@ -982,7 +1032,8 @@ async function handleGoalCommand(
   persistPermissionModeMapForRuntime(conversationRuntime.listener);
 
   const replaced = previousGoal ? " replaced" : " active";
-  const resultPrefix = `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`;
+  const stepCapLabel = parsedGoal.maxSteps ?? "∞";
+  const resultPrefix = `Goal${replaced} (iter 1/${stepCapLabel})\n${formatGoalSummary(goal)}`;
 
   // Send initial goal continuation prompt through the turn pipeline
   const goalState = goalLoopMode.getState();
@@ -1002,9 +1053,13 @@ async function handleGoalCommand(
     tokensUsed: storedGoal?.tokensUsed ?? 0,
     tokenBudget: storedGoal?.tokenBudget ?? goalState.tokenBudget,
     timeUsedSeconds: (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
+    currentStep: goalState.currentIteration,
+    maxSteps: goalState.maxSteps,
   });
 
-  await handleIncomingMessage(
+  startGoalLoopTurnInBackground(
+    socket,
+    conversationRuntime,
     {
       type: "message",
       agentId,
@@ -1017,10 +1072,7 @@ async function handleGoalCommand(
         },
       ],
     },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
+    opts,
   );
 
   return resultPrefix;

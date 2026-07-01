@@ -583,6 +583,32 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
 
+        // Stop cleanly when the autonomous step cap is reached. The goal is
+        // paused (not failed) so the user can /goal resume or raise the cap.
+        if (goalLoopMode.hasReachedStepLimit()) {
+          const reachedMaxSteps = goalState.maxSteps;
+          goalLoopMode.deactivate();
+          setUiGoalLoopActive(false);
+          settingsManager.updateConversationGoalStatus(
+            conversationIdRef.current,
+            "paused",
+          );
+          permissionMode.setMode("standard");
+          setUiPermissionMode("standard");
+
+          const statusId = uid("status");
+          buffersRef.current.byId.set(statusId, {
+            kind: "status",
+            id: statusId,
+            lines: [
+              `⏹️ Goal loop reached its step cap (${goalState.currentIteration}/${reachedMaxSteps}). Paused — run /goal resume to keep going or /goal --max-steps N to raise the cap.`,
+            ],
+          });
+          buffersRef.current.order.push(statusId);
+          refreshDerived();
+          return;
+        }
+
         if (!goalLoopMode.shouldContinue()) {
           return;
         }
