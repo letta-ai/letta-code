@@ -1023,6 +1023,9 @@ function inferThreadIdFromChannelTurnSources(params: {
   accountId?: string;
   channelTurnSources?: ChannelTurnSource[];
 }): string | null | undefined {
+  // Only infer a thread for routed replies where the caller did not pass an
+  // explicit threadId. If multiple active channel sources disagree below, we
+  // return undefined and let the route/action defaults decide instead.
   if (!params.input.chatId || params.input.threadId !== null) {
     return undefined;
   }
@@ -1041,9 +1044,21 @@ function inferThreadIdFromChannelTurnSources(params: {
       continue;
     }
 
+    // Slack channel routes can be scoped at the channel root while the active
+    // turn originated from a thread. In that case Slack uses the triggering
+    // message ts as the thread_ts for top-level messages, so falling back to
+    // messageId keeps channel replies in the user's active thread.
+    //
+    // Slack DMs also have message IDs, but using a DM message ts as thread_ts
+    // creates the bad behavior this helper is avoiding: replies appear inside a
+    // DM thread instead of the DM surface. Keep the messageId fallback limited
+    // to Slack channel turns; direct chats should stay unthreaded unless the
+    // caller explicitly passes a threadId/reply target.
+    const shouldInferSlackThreadFromMessage =
+      params.input.channel === "slack" && source.chatType === "channel";
     threadIds.add(
       source.threadId ??
-        (params.input.channel === "slack" ? source.messageId : null) ??
+        (shouldInferSlackThreadFromMessage ? source.messageId : null) ??
         null,
     );
   }
