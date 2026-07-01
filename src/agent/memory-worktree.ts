@@ -1,8 +1,8 @@
 import { execFile as execFileCb } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { mkdir, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
@@ -175,6 +175,15 @@ export interface ReflectionMemoryWorktreeFinalizeResult {
   error?: string;
 }
 
+export interface PendingReflectionMemoryWorktree {
+  id: string;
+  parentMemoryDir: string;
+  reflectionWorktreeDir: string;
+  reflectionBranch: string;
+  commitCount: number;
+  head?: string;
+}
+
 export function reflectionIntegrationConsumesTranscript(
   result: ReflectionMemoryWorktreeFinalizeResult,
 ): boolean {
@@ -221,6 +230,87 @@ async function getHead(cwd: string): Promise<string | undefined> {
   const result = await tryRunGit(cwd, ["rev-parse", "--verify", "HEAD"]);
   const head = result?.stdout.trim();
   return head || undefined;
+}
+
+async function getBranchCommitCount(
+  parentMemoryDir: string,
+  branchName: string,
+): Promise<number> {
+  const result = await tryRunGit(parentMemoryDir, [
+    "rev-list",
+    "--count",
+    `HEAD..${branchName}`,
+  ]);
+  return Number.parseInt(result?.stdout.trim() ?? "", 10) || 0;
+}
+
+function parseWorktreeListPorcelain(
+  output: string,
+): Array<{ path: string; head?: string; branch?: string }> {
+  const entries: Array<{ path: string; head?: string; branch?: string }> = [];
+  for (const block of output.split(/\n\s*\n/)) {
+    const entry: { path?: string; head?: string; branch?: string } = {};
+    for (const line of block.split("\n")) {
+      const separatorIndex = line.indexOf(" ");
+      const key = separatorIndex === -1 ? line : line.slice(0, separatorIndex);
+      const value = separatorIndex === -1 ? "" : line.slice(separatorIndex + 1);
+      if (key === "worktree") entry.path = value;
+      if (key === "HEAD") entry.head = value;
+      if (key === "branch") entry.branch = value;
+    }
+    if (!entry.path) continue;
+    entries.push({
+      path: entry.path,
+      ...(entry.head ? { head: entry.head } : {}),
+      ...(entry.branch ? { branch: entry.branch } : {}),
+    });
+  }
+  return entries;
+}
+
+export async function listPendingReflectionMemoryWorktrees(
+  parentMemoryDir: string,
+): Promise<PendingReflectionMemoryWorktree[]> {
+  const resolvedParent = await realpath(resolve(parentMemoryDir));
+  const worktreeBaseDir = join(dirname(resolvedParent), "memory-worktrees");
+  const worktreeList = await tryRunGit(resolvedParent, [
+    "worktree",
+    "list",
+    "--porcelain",
+  ]);
+  if (!worktreeList) return [];
+
+  const pending: PendingReflectionMemoryWorktree[] = [];
+  for (const entry of parseWorktreeListPorcelain(worktreeList.stdout)) {
+    const worktreeDir = normalizeGitPath(entry.path, resolvedParent);
+    const relativeWorktreeDir = relative(worktreeBaseDir, worktreeDir);
+    if (relativeWorktreeDir.startsWith("..") || isAbsolute(relativeWorktreeDir))
+      continue;
+
+    const branchName = entry.branch?.startsWith("refs/heads/")
+      ? entry.branch.slice("refs/heads/".length)
+      : undefined;
+    if (!branchName?.startsWith("letta/reflection/")) continue;
+
+    const isMerged = await tryRunGit(resolvedParent, [
+      "merge-base",
+      "--is-ancestor",
+      branchName,
+      "HEAD",
+    ]);
+    if (isMerged) continue;
+
+    pending.push({
+      id: branchName.slice("letta/reflection/".length),
+      parentMemoryDir: resolvedParent,
+      reflectionWorktreeDir: worktreeDir,
+      reflectionBranch: branchName,
+      commitCount: await getBranchCommitCount(resolvedParent, branchName),
+      head: entry.head,
+    });
+  }
+
+  return pending;
 }
 
 async function cleanupWorktreeAndBranch(

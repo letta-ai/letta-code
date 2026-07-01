@@ -3,6 +3,7 @@ import {
   buildReflectionMemoryScope,
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
+  listPendingReflectionMemoryWorktrees,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
@@ -242,6 +243,31 @@ function queueReflectionIntegrationReminder(params: {
   });
 }
 
+async function queuePendingReflectionWorktreeReminders(params: {
+  agentId: string;
+  conversationId: string;
+}): Promise<void> {
+  const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
+  const pendingWorktrees =
+    await listPendingReflectionMemoryWorktrees(memoryDir);
+  for (const pending of pendingWorktrees) {
+    queueReflectionIntegrationReminder({
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+      integration: {
+        status: "pending_manual_merge",
+        parentMemoryDir: pending.parentMemoryDir,
+        reflectionWorktreeDir: pending.reflectionWorktreeDir,
+        reflectionBranch: pending.reflectionBranch,
+        commitCount: pending.commitCount,
+        head: pending.head,
+        summary:
+          "A previously unresolved reflection memory worktree is still unmerged.",
+      },
+    });
+  }
+}
+
 export async function prepareReflectionMemoryWorktreeLaunch(params: {
   agentId: string;
   instruction?: string;
@@ -336,6 +362,21 @@ export async function launchReflectionSubagent(
 
   if (!memfsEnabled) {
     return { launched: false, reason: "memfs_disabled" };
+  }
+
+  if (triggerSource === "compaction-event") {
+    try {
+      await queuePendingReflectionWorktreeReminders({
+        agentId,
+        conversationId,
+      });
+    } catch (error) {
+      debugWarn(
+        "memory",
+        "Failed to queue pending reflection worktree reminders after compaction:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 
   if (!tryReserveReflectionLaunch(agentId)) {
