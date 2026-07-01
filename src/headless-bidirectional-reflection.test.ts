@@ -159,6 +159,9 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
         LETTA_LOCAL_BACKEND_DIR: localBackendDir,
         LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic",
         LETTA_TRANSCRIPT_ROOT: transcriptRoot,
+        // This test exercises transcript-driven reflection, not kernel sandbox
+        // behavior. Keep it independent of host bwrap/seatbelt availability.
+        LETTA_FS_SANDBOX: "0",
         USER_CWD: projectDir,
         LETTA_DEBUG: "1",
         NO_COLOR: "1",

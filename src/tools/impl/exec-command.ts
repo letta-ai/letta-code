@@ -34,6 +34,7 @@ const EXEC_SESSION_CLEANUP_MS = 5 * 60 * 1000;
 
 interface ExecCommandArgs {
   cmd: string;
+  description?: string;
   workdir?: string;
   shell?: string;
   tty?: boolean;
