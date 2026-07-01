@@ -187,6 +187,28 @@ test("channel progress labels subagent dispatches and previews prompts", () => {
   ]);
 });
 
+test("channel progress truncates subagent previews with ASCII ellipses", () => {
+  const updates = buildChannelTurnProgressUpdatesFromDelta({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        id: "call-1",
+        function: {
+          name: "Agent",
+          arguments: JSON.stringify({
+            prompt: "A".repeat(220),
+            subagent_type: "general-purpose",
+          }),
+        },
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates[0]?.toolDetails).toBe(`${"A".repeat(177)}...`);
+  expect(updates[0]?.toolDetails).not.toContain("…");
+});
+
 test("channel progress keeps subagent prompt previews across streamed fragments", () => {
   expect(
     buildChannelTurnProgressUpdatesFromDelta({
