@@ -1,5 +1,6 @@
 import { type Api, getModels, type Model } from "@earendil-works/pi-ai";
 import {
+  CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
   type PiProvider,
@@ -324,11 +325,15 @@ export function localModelSettingsForHandle(
   const providerTypeSettings = {
     provider_type: localProviderTypeForModelConfig(provider),
   };
+  const customModelSettings = {
+    ...providerTypeSettings,
+    max_tokens: CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+  };
   return (
     registeredModelSettingsForProviderModel(provider, modelId) ??
     catalogModelSettingsForProviderModel(provider, modelId) ??
     (getPiProviderSpec(provider).createCustomModel
-      ? providerTypeSettings
+      ? customModelSettings
       : undefined)
   );
 }

@@ -42,6 +42,8 @@ import {
 
 export const DEFAULT_PI_PROVIDER = "openai" satisfies PiProvider;
 export const UNSELECTED_LOCAL_MODEL_HANDLE = "local/default";
+export const CUSTOM_OPENAI_COMPATIBLE_DEFAULT_CONTEXT_WINDOW = 128000;
+export const CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS = 32000;
 export type { PiProvider } from "./pi-provider-registry";
 
 export function isUnselectedLocalModelHandle(model: unknown): boolean {
@@ -356,8 +358,9 @@ function customOpenAICompatibleModel(input: {
         ? ["text", "image"]
         : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: input.contextWindow ?? 128000,
-    maxTokens: input.maxTokens ?? 32000,
+    contextWindow:
+      input.contextWindow ?? CUSTOM_OPENAI_COMPATIBLE_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: input.maxTokens ?? CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
     compat: {
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,

@@ -24,6 +24,7 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
+import { CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS } from "@/backend/dev/pi-model-factory";
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
@@ -35,6 +36,7 @@ import { emptyLocalUsage } from "@/backend/local/local-message";
 import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import {
   listLocalModels,
+  localModelSettingsForHandle,
   resolveAvailableLocalModelForTurn,
 } from "@/backend/local/local-model-config";
 import {
@@ -1568,6 +1570,24 @@ describe("local backend pi transcript", () => {
 
       expect(resolved.model).toBe("llama3.1:latest");
       expect(resolved.modelSettings.provider_type).toBe("ollama");
+      expect(resolved.modelSettings.max_tokens).toBe(
+        CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+      );
+
+      expect(
+        localModelSettingsForHandle("ollama/llama3.1:latest")?.max_tokens,
+      ).toBe(CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS);
+
+      const prefixed = await resolveAvailableLocalModelForTurn({
+        model: "ollama/llama3.1:latest",
+        modelSettings: {},
+        storageDir,
+      });
+
+      expect(prefixed.modelSettings.provider_type).toBe("ollama");
+      expect(prefixed.modelSettings.max_tokens).toBe(
+        CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+      );
 
       const repaired = await resolveAvailableLocalModelForTurn({
         model: "llama3.1:latest",
@@ -1576,6 +1596,9 @@ describe("local backend pi transcript", () => {
       });
 
       expect(repaired.modelSettings.provider_type).toBe("ollama");
+      expect(repaired.modelSettings.max_tokens).toBe(
+        CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

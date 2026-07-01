@@ -688,9 +688,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       modelSettings: input.agent.model_settings,
       storageDir: this.localProviderAuthStorageDir,
     });
+    const effectiveModelSettings = localModel.modelSettings;
     const resolved = await resolvePiModelForAgent(
       localModel.model,
-      localModel.modelSettings,
+      effectiveModelSettings,
       { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
     );
     const context: Context = {
@@ -706,25 +707,24 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
-      ...(reasoningForSettings(input.agent.model_settings)
-        ? { reasoning: reasoningForSettings(input.agent.model_settings) }
+      ...(reasoningForSettings(effectiveModelSettings)
+        ? { reasoning: reasoningForSettings(effectiveModelSettings) }
         : {}),
-      ...(maxTokensForSettings(input.agent.model_settings)
-        ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
+      ...(maxTokensForSettings(effectiveModelSettings)
+        ? { maxTokens: maxTokensForSettings(effectiveModelSettings) }
         : {}),
-      ...(serviceTierForSettings(resolved.model, input.agent.model_settings)
+      ...(serviceTierForSettings(resolved.model, effectiveModelSettings)
         ? {
             serviceTier: serviceTierForSettings(
               resolved.model,
-              input.agent.model_settings,
+              effectiveModelSettings,
             ),
           }
         : {}),
-      ...(boolValue(input.agent.model_settings.parallel_tool_calls) !==
-      undefined
+      ...(boolValue(effectiveModelSettings.parallel_tool_calls) !== undefined
         ? {
             parallelToolCalls: boolValue(
-              input.agent.model_settings.parallel_tool_calls,
+              effectiveModelSettings.parallel_tool_calls,
             ),
           }
         : {}),
@@ -744,7 +744,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       );
       if (
         resolved.model.id.includes("claude-fable-5") &&
-        anthropicEffortForSettings(input.agent.model_settings) === "max"
+        anthropicEffortForSettings(effectiveModelSettings) === "max"
       ) {
         // pi-ai's public ThinkingLevel type currently tops out at xhigh, but
         // Anthropic accepts Fable's max effort through output_config.effort.

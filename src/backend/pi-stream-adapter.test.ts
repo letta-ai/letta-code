@@ -11,6 +11,7 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS } from "@/backend/dev/pi-model-factory";
 import {
   PiStreamAdapter,
   type PiStreamFunction,
@@ -118,6 +119,57 @@ function emptyTextBlocks(messages: Context["messages"]) {
 }
 
 describe("PiStreamAdapter", () => {
+  test("passes default output tokens for raw custom Ollama models", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-stream-raw-ollama-max-tokens-"),
+    );
+    const calls: Array<{
+      model: Model<string>;
+      options?: SimpleStreamOptions & Record<string, unknown>;
+    }> = [];
+    const stream: PiStreamFunction = (model, _context, options) => {
+      calls.push({ model, options });
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "ollama",
+        providerName: "lc-ollama",
+        apiKey: "not-needed",
+        baseURL: "http://localhost:11434/v1",
+      });
+
+      const baseInput = input();
+      await collectEvents(
+        new PiStreamAdapter({
+          stream,
+          localProviderAuthStorageDir: storageDir,
+        }).stream({
+          ...baseInput,
+          agent: {
+            ...baseInput.agent,
+            model: "llama3.1:latest",
+            model_settings: {},
+          },
+        }),
+      );
+
+      expect(calls[0]?.model.provider).toBe("ollama");
+      expect(calls[0]?.model.id).toBe("llama3.1:latest");
+      expect(calls[0]?.options?.maxTokens).toBe(
+        CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("downgrades images through Pi-AI payload conversion for text-only local models", async () => {
     let capturedPayload: unknown;
     const server = createServer(async (req, res) => {
