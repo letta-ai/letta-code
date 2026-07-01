@@ -376,6 +376,14 @@ describe("message_channel (signal)", () => {
 });
 
 describe("message_channel (no-op guard)", () => {
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearAllRoutes();
+  });
+
   test("send with no message or media returns an error", async () => {
     const result = await message_channel({
       action: "send",
