@@ -66,11 +66,13 @@ describe("channel slash commands", () => {
 
     const text = buildChannelHelpMessage("telegram");
     expect(text).toContain("Telegram is connected to Letta Code.");
+    expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
       "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
     );
 
     const slackText = buildChannelHelpMessage("slack");
+    expect(slackText).not.toContain("MessageChannel");
     expect(slackText).toContain(
       "In Slack threads, mention the app with bang commands: !help, !detach, !model, !new, !reload.",
     );
