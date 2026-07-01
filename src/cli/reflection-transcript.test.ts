@@ -23,6 +23,8 @@ import {
   listReflectionTranscriptCandidates,
   REFLECTION_STATE_SCHEMA_VERSION,
   readReflectionAutoSelection,
+  recordMetaReflectionResult,
+  recordSuccessfulReflectionForMetaTrigger,
 } from "@/cli/helpers/reflection-transcript";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
@@ -521,6 +523,41 @@ describe("reflectionTranscript helper", () => {
 
     const state = await getReflectionTranscriptState(agentId, conversationId);
     expect(state.total_completed_steps).toBe(5);
+  });
+
+  test("meta-reflection counter fires every configured successful reflections", async () => {
+    for (let index = 0; index < 2; index += 1) {
+      const result = await recordSuccessfulReflectionForMetaTrigger(agentId, {
+        interval: 3,
+      });
+      expect(result.shouldLaunchMetaReflection).toBe(false);
+      expect(
+        result.state.successful_reflections_since_last_meta_reflection,
+      ).toBe(index + 1);
+    }
+
+    const third = await recordSuccessfulReflectionForMetaTrigger(agentId, {
+      interval: 3,
+    });
+    expect(third.shouldLaunchMetaReflection).toBe(true);
+    expect(third.state.successful_reflections_since_last_meta_reflection).toBe(
+      0,
+    );
+    expect(third.state.total_successful_reflections).toBe(3);
+    expect(third.state.last_meta_reflection_started_at).toBeString();
+
+    const meta = await recordMetaReflectionResult(agentId, true);
+    expect(meta.total_successful_meta_reflections).toBe(1);
+    expect(meta.last_meta_reflection_succeeded_at).toBeString();
+
+    const fourth = await recordSuccessfulReflectionForMetaTrigger(agentId, {
+      interval: 3,
+    });
+    expect(fourth.shouldLaunchMetaReflection).toBe(false);
+    expect(fourth.state.successful_reflections_since_last_meta_reflection).toBe(
+      1,
+    );
+    expect(fourth.state.total_successful_reflections).toBe(4);
   });
 
   test("multi payload recent uses replay slices when conversations are already reflected", async () => {
